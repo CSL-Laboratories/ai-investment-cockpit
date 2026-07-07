@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install WP0 deps
+        # Later WPs extend this (fastapi, discord.py, duckdb, ...); the WP0 gate needs only these.
+        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema pytest ruff
+      - name: Lint
+        run: ruff check .
+      - name: Gates + tests (merge blockers)
+        # Includes the Invariant-1 call-site, no-LLM-in-risk, and secrets-grep gates (test_invariants.py).
+        run: python -m pytest -q

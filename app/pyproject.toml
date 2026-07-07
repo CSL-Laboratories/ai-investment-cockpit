@@ -1,0 +1,34 @@
+[project]
+name = "ai-investment-cockpit"
+version = "0.0.0"
+description = "Local AI Investment Cockpit — solo-dev, subscription-powered, human-gated AI investing copilot."
+requires-python = ">=3.11"
+# Full runtime deps documented here; CI installs the WP0 subset explicitly (.github/workflows/ci.yml).
+# Pin + hash-lock before install — supply-chain hardening (docs/security-architecture §7).
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "discord.py",
+  "apscheduler",
+  "sqlalchemy",
+  "duckdb",
+  "pyarrow",
+  "jsonschema",
+  "keyring",
+  "pydantic",
+  "pydantic-settings",
+  "pyyaml",
+  "httpx",
+  "websockets",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E501"]

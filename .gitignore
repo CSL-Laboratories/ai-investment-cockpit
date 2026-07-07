@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local state / data — never commit (docs/security-hardening-backlog OPS-02)
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+*.parquet
+/data/
+/replays/
+
+# Secrets live in Windows Credential Manager (keyring), NEVER in the repo (Invariant 4)
+.env
+*.env
+secrets.*
+*.key
+*.pem
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

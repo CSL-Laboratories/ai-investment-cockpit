@@ -1,0 +1,17 @@
+# WP0 — alias -> model map. Swap models by editing here only (config-only, no code change).
+# 'cli' is what claude/codex receives via --model; 'pinned' is the exact id recorded in the
+# audit lineage for reproducibility (docs/enhancements-and-additions E-06). 'runtime' pins the
+# vendor — auto modes refuse to arm a non-claude decision stage (Invariant 2).
+aliases:
+  triage:
+    cli: haiku
+    pinned: claude-haiku-4-5-20251001
+    runtime: claude
+  deep:
+    cli: opus
+    pinned: claude-opus-4-8
+    runtime: claude
+  codex:            # research / coding / system-maintenance ONLY — never a decision stage (Inv 2)
+    cli: gpt-5.5
+    pinned: gpt-5.5
+    runtime: codex
