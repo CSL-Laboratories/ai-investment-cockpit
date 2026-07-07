@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ThesisUpdate",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "position_symbol": {
+      "type": "string",
+      "description": "Uppercase US ticker of the open position this thesis update concerns."
+    },
+    "thesis": {
+      "type": "string",
+      "description": "The written investment thesis for the position."
+    },
+    "invalidation": {
+      "type": "string",
+      "description": "Free-text invalidation condition that would falsify the thesis."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "invalidation_watch", "closed"],
+      "description": "Thesis lifecycle state."
+    },
+    "machine_watchable": {
+      "type": "boolean",
+      "description": "True if the invalidation reduces to a machine-checkable predicate; false if manual_review_only."
+    },
+    "source_refs": {
+      "type": "array",
+      "description": "References to source artifacts (events, proposals, filings) backing the update."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp of this thesis update."
+    }
+  },
+  "required": [
+    "position_symbol",
+    "thesis",
+    "invalidation",
+    "status",
+    "machine_watchable",
+    "source_refs",
+    "updated_at"
+  ]
+}

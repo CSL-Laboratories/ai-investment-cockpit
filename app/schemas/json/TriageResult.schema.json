@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TriageResult",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "description": "Opaque id of the triage batch this result covers."
+    },
+    "window_start": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC start of the ingest window scored in this batch."
+    },
+    "window_end": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC end of the ingest window scored in this batch."
+    },
+    "scored": {
+      "type": "array",
+      "description": "Per-article triage classifications. No field requests escalation-bypass or execution (prompt-injection-defense.md §4 M4).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "description": "Opaque id of the scored MarketEvent/article."
+          },
+          "symbols": {
+            "type": "array",
+            "description": "Claimed tickers (uppercase US) for the article; untrusted until cross-checked in risk/.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "classification": {
+            "type": "string",
+            "enum": ["ignore", "watch", "material", "urgent"]
+          },
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "rationale": {
+            "type": "string"
+          }
+        },
+        "required": ["article_id", "symbols", "classification", "score", "rationale"]
+      }
+    }
+  },
+  "required": ["batch_id", "window_start", "window_end", "scored"]
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompiledRule",
+  "description": "Agent-output: a natural-language automation rule compiled to a deterministic predicate over TradeProposal fields, posted back for one-time human confirmation before risk/ enforces it. LLMs draft rules; they never are the rules (draft-2 /automation). SEC-19: the confirmed_hash pins the exact predicate risk/ enforces; any drift disables the rule. worst_case_notional_per_interval is the deterministically-computed exposure shown at confirm time and hard-capped under a risk/ ceiling; expires_at forces re-confirmation.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "rule_id": {
+      "type": "string",
+      "description": "Opaque identifier for this compiled rule."
+    },
+    "natural_language": {
+      "type": "string",
+      "description": "The operator's original natural-language rule statement (e.g. 'auto-approve rebalancing trades under $200 in existing positions')."
+    },
+    "predicate": {
+      "type": "object",
+      "description": "Deterministic predicate over TradeProposal fields that risk/ evaluates. Must not read free-text/thesis/news fields (SEC-19)."
+    },
+    "worst_case_notional_per_interval": {
+      "type": "number",
+      "description": "Deterministically-computed worst-case exposure ($ per interval) this rule can authorize; hard-capped under a risk/ ceiling."
+    },
+    "symbols_scope": {
+      "type": "array",
+      "description": "Uppercase US tickers this rule is scoped to; empty means any allowlisted symbol.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z.]{0,9}$"
+      }
+    },
+    "existing_positions_only": {
+      "type": "boolean",
+      "description": "If true, the rule may only auto-approve trades in currently-held positions."
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC instant after which the rule is disabled and requires re-confirmation."
+    },
+    "confirmed_hash": {
+      "type": "string",
+      "description": "Hex hash of the exact predicate the human confirmed; risk/ enforces only this hash and disables the rule on any drift (SEC-19)."
+    }
+  },
+  "required": [
+    "rule_id",
+    "natural_language",
+    "predicate",
+    "worst_case_notional_per_interval",
+    "symbols_scope",
+    "existing_positions_only",
+    "expires_at",
+    "confirmed_hash"
+  ]
+}
