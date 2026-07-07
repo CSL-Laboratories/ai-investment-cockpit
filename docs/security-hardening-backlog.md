@@ -123,6 +123,27 @@ WP7. Inv 1.
 **Test.** Runtime tracer: any MCP order-tool dispatch not through the gateway fails;
 `getattr`/partial/shim dispatch is caught.
 
+**Closed (WP7 adversarial review, 2026-07-07 — keep the reason).** The order-path 4c pass
+REPRODUCED a keyless Invariant-1 bypass: a caller holding the `OrderGateway` placed a
+never-approved order because gate (e) trusted the caller-supplied `approval`/`risk_decision`
+objects BY VALUE (it only matched `approval.id` against *some* signed adjudication, never
+binding that entry to THIS order). Fix: gate (e) re-loads the PERSISTED `ApprovalRecord` +
+`RiskDecision` by id and requires an HMAC-signed `EVENT_ADJUDICATION` whose payload binds the
+EXACT resolved order — decision=approve + proposal_id + risk_decision_id + order_tuple_hash
+(`brokers/gateway.py::_adjudication_binds`). The capability token is re-framed as single-use
+replay protection, NOT the authority (a self-minted token authorizes nothing gate (e) rejects).
+A follow-up round found single-use consumption + submitted-state were still read from MUTABLE,
+non-signed columns (a keyless DB-writer rewinding `approval_record.single_use_consumed`/
+`order_row.state` could DUPLICATE an already-approved order while `verify_chain` stayed green);
+fixed by deriving both from the append-only signed ledger (`_consumed_on_chain` keyed on the
+approval id — the true single-use anchor — and `_order_submitted_on_chain`). Three adversarial
+rounds converged clean (Inv 1 holds, no-duplicate-execution, 0 must_fix). Regression:
+`tests/brokers/test_gateway_hardening.py`. RESIDUAL (documented; NOT reproducibly exploitable
+for a reach or duplicate — all require arbitrary domain-table write): the SEC-07
+pending-exposure sum and the approval `decided_at` TTL still read mutable columns; a future
+hardening can chain-anchor them too. The live-MCP capability-token (mint bound to a signed
+approval) + runtime tracer + low-priv agent account remain the outstanding pre-live items.
+
 ### SEC-04 — Out-of-band, fail-closed kill switch
 **Attack.** `POST /killswitch` and the `/killswitch` command execute inside the
 orchestrator's own event loop. If that loop is in a tight `auto_full` submit burst,
@@ -194,6 +215,20 @@ cannot be outrun by a burst.
 WP7. Inv 1.
 **Test.** Change buying power between approve and submit → approval voids; a burst under
 `auto_full` with delayed fills halts at the pending-exposure cap.
+
+**Sharpened (WP6/WP7 adversarial review, 2026-07-07).** The submit-time re-check (risk re-run,
+mode, breaker, HALT, runtime pin, approval validity, capability token, pending-exposure cap) is
+built and adversarially verified (`brokers/gateway.py`; see SEC-03 for the approval-authority
+closure). ADDED: a reproduced duplicate-execution race on the approval side — two concurrent
+deliveries of ONE Discord `interaction_id` minted TWO approvals + TWO tokens (one operator
+click → two live orders). Fixed: `bridge/approval.record_decision` runs read→persist→mint under
+the shared lock, with a UNIQUE constraint on `ApprovalRecord.interaction_id` (idempotent on
+`IntegrityError`) as the cross-process backstop; the gateway's pre-broker order-state guard is
+the order-path half. Regressions: `tests/bridge/test_approval_race.py`,
+`tests/brokers/test_gateway_hardening.py`. Still-open pre-live: the pending-exposure cap reads
+mutable `order.state`/`order.notional` (a DB-writer could understate exposure to slip an
+over-cap but still-APPROVED order — not a duplicate/never-approved reach); chain-anchor it
+before live-mode.
 
 ### SEC-08 — Enforce the Claude-runtime pin at execution, not just arm-time
 **Attack.** L5 / the arm guard verify auto modes refuse to arm if a decision-stage job

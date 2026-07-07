@@ -267,7 +267,7 @@ def test_gate_fails_closed_on_broken_chain(st):
     assert not res.unlockable and res.metrics.get("chain_ok") is False
 
 
-def test_gate_unlockable_when_criteria_met(st):
+def test_gate_unlockable_when_criteria_met(st, wire_anchor):
     # advance the clock 5 weeks so the mode-timeline shows >=4 weeks in review_live
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     st.clock = FrozenClock(start)
@@ -277,13 +277,14 @@ def test_gate_unlockable_when_criteria_met(st):
     lad.set_mode(Mode.review_live, actor="op", clock=FrozenClock(start))
     _adjudicate(st, "approve", 28)
     _adjudicate(st, "reject", 2)                     # 28/30 approvals = 93%
+    wire_anchor(st)                                  # SEC-11: auto unlock requires an anchor
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_veto, now=now, thresholds=GateThresholds())
     assert res.unlockable, res.reasons
     assert res.metrics["adjudicated"] == 30 and res.metrics["approvals"] == 28
 
 
-def test_gate_blocks_on_bypass_event(st):
+def test_gate_blocks_on_bypass_event(st, wire_anchor):
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     st.clock = FrozenClock(start)
     st.audit._clock = st.clock
@@ -292,6 +293,7 @@ def test_gate_blocks_on_bypass_event(st):
     lad.set_mode(Mode.review_live, actor="op", clock=FrozenClock(start))
     _adjudicate(st, "approve", 30)
     st.audit.append("hard_check_failed", payload={"proposal_id": "p1"})   # bypass attempt
+    wire_anchor(st)                                  # anchor satisfied -> reach the bypass check
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_veto, now=now)
     assert not res.unlockable and any("bypass" in r for r in res.reasons)

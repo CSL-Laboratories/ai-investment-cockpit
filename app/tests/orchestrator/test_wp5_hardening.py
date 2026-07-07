@@ -121,11 +121,12 @@ def _seed_unlockable(st, start):
     return lad
 
 
-def test_gate_rejects_rows_injected_after_verification(st, monkeypatch):
+def test_gate_rejects_rows_injected_after_verification(st, monkeypatch, wire_anchor):
     """Simulate the verify->count window: verify_chain returns the CLEAN head it saw, then
     forged rows land before the counting read. The binding re-verification must fail closed."""
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_unlockable(st, start)
+    wire_anchor(st)                                  # SEC-11: satisfied anchor for the sanity unlock
     now = FrozenClock(start + timedelta(weeks=5)).now()
 
     # sanity: with the genuine chain, the gate unlocks.
@@ -224,12 +225,13 @@ def test_current_and_gate_fail_closed_when_watermark_also_deleted(st):
     assert lad.current() is Mode.read_only                # fix A: oracle consults verify_chain
 
 
-def test_gate_fails_closed_when_bypass_event_truncated_with_watermark(st):
+def test_gate_fails_closed_when_bypass_event_truncated_with_watermark(st, wire_anchor):
     """The reproduced skeptic-2 vector: truncate away a recorded bypass-attempt event AND the
     watermark; the gate must not then read unlockable=True."""
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_unlockable(st, start)
     st.audit.append("hard_check_failed", actor="op", payload={"proposal_id": "p1"})
+    wire_anchor(st)                                  # satisfied anchor -> the block is the bypass event
     now = FrozenClock(start + timedelta(weeks=5)).now()
     assert not compute_gate(st, Mode.auto_veto, now=now).unlockable    # blocked by the bypass event
 

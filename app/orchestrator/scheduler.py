@@ -26,6 +26,7 @@ PREMARKET_HOUR, PREMARKET_MINUTE = 8, 30
 INTRADAY_MINUTES = "*/15"
 EOD_HOUR, EOD_MINUTE = 16, 15
 DISARM_HOUR, DISARM_MINUTE = 16, 0
+ANCHOR_MINUTES = "*/30"                   # SEC-11 external-witness head-anchor cadence
 
 
 def _not_implemented_service(name: str) -> Callable:
@@ -67,6 +68,29 @@ def run_daily_disarm(state, clock=None, *, actor: str = "scheduler"):
     return ModeLadder(state).daily_disarm(clock=clock, actor=actor)
 
 
+def run_anchor_head(state, clock=None, *, actor: str = "scheduler"):
+    """SEC-11: publish the VERIFIED audit head to the external witness (``state.anchor_store``)
+    so a later tail-truncation/replay is caught — the performance gate and the mode oracle
+    compare the in-DB head against this anchor and fail closed for an auto unlock/read when the
+    head falls below it. Frequent posting bounds the replay window (a blocking event that lands
+    then gets truncated is caught once an anchor was posted past it).
+
+    Fail-closed + no-op safe: skips when no anchor store is configured (auto is then unreachable
+    anyway) and refuses to anchor an unverified chain (that would sign off on a tampered state).
+    Kept dependency-light (no bridge import) so orchestrator does not depend upward on WP6."""
+    store = getattr(state, "anchor_store", None)
+    if store is None:
+        return {"skipped": "no_anchor_store"}
+    v = state.audit.verify_chain()
+    if not v.ok:
+        return {"skipped": "chain_unverified", "error": v.error}
+    seq, head_hash = state.audit.head()
+    if not head_hash or seq <= 0:
+        return {"skipped": "no_head"}
+    store.append(seq, head_hash)                       # monotonic; idempotent on the same head
+    return {"anchored_seq": seq, "head_hash": head_hash}
+
+
 def build_scheduler(state, clock=None, *, services: dict | None = None):
     """Register the four cron jobs and return the (UN-started) scheduler. APScheduler is
     imported here so the job callables above stay usable without APScheduler installed."""
@@ -99,5 +123,12 @@ def build_scheduler(state, clock=None, *, services: dict | None = None):
         CronTrigger(hour=DISARM_HOUR, minute=DISARM_MINUTE,
                     day_of_week="mon-fri", timezone=EASTERN),
         id="daily_disarm", replace_existing=True,
+    )
+    # SEC-11 external-witness cadence: anchor the verified head every 30 min on weekdays so a
+    # tail-truncation/replay is caught by the gate + mode oracle. No-op when no store is wired.
+    sched.add_job(
+        lambda: run_anchor_head(state, clock),
+        CronTrigger(minute=ANCHOR_MINUTES, day_of_week="mon-fri", timezone=EASTERN),
+        id="anchor_head", replace_existing=True,
     )
     return sched

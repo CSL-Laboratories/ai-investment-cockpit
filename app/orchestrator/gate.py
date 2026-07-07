@@ -136,6 +136,27 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
             return GateResult(False, tgt, ["audit head moved during gate computation"],
                               {"chain_ok": False})
 
+    # SEC-11 (P0-auto prerequisite): the in-DB signed watermark is REPLAYABLE — a keyless writer
+    # who captured a past (seq, sig) can DELETE the tail and replay it, and verify_chain() cannot
+    # distinguish that rollback from the genuine past. The ONLY closure is the EXTERNAL out-of-DB
+    # witness. An auto unlock therefore REQUIRES a wired anchor store whose recorded head the
+    # verified chain still covers: a missing store, an empty store, or a verified head BELOW the
+    # anchor all FAIL CLOSED (no auto_veto/auto_full can arm without it).
+    if st.anchor_store is None:
+        return GateResult(False, tgt,
+                          ["no external audit anchor configured (SEC-11 P0-auto prerequisite)"],
+                          {"chain_ok": True, "anchor_ok": False})
+    anchor = st.anchor_store.latest()
+    if anchor is None:
+        return GateResult(False, tgt,
+                          ["external audit anchor is empty; post a head anchor before arming (SEC-11)"],
+                          {"chain_ok": True, "anchor_ok": False})
+    av = st.audit.verify_against_anchor(anchor[0], anchor[1])
+    if not av.ok:
+        return GateResult(False, tgt,
+                          [f"external anchor rollback/truncation detected: {av.error}"],
+                          {"chain_ok": True, "anchor_ok": False, "anchor_seq": anchor[0]})
+
     adjudications = [r for r in rows if r.event_type == EVENT_ADJUDICATION]
     decisions = [(r.payload or {}).get("decision") for r in adjudications]
     adjudicated = len(adjudications)
@@ -166,6 +187,8 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
 
     metrics = {
         "chain_ok": True,
+        "anchor_ok": True,
+        "anchor_seq": anchor[0],
         "chain_head_seq": v.head_seq,
         "adjudicated": adjudicated,
         "approvals": approvals,

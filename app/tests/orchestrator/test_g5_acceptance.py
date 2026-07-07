@@ -183,8 +183,13 @@ def test_g5_1_manual_downshift_can_skip_rungs(st):
 # =======================================================================================
 # CRITERION 2 — performance gate enforced (SEC-20)
 # =======================================================================================
-def test_g5_2_gate_refuses_below_threshold(st):
-    # a fresh state has 0 weeks and 0 adjudications -> refused, with metric-backed reasons.
+def test_g5_2_gate_refuses_below_threshold(st, wire_anchor):
+    # a barely-seeded state (0 adjudications, 0 weeks) WITH a satisfied anchor -> refused with
+    # metric-backed reasons. The anchor is required just to REACH the metric logic (SEC-11:
+    # compute_gate hard-requires the external witness for an auto unlock).
+    start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
+    _seed_lower_history(st, start, approvals=0)
+    wire_anchor(st)
     res = compute_gate(st, Mode.auto_veto)
     assert not res.unlockable
     assert any("weeks" in r for r in res.reasons)
@@ -205,46 +210,52 @@ def _seed_lower_history(st, start, *, approvals, rejects=0):
     return lad
 
 
-def test_g5_2_gate_unlockable_when_all_thresholds_met(st):
+def test_g5_2_gate_unlockable_when_all_thresholds_met(st, wire_anchor):
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=28, rejects=2)   # 28/30 = 93% >= 80%
+    wire_anchor(st)                                           # SEC-11 external witness satisfied
     now = FrozenClock(start + timedelta(weeks=5)).now()       # >= 4 weeks in lower
     res = compute_gate(st, Mode.auto_veto, now=now, thresholds=GateThresholds())
     assert res.unlockable, res.reasons
     assert res.metrics["adjudicated"] == 30 and res.metrics["chain_ok"] is True
+    assert res.metrics["anchor_ok"] is True
 
 
-def test_g5_2_gate_refuses_low_approval_rate(st):
+def test_g5_2_gate_refuses_low_approval_rate(st, wire_anchor):
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=20, rejects=15)  # 20/35 = 57% < 80%
+    wire_anchor(st)
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_veto, now=now)
     assert not res.unlockable and any("approval rate" in r for r in res.reasons)
 
 
-def test_g5_2_gate_refuses_drawdown_over_limit(st):
+def test_g5_2_gate_refuses_drawdown_over_limit(st, wire_anchor):
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=30)
     st.audit.append("drawdown_mark", actor="op", payload={"drawdown": "0.35"})  # > 0.20
+    wire_anchor(st)
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_veto, now=now)
     assert not res.unlockable and any("drawdown" in r for r in res.reasons)
 
 
-def test_g5_2_gate_blocks_on_bypass_event(st):
+def test_g5_2_gate_blocks_on_bypass_event(st, wire_anchor):
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=30)
     st.audit.append("hard_check_failed", actor="op", payload={"proposal_id": "p1"})
+    wire_anchor(st)
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_veto, now=now)
     assert not res.unlockable and any("bypass" in r for r in res.reasons)
 
 
-def test_g5_2_gate_ignores_fabricated_domain_rows(st):
+def test_g5_2_gate_ignores_fabricated_domain_rows(st, wire_anchor):
     """SEC-20: rows fabricated in a MUTABLE domain table (approval_record) do NOT move the
     gate — it reads only the audited, HMAC-anchored adjudication events."""
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=20)   # only 20 audited -> below the 30 floor
+    wire_anchor(st)
     now = FrozenClock(start + timedelta(weeks=5)).now()
     before = compute_gate(st, Mode.auto_veto, now=now)
     assert not before.unlockable and before.metrics["adjudicated"] == 20
@@ -273,10 +284,11 @@ def test_g5_2_gate_fails_closed_on_broken_chain(st):
     assert not res.unlockable and res.metrics.get("chain_ok") is False
 
 
-def test_g5_2_auto_full_requires_weeks_in_auto_veto(st):
+def test_g5_2_auto_full_requires_weeks_in_auto_veto(st, wire_anchor):
     # meets all auto_veto criteria but has 0 weeks in auto_veto -> auto_full refused.
     start = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     _seed_lower_history(st, start, approvals=30)
+    wire_anchor(st)
     now = FrozenClock(start + timedelta(weeks=5)).now()
     res = compute_gate(st, Mode.auto_full, now=now)
     assert not res.unlockable and any("auto_veto" in r for r in res.reasons)

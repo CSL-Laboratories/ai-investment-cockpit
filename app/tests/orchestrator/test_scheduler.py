@@ -37,6 +37,23 @@ def test_intraday_dispatches_when_open(state):
     assert sch.run_intraday_loop(state, OPEN, service=lambda s, c: "ran") == "ran"
 
 
+def test_anchor_head_noop_without_store(state):
+    # SEC-11 cadence job is a safe no-op when no external witness is configured.
+    assert state.anchor_store is None
+    assert sch.run_anchor_head(state)["skipped"] == "no_anchor_store"
+
+
+def test_anchor_head_publishes_verified_head(state):
+    from bridge.anchor import InMemoryAnchorStore
+    state.anchor_store = InMemoryAnchorStore()
+    state.audit.append("mode_change", actor="op",
+                       payload={"kind": "manual", "from": "read_only", "to": "paper"})
+    out = sch.run_anchor_head(state)
+    seq, head_hash = state.audit.head()
+    assert out["anchored_seq"] == seq
+    assert state.anchor_store.latest() == (seq, head_hash)
+
+
 def test_not_wired_workflows_raise(state):
     with pytest.raises(NotImplementedError):
         sch.run_premarket_brew(state, OPEN)

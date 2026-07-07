@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from schemas.models.base import Base
@@ -25,6 +25,12 @@ from schemas.models.base import Base
 
 class ApprovalRecord(Base):
     __tablename__ = "approval_record"
+
+    # A Discord interaction id is single-use: a UNIQUE backstop makes the approval-idempotency
+    # check-then-act atomic even across processes (SQLite treats NULLs as distinct, so
+    # desktop-fallback approvals with no interaction_id are unconstrained). See
+    # bridge/approval.record_decision (which also holds the in-process lock).
+    __table_args__ = (UniqueConstraint("interaction_id", name="uq_approval_interaction_id"),)
 
     # Opaque string PK.
     id: Mapped[str] = mapped_column(String, primary_key=True)

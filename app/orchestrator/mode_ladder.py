@@ -143,7 +143,18 @@ class ModeLadder:
             row = s.get(ModeState, row_id) if row_id else None
             if row is not None and row.mode != to:
                 return Mode.read_only                 # mutable row diverges from signed record
-            return _as_mode(to)
+            m = _as_mode(to)
+            # SEC-11: an AUTO mode-read must ALSO clear the external witness. A replayed
+            # watermark can resurrect an old (validly-signed) auto-arm that verify_chain()
+            # accepts; only the out-of-DB anchor catches that rollback. When an anchor store is
+            # wired (production; compute_gate makes it a hard prerequisite to ever arm auto),
+            # require the verified head to still cover the last anchor, else fail closed to
+            # read_only. Non-auto rungs carry no order authority, so they do not need the witness.
+            if m in _AUTO_MODES and self.st.anchor_store is not None:
+                anchor = self.st.anchor_store.latest()
+                if anchor is None or not self.st.audit.verify_against_anchor(anchor[0], anchor[1]).ok:
+                    return Mode.read_only
+            return m
 
     def current_row(self) -> ModeState | None:
         """The latest ModeState row (for armed_at/until/by display only). The authoritative

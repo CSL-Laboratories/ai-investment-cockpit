@@ -6,6 +6,7 @@ carries only non-secret operational config, prefixed ``COCKPIT_``.
 """
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import Enum
 
 from pydantic import Field
@@ -37,6 +38,17 @@ class Settings(BaseSettings):
 
     # Triage escalation sensitivity 0-100 (docs/draft-discord-control-plane /triage threshold).
     triage_threshold: int = Field(default=60, ge=0, le=100)
+
+    # ---- order-path knobs (WP6/WP7) ---------------------------------------------------
+    # A live order at/above this notional needs the operator's modal double-confirm (SEC-15;
+    # bridge/approval.py). Env: COCKPIT_MODAL_CONFIRM_NOTIONAL.
+    modal_confirm_notional: Decimal = Field(default=Decimal("1000"), ge=0)
+    # SEC-07 pending-exposure cap: sum(approved-but-unfilled notional) + open must stay <= this
+    # inside the locked submit (brokers/gateway.py). Env: COCKPIT_PENDING_EXPOSURE_CAP.
+    pending_exposure_cap: Decimal = Field(default=Decimal("10000"), ge=0)
+    # Approval time-to-live: an approval older than this (measured from RiskDecision eval) voids
+    # before submit (brokers/gateway.py). Env: COCKPIT_APPROVAL_TTL_SECONDS.
+    approval_ttl_seconds: int = Field(default=900, ge=0)
 
     log_level: str = "INFO"
 

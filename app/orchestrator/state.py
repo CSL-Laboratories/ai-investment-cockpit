@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Protocol, runtime_checkable
 
 from agent_runner.usage import UsageTracker
 from config.settings import Settings, get_settings
@@ -31,6 +31,12 @@ EVENT_WATCH_ONLY = "watch_only"            # L8 usage-window degradation (NOT a 
 EVENT_KILLSWITCH = "killswitch"
 EVENT_DRAWDOWN_MARK = "drawdown_mark"      # EOD-recorded realized drawdown the gate reads
 EVENT_ADJUDICATION = "proposal_decision"   # one per approve/reject/modify/veto (WP6 writes)
+# WP7 order path (SEC-13 two-phase submit + G7 per-transition audit):
+EVENT_ORDER_INTENT = "order_intent"        # BEFORE the broker submit (paired with a result)
+EVENT_ORDER_RESULT = "order_result"        # AFTER the submit (ack/fill/reject), same txn
+EVENT_ORDER_TRANSITION = "order_transition"  # order-state-machine step (proposed->approved->...)
+# SEC-11 external witness: a head anchor posted to the out-of-DB witness (git / #audit-log).
+EVENT_ANCHOR = "anchor"
 
 # SEC-20 bypass-attempt detector: any of these in the chain blocks a gate unlock.
 BYPASS_EVENTS = frozenset({
@@ -53,6 +59,26 @@ class SystemEvent:
     at: datetime
 
 
+@runtime_checkable
+class AnchorStore(Protocol):
+    """SEC-11 external-witness seam. The out-of-DB, append-only record of ``(seq, head_hash)``
+    the LOCAL process cannot silently rewrite (git-committed head + ``#audit-log`` post). The
+    performance gate and the mode oracle consult ``latest()`` and fail closed for an auto
+    unlock / auto mode-read whenever the verified in-DB head is BELOW the last external
+    anchor — the only closure for the replayable-watermark rollback (a keyless writer who
+    ``DELETE``s the tail and replays a captured ``audit_meta`` still cannot rewrite the
+    external witness). ``bridge/anchor.py`` provides the concrete implementations; a plain
+    local file is only a mirror and does NOT provide the guarantee on its own."""
+
+    def latest(self) -> "tuple[int, str] | None":
+        """The highest anchored ``(seq, head_hash)``, or ``None`` if nothing anchored yet."""
+        ...
+
+    def append(self, seq: int, head_hash: str) -> None:
+        """Record a new head anchor on the external witness (monotonic; never rewinds)."""
+        ...
+
+
 @dataclass
 class OrchestratorState:
     session_factory: Callable
@@ -64,6 +90,10 @@ class OrchestratorState:
     # the (read current -> check gate/HALT -> persist) sequence is atomic (SEC-04 race fix).
     # Reentrant: killswitch/daily_disarm hold it while calling drop_to_review_live.
     lock: "threading.RLock" = field(default_factory=threading.RLock, repr=False, compare=False)
+    # SEC-11 external witness (optional). When wired (production + the auto-mode paths), the
+    # gate + mode oracle require the in-DB head to be >= the last external anchor; when None
+    # (pre-WP6 tests) behavior is exactly the in-DB verify_chain() posture.
+    anchor_store: "AnchorStore | None" = field(default=None, compare=False)
 
     @classmethod
     def build(
@@ -74,14 +104,17 @@ class OrchestratorState:
         settings: Settings | None = None,
         usage: UsageTracker | None = None,
         clock: Clock = default_clock,
+        anchor_store: "AnchorStore | None" = None,
     ) -> "OrchestratorState":
         """Construct a state from a session factory, wiring an ``AuditLog`` on the same
         clock. ``hmac_key`` is the audit-chain key (from keyring in production; a literal
-        in tests)."""
+        in tests). ``anchor_store`` is the SEC-11 external witness (production wires the
+        git/#audit-log store; tests may inject a file/in-memory stand-in)."""
         return cls(
             session_factory=session_factory,
             audit=AuditLog(session_factory, hmac_key=hmac_key, clock=clock),
             usage=usage if usage is not None else UsageTracker(),
             settings=settings if settings is not None else get_settings(),
             clock=clock,
+            anchor_store=anchor_store,
         )
