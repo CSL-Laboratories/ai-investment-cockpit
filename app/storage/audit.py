@@ -5,8 +5,15 @@ A hash-chained, HMAC-keyed, externally-anchorable append-only log:
               recompute a valid chain without the key. The coverage set includes the row
               ``id`` (a reconciliation join key) so the PK is tamper-evident too.
   * SEC-11  — a strictly-monotonic ``seq`` + a key-SIGNED high-water mark (``audit_meta``)
-              catch tail truncation/rollback even between external anchors;
-              verify_against_anchor() pins a specific external anchor point.
+              catch tail truncation/rollback by a keyless writer who has NOT captured a
+              prior validly-signed watermark. CAVEAT (WP5 adversarial re-verify, 2026-07-07):
+              the watermark signature covers only the ``seq`` integer, so a keyless writer who
+              captured a past ``(seq, sig)`` pair (DB read over time) can roll the chain back
+              to that exact prior state and REPLAY it — verify_chain() cannot distinguish a
+              rollback-to-a-genuine-past-state from that state. Only the EXTERNAL out-of-DB
+              witness closes it: verify_against_anchor() pins a specific external anchor point
+              (head posted to #audit-log + committed to git). That anchor must be consulted on
+              the gate + mode-read paths — wired in WP6; today only verify_chain() runs there.
   * SEC-12  — the HMAC covers ALL load-bearing columns under a pinned canonical form
               (sorted keys, no lossy ``default=`` coercion); the authoritative timestamp is
               ``payload._ts`` and verify reconciles it against the ``created_at`` column so a
@@ -82,6 +89,15 @@ class AuditLog:
 
     def _sign(self, value: str) -> str:
         return hmac.new(self._key, value.encode(), hashlib.sha256).hexdigest()
+
+    def verify_entry(self, entry) -> bool:
+        """Recompute ONE entry's HMAC and compare it constant-time. An O(1) integrity probe
+        for a hot read path that must trust the signed record, not a mutable domain row: a
+        local writer without the key cannot forge ``entry_hash``. Used by the mode ladder's
+        ``current()`` (SEC-20/SEC-23) and the gate's verify-bound counting (SEC-20)."""
+        recomputed = self._hash(entry.id, entry.seq, entry.prev_hash, entry.event_type,
+                                entry.actor, entry.refs, entry.payload)
+        return hmac.compare_digest(recomputed, entry.entry_hash or "")
 
     # ---- signed watermark --------------------------------------------------
     def _bump_watermark(self, s, seq: int) -> None:
@@ -220,6 +236,12 @@ class AuditLog:
         head_seq = expected - 1
         if wm == -1:
             return VerifyResult(False, head_seq, prev, "watermark signature invalid (tamper)")
+        # SEC-11: every append bumps the signed watermark, so a NON-EMPTY chain always has one.
+        # rows-present + watermark-absent is itself the tail-truncation signature (a keyless
+        # writer deletes the audit_meta rows to dodge the head_seq<wm check below) -> fail CLOSED.
+        if rows and wm is None:
+            return VerifyResult(False, head_seq, prev,
+                                "watermark missing on a non-empty chain (truncation/tamper)")
         if wm is not None and head_seq < wm:
             return VerifyResult(False, head_seq, prev, f"truncation: head seq {head_seq} < watermark {wm}")
         return VerifyResult(True, head_seq, prev)

@@ -256,6 +256,25 @@ external witness the local process can't silently rewrite: post to `#audit-log` 
 server-timestamps it) **and** commit the head hash into git (a later rewrite shows in the
 diff Lucas reviews via GitHub Desktop). Verification rejects any chain whose head
 sequence is below the last anchor.
+
+**Sharpening (WP5 adversarial re-verify, 2026-07-07 — keep the reason).** The in-DB signed
+watermark is **REPLAYABLE and is NOT sufficient on its own** — the external anchor is
+load-bearing, not defense-in-depth. `head_seq_sig = HMAC(key, str(seq))` binds only the
+`seq` integer, so a keyless writer with DB *read* access captures a past `(seq, sig)` at a
+clean head, and after a blocking event (`hard_check_failed`/`breaker_trip`/`drawdown_mark`)
+lands at a higher seq, runs `DELETE FROM audit_entry WHERE seq > N` + replays the captured
+`audit_meta` rows. `verify_chain()` then returns `ok=True` (present, validly-signed,
+head==watermark) with the blocking event **erased**, so `compute_gate` reads `unlockable=True`
+and `ModeLadder.current()` resurrects an old auto-arm — **no HMAC key touched**. Binding the
+sig to `head_hash` does **not** help (the attacker also captured the genuine triple at seq N).
+The **only** closure is the external monotonic witness: `AuditLog.verify_against_anchor()`
+**exists** but is called only in tests today — **WP6 must wire it into `compute_gate` and
+`ModeLadder.current()`** (fail closed for an auto unlock / auto mode-read when the verified
+head is below, or absent from, the external anchor). Until then the in-DB `verify_chain()` in
+those paths catches every keyless truncation class *except* a replayed historical watermark.
+This is a **P0-auto** prerequisite (no `auto_veto`/`auto_full` before it), consistent with the
+ladder-gate rule below. Empirically reproduced against the WP5 build; regression for the
+primitive is `tests/storage/test_audit.py::test_anchor_rollback_detected`.
 **Amends.** [[security-architecture]] §8. Inv 6.
 **Test.** Truncate the tail → head sequence < last anchor → verification fails.
 

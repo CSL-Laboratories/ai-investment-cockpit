@@ -82,6 +82,18 @@ def test_truncation_detected_by_watermark(env):
     assert not v.ok and "truncation" in v.error             # signed watermark catches it (SEC-11)
 
 
+def test_missing_watermark_on_nonempty_chain_fails(env):
+    audit, _ = env
+    for i in range(3):
+        audit.append("e", payload={"i": i})
+    from storage.audit import audit_meta
+    with audit._sf() as s, s.begin():
+        s.execute(audit_meta.delete())                          # wipe the signed watermark
+    v = audit.verify_chain()
+    # SEC-11: rows present + watermark absent is the tail-truncation signature -> fail closed.
+    assert not v.ok and "watermark" in v.error
+
+
 def test_anchor_rollback_detected(env):
     audit, _ = env
     for i in range(5):
