@@ -17,7 +17,7 @@ jobs:
           python-version: "3.12"
       - name: Install WP0 deps
         # Later WPs extend this (fastapi, discord.py, duckdb, ...); the WP0 gate needs only these.
-        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pytest ruff
+        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow pytest ruff
       - name: Lint
         run: ruff check .
       - name: Gates + tests (merge blockers)
