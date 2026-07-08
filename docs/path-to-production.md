@@ -12,6 +12,8 @@ related:
   - draft-discord-control-plane
   - setup/accounts-and-keys
   - setup/moving-targets-refresh-2026-07-06
+  - production-work-packages
+  - production-playbook
 ---
 
 # Path to production
@@ -328,6 +330,11 @@ required for a paper-first working product:
 ---
 
 ## 7. Ordered checklist — do these in this order
+
+> This checklist is formalized as the gated work packages **W10 → W19** in
+> [[production-work-packages]] (the coverage matrix + dependency DAG + `Accept:`/gate
+> per package). Drive each one, one-per-session, with its paste-ready kickoff prompt in
+> [[production-playbook]]. The step numbers below map to those packages.
 
 1. **Bump doc frontmatter / status banners** to 2026-07-08 across the touched docs
    (build complete, paper-first, SEC-11 still OPEN). *(Doc hygiene; separate diff.)*

@@ -3,7 +3,7 @@ title: AI Investment Copilot — research, architecture & build index
 type: index
 status: active
 last-verified: 2026-07-08
-related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, path-to-production]
+related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, path-to-production, production-work-packages, production-playbook]
 ---
 
 # AI Investment Copilot — index
@@ -31,7 +31,9 @@ research  →  architecture  →  build  →  security  →  enhancements
 > harness = commit `9f6ff44`; 586 tests pass / 3 skipped; ruff clean; gates G0…G9 green).
 > The system is **paper-first — no live capital has moved and none may** until the
 > pre-live gates pass, including the OPEN P0 SEC-11 audit-spine (delete-then-heal)
-> blocker in [[security-hardening-backlog]]. Go-live is governed by [[path-to-production]].
+> blocker in [[security-hardening-backlog]]. Go-live is formalized as the gated work
+> packages **W10→W19** in [[production-work-packages]] (drive them one-per-session with
+> [[production-playbook]]); [[path-to-production]] is the narrative guide behind them.
 
 ## Files
 
@@ -78,6 +80,13 @@ rollout beyond paper mode is governed by [[path-to-production]].
 | [[upside-and-roi]] | Honest ROI: the ~$0 marginal cost stack, four return streams (time / alpha-as-capped-option / discipline / infrastructure), 3-year scenarios, risk ledger |
 | [[enhancements-and-additions]] | *(Opus 4.8)* Post-scaffold value-adds (E-01…E-12): benchmark scorecard, cross-model verification, record/replay, heartbeat/DR, lineage graph, shadow-live — each tagged to its phase/gate |
 | [[path-to-production]] | *(2026-07-08)* Post-build go-live + polishing guide: the gates that must pass before any live capital — SEC-11 (P0, **OPEN**) closure, the performance-ladder unlocks (per the plan's paper-soak requirement), moving-target re-verification, and the operational hardening needed to leave paper mode |
+
+**Production (go-live — the W-series, 2026-07-08):**
+
+| File | What it contains |
+|---|---|
+| [[production-work-packages]] | The pre-live/go-live build SPEC — the production analog of [[build-scaffold-ultracode]]: the **coverage matrix** (every open/partial SEC-01…24 + OPS-01…07 → exactly one W, or done/deferred), the **W10→W19 dependency DAG + build order**, and each work package (scope, `Accept:`, the adversarial gate G10…G19, dependencies). W10 (audit-spine / SEC-11) is the keystone everything auto/live depends on. |
+| [[production-playbook]] | How to DRIVE the W-series with Opus 4.8 agents — the production analog of [[ultracode-build-playbook]]: the property-closure / adversarial-gate philosophy, the session bootstrap, reusable Workflow scripts, the G10…G19 gate table, and **paste-ready per-W kickoff prompts** for one-work-package-per-session execution. |
 
 ## The five facts everything else hangs on (all verified against primary sources)
 
