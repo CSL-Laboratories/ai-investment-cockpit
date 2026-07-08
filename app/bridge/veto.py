@@ -133,8 +133,15 @@ class AutoVetoCoordinator:
             ticket = self._tickets[proposal_id]
             if not ticket.delivered:
                 now, backward = self._read_monotonic()
-                ticket.delivered = True
-                ticket.delivered_at_monotonic = now
+                # SEC-23: a backward monotonic reading at confirm is a clock discontinuity
+                # (a forged/rewound time source). It must NOT stamp a stale-low delivery
+                # instant that starts the veto countdown — that would let a later forward
+                # clock see a full/elapsed window and mint an auto-exec token. Fail closed:
+                # leave the ticket UNDELIVERED so resolve() refuses ('undelivered'),
+                # consistent with how resolve() rejects a backward jump.
+                if not backward:
+                    ticket.delivered = True
+                    ticket.delivered_at_monotonic = now
             return ticket
 
     def veto(self, proposal_id: str, *, actor_user_id, clock=None) -> VetoOutcome:

@@ -22,8 +22,18 @@ Terminal: filled, cancelled, expired, rejected, canary_breach.
 re-checks) and the submit — live on ``brokers.gateway.OrderGateway``; ``place_equity_order``
 PROVABLY calls ``review_equity_order`` first and refuses if the review refuses (G7: review
 precedes place). This module owns the ``transition`` primitive both build on.
+
+WP8 (Owner C — SEC-07 "Sharpened" closure, docs/security-hardening-backlog.md): every signed
+``EVENT_ORDER_TRANSITION`` payload — the birth in ``create_order`` AND every ``transition()``
+step — now also carries ``notional`` (str; the row's explicit notional, else qty*limit_price,
+else "0" for an un-priced market order — the same rule as
+``gateway.OrderGateway._order_notional``) and ``symbol``, both JSON-native strings, so the
+SEC-07 pending-exposure cap can be derived entirely from the HMAC-signed ledger instead of the
+mutable ``order_row.state`` / ``order_row.notional`` columns.
 """
 from __future__ import annotations
+
+from decimal import Decimal, InvalidOperation
 
 from core.ids import new_id
 from orchestrator.state import EVENT_ORDER_TRANSITION, OrchestratorState
@@ -54,6 +64,29 @@ def legal_order_transition(src: str, dst: str) -> bool:
     if src in TERMINAL_STATES:
         return False
     return dst in LEGAL_TRANSITIONS.get(src, frozenset())
+
+
+def _dec(x) -> Decimal:
+    try:
+        return x if isinstance(x, Decimal) else Decimal(str(x))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("NaN")
+
+
+def _payload_notional(order: Order) -> str:
+    """JSON-native notional for the SIGNED transition payload (WP8 SEC-07 "Sharpened"
+    closure): the order row's explicit notional, else qty*limit_price, else "0" for an
+    un-priced market order — the SAME rule as ``gateway.OrderGateway._order_notional``, so
+    the chain-anchored pending-exposure sum folds exactly the value the cap would use."""
+    if order.notional is not None:
+        n = _dec(order.notional)
+        if n.is_finite():
+            return str(n)
+    if order.limit_price is not None:
+        n = _dec(order.qty) * _dec(order.limit_price)
+        if n.is_finite():
+            return str(n)
+    return "0"
 
 
 def create_order(
@@ -105,6 +138,10 @@ def create_order(
         "proposal_id": proposal_id,
         "risk_decision_id": risk_decision_id,
         "order_tuple_hash": order_tuple_hash,
+        # WP8 SEC-07 "Sharpened" closure: the SIGNED birth payload carries the notional +
+        # symbol so pending exposure is derivable from the ledger, not mutable columns.
+        "notional": _payload_notional(order),
+        "symbol": symbol,
     }
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)
     return order
@@ -156,6 +193,10 @@ def transition(
         "order_tuple_hash": (
             order_tuple_hash if order_tuple_hash is not None else order.order_tuple_hash
         ),
+        # WP8 SEC-07 "Sharpened" closure: every SIGNED transition payload carries notional +
+        # symbol so pending exposure is derivable from the ledger, not mutable columns.
+        "notional": _payload_notional(order),
+        "symbol": order.symbol,
     }
     # record_state_change UPDATEs the existing row AND appends its audit entry in ONE txn.
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)

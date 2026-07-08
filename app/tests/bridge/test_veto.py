@@ -131,6 +131,33 @@ def test_backward_clock_jump_trips_breaker(st):
     assert any(b.tripped for b in trips)        # the injection breaker recorded a trip
 
 
+# ---- SEC-23 (round-5): a rewound clock at CONFIRM must not start the veto window -------
+def test_rewound_clock_at_confirm_does_not_start_window(st):
+    # A backward monotonic reading at confirm time must NOT stamp a stale-low delivery
+    # instant. Otherwise the process-wide watermark (which refuses to rewind) lets a later
+    # forward-clock resolve() see a fully-elapsed window and mint an auto-exec token, with
+    # the veto window collapsed to ~0 and WITHOUT tripping the clock/injection breaker.
+    mono = _Mono(1000.0)
+    coord, reg = _coord(st, mono)
+    # A prior ticket establishes the process-wide monotonic watermark at 1000.
+    coord.schedule(proposal_id="warm", risk_decision=make_risk(), resolved_order=make_order())
+    coord.confirm_delivery("warm")                          # _last_monotonic = 1000
+
+    # The attack ticket: the monotonic source is REWOUND at confirm time.
+    coord.schedule(proposal_id="prop-1", risk_decision=make_risk(), resolved_order=make_order())
+    mono.t = 0.0                                            # forged/rewound clock at CONFIRM
+    ticket = coord.confirm_delivery("prop-1")
+    # Fail closed: the rewound reading must not cleanly start the countdown from t=0.
+    assert not (ticket.delivered and ticket.delivered_at_monotonic == 0.0)
+
+    # Clock "restored" forward to the true instant — only ~0s actually elapsed.
+    mono.t = 1000.0
+    res = coord.resolve("prop-1")
+    assert res.executed is False
+    assert res.reason in {"undelivered", "clock_backwards"}
+    assert reg.live_count() == 0
+
+
 # ---- mode dropped out of auto_veto cancels the auto-exec -------------------------------
 def test_mode_no_longer_auto_veto_cancels(st):
     mono = _Mono(0.0)

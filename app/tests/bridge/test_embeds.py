@@ -74,6 +74,19 @@ def test_no_resolver_renders_sources_unavailable_not_model_text():
     assert "MODEL TEXT" not in str(embed["sources"])
 
 
+def test_model_authored_generated_by_never_leaks_into_embed():
+    # ROUND-4 (SEC-17): a hijacked model stuffs a PII/position leak into the free-text
+    # generated_by object. The operator embed must NEVER echo it verbatim.
+    poisoned = _proposal(generated_by={
+        "runtime": "acct 000123456789 client MSFT 400 shares",
+        "model": "opus",
+    })
+    embed = render_proposal_embed(poisoned, make_risk(), raw_excerpt_fn=lambda r: "RAW")
+    assert "generated_by" not in embed
+    assert "000123456789" not in str(embed)
+    assert "MSFT 400 shares" not in str(embed)
+
+
 def test_order_params_and_model_prose_are_labelled():
     embed = render_proposal_embed(_proposal(), make_risk(), raw_excerpt_fn=lambda r: "RAW")
     assert embed["order"]["symbol"] == "AAPL"

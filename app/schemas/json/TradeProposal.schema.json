@@ -7,11 +7,13 @@
   "properties": {
     "proposal_id": {
       "type": "string",
-      "description": "Opaque proposal identifier."
+      "pattern": "^[A-Za-z0-9_:.\\-]{1,64}$",
+      "description": "Opaque proposal identifier. Pattern-constrained (SEC-09): a compact id with no spaces or long digit runs, so a hijacked model cannot smuggle an account number / PII through this structured field into the ProposalRecord PK, the EVENT_PROPOSAL audit payload, or the operator embed."
     },
     "symbol": {
       "type": "string",
-      "description": "Uppercase US ticker."
+      "pattern": "^[A-Z0-9.\\-]{1,12}$",
+      "description": "Uppercase US ticker. Pattern-constrained (SEC-09): a real ticker shape so a hijacked model cannot carry an account number / PII in this structured field to store/audit/embed."
     },
     "side": {
       "type": "string",
@@ -53,7 +55,9 @@
       "type": "array",
       "description": "Cited raw_ref strings pointing at the raw source items (parquet) that support the thesis. Consumed by the cross-model grounding verifier.",
       "items": {
-        "type": "string"
+        "type": "string",
+        "pattern": "^[A-Za-z0-9:/#._\\-]{1,128}$",
+        "description": "A safe raw_ref (e.g. parquet://YYYY-MM-DD/events-<id>#<idx>). Pattern-constrained (SEC-09): no spaces or PII-shaped free text in this structured field."
       }
     },
     "generated_by": {

@@ -212,6 +212,21 @@ def test_injection_breaker_synchronous_disarm(st):
     assert lad.current() is Mode.review_live
 
 
+def test_default_injection_predicate_fails_closed_on_dict_context_regression():
+    """ROUND 2 FIX: callers pass a DICT context, so the default fallback predicate must read
+    dict keys and FAIL CLOSED. It previously did getattr(context,'injection_detected',...) on
+    a dict — always False — so a fallback resolve() with {'grounding_flagged':True} would mint
+    the submit token."""
+    assert bk.default_injection_predicate({"grounding_flagged": True}) is True
+    assert bk.default_injection_predicate({"same_ticker_burst": {"count": 4}}) is True
+    assert bk.default_injection_predicate({"same_ticker_burst": {"count": "many"}}) is True
+    assert bk.default_injection_predicate({"injection_detected": True}) is True
+    assert bk.default_injection_predicate({"same_ticker_burst": {"count": 3}}) is False
+    assert bk.default_injection_predicate({"grounding_flagged": False}) is False
+    assert bk.default_injection_predicate({}) is False
+    assert bk.default_injection_predicate(None) is False
+
+
 # ---- L8 watch-only (separate from L6) + SEC-23 generation -----------------------------
 def test_watch_only_does_not_drop_mode_and_bumps_generation(st):
     lad = ModeLadder(st)

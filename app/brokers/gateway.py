@@ -33,7 +33,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 
 from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
-from brokers.order_state_machine import transition
+from brokers.order_state_machine import TERMINAL_STATES, transition
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.mode_ladder import ExecutionRuntimeError
@@ -338,18 +338,149 @@ class OrderGateway:
         return None
 
     def _pending_ok(self, st, order) -> tuple[bool, Decimal, Decimal]:
-        """(h) SEC-07 pending-exposure cap: sum approved-but-unfilled notional across OPEN
-        orders + this order's notional must be <= the cap."""
-        open_states = ("approved", "submitted", "partially_filled")
-        with st.session_factory() as s:
-            rows = s.execute(
-                select(Order).where(Order.state.in_(open_states))
-            ).scalars().all()
-        pending = sum((self._order_notional(o) for o in rows if o.id != order.id),
-                      Decimal("0"))
-        total = pending + self._order_notional(order)
+        """(h) SEC-07 pending-exposure cap, COMPREHENSIVE completeness-reconcile (WP8; the SEC-07
+        "Sharpened" closure + round-3/round-4 hardening, docs/security-hardening-backlog.md): sum
+        approved-but-unfilled notional across OPEN siblings + THIS order's notional must be <= the
+        cap. The open SET and every notional are anchored in HMAC-verified
+        ``EVENT_ORDER_TRANSITION`` payloads — NEVER a mutable ``order_row`` column — because the
+        threat model is a keyless writer with arbitrary UPDATE/DELETE on the domain tables.
+        Understatement is the attack, so ANY reconcile discrepancy FAILS CLOSED.
+
+        From ONE verify_entry-filtered, seq-ascending scan of the signed EVENT_ORDER_TRANSITION
+        ledger we build ``chain_latest[rid]`` (last verified 'to' state), ``chain_notional[rid]``
+        (the MAX verified payload notional across the row's WHOLE signed history — round-5 bypass 1:
+        latest-wins let a laundered notional=0 signed on a later transition shrink the value; the
+        birth signs the real notional atomically, so max-across-history preserves it),
+        ``chain_to_states[rid]`` (the set of every verified 'to' state ever signed) and
+        ``chain_ids`` (row_ids with >=1 verified transition). Against ``db_rows`` (every persisted
+        Order except the current, with ``db_ids`` its id set) and
+        ``open_states={approved,submitted,partially_filled}`` we FAIL CLOSED if ANY of:
+
+          (1) a db row id NOT in ``chain_ids`` — its signed history was deleted;
+          (2) a row_id chain-open but whose Order ROW is absent from ``db_ids`` — its row was
+              deleted (round-4 gap 2: the prior one-directional ``select(Order)`` scan iterated
+              only surviving rows, so a chain-open sibling whose ROW was deleted was never seen);
+          (3) a db row whose DB state is open but whose ``chain_latest`` is NOT open — the chain
+              was regressed/rewound below a genuinely-open row (round-4 gap 1: a partial-tail
+              delete of the 'approved' step leaves ``chain_latest='proposed'`` while the DB row
+              stays 'approved', and the old ``state not in open_states: continue`` SKIPPED it);
+          (4) an order counted as open lacks a verified ``chain_notional``;
+          (5) a db row in a TERMINAL state not backed by a verified transition whose 'to' is that
+              terminal (round-5 bypass 2: a bare column UPDATE masks a genuinely-open sibling as
+              closed — dropping it from BOTH open sets when paired with a chain-regressing delete —
+              yet no signed terminal 'to' exists).
+
+        The OPEN set summed is ``{ rid : chain_latest[rid] open OR db_rows[rid].state open }``;
+        each contributes ``chain_notional[rid]`` — never the mutable column, so a chain-deleted
+        db-open sibling contributes nothing but trips (1)/(4) => fail closed (round-2). The
+        CURRENT order contributes ``max(chain_notional_for_current, row_notional)`` (round-3
+        bypass A: a zeroed mutable ``order_row.notional`` cannot shrink it) and FAILS CLOSED with
+        no verified chain notional. Every legitimately created/-transitioned order carries signed
+        transitions with notional, so (1)-(4) never fire in normal operation.
+
+        Defense-in-depth: ``state.audit.verify_chain()`` runs at the TOP (fail closed on an
+        unhealed truncation/tamper before trusting any chain-derived exposure), then the SEC-11
+        anchor consult — when an external witness is wired (``state.anchor_store``) the chain must
+        verify AGAINST THE ANCHOR, else fail closed (skipped when none wired; every existing
+        brokers test wires none)."""
+        open_states = {"approved", "submitted", "partially_filled"}
         cap = self._cap(st)
-        return (total <= cap, total, cap)
+
+        # Fail closed on an unhealed truncation/tamper before trusting any chain-derived exposure.
+        if not st.audit.verify_chain().ok:
+            return (False, Decimal("0"), cap)
+
+        anchor_store = getattr(st, "anchor_store", None)
+        if anchor_store is not None:
+            anchor = anchor_store.latest()
+            if anchor is None or not st.audit.verify_against_anchor(anchor[0], anchor[1]).ok:
+                return (False, Decimal("0"), cap)   # anchor rollback -> trust no chain exposure
+
+        # ONE verify_entry-filtered, seq-ascending scan -> per-row latest verified 'to' state +
+        # latest verified payload notional + the set of row_ids with any verified transition. The
+        # CURRENT order is included here (sized from its own verified chain notional below).
+        with st.session_factory() as s:
+            entries = s.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type == EVENT_ORDER_TRANSITION)
+                .order_by(AuditEntry.seq)
+            ).scalars().all()
+        chain_latest: dict = {}          # row_id -> latest verified 'to' state
+        chain_notional: dict = {}        # row_id -> MAX verified payload notional across history
+        chain_ids: set = set()           # row_ids with >=1 verified transition
+        chain_to_states: dict = {}       # row_id -> set of every verified 'to' state ever signed
+        for e in entries:
+            row_id = (e.refs or {}).get("row_id")
+            if not row_id:
+                continue
+            if not st.audit.verify_entry(e):
+                continue                 # unverified entries are attacker-writable; never trusted
+            chain_ids.add(row_id)
+            p = e.payload or {}
+            if p.get("to"):
+                chain_latest[row_id] = p["to"]          # seq-ascending scan: last verified wins
+                chain_to_states.setdefault(row_id, set()).add(p["to"])
+            if "notional" in p:
+                n = _dec(p.get("notional"))
+                if n.is_finite():
+                    # ROUND-5 bypass 1 (notional laundering): take the MAX across the WHOLE signed
+                    # history, NEVER latest-wins. The birth transition signs the real notional
+                    # atomically (attacker cannot pre-zero within that txn), so a later laundered
+                    # notional=0 (a keyless UPDATE order_row.notional=0 before a routine legit
+                    # transition, which re-derives from the mutable column) cannot shrink the value.
+                    prev = chain_notional.get(row_id)
+                    chain_notional[row_id] = n if prev is None else max(prev, n)
+
+        # Every persisted Order row EXCEPT the current order (sized separately below).
+        with st.session_factory() as s:
+            all_rows = s.execute(select(Order)).scalars().all()
+        db_rows = {row.id: row for row in all_rows if row.id != order.id}
+        db_ids = set(db_rows)
+
+        tampered = False
+        # (1) a db row with NO signed history at all -> its birth transition was deleted.
+        for rid in db_ids:
+            if rid not in chain_ids:
+                tampered = True
+        # (2) a chain-open row_id whose Order ROW was deleted (round-4 gap 2).
+        for rid, state in chain_latest.items():
+            if rid != order.id and state in open_states and rid not in db_ids:
+                tampered = True
+        # (3) a db-open row whose chain regressed below open (round-4 gap 1).
+        for rid, row in db_rows.items():
+            if row.state in open_states and chain_latest.get(rid) not in open_states:
+                tampered = True
+        # (5) ROUND-5 bypass 2 (terminal rewind without a signed transition): a db row whose state
+        # is TERMINAL MUST be backed by a verified EVENT_ORDER_TRANSITION whose 'to' is that exact
+        # terminal state. A bare column UPDATE to a terminal (masking a genuinely-open sibling as
+        # closed so it drops from BOTH open sets — e.g. combined with a partial-tail delete that
+        # regresses the chain below open) leaves no such signed 'to' -> fail closed. A legitimate
+        # cancel/expire goes through transition(), which signs the terminal 'to', so this never
+        # fires legitimately.
+        for rid, row in db_rows.items():
+            if row.state in TERMINAL_STATES and row.state not in chain_to_states.get(rid, set()):
+                tampered = True
+
+        # OPEN set = chain-open OR db-open (excluding the current order).
+        open_ids = {rid for rid, state in chain_latest.items()
+                    if rid != order.id and state in open_states}
+        open_ids |= {rid for rid, row in db_rows.items() if row.state in open_states}
+
+        pending = Decimal("0")
+        for rid in open_ids:
+            chain_n = chain_notional.get(rid)
+            if chain_n is None:
+                tampered = True          # (4) an open member with no verified chain notional
+                continue                 # never fold the mutable column: understatement is fine
+            pending += chain_n           # chain-anchored notional only, never the mutable column
+
+        # The current order's OWN contribution, chain-anchored (round-3 bypass A): a zeroed
+        # mutable order_row.notional cannot shrink it; no verified chain notional => fail closed.
+        cur_chain_n = chain_notional.get(order.id)
+        if cur_chain_n is None:
+            return (False, pending, cap)
+        total = pending + max(cur_chain_n, self._order_notional(order))
+        return (total <= cap and not tampered, total, cap)
 
     # ---- public: pure dry-run re-check (no submit, no token consume) --------------------
     def review_equity_order(self, order, *, approval, risk_decision, ladder, breaker_engine,

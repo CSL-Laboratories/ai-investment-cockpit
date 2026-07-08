@@ -129,6 +129,9 @@ def render_proposal_embed(proposal: dict, risk_decision,
         # model prose, explicitly labelled — informational, never a risk fact:
         "model_thesis": p.get("thesis"),
         "model_invalidation": p.get("invalidation"),
-        "generated_by": p.get("generated_by"),
+        # SEC-17: operator-facing provenance must be deterministic. ``generated_by`` is a
+        # model-authored free-text object (a hijacked model can stuff a PII/position leak into
+        # runtime/model), so it is NEVER echoed into the operator embed. A provenance line, if
+        # wanted, must come from a server-stamped source (the AgentJob row), not the proposal.
         "sources": sources,
     }

@@ -89,3 +89,44 @@ def test_trade_proposal_requires_field(missing):
 def test_trade_proposal_rejects_bad_enum():
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate({**VALID, "asset_type": "crypto"}, SCHEMA)
+
+
+# --- SEC-09 (ROUND-5): structured string fields are pattern-constrained so a hijacked
+# model cannot smuggle an account number / PII through proposal_id / symbol / source_refs
+# (which flow verbatim to the ProposalRecord PK, the EVENT_PROPOSAL audit payload, and the
+# operator embed). additionalProperties:false constrains KEYS, not CONTENTS — patterns do.
+
+
+def test_proposal_id_leak_string_fails_validation():
+    """A hijacked model emits an account-number-shaped proposal_id (spaces + long digit
+    run). It must FAIL Inv-3 validation (was: valid), forcing repair-then-quarantine."""
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            {**VALID, "proposal_id": "prop 000123456789 balance"}, SCHEMA)
+
+
+def test_symbol_leak_string_fails_validation():
+    """A hijacked model stuffs an account number into the symbol field. It must FAIL
+    validation instead of being echoed unredacted into the operator #proposals embed."""
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**VALID, "symbol": "ACCT 000111222333"}, SCHEMA)
+
+
+def test_source_ref_leak_string_fails_validation():
+    """A leak-carrying source_ref (spaces + PII-shaped free text) must FAIL validation."""
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(
+            {**VALID, "source_refs": ["account 000123456789 holds TSLA"]}, SCHEMA)
+
+
+def test_valid_ticker_id_and_parquet_ref_still_validate():
+    """G8 fixture shapes (AAPL / prop-qqq-1 / parquet ref) must keep validating."""
+    jsonschema.validate(
+        {
+            **VALID,
+            "proposal_id": "prop-qqq-1",
+            "symbol": "AAPL",
+            "source_refs": ["parquet://2026-07-07/events-abc123#0"],
+        },
+        SCHEMA,
+    )

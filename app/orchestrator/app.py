@@ -2,10 +2,18 @@
 
 ``create_app(state)`` builds the loopback-only control-plane API the Discord bridge drives.
 Every route requires the API key (``auth.ApiKeyAuth``, §6). This shell is deliberately THIN:
-job/brief/proposal EXECUTION lands in WP6/WP7/WP8 — those handlers read stored rows or
-return ``501 not_wired``. The load-bearing endpoints implemented here are the ones that move
-the deterministic core already in the tree: ``/mode`` (ladder + arm guard), ``/limits``
+job execution lands in WP6/WP7 — those handlers read stored rows or return ``501
+not_wired``. The load-bearing endpoints implemented here are the ones that move the
+deterministic core already in the tree: ``/mode`` (ladder + arm guard), ``/limits``
 (SEC-15 privileged loosening), ``/killswitch``, and ``/status``.
+
+WP8 wiring (docs/build-scaffold-ultracode.md WP8): ``create_app`` gains an optional
+``services`` registry ({"brew", "intraday", "eod"} callables, built by
+``workflows.services.build_services``). ``GET /brief/today`` / ``POST /brief/run`` read /
+invoke through it and stay ``501 not_wired`` when it is absent (existing WP5 tests keep
+passing); ``GET /proposals`` reads persisted ``ProposalRecord`` rows. The audited-limits
+reader was EXTRACTED to ``orchestrator/limits.py`` (SEC-15); thin aliases below keep this
+module's public surface unchanged. ``POST /automations`` stays 501 (SEC-19 deferred).
 
 CRITICAL (Invariant 1): NO handler places an order or imports ``brokers/``. The order path
 is unreachable from the API surface; the CI call-site gate must stay green.
@@ -23,33 +31,29 @@ from config.models import load_model_map, runtime_for
 from config.settings import Mode, get_settings
 from core.ids import new_id
 from schemas.models.agent_job import AgentJob
-from schemas.models.audit_entry import AuditEntry
 from schemas.models.automation_rule import AutomationRule
 from schemas.models.breaker_state import BreakerState
+from schemas.models.brief_record import BriefRecord
 from schemas.models.market_event import MarketEvent
+from schemas.models.proposal_record import ProposalRecord
 from storage.repositories import Repo
 
 from .auth import ApiKeyAuth
 from .breakers import BreakerEngine
 from .gate import compute_gate
 from .killswitch import killswitch as do_killswitch
+from .limits import (
+    EVENT_LIMITS_CHANGE,
+    LIMIT_LOOSEN_DIR as _LIMIT_LOOSEN_DIR,
+    current_limits as _current_limits,
+    funded_balance as _funded_balance,
+    hard_bounds as _hard_bounds,
+)
 from .mode_ladder import IllegalTransition, ModeLadder
 
-_AUTO_MODES = frozenset({Mode.auto_veto, Mode.auto_full})
+__all__ = ["create_app", "serve", "EVENT_LIMITS_CHANGE", "_current_limits"]
 
-# ---- limits (SEC-15) -------------------------------------------------------------------
-# Limits are audited (source of truth = latest EVENT_LIMITS_CHANGE), never a mutable table.
-EVENT_LIMITS_CHANGE = "limits_change"
-# Which direction LOOSENS a limit: +1 == a larger value loosens; -1 == a smaller value does.
-_LIMIT_LOOSEN_DIR = {
-    "max_notional": 1,
-    "daily_loss_limit": 1,
-    "max_positions": 1,
-    "concentration_pct": 1,
-    "triage_threshold": -1,          # a LOWER triage threshold widens what escalates (SEC-15)
-    "deep_model_daily_budget": 1,
-}
-_DEFAULT_FUNDED_BALANCE = Decimal("25000")   # [est.] outer bound; overridable via settings
+_AUTO_MODES = frozenset({Mode.auto_veto, Mode.auto_full})
 
 
 def _dec(x) -> Decimal:
@@ -57,36 +61,6 @@ def _dec(x) -> Decimal:
         return x if isinstance(x, Decimal) else Decimal(str(x))
     except (InvalidOperation, ValueError, TypeError):
         return Decimal("NaN")
-
-
-def _funded_balance(settings) -> Decimal:
-    return _dec(getattr(settings, "funded_balance", _DEFAULT_FUNDED_BALANCE))
-
-
-def _default_limits(settings) -> dict:
-    fb = _funded_balance(settings)
-    return {
-        "max_notional": str(getattr(settings, "max_notional", min(Decimal("1000"), fb))),
-        "daily_loss_limit": str(getattr(settings, "daily_loss_limit", min(Decimal("500"), fb))),
-        "max_positions": int(getattr(settings, "max_positions", 10)),
-        "concentration_pct": str(getattr(settings, "concentration_pct", Decimal("0.25"))),
-        "triage_threshold": int(settings.triage_threshold),
-        "deep_model_daily_budget": int(settings.deep_model_daily_budget),
-    }
-
-
-def _hard_bounds(settings) -> dict:
-    """The most-permissive value each field may take (a hard config ceiling derived from the
-    funded balance; a floor for a lower-loosens field). No ``/limits`` call may cross it."""
-    fb = _funded_balance(settings)
-    return {
-        "max_notional": fb,                 # cannot risk more than the funded balance (O1)
-        "daily_loss_limit": fb,
-        "max_positions": Decimal("50"),
-        "concentration_pct": Decimal("1"),  # 100%
-        "triage_threshold": Decimal("0"),   # floor: 0 (lower loosens)
-        "deep_model_daily_budget": Decimal("50"),
-    }
 
 
 def _is_loosening(field: str, new, cur) -> bool:
@@ -99,20 +73,6 @@ def _exceeds_bound(field: str, value, bounds: dict) -> bool:
     d = _LIMIT_LOOSEN_DIR[field]
     v, b = _dec(value), _dec(bounds[field])
     return v > b if d > 0 else v < b
-
-
-def _current_limits(state) -> dict:
-    with state.session_factory() as s:
-        row = s.execute(
-            select(AuditEntry)
-            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE)
-            .order_by(AuditEntry.seq.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-    limits = _default_limits(state.settings)
-    if row and (row.payload or {}).get("limits"):
-        limits.update(row.payload["limits"])
-    return limits
 
 
 # ---- request bodies --------------------------------------------------------------------
@@ -174,12 +134,16 @@ def _mode_view(ladder: ModeLadder) -> dict:
     }
 
 
-def create_app(state, *, auth: ApiKeyAuth | None = None) -> FastAPI:
+def create_app(state, *, auth: ApiKeyAuth | None = None,
+               services: dict | None = None) -> FastAPI:
     """Build the FastAPI app bound to an ``OrchestratorState``. ``auth`` is injectable for
-    tests; production defaults to the keyring-backed key guard (every route requires it)."""
+    tests; production defaults to the keyring-backed key guard (every route requires it).
+    ``services`` is the WP8 workflow registry ({"brew","intraday","eod"}); when absent the
+    brief endpoints stay honest 501s."""
     guard = auth if auth is not None else ApiKeyAuth()
     app = FastAPI(title="AI Investment Cockpit — orchestrator", dependencies=[Depends(guard)])
     app.state.orch = state
+    app.state.services = services
 
     # ---- jobs (execution: WP6) ---------------------------------------------------------
     @app.post("/jobs", status_code=status.HTTP_202_ACCEPTED)
@@ -214,17 +178,43 @@ def create_app(state, *, auth: ApiKeyAuth | None = None) -> FastAPI:
     # ---- brief (brew workflow: WP8) ----------------------------------------------------
     @app.get("/brief/today")
     def brief_today():
-        return _not_wired("/brief/today", "WP8")
+        if not services or "brew" not in services:
+            return _not_wired("/brief/today", "WP8")
+        today = state.clock.now().date().isoformat()
+        with state.session_factory() as s:
+            row = s.execute(
+                select(BriefRecord).where(BriefRecord.brief_date == today)
+            ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"no brief stored for {today}")
+        return {
+            "id": row.id, "date": row.brief_date, "degraded": bool(row.degraded),
+            "job_id": row.job_id, "brief": row.payload,
+        }
 
     @app.post("/brief/run")
     def brief_run():
-        return _not_wired("/brief/run", "WP8")
+        if not services or "brew" not in services:
+            return _not_wired("/brief/run", "WP8")
+        return services["brew"](state, state.clock)
 
-    # ---- proposals (WP6 writes adjudications; WP7 executes) -----------------------------
+    # ---- proposals (WP8 produces; WP6 adjudicates; WP7 executes) ------------------------
     @app.get("/proposals")
     def list_proposals():
-        # No proposal store is wired yet (WP8 produces them); return an honest empty list.
-        return {"proposals": []}
+        with state.session_factory() as s:
+            rows = s.execute(
+                select(ProposalRecord)
+                .order_by(ProposalRecord.created_at.desc())
+                .limit(100)
+            ).scalars().all()
+        return {
+            "proposals": [
+                {"id": r.id, "symbol": r.symbol, "side": r.side, "status": r.status,
+                 "flagged": bool(r.flagged),
+                 "created_at": r.created_at.isoformat() if r.created_at else None}
+                for r in rows
+            ]
+        }
 
     @app.post("/proposals/{proposal_id}/decision")
     def decide_proposal(proposal_id: str, body: DecisionRequest):
@@ -385,7 +375,7 @@ def create_app(state, *, auth: ApiKeyAuth | None = None) -> FastAPI:
 
     @app.post("/automations")
     def add_automation():
-        # NL -> predicate compile is an LLM step (SEC-19) wired in WP8; never here.
+        # NL -> predicate compile is an LLM step (SEC-19); deliberately deferred. Never here.
         return _not_wired("/automations", "WP8")
 
     return app

@@ -118,10 +118,26 @@ def evaluate(signals: BreakerSignals, th: BreakerThresholds | None = None) -> li
 
 
 def default_injection_predicate(context=None) -> bool:
-    """SEC-01 stub the WP8 injection/anomaly detector replaces. The TRIP MECHANISM and audit
-    around it are real now (``BreakerEngine.check_order_path``); only the detection is a
-    stub."""
-    return bool(getattr(context, "injection_detected", False)) if context is not None else False
+    """SEC-01 fallback used when a caller (e.g. ``AutoVetoCoordinator.resolve``) does not pass
+    an explicit predicate. Callers pass a DICT context, so it FAILS CLOSED off dict keys —
+    mirroring ``workflows.grounding.injection_predicate`` (dependency-light: no import of
+    workflows here). Trips on a grounding-flagged proposal, a same-ticker escalation burst
+    (count >= 4, or malformed burst), or an explicit ``injection_detected`` flag. A non-dict
+    context still honours an ``injection_detected`` attribute."""
+    if not context:
+        return False
+    if isinstance(context, dict):
+        if context.get("injection_detected") or context.get("grounding_flagged"):
+            return True
+        burst = context.get("same_ticker_burst")
+        if isinstance(burst, dict):
+            try:
+                if int(burst.get("count", 0)) >= 4:
+                    return True
+            except (TypeError, ValueError):
+                return True   # malformed burst context fails closed
+        return False
+    return bool(getattr(context, "injection_detected", False))
 
 
 class BreakerEngine:
