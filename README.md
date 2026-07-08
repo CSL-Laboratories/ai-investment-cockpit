@@ -4,9 +4,15 @@ A solo-developer, subscription-powered, **human-gated** AI investing copilot: a
 morning-brew daily briefing plus human-approved short/long-term trade decisions, run
 from one always-on Windows workstation and operated from anywhere over Discord.
 
-> **Status: WP0 scaffold — no live trading.** The system is paper-first and phased; a
-> dollar only moves after a multi-week paper soak and explicit gates. Graduated from
-> the `csl-general` brainstorming vault on 2026-07-06.
+> **Status: WP0–WP9 COMPLETE (2026-07-08) — paper-first, no live trading.** The full
+> phased ultracode build (WP0 → WP9) has shipped to `main` and is green: the WP9
+> system-test harness (commit `9f6ff44`) passes 586 tests / 3 skipped with `ruff`
+> clean, and every per-WP deterministic gate (G0…G9) is green. The system remains
+> **paper-first**: no real capital has moved and none may until the explicit pre-live
+> gates pass — chief among them the **OPEN P0 audit-spine blocker (SEC-11
+> delete-then-heal)** in [`docs/security-hardening-backlog.md`](docs/security-hardening-backlog.md).
+> A dollar only moves after a multi-week paper soak and the performance/security gates.
+> Graduated from the `csl-general` brainstorming vault on 2026-07-06.
 
 ## Layout
 
@@ -32,12 +38,13 @@ Phased: **one Workflow call per work package** (WP0 → WP1a → WP1b → … �
 human merge checkpoint and a deterministic gate between each. The orchestration manual
 is [`docs/ultracode-build-playbook.md`](docs/ultracode-build-playbook.md).
 
-## Run the WP0 gate
+## Run the gates (WP0 → WP9)
 
 ```bash
 cd app
 python -m pip install pydantic pydantic-settings keyring pyyaml jsonschema pytest ruff
-python -m pytest -q      # includes the Invariant-1 / no-LLM-in-risk / secrets-grep gates
+python -m pytest -q      # full suite incl. Invariant-1 call-site / no-LLM-in-risk / secrets-grep gates (586 pass, 3 skipped as of 2026-07-08)
+ruff check .             # G-gate lint, clean as of 2026-07-08
 ```
 
 ## Before you build

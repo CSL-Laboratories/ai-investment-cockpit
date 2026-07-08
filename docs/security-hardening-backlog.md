@@ -2,11 +2,48 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: active
-last-verified: 2026-07-03
+last-verified: 2026-07-08
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
 # Security hardening backlog
+
+> **Post-WP9 survey (2026-07-08).** WP0–WP9 shipped to main (WP9 = system test
+> harness, commit 9f6ff44; suite 586 passed / 3 skipped, ruff clean, G9 green).
+> This banner is a documentation-only status summary — it does **not** change,
+> close, or weaken any individual SEC-xx / OPS-xx entry below; each entry's own
+> substance and "why we stopped trying" remain authoritative.
+>
+> - **Implemented / property holds:** SEC-09, SEC-14, SEC-18, SEC-21 (WP8); the
+>   HMAC audit chain (SEC-10) and the gateway submit-time re-check covering
+>   SEC-04/07/08 (WP2/WP6/WP7).
+> - **Partially closed:** SEC-03 (Inv-1 order authority closed WP7 via a signed
+>   `EVENT_ADJUDICATION` binding; live-MCP capability-token binding, runtime
+>   tracer, and low-priv agent account still outstanding), SEC-07 (single-
+>   transaction tampers closed WP8; the delete-then-heal residual is folded into
+>   SEC-11), SEC-09 (dashed-account# / lowercase-foreign redaction residual),
+>   SEC-21 (domain-row corroboration binding + single-scheduler `try_consume`
+>   lock).
+> - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The non-monotonic,
+>   reusable per-entry sequence plus the absence of a durable out-of-domain
+>   witness allows a keyless delete-then-heal that `verify_chain()` re-greens.
+>   Closure requires a `GitAuditLogAnchorStore` (Discord `#audit-log` + git
+>   head-hash commit — the same-trust-domain `FileAnchorStore` does **not**
+>   qualify), a monotonic non-reusable HMAC-covered `seq`, and binding
+>   security-relevant domain-row fields (`Order` open-state,
+>   `MarketEvent.event_type`) into the signed chain. Completing SEC-11 also
+>   auto-closes the SEC-07 / SEC-20 / SEC-21 audit-spine residuals, since
+>   `brokers/gateway.py::_pending_ok` and `workflows/budget.py` already consult
+>   `verify_against_anchor` once a witness is wired.
+> - **Other pre-live items:** SEC-03, SEC-05, SEC-06 remain pre-live; SEC-09 and
+>   the single-scheduler polish are minor residuals.
+> - **Auto-mode-only (gated):** SEC-01/16/19/23 stay behind the performance gate
+>   and the intentionally-unwired Phase-3 auto-exec seam.
+> - **Classification note:** items lacking an inline completion note
+>   (SEC-02/04/08/10/12/13/15/16/22, OPS-01/03/04/05) are classified here from the
+>   backlog's own cross-references and the WP0–WP9-complete build state and should
+>   each still receive an explicit per-entry completion note. No security claim is
+>   weakened; SEC-11 remains the P0 pre-live blocker.
 
 This is the **adversarial-review output** for the Local AI Investment Cockpit. The
 baseline architecture is settled in [[security-architecture]] and

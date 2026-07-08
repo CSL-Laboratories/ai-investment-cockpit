@@ -2,8 +2,8 @@
 title: AI Investment Copilot — research, architecture & build index
 type: index
 status: active
-last-verified: 2026-07-03
-related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi]
+last-verified: 2026-07-08
+related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, path-to-production]
 ---
 
 # AI Investment Copilot — index
@@ -26,6 +26,12 @@ before non-trivial work; settled questions are settled downstream, don't re-liti
 research  →  architecture  →  build  →  security  →  enhancements
 (verified)   (settled)        (WPs)     (threat model + hardening)  (roadmap)
 ```
+
+> **Build status (2026-07-08): WP0–WP9 COMPLETE and green on `main`** (WP9 system-test
+> harness = commit `9f6ff44`; 586 tests pass / 3 skipped; ruff clean; gates G0…G9 green).
+> The system is **paper-first — no live capital has moved and none may** until the
+> pre-live gates pass, including the OPEN P0 SEC-11 audit-spine (delete-then-heal)
+> blocker in [[security-hardening-backlog]]. Go-live is governed by [[path-to-production]].
 
 ## Files
 
@@ -51,6 +57,12 @@ research  →  architecture  →  build  →  security  →  enhancements
 | [[build-scaffold-ultracode]] | The build spec: all-Python stack, repo layout, the **9 INVARIANTS**, work packages WP0–WP9 with acceptance tests, build order |
 | [[ultracode-build-playbook]] | *(Opus 4.8)* How to drive the WP0–WP9 build with many Opus 4.8 agents: runnable Workflow scripts, adversarial-review harness for the order path, verification gates, per-WP kickoff prompts |
 
+**Status (2026-07-08): the WP0–WP9 build described by these two docs is COMPLETE and
+shipped to `main`** — build order WP0→WP1a→WP1b→WP2→{WP3,WP4}→WP5→{WP6,WP7}→WP8→WP9,
+all gates green (WP9 system-test harness = commit `9f6ff44`; 586 tests pass / 3 skipped;
+ruff clean). These two docs are now the historical spec-of-record for the build; live
+rollout beyond paper mode is governed by [[path-to-production]].
+
 **Security:**
 
 | File | What it contains |
@@ -65,6 +77,7 @@ research  →  architecture  →  build  →  security  →  enhancements
 |---|---|
 | [[upside-and-roi]] | Honest ROI: the ~$0 marginal cost stack, four return streams (time / alpha-as-capped-option / discipline / infrastructure), 3-year scenarios, risk ledger |
 | [[enhancements-and-additions]] | *(Opus 4.8)* Post-scaffold value-adds (E-01…E-12): benchmark scorecard, cross-model verification, record/replay, heartbeat/DR, lineage graph, shadow-live — each tagged to its phase/gate |
+| [[path-to-production]] | *(2026-07-08)* Post-build go-live + polishing guide: the gates that must pass before any live capital — SEC-11 (P0, **OPEN**) closure, the performance-ladder unlocks (per the plan's paper-soak requirement), moving-target re-verification, and the operational hardening needed to leave paper mode |
 
 ## The five facts everything else hangs on (all verified against primary sources)
 

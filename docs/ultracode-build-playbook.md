@@ -1,10 +1,24 @@
 ---
 title: Ultracode build playbook — orchestrating the cockpit build with many Opus 4.8 agents
 type: playbook
-status: draft
-last-verified: 2026-07-03
+status: built
+last-verified: 2026-07-08
 related: [build-scaffold-ultracode, cockpit-review-and-integrated-plan, draft-discord-control-plane, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, research-report, research-supplement]
 ---
+
+> **BUILD COMPLETE — 2026-07-08.** All nine Workflow phases in §3 have run; the
+> gates G0–G9 in §5 are green and WP0→WP9 are merged to `main` (WP9 = commit
+> `9f6ff44`; suite 586 passed / 3 skipped, ruff clean). The mandatory 4c
+> adversarial passes on the four security-critical WPs (WP4 risk, WP5 mode
+> ladder, WP6 approval path, WP7 order path) completed. This playbook is
+> retained as the build-time record; the orchestration procedure, the §5 gate
+> table, the §4 scripts, and the §9 anti-patterns are preserved verbatim.
+>
+> **PAPER-FIRST — no live money.** Live-mode work still requires the pre-live
+> gates and the 2-week paper soak called for in [[build-scaffold-ultracode]]
+> ("Build order & session plan"). The SEC-11 audit-spine "delete-then-heal" hole
+> referenced through §6 (`security-hardening-backlog.md`) remains the OPEN P0
+> pre-live blocker — it is **NOT** closed by this build.
 
 # Ultracode build playbook
 

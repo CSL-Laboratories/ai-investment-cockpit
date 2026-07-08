@@ -1,10 +1,16 @@
 ---
 title: Build scaffold — work packages for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
-status: draft
-last-verified: 2026-07-02
+status: built
+last-verified: 2026-07-08
 related: [README, cockpit-review-and-integrated-plan, draft-discord-control-plane, research-report, research-supplement]
 ---
+
+> **BUILD COMPLETE — 2026-07-08.** WP0→WP9 all shipped to `main` and green, in the scaffold's build order (WP0 → WP1a → WP1b → WP2 → {WP3, WP4} → WP5 → {WP6, WP7} → WP8 → WP9). WP9 (system test harness) = commit 9f6ff44; test suite 586 passed / 3 skipped, ruff clean; the §3 gate table G0–G9 in [[ultracode-build-playbook]] is fully green. Every WP `Accept:` line and all 9 invariants below remain the settled spec and are preserved verbatim — this banner is additive, nothing below it is superseded. See [[path-to-production]].
+>
+> **The system is PAPER-FIRST. No real money has moved and none may until the pre-live gates pass**, including the 2-week paper soak mandated in "Build order & session plan" below. The "Deferred (do not build yet)" section remains fully deferred: the Robinhood Agentic MCP live path (Phase 3 gate), `auto_full` unlock logic (Phase 3.5), the PWA dashboard, options support, and Codex research jobs are NOT built.
+>
+> **Pre-live P0 still OPEN:** the SEC-11 audit-spine "delete-then-heal" hole (non-monotonic `seq` + no durable external witness) is documented with repros in `docs/security-hardening-backlog.md` and is NOT closed. It blocks live-mode work regardless of the green gates.
 
 # Build scaffold: layer-by-layer work packages
 
@@ -182,6 +188,8 @@ test; secrets-in-logs grep test.
 ```text
 WP0 → WP1a → WP1b → WP2 → {WP3, WP4 in parallel} → WP5 → {WP6, WP7 in parallel} → WP8 → WP9
 ```
+
+> **DONE (2026-07-08):** every WP in this order shipped to `main` and is green (WP9 = commit 9f6ff44). The remaining unmet item on this line is the **2-week paper soak before any live-mode work** (below) — that gate has NOT passed.
 
 Suggested ultracode usage per session: fan out module implementation +
 test-writing as parallel agents; run an adversarial-review pass (independent
