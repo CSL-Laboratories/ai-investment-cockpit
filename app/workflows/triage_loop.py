@@ -32,6 +32,7 @@ from workflows.budget import (
     BudgetIntegrityError,
     DeepBudget,
     deterministic_urgency,
+    make_event_type_verifier,
     rank_candidates,
 )
 from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
@@ -188,6 +189,10 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
 
     # ---- deterministic pre-filters BEFORE any model call ---------------------------------
     calendars = _calendar_events(state)
+    # SEC-11 (W10): reconcile every mutable event_type used for corroboration (halt/filing AND
+    # calendar:%) against its signed EVENT_INGEST_BATCH binding, so a keyless writer cannot
+    # manufacture deterministic corroboration (and thus deep-budget spend) with a forged row.
+    verify_event_type = make_event_type_verifier(state)
     survivors: list[MarketEvent] = []
     for ev in events:
         keep = ev.symbol in holdings_symbols or ev.symbol in watchlist \
@@ -195,7 +200,8 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if not keep:
             # calendar proximity via deterministic_urgency's calendar check (no quote hook
             # here — the pre-filter never spends quote calls on noise).
-            keep, _ = deterministic_urgency(ev, calendars, now=now, quote_move_fn=None)
+            keep, _ = deterministic_urgency(ev, calendars, now=now, quote_move_fn=None,
+                                            verify_event_type=verify_event_type)
         if keep:
             survivors.append(ev)
         else:
@@ -270,7 +276,8 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     # holdings candidate is never trimmed as "burst excess" behind an uncorroborated,
     # higher-model-score flood item (SEC-21: rank by signal strength, never model score).
     corroboration: dict[str, tuple[bool, str]] = {
-        ev.id: deterministic_urgency(ev, calendars, now=now, quote_move_fn=quote_move_fn)
+        ev.id: deterministic_urgency(ev, calendars, now=now, quote_move_fn=quote_move_fn,
+                                     verify_event_type=verify_event_type)
         for ev in raw_cands
     }
 

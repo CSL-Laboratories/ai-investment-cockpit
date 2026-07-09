@@ -124,12 +124,14 @@ def test_keyless_state_and_notional_rewind_cannot_free_cap_headroom(st):
 def test_delete_then_heal_still_counts_db_open_sibling(st):
     """The reproduced SEC-07 'delete-then-heal' bypass: a keyless writer DELETEs order2's
     EVENT_ORDER_TRANSITION entries (its whole tail), so order2 VANISHES from a presence-derived
-    chain sum — while its ``Order`` row remains 'approved' in the DB. A later order-creation
-    append reuses the freed seqs and re-bumps the watermark, so the chain still 'heals'. The
-    OLD chain-only ``_pending_ok`` would drop order2 (3000 <= cap) and let an over-cap third
-    order through; the completeness-reconciled version detects order2 as a db-open row with NO
-    verified signed history (chain_ids miss) AND no verified chain notional -> TAMPER -> fail
-    closed, so the third order is REFUSED at gate (h) and never reaches the broker."""
+    chain sum — while its ``Order`` row remains 'approved' in the DB. Pre-W10 a later
+    order-creation append REUSED the freed seqs and re-bumped the watermark, so the chain
+    re-greened and the gate-(h) completeness reconcile was the catch. W10's MONOTONIC,
+    NON-REUSABLE seq closes it one layer earlier: the refill can no longer reuse the freed seqs,
+    so the delete-then-heal lands as a seq GAP that ``verify_chain`` rejects — the mode oracle
+    drops to read_only and the over-cap third order is REFUSED at the mode gate (b), never
+    reaching the broker. (The gate-(h) reconcile remains as defense-in-depth for the NON-deletion
+    tampers — column rewind / row delete / notional laundering — covered by the other tests.)"""
     broker = RecordingBroker()
     sc = build_scenario(st, gateway=OrderGateway(broker, pending_exposure_cap=CAP),
                         broker=broker)
@@ -150,18 +152,21 @@ def test_delete_then_heal_still_counts_db_open_sibling(st):
                      and (e.refs or {}).get("row_id") == o2.id]
         assert remaining == []
 
-    # the third order-creation appends new entries (reusing the freed seqs) — the 'heal'.
+    # the third order-creation appends new entries — W10's monotonic, NON-REUSABLE seq allocates
+    # ABOVE the high-water, so the freed tail seqs are NOT reissued and the chain does NOT
+    # re-green (the 'heal' fails).
     o3, appr3, rd3 = _fresh_submittable(st, sc)
+    assert not st.audit.verify_chain().ok            # W10: delete-then-heal caught as a seq gap
 
-    # order2 is db-open but its verified chain notional was deleted -> TAMPER. The chain-anchored
-    # sum NEVER folds the mutable column, so total understates (1500+0+1500 = 3000) yet tampered
-    # forces ok=False — the security property; the exact total is incidental to fail-closed.
+    # _pending_ok fails closed on the un-verifiable chain BEFORE the exposure math (total 0).
     ok, total, cap = sc.gateway._pending_ok(st, o3)
-    assert not ok and total == Decimal("3000") and cap == CAP
+    assert not ok and total == Decimal("0") and cap == CAP
 
+    # the tampered chain drops the mode oracle to read_only, so the submit is refused at the mode
+    # gate (b) — earlier than, and strictly stronger than, the SEC-07 exposure gate (h).
     out = sc.gateway.submit(o3, **sc.submit_kwargs(approval=appr3, risk_decision=rd3,
                                                    token_nonce="n3"))
-    assert not out.ok and out.stage == "pending_exposure"
+    assert not out.ok and out.stage == "mode"
     assert broker.calls == 0                         # the over-cap order never reached the broker
 
 
@@ -177,8 +182,11 @@ def test_delete_tail_and_zero_notional_db_open_sibling_fails_closed(st):
     order_row.notional column is the SOLE (and zeroed) notional source — exactly the trust
     SEC-07 forbids: order1(1500) + order2(0) + order3(1500) = 3000 <= cap would slip the
     over-cap sibling past gate (h). The fail-closed rule treats a missing verified
-    chain_notional for an open member as TAMPER, so ``_pending_ok`` returns ok=False and the
-    submit is REFUSED at gate (h) without ever calling the broker."""
+    chain_notional for an open member as TAMPER, so ``_pending_ok`` returns ok=False. Post-W10
+    the DELETE of the signed tail is itself caught at ``verify_chain`` (the monotonic non-reusable
+    seq turns the refill into a gap), so the mode oracle drops to read_only and the submit is
+    refused at the mode gate (b) — a stronger, earlier fail-closed than gate (h); the broker is
+    never called either way."""
     broker = RecordingBroker()
     sc = build_scenario(st, gateway=OrderGateway(broker, pending_exposure_cap=CAP),
                         broker=broker)
@@ -202,14 +210,15 @@ def test_delete_tail_and_zero_notional_db_open_sibling_fails_closed(st):
         assert remaining == []
 
     o3, appr3, rd3 = _fresh_submittable(st, sc)
+    assert not st.audit.verify_chain().ok            # W10: the delete-then-heal no longer re-greens
 
-    # order2 has no verified chain notional but is still db-open -> TAMPER -> fail closed.
+    # the un-verifiable chain fails _pending_ok closed (and drops the mode oracle to read_only).
     ok, _total, cap = sc.gateway._pending_ok(st, o3)
     assert not ok and cap == CAP
 
     out = sc.gateway.submit(o3, **sc.submit_kwargs(approval=appr3, risk_decision=rd3,
                                                    token_nonce="n3"))
-    assert not out.ok and out.stage == "pending_exposure"
+    assert not out.ok and out.stage == "mode"        # W10: refused at the mode gate before gate (h)
     assert broker.calls == 0                         # the over-cap order never reached the broker
 
 
@@ -288,15 +297,17 @@ def test_delete_tail_and_set_terminal_row_remains_fails_closed(st):
         assert remaining == []
 
     o3, appr3, rd3 = _fresh_submittable(st, sc)
+    assert not st.audit.verify_chain().ok            # W10: the delete-then-heal no longer re-greens
 
-    # order2 is in NEITHER open set, yet the row-completeness reconcile detects it as a row with
-    # no verified transition -> TAMPER -> fail closed.
+    # order2 is in NEITHER open set; post-W10 the DELETE of its signed tail already fails
+    # verify_chain, so _pending_ok fails closed (the row-completeness reconcile remains the catch
+    # for the NON-deletion tampers).
     ok, _total, cap = sc.gateway._pending_ok(st, o3)
     assert not ok and cap == CAP
 
     out = sc.gateway.submit(o3, **sc.submit_kwargs(approval=appr3, risk_decision=rd3,
                                                    token_nonce="n3"))
-    assert not out.ok and out.stage == "pending_exposure"
+    assert not out.ok and out.stage == "mode"        # W10: refused at the mode gate before gate (h)
     assert broker.calls == 0                         # the over-cap order never reached the broker
 
 
@@ -308,9 +319,10 @@ def test_partial_tail_delete_chain_regressed_db_open_fails_closed(st):
     transition (its 'approved' step) and keeps its 'proposed' birth, so chain_latest[order2]
     REGRESSES to 'proposed' while the DB row stays 'approved'. The old ``state not in open_states:
     continue`` then SKIPPED a genuinely-open sibling -> total understated (order1 1500 + order3
-    1500 = 3000 <= cap) and the over-cap third order reached the broker. The completeness reconcile
-    now flags a db-open row whose chain regressed below open as TAMPER (and re-includes it via the
-    db-open set), so the third order is REFUSED at gate (h) and never reaches the broker."""
+    1500 = 3000 <= cap) and the over-cap third order reached the broker. Post-W10 the partial
+    DELETE is itself caught at ``verify_chain`` (the non-reusable seq turns the refill into a gap),
+    dropping the mode oracle to read_only so the third order is REFUSED at the mode gate (b) —
+    earlier than gate (h); the completeness reconcile remains for the NON-deletion regressions."""
     broker = RecordingBroker()
     sc = build_scenario(st, gateway=OrderGateway(broker, pending_exposure_cap=CAP),
                         broker=broker)
@@ -334,17 +346,19 @@ def test_partial_tail_delete_chain_regressed_db_open_fails_closed(st):
                       and (e.refs or {}).get("row_id") == o2.id]
         assert [e.payload.get("to") for e in o2_entries] == ["proposed"]   # only the birth survives
 
-    # the third order-creation appends new entries (reusing the freed seq) — the chain 'heals'.
+    # the third order-creation appends new entries; W10's non-reusable seq does NOT reissue the
+    # deleted 'approved' step's freed seq, so the chain does NOT re-green.
     o3, appr3, rd3 = _fresh_submittable(st, sc)
-    assert st.audit.verify_chain().ok    # GREEN: the reconcile (not verify_chain) must catch it
+    assert not st.audit.verify_chain().ok    # W10: the partial-tail delete is caught as a seq gap
 
-    # order2 is db-open but its chain regressed below open -> TAMPER -> fail closed.
+    # order2's chain regressed below open; post-W10 the DELETE already fails verify_chain, so
+    # _pending_ok fails closed (the db-open reconcile remains for the NON-deletion regressions).
     ok, _total, cap = sc.gateway._pending_ok(st, o3)
     assert not ok and cap == CAP
 
     out = sc.gateway.submit(o3, **sc.submit_kwargs(approval=appr3, risk_decision=rd3,
                                                    token_nonce="n3"))
-    assert not out.ok and out.stage == "pending_exposure"
+    assert not out.ok and out.stage == "mode"        # W10: refused at the mode gate before gate (h)
     assert broker.calls == 0                         # the over-cap order never reached the broker
 
 
@@ -450,8 +464,10 @@ def test_terminal_rewind_without_signed_transition_fails_closed(st):
     while its birth survives (so the chain_ids-miss / no-history reconcile does NOT fire). The
     over-cap third order then slipped past gate (h) (1500+1500 = 3000 <= cap). The new rule — any
     db row in a TERMINAL state MUST be backed by a verified transition whose 'to' is that terminal —
-    flags order2 as TAMPER (its db 'cancelled' has no signed 'cancelled' 'to') -> fail closed, so
-    the third order is REFUSED at gate (h) and never reaches the broker."""
+    flags order2 as TAMPER (its db 'cancelled' has no signed 'cancelled' 'to') -> fail closed.
+    Post-W10 the DELETE of the signed 'approved' step is itself caught at ``verify_chain`` (the
+    non-reusable seq turns the refill into a gap), so the mode oracle drops to read_only and the
+    third order is REFUSED at the mode gate (b) — a stronger, earlier fail-closed than gate (h)."""
     broker = RecordingBroker()
     sc = build_scenario(st, gateway=OrderGateway(broker, pending_exposure_cap=CAP),
                         broker=broker)
@@ -476,16 +492,18 @@ def test_terminal_rewind_without_signed_transition_fails_closed(st):
                   and (e.refs or {}).get("row_id") == o2.id]
         assert o2_tos == ["proposed"]                # only the birth survives; no signed cancel
 
-    o3, appr3, rd3 = _fresh_submittable(st, sc)       # heal: new appends reuse the freed seq
-    assert st.audit.verify_chain().ok    # GREEN: the terminal-backing reconcile (not verify) fires
+    o3, appr3, rd3 = _fresh_submittable(st, sc)       # heal attempt: new appends can't reuse the freed seq
+    assert not st.audit.verify_chain().ok    # W10: the deleted 'approved' step is caught as a seq gap
 
-    # order2's db state is terminal but no signed transition backs that terminal -> TAMPER.
+    # order2's db state is terminal but no signed transition backs it; post-W10 the DELETE already
+    # fails verify_chain, so _pending_ok fails closed (the terminal-backing reconcile remains for
+    # the NON-deletion terminal rewrites).
     ok, _total, cap = sc.gateway._pending_ok(st, o3)
     assert not ok and cap == CAP
 
     out = sc.gateway.submit(o3, **sc.submit_kwargs(approval=appr3, risk_decision=rd3,
                                                    token_nonce="n3"))
-    assert not out.ok and out.stage == "pending_exposure"
+    assert not out.ok and out.stage == "mode"        # W10: refused at the mode gate before gate (h)
     assert broker.calls == 0                         # the over-cap order never reached the broker
 
 

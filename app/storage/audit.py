@@ -4,16 +4,26 @@ A hash-chained, HMAC-keyed, externally-anchorable append-only log:
   * SEC-10  — each link is an HMAC keyed from keyring; a DB-only writer cannot forge or
               recompute a valid chain without the key. The coverage set includes the row
               ``id`` (a reconciliation join key) so the PK is tamper-evident too.
-  * SEC-11  — a strictly-monotonic ``seq`` + a key-SIGNED high-water mark (``audit_meta``)
-              catch tail truncation/rollback by a keyless writer who has NOT captured a
-              prior validly-signed watermark. CAVEAT (WP5 adversarial re-verify, 2026-07-07):
-              the watermark signature covers only the ``seq`` integer, so a keyless writer who
-              captured a past ``(seq, sig)`` pair (DB read over time) can roll the chain back
-              to that exact prior state and REPLAY it — verify_chain() cannot distinguish a
-              rollback-to-a-genuine-past-state from that state. Only the EXTERNAL out-of-DB
-              witness closes it: verify_against_anchor() pins a specific external anchor point
-              (head posted to #audit-log + committed to git). That anchor must be consulted on
-              the gate + mode-read paths — wired in WP6; today only verify_chain() runs there.
+  * SEC-11  — a strictly-monotonic, NON-REUSABLE ``seq`` + a key-SIGNED high-water mark
+              (``audit_meta``) catch tail truncation/rollback by a keyless writer who has NOT
+              captured a prior validly-signed watermark. W10 closure (2026-07-08): the
+              high-water NEVER decreases, even across a keyless ``DELETE`` — ``_insert``
+              allocates ``seq = max(high_water, max_existing) + 1`` so a freed tail seq is
+              never reissued, and a delete-then-refill therefore lands as a seq GAP that
+              ``verify_chain()`` rejects (the WP8 "delete-then-heal" hole: before this, the
+              watermark was reassigned to the current head on every append, so refilling the
+              freed seqs re-greened the chain). Appending onto a chain whose signed high-water
+              was deleted (rows present, watermark absent) is REFUSED — healing the watermark
+              at a refilled head is exactly the bypass. CAVEAT (WP5 adversarial re-verify,
+              2026-07-07 — still load-bearing, the monotonic seq does NOT close it): a keyless
+              writer who captured a past validly-signed ``(seq, sig)`` pair (DB read over time)
+              can DELETE the tail and REPLAY that captured watermark; ``verify_chain()`` cannot
+              distinguish a rollback-to-a-genuine-past-state from that state. Only the EXTERNAL
+              out-of-DB witness closes THAT class: verify_against_anchor() pins a specific
+              external anchor point (head posted to #audit-log + committed to git). That anchor
+              is consulted on the gate + mode-read + gateway + budget paths (wired WP6/WP8;
+              the durable witness is wired at ``main.compose()`` in W10) and fails closed when
+              the verified head is below or absent from it.
   * SEC-12  — the HMAC covers ALL load-bearing columns under a pinned canonical form
               (sorted keys, no lossy ``default=`` coercion); the authoritative timestamp is
               ``payload._ts`` and verify reconciles it against the ``created_at`` column so a
@@ -65,6 +75,14 @@ def _canonical(entry_id, seq, prev_hash, event_type, actor, refs, payload) -> by
     return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+class AuditIntegrityError(Exception):
+    """A keyless-writer tamper made an append unsafe (SEC-11 W10): the signed monotonic
+    high-water is absent on a non-empty chain, or its signature is invalid. Refusing to
+    append is fail-closed — healing the watermark at a refilled head is exactly the
+    delete-then-heal bypass this closes. Distinct from ``IntegrityError``/``OperationalError``
+    (a benign cross-process seq collision, which ``append`` retries) so it is NEVER retried."""
+
+
 @dataclass
 class VerifyResult:
     ok: bool
@@ -99,13 +117,21 @@ class AuditLog:
                                 entry.actor, entry.refs, entry.payload)
         return hmac.compare_digest(recomputed, entry.entry_hash or "")
 
-    # ---- signed watermark --------------------------------------------------
-    def _bump_watermark(self, s, seq: int) -> None:
+    # ---- signed monotonic high-water mark (SEC-11) -------------------------
+    def _bump_hwm(self, s, seq: int) -> None:
+        """Advance the signed high-water to ``max(current, seq)`` and re-sign. It NEVER
+        decreases, even across a keyless tail ``DELETE`` — that monotonicity is what makes a
+        freed seq non-reissuable (``_insert`` allocates above it) so a delete-then-refill
+        lands as a seq GAP ``verify_chain`` rejects, instead of the old re-greening refill."""
+        cur = self._read_hwm(s)
+        hwm = seq if cur is None or cur < 0 else max(cur, seq)
         s.execute(audit_meta.delete().where(audit_meta.c.k.in_(["head_seq", "head_seq_sig"])))
-        s.execute(audit_meta.insert().values(k="head_seq", v=str(seq)))
-        s.execute(audit_meta.insert().values(k="head_seq_sig", v=self._sign(str(seq))))
+        s.execute(audit_meta.insert().values(k="head_seq", v=str(hwm)))
+        s.execute(audit_meta.insert().values(k="head_seq_sig", v=self._sign(str(hwm))))
 
-    def _read_watermark(self, s) -> int | None:
+    def _read_hwm(self, s) -> int | None:
+        """The signed monotonic high-water (highest ``seq`` EVER allocated). ``None`` on a
+        virgin chain (never appended); ``-1`` if the signature is invalid (tamper)."""
         rows = dict(s.execute(select(audit_meta.c.k, audit_meta.c.v)).all())
         if "head_seq" not in rows:
             return None
@@ -116,7 +142,19 @@ class AuditLog:
     # ---- core insert (shared by append / append_in) ------------------------
     def _insert(self, s, event_type, actor, refs, payload) -> AuditEntry:
         head = s.execute(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).scalar_one_or_none()
-        seq = (head.seq + 1) if head else 1
+        max_existing = head.seq if head else 0
+        hwm = self._read_hwm(s)
+        # SEC-11 (W10) fail-closed guards on the signed high-water BEFORE allocating a seq:
+        if hwm == -1:
+            raise AuditIntegrityError("audit high-water signature invalid (tamper) — refusing to append")
+        if hwm is None and max_existing > 0:
+            # Rows present but the signed high-water was deleted: the delete-then-heal signature.
+            # Re-creating the watermark at a refilled head is exactly the bypass -> refuse.
+            raise AuditIntegrityError(
+                "audit high-water missing on a non-empty chain (tamper) — refusing to append")
+        # Allocate ABOVE the high-water, so a freed tail seq is NEVER reissued (non-reusable):
+        # a delete-then-refill then shows as a contiguity gap, not a silent re-green.
+        seq = max(hwm or 0, max_existing) + 1
         prev_hash = head.entry_hash if head else None
         created = self._clock.now().astimezone(timezone.utc).replace(tzinfo=None)   # naive UTC (stable round-trip)
         p = dict(payload or {})
@@ -128,7 +166,7 @@ class AuditLog:
                          event_type=event_type, actor=actor, refs=r, payload=p, created_at=created)
         s.add(row)
         s.flush()
-        self._bump_watermark(s, seq)
+        self._bump_hwm(s, seq)
         return row
 
     def append(self, event_type: str, actor=None, refs=None, payload=None) -> AuditEntry:
@@ -220,7 +258,7 @@ class AuditLog:
     def verify_chain(self) -> VerifyResult:
         with self._sf() as s:
             rows = s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
-            wm = self._read_watermark(s)
+            wm = self._read_hwm(s)
         prev, expected = None, 1
         for r in rows:
             if r.seq != expected:
@@ -236,14 +274,17 @@ class AuditLog:
         head_seq = expected - 1
         if wm == -1:
             return VerifyResult(False, head_seq, prev, "watermark signature invalid (tamper)")
-        # SEC-11: every append bumps the signed watermark, so a NON-EMPTY chain always has one.
+        # SEC-11: every append bumps the signed high-water, so a NON-EMPTY chain always has one.
         # rows-present + watermark-absent is itself the tail-truncation signature (a keyless
-        # writer deletes the audit_meta rows to dodge the head_seq<wm check below) -> fail CLOSED.
+        # writer deletes the audit_meta rows to dodge the head_seq<hwm check below) -> fail CLOSED.
         if rows and wm is None:
             return VerifyResult(False, head_seq, prev,
                                 "watermark missing on a non-empty chain (truncation/tamper)")
+        # SEC-11 (W10): the high-water is MONOTONIC (never decreases across a delete), so a
+        # verified head below it is a tail truncation — even one whose freed seqs were refilled
+        # (the refill allocates ABOVE the high-water and shows as the seq gap caught above).
         if wm is not None and head_seq < wm:
-            return VerifyResult(False, head_seq, prev, f"truncation: head seq {head_seq} < watermark {wm}")
+            return VerifyResult(False, head_seq, prev, f"truncation: head seq {head_seq} < high-water {wm}")
         return VerifyResult(True, head_seq, prev)
 
     def verify_against_anchor(self, anchored_seq: int, anchored_hash: str) -> VerifyResult:

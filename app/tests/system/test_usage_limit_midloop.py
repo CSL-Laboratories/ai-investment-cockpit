@@ -89,6 +89,9 @@ def test_g9_usage_limit_midloop_watch_only_disables_order_path(tmp_path):
     day = market_days(1)[0]
     _, rows = day.persist(system)
     assert len(rows) == 3, "the fixture day must persist AAPL filing + MSFT filing + noise"
+    # SEC-11 (W10): anchor the head before the deep-budget-consuming intraday tick (the budget
+    # consult fails closed on an absent anchor, like the order path).
+    system.anchor(clock=day.clock())
     aapl_id = rows["d0-f-aapl"].id
     msft_id = rows["d0-f-msft"].id
     noise_id = rows["d0-noise"].id
@@ -186,6 +189,7 @@ def test_g9_negative_control_valid_deep_no_watch_only(tmp_path):
     st = system.st
     day = market_days(1)[0]
     _, rows = day.persist(system)
+    system.anchor(clock=day.clock())   # SEC-11 (W10): witness fresh before the deep-budget tick
 
     mode_before = system.ladder.current()
     # identical structure to the main test, but the deep queue returns VALID proposals.

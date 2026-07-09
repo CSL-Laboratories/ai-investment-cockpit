@@ -22,7 +22,8 @@ HONESTY ABOUT THE GUARANTEE (do not overclaim):
   * The REAL guarantee needs a witness in a DIFFERENT trust domain that the local writer cannot
     forge: a git commit Lucas reviews (history he would notice being rewritten) AND/OR a
     ``#audit-log`` Discord post (a server-side timestamp the local writer cannot backdate).
-    ``GitAuditLogAnchorStore`` is the adapter SKETCH those plug into.
+    ``GitAuditLogAnchorStore`` wraps those; the concrete adapters live in ``bridge/witness.py``
+    (``GitCommitWitness`` + ``DiscordAuditLogWitness``) and are wired at ``main.compose()`` (W10).
 """
 from __future__ import annotations
 
@@ -172,24 +173,41 @@ class ExternalWitnessAdapter(Protocol):
 
 
 class GitAuditLogAnchorStore:
-    """SKETCH of the production witness. Wraps one or more ``ExternalWitnessAdapter`` backends
-    (git commit + ``#audit-log`` post). It is the ONLY implementation that provides the SEC-11
-    guarantee against a KEY-HOLDER rollback, because its state lives outside the local writer's
-    trust domain. Wiring the concrete git/Discord adapters is deferred (needs the deploy's git
-    remote + bot credentials); the interface is pinned here so ``post_head_anchor`` and the
-    gate/mode-oracle integration are written against the final shape today.
+    """The production witness (W10). Wraps one or more ``ExternalWitnessAdapter`` backends —
+    the concrete ``GitCommitWitness`` + ``DiscordAuditLogWitness`` in ``bridge/witness.py``,
+    wired at ``main.compose()``.
 
-    NOTE: ``latest()`` reads back from the external domain (not a local cache) so the gate/mode
-    oracle compares the in-DB head against a value the local writer could not have forged."""
+    **``latest()`` — the TRUST read the gate/mode/gateway/budget consult to fail closed —
+    returns the MAX only over backends whose ``out_of_domain`` is True (SEC-11, hardened by the
+    G10 red-team 2026-07-08).** A same-trust-domain mirror (``GitCommitWitness``, whose runtime
+    read is the local working-tree head file a keyless writer can overwrite) is EXCLUDED: it is
+    theater as a runtime witness (the exact ``FileAnchorStore``-in-effect failure the SEC-11 rule
+    forbids). So when the ONLY wired backend is a same-domain mirror, ``latest()`` returns None
+    and every consult FAILS CLOSED (auto unreachable; live/budget refuse) — the correct posture
+    until a genuine out-of-domain witness (a server-stamped ``#audit-log`` post) is provisioned.
+    With a real out-of-domain backend, LOWERING the witness requires forging the SERVER's held
+    history, which a keyless local writer cannot do.
+
+    ``append`` publishes to ALL backends (the mirror is still written for the reviewed-history
+    detection layer + local cross-check) and refuses a rewind/fork (monotonic); each backend
+    additionally self-guards on ``publish``."""
 
     def __init__(self, *adapters: ExternalWitnessAdapter) -> None:
         if not adapters:
             raise AnchorError("GitAuditLogAnchorStore needs at least one external witness adapter")
         self._adapters = list(adapters)
 
+    @property
+    def has_out_of_domain_witness(self) -> bool:
+        """True iff at least one wired backend is a genuine out-of-domain trust source (a
+        same-domain mirror alone does NOT satisfy the SEC-11 auto/live prerequisite)."""
+        return any(getattr(a, "out_of_domain", False) for a in self._adapters)
+
     def latest(self) -> "tuple[int, str] | None":
         best: tuple[int, str] | None = None
         for a in self._adapters:
+            if not getattr(a, "out_of_domain", False):
+                continue                          # SEC-11: a same-trust-domain mirror is NOT a trust source
             got = a.read_latest()
             if got is None:
                 continue
@@ -198,7 +216,14 @@ class GitAuditLogAnchorStore:
         return best
 
     def append(self, seq: int, head_hash: str) -> None:
-        cur = self.latest()
-        _guard_monotonic(cur[0] if cur else None, cur[1] if cur else None, seq, head_hash)
+        # Guard against the highest recorded head ACROSS ALL backends (mirror included) so a
+        # publish never rewinds any backend; each adapter also self-guards on publish.
+        highest: tuple[int, str] | None = None
+        for a in self._adapters:
+            got = a.read_latest()
+            if got is not None and (highest is None or got[0] > highest[0]):
+                highest = (int(got[0]), str(got[1]))
+        _guard_monotonic(highest[0] if highest else None, highest[1] if highest else None,
+                         seq, head_hash)
         for a in self._adapters:
             a.publish(int(seq), head_hash)

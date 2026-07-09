@@ -20,10 +20,50 @@ from sqlalchemy import select
 
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
-from workflows.constants import EVENT_DEEP_ESCALATION
+from workflows.constants import EVENT_DEEP_ESCALATION, EVENT_INGEST_BATCH
 
 _CALENDAR_WINDOW = timedelta(hours=36)
 _QUOTE_MOVE_PCT = 3.0
+_HARD_EVENT_TYPES = frozenset({"halt", "filing"})
+
+
+def signed_event_type(state, event_id: str) -> str | None:
+    """SEC-11 (W10) domain-row binding read-side: the ``event_type`` bound into the covering,
+    HMAC-VERIFIED ``EVENT_INGEST_BATCH`` entry for ``event_id`` (events.py binds it at persist).
+    Returns the SIGNED value, or ``None`` when no verified entry binds this id — the caller
+    treats ``None`` (and any mismatch against the mutable ``MarketEvent.event_type`` column) as
+    'no corroboration' / 'no consumption' (fail closed). A keyless writer who flips the column
+    news->filing cannot also forge the signed copy (its HMAC would break -> verify_entry False
+    -> ``None``), so a forged flip yields no deterministic corroboration and spends no budget."""
+    if not event_id:
+        return None
+    with state.session_factory() as s:
+        entries = s.execute(
+            select(AuditEntry).where(AuditEntry.event_type == EVENT_INGEST_BATCH)
+        ).scalars().all()
+    for e in entries:
+        types = (e.payload or {}).get("event_types") or {}
+        if event_id in types:
+            if not state.audit.verify_entry(e):
+                return None            # tampered ingest batch -> unverifiable -> fail closed
+            return str(types[event_id])
+    return None
+
+
+def make_event_type_verifier(state):
+    """A ``deterministic_urgency(verify_event_type=...)`` callable: True iff a MarketEvent's
+    mutable ``event_type`` column (halt/filing OR ``calendar:%``) matches its signed
+    EVENT_INGEST_BATCH value (SEC-11). Memoized per event id for the caller's lifetime (one
+    triage tick) so the hot loop does not re-scan the ingest ledger per candidate×calendar."""
+    cache: dict = {}
+
+    def _verify(event) -> bool:
+        eid = getattr(event, "id", None)
+        if eid not in cache:
+            cache[eid] = signed_event_type(state, eid)
+        signed = cache[eid]
+        return signed is not None and signed == getattr(event, "event_type", None)
+    return _verify
 
 
 class BudgetIntegrityError(Exception):
@@ -51,11 +91,17 @@ def _assert_budget_chain_ok(state) -> None:
         )
     anchor_store = getattr(state, "anchor_store", None)
     if anchor_store is not None:
+        # SEC-11 (W10, G10 fix 2026-07-08): a WIRED store whose ``latest()`` is None (no genuine
+        # out-of-domain witness, or the same-domain mirror-only store) must FAIL CLOSED for
+        # parity with gate.py / gateway.py / mode_ladder.py (`if anchor is None or not ...`).
+        # The old `if anchor is not None and not ...` failed OPEN on None, so a deleted witness
+        # skipped the consult and only the replay-defeatable verify_chain() ran (the budget was
+        # the sole outlier of the four consuming paths).
         anchor = anchor_store.latest()
-        if anchor is not None and not state.audit.verify_against_anchor(*anchor).ok:
+        if anchor is None or not state.audit.verify_against_anchor(*anchor).ok:
             raise BudgetIntegrityError(
-                "external audit anchor rollback/truncation detected — deep budget cannot be "
-                "trusted (fail closed)"
+                "external audit anchor absent or rollback/truncation detected — deep budget "
+                "cannot be trusted (fail closed)"
             )
 
 
@@ -117,9 +163,23 @@ class DeepBudget:
         SEC-21 (round-2) defense-in-depth backstop: an UNcorroborated consumption is
         REFUSED (return False, append nothing) so no caller can spend deep budget without
         deterministic corroboration even if a gate upstream is bypassed. The caller treats a
-        False return as a deferral (Inv 7), never a drop."""
+        False return as a deferral (Inv 7), never a drop.
+
+        SEC-11 (W10) domain-row backstop: when the corroboration rests on the mutable
+        ``MarketEvent.event_type`` (a ``event_type:{halt|filing}`` reason), reconcile it here
+        against the value bound into the signed EVENT_INGEST_BATCH entry. A keyless writer who
+        flipped the column to manufacture corroboration is caught (the signed copy still says
+        'news' / no verified binding exists) and the consumption is REFUSED — the column alone
+        is never a spend trust root. This closes the live path even if a caller computed
+        ``deterministic_urgency`` without the verifier (the reason string still carries the
+        claimed type)."""
         if not corroborated:
             return False
+        if reason.startswith("event_type:"):
+            claimed = reason.split(":", 1)[1]
+            signed = signed_event_type(self._state, event_id)
+            if signed is None or signed != claimed or signed not in _HARD_EVENT_TYPES:
+                return False           # forged/unbound event_type corroboration -> fail closed
         with self._state.lock:
             if self.remaining(day) <= 0:
                 return False
@@ -142,20 +202,36 @@ def _aware(dt: datetime) -> datetime:
 
 
 def deterministic_urgency(event: MarketEvent, calendar_events: Sequence[MarketEvent], *,
-                          now: datetime, quote_move_fn=None) -> tuple[bool, str]:
+                          now: datetime, quote_move_fn=None,
+                          verify_event_type=None) -> tuple[bool, str]:
     """Deterministic corroboration for 'urgent' (SEC-21): True iff a same-symbol calendar
     event sits within ±36h of ``now``, OR the event type is a halt/filing, OR an injected
     quote hook reports an abs move >= 3.0%. The headline's self-description NEVER counts.
-    Returns (corroborated, reason)."""
+    Returns (corroborated, reason).
+
+    SEC-11 (W10) domain-row binding: when ``verify_event_type`` (a ``(event) -> bool``) is
+    supplied, the halt/filing branch corroborates ONLY if it returns True — i.e. the mutable
+    ``event.event_type`` column matches the value bound into the signed EVENT_INGEST_BATCH
+    entry (``make_event_type_verifier``). A keyless flip news->filing therefore yields NO
+    corroboration (fail closed). When ``None`` (unbound/pre-ingest events, and the deterministic
+    pre-filter which spends no budget) the column is trusted as before — the fail-closed spend
+    gate is ``DeepBudget.try_consume``, which reconciles every ``event_type:`` reason too."""
     now = _aware(now)
     symbol = (event.symbol or "").upper()
     if symbol:
         for cal in calendar_events or []:
             if (cal.symbol or "").upper() != symbol or cal.ts is None:
                 continue
+            # SEC-11 (W10, G10 fix 2026-07-08): the calendar row's ``event_type`` (``calendar:%``)
+            # is itself a mutable column — a keyless writer can INSERT a forged calendar row to
+            # manufacture proximity corroboration (the denial-of-wallet sibling of the closed
+            # event_type-flip hole). When the verifier is supplied, a calendar row corroborates
+            # ONLY if its event_type matches its signed EVENT_INGEST_BATCH binding (fail closed).
+            if verify_event_type is not None and not verify_event_type(cal):
+                continue
             if abs(_aware(cal.ts) - now) <= _CALENDAR_WINDOW:
                 return True, f"calendar_proximity:{symbol}"
-    if event.event_type in {"halt", "filing"}:
+    if event.event_type in _HARD_EVENT_TYPES and (verify_event_type is None or verify_event_type(event)):
         return True, f"event_type:{event.event_type}"
     if quote_move_fn is not None and symbol:
         try:

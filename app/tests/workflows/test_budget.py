@@ -24,9 +24,20 @@ from workflows.budget import (
     deterministic_urgency,
     rank_candidates,
 )
-from workflows.constants import EVENT_DEEP_ESCALATION
+from workflows.constants import EVENT_DEEP_ESCALATION, EVENT_INGEST_BATCH
 
 DAY = NOW.date()
+
+
+def bind_event_type(st, event_id, event_type):
+    """Seed the signed EVENT_INGEST_BATCH binding events.py writes at persist time, so an
+    ``event_type:{halt|filing}`` corroboration passes the SEC-11 (W10) reconciliation in
+    ``try_consume`` (an unbound / forged event_type spends no deep budget — fail closed)."""
+    st.audit.append(EVENT_INGEST_BATCH, actor="ingest",
+                    refs={"model": "market_event", "row_ids": [event_id]},
+                    payload={"raw_key": "events-x", "date": DAY.isoformat(),
+                             "content_hash": "h" * 64, "count": 1,
+                             "event_types": {event_id: event_type}})
 
 
 def consume(budget, i=1, **kw):
@@ -142,6 +153,7 @@ def test_budget_per_day_isolation(st):
 
 def test_budget_ledger_payload_shape(st):
     b = DeepBudget(st, limit=1)
+    bind_event_type(st, "evt-7", "halt")          # SEC-11 (W10): event_type corroboration needs a signed binding
     consume(b, 7, symbol="MSFT", reason="event_type:halt", corroborated=True)
     with st.session_factory() as s:
         e = s.execute(select(AuditEntry).where(

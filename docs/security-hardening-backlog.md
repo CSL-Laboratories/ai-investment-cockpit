@@ -412,6 +412,53 @@ audit-spine: bind security-relevant **domain-row** fields (`Order` open-state, `
 event_type`) into the signed chain so the SEC-07 open-set and SEC-21 corroboration inputs are
 tamper-evident against a keyless writer.
 
+**W10 closure — the mechanism, and the G10 red-team round-1 correction (2026-07-08 — keep the
+reason; this is the load-bearing "why").** All three audit-spine sub-closures landed:
+- **(b) monotonic, non-reusable, HMAC-covered `seq`** — `storage/audit.py` keeps a persistent
+  signed high-water (`_bump_hwm`/`_read_hwm`) that NEVER decreases; `_insert` allocates
+  `seq = max(high_water, max_existing)+1`, so a freed tail seq is never reissued and a keyless
+  delete-then-**refill** lands as a seq GAP `verify_chain` rejects — WITHOUT the witness.
+  Appending onto a chain whose signed high-water was deleted is REFUSED (`AuditIntegrityError`)
+  — healing at a refilled head IS the bypass. Regression: `tests/storage/test_sec11_seq_monotonic.py`.
+- **(c) domain-row binding** — `MarketEvent.event_type` is bound into the signed
+  `EVENT_INGEST_BATCH` payload (`workflows/events.py`) and reconciled on the budget read-path
+  (`workflows/budget.py` `signed_event_type` + `deterministic_urgency(verify_event_type=)` +
+  `try_consume`; threaded into `workflows/triage_loop.py`). A keyless `news→filing` flip — AND
+  (G10 round-1 finding 3) a forged unsigned `calendar:%` row — yield no corroboration and spend
+  no deep budget. Regression: `tests/workflows/test_sec11_domain_row_binding.py`.
+- **(a) durable out-of-domain witness** — concrete `ExternalWitnessAdapter`s in
+  `bridge/witness.py` (`GitCommitWitness`, `DiscordAuditLogWitness`), `GitAuditLogAnchorStore`
+  promoted from SKETCH, wired at `main.compose()`. The four consult sites already call
+  `verify_against_anchor`, so this closed the SEC-07/SEC-20/SEC-21 audit-spine residuals with no
+  subsystem code (the SEC-07 delete-then-heal tests now catch the refill one layer earlier, at
+  `verify_chain` → read_only mode).
+
+**The G10 round-1 red-team found the naïve (a) wiring was FILE-ANCHOR THEATER (keep this — it is
+exactly the failure the SEC-11 rule forbids).** `GitCommitWitness.read_latest()` reads the local
+working-tree head file `data/audit-head.json`; the git COMMIT is write-only/procedural (Lucas
+reviews history out-of-band), NEVER consulted at the runtime read path. So a keyless writer who
+`DELETE`s the DB tail + replays a captured watermark ALSO overwrites the head file to the captured
+`(N, H_N)`, and `verify_against_anchor` reads clean at all four consult sites — the replay-rollback
+re-greens on a same-trust-domain witness (`used_only_file_anchor`), defeating SEC-11 in the default
+(Discord-deferred) deployment. **The fix:** adapters declare `out_of_domain` (git=False MIRROR +
+reviewed-history detection layer; Discord=True server-stamped trust source), and
+`GitAuditLogAnchorStore.latest()` — the value the consults trust — counts ONLY out-of-domain
+backends, so a git-only store returns `latest()=None` and every consult FAILS CLOSED (auto
+unreachable; live/budget refuse). A keyless rewrite of the git head file can no longer move the
+trust read; `budget.py` now also fails closed on `anchor is None` for parity (round-1 finding 2).
+Regressions: `tests/bridge/test_witness_adapters.py::test_git_only_store_is_never_trusted_for_latest`
++ `..._rewriting_the_git_mirror_cannot_lower_the_witness`; `tests/orchestrator/test_sec11_anchor.py::
+test_git_only_store_fails_closed_at_gate_and_oracle` + `..._git_head_file_rewrite_cannot_unlock_with_durable_witness`.
+
+**STATUS — SEC-11 remains OPEN as a pre-live P0 (do NOT imply closed).** The MECHANISM is complete
+and holds fail-closed against the fresh G10 red-team, but its ACTIVATION is contingent on the
+**prose prerequisite**: provisioning the durable OUT-OF-DOMAIN witness — a `discord-bot-token` in
+keyring + an `audit_log_channel_id` for a private `#audit-log` channel whose ACL denies the bot
+manage-messages. Until that is provisioned, the system is fail-closed-safe (no auto, no unsafe
+re-green) but auto/live/deep-budget do NOT operate. `GitCommitWitness` alone is a mirror, never the
+witness. SEC-11 closes only when the Discord witness is live AND a fresh red-team re-converges
+against the wired-with-Discord posture.
+
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If
 the hash covers only a summary + `prev_hash`, an attacker edits uncovered columns without

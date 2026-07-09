@@ -81,6 +81,8 @@ def test_git_auditlog_store_needs_an_adapter():
 
 def test_git_auditlog_store_delegates_and_is_monotonic():
     class _Adapter:
+        out_of_domain = True                          # a stand-in for a genuine out-of-domain witness
+
         def __init__(self):
             self.published = []
 

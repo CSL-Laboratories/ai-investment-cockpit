@@ -106,6 +106,9 @@ def test_one_market_day_dryrun_reaches_no_broker(tmp_path):
     events = market_day_events(now)
     _result, rows = persist_day(system, events)
     assert len(rows) == len(events), "every fixture item must persist exactly once"
+    # SEC-11 (W10): the anchor cadence keeps the witness fresh before the budget-consuming tick
+    # (the deep-budget consult fails closed on an absent anchor, like the order path).
+    system.anchor()
 
     # dispatched refs = the material/urgent items the brief packet is built over (the exact
     # set morning_brew clamps brief.source_refs to).

@@ -272,6 +272,12 @@ def replay_day(system, day, *, operator: str, orders: int, arm_auto: bool) -> Da
     _result, rows = day.persist(system)
     events_persisted = [row.id for row in rows.values()]
 
+    # SEC-11 (W10): the scheduler's independent run_anchor_head cadence keeps the external witness
+    # fresh BEFORE the intraday tick consults it — the deep-budget path now fails closed on an
+    # absent anchor, exactly like the order path (approve_and_place also anchors before placing).
+    # Mirror that cadence here so the tick reads a current anchor (auto days re-anchor post-arm).
+    system.anchor(clock=clock)
+
     # ---- [auto days] arm auto_veto BEFORE the tick so the mode timeline captures it -----------
     if arm_auto:
         _arm_auto_veto(system, operator=operator, clock=clock)

@@ -42,6 +42,28 @@ def test_compose_builds_state_app_and_services(tmp_path):
     assert state.audit.verify_chain().ok
 
 
+def test_compose_wires_durable_git_witness_not_file_anchor(tmp_path, monkeypatch):
+    """SEC-11 (W10, hardened by the G10 red-team): compose() wires a NON-NULL
+    GitAuditLogAnchorStore (NEVER FileAnchorStore). In the default (Discord-deferred) deployment
+    its ONLY backend is the same-trust-domain GitCommitWitness mirror, so the store has NO
+    genuine out-of-domain witness -> latest() is None -> an auto unlock FAILS CLOSED. A git-only
+    (file-anchor-in-effect) wiring must never satisfy the SEC-11 prerequisite."""
+    from bridge.anchor import FileAnchorStore, GitAuditLogAnchorStore
+    from config.settings import Mode
+    from orchestrator.gate import compute_gate
+
+    monkeypatch.setenv("COCKPIT_AUDIT_HEAD_FILE", str(tmp_path / "audit-head.json"))
+    state, _, _ = compose(db_url=f"sqlite:///{(tmp_path / 'w.db').as_posix()}",
+                          parquet_root=str(tmp_path / "raw"))
+    assert state.anchor_store is not None
+    assert isinstance(state.anchor_store, GitAuditLogAnchorStore)
+    assert not isinstance(state.anchor_store, FileAnchorStore)
+    assert state.anchor_store.has_out_of_domain_witness is False   # git-only: no genuine witness
+    assert state.anchor_store.latest() is None                     # same-domain mirror is not trusted
+    res = compute_gate(state, Mode.auto_veto)
+    assert not res.unlockable and res.metrics.get("anchor_ok") is False   # fail closed
+
+
 def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clock):
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient

@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # before submit (brokers/gateway.py). Env: COCKPIT_APPROVAL_TTL_SECONDS.
     approval_ttl_seconds: int = Field(default=900, ge=0)
 
+    # ---- SEC-11 external audit witness (W10) ------------------------------------------
+    # The git-TRACKED head file the GitCommitWitness anchors (reviewed history — bridge/
+    # witness.py). Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.
+    audit_head_file: str = "data/audit-head.json"
+    # The private #audit-log Discord channel id the DiscordAuditLogWitness posts to (server-
+    # stamped, out-of-domain). None until provisioned; the bot TOKEN is keyring-only (Inv 4),
+    # NEVER here. Env: COCKPIT_AUDIT_LOG_CHANNEL_ID.
+    audit_log_channel_id: int | None = None
+
     log_level: str = "INFO"
 
 

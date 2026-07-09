@@ -167,7 +167,16 @@ def persist_events(state, event_dicts: list[dict], *, parquet_root, clock=None) 
             ingested_at=now,
             created_at=now,
         ))
-    payload = {"raw_key": raw_key, "date": date, "content_hash": batch_hash, "count": len(rows)}
+    # SEC-11 (W10) domain-row binding: bind each row's mutable ``event_type`` (keyed by its
+    # immutable id) into the HMAC-signed EVENT_INGEST_BATCH payload. ``deterministic_urgency``
+    # treats ``event_type in {"halt","filing"}`` as auto-corroboration (workflows/budget.py),
+    # yet the column is otherwise unsigned — a keyless writer flipping news->filing could
+    # manufacture corroboration. The signed copy here is the tamper-evident trust root the
+    # budget read-path reconciles against (workflows.budget.signed_event_type).
+    payload = {
+        "raw_key": raw_key, "date": date, "content_hash": batch_hash, "count": len(rows),
+        "event_types": {r.id: r.event_type for r in rows},
+    }
     with state.session_factory() as s, s.begin():
         for row in rows:
             s.add(row)
