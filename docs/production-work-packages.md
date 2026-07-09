@@ -10,7 +10,9 @@ related: [path-to-production, security-hardening-backlog, security-architecture,
 >
 > **The system is PAPER-FIRST. No real money has moved and none may until the pre-live gates pass.** A green suite proves the *shape* of the plan, not the *closure* of an adversarial property (path-to-production §1, lines 34–47).
 >
-> **Pre-live P0 still OPEN — SEC-11.** The audit-spine "delete-then-heal" hole (non-monotonic reusable `seq` + no durable out-of-domain witness; `FileAnchorStore` is same-trust-domain theater) is the standing P0 pre-live blocker (security-hardening-backlog.md SEC-11 lines 362–413; path-to-production §2 lines 60–86). **W10 closes it and is the keystone. Nothing in this document may ever imply SEC-11 is closed until W10's adversarial gate (G10) fails closed against a fresh red-team.**
+> **Pre-live P0 — SEC-11: W10 MECHANISM DONE (`ea7e0fc`, 2026-07-08), but SEC-11 STAYS OPEN pending witness ACTIVATION.** The audit-spine "delete-then-heal" hole (non-monotonic reusable `seq` + no durable out-of-domain witness) is closed at the MECHANISM level: monotonic non-reusable HMAC-covered `seq` + domain-row binding + concrete witness adapters, all shipped and green (619 passed / 3 skipped). **G10 passed a FRESH round-2 red-team (0 repros, all four consuming paths).** *(security-hardening-backlog.md SEC-11 "W10 closure" note; path-to-production §2.)*
+>
+> **The G10 round-1 red-team caught a load-bearing correction — carry it into EVERY dependent W (keep the reason).** The naïve wiring was **FILE-ANCHOR THEATER**: `GitCommitWitness.read_latest()` reads a local working-tree head file a keyless writer can overwrite, and the git commit is procedural (Lucas reviews history OUT-OF-BAND), **never consulted at the runtime read path** — so a replayed-watermark rollback re-greened at all four consult sites. **The git-commit witness is a MIRROR + reviewed-history DETECTION layer, NOT a runtime trust source; only the Discord `#audit-log` server-stamped post is a runtime OUT-OF-DOMAIN witness.** `GitAuditLogAnchorStore.latest()` (the value the consults trust) counts ONLY `out_of_domain=True` backends, so a **git-only deployment `latest()`=None → every consult FAILS CLOSED** (auto unreachable; live/deep-budget refuse). **SEC-11's ACTIVATION is therefore contingent on the prose prerequisite: provisioning the Discord witness** (`discord-bot-token` in keyring + `audit_log_channel_id` for a private `#audit-log` channel whose ACL denies the bot manage-messages). Until then the system is fail-closed-safe but auto/live do NOT operate. **Nothing in this document may ever imply SEC-11 is "closed" (auto-ready) on the strength of the git mirror OR before the Discord witness is provisioned.**
 
 # The W-series: production property-closure packages
 
@@ -104,17 +106,27 @@ weaken the nine above — each is a durability the build assumed but never
 guaranteed.
 
 **P-A (audit-witness invariant).** The verified in-DB audit head MUST be
-anchored to a durable, OUT-OF-DOMAIN witness (git-commit head-hash + Discord
-`#audit-log` server-timestamp — NOT the same-trust-domain `FileAnchorStore`)
-before any auto-mode unlock or any live-mode gate/mode read; `compute_gate`,
-`ModeLadder.current()`, `gateway._pending_ok`, and `workflows/budget.py` FAIL
-CLOSED when the verified head is below or absent from the last external anchor.
-This does not weaken Invariant 6 — it is the durability Invariant 6 assumed but
-never had. It is the closure of SEC-11; until it holds against a fresh
-adversarial repro the audit spine is same-trust-domain theater, and SEC-11 must
-NEVER be implied closed. *(path-to-production §2 lines 60–87; backlog SEC-11
-lines 362–413, esp. 405–413; security-architecture §8; `anchor.py` docstring
-lines 16–26.)*
+anchored to a durable, RUNTIME OUT-OF-DOMAIN witness before any auto-mode unlock
+or any live-mode gate/mode read; `compute_gate`, `ModeLadder.current()`,
+`gateway._pending_ok`, and `workflows/budget.py` FAIL CLOSED when the verified
+head is below or absent from the last external anchor. **What counts as the
+RUNTIME witness (G10 red-team correction, 2026-07-08 — this is the load-bearing
+distinction):** only a source a keyless local writer cannot forge AT THE RUNTIME
+READ PATH — the Discord `#audit-log` server-stamped post (`DiscordAuditLogWitness`,
+`out_of_domain=True`). The **git-commit head-hash is a MIRROR + a reviewed-history
+DETECTION layer (`GitCommitWitness`, `out_of_domain=False`), NOT a runtime witness**:
+its `read_latest()` reads a local working-tree file a keyless writer can overwrite,
+and the git commit is procedural/out-of-band (Lucas reviews history before push),
+never consulted at the read path. `FileAnchorStore` is same-trust-domain theater
+too. **`GitAuditLogAnchorStore.latest()` — the value the four consults trust —
+counts ONLY `out_of_domain=True` backends, so a git-only deployment returns
+`latest()`=None and every consult FAILS CLOSED** (auto unreachable; live/deep-budget
+refuse). This does not weaken Invariant 6 — it is the durability Invariant 6
+assumed but never had. It is the closure of SEC-11; the MECHANISM holds against a
+fresh red-team (W10, `ea7e0fc`), but its ACTIVATION is contingent on provisioning
+the Discord witness (bot creds), and until then SEC-11 must NEVER be implied
+closed. *(path-to-production §2; backlog SEC-11 "W10 closure" note; security-
+architecture §8; `bridge/anchor.py` + `bridge/witness.py` + `main.py` docstrings.)*
 
 **P-B (capability-boundary invariant).** In production, Invariant 1 is enforced
 at the ORDER-AUTHORITY CAPABILITY boundary (the live Robinhood MCP connection),
@@ -151,11 +163,11 @@ slice.
 | SEC-04 | partial | W12 | Out-of-band fail-closed kill (L184–199). HALT gate exists; residual = NSSM stop doc + hotkey/file-drop + set-flag→cancel→disconnect ordering. |
 | SEC-05 | open | W11 | Bearer stores outside keyring (L201–216). P0-live. Separate low-priv Windows account + per-file ACLs. **Host-provisioning half overlaps OPS-06/W15 — see §3.1.** |
 | SEC-06 | partial | W11 | Tool starvation asserted, never tested (L218–232). Residual: startup+CI actual-argv inspector, auto-arm refusal, cwd pin. |
-| SEC-07 | partial | W10 (+W17) | Single-transaction tampers CLOSED @ WP8 (L270–294). PRIMARY residual = delete-then-heal, folded into SEC-11/W10. W17 ADVANCES the minor decided_at-TTL residual but does NOT close SEC-07. |
+| SEC-07 | partial | W10 (+W17) | Single-transaction tampers CLOSED @ WP8 (L270–294). Delete-then-heal residual AUTO-CLOSED by W10's monotonic seq (`ea7e0fc`): the refill is now a `verify_chain` gap → read_only, one layer earlier than the gate-(h) reconcile (`test_pending_exposure_chain.py` updated). W17 ADVANCES the minor decided_at-TTL residual but does NOT close SEC-07. |
 | SEC-08 | done | DONE @ WP8 | Runtime pin at execution + Claude-exhaustion drop (L296–309). No delta. |
 | SEC-09 | partial | W14 | Default-on scrubber DONE @ WP8 (L334–347). Residual = dashed-account# + lowercase/space-broken foreign ticker+size redaction (confidentiality-only). |
 | SEC-10 | done | DONE @ WP2 | HMAC-keyed chain (L349–360). Property holds. |
-| SEC-11 | **open** | **W10** | **THE P0 pre-live blocker** (L362–413). Durable out-of-domain witness + monotonic non-reusable HMAC-covered seq + domain-row binding. Keystone. NEVER imply closed. |
+| SEC-11 | **open (mechanism DONE)** | **W10 `ea7e0fc`** | **THE P0 pre-live blocker.** MECHANISM shipped: monotonic non-reusable HMAC-covered seq + domain-row binding + concrete witness adapters; G10 passed a fresh red-team. STAYS OPEN: ACTIVATION needs the Discord out-of-domain witness PROVISIONED (git alone is a mirror → fail-closed). NEVER imply closed. |
 | SEC-12 | done | DONE @ WP2 | Hash coverage + canonical serialization (L415–428). W10 EXTENDS the covered set (domain-row binding), scoped under SEC-11. |
 | SEC-13 | partial | W12 | Audit write not atomic with state change (L430–447). Two-phase entries + startup reconciliation + 1:1 completeness. |
 | SEC-14 | partial | W18 (+W19) | Grounding-verifier property HOLDS @ WP8 (L474–487). Residual = auto-exec seam threads `injection_predicate` + gates on `flagged`: W18 WIRES+PROVES it for the auto_veto rung, W19 for auto_full (core built @ WP8, do NOT rebuild). |
@@ -310,12 +322,19 @@ canary) and SEC-19 (CompiledRule hashing) are P0-auto preconditions and SEC-21's
 try_consume lock is required for a single-scheduler auto deployment — so both
 **W18→W14 and W19→W14 are DECLARED edges in the table above**, not implicit.
 
-**Keystone confirmed, code-grounded.** The `verify_against_anchor` consult sites
-ALREADY EXIST — `gateway.py:396`, `gate.py:154`, `mode_ladder.py:155`,
-`budget.py:55` — so closing W10 auto-resolves the SEC-07/20/21 audit-spine
-residuals with NO further subsystem code. Only the durable out-of-domain witness
-(`GitAuditLogAnchorStore`, a SKETCH at `anchor.py:174–204`, deferred pending bot
-creds) is missing.
+**Keystone SHIPPED (mechanism), code-grounded.** The `verify_against_anchor`
+consult sites ALREADY EXISTED — `gateway.py`, `gate.py`, `mode_ladder.py`,
+`budget.py` — so W10's wiring auto-resolved the SEC-07/20/21 audit-spine residuals
+with NO further subsystem code. W10 (`ea7e0fc`) built the monotonic non-reusable
+seq (`storage/audit.py`), the domain-row binding (`events.py`/`budget.py`/
+`triage_loop.py`), and the concrete witness adapters (`bridge/witness.py`
+`GitCommitWitness` + `DiscordAuditLogWitness`), promoted `GitAuditLogAnchorStore`
+to production, and wired it at `main.compose()`. **The only thing still missing is
+ACTIVATION, not code: the RUNTIME out-of-domain witness is the Discord
+`#audit-log` post; a git-only deployment is fail-closed (`latest()`=None) until a
+`discord-bot-token` + `audit_log_channel_id` are provisioned.** One correction
+`budget.py` needed for parity (G10 finding): fail closed on `anchor is None` like
+the other three consults.
 
 ---
 
@@ -327,6 +346,19 @@ per-W kickoff prompts live in [[ultracode-build-playbook]]. Each W-gate is an
 ADVERSARIAL property-closure acceptance (§1), not a green suite.
 
 ### W10 — Audit-spine hardening: close SEC-11 delete-then-heal (the keystone)
+
+> **STATUS: MECHANISM DONE + pushed (`ea7e0fc`, 2026-07-08); G10 passed a FRESH
+> round-2 red-team (0 repros, all 4 consuming paths). SEC-11 STAYS OPEN pending
+> witness ACTIVATION.** The spec below is retained as the plan of record; the
+> as-built delivery + the load-bearing G10 CORRECTION are in the banner (top of
+> this doc), the P-A invariant, and the [[security-hardening-backlog]] "W10
+> closure" note. **The one correction future W's MUST honor:** `GitCommitWitness`
+> is a MIRROR + reviewed-history detection layer (`out_of_domain=False`), NOT a
+> runtime witness — only the Discord `#audit-log` server-stamped
+> `DiscordAuditLogWitness` (`out_of_domain=True`) gates auto/live; a git-only
+> deployment fails closed (`latest()`=None). So "wire the witness in `compose()`"
+> below is DONE, but auto/live/deep-budget only ACTIVATE once the Discord
+> `discord-bot-token` + `audit_log_channel_id` are provisioned.
 
 **One-liner.** Wire a durable OUT-OF-DOMAIN witness, make the per-`AuditEntry`
 `seq` strictly monotonic + non-reusable, and bind `MarketEvent.event_type` into
@@ -340,13 +372,21 @@ degradation trust and every auto rung.
 single-owner package (NOT parallelizable across owners; forking would race the
 chain head, the OPS-01 single-writer concern):
 - **(a) Durable out-of-domain witness.** Replace the `GitAuditLogAnchorStore`
-  SKETCH (`bridge/anchor.py:174–204`) with concrete `ExternalWitnessAdapter`
-  implementations: a git-head-hash commit adapter (a rewrite shows in the diff
-  Lucas reviews via GitHub Desktop) AND a Discord `#audit-log` post adapter
-  (server-side timestamp the local writer cannot backdate). Wire the composed
-  store into `main.compose()` (`main.py:39` calls `OrchestratorState.build(...)`
-  with NO `anchor_store` today, so production fails closed on every auto unlock).
-  `FileAnchorStore` stays a same-trust-domain MIRROR only, never the witness.
+  SKETCH with concrete `ExternalWitnessAdapter` implementations: a git-head-hash
+  commit adapter AND a Discord `#audit-log` post adapter. Wire the composed store
+  into `main.compose()`. **⚠ G10 CORRECTION (as-built `ea7e0fc`): these two adapters
+  are NOT co-equal witnesses. The git-head-hash adapter (`GitCommitWitness`) is
+  `out_of_domain=False` — a MIRROR + reviewed-history detection layer, because its
+  runtime `read_latest()` reads a LOCAL working-tree file a keyless writer can
+  overwrite (the commit is procedural/out-of-band, never consulted at the read path).
+  ONLY the Discord `#audit-log` adapter (`DiscordAuditLogWitness`) is
+  `out_of_domain=True`, and `GitAuditLogAnchorStore.latest()` counts ONLY
+  out-of-domain backends — so a git-only deployment returns `latest()`=None and every
+  consult FAILS CLOSED. See the status banner + P-A.** `compose()` now ALWAYS wires
+  `anchor_store=_build_anchor_store(...)` (a non-None `GitAuditLogAnchorStore`); it
+  still fails closed on a git-only deploy because `latest()`=None absent the Discord
+  witness, NOT because no store is wired. `FileAnchorStore` is same-trust-domain
+  theater too, never the witness.
 - **(b) Monotonic, non-reusable, HMAC-covered seq.** Root cause: `_insert`
   allocates `seq = (head.seq + 1) if head else 1` from the max surviving row
   (`audit.py:118`) and `_bump_watermark` DELETEs+re-inserts the watermark each
@@ -655,8 +695,10 @@ extends the smoke).
 **Does not do.** Does NOT close/weaken/imply SEC-11 (OPS-01 serialization is
 orthogonal to the keyless delete-then-replay); does NOT re-implement the built
 in-process lock/retry/UNIQUE/same-process test; does NOT introduce WAL/busy_timeout
-as new; does NOT re-spec `compose()`; does NOT build `GitAuditLogAnchorStore` or
-any witness; does NOT provision creds / host-harden / backups / calendar / MCP
+as new; does NOT re-spec `compose()`; does NOT touch/re-spec `GitAuditLogAnchorStore`
+or the witness adapters (SHIPPED at W10 `ea7e0fc` — a git-only deploy fails closed via
+`latest()`=None absent the Discord witness; W13 only extends the compose()/run() smoke);
+does NOT provision creds / host-harden / backups / calendar / MCP
 session lifetime (other Ws); does NOT alter the HMAC/verify algorithms or add API
 routes; does NOT commit/push.
 
@@ -938,6 +980,18 @@ else degrade to notional-denominated and flag every trade.*
 ---
 
 ### W17 — Phase 3 live enablement: the Robinhood Agentic MCP live path behind the full gate
+
+> **SEC-11 ACTIVATION IS A W17 PRECONDITION (G10 correction).** W10 shipped the
+> witness MECHANISM but a git-only deployment is fail-closed (`latest()`=None → the
+> live-mode gate/mode consults refuse). So **before the first live cycle, W17 MUST
+> provision the durable RUNTIME out-of-domain witness**: create the private
+> `#audit-log` Discord channel (ACL: deny the bot manage-messages), set
+> `audit_log_channel_id` (`COCKPIT_AUDIT_LOG_CHANNEL_ID`), and put the
+> `discord-bot-token` in keyring — then confirm `run_anchor_head` posts and
+> `GitAuditLogAnchorStore.latest()` reflects the server head. Only then does the
+> `review_live` gate/mode read stop failing closed. The git-commit witness remains a
+> reviewed-history detection layer, never the runtime witness. *(W10 `ea7e0fc`;
+> P-A invariant; `main._build_anchor_store`.)*
 
 **One-liner.** Make live orders reachable ONLY through mode+risk+approval on a
 loss-tolerable fund: turn the `robinhood_mcp.py` stub into the real Agentic MCP
