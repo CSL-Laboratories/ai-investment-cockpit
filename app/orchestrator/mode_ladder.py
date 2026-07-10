@@ -205,12 +205,14 @@ class ModeLadder:
 
     # ---- gated auto arm ----------------------------------------------------------------
     def arm_auto_mode(self, target, decision_stage_runtimes=None, gate_result=None,
-                      operator=None, clock=None) -> ArmResult:
+                      operator=None, clock=None, decision_stage_specs=None) -> ArmResult:
         """Arm ``auto_veto`` / ``auto_full``. REFUSES (returns ``armed=False``, nothing
         persisted) unless: target is an auto mode reachable by a single-rung step up, the
-        performance gate passed for exactly this target (SEC-20), AND every decision-stage
-        runtime is ``claude`` (Inv 2). On success, stamps armed_at / armed_until (disarm at
-        market close) / armed_by and persists via record_state_change."""
+        performance gate passed for exactly this target (SEC-20), every decision-stage runtime
+        is ``claude`` (Inv 2), AND every decision-stage job resolves to a tool/MCP-STARVED argv
+        (SEC-06 / W11 — deny-by-default on the actual constructed argv). On success, stamps
+        armed_at / armed_until (disarm at market close) / armed_by and persists via
+        record_state_change."""
         clock = clock or self.st.clock
         target = _as_mode(target)
         # Whole read-modify-write under the lock so a concurrent killswitch cannot interleave
@@ -242,6 +244,17 @@ class ModeLadder:
             non_claude = sorted({r for r in runtimes if r != "claude"})
             if non_claude:
                 reasons.append(f"decision-stage runtime(s) not claude: {non_claude} (Inv 2)")
+
+            # W11 SEC-06: refuse to arm if any decision-stage job's ACTUAL argv grants a tool or
+            # attaches an MCP server (deny-by-default). Defaults to the canonical decision aliases
+            # so a wiring that made a decision job tool-bearing is caught at ARM time, not first run.
+            from agent_runner import tool_inspector
+            specs = (decision_stage_specs if decision_stage_specs is not None
+                     else tool_inspector.default_decision_stage_specs())
+            try:
+                tool_inspector.assert_all_decision_specs_tool_starved(specs)
+            except tool_inspector.ToolStarvationError as exc:
+                reasons.append(f"decision-stage job is not tool-starved (SEC-06): {exc}")
 
             if reasons:
                 return ArmResult(armed=False, mode=src, reasons=reasons, row=None)

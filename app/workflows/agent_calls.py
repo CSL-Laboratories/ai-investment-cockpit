@@ -45,6 +45,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
     generation = state.usage.window(runtime).generation
     job_id = new_id("job")
+    pinned_cwd = getattr(state.settings, "decision_agent_cwd", None)
     spec = AgentSpec(
         job_id=job_id,
         runtime=runtime,
@@ -55,9 +56,15 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         allowed_tools=[],            # SEC-06: decision stages are tool-starved
         timeout_s=timeout_s,
         decision_stage=True,
+        cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
     )
     started = state.clock.now()
-    result = run_agent(spec, transport=transport, usage=state.usage, secret_values=None)
+    # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd, and — SEC-05 —
+    # refuses to spawn a decision job under the orchestrator's privileged token when a low-priv
+    # account is configured (the transport must launch the child under it). All fail-closed.
+    result = run_agent(spec, transport=transport, usage=state.usage, secret_values=None,
+                       pinned_cwd=pinned_cwd,
+                       decision_agent_account=getattr(state.settings, "decision_agent_account", None))
     completed = state.clock.now()
 
     refs = dict(input_refs or {})

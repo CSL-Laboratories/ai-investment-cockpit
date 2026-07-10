@@ -2,7 +2,7 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: active
-last-verified: 2026-07-08
+last-verified: 2026-07-09
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
@@ -18,12 +18,12 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   HMAC audit chain (SEC-10) and the gateway submit-time re-check covering
 >   SEC-04/07/08 (WP2/WP6/WP7).
 > - **Partially closed:** SEC-03 (Inv-1 order authority closed WP7 via a signed
->   `EVENT_ADJUDICATION` binding; live-MCP capability-token binding, runtime
->   tracer, and low-priv agent account still outstanding), SEC-07 (single-
->   transaction tampers closed WP8; the delete-then-heal residual is folded into
->   SEC-11), SEC-09 (dashed-account# / lowercase-foreign redaction residual),
->   SEC-21 (domain-row corroboration binding + single-scheduler `try_consume`
->   lock).
+>   `EVENT_ADJUDICATION` binding; runtime tracer + live-MCP token binding +
+>   trust-root pinning CLOSED W11/G11 2026-07-09 — `producing_runtime` provenance
+>   a documented pre-W17 residual), SEC-07 (single-transaction tampers closed WP8;
+>   the delete-then-heal residual is folded into SEC-11), SEC-09 (dashed-account# /
+>   lowercase-foreign redaction residual), SEC-21 (domain-row corroboration binding
+>   + single-scheduler `try_consume` lock).
 > - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The non-monotonic,
 >   reusable per-entry sequence plus the absence of a durable out-of-domain
 >   witness allows a keyless delete-then-heal that `verify_chain()` re-greens.
@@ -35,7 +35,11 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   auto-closes the SEC-07 / SEC-20 / SEC-21 audit-spine residuals, since
 >   `brokers/gateway.py::_pending_ok` and `workflows/budget.py` already consult
 >   `verify_against_anchor` once a witness is wired.
-> - **Other pre-live items:** SEC-03, SEC-05, SEC-06 remain pre-live; SEC-09 and
+> - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
+>   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
+>   (credential starvation — ACTIVATION pending the low-priv account + launcher;
+>   host provisioning is OPS-06/W15), SEC-06 (deny-by-default argv tool/MCP
+>   starvation). G11 held across three fresh red-team rounds (0 repros). SEC-09 and
 >   the single-scheduler polish are minor residuals.
 > - **Auto-mode-only (gated):** SEC-01/16/19/23 stay behind the performance gate
 >   and the intentionally-unwired Phase-3 auto-exec seam.
@@ -181,6 +185,34 @@ pending-exposure sum and the approval `decided_at` TTL still read mutable column
 hardening can chain-anchor them too. The live-MCP capability-token (mint bound to a signed
 approval) + runtime tracer + low-priv agent account remain the outstanding pre-live items.
 
+**W11 closure (G11 adversarial gate — 2026-07-09, keep the reason).** The three outstanding SEC-03
+residuals are CLOSED and pinned. (1) **Always-on runtime tracer** (`brokers/order_tracer.py`): a
+CLASS-level guard on every broker order method fails closed (raise `OrderAuthorityViolation` + an
+`order_authority_bypass` AuditEntry, broker never entered) on any dispatch whose live call stack
+lacks the `OrderGateway.submit` code-object frame — catching direct / getattr / stored-partial /
+MCP-shim AND class/descriptor dispatch (`type(broker).submit_order(broker,…)`), all of which pass
+the static Inv-1 grep GREEN. (2) **Live-MCP capability token bound to a signed approval**
+(`gateway.mint_live_submit_token`): the LIVE capability cannot even be MINTED for an order no
+HMAC-signed `EVENT_ADJUDICATION` approves (re-derived from the chain), and
+`robinhood_mcp.agentic_place` REFUSES unless the tracer guards the broker. (3) **Trust-root
+pinning** (`gateway.__init__(st=…)` + `_resolve_state`): gate (e)'s root of trust (the HMAC key +
+DB) is pinned at construction, so a caller holding only the gateway cannot substitute an
+attacker-keyed chain by threading a forged ladder (a G11-round-2 finding — the same never-approved
+order flipped refused→fired under a caller-supplied `st`). **The G11 gate held across THREE fresh
+red-team rounds** (2/3/4; round 4 unanimous, 0 repros): every self-minted / by-value / forged-row /
+dispatch bypass fails closed; the order authority remains gate (e)'s signed adjudication. Two G11
+findings were fixes-that-introduced-defects, caught and closed in the next fresh round (the
+class-level wrap first exposed a named `_order_tracer_original` unwrap handle — removed; the original
+now lives only in the guard closure, only a boolean sentinel is public). Regressions:
+`tests/brokers/test_order_tracer.py`, `test_gateway_hardening.py` (live-token + trust-root-pin
+cases), `test_robinhood_mcp.py`. **RESIDUALS (documented, NON-reachable today — no wired order-path
+caller; decision agents are out-of-process): (a)** gate (f) trusts a caller-supplied
+`producing_runtime` literal (the signed adjudication binds proposal/risk/tuple, not the runtime) —
+chain-anchor it before W17 wires a live submit caller; **(b)** an in-process actor with arbitrary
+introspection (a guard's `__closure__`, monkeypatch, capture-before-install) can reach the original
+— inherent to any Python wrapper and equivalent to the trusted-composition level, outside the P-B
+(out-of-process decision agent) threat model.
+
 ### SEC-04 — Out-of-band, fail-closed kill switch
 **Attack.** `POST /killswitch` and the `/killswitch` command execute inside the
 orchestrator's own event loop. If that loop is in a tight `auto_full` submit burst,
@@ -215,6 +247,28 @@ stolen token's window is bounded.
 **Test.** A decision-stage agent process cannot read `auth.json` / the keyring (ACL
 assertion).
 
+**W11 closure (G11 adversarial gate — 2026-07-09, keep the reason).** The runtime ACL-assertion
+half is CLOSED: `agent_runner/account_guard.assert_credential_starved` fails closed unless the
+configured decision-agent account provably cannot read the bearer stores (`~/.codex/auth.json`, the
+Claude CLI session store, the keyring), invoked at `main.compose()` startup. **G11 round-1 caught
+that the ACL check ALONE was theater** (the load-bearing reason to keep): the ACL verifies the
+low-priv account's access, but nothing spawned the decision subprocess UNDER that account —
+`SubprocessTransport.run` used the orchestrator's privileged token, so an injected decision agent
+still read the stores in a CONFIGURED deployment. Fixed:
+`agent_runner/transport.LowPrivSubprocessTransport` launches the child under the account, and
+`runner.run_agent` FAILS CLOSED (`CredentialGuardError`) for any decision-stage job when a
+`decision_agent_account` is configured but the transport does not launch under it — threaded from
+BOTH decision-spawn sites (`workflows/agent_calls.call_agent`, `workflows/grounding.run_grounding_check`;
+a G11-round-2 asymmetry). Regressions: `tests/agent_runner/test_account_guard.py`. G11 held across
+three fresh rounds (0 repros). **ACTIVATION** (parallel to SEC-11's Discord witness): SEC-05 is
+ACTIVE only once the low-priv account + a `CreateProcessWithLogonW` launcher are provisioned
+([[setup/low-priv-agent-account]]); until then `_logon_launch` raises — a configured account with no
+launcher cannot run decision jobs at all (fail closed, never a privileged fallback). **The
+host-provisioning half** (account creation, BitLocker, NTFS ACLs) **is OPS-06 / W15** (W-series
+§3.1 split). **RESIDUAL (pre-W17, pragma-no-cover, non-reachable):** the ACL check walks direct-SID
+ACEs only, missing group-membership grants — refine with an effective-access (`AuthzAccessCheck`)
+evaluation when the launcher lands.
+
 ### SEC-06 — Mechanically test decision-agent tool starvation
 **Attack.** The only tool test asserts the agent "cannot touch the filesystem outside
 its sandbox" (FS **write**). Exfil needs FS **read** + an egress channel, neither
@@ -230,6 +284,17 @@ just write-sandboxing). Pin and assert the subprocess working directory.
 **Amends.** [[security-architecture]] §7. Inv 4.
 **Test.** A job spec with a non-empty tool list is refused; the arg-list inspector fails
 on `WebFetch`/`Bash`/`Read`.
+
+**W11 closure (G11 adversarial gate — 2026-07-09).** CLOSED: `agent_runner/tool_inspector.inspect_argv`
+is a deny-by-default inspector on the ACTUAL constructed argv — it refuses any granted tool, any
+`--mcp*` attachment, any permission-loosener (`--dangerously-skip-permissions` / `--permission-mode`),
+and the capability/prompt-injection flags `--settings` / `--append-system-prompt` / `--system-prompt`
+(a G11-round-3 deny-list gap) — wired into `run_agent` (every decision spawn, incl. `run_grounding_check`)
+and `arm_auto_mode` (an auto rung refuses to arm if any decision-stage job resolves to a
+tool/MCP-bearing argv), plus a pinned + asserted decision-agent cwd (`assert_decision_cwd`). The
+spec-level `build_argv` refusal (shipped WP1b) is the necessary first line; this is the mechanical
+argv layer the backlog required. Regressions: `tests/agent_runner/test_tool_inspector.py`. G11 held
+across three fresh rounds (0 repros); the inspector defeated every injected-flag variant tried.
 
 ### SEC-07 — Locked submit transaction (defeat TOCTOU)
 **Attack.** A proposal clears risk at 10:00, the operator approves at 10:04, mode is

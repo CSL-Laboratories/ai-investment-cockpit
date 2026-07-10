@@ -157,7 +157,13 @@ def run_grounding_check(state, proposal: dict, raw_items: list[dict], *,
             decision_stage=True,
             allowed_tools=[],
         )
-        result = run_agent(spec, transport=transport, usage=state.usage)
+        # W11 SEC-05/06: thread the low-priv account + pinned cwd so the runner's spawn backstop
+        # covers the grounding decision spawn too (not only workflows/agent_calls.py).
+        result = run_agent(
+            spec, transport=transport, usage=state.usage,
+            pinned_cwd=getattr(state.settings, "decision_agent_cwd", None),
+            decision_agent_account=getattr(state.settings, "decision_agent_account", None),
+        )
     except Exception:
         return None
     if result.status != OK or not isinstance(result.validated, dict):
