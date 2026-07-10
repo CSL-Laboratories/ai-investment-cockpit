@@ -148,3 +148,48 @@ def test_completeness_catches_unaudited_state(env):
     assert audit.verify_completeness(ModeState) == []       # atomic write is covered
     Repo(sf, ModeState).add(id="m2", mode="paper", created_at=now)   # bare write, no audit
     assert audit.verify_completeness(ModeState) == ["m2"]   # uncovered state row is flagged
+
+
+def test_completeness_is_model_scoped_no_cross_table_mask(env):
+    """C2 (cross-table collision): coverage is scoped by ``refs.model``. A covered ModeState
+    must NOT mask a bare-added Order sharing the same id — ``verify_completeness(Order)`` still
+    flags the orphan Order, while ``verify_completeness(ModeState)`` sees the ModeState covered."""
+    from schemas.models.order import Order
+    audit, sf = env
+    now = datetime.now(timezone.utc)
+    collide = "shared-id"
+    # A covered ModeState under the shared id (refs.model == mode_state).
+    audit.record_state_change(ModeState(id=collide, mode="review_live", created_at=now),
+                              "mode_change", actor="op")
+    # A BARE Order under the SAME id — no covering audit entry.
+    Repo(sf, Order).add(
+        id=collide, proposal_id="p", risk_decision_id="r", account="paper", symbol="AAPL",
+        side="buy", qty=1, order_type="market", tif="day", order_tuple_hash="h",
+        state="submitted", filled_qty=0, created_at=now, updated_at=now,
+    )
+    assert audit.verify_completeness(ModeState) == []          # its own audited row covers it
+    assert audit.verify_completeness(Order) == [collide]       # NOT masked by the ModeState cover
+
+
+def test_completeness_report_aggregates_all_gaps(env):
+    # SEC-13 thin roll-up: one snapshot of unresolved intents + orphan results + uncovered rows.
+    audit, sf = env
+    now = datetime.now(timezone.utc)
+    # (a) an unresolved intent (crash-mid-submit).
+    i = audit.intent("order_submit", refs={"order_id": "o9"})
+    # (b) an uncovered domain row (bare write bypassing record_state_change).
+    Repo(sf, ModeState).add(id="m3", mode="paper", created_at=now)
+
+    report = audit.completeness_report([ModeState])
+    assert report["unresolved_intents"] == [i.seq]
+    assert report["orphan_results"] == []
+    assert report["uncovered"] == {"mode_state": ["m3"]}
+
+    # Resolving the intent + no orphan/uncovered => a clean aggregate.
+    audit.result(i, "order_submit", refs={"order_id": "o9"})
+    audit.record_state_change(ModeState(id="m4", mode="review_live", created_at=now),
+                              "mode_change", actor="op")
+    # m3 is still uncovered; cover the report over a model with no gaps to see it clear.
+    clean = audit.completeness_report([])
+    assert clean == {"unresolved_intents": [], "orphan_results": [], "uncovered": {}}
+    assert audit.verify_chain().ok

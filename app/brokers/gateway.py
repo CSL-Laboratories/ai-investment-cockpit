@@ -97,10 +97,14 @@ class GateOutcome:
 
 
 def _halt_active(path) -> bool:
-    """SEC-04 fail-closed HALT probe: an UNREADABLE flag counts as SET."""
+    """SEC-04 fail-closed HALT probe: ANY probe failure counts as SET. ``halt_is_set`` already
+    fails closed internally (R3-S3: Windows winerror != 2, NUL-byte ValueError, unreadable OSError
+    all read as SET); this belt-and-suspenders catch broadened from ``except OSError`` to
+    ``except Exception`` so that ANY unexpected probe fault (e.g. a re-raised ValueError, a
+    monkeypatched seam) still fails closed rather than propagating and skipping the gate."""
     try:
         return halt_is_set(path)
-    except OSError:
+    except Exception:   # noqa: BLE001 - fail closed: any probe fault => HALT treated as SET
         return True
 
 
@@ -621,6 +625,21 @@ class OrderGateway:
                 return GateOutcome(False, "pending_exposure", reason,
                                    order_tuple_hash=resolved_hash)
 
+            # SEC-04 SYNCHRONOUS HALT re-check immediately before the broker call. Gate (a) probed
+            # the sentinel ONCE at the top of _precheck; the still-unlocked-file work since then
+            # (_load_row, _registry.consume, _pending_ok's verify_chain + full table scans) is a real
+            # TOCTOU window in which the OUT-OF-BAND `python -m orchestrator.halt --set` — which never
+            # takes st.lock — can write the sentinel. Re-probe the SAME default_halt_path() here so
+            # NO unresolved intent and NO broker call is emitted once the flag is present (SEC-04's
+            # required control: check the sentinel synchronously immediately before every MCP call).
+            # An UNREADABLE flag counts as SET (fail closed). Additive: gates a-h and the two-phase
+            # submit are unchanged.
+            if _halt_active(default_halt_path()):
+                reason = "HALT sentinel set before broker submit (SEC-04)"
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                                     actor=producing_runtime)
+                return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
+
             # ALL gates passed -> two-phase submit (SEC-13). Intent BEFORE the broker call.
             intent = st.audit.intent(
                 "order_submit",
@@ -630,6 +649,25 @@ class OrderGateway:
                          "qty": str(order.qty), "order_type": order.order_type,
                          "mode": ladder.current().value, "producing_runtime": producing_runtime},
             )
+            # SEC-04 (R3-S1) FINAL fail-closed HALT re-check — AFTER the intent is written and
+            # IMMEDIATELY before the broker call. The pre-broker re-check above runs BEFORE the
+            # two-phase intent write; an out-of-band `python -m orchestrator.halt --set` (which never
+            # takes st.lock) landing DURING the intent append is a fresh TOCTOU window that would
+            # still fire the broker submit. Re-probe the SAME default_halt_path() here so the
+            # sentinel is honored right up to the call. On trip: COMPLETE the two-phase pair (a
+            # covering result so this intent does NOT dangle — SEC-13's 1:1 pairing and
+            # unresolved_intents() stay intact), record the refusal, and return WITHOUT calling the
+            # broker. An UNREADABLE flag counts as SET (fail closed).
+            if _halt_active(default_halt_path()):
+                reason = "HALT set immediately before broker call (SEC-04)"
+                st.audit.result(
+                    intent, "order_submit",
+                    refs={"order_id": order.id, "aborted": "halt"},
+                    payload={"aborted": reason},
+                )
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                                     actor=producing_runtime)
+                return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
             # The private broker call (SEC-03: never a module global / string dispatch).
             result = self._broker.submit_order(canonical)
             # Result AFTER the broker call — the two-phase pair keyed on the intent seq.

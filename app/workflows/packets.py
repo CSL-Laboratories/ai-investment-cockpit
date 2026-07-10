@@ -17,6 +17,27 @@ from ingest.normalize import escape_untrusted
 from schemas.models.market_event import MarketEvent
 
 
+def _attr_escape(value) -> str:
+    """Escape ONE attribute VALUE for a double-quoted wrapper attribute. An attacker-controlled
+    MCP ``source``/field value must not be able to break out of the quoted attribute, so & < >
+    AND the double-quote are neutralized (& first -> idempotent). This is the attribute-context
+    twin of ``escape_untrusted`` (which guards element text)."""
+    s = value if isinstance(value, str) else str(value)
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def wrap_untrusted(inner: str, *, source: str, **attrs) -> str:
+    """Assemble ONE ``<untrusted-content ...>...</untrusted-content>`` block. ``inner`` is ALREADY
+    escaped+capped by the caller (``escape_untrusted``) — this function never re-escapes element
+    text. ``source`` and every attr VALUE are attribute-escaped so an attacker-controlled MCP
+    source/field value cannot break out of the double-quoted attribute. Attribute order: ``source``
+    first, then ``attrs`` in insertion order (e.g. ``article_ref``, ``ts``)."""
+    parts = [f'source="{_attr_escape(source)}"']
+    parts.extend(f'{k}="{_attr_escape(v)}"' for k, v in attrs.items())
+    return f'<untrusted-content {" ".join(parts)}>\n{inner}\n</untrusted-content>'
+
+
 @dataclass(frozen=True)
 class PacketItem:
     event_id: str
@@ -46,11 +67,9 @@ def build_packet(events: Sequence[MarketEvent], *, max_item_chars: int = 1200) -
         body = f"{headline} — {ev.summary}" if ev.summary else headline
         inner = escape_untrusted(body)[:max_item_chars]
         ts = ev.ts.isoformat() if ev.ts is not None else ""
-        wrapped = (
-            f'<untrusted-content source="{ev.source}" article_ref="{ev.raw_ref}" ts="{ts}">\n'
-            f"{inner}\n"
-            f"</untrusted-content>"
-        )
+        # SEAM 1: identical bytes to the previous inline f-string for news — ALLOWED_SOURCES
+        # values (and raw_ref/ts) contain no < > & " so _attr_escape is a no-op here.
+        wrapped = wrap_untrusted(inner, source=ev.source, article_ref=ev.raw_ref, ts=ts)
         items.append(PacketItem(event_id=ev.id, raw_ref=ev.raw_ref, symbol=ev.symbol,
                                 text=wrapped))
     return Packet(items=tuple(items))

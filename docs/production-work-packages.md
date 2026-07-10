@@ -158,9 +158,9 @@ slice.
 | ID | Status | Owner | Note |
 |----|--------|-------|------|
 | SEC-01 | partial | W18 (+W19) | Sync injection breaker BUILT @ WP8 (`bridge/veto.py`); residual = thread the real `injection_predicate` into the auto-exec coordinator fire seam. **auto_veto-rung threading OWNED by W18 (WIRE+PROVE, do NOT rebuild); auto_full threading by W19.** |
-| SEC-02 | open | W12 | MCP-response free-text unhardened injection input (L126–140). P0-live. Untrusted-wrap + M3 escape + minimize read-all-accounts to the Agentic account. |
+| SEC-02 | **core-injection done (W12 · G12)** | W12 | MCP untrusted-input seam CLOSED for injection (held all 8 G12 rounds). Confidentiality/minimize is best-effort over the MOCKED read path — definitive closure = the real payload schema (W17), residual bounded by M1. Residuals: grouped/hyphenated account# = W14/SEC-09; live payload minimize = W17. |
 | SEC-03 | **done (W11 · G11)** | W11 | Order authority CLOSED @ WP7 (signed adjudication binding). W11/G11 (2026-07-09) CLOSED the residual: always-on runtime tracer + live-MCP token bound to a signed approval + gateway trust-root pinning. G11 held 3 fresh rounds (0 repros). Pre-W17 residual: `producing_runtime` provenance. |
-| SEC-04 | partial | W12 | Out-of-band fail-closed kill (L184–199). HALT gate exists; residual = NSSM stop doc + hotkey/file-drop + set-flag→cancel→disconnect ordering. |
+| SEC-04 | **done (W12 · G12)** | W12 | Out-of-band fail-closed kill CLOSED (G12 unanimous 0/5, R7+R8): `--set` CLI trigger + synchronous pre-broker HALT re-checks + `os.stat` fail-closed probe + account-independent hardcoded default + relative-path reject + BaseException-safe hooks + injected MCP-disconnect. Residuals: live disconnect wiring = W17; NSSM account/pin provisioning = W15/OPS-06. |
 | SEC-05 | **mechanism done (W11 · G11); ACTIVATION pending** | W11 (+W15/OPS-06) | Bearer stores outside keyring (L201–216). P0-live. W11/G11 CLOSED the runtime ACL-assert + **spawn-under-account fail-closed** (G11 round-1 caught the ACL-only theater). ACTIVATION needs the low-priv account + a `CreateProcessWithLogonW` launcher provisioned (until then decision jobs fail closed). **Host-provisioning half is OPS-06/W15 — see §3.1.** |
 | SEC-06 | **done (W11 · G11)** | W11 | Tool starvation asserted, never tested (L218–232). CLOSED @ W11/G11: deny-by-default ACTUAL-argv inspector (tools/MCP/looseners/`--settings`/`--*system-prompt`) wired into `run_agent` + `arm_auto_mode` auto-arm refusal + pinned cwd. |
 | SEC-07 | partial | W10 (+W17) | Single-transaction tampers CLOSED @ WP8 (L270–294). Delete-then-heal residual AUTO-CLOSED by W10's monotonic seq (`ea7e0fc`): the refill is now a `verify_chain` gap → read_only, one layer earlier than the gate-(h) reconcile (`test_pending_exposure_chain.py` updated). W17 ADVANCES the minor decided_at-TTL residual but does NOT close SEC-07. |
@@ -169,7 +169,7 @@ slice.
 | SEC-10 | done | DONE @ WP2 | HMAC-keyed chain (L349–360). Property holds. |
 | SEC-11 | **open (mechanism DONE)** | **W10 `ea7e0fc`** | **THE P0 pre-live blocker.** MECHANISM shipped: monotonic non-reusable HMAC-covered seq + domain-row binding + concrete witness adapters; G10 passed a fresh red-team. STAYS OPEN: ACTIVATION needs the Discord out-of-domain witness PROVISIONED (git alone is a mirror → fail-closed). NEVER imply closed. |
 | SEC-12 | done | DONE @ WP2 | Hash coverage + canonical serialization (L415–428). W10 EXTENDS the covered set (domain-row binding), scoped under SEC-11. |
-| SEC-13 | partial | W12 | Audit write not atomic with state change (L430–447). Two-phase entries + startup reconciliation + 1:1 completeness. |
+| SEC-13 | **done (W12 · G12)** | W12 | Atomic two-phase audit + startup reconcile + 1:1 completeness gate CLOSED (G12 0/5, R4–R8): landed-evidence-only heal with global terminal-negative veto; model-scoped + `row_ids`-aware completeness over all audited models incl. `MarketEvent`; `create_job` audited. Residual: deleted-then-reused-id = SEC-11 domain-row-binding class (SEC-11 stays OPEN). |
 | SEC-14 | partial | W18 (+W19) | Grounding-verifier property HOLDS @ WP8 (L474–487). Residual = auto-exec seam threads `injection_predicate` + gates on `flagged`: W18 WIRES+PROVES it for the auto_veto rung, W19 for auto_full (core built @ WP8, do NOT rebuild). |
 | SEC-15 | **open** | **W18** | Reconciled-holdings trust root + privileged /limits ceremony (modal double-confirm + cool-down + hard ceilings + auto-disarm on loosening) + watchlist-human-only (L489–508). P0-auto. **The open BUILD piece — OWNED by W18 (the first autonomous rung's security set).** |
 | SEC-16 | open | W14 | On-allowlist canary class (L510–526). P0-auto. AUTO-gated → W14 gate-ordering dep on W10. |
@@ -557,6 +557,19 @@ a live Robinhood MCP socket; does NOT touch SEC-09/14/18/21; does NOT commit/pus
 ---
 
 ### W12 — Untrusted-input, out-of-band kill & atomic audit (SEC-02 / SEC-04 / SEC-13)
+
+> **STATUS: DONE (2026-07-09) — branch `w12-untrusted-kill-atomic-audit`; suite 753 passed / 3
+> skipped, ruff clean (+~90 regressions over the 662 W11 baseline).** G12 ran **8 fresh red-team
+> rounds** (`scratchpad/w12-g12-redteam.js`, per-property scope-bounded). **SEC-04 CLOSED** (unanimous
+> 0/5, R7+R8); **SEC-13 CLOSED** (0/5, R4–R8); **SEC-02 core-injection CLOSED** (held all 8 rounds; the
+> one real injection R7-1 fixed). The SEC-02 confidentiality/minimize layer is BEST-EFFORT over the
+> MOCKED read path — its definitive closure is the real Robinhood MCP payload schema (a **W17**
+> precondition) and its residual exposure is BOUNDED by M1 (decision agents have no outbound tool). The
+> as-built delivery + the per-round attack→fix→regression record are in [[security-hardening-backlog]]
+> (SEC-02/04/13 "W12 closure" notes). Round 9 was canceled mid-run (token conservation) after SEC-04 +
+> SEC-13 had already held; the spec below is retained as the plan of record. Residuals owned elsewhere:
+> grouped/hyphenated account# = W14/SEC-09; live disconnect wiring + payload minimize schema = W17;
+> NSSM/pin provisioning = W15/OPS-06; deleted-then-reused-id = SEC-11.
 
 **One-liner.** Close the three P0-"live" boundary controls: treat every MCP
 tool-RESULT free-text field as untrusted before it re-enters a prompt; make the

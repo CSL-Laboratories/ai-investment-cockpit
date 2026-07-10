@@ -156,6 +156,31 @@ def test_job_unknown_model_422(client):
     assert client.post("/jobs", headers=AUTH, json={"model": "bogus"}).status_code == 422
 
 
+def test_create_job_is_audited(client, state):
+    """R3-C3 (Inv 6): the queued AgentJob create_job inserts MUST carry a covering AuditEntry —
+    it was a bare ``Repo.add`` bypassing record_state_change, so with AgentJob in the default
+    completeness gate every queued job left an uncovered row that tripped reconcile ok=False (cry
+    wolf) AND, more fundamentally, was a state change with no audit. Fix routes it through
+    record_state_change; the job row is now covered and a fresh reconcile is ok=True."""
+    from orchestrator.reconcile import reconcile_startup
+    from schemas.models.agent_job import AgentJob
+
+    r = client.post("/jobs", headers=AUTH, json={"model": "triage"})
+    assert r.status_code == 202
+    jid = r.json()["id"]
+
+    # the created job row now carries a covering AuditEntry (no completeness gap).
+    assert state.audit.verify_completeness(AgentJob) == []
+    # and a fresh startup reconcile over this state is clean — no cry-wolf alert.
+    report = reconcile_startup(state, broker_history_fn=lambda oid: [])
+    assert report.ok is True
+    assert report.uncovered == {}
+    assert state.audit.verify_chain().ok
+    # return shape + fetch behavior unchanged.
+    assert r.json()["runtime"] == "claude"
+    assert client.get(f"/jobs/{jid}", headers=AUTH).json()["status"] == "queued"
+
+
 def test_not_wired_endpoints_return_501(client):
     assert client.get("/brief/today", headers=AUTH).status_code == 501
     assert client.post("/brief/run", headers=AUTH).status_code == 501

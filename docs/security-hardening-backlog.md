@@ -143,6 +143,33 @@ scan over MCP text as over news.
 **Test.** Injected instruction inside a mocked MCP position payload alters no order and
 is flagged.
 
+**W12 closure (G12 adversarial gate — 2026-07-09, keep the reason).** The MCP tool-RESULT
+untrusted-input seam is built: `brokers/mcp_untrusted.py` runs every free-text field through
+`minimize_to_agentic` → `escape_untrusted` → `scrub_text` (SEC-09 canary) → the shared
+`wrap_untrusted` (factored out of `packets.py`, attribute-escaped); `robinhood_mcp.read_agentic_snapshot`
+is a MOCKED read seam (no live socket — Phase-3/W17-gated). **The CORE INJECTION property is CLOSED
+and held every G12 round (R1–R8):** a `</untrusted-content> SYSTEM: …` / fullwidth-homoglyph / role-marker
+payload in a mocked field is NFKC-folded + role-marker-neutralized + `<>&`-escaped + wrapped, and the
+delimiter/attribute-breakout skeptics were refuted every round. The **G12 gate ran 8 fresh red-team
+rounds** (`scratchpad/w12-g12-redteam.js`, per-property scope-bounded); each in-scope repro was fixed
+fail-closed with a pinned regression BEFORE re-running FRESH — the whack-a-mole was CONFIDENTIALITY
+(minimize) completeness against ever-more-exotic MOCKED payload shapes, not injection: R1 raw-substring
++ non-Agentic leak; R2 nested account shapes; R3 keyed-by-account / structured-position; R4 no-foreign-id
+final-invariant-gate; R5 undeclared partition key (`_account_id_pattern` shape-strip) + prose-size; R6
+all-digit-agentic length-anchored pattern + nested-size (recursive) + relative-halt-path; **R7 the ONE
+real injection — a malicious dict KEY reaching the `field=` attribute un-neutralized (`_safe_field` now
+reduces the attacker-controlled path to path-safe tokens)** + foreign id under `owner` (id-shaped learning
+under `_MAYBE_ID_KEYS`); R8 foreign row under an id-key SYNONYM (`_drop_foreign` checks `_ALL_ID_KEYS`) +
+position symbol SYNONYMS (`instrument/stock/…`). Regressions: `tests/brokers/test_mcp_untrusted.py`
+(+~35), `test_robinhood_mcp.py`, `tests/system/test_w12_boundaries.py`. **STATUS: core-injection CLOSED;
+the confidentiality/minimize layer is BEST-EFFORT over the MOCKED read path — its DEFINITIVE closure is the
+real Robinhood MCP payload schema, a W17 precondition, and the residual exposure is BOUNDED by M1 (decision
+agents have NO outbound tool, so a foreign-account string reaching the model's own context cannot be
+exfiltrated).** **RESIDUALS (documented, owned elsewhere): (a)** grouped/hyphenated account#/tax-id
+redaction is the SEC-09 scrubber-regex residual owned by **W14** (W12 reuses `scrub_text` as-is); **(b)**
+an all-LETTER agentic account id disables the shape-strip — out of the realistic threat model (every real
+broker account number contains a digit); **(c)** the live-payload minimize schema is a **W17** precondition.
+
 ### SEC-03 — Enforce Invariant 1 at the capability boundary, not the call site
 **Attack.** The real order authority is the live Robinhood **MCP connection**, not the
 Python symbol `place_equity_order`. A compromised dependency (an adversary the docs
@@ -229,6 +256,70 @@ path cancellable at a preemption point.
 **Amends.** [[security-architecture]] §4 L7 + §10. Inv 1.
 **Test.** Set the sentinel mid-`auto_full` burst → the next submit is refused before the
 MCP call.
+
+**W12 closure (G12 adversarial gate — 2026-07-09, keep the reason). CLOSED (unanimous 0/5 on TWO
+fresh rounds, R7+R8).** Delivered: an OUT-OF-BAND CLI trigger `python -m orchestrator.halt --set`
+(`orchestrator/halt.py`) that sets the sentinel from a SEPARATE process independent of a wedged event
+loop; the killswitch ordering is `set-flag → cancel → MCP-disconnect (injected `disconnect_hook`, no
+`brokers/` import) → disarm`, all under `st.lock` and audited (`EVENT_KILLSWITCH`); an NSSM-service-stop
+runbook note. The G12 gate hardened it across rounds (fixes-that-introduced-defects, each caught by the
+NEXT fresh round): **R1** a TOCTOU post-gate-(a) window — the gateway now re-checks `_halt_active`
+SYNCHRONOUSLY twice more, immediately before the two-phase intent AND immediately before the broker call,
+completing the two-phase pair on a late trip so no intent dangles (SEC-13-safe); **R2** an unguarded
+`cancel_hook` raise that skipped disarm+audit → catch-and-continue; **R2/R6** `halt_is_set` failed OPEN
+on the ignored-errno class — reimplemented on `os.stat` so only a definitively-absent sentinel (POSIX
+ENOENT / Windows `winerror==2`) reads not-set and EVERY other errno/`ValueError` fails CLOSED, plus
+`ensure_halt_dir` at compose; **R2/R3** hook catches broadened to `except BaseException` (an async
+`CancelledError` must not skip containment); **R5** the account-independent default was built on the
+per-account-MUTABLE `%PROGRAMDATA%` env var → a HARDCODED `C:/ProgramData` literal; **R6** a RELATIVE
+`COCKPIT_HALT_PATH`/`--path` diverges by CWD → rejected (raise) fail-closed. Regressions:
+`tests/orchestrator/test_oob_kill.py`, `tests/brokers/test_gateway_hardening.py`. **RESIDUALS (owned
+elsewhere, do NOT gate SEC-04): the LIVE asyncio-safe MCP `disconnect_hook` wiring is a W17 precondition;
+provisioning the low-priv NSSM account + the operator/service shared `COCKPIT_HALT_PATH` pin is W15/OPS-06.**
+
+**W12 round-2 closure (G12 fresh red-team — 2026-07-09, keep the reason).** Three deeper
+fail-open defects the round-1 gate missed are now CLOSED, each pinned by a regression whose name
+preserves the attack (`tests/orchestrator/test_oob_kill.py`):
+- **R2-S2 — the HALT probe fooled by the swallowed-errno class.** `halt_is_set` used
+  `Path(path).exists()`, which SWALLOWS `ENOTDIR` / `EBADF` / `WSAENOTREADY` / `ERROR_NOT_READY`
+  / `ERROR_INVALID_NAME` / `ERROR_CANT_RESOLVE_FILENAME` and returns `False` WITHOUT raising — so
+  a genuinely PRESENT-but-UNREADABLE sentinel (a not-yet-ready network path, an ENOTDIR component)
+  read as NOT SET at BOTH gateway probe sites (gate (a) + the pre-broker re-check) and the
+  gateway's `except OSError` never fired => order slips. Fixed by a RAW `os.stat` probe in the
+  PRIMITIVE (present→True; `FileNotFoundError`→False; any other `OSError`→True/fail-closed), so
+  ALL callers (gateway + the mode-ladder arm refusal) inherit the policy. Regression:
+  `test_halt_probe_fails_closed_on_unreadable_sentinel`.
+- **R2-S1 — per-account default-path divergence.** `default_halt_path()` fell back to per-user
+  `LOCALAPPDATA` / `XDG_STATE_HOME`, so the OOB `--set` under the operator account wrote a
+  DIFFERENT file than the gateway read under the NSSM service account — the kill wrote where the
+  gateway never looked. Fixed: the default is now ACCOUNT-INDEPENDENT / machine-wide
+  (Windows `%ProgramData%` / POSIX `/var/tmp`); `COCKPIT_HALT_PATH` remains the first-precedence
+  override and the divergence-proof production pin. Regression:
+  `test_default_halt_path_is_account_independent`.
+- **R2-S3 — `BaseException` escaped the killswitch hook catches.** The `cancel_hook` /
+  `disconnect_hook` catches were `except Exception`, so an `asyncio.CancelledError` /
+  `KeyboardInterrupt` / `SystemExit` ESCAPED `st.lock`, skipping the disarm + `EVENT_KILLSWITCH`
+  audit => auto stays armed + the kill unaudited (latent today — the sole caller passes no hooks —
+  but live once W17 wires the async disconnect). Fixed: both catches are now `except BaseException`
+  (record the failure, CONTINUE to disarm+audit, never re-raise). Regression:
+  `test_killswitch_base_exception_hook_still_disarms_and_audits`.
+
+**W12 round-2 OUT-OF-SCOPE residuals (DOCUMENTED, not fixed here — a code fix would touch another
+W's file; keep the reason).**
+1. **W17 — the live async disconnect_hook wiring.** R2-S3 hardens the killswitch to SURVIVE a
+   `BaseException`-raising hook, but the actual injection of a real, asyncio-cancellation-safe
+   MCP/broker `disconnect_hook` at the LIVE composition root (a disconnect that itself does not
+   deadlock while the event loop is being torn down) is W17's job and touches W17's composition
+   root — OUT of W12 scope. W17 precondition: wire the live `disconnect_hook` and prove a
+   `CancelledError` during loop teardown still completes containment (the R2-S3 regression is the
+   template). W12 does NOT wire the live async disconnect.
+2. **W15 / OPS-06 — pin `COCKPIT_HALT_PATH` across both host accounts at DEPLOY time.** R2-S1
+   makes the CODE default account-independent and the halt module docstring now REQUIRES production
+   to pin `COCKPIT_HALT_PATH` to one absolute path shared by the NSSM SERVICE account and the
+   operator's interactive `--set` process (plus the hotkey/file-drop trigger). ENFORCING that pin —
+   setting the env var in the NSSM service registry env AND the operator shell during host
+   provisioning — is an operational / host-provisioning step owned by W15 / OPS-06, not W12 code.
+   W12 does NOT provision the service env.
 
 ### SEC-05 — Enumerate bearer-credential stores as first-class assets
 **Attack.** `keyring` protects Alpaca/Finnhub/MCP/Discord creds, but the **Codex and
@@ -557,6 +648,26 @@ into the chain, and store parquet raw **write-once** (new-version-on-change) so 
 **Amends.** [[security-architecture]] §8; [[build-scaffold-ultracode]] WP2/WP7. Inv 6, 8.
 **Test.** Crash between broker ACK and audit commit → startup reconciliation flags it; an
 orphan `RiskDecision` fails verification.
+
+**W12 closure (G12 adversarial gate — 2026-07-09, keep the reason). CLOSED (0/5 on FIVE consecutive
+fresh rounds, R4–R8).** Delivered `orchestrator/reconcile.py::reconcile_startup` (wired into
+`main.compose()`): for every `AuditLog.unresolved_intents()` it queries an INJECTED
+`broker_history_fn` (mock; W17 supplies the live reader) and HEALS the missing `result()` ONLY on
+POSITIVE landed evidence, else ALERTS `#system` and reports `ok=False`; then a 1:1 completeness gate
+(`orphan_results` + `verify_completeness` over the load-bearing audited models). G12 hardenings:
+**R1** `_order_landed` false-healed on any truthy reply → require same-`order_id` + a landed status;
+**R2** the terminal-negative was a per-record `continue` (a landed-then-canceled sequence healed) →
+GLOBAL veto (a settled reject/cancel ANYWHERE blocks the heal, even with a `broker_order_id`); **R1**
+`verify_completeness` was UNSCOPED (a cross-table id collision masked an uncovered row) → model-scoped
+by `refs.model`; **R1/R3** the gated model set covered only 3 of the audited models and missed the
+`append_in` batch path → extended to all `record_state_change` models + `MarketEvent`, with the covered
+set reading BOTH `refs.row_id` AND `refs.row_ids`; **R3** `create_job` bare-added an `AgentJob` (Inv-6
+gap the expanded gate exposed) → routed through `record_state_change`. Registered end-to-end in the WP9
+harness (`tests/system/test_w12_boundaries.py`). Regressions: `tests/orchestrator/test_reconcile.py`,
+`tests/storage/test_audit.py`. **RESIDUAL (documented, NOT SEC-13's thin gate): a deleted-then-reused-id
+(keyless DELETE of an audited row whose covering entry survives + bare re-INSERT reusing the id) is the
+SEC-11 domain-row-binding / audit-spine class — already caught for the ORDER table by the gateway's
+signed `EVENT_ORDER_TRANSITION` reconcile; SEC-11 stays OPEN.**
 
 ---
 
