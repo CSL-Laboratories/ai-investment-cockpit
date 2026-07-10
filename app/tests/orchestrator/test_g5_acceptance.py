@@ -495,7 +495,10 @@ def test_g5_6_build_scheduler_registers_four_cron_jobs(st):
     pytest.importorskip("apscheduler")
     scheduler = sch.build_scheduler(st, FrozenClock(OPEN_UTC))
     jobs = {j.id: j for j in scheduler.get_jobs()}
-    assert set(jobs) == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm"}
+    # + anchor_head (SEC-11 external-witness cadence, added in WP6/WP7 hardening).
+    assert set(jobs) == {
+        "premarket_brew", "intraday_loop", "eod_review", "daily_disarm", "anchor_head",
+    }
     assert not scheduler.running                        # returned UN-started
     # expected cron triggers.
     assert "hour='8'" in str(jobs["premarket_brew"].trigger)

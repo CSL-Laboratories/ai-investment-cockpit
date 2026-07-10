@@ -158,18 +158,26 @@ slice.
 | ID | Status | Owner | Note |
 |----|--------|-------|------|
 | SEC-01 | partial | W18 (+W19) | Sync injection breaker BUILT @ WP8 (`bridge/veto.py`); residual = thread the real `injection_predicate` into the auto-exec coordinator fire seam. **auto_veto-rung threading OWNED by W18 (WIRE+PROVE, do NOT rebuild); auto_full threading by W19.** |
+<<<<<<< Updated upstream
 | SEC-02 | open | W12 | MCP-response free-text unhardened injection input (L126–140). P0-live. Untrusted-wrap + M3 escape + minimize read-all-accounts to the Agentic account. |
 | SEC-03 | partial | W11 | Order authority CLOSED @ WP7 (signed adjudication binding, L163–182). Residual (P0-live): live-MCP capability token bound to a signed approval + runtime tracer + zero-MCP decision agents (L182). |
 | SEC-04 | partial | W12 | Out-of-band fail-closed kill (L184–199). HALT gate exists; residual = NSSM stop doc + hotkey/file-drop + set-flag→cancel→disconnect ordering. |
 | SEC-05 | open | W11 | Bearer stores outside keyring (L201–216). P0-live. Separate low-priv Windows account + per-file ACLs. **Host-provisioning half overlaps OPS-06/W15 — see §3.1.** |
 | SEC-06 | partial | W11 | Tool starvation asserted, never tested (L218–232). Residual: startup+CI actual-argv inspector, auto-arm refusal, cwd pin. |
+=======
+| SEC-02 | **done (W12 · G12)** | W12 | MCP-response free-text unhardened injection input (L126–140). CLOSED @ W12/G12 (2026-07-09): `brokers/mcp_untrusted.py` minimizes read-all-accounts to the Agentic account BEFORE any prompt, then wraps every free-text field via the SAME `escape_untrusted`/`wrap_untrusted` news uses (factored out of `packets.py`, not re-implemented) + `scrub_text`. |
+| SEC-03 | **done (W11 · G11)** | W11 | Order authority CLOSED @ WP7 (signed adjudication binding). W11/G11 (2026-07-09) CLOSED the residual: always-on runtime tracer + live-MCP token bound to a signed approval + gateway trust-root pinning. G11 held 3 fresh rounds (0 repros). Pre-W17 residual: `producing_runtime` provenance. |
+| SEC-04 | **done (W12 · G12)** | W12 | Out-of-band fail-closed kill (L184–199). CLOSED @ W12/G12 (2026-07-09): `python -m orchestrator.halt set/clear/status` sets the sentinel from a SEPARATE process (the existing gate-(a) synchronous check does the rest); `killswitch()` extended to set-flag→cancel→disconnect→disarm via an injected `disconnect_hook`. Residual: NSSM-stop + hotkey/file-drop runbook docs — OPS-06/W15. |
+| SEC-05 | **mechanism done (W11 · G11); ACTIVATION pending** | W11 (+W15/OPS-06) | Bearer stores outside keyring (L201–216). P0-live. W11/G11 CLOSED the runtime ACL-assert + **spawn-under-account fail-closed** (G11 round-1 caught the ACL-only theater). ACTIVATION needs the low-priv account + a `CreateProcessWithLogonW` launcher provisioned (until then decision jobs fail closed). **Host-provisioning half is OPS-06/W15 — see §3.1.** |
+| SEC-06 | **done (W11 · G11)** | W11 | Tool starvation asserted, never tested (L218–232). CLOSED @ W11/G11: deny-by-default ACTUAL-argv inspector (tools/MCP/looseners/`--settings`/`--*system-prompt`) wired into `run_agent` + `arm_auto_mode` auto-arm refusal + pinned cwd. |
+>>>>>>> Stashed changes
 | SEC-07 | partial | W10 (+W17) | Single-transaction tampers CLOSED @ WP8 (L270–294). Delete-then-heal residual AUTO-CLOSED by W10's monotonic seq (`ea7e0fc`): the refill is now a `verify_chain` gap → read_only, one layer earlier than the gate-(h) reconcile (`test_pending_exposure_chain.py` updated). W17 ADVANCES the minor decided_at-TTL residual but does NOT close SEC-07. |
 | SEC-08 | done | DONE @ WP8 | Runtime pin at execution + Claude-exhaustion drop (L296–309). No delta. |
 | SEC-09 | partial | W14 | Default-on scrubber DONE @ WP8 (L334–347). Residual = dashed-account# + lowercase/space-broken foreign ticker+size redaction (confidentiality-only). |
 | SEC-10 | done | DONE @ WP2 | HMAC-keyed chain (L349–360). Property holds. |
 | SEC-11 | **open (mechanism DONE)** | **W10 `ea7e0fc`** | **THE P0 pre-live blocker.** MECHANISM shipped: monotonic non-reusable HMAC-covered seq + domain-row binding + concrete witness adapters; G10 passed a fresh red-team. STAYS OPEN: ACTIVATION needs the Discord out-of-domain witness PROVISIONED (git alone is a mirror → fail-closed). NEVER imply closed. |
 | SEC-12 | done | DONE @ WP2 | Hash coverage + canonical serialization (L415–428). W10 EXTENDS the covered set (domain-row binding), scoped under SEC-11. |
-| SEC-13 | partial | W12 | Audit write not atomic with state change (L430–447). Two-phase entries + startup reconciliation + 1:1 completeness. |
+| SEC-13 | **done (W12 · G12)** | W12 | Audit write not atomic with state change (L430–447). Two-phase entries were already WP2/WP7/WP8; CLOSED @ W12/G12 (2026-07-09): `orchestrator/reconcile.py` startup reconciliation of unresolved intents against (mocked) broker history + `storage/audit.py::verify_completeness_aggregate` 1:1 gate, wired into `main.compose()` — fails closed to `review_live` on any gap. |
 | SEC-14 | partial | W18 (+W19) | Grounding-verifier property HOLDS @ WP8 (L474–487). Residual = auto-exec seam threads `injection_predicate` + gates on `flagged`: W18 WIRES+PROVES it for the auto_veto rung, W19 for auto_full (core built @ WP8, do NOT rebuild). |
 | SEC-15 | **open** | **W18** | Reconciled-holdings trust root + privileged /limits ceremony (modal double-confirm + cool-down + hard ceilings + auto-disarm on loosening) + watchlist-human-only (L489–508). P0-auto. **The open BUILD piece — OWNED by W18 (the first autonomous rung's security set).** |
 | SEC-16 | open | W14 | On-allowlist canary class (L510–526). P0-auto. AUTO-gated → W14 gate-ordering dep on W10. |
@@ -545,6 +553,12 @@ a live Robinhood MCP socket; does NOT touch SEC-09/14/18/21; does NOT commit/pus
 ---
 
 ### W12 — Untrusted-input, out-of-band kill & atomic audit (SEC-02 / SEC-04 / SEC-13)
+
+> **STATUS: DONE (2026-07-09).** SEC-02/04/13 CLOSED on branch
+> `w12-untrusted-mcp-oob-kill-atomic-audit` (650→693 tests including W11, ruff clean). The spec
+> below is retained as the plan of record; the as-built delivery is in
+> [[security-hardening-backlog]] (SEC-02/04/13 "W12 closure" notes). SEC-11 is NOT implied
+> closed by this work — the completeness gate here is complementary, not the external witness.
 
 **One-liner.** Close the three P0-"live" boundary controls: treat every MCP
 tool-RESULT free-text field as untrusted before it re-enters a prompt; make the

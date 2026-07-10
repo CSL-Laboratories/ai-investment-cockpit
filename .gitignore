@@ -20,6 +20,8 @@ venv/
 .env
 *.env
 secrets.*
+# core/secrets.py is the keyring wrapper module, not a secret file — don't shadow it
+!**/secrets.py
 *.key
 *.pem
 

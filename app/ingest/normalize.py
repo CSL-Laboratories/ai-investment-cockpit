@@ -25,6 +25,14 @@ _ROLE_MARKERS = re.compile(
 )
 
 
+def contains_role_marker(text: str) -> bool:
+    """Whether raw ``text`` carries an unneutralized role/delimiter marker (a role-play or
+    delimiter-escape attempt). Reuses the same pattern ``escape_untrusted`` neutralizes, so
+    callers (e.g. the MCP untrusted-input scanner) can assert "no raw marker reached a
+    prompt" without re-deriving the regex."""
+    return bool(_ROLE_MARKERS.search(text or ""))
+
+
 def escape_untrusted(text) -> str:
     if text is None or text == "":
         return ""

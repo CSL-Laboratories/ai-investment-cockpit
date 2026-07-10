@@ -83,5 +83,6 @@ def test_build_scheduler_registers_four_jobs(state):
     pytest.importorskip("apscheduler")
     scheduler = sch.build_scheduler(state, OPEN)
     ids = {j.id for j in scheduler.get_jobs()}
-    assert ids == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm"}
+    # + anchor_head (SEC-11 external-witness cadence, added in WP6/WP7 hardening).
+    assert ids == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm", "anchor_head"}
     assert not scheduler.running        # returned un-started

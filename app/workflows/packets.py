@@ -39,6 +39,18 @@ class Packet:
         return "\n\n".join(i.text for i in self.items)
 
 
+def wrap_untrusted(inner: str, *, source: str, ref: str, ts: str = "") -> str:
+    """The one ``<untrusted-content ...>`` wrapper (prompt-injection-defense.md §4 M2), shared
+    by every untrusted-content producer (news packets here; ``brokers/mcp_untrusted.py`` for
+    MCP tool-result fields). ``inner`` must already be ``escape_untrusted``-passed — this
+    function only wraps, it does not neutralize."""
+    return (
+        f'<untrusted-content source="{source}" article_ref="{ref}" ts="{ts}">\n'
+        f"{inner}\n"
+        f"</untrusted-content>"
+    )
+
+
 def build_packet(events: Sequence[MarketEvent], *, max_item_chars: int = 1200) -> Packet:
     items = []
     for ev in events:
@@ -46,11 +58,7 @@ def build_packet(events: Sequence[MarketEvent], *, max_item_chars: int = 1200) -
         body = f"{headline} — {ev.summary}" if ev.summary else headline
         inner = escape_untrusted(body)[:max_item_chars]
         ts = ev.ts.isoformat() if ev.ts is not None else ""
-        wrapped = (
-            f'<untrusted-content source="{ev.source}" article_ref="{ev.raw_ref}" ts="{ts}">\n'
-            f"{inner}\n"
-            f"</untrusted-content>"
-        )
+        wrapped = wrap_untrusted(inner, source=ev.source, ref=ev.raw_ref, ts=ts)
         items.append(PacketItem(event_id=ev.id, raw_ref=ev.raw_ref, symbol=ev.symbol,
                                 text=wrapped))
     return Packet(items=tuple(items))

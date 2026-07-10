@@ -13,13 +13,30 @@ SEC-03 hardening:
   * there is NO live socket / MCP transport here — ``submit_order`` is an in-process stub;
   * ``agentic_place`` takes the ``OrderGateway`` explicitly and calls the gated path — a
     caller cannot reach ``submit_order`` on the broker without a live capability token minted
+<<<<<<< Updated upstream
     by the approval/veto path.
+=======
+    by the approval/veto path;
+  * W11 (SEC-03 (d)/(a)): the LIVE capability token is minted via
+    ``OrderGateway.mint_live_submit_token`` — bound to the COVERING signed ``EVENT_ADJUDICATION``
+    at mint time — and ``agentic_place`` REFUSES unless the always-on runtime order tracer
+    (``brokers/order_tracer.py``) guards the broker. The live order authority never runs untraced,
+    and its capability never exists for an unapproved order.
+
+SEC-02 hardening (W12): the platform's read tools return **read-all-accounts** payloads —
+``fetch_agentic_summary`` is the mocked stand-in for that read (no live socket) and ALWAYS
+routes its result through ``brokers/mcp_untrusted.py`` before returning it, so a caller only
+ever sees the Agentic account's fields, each wrapped as untrusted content. There is no path
+that hands a raw MCP payload to a caller.
+>>>>>>> Stashed changes
 """
 from __future__ import annotations
 
 from decimal import Decimal
 
+from brokers.mcp_untrusted import prepare_mcp_result
 from core.ids import new_id
+from workflows.packets import Packet
 
 
 class RobinhoodMCPBroker:
@@ -27,8 +44,17 @@ class RobinhoodMCPBroker:
     ``OrderGateway`` as its ``_broker``. Acknowledges orders (no fill) — no network, no socket,
     no string-name dispatch."""
 
-    def __init__(self) -> None:
+    def __init__(self, agentic_account_id: str = "agentic") -> None:
         self.submitted: list[dict] = []
+        self.agentic_account_id = agentic_account_id
+
+    def fetch_agentic_summary(self, raw_accounts_response: list[dict]) -> Packet:
+        """Mocked MCP tool-RESULT read (SEC-02): ``raw_accounts_response`` stands in for what
+        the future live read-all-accounts call would return. ALWAYS minimized to
+        ``self.agentic_account_id`` and wrapped as untrusted content before it is returned —
+        there is no raw-payload escape hatch."""
+        return prepare_mcp_result(raw_accounts_response,
+                                  agentic_account_id=self.agentic_account_id)
 
     def submit_order(self, canonical_tuple: dict) -> dict:
         oid = new_id("rh")

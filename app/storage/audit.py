@@ -91,6 +91,19 @@ class VerifyResult:
     error: str | None = None
 
 
+@dataclass
+class CompletenessResult:
+    """W12 (SEC-13) — the aggregated 1:1 completeness gate for the startup reconcile path.
+    Thin composition of the EXISTING primitives below (``unresolved_intents``,
+    ``orphan_results``, ``verify_completeness``) — no new verification logic, no touch to
+    ``verify_chain``/``verify_entry``/``verify_against_anchor`` or the HMAC/canonical form."""
+
+    ok: bool
+    unresolved_intents: list[int]
+    orphan_results: list[int]
+    uncovered_rows: list[str]
+
+
 class AuditLog:
     def __init__(self, session_factory, hmac_key, clock=default_clock):
         self._sf = session_factory
@@ -248,6 +261,21 @@ class AuditLog:
             covered = {(r.refs or {}).get("row_id") for r in s.execute(select(AuditEntry)).scalars().all()}
             ids = {row.id for row in s.execute(select(model_class)).scalars().all()}
         return sorted(ids - covered)
+
+    def verify_completeness_aggregate(self, *model_classes) -> CompletenessResult:
+        """W12 — the ONE startup-reconcile completeness gate: unresolved intents + orphan
+        results + any uncovered row across ``model_classes``, composed from the primitives
+        above. ``ok=False`` means the startup reconcile path must alert/resolve before the
+        scheduler/API start."""
+        unresolved = self.unresolved_intents()
+        orphans = self.orphan_results()
+        uncovered: list[str] = []
+        for model_class in model_classes:
+            uncovered.extend(self.verify_completeness(model_class))
+        return CompletenessResult(
+            ok=not unresolved and not orphans and not uncovered,
+            unresolved_intents=unresolved, orphan_results=orphans, uncovered_rows=uncovered,
+        )
 
     # ---- verification ------------------------------------------------------
     def head(self) -> tuple[int, str | None]:

@@ -148,3 +148,44 @@ def test_completeness_catches_unaudited_state(env):
     assert audit.verify_completeness(ModeState) == []       # atomic write is covered
     Repo(sf, ModeState).add(id="m2", mode="paper", created_at=now)   # bare write, no audit
     assert audit.verify_completeness(ModeState) == ["m2"]   # uncovered state row is flagged
+
+
+# ---- W12 (SEC-13) — the aggregated startup-reconcile completeness gate -----------------
+def test_verify_completeness_aggregate_clean_chain_ok(env):
+    audit, sf = env
+    now = datetime.now(timezone.utc)
+    audit.record_state_change(ModeState(id="m1", mode="review_live", created_at=now),
+                              "mode_change", actor="op")
+    res = audit.verify_completeness_aggregate(ModeState)
+    assert res.ok
+    assert res.unresolved_intents == [] and res.orphan_results == [] and res.uncovered_rows == []
+
+
+def test_verify_completeness_aggregate_flags_unresolved_intent(env):
+    audit, sf = env
+    intent = audit.intent("order_submit", refs={"order_id": "o1"}, payload={})
+    res = audit.verify_completeness_aggregate()
+    assert not res.ok
+    assert res.unresolved_intents == [intent.seq]
+
+
+def test_verify_completeness_aggregate_flags_uncovered_row(env):
+    audit, sf = env
+    now = datetime.now(timezone.utc)
+    Repo(sf, ModeState).add(id="m2", mode="paper", created_at=now)   # bare write, no audit
+    res = audit.verify_completeness_aggregate(ModeState)
+    assert not res.ok
+    assert res.uncovered_rows == ["m2"]
+
+
+def test_verify_completeness_aggregate_never_touches_verify_chain(env):
+    """The aggregation is a pure read-side composition — it must not alter the chain's
+    verified state (byte-identical hash/canonical form untouched)."""
+    audit, sf = env
+    now = datetime.now(timezone.utc)
+    audit.record_state_change(ModeState(id="m1", mode="review_live", created_at=now),
+                              "mode_change", actor="op")
+    before = audit.verify_chain()
+    audit.verify_completeness_aggregate(ModeState)
+    after = audit.verify_chain()
+    assert before == after
