@@ -125,7 +125,7 @@ def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
                          order_type=order_type, limit_price=limit_price, tif="day",
                          notional=notional, order_tuple_hash=h, actor="claude")
 
-    gw = gateway or OrderGateway(broker or AlpacaPaperBroker())
+    gw = gateway or OrderGateway(broker or AlpacaPaperBroker(), st=st)   # SEC-03: pin the trust root
     nonce = "n1"
     if mint:
         gw.mint_submit_token(nonce=nonce, proposal_id="p1", risk_decision_id=rd.id,

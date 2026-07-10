@@ -15,9 +15,11 @@ from dataclasses import replace
 
 import jsonschema
 
+from agent_runner.account_guard import CredentialGuardError
 from agent_runner.detect import looks_like_limit
 from agent_runner.result import AgentResult, LIMIT_HIT, NEEDS_HUMAN, OK, TIMEOUT
 from agent_runner.spec import AgentSpec
+from agent_runner.tool_inspector import assert_decision_cwd, inspect_argv
 from agent_runner.transport import SubprocessTransport
 from agent_runner.usage import UsageTracker
 from config.models import load_model_map
@@ -98,13 +100,27 @@ def _validate(body, schema) -> str | None:
 
 
 def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
-              resume: bool = False) -> AgentResult:
+              resume: bool = False, pinned_cwd: str | None = None,
+              decision_agent_account: str | None = None) -> AgentResult:
     transport = transport or SubprocessTransport()
     usage = usage or UsageTracker()
 
     # Inv 3: a decision-stage job must declare a schema (no unvalidated OK path).
     if spec.decision_stage and spec.schema is None:
         raise ValueError("Inv 3: a decision-stage job requires a schema")
+
+    # SEC-05 (G11 round-1 closure): a decision-stage subprocess must NOT inherit the orchestrator's
+    # privileged token — otherwise the account_guard ACL check is theater (the guard verifies the
+    # low-priv account cannot read the bearer stores, but nothing spawns the child under it). When a
+    # low-priv account is configured, the transport MUST launch the child under THAT account; a
+    # transport that runs as the current user (no matching ``account``) is REFUSED, fail closed.
+    if spec.decision_stage and decision_agent_account:
+        if getattr(transport, "account", None) != decision_agent_account:
+            raise CredentialGuardError(
+                f"SEC-05: decision-stage job {spec.job_id!r} would spawn under the orchestrator's "
+                f"privileged token; account {decision_agent_account!r} is configured but the "
+                "transport does not launch the child under it. Refusing to spawn (fail closed)."
+            )
     # Inv 7 / SEC-23: while the vendor breaker is open, refuse (watch-only) — never
     # dispatch a decision job to a known-degraded vendor. (WP5 resets the window.)
     if usage.is_open(spec.runtime):
@@ -112,6 +128,10 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         return AgentResult(status=LIMIT_HIT, error="breaker_open", usage_state=w.state)
 
     argv = build_argv(spec, resume=resume)
+    if spec.decision_stage:
+        # SEC-06: deny-by-default on the ACTUAL argv (tools / MCP) + pin the decision-agent cwd.
+        inspect_argv(argv, decision_stage=True)
+        assert_decision_cwd(spec.cwd, pinned_cwd=pinned_cwd)
     _assert_no_secret(argv, spec.prompt, secret_values)
 
     proc = transport.run(argv, spec.prompt, spec.timeout_s, spec.cwd)
@@ -153,10 +173,11 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         return AgentResult(status=OK, validated=body, raw=proc.stdout, session_id=session_id)
 
     # one repair attempt, then quarantine (Inv 3)
-    return _repair(spec, reason, transport, usage, session_id, secret_values)
+    return _repair(spec, reason, transport, usage, session_id, secret_values, pinned_cwd)
 
 
-def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values) -> AgentResult:
+def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values,
+            pinned_cwd: str | None = None) -> AgentResult:
     repair_prompt = (
         spec.prompt
         + "\n\nYour previous output was rejected: " + str(reason)[:500]
@@ -164,6 +185,9 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
     )
     rspec = replace(spec, prompt=repair_prompt, session_id=session_id or spec.session_id)
     argv = build_argv(rspec, resume=bool(session_id))
+    if rspec.decision_stage:
+        inspect_argv(argv, decision_stage=True)
+        assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
 

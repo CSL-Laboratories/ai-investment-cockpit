@@ -109,16 +109,40 @@ class OrderGateway:
         self,
         broker,
         *,
+        st=None,
         token_registry: TokenRegistry | None = None,
         pending_exposure_cap: Decimal | None = None,
         approval_ttl_seconds: int | None = None,
     ) -> None:
         # SEC-03: broker + registry are PRIVATE instance state — never module globals, never
-        # dispatched by string name.
+        # dispatched by string name. ``st`` (the TRUST ROOT — the HMAC-signed audit chain + its DB)
+        # is likewise pinned here: gate (e) verifies the signed adjudication against THIS chain, so
+        # a caller holding only the gateway cannot substitute their own HMAC key / DB by threading a
+        # forged ladder (see ``_resolve_state``). Production MUST construct with ``st=`` the composed
+        # state; trusted test construction may omit it and the (genuine) ladder state is used.
         self._broker = broker
+        self._st = st
         self._registry = token_registry or TokenRegistry()
         self._cap_override = pending_exposure_cap
         self._ttl_override = approval_ttl_seconds
+
+    def _resolve_state(self, ladder):
+        """Return the pinned TRUST ROOT for gate (e). The signed audit chain is the order authority;
+        its HMAC key + DB must not be caller-supplied (SEC-03). When the gateway was built with a
+        state, the caller's ladder MUST carry that exact state — else FAIL CLOSED (a caller cannot
+        swap in an attacker-keyed chain). When built without one (trusted test construction), the
+        ladder's state is used, since the test supplies the genuine chain."""
+        cand = getattr(ladder, "st", None)
+        if self._st is not None:
+            if cand is not self._st:
+                raise CapabilityError(
+                    "SEC-03: the ladder's state is not the gateway's pinned trust root; refusing to "
+                    "trust a caller-substituted audit chain / HMAC key"
+                )
+            return self._st
+        if cand is None:
+            raise CapabilityError("SEC-03: no trust state available for the order gateway")
+        return cand
 
     # ---- capability mint seam (the approval/veto path calls this; the gateway NEVER mints
     # its own token in submit — it only consumes) --------------------------------------
@@ -133,6 +157,31 @@ class OrderGateway:
         independently refuses any order without a signed, persisted approval that binds it
         (regression: ``test_gateway_hardening``). The token merely guarantees a given
         authorization is consumed at most once."""
+        return self._registry.mint(
+            nonce=nonce, proposal_id=proposal_id, risk_decision_id=risk_decision_id,
+            order_tuple_hash=order_tuple_hash,
+        )
+
+    def mint_live_submit_token(
+        self, st, *, approval_id, nonce, proposal_id, risk_decision_id, order_tuple_hash
+    ) -> SubmitToken:
+        """SEC-03 (d) — the LIVE Robinhood-Agentic capability mint. Unlike ``mint_submit_token``
+        (bare single-use replay protection for the in-process paper flow), the LIVE capability is
+        bound to the COVERING signed ``EVENT_ADJUDICATION`` at MINT time: the token cannot even be
+        CREATED for an order no HMAC-signed adjudication approves (``_adjudication_binds`` re-derives
+        the binding from the chain, never a caller-supplied object). Defense-in-depth atop gate (e)
+        (which independently refuses at submit): the live capability never exists for an unapproved
+        order, so a stolen/replayed live token maps only to a genuinely-approved binding. Refuses
+        with ``CapabilityError`` when no covering adjudication binds this exact order."""
+        # SEC-03: a pinned gateway verifies against its OWN trust root, never a caller-passed chain.
+        st = self._st if self._st is not None else st
+        if not self._adjudication_binds(st, approval_id, proposal_id=proposal_id,
+                                        risk_decision_id=risk_decision_id,
+                                        order_tuple_hash=order_tuple_hash):
+            raise CapabilityError(
+                "SEC-03: refusing to mint a live-MCP capability token with no covering signed "
+                "EVENT_ADJUDICATION binding this exact order (proposal/risk_decision/order_tuple)"
+            )
         return self._registry.mint(
             nonce=nonce, proposal_id=proposal_id, risk_decision_id=risk_decision_id,
             order_tuple_hash=order_tuple_hash,
@@ -488,7 +537,7 @@ class OrderGateway:
         """Run gates (a)-(f) + (h) WITHOUT submitting or consuming the capability token — a
         pure dry-run TOCTOU re-check. Returns a ``GateOutcome``. ``place_equity_order`` calls
         this first and refuses if it refuses (G7: review precedes place)."""
-        st = ladder.st
+        st = self._resolve_state(ladder)
         clock = clock or st.clock
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
         with st.lock:
@@ -518,7 +567,7 @@ class OrderGateway:
         failure (audited; bypass events recorded so the gate sees them). Only if all pass:
         two-phase submit (intent -> broker.submit_order -> result), consume the single-use
         approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13)."""
-        st = ladder.st
+        st = self._resolve_state(ladder)
         clock = clock or st.clock
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
         canonical = self._resolve_tuple(order)

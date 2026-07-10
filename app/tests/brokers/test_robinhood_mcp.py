@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from brokers.gateway import OrderGateway
+from brokers.order_tracer import install as install_tracer
 from brokers.robinhood_mcp import RobinhoodMCPBroker, agentic_place
 from schemas.models.order import Order
 
@@ -22,6 +23,7 @@ def test_agentic_place_routes_through_gateway_review_then_submit(st):
     broker = RobinhoodMCPBroker()
     gw = OrderGateway(broker)
     sc = build_scenario(st, gateway=gw, broker=broker)
+    install_tracer(broker, state=st)                 # W11 SEC-03: the live path runs traced
     out = agentic_place(gw, sc.order, **sc.submit_kwargs())
     assert out.ok and out.stage == "submitted"
     # the order actually went to the MCP broker seam, and only AFTER the local review+submit.
@@ -36,6 +38,7 @@ def test_agentic_place_refuses_without_token(st):
     broker = RobinhoodMCPBroker()
     gw = OrderGateway(broker)
     sc = build_scenario(st, gateway=gw, broker=broker, mint=False)
+    install_tracer(broker, state=st)                 # tracer active; the missing token still refuses
     out = agentic_place(gw, sc.order, **sc.submit_kwargs())
     assert not out.ok and out.stage == "capability"
     assert len(broker.submitted) == 0             # never reached the MCP endpoint

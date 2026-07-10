@@ -101,3 +101,47 @@ def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clo
     assert row["id"] == "prop-api" and row["symbol"] == "AAPL"
     assert row["side"] == "buy" and row["status"] == "draft" and row["flagged"] is False
     assert row["created_at"] is not None
+
+
+def test_compose_fails_closed_on_credential_guard_violation(tmp_path, monkeypatch):
+    """W11 (SEC-05): compose() INVOKES the credential-starvation guard before building the graph —
+    a decision-agent account that can read a bearer store fails the whole compose closed."""
+    from agent_runner import account_guard
+    from agent_runner.account_guard import CredentialGuardError
+
+    def boom(settings):
+        raise CredentialGuardError("decision-agent account can read ~/.codex/auth.json")
+
+    monkeypatch.setattr(account_guard, "assert_credential_starved", boom)
+    with pytest.raises(CredentialGuardError):
+        compose(db_url=f"sqlite:///{(tmp_path / 'cg.db').as_posix()}",
+                parquet_root=str(tmp_path / "raw"))
+
+
+def test_compose_fails_closed_when_a_decision_job_is_not_tool_starved(tmp_path, monkeypatch):
+    """W11 (SEC-06): compose() INVOKES the tool inspector on the canonical decision specs — a
+    decision job resolving to a tool-bearing argv fails the whole compose closed."""
+    from agent_runner import tool_inspector
+    from agent_runner.spec import AgentSpec
+
+    tool_bearing = AgentSpec(job_id="triage", runtime="claude", model_alias="triage", prompt="",
+                             schema={}, allowed_tools=["Bash"], decision_stage=True)
+    monkeypatch.setattr(tool_inspector, "default_decision_stage_specs", lambda: [tool_bearing])
+    with pytest.raises(tool_inspector.ToolStarvationError):
+        compose(db_url=f"sqlite:///{(tmp_path / 'ts.db').as_posix()}",
+                parquet_root=str(tmp_path / "raw"))
+
+
+def test_build_decision_transport_selects_low_priv_when_account_configured():
+    """W11 (SEC-05): compose wires an account-LAUNCHING transport when a low-priv account is
+    configured (so decision agents spawn under it), else the plain subprocess transport (dev)."""
+    from types import SimpleNamespace
+
+    from agent_runner.transport import LowPrivSubprocessTransport, SubprocessTransport
+    from main import build_decision_transport
+
+    dev = build_decision_transport(SimpleNamespace(decision_agent_account=None))
+    assert isinstance(dev, SubprocessTransport)
+
+    prod = build_decision_transport(SimpleNamespace(decision_agent_account="cockpit-agent"))
+    assert isinstance(prod, LowPrivSubprocessTransport) and prod.account == "cockpit-agent"

@@ -50,6 +50,44 @@ def _build_anchor_store(settings):
     return GitAuditLogAnchorStore(*adapters)
 
 
+def run_startup_security_checks(settings):
+    """W11 (SEC-05 / SEC-06) — fail-closed startup checks invoked by ``compose()`` BEFORE the app
+    graph is built: (1) the decision-agent account provably cannot read the bearer stores
+    (``account_guard``), and (2) every canonical decision-stage job resolves to a tool/MCP-STARVED
+    argv (``tool_inspector``). RAISES (``CredentialGuardError`` / ``ToolStarvationError``) on any
+    violation — the cockpit refuses to serve a decision/order path it cannot vouch for. Returns a
+    summary for observability. In dev (no low-priv account configured) the credential control is
+    reported INACTIVE, not passed — and a WARNING is logged, because a live/auto deployment MUST
+    provision it (the ACL check + spawn-under-account is only ACTIVE once ``decision_agent_account``
+    is set and the account-launching transport is wired; the runner fails closed otherwise)."""
+    import logging
+
+    from agent_runner import account_guard, tool_inspector
+
+    cred = account_guard.assert_credential_starved(settings)
+    tool_inspector.assert_all_decision_specs_tool_starved(
+        tool_inspector.default_decision_stage_specs()
+    )
+    if not cred.enforced:
+        logging.getLogger("cockpit.security").warning(
+            "SEC-05 credential starvation INACTIVE: no decision_agent_account configured; decision "
+            "agents run under the orchestrator token. Provision the low-priv account before any "
+            "live/auto order path (docs/setup/low-priv-agent-account.md)."
+        )
+    return {"credential_guard_enforced": cred.enforced, "decision_tools_starved": True}
+
+
+def build_decision_transport(settings):
+    """SEC-05 — the transport decision-stage agents spawn through. When a low-priv account is
+    configured, an account-launching transport (so the child runs under it, not the orchestrator);
+    else the default (dev). The runner independently fails closed if a configured account is not
+    applied at the spawn, so a mis-wired transport can never run a decision job privileged."""
+    from agent_runner.transport import LowPrivSubprocessTransport, SubprocessTransport
+
+    account = getattr(settings, "decision_agent_account", None)
+    return LowPrivSubprocessTransport(account) if account else SubprocessTransport()
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw"):
     """Build the full application graph: ``(state, app, services)``."""
     from config.settings import get_settings
@@ -59,18 +97,27 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     from workflows.services import build_services
 
     settings = get_settings()
+    run_startup_security_checks(settings)   # SEC-05/06: fail closed before building the graph
     engine = make_engine(db_url)
     create_all(engine)
     session_factory = make_session_factory(engine)
     state = OrchestratorState.build(session_factory, hmac_key=_hmac_key(), settings=settings,
                                     anchor_store=_build_anchor_store(settings))
-    services = build_services(state, parquet_root=parquet_root)
+    # SEC-05: decision-stage agents spawn under the low-priv account when one is configured.
+    services = build_services(state, transport=build_decision_transport(settings),
+                              parquet_root=parquet_root)
     app = create_app(state, services=services)
     return state, app, services
 
 
 def run() -> None:  # pragma: no cover - production entrypoint, not under test
-    """Start the cockpit: scheduler jobs + the loopback-only API."""
+    """Start the cockpit: scheduler jobs + the loopback-only API.
+
+    ``compose()`` already ran the W11 SEC-05/06 startup security checks (fail closed). The W11
+    always-on order tracer (``brokers/order_tracer.install``) is installed at the LIVE order-path
+    composition seam, which is Phase-3-gated (``robinhood_mcp`` is a stub until W17) — the live
+    ``agentic_place`` path itself REFUSES to run untraced, so no order can reach the broker before
+    the tracer guards it."""
     from orchestrator.app import serve
     from orchestrator.scheduler import build_scheduler
 

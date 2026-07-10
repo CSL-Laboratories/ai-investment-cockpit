@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     # before submit (brokers/gateway.py). Env: COCKPIT_APPROVAL_TTL_SECONDS.
     approval_ttl_seconds: int = Field(default=900, ge=0)
 
+    # ---- SEC-05/06 decision-agent starvation (W11) ------------------------------------
+    # The separate LOW-PRIVILEGE Windows account decision-stage subprocesses run under. When set,
+    # main.compose() FAILS CLOSED unless that account provably cannot read the bearer stores
+    # (agent_runner/account_guard.py; docs/setup/low-priv-agent-account.md). None => dev, the
+    # SEC-05 control is inactive (not satisfied). Non-secret. Env: COCKPIT_DECISION_AGENT_ACCOUNT.
+    decision_agent_account: str | None = None
+    # The pinned sandbox cwd for decision-agent subprocesses (SEC-06): the runner refuses any
+    # decision job whose cwd != this. None => not pinned (dev). Env: COCKPIT_DECISION_AGENT_CWD.
+    decision_agent_cwd: str | None = None
+
     # ---- SEC-11 external audit witness (W10) ------------------------------------------
     # The git-TRACKED head file the GitCommitWitness anchors (reviewed history — bridge/
     # witness.py). Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.

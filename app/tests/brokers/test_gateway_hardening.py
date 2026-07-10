@@ -13,6 +13,9 @@ from __future__ import annotations
 from decimal import Decimal
 from types import SimpleNamespace
 
+import pytest
+
+from brokers.capability import CapabilityError
 from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from core.ids import new_id
@@ -197,3 +200,63 @@ def test_second_valid_approval_same_order_refused_by_state_guard(st):
     out = sc.gateway.submit(sc.order, **sc.submit_kwargs(approval=appr2, token_nonce="n2"))
     assert not out.ok and out.stage == "order_state"
     assert broker.calls == 1                               # NO duplicate broker order
+
+
+def test_live_capability_token_requires_a_covering_signed_approval(st):
+    """SEC-03 (d): the LIVE-MCP capability mint refuses when no HMAC-signed adjudication covers this
+    exact order — the token cannot even be CREATED for an unapproved order (defense-in-depth atop
+    gate (e), which independently refuses at submit)."""
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker)                 # legit AAPL approval + covering adjudication
+    _, gme_hash = _gme_order(st, sc)
+
+    # (1) a live token for an order NO signed adjudication approves -> refused at MINT (never created).
+    with pytest.raises(CapabilityError, match="no covering signed"):
+        sc.gateway.mint_live_submit_token(
+            st, approval_id=sc.approval.id, nonce="live-evil", proposal_id="p1",
+            risk_decision_id=sc.risk_decision.id, order_tuple_hash=gme_hash)
+    assert sc.gateway.live_token_count() == 1              # only the scenario's paper token exists
+
+    # (2) the LEGIT binding (the approved AAPL order) mints fine.
+    tok = sc.gateway.mint_live_submit_token(
+        st, approval_id=sc.approval.id, nonce="live-ok", proposal_id="p1",
+        risk_decision_id=sc.risk_decision.id, order_tuple_hash=sc.tuple_hash)
+    assert tok.nonce == "live-ok"
+
+
+def test_agentic_place_refuses_when_the_tracer_is_not_active(st):
+    """SEC-03: the live Robinhood-Agentic path refuses unless the always-on order tracer guards the
+    broker (the live order authority must never run untraced); with it installed, the gated path
+    reaches the broker exactly once."""
+    from brokers.order_tracer import OrderAuthorityViolation, install
+    from brokers.robinhood_mcp import agentic_place
+
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker, mint=False)
+    sc.gateway.mint_live_submit_token(
+        st, approval_id=sc.approval.id, nonce=sc.nonce, proposal_id="p1",
+        risk_decision_id=sc.risk_decision.id, order_tuple_hash=sc.tuple_hash)
+
+    # (1) tracer NOT installed -> the live path refuses before the broker.
+    with pytest.raises(OrderAuthorityViolation):
+        agentic_place(sc.gateway, sc.order, **sc.submit_kwargs())
+    assert broker.calls == 0
+
+    # (2) tracer installed -> the gated live path reaches the broker.
+    install(broker, state=st)
+    out = agentic_place(sc.gateway, sc.order, **sc.submit_kwargs())
+    assert out.ok and broker.calls == 1
+
+
+def test_pinned_gateway_rejects_a_caller_substituted_trust_root(st):
+    """SEC-03 (G11 round-2): gate (e)'s root of trust is the SIGNED chain, and its HMAC key / DB are
+    PINNED at construction. A caller holding only the gateway cannot swap in an attacker-keyed chain
+    by threading a forged ladder — the same never-approved order that would fire under an
+    attacker-keyed state is refused before the broker."""
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker)                 # gateway pinned to `st` (conftest st=st)
+    # a foreign ladder whose .st is a DIFFERENT (attacker-keyed) state object
+    foreign = SimpleNamespace(st=SimpleNamespace(name="attacker-keyed-state"))
+    with pytest.raises(CapabilityError, match="pinned trust root"):
+        sc.gateway.submit(sc.order, **sc.submit_kwargs(ladder=foreign))
+    assert broker.calls == 0

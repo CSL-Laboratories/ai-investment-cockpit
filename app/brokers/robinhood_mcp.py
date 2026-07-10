@@ -13,7 +13,12 @@ SEC-03 hardening:
   * there is NO live socket / MCP transport here — ``submit_order`` is an in-process stub;
   * ``agentic_place`` takes the ``OrderGateway`` explicitly and calls the gated path — a
     caller cannot reach ``submit_order`` on the broker without a live capability token minted
-    by the approval/veto path.
+    by the approval/veto path;
+  * W11 (SEC-03 (d)/(a)): the LIVE capability token is minted via
+    ``OrderGateway.mint_live_submit_token`` — bound to the COVERING signed ``EVENT_ADJUDICATION``
+    at mint time — and ``agentic_place`` REFUSES unless the always-on runtime order tracer
+    (``brokers/order_tracer.py``) guards the broker. The live order authority never runs untraced,
+    and its capability never exists for an unapproved order.
 """
 from __future__ import annotations
 
@@ -46,7 +51,19 @@ def agentic_place(gateway, order, *, approval, risk_decision, ladder, breaker_en
     """Route a Robinhood-Agentic order through the OrderGateway's gated path. This is the ONLY
     sanctioned entry for the MCP surface: it delegates to ``place_equity_order`` (review THEN
     submit), so the local review always precedes the submit even though the live platform
-    would not force it (Inv 1)."""
+    would not force it (Inv 1).
+
+    W11 (SEC-03): FAIL CLOSED unless the always-on runtime order tracer guards the broker — the
+    live order authority must never run untraced (a bypass of the gateway would otherwise reach
+    the live socket unobserved). The forwarded ``token_nonce`` is a live capability minted via
+    ``gateway.mint_live_submit_token`` (bound to the covering signed adjudication)."""
+    from brokers.order_tracer import OrderAuthorityViolation, is_installed
+
+    if not is_installed(gateway._broker):
+        raise OrderAuthorityViolation(
+            "SEC-03: the live Robinhood-Agentic path requires the runtime order tracer installed "
+            "on the broker; refusing to place an order untraced."
+        )
     return gateway.place_equity_order(
         order, approval=approval, risk_decision=risk_decision, ladder=ladder,
         breaker_engine=breaker_engine, risk_recheck=risk_recheck, positions=positions,
