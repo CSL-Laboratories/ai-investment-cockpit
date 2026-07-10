@@ -2,7 +2,7 @@
 title: Production work packages — the W-series (pre-live / go-live) for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
 status: active
-last-verified: 2026-07-08
+last-verified: 2026-07-09
 related: [path-to-production, security-hardening-backlog, security-architecture, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions]
 ---
 
@@ -159,10 +159,10 @@ slice.
 |----|--------|-------|------|
 | SEC-01 | partial | W18 (+W19) | Sync injection breaker BUILT @ WP8 (`bridge/veto.py`); residual = thread the real `injection_predicate` into the auto-exec coordinator fire seam. **auto_veto-rung threading OWNED by W18 (WIRE+PROVE, do NOT rebuild); auto_full threading by W19.** |
 | SEC-02 | open | W12 | MCP-response free-text unhardened injection input (L126–140). P0-live. Untrusted-wrap + M3 escape + minimize read-all-accounts to the Agentic account. |
-| SEC-03 | partial | W11 | Order authority CLOSED @ WP7 (signed adjudication binding, L163–182). Residual (P0-live): live-MCP capability token bound to a signed approval + runtime tracer + zero-MCP decision agents (L182). |
+| SEC-03 | **done (W11 · G11)** | W11 | Order authority CLOSED @ WP7 (signed adjudication binding). W11/G11 (2026-07-09) CLOSED the residual: always-on runtime tracer + live-MCP token bound to a signed approval + gateway trust-root pinning. G11 held 3 fresh rounds (0 repros). Pre-W17 residual: `producing_runtime` provenance. |
 | SEC-04 | partial | W12 | Out-of-band fail-closed kill (L184–199). HALT gate exists; residual = NSSM stop doc + hotkey/file-drop + set-flag→cancel→disconnect ordering. |
-| SEC-05 | open | W11 | Bearer stores outside keyring (L201–216). P0-live. Separate low-priv Windows account + per-file ACLs. **Host-provisioning half overlaps OPS-06/W15 — see §3.1.** |
-| SEC-06 | partial | W11 | Tool starvation asserted, never tested (L218–232). Residual: startup+CI actual-argv inspector, auto-arm refusal, cwd pin. |
+| SEC-05 | **mechanism done (W11 · G11); ACTIVATION pending** | W11 (+W15/OPS-06) | Bearer stores outside keyring (L201–216). P0-live. W11/G11 CLOSED the runtime ACL-assert + **spawn-under-account fail-closed** (G11 round-1 caught the ACL-only theater). ACTIVATION needs the low-priv account + a `CreateProcessWithLogonW` launcher provisioned (until then decision jobs fail closed). **Host-provisioning half is OPS-06/W15 — see §3.1.** |
+| SEC-06 | **done (W11 · G11)** | W11 | Tool starvation asserted, never tested (L218–232). CLOSED @ W11/G11: deny-by-default ACTUAL-argv inspector (tools/MCP/looseners/`--settings`/`--*system-prompt`) wired into `run_agent` + `arm_auto_mode` auto-arm refusal + pinned cwd. |
 | SEC-07 | partial | W10 (+W17) | Single-transaction tampers CLOSED @ WP8 (L270–294). Delete-then-heal residual AUTO-CLOSED by W10's monotonic seq (`ea7e0fc`): the refill is now a `verify_chain` gap → read_only, one layer earlier than the gate-(h) reconcile (`test_pending_exposure_chain.py` updated). W17 ADVANCES the minor decided_at-TTL residual but does NOT close SEC-07. |
 | SEC-08 | done | DONE @ WP8 | Runtime pin at execution + Claude-exhaustion drop (L296–309). No delta. |
 | SEC-09 | partial | W14 | Default-on scrubber DONE @ WP8 (L334–347). Residual = dashed-account# + lowercase/space-broken foreign ticker+size redaction (confidentiality-only). |
@@ -457,6 +457,18 @@ P0 blockers. Does NOT commit or push.
 ---
 
 ### W11 — Runtime capability boundary: unforgeable order authority + credential/tool starvation
+
+> **STATUS: DONE (2026-07-09) — G11 passed THREE fresh red-team rounds (round 4 unanimous, 0
+> repros).** SEC-03/05/06 residuals CLOSED on branch `w11-capability-boundary` (656→662 tests, +43
+> W11 regressions, ruff clean). The spec below is retained as the plan of record; the as-built
+> delivery + the load-bearing G11 corrections are in [[security-hardening-backlog]] (SEC-03/05/06
+> "W11 closure" notes). **Corrections future W's MUST honor:** (a) SEC-05 is fail-closed-SAFE but
+> ACTIVATES only once the low-priv account + a `CreateProcessWithLogonW` launcher are provisioned
+> (a W17 precondition, parallel to SEC-11's Discord witness) — the ACL check ALONE is theater (G11
+> round-1); (b) `gateway.__init__(st=…)` pins the gate-(e) trust root — a caller cannot substitute
+> an attacker-keyed chain via a forged ladder (G11 round-2); (c) the order tracer exposes NO named
+> unwrap handle (G11 round-3). Pre-W17 residual: chain-anchor `producing_runtime` so gate (f) does
+> not trust a caller literal (out of W11's SEC-08 scope).
 
 **One-liner.** Make the order authority unforgeable at RUNTIME (an always-on
 tracer failing closed on any broker order-call outside `OrderGateway.submit` —

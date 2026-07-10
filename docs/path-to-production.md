@@ -2,7 +2,7 @@
 title: Path to production — from green build to live-capable product
 type: roadmap
 status: active
-last-verified: 2026-07-08
+last-verified: 2026-07-09
 related:
   - build-scaffold-ultracode
   - ultracode-build-playbook
@@ -102,9 +102,9 @@ without the P0 "live" set (SEC-02/03/04/05/06/07/09/13, OPS-01/03); no
 
 | ID | What must be built | Why it blocks live | Cite |
 |---|---|---|---|
-| **SEC-03** (PARTIAL) | Mint a **single-use live-MCP capability token** bound to a signed approval (`proposal_id` + `RiskDecision.id` + resolved-order/quote hash); add a **runtime tracer** asserting `place_equity_order` dispatches only through `OrderGateway` (catches `getattr`/stored-partial/MCP-shim); spawn decision agents with **zero MCP servers**. | The WP7 grep matches a Python symbol, not the live MCP socket that is the real order authority. Any holder of the MCP client can call the order tool by name. | [[security-hardening-backlog]] SEC-03 Closed note, lines 126–145; [[security-architecture]] §4 L1 + §12 test 1 |
-| **SEC-05** (OPEN) | Run decision-stage agents under a **separate low-privilege Windows account** with per-file ACLs so they cannot read `~/.codex/auth.json` or the keyring; treat the Robinhood MCP session as short-lived, re-auth'd, monitored. | Bearer stores are plaintext files; a harvested MCP token places orders with zero contact with this app. | [[security-hardening-backlog]] SEC-05 lines 164–179; SEC-03 line 145 |
-| **SEC-06** (PARTIAL) | Startup + CI assertion that inspects the **actual constructed subprocess arg list** and refuses any decision-stage job with a non-empty `allowed_tools` (deny-by-default); refuse to arm auto modes if any decision job has tools. | Exfil needs only FS-read + egress, neither forbidden by the write-only sandbox test; the mechanical arg-list inspector is not recorded as built. | [[security-hardening-backlog]] SEC-06 lines 181–195 |
+| **SEC-03** ✅ **DONE @ W11/G11** | CLOSED (2026-07-09): a single-use **live-MCP capability token** bound to the covering signed `EVENT_ADJUDICATION` (`gateway.mint_live_submit_token`); an always-on **CLASS-level runtime tracer** (`brokers/order_tracer.py`) that fails closed on any dispatch outside `OrderGateway.submit`; decision agents with **zero MCP servers**; and the gate-(e) **trust root pinned at construction** (a forged ladder cannot substitute the HMAC key). Pre-W17 residual: chain-anchor `producing_runtime`. | The WP7 grep matches a Python symbol, not the live MCP socket. | [[security-hardening-backlog]] SEC-03 "W11 closure"; [[security-architecture]] §4 L1 + §12 test 1 |
+| **SEC-05** ✅ **mechanism DONE @ W11/G11; ACTIVATION pending** | CLOSED mechanism: the startup ACL-assert (`account_guard`) + the **spawn-under-account fail-closed** gate (`runner.run_agent` refuses a decision spawn unless the transport launches the child under the low-priv account — G11 round-1 caught that the ACL alone was theater). ACTIVATES once the account + a `CreateProcessWithLogonW` launcher are provisioned ([[setup/low-priv-agent-account]]); host provisioning is OPS-06/W15. | Bearer stores are plaintext files; a harvested MCP token places orders with zero contact with this app. | [[security-hardening-backlog]] SEC-05 "W11 closure" |
+| **SEC-06** ✅ **DONE @ W11/G11** | CLOSED (2026-07-09): `tool_inspector.inspect_argv` — a deny-by-default inspector on the **actual constructed argv** (refuses tools/`--mcp*`/permission-looseners/`--settings`/`--*system-prompt`) wired into `run_agent` (every decision spawn) + `arm_auto_mode` (auto rungs refuse to arm on a tool/MCP-bearing decision job) + a pinned cwd. | Exfil needs only FS-read + egress; the write-only sandbox test did not forbid them. | [[security-hardening-backlog]] SEC-06 "W11 closure" |
 | **SEC-02** (OPEN) | Treat every MCP-response free-text field that re-enters a prompt as untrusted (`<untrusted-content>` wrap + M3 escape); minimize the read-all-accounts payload to the Agentic account **before** any prompt; run the canary/pattern scan over MCP text. | Endpoint-pin/TLS stop a spoofed host, not malicious content from the pinned host; Inv 3 validates model *output*, not tool-result *input*. | [[security-hardening-backlog]] SEC-02 lines 89–103; [[security-architecture]] §7; prompt-injection-defense §9 |
 | **SEC-04** (PARTIAL) | Document the **out-of-band, fail-closed kill path**: NSSM service-stop as the hard stop that drops the MCP connection independent of Discord/LLM; a local hotkey/file-drop HALT trigger; a preemption point (set-flag → cancel in-flight → disconnect MCP). | `POST /killswitch` runs inside the orchestrator loop; a wedged/GIL-starved burst queues the kill behind the order path it should preempt. | [[security-hardening-backlog]] SEC-04 lines 147–162; SEC-07 line 220; [[security-architecture]] §4 L7 + §10 |
 | **SEC-07** (PARTIAL) | Chain-anchor the pending-exposure cap and the approval `decided_at` TTL (still read mutable columns). | Single-transaction tampers closed WP8; the tail-delete-then-refill residual is the SEC-11 class and needs the external witness. | [[security-hardening-backlog]] SEC-07 WP8 note, lines 233–257 |
@@ -368,8 +368,10 @@ required for a paper-first working product:
    for a private `#audit-log` channel, ACL denies the bot manage-messages) so
    `GitAuditLogAnchorStore.latest()` stops returning None and the gate/mode/gateway/
    budget consults stop failing closed. The git-commit witness is a reviewed-history
-   mirror, never the runtime witness. Then W11 SEC-03/05/06, W12 SEC-02/04/13,
-   W13 OPS-01/03 + pin/hash-lock deps.
+   mirror, never the runtime witness. **W11 SEC-03/05/06 is DONE (G11, 2026-07-09,
+   3 fresh rounds) — but SEC-05 ACTIVATION (provision the low-priv account + a
+   `CreateProcessWithLogonW` launcher) is a W17 precondition, parallel to SEC-11's
+   witness.** Then W12 SEC-02/04/13, W13 OPS-01/03 + pin/hash-lock deps.
 7. **Wire polishing (§5)** — scrubber final wiring, single-scheduler
    `try_consume` lock, CI hardening, monitoring/alerting + heartbeat, backups/DR,
    session calendar, MCP session lifetime.
