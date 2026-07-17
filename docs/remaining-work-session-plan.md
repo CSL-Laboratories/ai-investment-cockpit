@@ -38,7 +38,22 @@ live-enabled, without re-treading closed properties or weakening a gated invaria
 
 ## Part 1 — Drift repairs (do these FIRST; they break sessions silently)
 
-Session 0 below applies all of these. Each was verified this session.
+> **✅ APPLIED — Session 0 ran 2026-07-16 (commit follows this doc).** Every repair in this Part is
+> now IN the docs; this Part is retained as the record of what was wrong and why. **Do NOT re-run
+> Session 0.** Mechanical gate at the time: no `app/` source touched, ruff clean, suite UNCHANGED at
+> **753 passed / 3 skipped**. Task C committed the two surviving red-team templates to
+> `tools/redteam/`; **`w10_redteam.js` was confirmed unrecoverable** (searched every scratchpad,
+> the harness-persisted `workflows/scripts/` dirs, and the whole of `%TEMP%`/`.claude`) and was NOT
+> reconstructed — `production-playbook.md` §4a prose remains its canonical source.
+>
+> **Two corrections Session 0 made to THIS PLAN itself:** (1) the calendar is
+> `app/orchestrator/market_calendar.py`, **not** `app/ingest/` — this plan cited the wrong path (the
+> docs had it right); (2) W16's kickoff ALREADY listed all six knob names correctly and W14's ACCEPT
+> (c) was ALREADY correctly scoped — so those two repairs shrank to targeted warnings rather than
+> additions. **(3) W12 IS pushed** to `origin/w12-untrusted-kill-atomic-audit` (this plan and the
+> memory said otherwise); it remains UNMERGED to `main`, which is what actually matters.
+
+Session 0 applied all of these. Each was verified against the tree.
 
 ### 1.1 Stale backlog line-refs — systemic, **+180 to +220 lines**
 
@@ -319,11 +334,13 @@ them.** They are the real long pole.
 **Wall-clock, not code:** the **2-week paper soak** and **≥4-week auto windows**. W16 delivers
 the *instruments*, not the history.
 
-**Untracked, dated:** `market_calendar.py` codes NYSE **2025 and 2026 only**. Today is
-2026-07-16, so coverage expires in ~5 months and W15's staleness gauge will warn almost
-immediately. Fail-safe (falls back to weekday/hours; never reports a real holiday as open), so
-WARN not block — but a **2027 refresh is an operator task with a real date** and is tracked
-nowhere.
+**Untracked, dated:** `app/orchestrator/market_calendar.py` (**`orchestrator/`, not `ingest/` —
+this plan cited the wrong path in its first draft; corrected in Session 0**) codes NYSE **2025 and
+2026 only**; its docstring says they "MUST be refreshed each year". Today is 2026-07-16, so
+coverage expires in ~5 months and W15's staleness gauge will warn almost immediately. Fail-safe
+(falls back to weekday/hours; "will not wrongly report a real holiday as open beyond the coded
+years"), so WARN not block — but a **2027 refresh is an operator task with a real date** and is
+tracked nowhere.
 
 **Before real capital (invariant P-C):** re-verify Anthropic SDK-credit status, Robinhood
 Agentic scope/OAuth TTLs, and **per-broker post-PDT house-margin rules** against **fresh primary
@@ -477,7 +494,8 @@ TASK B — DRIFT REPAIRS. Author ONLY docs/ + tools/. Do not touch app/ source.
       terminal reachable from any non-terminal), :50 (terminal set), :52; schemas/models/order.py:37.
       W14's real delta is the out-of-band registry + interception hook + per-run rotation +
       batch-seeding + the PII variant. Add an anti-rebuild fence.
-  (l) OPS-04 DATED FUSE. app/ingest/market_calendar.py codes NYSE 2025 and 2026 ONLY and its
+  (l) OPS-04 DATED FUSE. app/orchestrator/market_calendar.py (NOTE: orchestrator/, NOT ingest/ —
+      the first draft of this prompt cited the wrong path) codes NYSE 2025 and 2026 ONLY and its
       docstring says they MUST be refreshed each year. Today is 2026-07-16 — coverage expires in
       ~5 months and W15's staleness gauge will warn almost immediately. The fallback is fail-SAFE
       (weekday/hours rules; never reports a real holiday as open beyond coded years), so this is
@@ -876,7 +894,8 @@ PACKAGE-SPECIFIC — apply only the one matching the kickoff below:
 
   W15: You are the heaviest mid-tier package and you have SHARED-FILE CONTENTION (/status in
        orchestrator/app.py, config/settings.py) — barrier-merge required.
-       OPS-04: HARDEN AND SURFACE the EXISTING app/ingest/market_calendar.py — do NOT re-author
+       OPS-04: HARDEN AND SURFACE the EXISTING app/orchestrator/market_calendar.py (orchestrator/,
+       NOT ingest/) — do NOT re-author
        it. Note its coded holiday/early-close sets are NYSE 2025 AND 2026 ONLY and today is
        2026-07-16: the staleness gauge you build will begin WARNING within ~5 months. The fallback
        is fail-SAFE (weekday/hours; never reports a real holiday as open beyond coded years) so
