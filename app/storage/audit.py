@@ -243,11 +243,60 @@ class AuditLog:
 
     def verify_completeness(self, model_class) -> list[str]:
         """Every row of a load-bearing model must have a covering AuditEntry (refs.row_id).
-        Returns the ids of any uncovered rows (SEC-13)."""
+        Returns the ids of any uncovered rows (SEC-13).
+
+        IN-SCOPE guarantee (honest boundary — do NOT over-claim): this detects a row with NO
+        covering AuditEntry — a FRESH row a keyless writer bare-``session.add``ed, bypassing
+        ``record_state_change``. It does NOT detect a deleted-then-reused-id tamper: an arbitrary
+        keyless ``DELETE`` of an audited row followed by a bare ``INSERT`` of a NEW, unaudited row
+        under the SAME id whose ORIGINAL covering AuditEntry SURVIVES reads as covered here,
+        because that surviving entry's ``row_id`` still matches. That id-reuse is the
+        KEYLESS-WRITER / SEC-11 domain-row-binding class (SEC-11 remains OPEN pending its external
+        witness) — and for the order table it is already caught at the order path by the gateway's
+        signed ``EVENT_ORDER_TRANSITION`` reconcile, which fails closed when the chain lacks the
+        new row's signed history. Binding each row's covering entry ``seq`` into the row at write
+        time (the general closure) is a cross-model schema change, out of scope for this thin gate.
+
+        C2 (cross-table collision) fail-closed: the coverage set is SCOPED to this model's
+        table via ``refs.model`` (stamped by ``record_state_change`` AND ``append_in``). An
+        UNSCOPED coverage set let an unaudited row of one table pass because a covered row of a
+        DIFFERENT table shared the same id — so a bare-added Order whose id collided with a
+        covered ApprovalRecord read as covered. Requiring ``refs.model == model_class.__tablename__``
+        binds coverage to the right table, so a cross-table id collision no longer masks the gap.
+
+        R3-C2 (append_in batch coverage) fail-closed: the covered set is the UNION of the SINGULAR
+        ``refs.row_id`` (stamped by ``record_state_change`` for a single state row) AND every id in
+        the PLURAL ``refs.row_ids`` list (stamped by ``append_in`` for a BATCH — e.g. the
+        ``EVENT_INGEST_BATCH`` that atomically persists a whole MarketEvent batch,
+        ``workflows/events.py``). Reading only the singular ``row_id`` would leave every legitimately
+        batch-audited row uncovered (cry wolf); reading only the plural would miss single-row audits.
+        Both scoped by ``refs.model`` so the cross-table guarantee above still holds for either shape."""
+        table = model_class.__tablename__
         with self._sf() as s:
-            covered = {(r.refs or {}).get("row_id") for r in s.execute(select(AuditEntry)).scalars().all()}
+            covered: set = set()
+            for r in s.execute(select(AuditEntry)).scalars().all():
+                refs = r.refs or {}
+                if refs.get("model") != table:
+                    continue
+                rid = refs.get("row_id")
+                if rid is not None:
+                    covered.add(rid)                       # singular: record_state_change
+                row_ids = refs.get("row_ids")
+                if isinstance(row_ids, (list, tuple)):
+                    covered.update(row_ids)                # plural: append_in batch (e.g. ingest)
             ids = {row.id for row in s.execute(select(model_class)).scalars().all()}
         return sorted(ids - covered)
+
+    def completeness_report(self, model_classes) -> dict:
+        """SEC-13 — aggregate the two-phase + state-coverage gaps in one snapshot for the
+        startup reconciler (``orchestrator.reconcile``) and ops probes: any unresolved intent,
+        any orphan result, and any load-bearing domain row lacking a covering AuditEntry. A
+        THIN read-only roll-up over the existing primitives — it does NOT touch the chain/HMAC."""
+        return {
+            "unresolved_intents": self.unresolved_intents(),
+            "orphan_results": self.orphan_results(),
+            "uncovered": {m.__tablename__: self.verify_completeness(m) for m in model_classes},
+        }
 
     # ---- verification ------------------------------------------------------
     def head(self) -> tuple[int, str | None]:

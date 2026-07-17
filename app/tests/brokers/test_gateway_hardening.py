@@ -248,6 +248,104 @@ def test_agentic_place_refuses_when_the_tracer_is_not_active(st):
     assert out.ok and broker.calls == 1
 
 
+def test_out_of_band_halt_after_gate_a_still_refuses_before_broker(st):
+    """B1 (SEC-04 TOCTOU): ``submit`` probes the HALT sentinel ONCE at gate (a) (top of
+    ``_precheck``). After that, still-unlocked-file work runs (``_load_row``, ``_registry.consume``,
+    ``_pending_ok``'s ``verify_chain`` + full table scans) — a real window in which the OUT-OF-BAND
+    ``python -m orchestrator.halt --set`` (which never takes ``st.lock``) writes the sentinel. The
+    SYNCHRONOUS re-check immediately before the two-phase submit must catch it: stage ``'halt'``, NO
+    broker call, and NO unresolved ``order_submit`` intent was emitted (it refuses BEFORE
+    ``st.audit.intent``)."""
+    from orchestrator.halt import default_halt_path, halt_is_set, set_halt
+
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker)
+    assert not halt_is_set(default_halt_path())            # gate (a) will pass at submit start
+
+    # Seam that lands the out-of-band sentinel in the TOCTOU window: wrap gate (h) _pending_ok, which
+    # runs AFTER gate (a) passed and AFTER the token consume, immediately before the two-phase block.
+    real_pending_ok = sc.gateway._pending_ok
+
+    def _pending_ok_then_oob_halt(st_arg, order_arg):
+        result = real_pending_ok(st_arg, order_arg)         # gate (a) already passed to reach here
+        set_halt(default_halt_path(), reason="oob-mid-submit")
+        return result
+
+    sc.gateway._pending_ok = _pending_ok_then_oob_halt
+
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert not out.ok and out.stage == "halt", out
+    assert broker.calls == 0                                # broker NEVER called after the OOB kill
+    # refused BEFORE the two-phase submit: no order_submit intent was appended, chain stays clean.
+    assert not _has_order_submit_intent(st)
+    assert st.audit.verify_chain().ok
+
+
+def test_out_of_band_halt_during_intent_window_refuses_and_completes_pair(st):
+    """R3-S1 (SEC-04 TOCTOU, deeper than B1): the round-2 pre-broker HALT re-check sits BEFORE the
+    two-phase intent write, so an out-of-band ``python -m orchestrator.halt --set`` (which never
+    takes ``st.lock``) landing DURING the intent append — the window between ``st.audit.intent()``
+    and ``broker.submit_order()`` — would STILL fire the broker under the old code. The FINAL
+    re-check AFTER the intent, immediately before the broker call, must catch it: stage ``'halt'``,
+    broker untouched, AND the intent that WAS written is COVERED by a result (``aborted=halt``) so
+    ``unresolved_intents()`` does NOT grow — SEC-13's 1:1 pairing stays intact (no dangling
+    intent)."""
+    from orchestrator.halt import default_halt_path, halt_is_set, set_halt
+
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker)
+    assert not halt_is_set(default_halt_path())
+    assert st.audit.unresolved_intents() == []          # clean before
+
+    # Seam that lands the OOB sentinel AFTER the intent is written but BEFORE the broker call: wrap
+    # st.audit.intent so the REAL intent appends, THEN the out-of-band --set writes the sentinel.
+    # This is the window the pre-broker check (which runs BEFORE the intent write) does not cover.
+    real_intent = st.audit.intent
+
+    def _intent_then_oob_halt(*a, **k):
+        entry = real_intent(*a, **k)                     # the real order_submit intent is appended
+        set_halt(default_halt_path(), reason="oob-during-intent-window")
+        return entry
+
+    st.audit.intent = _intent_then_oob_halt
+
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert not out.ok and out.stage == "halt", out
+    assert broker.calls == 0                             # broker NEVER called in the intent window
+    assert _has_order_submit_intent(st)                 # the intent really WAS written (window hit)
+    # yet it is COVERED by an aborted result -> no orphan intent; SEC-13 1:1 pairing intact.
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+def test_intent_window_positive_control_no_halt_submits_and_pairs(st):
+    """POSITIVE CONTROL for R3-S1: with NO out-of-band kill in the intent window, the added FINAL
+    pre-broker re-check is a no-op — a legit approved order reaches the broker exactly once, the
+    ``order_submit`` intent is paired by its REAL result, and ``unresolved_intents()`` is empty.
+    Proves the added final check does not refuse legitimate traffic."""
+    from orchestrator.halt import default_halt_path, halt_is_set
+
+    broker = RecordingBroker()
+    sc = build_scenario(st, broker=broker)
+    assert not halt_is_set(default_halt_path())
+
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert out.ok and out.stage == "submitted", out
+    assert broker.calls == 1                             # legit order flows through the final check
+    assert _has_order_submit_intent(st)                 # the two-phase intent was written
+    assert st.audit.unresolved_intents() == []          # and paired by its result (no dangle)
+    assert st.audit.verify_chain().ok
+
+
+def _has_order_submit_intent(st) -> bool:
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+    with st.session_factory() as s:
+        rows = s.execute(select(AuditEntry)).scalars().all()
+    return any((r.event_type or "") == "intent:order_submit" for r in rows)
+
+
 def test_pinned_gateway_rejects_a_caller_substituted_trust_root(st):
     """SEC-03 (G11 round-2): gate (e)'s root of trust is the SIGNED chain, and its HMAC key / DB are
     PINNED at construction. A caller holding only the gateway cannot swap in an attacker-keyed chain

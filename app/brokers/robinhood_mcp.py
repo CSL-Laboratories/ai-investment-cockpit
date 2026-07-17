@@ -23,7 +23,9 @@ SEC-03 hardening:
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Callable
 
+from brokers.mcp_untrusted import HardenedMCP, harden_mcp_result, minimize_to_agentic
 from core.ids import new_id
 
 
@@ -34,6 +36,20 @@ class RobinhoodMCPBroker:
 
     def __init__(self) -> None:
         self.submitted: list[dict] = []
+
+    def read_agentic_snapshot(self, fetch: Callable[[], dict], *, agentic_account_id: str,
+                              subject_symbols: frozenset[str] = frozenset()) -> HardenedMCP:
+        """W12 SEC-02 read seam: the MCP RESPONSE is a first-class prompt-injection input, so its
+        free text is neutralized before it can reach any prompt.
+
+        ``fetch`` is INJECTED — a mock in tests; W17 wires the live MCP read (no live socket is
+        opened here). The raw payload is minimized to the Agentic account ONLY (every other
+        account's holdings are dropped and FAIL CLOSED if the Agentic account can't be positively
+        identified), then every free-text field is escaped, SEC-09-scanned, and wrapped as
+        ``mcp:robinhood`` untrusted-content. Only the returned :class:`HardenedMCP.prompt_block`
+        may enter a model context."""
+        minimized = minimize_to_agentic(fetch(), agentic_account_id=agentic_account_id)
+        return harden_mcp_result(minimized, source="robinhood", subject_symbols=subject_symbols)
 
     def submit_order(self, canonical_tuple: dict) -> dict:
         oid = new_id("rh")

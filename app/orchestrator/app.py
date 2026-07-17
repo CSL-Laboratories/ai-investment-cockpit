@@ -37,6 +37,7 @@ from schemas.models.brief_record import BriefRecord
 from schemas.models.market_event import MarketEvent
 from schemas.models.proposal_record import ProposalRecord
 from storage.repositories import Repo
+from workflows.constants import EVENT_AGENT_JOB
 
 from .auth import ApiKeyAuth
 from .breakers import BreakerEngine
@@ -153,10 +154,21 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
             raise HTTPException(status_code=422, detail=f"unknown model alias {body.model!r}")
         runtime = body.runtime or runtime_for(body.model)
         pinned = aliases[body.model].get("pinned", body.model)
-        job = Repo(state.session_factory, AgentJob).add(
+        # Inv 6 (SEC-13) fail-closed: a QUEUED AgentJob is a state change and MUST carry a covering
+        # AuditEntry written ATOMICALLY with the row — never a bare ``Repo.add`` (which the round-2
+        # completeness-gate expansion exposed: AgentJob is in _DEFAULT_MODELS, so a bare-added queued
+        # job left an uncovered row that tripped reconcile ok=False on every boot). Route it through
+        # record_state_change with the same EVENT_AGENT_JOB event that audits the job's later
+        # completion (workflows/agent_calls.py:89), so the row and its audit entry commit together.
+        job = AgentJob(
             id=new_id("job"), runtime=runtime, model=body.model, model_pinned=pinned,
             prompt_template=body.prompt_template, prompt_hash="", input_refs=body.input_refs,
             schema_id=body.schema_id, status="queued", created_at=state.clock.now(),
+        )
+        state.audit.record_state_change(
+            job, EVENT_AGENT_JOB, actor="orchestrator.create_job",
+            payload={"status": "queued", "model": body.model, "runtime": runtime,
+                     "model_pinned": pinned, "schema_id": body.schema_id},
         )
         return {"id": job.id, "status": job.status, "runtime": runtime, "model_pinned": pinned}
 

@@ -88,21 +88,55 @@ def build_decision_transport(settings):
     return LowPrivSubprocessTransport(account) if account else SubprocessTransport()
 
 
+def _no_broker_history(order_id: str) -> list:
+    """SEC-13 default broker-history reader for startup reconciliation. NO live broker read
+    exists until W17 wires the MCP order-history seam, so this returns ``[]`` (no history) —
+    a FRESH empty DB has no unresolved intents, so reconciliation is clean (``ok=True``). Once
+    W17 lands, this is replaced by the live read so a crashed-mid-submit intent can be healed."""
+    return []
+
+
+def _startup_reconcile(state) -> None:
+    """SEC-13 — reconcile the two-phase ledger against the broker + domain tables at startup.
+    On a NOT-``ok`` verdict we LOG the alert (already emitted by the injected alerter) and keep
+    serving: reconciliation SURFACES a completeness defect, it does not gate boot. A fresh empty
+    DB reconciles clean, so the ``compose`` smoke test stays green."""
+    import logging
+
+    from orchestrator.reconcile import reconcile_startup
+
+    log = logging.getLogger("cockpit.reconcile")
+    report = reconcile_startup(state, broker_history_fn=_no_broker_history,
+                               alerter=log.warning)
+    if not report.ok:
+        log.warning(
+            "SEC-13 startup reconciliation is NOT ok: healed=%s alerted=%s orphan_results=%s "
+            "uncovered=%s — investigate the two-phase/completeness gaps above.",
+            report.healed, report.alerted, report.orphan_results, report.uncovered,
+        )
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw"):
     """Build the full application graph: ``(state, app, services)``."""
     from config.settings import get_settings
     from orchestrator.app import create_app
+    from orchestrator.halt import default_halt_path, ensure_halt_dir
     from orchestrator.state import OrchestratorState
     from storage.engine import create_all, make_engine, make_session_factory
     from workflows.services import build_services
 
     settings = get_settings()
+    # SEC-04 (R3-S3): create the HALT sentinel's PARENT dir so an ABSENT sentinel resolves to the
+    # true not-found signal (Windows winerror 2 => not-halted) and the fail-closed winerror-2
+    # invariant does not trip on the happy path; a dropped mount still fails closed.
+    ensure_halt_dir(default_halt_path())
     run_startup_security_checks(settings)   # SEC-05/06: fail closed before building the graph
     engine = make_engine(db_url)
     create_all(engine)
     session_factory = make_session_factory(engine)
     state = OrchestratorState.build(session_factory, hmac_key=_hmac_key(), settings=settings,
                                     anchor_store=_build_anchor_store(settings))
+    _startup_reconcile(state)   # SEC-13: heal/alert the two-phase ledger before wiring services
     # SEC-05: decision-stage agents spawn under the low-priv account when one is configured.
     services = build_services(state, transport=build_decision_transport(settings),
                               parquet_root=parquet_root)
