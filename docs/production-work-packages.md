@@ -252,7 +252,7 @@ register-relevant effect is a SUBSTRATE UPGRADE, not a closure: a direct EDGAR f
 converts `event_type="filing"` from a news-vendor TAG into a first-party trust root (the
 SEC accession number + the pinned `data.sec.gov` host over TLS), strengthening the
 corroboration SUBSTRATE that **SEC-21** (deterministic-urgency corroboration of
-`event_type in {"halt","filing"}` — `workflows/budget.py:158`, `workflows/triage_loop.py:46,194`)
+`event_type in {"halt","filing"}` — `workflows/budget.py:27,234`, `workflows/triage_loop.py:47,199`)
 and **SEC-15** (reconciled trust root, W18) read. It does NOT re-open or re-own
 SEC-21/SEC-15 — those stay with W10/W18 — it makes the data they trust first-party. The
 AUTO-mode use of that upgrade is a SOFT dependency on W10 (which binds
@@ -428,7 +428,8 @@ the SEC-07/20/21 residuals with NO further subsystem code.
 - Auto unlock / auto mode-read fail closed when head is below OR absent-from the external anchor (no store / empty store / head-below-anchor all refuse).
 - `MarketEvent.event_type` bound + reconciled; a keyless flip yields no corroboration.
 - SEC-07/20/21 residuals verified auto-closed by the wiring, NO further subsystem code.
-- Full suite green + ruff clean (baseline 586 / 3 skipped); the three repros are regressions.
+- Full suite green + ruff clean (the baseline AT W10 was 586 / 3 skipped; the CURRENT baseline is
+  **753 / 3 skipped (756 collected)** post-W12 — lineage 586 (WP9) → 619 (W10) → 662 (W11) → 753 (W12)); the three repros are regressions.
 - No invariant weakened; SEC-11 never implied closed until G10 fails closed; keyring-only HMAC key.
 
 **Gate G10** (protects Inv 6 + SEC-11; auto-resolves SEC-07/20/21).
@@ -700,7 +701,11 @@ OPS-03 WAL/busy_timeout asserted on a live connection + concurrent writers with 
 surfaced lock error; pinned deps + hash-locked lockfile + CI install-from-lockfile
 succeeds; a corrupted lockfile hash makes CI exit non-zero (documented local
 repro); `main.run()` smoke passes and its only uncovered line is `uvicorn.run`;
-full suite green (≥586/3 skipped) + ruff clean; G0..G9 remain green; no invariant
+full suite green **at the TRUE baseline of the tree you branched from** — 753/3 skipped (756
+collected) if from W12 (`fce3349`); lineage 586 (WP9) → 619 (W10) → 662 (W11) → 753 (W12). The
+historical "≥586" bar is STALE — a tree that LOST ~170 regressions still clears it (anti-pattern
+#6). Establish the real count with `cd app && python -m pytest -q` BEFORE changing anything —
++ ruff clean; G0..G9 remain green; no invariant
 weakened; SEC-11 NOT claimed closed.
 
 **Gate G13** (protects Inv 6 single-writer head + Inv 4 — OPS-01/03 + supply-chain).
@@ -1381,9 +1386,11 @@ CLOSE either — it makes the data they read first-party). Sentiment is EXPLICIT
 **Why — lead with the security angle.** Today the ONLY thing that stamps
 `event_type="filing"` is a news vendor's TAG — no live feed emits it (the fixture builds
 it by hand, `tests/workflows/fixtures_market_day.py`), yet `deterministic_urgency` treats
-`event_type in {"halt","filing"}` as auto-corroboration (`workflows/budget.py:158`) and
+`event_type in {"halt","filing"}` as auto-corroboration (`workflows/budget.py:234`; the
+frozenset is `budget.py:27` — the previously-cited `:158` is `try_consume`) and
 the triage pre-filter keeps any such event regardless of holdings/watchlist
-(`workflows/triage_loop.py:46,194`). A DIRECT EDGAR feed makes `"filing"` a FIRST-PARTY
+(`workflows/triage_loop.py:199`; the frozenset is `triage_loop.py:47` — the previously-cited
+`:46` is `_BURST_THRESHOLD`). A DIRECT EDGAR feed makes `"filing"` a FIRST-PARTY
 assertion: our own connector sets it only after fetching the record from the pinned SEC
 host over TLS and reading the real accession number, which flows into
 `article_id`/`raw_ref` and the audit-bound `content_hash` (`ingest/normalize.py:78,79`).
@@ -1459,7 +1466,7 @@ sources (verified 2026-07-08, re-verify at build — moving targets):
   inherits `escape_untrusted` (SEC-02, `normalize.py:73-76`) and `content_hash` audit
   binding (`normalize.py:79`, SEC-13/Inv 8).
 - EDGAR filings emit the canonical `event_type="filing"` (the exact string that hits
-  `{"halt","filing"}` at `budget.py:158` + `triage_loop.py:46`); granular form in
+  `{"halt","filing"}` at `budget.py:27,234` + `triage_loop.py:47,199`); granular form in
   `raw.form`. Dedup key `sec:edgar:<accession>` through the existing `ingest.dedup.Dedup`;
   `persist_events` gives write-once parquet `raw_ref` + `EVENT_INGEST_BATCH` binding for
   free (`workflows/events.py:94`).
