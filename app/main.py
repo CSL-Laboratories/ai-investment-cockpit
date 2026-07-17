@@ -116,6 +116,55 @@ def _startup_reconcile(state) -> None:
         )
 
 
+def build_ingest_fetchers(settings, *, finra_token_provider=None, finra_http_get=None,
+                          finra_row_mapper=None):
+    """W20 — build the production ingest fetch CLOSURES from settings. All I/O lives in these
+    factories, never in the pure ingest modules (which take an injected ``fetch``).
+
+    NOTHING CALLS THIS YET, AND THAT IS CORRECT/EXPECTED. No ingest poller is wired into
+    ``compose()`` or the scheduler today — ``workflows.events.persist_events`` is currently
+    reached only from tests. Standing up the first production ingest job is a separate package;
+    this helper exists so that wiring is a one-liner then, instead of a fresh design decision.
+
+    Returns ``{"sec:edgar": fetch | None, "finra": fetch | None}``. A None value means NOT
+    PROVISIONED, which a caller MUST NOT read as "no events" — for the brew, consult
+    ``fetch.brew_status(day)`` (``ingest/edgar_brew.py:make_brew_fetch``), whose NOT_PROVISIONED /
+    NOT_RUN / DEGRADED statuses are deliberately distinguishable from a quiet day.
+
+    FINRA's ``token_provider`` (OAuth2 client_credentials — the credentials are keyring-only,
+    Inv 4) and ``http_get`` are injected by the caller, not read from settings: settings carries
+    non-secret config only, and keeping the HTTP client injected keeps httpx out of the ingest
+    import graph. Without them the FINRA fetcher stays None rather than being half-built.
+    """
+    from ingest.edgar_brew import make_brew_fetch
+    from ingest.finra_short_interest import make_finra_fetch
+
+    fetchers = {"sec:edgar": None, "finra": None}
+    if settings.brew_db_path:
+        fetchers["sec:edgar"] = make_brew_fetch(settings.brew_db_path,
+                                                runs_dir=settings.brew_runs_dir)
+    if settings.finra_endpoint and settings.finra_user_agent and finra_token_provider \
+            and finra_http_get:
+        from ingest.ratelimit import TokenBucket
+
+        fetchers["finra"] = make_finra_fetch(
+            endpoint=settings.finra_endpoint,
+            user_agent=settings.finra_user_agent,
+            token_provider=finra_token_provider,
+            http_get=finra_http_get,
+            row_mapper=finra_row_mapper,
+        )
+        # The bucket is the POLLER's, not the fetch closure's. It rides on the closure only so
+        # the later wiring stays a one-liner; the CONTRACT is that the caller passes it through:
+        #     FinraShortInterestPoller(fetch, bucket=fetch.bucket)
+        # Nothing reads this attribute otherwise. The rate is a self-imposed politeness floor,
+        # NOT a verified FINRA cap (settings.finra_rate_per_sec). Capacity == rate so it starts
+        # empty and takes no birth burst (ingest/ratelimit.py TokenBucket).
+        fetchers["finra"].bucket = TokenBucket(rate_per_sec=settings.finra_rate_per_sec,
+                                               capacity=settings.finra_rate_per_sec)
+    return fetchers
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw"):
     """Build the full application graph: ``(state, app, services)``."""
     from config.settings import get_settings

@@ -67,8 +67,17 @@ def build_packet(events: Sequence[MarketEvent], *, max_item_chars: int = 1200) -
         body = f"{headline} — {ev.summary}" if ev.summary else headline
         inner = escape_untrusted(body)[:max_item_chars]
         ts = ev.ts.isoformat() if ev.ts is not None else ""
-        # SEAM 1: identical bytes to the previous inline f-string for news — ALLOWED_SOURCES
-        # values (and raw_ref/ts) contain no < > & " so _attr_escape is a no-op here.
+        # SEAM 1: identical bytes to the previous inline f-string for news.
+        #
+        # CORRECTED (W20). This comment previously read "ALLOWED_SOURCES values (and raw_ref/ts)
+        # contain no < > & " so _attr_escape is a no-op here" — asserting the escape was
+        # DECORATIVE. That was true only while every article_id was an int (finnhub) or a
+        # synthetic key. raw_ref is f"{source}:{article_id}" (normalize.py) and normalize does
+        # NOT escape article_id, so raw_ref's character set is FEED-DEPENDENT, not fixed: W20's
+        # EDGAR-via-brew feed derives article_id from an accession read out of another repo's
+        # DB. _attr_escape is therefore load-bearing here — do not remove it, and
+        # do not re-derive "it can't contain a quote" from today's feed list. It is a no-op only
+        # for feeds whose ids happen to be quote-free, which is not a property anyone enforces.
         wrapped = wrap_untrusted(inner, source=ev.source, article_ref=ev.raw_ref, ts=ts)
         items.append(PacketItem(event_id=ev.id, raw_ref=ev.raw_ref, symbol=ev.symbol,
                                 text=wrapped))

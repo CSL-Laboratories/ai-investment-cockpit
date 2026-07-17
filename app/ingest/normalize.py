@@ -15,7 +15,12 @@ import math
 import re
 import unicodedata
 
-ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar"}
+# The §5 feed allowlist. This literal is the ONE reviewable line that authorizes a feed, so it is
+# widened HERE and never by a module registering itself at import (that would make the allowlist's
+# contents import-order-dependent and un-greppable). "sec:edgar" = the edgar-morning-brew Delta
+# feed (ingest/edgar_brew.py); "finra" = short-interest/Reg SHO enrichment (W20,
+# ingest/finra_short_interest.py).
+ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra"}
 MAX_LEN = 4000
 MAX_SYMBOLS = 64
 _TICKER = re.compile(r"^[A-Z0-9.\-]{1,12}$")

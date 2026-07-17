@@ -29,6 +29,7 @@ from config.models import runtime_for
 from core.ids import new_id
 from ingest.normalize import escape_untrusted
 from workflows.constants import EVENT_GROUNDING
+from workflows.packets import wrap_untrusted
 from workflows.prompts import load_prompt
 from workflows.schema_loader import load_schema
 
@@ -116,20 +117,43 @@ def corroborate(proposal: dict, dispatched_refs: frozenset[str],
 def extract_slice(raw_items: list[dict]) -> str:
     """Deterministic entity/number slice of the cited raw items — what the verifier model
     is fed INSTEAD of the raw prose the proposer saw (SEC-14 'deterministically-extracted
-    slice'). Symbols, numbers, dates and the ESCAPED headline only."""
+    slice'). Symbols, numbers, dates and the ESCAPED headline only.
+
+    ATTRIBUTE CONTEXT IS NOT ELEMENT CONTEXT (SEC-02) — why this delegates to packets.py.
+    ------------------------------------------------------------------------------------
+    This used to HAND-ROLL the wrapper as an f-string, interpolating ``source``/``raw_ref``/``ts``
+    straight into double-quoted HTML attributes with NO escaping. ``escape_untrusted`` guards
+    ELEMENT TEXT and does not neutralize ``"``; ``normalize.to_market_event`` escapes headline/
+    summary/event_type but NOT ``article_id`` and NOT ``raw_ref`` (= f"{source}:{article_id}").
+    So a raw_ref carrying a double-quote closed ``article_ref="..."`` early and injected
+    attacker-chosen attributes/content into the verifier's prompt — the SEC-14 verifier being
+    exactly the component that is supposed to CATCH injection.
+
+    That was latent, not theoretical: it was safe only while every article_id was an int
+    (finnhub) or a synthetic key. W20's EDGAR-via-brew feed is the FIRST feed whose article_id
+    is attacker-influenceable free text (an accession read out of another repo's DB), which is
+    what turned the assumption false.
+
+    ``packets.wrap_untrusted`` / ``packets._attr_escape`` ALREADY solve the attribute-context
+    problem and are shipped, tested code — so this REUSES them rather than authoring a third
+    escaper (two escapers with one call site each is how they drift). Byte-for-byte identical
+    output for every existing item, since a no-op escape of a quote-free value is the value.
+    Defense in depth only: the primary control is at the feed boundary (ingest/edgar_brew.py's
+    ASCII-anchored ``_ACCESSION`` filter drops such an accession before it can become a ref)."""
     lines = []
     for item in raw_items:
         headline = escape_untrusted(str(item.get("headline", "")))[:200]
         combined = f"{item.get('headline', '')} {item.get('summary', '')}"
         numbers = ",".join(_NUMBER.findall(str(combined))[:16])
         symbols = ",".join(item.get("symbols") or [])
-        lines.append(
-            f'<untrusted-content source="{item.get("source", "")}" '
-            f'article_ref="{item.get("raw_ref", "")}" ts="{item.get("ts", "")}">\n'
-            f"symbols={symbols} numbers={numbers} event_type={item.get('event_type', '')}\n"
-            f"headline={headline}\n"
-            f"</untrusted-content>"
-        )
+        inner = (f"symbols={symbols} numbers={numbers} event_type={item.get('event_type', '')}\n"
+                 f"headline={headline}")
+        lines.append(wrap_untrusted(
+            inner,
+            source=item.get("source", ""),
+            article_ref=item.get("raw_ref", ""),
+            ts=item.get("ts", ""),
+        ))
     return "\n\n".join(lines)
 
 

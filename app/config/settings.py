@@ -69,6 +69,41 @@ class Settings(BaseSettings):
     # NEVER here. Env: COCKPIT_AUDIT_LOG_CHANNEL_ID.
     audit_log_channel_id: int | None = None
 
+    # ---- W20 ingest feeds (docs/production-work-packages.md W20) ----------------------
+    # NOTE for the later barrier merge: settings.py is also touched by W14(f)/W15/W16(c).
+    # Everything W20 owns is inside THIS block; nothing above or below it is W20's.
+    #
+    # edgar-morning-brew's SQLite file — the cockpit reads it READ-ONLY (mode=ro URI,
+    # ingest/edgar_brew.py:read_only_uri) and NEVER fetches sec.gov itself. Path is
+    # operator-set/TBD: the brew's own default is a bare relative "edgar_morning_brew.db"
+    # (its storage/engine.py:20 make_engine), which is not a location this process can assume,
+    # so there is NO default here. None => the feed is NOT PROVISIONED, which
+    # read_brew_run_outcome reports as BrewFeedStatus.NOT_PROVISIONED (stale=True,
+    # quiet_day=False) — deliberately DISTINGUISHABLE from a legitimate quiet day, never a
+    # silent no-op. Env: COCKPIT_BREW_DB_PATH. Non-secret.
+    brew_db_path: str | None = None
+    # The brew's runs/ artifact dir (its ArtifactWriter writes <YYYY-MM-DD>-<slug>.txt there
+    # atomically; the FILENAME is the run-outcome signal). Required to tell "degraded"/"not-run"
+    # from "nothing-material" — with it unset, brew_status() fails closed to NOT_RUN
+    # (ingest/edgar_brew.py:make_brew_fetch). Operator-set/TBD, no default: it is derived from the
+    # brew's output_dir. Env: COCKPIT_BREW_RUNS_DIR. Non-secret.
+    brew_runs_dir: str | None = None
+    #
+    # FINRA short-interest / Reg SHO — ENRICHMENT ONLY (~2 weeks stale; never a hard event).
+    # Dataset URL: base https://api.finra.org is confirmed but the dataset identifier + path
+    # pattern are UNVERIFIABLE (console-gated), so this is operator-set/TBD with NO default;
+    # make_finra_fetch raises rather than invent one. Env: COCKPIT_FINRA_ENDPOINT.
+    finra_endpoint: str | None = None
+    # Declared User-Agent, ALWAYS sent (a suppressed UA is empirically HTTP 403). FINRA publishes
+    # no UA grammar, so the shape is operator-set/TBD. Env: COCKPIT_FINRA_USER_AGENT. Non-secret
+    # (the OAuth2 client credentials are secrets and live in keyring, Inv 4 — never here).
+    finra_user_agent: str | None = None
+    # Self-imposed politeness floor in requests/sec, NOT a verified FINRA cap — FINRA documents no
+    # rate limit and the SEC's 10 req/s figure governs sec.gov, not api.finra.org. The real
+    # ceiling is operator-set/TBD. Env: COCKPIT_FINRA_RATE_PER_SEC.
+    finra_rate_per_sec: float = Field(default=1.0, gt=0)
+    # ---- end W20 block ----------------------------------------------------------------
+
     log_level: str = "INFO"
 
 
