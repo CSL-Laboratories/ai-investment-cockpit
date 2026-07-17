@@ -28,6 +28,7 @@ from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from bridge.embeds import render_proposal_embed
 from core.ids import new_id
+from ingest.cramer_signal import inverse_side
 from ingest.normalize import escape_untrusted
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
@@ -142,18 +143,30 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
-                   account: str = "paper") -> ProposalOutcome:
+                   account: str = "paper", prompt_name: str = "trade_proposal",
+                   forced_side: str | None = None) -> ProposalOutcome:
     """Draft ONE trade proposal for ``event`` over the dispatched ``packet``.
 
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
     seam (no fetcher exists in the tree); None fails the risk gate conservatively.
+
+    ``forced_side`` (Inverse Cramer) is a DETERMINISTIC override: when set, the returned
+    proposal's ``side`` is ALWAYS ``forced_side`` regardless of what the deep model output —
+    the side is decided by ingest-time code (``ingest/cramer_signal.py``), never by the
+    model's reading of the (untrusted) article text. A model that disagrees is not an
+    error; the disagreement is only recorded in ``reasons`` for visibility.
+
     Returns everything; the caller (services/bridge) owns delivery + veto scheduling."""
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
 
-    # ---- ONE deep call (trade_proposal.v1, schema TradeProposal) ------------------------
-    tmpl = load_prompt("trade_proposal")
-    prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
+    # ---- ONE deep call (schema TradeProposal) -------------------------------------------
+    tmpl = load_prompt(prompt_name)
+    render_kwargs = {"symbol": event.symbol, "packet_block": packet.prompt_block()}
+    if forced_side is not None:
+        render_kwargs["forced_side"] = forced_side
+        render_kwargs["cramer_side"] = inverse_side(forced_side)
+    prompt = tmpl.render(**render_kwargs)
     result, job = call_agent(
         state, alias="deep", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TradeProposal",
@@ -169,6 +182,12 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                                (f"deep output quarantined ({result.error})",))
 
     proposal = dict(result.validated)
+    if forced_side is not None and proposal.get("side") != forced_side:
+        reasons.append(
+            f"forced_side override: model proposed side={proposal.get('side')!r}, "
+            f"overridden to {forced_side!r} (Inverse Cramer)"
+        )
+        proposal["side"] = forced_side
     pid = str(proposal.get("proposal_id", ""))
 
     # ---- guard: an order-shaped proposal needs a size -----------------------------------

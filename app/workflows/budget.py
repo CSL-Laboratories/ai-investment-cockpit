@@ -24,7 +24,10 @@ from workflows.constants import EVENT_DEEP_ESCALATION, EVENT_INGEST_BATCH
 
 _CALENDAR_WINDOW = timedelta(hours=36)
 _QUOTE_MOVE_PCT = 3.0
-_HARD_EVENT_TYPES = frozenset({"halt", "filing"})
+# cramer_call:buy/sell (Inverse Cramer): the deterministic ingest-time detector IS the
+# corroboration (ingest/cramer_signal.py) — same trust posture as halt/filing, never the
+# model's own reading of the article.
+_HARD_EVENT_TYPES = frozenset({"halt", "filing", "cramer_call:buy", "cramer_call:sell"})
 
 
 def signed_event_type(state, event_id: str) -> str | None:

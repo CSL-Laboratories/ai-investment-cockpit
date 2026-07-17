@@ -208,6 +208,30 @@ def test_halt_and_filing_corroborate():
     assert ok is True and reason == "event_type:filing"
 
 
+# ---- Inverse Cramer: cramer_call:buy/sell get the SAME trust posture as halt/filing -----
+def test_cramer_call_corroborates_like_halt_and_filing():
+    ok, reason = deterministic_urgency(make_event(event_type="cramer_call:buy"), [], now=NOW)
+    assert ok is True and reason == "event_type:cramer_call:buy"
+    ok, reason = deterministic_urgency(make_event(event_type="cramer_call:sell"), [], now=NOW)
+    assert ok is True and reason == "event_type:cramer_call:sell"
+
+
+def test_cramer_call_try_consume_fails_closed_without_signed_binding(st):
+    """SEC-11 (W10) domain-row backstop applies identically to cramer_call:* — an
+    UNSIGNED/unbound event_type spends no budget, even if the caller claims corroboration."""
+    b = DeepBudget(st, limit=1)
+    # deliberately NOT calling bind_event_type -> no signed EVENT_INGEST_BATCH binding
+    ok = consume(b, 8, symbol="AAPL", reason="event_type:cramer_call:buy", corroborated=True)
+    assert ok is False and b.spent(DAY) == 0
+
+
+def test_cramer_call_try_consume_succeeds_with_signed_binding(st):
+    b = DeepBudget(st, limit=1)
+    bind_event_type(st, "evt-9", "cramer_call:sell")
+    ok = consume(b, 9, symbol="TSLA", reason="event_type:cramer_call:sell", corroborated=True)
+    assert ok is True and b.spent(DAY) == 1
+
+
 def test_quote_move_hook():
     ok, reason = deterministic_urgency(make_event(), [], now=NOW,
                                        quote_move_fn=lambda s: -4.2)

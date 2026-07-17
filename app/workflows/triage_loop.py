@@ -23,6 +23,7 @@ from sqlalchemy import select
 
 from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from core.ids import new_id
+from ingest.cramer_signal import inverse_side
 from orchestrator.breakers import BreakerEngine, BreakerSignals
 from orchestrator.limits import current_limits
 from schemas.models.audit_entry import AuditEntry
@@ -44,7 +45,9 @@ from workflows.proposals import draft_proposal
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
-_HARD_EVENT_TYPES = frozenset({"halt", "filing"})
+# cramer_call:buy/sell (Inverse Cramer): a deterministically-detected Cramer call is kept
+# regardless of holdings/watchlist membership, same posture as halt/filing.
+_HARD_EVENT_TYPES = frozenset({"halt", "filing", "cramer_call:buy", "cramer_call:sell"})
 
 
 def _last_consumed_window_end(state) -> datetime | None:
@@ -359,10 +362,18 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if not consumed:
             _defer(state, dispositions, ev, "deep_budget_exhausted")
             continue
-        if cand["holdings_match"] or cand["symbol"] in watchlist:
+        # Inverse Cramer: a deterministically-detected Cramer call always drafts a proposal
+        # (any symbol, not just holdings/watchlist), with the side FIXED by the ingest-time
+        # detector — never left to the deep model's reading of the (untrusted) article.
+        is_cramer_call = ev.event_type.startswith("cramer_call:")
+        propose_kwargs = {}
+        if is_cramer_call:
+            propose_kwargs["forced_side"] = inverse_side(ev.event_type.split(":", 1)[1])
+            propose_kwargs["prompt_name"] = "inverse_cramer_proposal"
+        if cand["holdings_match"] or cand["symbol"] in watchlist or is_cramer_call:
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist)
+                         watchlist=watchlist, **propose_kwargs)
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True

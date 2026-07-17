@@ -11,6 +11,7 @@ frames get a stable synthetic dedup key instead of being silently dropped.
 """
 from __future__ import annotations
 
+from ingest.cramer_signal import detect_cramer_call
 from ingest.dedup import Dedup
 from ingest.normalize import content_hash, to_market_event
 
@@ -29,13 +30,25 @@ def _dedup_key(msg: dict, aid) -> str:
 
 def _to_event(msg: dict) -> dict:
     aid = _frame_id(msg)
+    headline = msg.get("headline", "")
+    summary = msg.get("summary") or msg.get("content", "")
+    symbols = msg.get("symbols", [])
+    # Inverse Cramer: classify at the ONE true ingest point, BEFORE persist_events binds
+    # event_type into the signed EVENT_INGEST_BATCH chain (SEC-11) — so cramer_call:buy/sell
+    # is as trustworthy as halt/filing, never a later, unsigned reclassification.
+    event_type = "news"
+    call = detect_cramer_call(headline, summary, symbols)
+    if call is not None:
+        _, side = call
+        event_type = f"cramer_call:{side}"
     return to_market_event(
         source="alpaca:benzinga",
         article_id=aid if aid is not None else "synthetic",
-        symbols=msg.get("symbols", []),
-        headline=msg.get("headline", ""),
-        summary=msg.get("summary") or msg.get("content", ""),
+        symbols=symbols,
+        headline=headline,
+        summary=summary,
         ts=msg.get("created_at") or msg.get("updated_at"),
+        event_type=event_type,
         raw=msg,
     )
 

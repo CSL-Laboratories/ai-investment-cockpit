@@ -16,6 +16,33 @@ def test_replay_fixture_emits_normalized_events():
     assert c.run(out.append) == 3
     assert [e["article_id"] for e in out] == ["1", "2", "3"]
     assert out[0]["source"] == "alpaca:benzinga" and out[0]["symbols"] == ["AAPL"]
+    assert out[0]["event_type"] == "news"          # ordinary frame -> unaffected
+
+
+# ---- Inverse Cramer: classified at THIS ingest point, before persist_events signs it ---
+def test_cramer_buy_call_is_tagged_at_ingest():
+    frame = {"id": 9, "symbols": ["AAPL"], "headline": "Jim Cramer Says Buy AAPL",
+            "summary": "Cramer recommends buying Apple", "created_at": "2026-07-06T09:30:00Z"}
+    out = []
+    AlpacaNewsConsumer(connect=lambda: iter([frame])).run(out.append)
+    assert out[0]["event_type"] == "cramer_call:buy"
+    assert out[0]["symbols"] == ["AAPL"]
+
+
+def test_cramer_sell_call_is_tagged_at_ingest():
+    frame = {"id": 10, "symbols": ["TSLA"], "headline": "Cramer Says Sell TSLA", "summary": None,
+            "created_at": "2026-07-06T09:30:00Z"}
+    out = []
+    AlpacaNewsConsumer(connect=lambda: iter([frame])).run(out.append)
+    assert out[0]["event_type"] == "cramer_call:sell"
+
+
+def test_ambiguous_cramer_mention_stays_ordinary_news():
+    frame = {"id": 11, "symbols": ["AAPL", "MSFT"], "headline": "Cramer discusses AAPL and MSFT",
+            "summary": "buy AAPL, sell MSFT", "created_at": "2026-07-06T09:30:00Z"}
+    out = []
+    AlpacaNewsConsumer(connect=lambda: iter([frame])).run(out.append)
+    assert out[0]["event_type"] == "news"          # ambiguous (2 tickers) -> never guessed
 
 
 def test_dedup_by_article_id():
