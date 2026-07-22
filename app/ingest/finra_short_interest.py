@@ -62,10 +62,11 @@ under a poison bound. All I/O lives in ``make_finra_fetch``; the poller is pure.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+import re
 
 from ingest.clock_contract import resolve_wall_clock, utc_now
 from ingest.dedup import Dedup
-from ingest.normalize import _TICKER, to_market_event
+from ingest.normalize import _canonical_ticker, to_market_event
 from ingest.ratelimit import TokenBucket
 
 # The §5 feed allowlist (ingest/normalize.py) authorizes "finra" in its literal;
@@ -92,8 +93,19 @@ _KIND_TO_ID_PREFIX = {"short_interest": "si", "reg_sho_threshold": "sho"}
 # Heuristic sanity bound on a single cursor advance (poison guard), mirroring MAX_ID_GAP in
 # finnhub_poll.py. NOT a cadence claim: it only bounds how far one untrusted batch can shove the
 # cursor forward, so a row dated 2099-01-01 cannot strand the feed forever. Generous enough that
-# any real twice-monthly OR weekly schedule (and a long backfill gap) passes untouched.
+# any real twice-monthly OR weekly schedule (and a long backfill gap) passes untouched. A gap
+# never produces a synthetic cursor: it is held and signalled until observed rows bridge it.
 MAX_CURSOR_GAP_DAYS = 400
+_SETTLEMENT_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+
+
+class FinraBatch(list):
+    """Fetched rows plus failure metadata that must reach the poller's counted paths."""
+
+    def __init__(self, rows=(), *, mapper_errors: int = 0, payload_error: bool = False):
+        super().__init__(rows)
+        self.mapper_errors = mapper_errors
+        self.payload_error = payload_error
 
 
 def _assert_enrichment_event_type(event_type: str) -> str:
@@ -108,12 +120,19 @@ def _assert_enrichment_event_type(event_type: str) -> str:
 
 def _parse_settlement_date(value):
     """Return an ISO ``YYYY-MM-DD`` date or None. Untrusted input: never raises."""
-    if isinstance(value, date):
+    # datetime is a date subclass, but it cannot be compared or serialized as this cursor's
+    # DATE-only identity. Reject it rather than emitting first and crashing on the poison bound.
+    if isinstance(value, datetime):
+        return None
+    if type(value) is date:
         return value
-    if not isinstance(value, str):
+    # This is an identity field for both cursor and dedup.  ``fromisoformat`` accepts compact
+    # and ISO-week spellings, but those are not the published wire grammar and could alias a
+    # genuine extended date.  Do not trim or normalize this raw value before validation.
+    if type(value) is not str or not _SETTLEMENT_DATE.fullmatch(value):
         return None
     try:
-        return date.fromisoformat(value.strip())
+        return date.fromisoformat(value)
     except ValueError:
         return None
 
@@ -153,6 +172,11 @@ def _utc_now() -> datetime:
     return utc_now()
 
 
+# Both pollers must use the identical default object, not two wrappers that merely happen to
+# return the same time today. Keep the historical name as a compatibility alias.
+_utc_now = utc_now
+
+
 class FinraShortInterestPoller:
     """Poll FINRA consolidated short interest + Reg SHO threshold rows.
 
@@ -187,20 +211,25 @@ class FinraShortInterestPoller:
         #                        would carry symbols == [] and name nobody (G20 round-6; the
         #                        analogue of edgar_brew's no_ticker/symbol_less pair)
         #   not_a_dict         — the row was not a dict at all
-        #   build_error        — to_market_event raised, or the row was otherwise unusable:
-        #                        STRUCTURAL (a pure function of the row), terminal
+        #   build_error        — to_market_event raised, or the row was otherwise unusable.
+        #                        It is counted AND held for retry: an untrusted row or a future
+        #                        normalizer drift is not proof that its evidence is disposable.
         #   emit_error         — on_event raised: TRANSIENT/RETRIABLE, NOT a drop. The dedup key
         #                        is ROLLED BACK and the cursor is barred from passing the row —
         #                        see "A FAILED EMIT IS NOT A DROP" below
         #   duplicate          — dedup suppressed an already-emitted (date, symbol)
-        #   future_settlement  — a row settled after `today` (poison); cursor clamped
-        #   clamped_cursor     — the cursor was clamped rather than taken from a real row
+        #   future_settlement  — a row settled after `today` (poison); refused before emit/dedup
+        #   gap_blocked        — a valid row would require a synthetic cursor gap; held instead
+        #   clamped_cursor     — retained legacy telemetry; future poison must leave it at zero
         self.counters = {"unknown_kind": 0, "bad_settlement": 0, "no_symbol": 0,
-                         "symbol_less": 0,
+                         "symbol_less": 0, "mapper_error": 0, "payload_error": 0,
                          "not_a_dict": 0, "build_error": 0, "emit_error": 0, "duplicate": 0,
-                         "future_settlement": 0, "clamped_cursor": 0}
-        # A clamp is NOT "FINRA published nothing". Leave a durable, readable signal.
+                         "future_settlement": 0, "gap_blocked": 0, "clamped_cursor": 0}
+        # A refused poison row is NOT "FINRA published nothing". Leave a durable signal.
         self.strand_signal: str | None = None
+        # A counted invalid row, fetch fault, or retriable emit must not be mistaken for a quiet
+        # poll or skipped by a later row.
+        self.progress_signal: str | None = None
 
     @property
     def cursor(self) -> date | None:
@@ -239,9 +268,10 @@ class FinraShortInterestPoller:
         retried and the evidence would be silently, unrecoverably gone, with the counters showing
         a tidy "drop". Hence the rollback, the retriable counter, and the cursor barrier below.
 
-        ``to_market_event`` raising is different in kind: it is a pure function of the row, so it
-        will raise identically forever. That is STRUCTURAL — counted apart as ``build_error``,
-        terminal, and the key stays burnt so a deterministic bad row cannot re-count every poll.
+        ``to_market_event`` raising is counted separately as ``build_error``. It is not allowed to
+        burn the dedup key or let a later row move the cursor past its settlement date: the wire
+        row, or a normalizer boundary that has drifted, may be corrected on the next fetch. A
+        reported retry wedge is preferable to silently discarding evidence.
 
         ``now`` IS MONOTONIC SECONDS. It reaches the TokenBucket (an elapsed-time clock) and the
         injected ``fetch``, and NOTHING else. The cursor bound's calendar comes from the injected
@@ -252,27 +282,65 @@ class FinraShortInterestPoller:
         today = self._wall_clock_today()        # VALIDATE FIRST: raises on a mis-wired clock
         if not self._bucket.allow(now):
             return 0                                    # rate-limited: skip (never exceed)
-        emitted, emitted_dates = 0, []
+        emitted, advance_dates = 0, []
         emit_barriers = []                              # settlement dates we FAILED to emit
-        for row in self._fetch(self._cursor, now):
+        attribution_barriers = []                       # located rows a later cursor must re-fetch
+        # A malformed/unmapped row whose settlement date we cannot establish is a stronger
+        # barrier: advancing at all could skip it under FINRA's inclusive date cursor.
+        unlocatable_barriers = 0
+        future_settlements = []                         # poison rows refused before dedup/emit
+        structural_keys = ("unknown_kind", "bad_settlement", "no_symbol", "symbol_less",
+                           "mapper_error", "payload_error", "not_a_dict", "build_error")
+        drops_before = sum(self.counters[key] for key in structural_keys)
+        batch = self._fetch(self._cursor, now)
+        mapper_errors = getattr(batch, "mapper_errors", 0)
+        if type(mapper_errors) is not int or mapper_errors < 0:
+            mapper_errors = 1
+        if mapper_errors:
+            self.counters["mapper_error"] += mapper_errors
+            unlocatable_barriers += mapper_errors
+        if bool(getattr(batch, "payload_error", False)):
+            self.counters["payload_error"] += 1
+            unlocatable_barriers += 1
+        for row in batch:
+            settlement = None
+            key = None
             try:
-                if not isinstance(row, dict):
+                if type(row) is not dict:
                     self.counters["not_a_dict"] += 1
+                    unlocatable_barriers += 1
                     continue
-                kind = row.get("kind", "short_interest")
-                event_type = _KIND_TO_EVENT_TYPE.get(kind)
-                if event_type is None:
-                    self.counters["unknown_kind"] += 1
-                    continue                            # unknown kind: skip, never guess
+                # Parse before the row kind. An unknown kind at a known date may be corrected;
+                # do not let a later valid row move the inclusive cursor beyond it.
                 settlement = _parse_settlement_date(row.get("settlementDate"))
                 if settlement is None:
                     self.counters["bad_settlement"] += 1
-                    continue                            # malformed date: skip, never abort batch
-                symbol = row.get("symbol")
-                if not isinstance(symbol, str) or not symbol.strip():
-                    self.counters["no_symbol"] += 1
+                    unlocatable_barriers += 1
+                    continue                            # malformed date: never guess its window
+                if settlement > today:
+                    # Do not emit a future settlement and then manufacture a cursor at today's
+                    # date: that synthetic jump can skip real rows between the old cursor and
+                    # today. Keep the poison re-fetchable and visible until its date is real.
+                    self.counters["future_settlement"] += 1
+                    future_settlements.append(settlement)
+                    self.strand_signal = (
+                        f"FUTURE SETTLEMENT REFUSED at {settlement}: short interest is published "
+                        "after settlement, so this row is poison. It was neither emitted nor used "
+                        "to advance the cursor; subsequent emptiness may be a poison artifact."
+                    )
                     continue
-                symbol = symbol.strip().upper()
+                kind = row.get("kind", "short_interest")
+                event_type = _KIND_TO_EVENT_TYPE.get(kind) if type(kind) is str else None
+                if event_type is None:
+                    self.counters["unknown_kind"] += 1
+                    attribution_barriers.append(settlement)
+                    continue                            # unknown kind: skip, never guess
+                raw_symbol = row.get("symbol")
+                if type(raw_symbol) is not str or not raw_symbol.strip():
+                    self.counters["no_symbol"] += 1
+                    attribution_barriers.append(settlement)
+                    continue
+                symbol = _canonical_ticker(raw_symbol)
                 # G20 round-6: PRESENCE is not VALIDITY. A non-empty-but-invalid symbol ("N/A"
                 # for a non-listed issuer; "<system:>" for the hostile form) passes the strip
                 # test, then normalize._clean_symbols silently filters it against _TICKER and
@@ -284,8 +352,9 @@ class FinraShortInterestPoller:
                 # sibling: the identical defect survived five rounds here because the test that
                 # named the control (test_hostile_symbol_is_ticker_validated) asserted the
                 # symbol-less emission as CORRECT.
-                if not _TICKER.match(symbol):
+                if symbol is None:
                     self.counters["symbol_less"] += 1
+                    attribution_barriers.append(settlement)
                     continue
                 iso = settlement.isoformat()
                 prefix = _KIND_TO_ID_PREFIX[kind]
@@ -294,6 +363,10 @@ class FinraShortInterestPoller:
                 key = f"{SOURCE}:{prefix}:{iso}:{symbol}"
                 if not self._dedup.add(key):
                     self.counters["duplicate"] += 1
+                    # Dedup's contract is a prior successful emit. A confirmed duplicate is
+                    # therefore safe cursor evidence, and lets a corrected earlier row release
+                    # an inclusive-date barrier instead of pinning the feed forever.
+                    advance_dates.append(settlement)
                     continue
                 try:
                     event = to_market_event(
@@ -311,7 +384,18 @@ class FinraShortInterestPoller:
                         raw=row,
                     )
                 except Exception:
-                    self.counters["build_error"] += 1   # STRUCTURAL: deterministic in the row
+                    self._dedup.discard(key)
+                    self.counters["build_error"] += 1
+                    attribution_barriers.append(settlement)
+                    continue
+                if event.get("symbols") != [symbol]:
+                    # Defense in depth: the pre-build canonical-ticker check and normalize's
+                    # own check must agree EXACTLY. If a future drift substitutes a different
+                    # valid symbol, that is just as dangerous as an empty one: do not emit it,
+                    # burn its key, or advance beyond its row.
+                    self._dedup.discard(key)
+                    self.counters["symbol_less"] += 1
+                    attribution_barriers.append(settlement)
                     continue
                 try:
                     on_event(event)
@@ -325,53 +409,95 @@ class FinraShortInterestPoller:
                     continue
             except Exception:
                 # Nothing downstream is reachable from here (on_event has its own handler), so an
-                # exception at this level is structural: a row we could not even read.
+                # exception at this level is counted and held: a later corrected representation
+                # must not be silently skipped by an inclusive cursor.
+                if key is not None:
+                    self._dedup.discard(key)
                 self.counters["build_error"] += 1
+                if settlement is None:
+                    unlocatable_barriers += 1
+                else:
+                    attribution_barriers.append(settlement)
                 continue                                # one bad item never kills the poll
             emitted += 1
-            emitted_dates.append(settlement)
-        if emitted_dates:
-            candidate = max(emitted_dates)
+            advance_dates.append(settlement)
+        gap_blocked = False
+        if advance_dates and not unlocatable_barriers:
+            candidate = max(advance_dates)
             if emit_barriers:
                 # A LATER row emitting fine must not carry the cursor past an EARLIER row we
                 # FAILED to emit. `settlementDateFrom` is an INCLUSIVE lower bound, so holding
                 # the cursor AT the earliest failed date keeps that row in the next window;
                 # anything beyond it would evict the row forever — silent evidence loss.
                 candidate = min(candidate, min(emit_barriers))
-            # Advance only from EMITTED items, bounded so a poison far-future date can't strand
-            # the cursor.
-            #
-            # COLD START IS BOUNDED TOO. It previously took the batch "as-is (nothing to bound
-            # against)" — but MAX_CURSOR_GAP_DAYS is measured from self._cursor, so on the FIRST
-            # poll there was no ceiling at all: one hostile row dated 2099-01-01 in the very
-            # first batch set the cursor to 2099 permanently, and every later poll then asked
-            # FINRA for settlementDateFrom=2099-01-01 and got nothing, forever. "No prior
-            # cursor" is not "no bound available" — the calendar is a bound. Clamp to today.
-            #
-            # THE COMPARISON IS UNCONDITIONAL, ON PURPOSE. `today` was resolved and TYPE-CHECKED at
-            # the TOP of poll (_wall_clock_today raises on anything that is not a tz-aware
-            # datetime), so there is nothing left to isinstance-test here. This line used to read
-            # `if isinstance(today, date) and candidate > today:` — so a mis-wired clock made the
-            # test False and silently DISABLED the entire poison bound: no raise, no counter, no
-            # signal, cursor pinned at 2099 forever. That is the exact strand the bound exists to
-            # prevent, delivered by the bound's own guard. NEVER re-add a type test to this line:
-            # if `today` could be the wrong type here, the fix belongs at the SEAM, not in this
-            # condition.
-            if candidate > today:
-                self.counters["future_settlement"] += 1
-                self.counters["clamped_cursor"] += 1
-                self.strand_signal = (
-                    f"cursor CLAMPED to {today}: an emitted row carried settlementDate "
-                    f"{candidate}, in the future. Short interest is published ~2 weeks AFTER "
-                    "its settlement date, so this row is not merely early — it is poison. "
-                    "Subsequent emptiness may be a CLAMP artifact, not an empty publication."
-                )
-                candidate = today
+            if attribution_barriers:
+                # A counted symbol/no-symbol refusal is not permission to discard a possible
+                # correction. The production query treats settlementDateFrom as inclusive, so
+                # holding the cursor at the earliest refused row preserves that row's window.
+                candidate = min(candidate, min(attribution_barriers))
+            # Future rows were refused before dedup or emit, so every candidate here is observed
+            # non-poison evidence. The gap cap remains a second guard for a persisted/legacy
+            # cursor, never a license to manufacture today's cursor from a future row.
             if self._cursor is None:
                 self._cursor = candidate
             else:
                 ceiling = self._cursor + timedelta(days=MAX_CURSOR_GAP_DAYS)
-                self._cursor = max(self._cursor, min(candidate, ceiling))
+                if candidate > ceiling:
+                    # A synthetic ceiling date is not evidence. Moving to it would skip a real
+                    # settlement in the unseen gap under FINRA's inclusive cursor predicate.
+                    # Hold loudly until observed rows bridge the gap instead.
+                    gap_blocked = True
+                    self.counters["gap_blocked"] += 1
+                    self.strand_signal = (
+                        f"CURSOR GAP REFUSED: observed settlement {candidate} is more than "
+                        f"{MAX_CURSOR_GAP_DAYS} days after cursor {self._cursor}. No synthetic "
+                        "date was used; intermediate evidence remains re-fetchable."
+                    )
+                else:
+                    self._cursor = max(self._cursor, candidate)
+        dropped = sum(self.counters[key] for key in structural_keys) - drops_before
+        if future_settlements:
+            self.progress_signal = (
+                f"POISON SETTLEMENT REFUSED: {len(future_settlements)} future row(s) were "
+                f"not emitted and did not advance cursor {self._cursor}; this is not a quiet "
+                "publication."
+            )
+        elif gap_blocked:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS: cursor held at {self._cursor}; an observed settlement "
+                f"exceeded the {MAX_CURSOR_GAP_DAYS}-day safe gap and no synthetic cursor was "
+                "created. Intermediate evidence remains re-fetchable; this is not a quiet "
+                "publication."
+            )
+        elif unlocatable_barriers:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS — CURSOR HELD at {self._cursor}: "
+                f"{unlocatable_barriers} fetched row(s) could not be mapped to a settlement "
+                "date. Refusing to skip evidence whose inclusive cursor window is unknown; "
+                "this is not a quiet publication."
+            )
+        elif emit_barriers:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS — CURSOR LIMITED at {self._cursor}: "
+                f"{len(emit_barriers)} valid row(s) FAILED TO EMIT and remain re-fetchable. "
+                "Refusing to advance past a downstream-retry barrier; this is not a quiet "
+                "publication."
+            )
+        elif attribution_barriers:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS — CURSOR HELD at {self._cursor}: "
+                f"{len(attribution_barriers)} counted attribution "
+                "drop(s) remain re-fetchable. Refusing to advance past a row that FINRA may "
+                "correct; this is not a quiet publication."
+            )
+        elif emitted == 0 and dropped:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS: {dropped} fetched row(s) were counted as structural "
+                "drops and no event emitted. Cursor was not advanced; this is not a quiet "
+                "publication."
+            )
+        elif emitted:
+            self.progress_signal = None
         return emitted
 
 
@@ -427,15 +553,21 @@ def make_finra_fetch(*, endpoint, user_agent, token_provider, kind="short_intere
             # from a cadence rule (see module docstring).
             params["settlementDateFrom"] = cursor.isoformat()
         payload = http_get(endpoint, headers=headers, params=params, timeout=timeout).json()
-        rows = payload if isinstance(payload, list) else []
+        if not isinstance(payload, list):
+            # An error object / unexpected payload is not an empty publication. Preserve the
+            # distinction for poll() so it reports a counted, fail-closed fetch fault.
+            return FinraBatch(payload_error=True)
+        rows = payload
         out = []
+        mapper_errors = 0
         for r in rows:
             try:
                 mapped = dict(mapper(r))
             except Exception:
-                continue                                 # a bad wire row never kills the batch
+                mapper_errors += 1                       # surfaced by poll(), never a quiet skip
+                continue
             mapped.setdefault("kind", kind)
             out.append(mapped)
-        return out
+        return FinraBatch(out, mapper_errors=mapper_errors)
 
     return fetch

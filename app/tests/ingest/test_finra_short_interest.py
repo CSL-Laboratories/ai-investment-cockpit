@@ -108,25 +108,40 @@ def test_default_bucket_starts_empty():
     assert poller.poll(0.0, lambda e: None) == 0
 
 
-# (4) malformed / poison rows are skipped without killing the batch or poisoning the cursor
-@pytest.mark.parametrize("bad", [
-    _row(settlementDate="not-a-date"),
-    _row(settlementDate=None),
-    _row(settlementDate=""),
-    _row(symbol=None),
-    _row(symbol="   "),
-    _row(symbol=12345),
-    _row(kind="unknown_kind"),
-    {"kind": "short_interest"},
-    "not-a-dict",
-    None,
+# (4) malformed / poison rows are counted without killing the batch or silently skipping them
+@pytest.mark.parametrize(("bad", "unlocatable"), [
+    (_row(settlementDate="not-a-date"), True),
+    (_row(settlementDate=None), True),
+    (_row(settlementDate=""), True),
+    (_row(symbol=None), False),
+    (_row(symbol="   "), False),
+    (_row(symbol=12345), False),
+    (_row(kind="unknown_kind"), False),
+    ({"kind": "short_interest"}, True),
+    ("not-a-dict", True),
+    (None, True),
 ])
-def test_malformed_rows_skipped_without_killing_batch(bad):
+def test_malformed_rows_are_counted_without_killing_batch_or_skipping_unknown_windows(bad, unlocatable):
     good = _row(symbol="MSFT")
     n, out, poller = _collect([bad, good])
     assert n == 1
     assert out[0]["symbols"] == ["MSFT"]
-    assert poller.cursor == date(2026, 6, 30)
+    if unlocatable:
+        assert poller.cursor is None, "an unknown-date row must hold the inclusive cursor"
+    else:
+        assert poller.cursor == date(2026, 6, 30)
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
+
+
+def test_datetime_settlement_is_counted_and_never_emits_then_crashes():
+    """G20 round-7: datetime is a date subclass, but not this DATE-only cursor identity."""
+    bad = _row(settlementDate=datetime(2026, 6, 30, tzinfo=timezone.utc), symbol="AAPL")
+    n, out, poller = _collect([bad, _row(symbol="MSFT")])
+    assert n == 1
+    assert [event["symbols"] for event in out] == [["MSFT"]]
+    assert poller.counters["bad_settlement"] == 1
+    assert poller.cursor is None
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
 
 
 def test_poison_future_date_cannot_strand_the_cursor():
@@ -135,11 +150,67 @@ def test_poison_future_date_cannot_strand_the_cursor():
     assert poller.cursor == date(2026, 6, 30)
 
     # a hostile row dated far in the future must not shove the cursor beyond the poison bound
+    seen = []
     poller._fetch = lambda c, n: [_row(settlementDate="2099-01-01", symbol="ZZZ")]
-    poller.poll(20.0, lambda e: None)
+    assert poller.poll(20.0, seen.append) == 0
+    assert seen == []
     assert poller.cursor <= date(2026, 6, 30) + __import__("datetime").timedelta(
         days=MAX_CURSOR_GAP_DAYS)
     assert poller.cursor < date(2099, 1, 1)
+    assert poller.counters["future_settlement"] == 1
+
+
+def test_future_poison_cannot_synthetically_pass_a_real_intermediate_settlement():
+    """A clamp to today would exclude 2026-07-15 after a 2026-06-30 cursor; refuse instead."""
+    batches = [
+        [_row(settlementDate="2026-06-30", symbol="AAPL")],
+        [_row(settlementDate="2099-01-01", symbol="ZZZ")],
+        [_row(settlementDate="2026-07-15", symbol="MSFT")],
+    ]
+    seen_cursors = []
+
+    def fetch(cursor, _now):
+        seen_cursors.append(cursor)
+        return [row for row in batches.pop(0) if cursor is None or
+                date.fromisoformat(row["settlementDate"]) >= cursor]
+
+    out = []
+    poller = FinraShortInterestPoller(fetch=fetch, clock=_fixed_clock(date(2026, 7, 16)))
+    assert poller.poll(10.0, out.append) == 1
+    assert poller.cursor == date(2026, 6, 30)
+    assert poller.poll(20.0, out.append) == 0
+    assert poller.cursor == date(2026, 6, 30)
+    assert poller.poll(30.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["AAPL"], ["MSFT"]]
+    assert seen_cursors == [None, date(2026, 6, 30), date(2026, 6, 30)]
+
+
+def test_gap_guard_holds_instead_of_creating_a_synthetic_intermediate_cursor():
+    """A 400-day ceiling must not skip a real date that no emitted row actually supplied."""
+    batches = [
+        [_row(settlementDate="2024-01-01", symbol="AAPL")],
+        [_row(settlementDate="2025-06-01", symbol="ZZZ")],
+        [_row(settlementDate="2025-01-15", symbol="MSFT")],
+    ]
+    seen_cursors = []
+
+    def fetch(cursor, _now):
+        seen_cursors.append(cursor)
+        return [row for row in batches.pop(0) if cursor is None or
+                date.fromisoformat(row["settlementDate"]) >= cursor]
+
+    out = []
+    poller = FinraShortInterestPoller(fetch=fetch, clock=_fixed_clock(date(2026, 7, 16)))
+    assert poller.poll(10.0, out.append) == 1
+    assert poller.cursor == date(2024, 1, 1)
+    assert poller.poll(20.0, out.append) == 1
+    assert poller.cursor == date(2024, 1, 1), "the gap ceiling must not become a cursor"
+    assert poller.counters["gap_blocked"] == 1
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
+    assert poller.poll(30.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["AAPL"], ["ZZZ"], ["MSFT"]]
+    assert poller.cursor == date(2025, 1, 15)
+    assert seen_cursors == [None, date(2024, 1, 1), date(2024, 1, 1)]
 
 
 def test_cursor_never_moves_backwards_and_only_from_emitted():
@@ -245,8 +316,9 @@ def test_no_finra_event_ever_leaves_the_module_with_empty_symbols():
     rows = [_row(symbol=s, settlementDate="2026-06-30")
             for s in ("<system:>", "N/A", "NOT LISTED", "TOOLONGTICKERNAME", "a b")]
     n, out, poller = _collect(rows)
-    assert all(ev["symbols"] for ev in out), "no emitted event may carry empty symbols"
-    assert poller.counters["symbol_less"] == len(rows) - n
+    assert n == 0, "every hostile symbol must be refused, not merely emit a nonempty replacement"
+    assert out == []
+    assert poller.counters["symbol_less"] == len(rows)
 
 def test_a_valid_symbol_still_emits_after_the_symbol_validation():
     """The converse — a control that rejects everything is not a control."""
@@ -254,6 +326,76 @@ def test_a_valid_symbol_still_emits_after_the_symbol_validation():
     assert n == 1
     assert out[0]["symbols"] == ["AAPL"]
     assert poller.counters["symbol_less"] == 0
+
+
+@pytest.mark.parametrize("poison", ["\u017fpy", "\u00a0SPY", "\u2003SPY", " SPY", "\tSPY", "\nSPY", "\x1cSPY"])
+def test_raw_symbol_cannot_alias_a_real_ticker_or_burn_its_dedup_key(poison):
+    """G20: raw Unicode/case/control whitespace must not impersonate the genuine SPY key."""
+    rows = [_row(symbol=poison, issueName="poison raw symbol"), _row(symbol="SPY")]
+    n, out, poller = _collect(rows)
+    assert n == 1
+    assert [event["symbols"] for event in out] == [["SPY"]]
+    assert poller.counters["symbol_less"] == 1
+    assert poller.counters["duplicate"] == 0, "the rejected alias must not consume SPY's key"
+
+
+def test_post_normalization_symbol_guard_refuses_a_future_gate_divergence(monkeypatch):
+    """The emitted event, not only the precheck, is the final symbol-validity authority."""
+    monkeypatch.setattr(mod, "_canonical_ticker", lambda _value: "N/A")
+    n, out, poller = _collect([_row(symbol="N/A")])
+    assert n == 0 and out == []
+    assert poller.counters["symbol_less"] == 1
+    assert poller._dedup.add("finra:si:2026-06-30:N/A") is True, \
+        "a post-normalization refusal must roll back the un-emitted key"
+
+
+def test_post_normalization_symbol_guard_refuses_a_valid_but_different_symbol(monkeypatch):
+    """A nonempty result is insufficient: provenance requires the exact validated ticker."""
+    real = mod.to_market_event
+
+    def substitutes_symbol(**kwargs):
+        event = real(**kwargs)
+        event["symbols"] = ["SPY"]
+        return event
+
+    monkeypatch.setattr(mod, "to_market_event", substitutes_symbol)
+    n, out, poller = _collect([_row(symbol="AAPL")])
+    assert n == 0 and out == []
+    assert poller.counters["symbol_less"] == 1
+    assert poller._dedup.add("finra:si:2026-06-30:AAPL") is True, \
+        "a substituted normalized symbol must not burn AAPL's key"
+
+
+def test_stateful_ticker_subclass_is_rejected_before_it_can_change_between_gates():
+    class FlipTicker(str):
+        calls = 0
+
+        def strip(self, chars=None):
+            return self
+
+        def isascii(self):
+            return True
+
+        def upper(self):
+            type(self).calls += 1
+            return self if type(self).calls == 1 else "SPY"
+
+    n, out, poller = _collect([_row(symbol=FlipTicker("AAPL")), _row(symbol="SPY")])
+    assert n == 1
+    assert [(event["symbols"], event["raw_ref"]) for event in out] == [
+        (["SPY"], "finra:si:2026-06-30:SPY")
+    ]
+    assert poller.counters["no_symbol"] == 1 and poller.counters["duplicate"] == 0
+
+
+@pytest.mark.parametrize("poison", ["20260630", "2026-W27-2"])
+def test_non_extended_settlement_date_cannot_alias_the_genuine_dedup_identity(poison):
+    rows = [_row(settlementDate=poison, symbol="SPY"),
+            _row(settlementDate="2026-06-30", symbol="SPY")]
+    n, out, poller = _collect(rows)
+    assert n == 1
+    assert [event["raw_ref"] for event in out] == ["finra:si:2026-06-30:SPY"]
+    assert poller.counters["bad_settlement"] == 1 and poller.counters["duplicate"] == 0
 
 
 def test_an_invalid_symbol_does_not_advance_the_cursor_or_burn_the_dedup_key():
@@ -276,6 +418,31 @@ def test_an_invalid_symbol_does_not_advance_the_cursor_or_burn_the_dedup_key():
     n2 = poller.poll(1000.0, out.append)
     assert n2 == 1, "a counted drop must not have advanced the cursor past its window"
     assert out[0]["symbols"] == ["AAPL"]
+
+
+def test_counted_symbol_drop_cannot_be_skipped_by_a_later_emitted_row():
+    """G20 round-7: a production-style inclusive cursor must re-fetch a corrected row."""
+    rows = [_row(symbol="N/A", settlementDate="2026-06-15"),
+            _row(symbol="MSFT", settlementDate="2026-06-30")]
+
+    def fetch(cursor, _now):
+        return [row for row in rows if cursor is None or
+                date.fromisoformat(row["settlementDate"]) >= cursor]
+
+    out = []
+    poller = FinraShortInterestPoller(fetch=fetch)
+    assert poller.poll(10.0, out.append) == 1
+    assert poller.cursor == date(2026, 6, 15), "cursor passed a counted invalid-symbol row"
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
+
+    rows[:] = [_row(symbol="AAPL", settlementDate="2026-06-15"),
+               _row(symbol="MSFT", settlementDate="2026-06-30")]
+    assert poller.poll(1000.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["MSFT"], ["AAPL"]]
+    assert poller.cursor == date(2026, 6, 30), \
+        "a confirmed MSFT duplicate must release the repaired earlier-row barrier"
+    assert poller.poll(2000.0, out.append) == 0
+    assert poller.cursor == date(2026, 6, 30)
 
 
 # (7) reg_sho_threshold rows
@@ -371,8 +538,96 @@ def test_make_finra_fetch_row_mapper_failure_skips_only_that_row():
     fetch = make_finra_fetch(endpoint="https://example.invalid/ds", user_agent="UA x@y.com",
                              token_provider=lambda: "t", kind="reg_sho_threshold",
                              row_mapper=mapper, http_get=lambda *a, **k: _Resp())
-    assert fetch(None, 1.0) == [{"settlementDate": "2026-06-30", "symbol": "AAPL",
-                                 "kind": "reg_sho_threshold"}]
+    batch = fetch(None, 1.0)
+    assert batch == [{"settlementDate": "2026-06-30", "symbol": "AAPL",
+                      "kind": "reg_sho_threshold"}]
+    assert batch.mapper_errors == 1, "a mapper refusal must reach a counted poller path"
+    n, out, poller = _collect(batch)
+    assert n == 1 and out[0]["symbols"] == ["AAPL"]
+    assert poller.counters["mapper_error"] == 1
+
+
+def test_mapper_error_holds_the_inclusive_cursor_until_the_row_can_be_mapped():
+    """A mapper has no trustworthy date on failure, so any advance could lose its correction."""
+    rows = [_row(settlementDate="2026-06-15", symbol="AAPL"),
+            _row(settlementDate="2026-06-30", symbol="MSFT")]
+    recovered = {"yes": False}
+    seen = []
+
+    class _Resp:
+        @staticmethod
+        def json():
+            return rows
+
+    def http_get(_url, headers=None, params=None, timeout=None):
+        seen.append(params)
+        return _Resp()
+
+    def mapper(row):
+        if row["symbol"] == "AAPL" and not recovered["yes"]:
+            raise ValueError("temporary schema mismatch")
+        return row
+
+    fetch = make_finra_fetch(endpoint="https://example.invalid/ds", user_agent="UA x@y.com",
+                             token_provider=lambda: "t", row_mapper=mapper, http_get=http_get)
+    out = []
+    poller = FinraShortInterestPoller(fetch=fetch)
+    assert poller.poll(10.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["MSFT"]]
+    assert poller.counters["mapper_error"] == 1 and poller.cursor is None
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
+
+    recovered["yes"] = True
+    assert poller.poll(1000.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["MSFT"], ["AAPL"]]
+    assert poller.cursor == date(2026, 6, 30)
+    assert seen == [{}, {}], "the failed mapper must not advance to a cursor that skips AAPL"
+
+
+def test_unknown_date_row_holds_the_cursor_until_its_corrected_date_is_visible():
+    rows = [_row(settlementDate="not-a-date", symbol="AAPL"),
+            _row(settlementDate="2026-06-30", symbol="MSFT")]
+
+    def fetch(cursor, _now):
+        return [row for row in rows if cursor is None or
+                date.fromisoformat(row["settlementDate"]) >= cursor]
+
+    out = []
+    poller = FinraShortInterestPoller(fetch=fetch)
+    assert poller.poll(10.0, out.append) == 1
+    assert poller.cursor is None and poller.counters["bad_settlement"] == 1
+
+    rows[:] = [_row(settlementDate="2026-06-15", symbol="AAPL"),
+               _row(settlementDate="2026-06-30", symbol="MSFT")]
+    assert poller.poll(1000.0, out.append) == 1
+    assert [event["symbols"] for event in out] == [["MSFT"], ["AAPL"]]
+    assert poller.cursor == date(2026, 6, 30)
+
+
+def test_non_list_finra_payload_is_counted_and_signalled_not_a_quiet_poll():
+    class _Resp:
+        @staticmethod
+        def json():
+            return {"status": "error", "message": "token expired"}
+
+    fetch = make_finra_fetch(endpoint="https://example.invalid/ds", user_agent="UA x@y.com",
+                             token_provider=lambda: "t", http_get=lambda *a, **k: _Resp())
+    poller = FinraShortInterestPoller(fetch=fetch)
+    assert poller.poll(10.0, lambda _event: None) == 0
+    assert poller.counters["payload_error"] == 1
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
+
+
+def test_limited_invalid_prefix_is_loud_and_refuses_to_skip_to_unseen_rows():
+    """A limited source window with only invalid head rows must not impersonate a quiet day."""
+    rows = [_row(symbol="N/A", settlementDate="2026-06-15"),
+            _row(symbol="NOT LISTED", settlementDate="2026-06-16")]
+    poller = FinraShortInterestPoller(fetch=lambda _cursor, _now: rows)
+    for now in (10.0, 1000.0, 2000.0):
+        assert poller.poll(now, lambda _event: None) == 0
+    assert poller.cursor is None
+    assert poller.counters["symbol_less"] == 6
+    assert poller.progress_signal and "NO FORWARD PROGRESS" in poller.progress_signal
 
 
 def test_make_finra_fetch_rejects_unknown_kind():
@@ -422,12 +677,12 @@ def test_finra_cold_start_poison_date_cannot_strand_the_cursor_forever():
     poller = FinraShortInterestPoller(
         fetch=lambda c, n: [_row(settlementDate="2099-01-01", symbol="ZZZ")],
         clock=_fixed_clock(date(2026, 7, 16)))
-    poller.poll(10.0, lambda e: None)                     # COLD START, poisoned
-    assert poller.cursor == date(2026, 7, 16), "cold-start cursor was stranded in the future"
-    assert poller.cursor < date(2099, 1, 1)
-    assert poller.counters["future_settlement"] == 1      # noticed
-    assert poller.counters["clamped_cursor"] == 1         # counted
-    assert poller.strand_signal and "CLAMP" in poller.strand_signal   # and signalled
+    assert poller.poll(10.0, lambda e: None) == 0          # COLD START, poisoned
+    assert poller.cursor is None, "a future row may not manufacture a synthetic cursor"
+    assert poller.counters["future_settlement"] == 1       # noticed
+    assert poller.counters["clamped_cursor"] == 0
+    assert poller.strand_signal and "REFUSED" in poller.strand_signal
+    assert poller.progress_signal and "not a quiet publication" in poller.progress_signal
 
 
 def test_finra_cold_start_bound_uses_a_wall_clock_never_polls_monotonic_now():
@@ -461,8 +716,9 @@ def test_finra_default_clock_is_a_real_wall_clock_not_opt_in():
     poller = FinraShortInterestPoller(
         fetch=lambda c, n: [_row(settlementDate="2099-01-01", symbol="ZZZ")])   # no clock=
     poller.poll(10.0, lambda e: None)
-    assert poller.cursor <= datetime.now(timezone.utc).date()
-    assert poller.counters["clamped_cursor"] == 1
+    assert poller.cursor is None
+    assert poller.counters["future_settlement"] == 1
+    assert poller.counters["clamped_cursor"] == 0
 
 
 @pytest.mark.parametrize("row,counter", [
@@ -565,10 +821,13 @@ def test_finra_cursor_never_advances_past_a_row_that_failed_to_emit():
     assert poller.counters["emit_error"] == 1
     assert poller.cursor == date(2026, 6, 15), \
         "the cursor advanced past a row that failed to emit -> that row is lost forever"
+    assert poller.progress_signal and "FAILED TO EMIT" in poller.progress_signal
 
     down["yes"] = False
     assert poller.poll(20.0, on_event) == 1                # AAPL retried; MSFT deduped
     assert [e["symbols"] for e in out] == [["MSFT"], ["AAPL"]]
+    assert poller.cursor == date(2026, 6, 30), \
+        "the confirmed duplicate must release the retry barrier after AAPL succeeds"
 
 
 def test_finra_a_structural_build_error_is_counted_apart_from_a_transient_emit_error(monkeypatch):
@@ -674,17 +933,18 @@ def test_finra_the_clock_is_validated_before_any_row_is_read_not_only_when_one_e
         rate_limited.poll(0.0, lambda e: None)          # rate-DENIED poll (empty bucket): loud too
 
 
-def test_finra_the_poison_bound_is_not_guarded_by_a_type_test_of_the_clocks_own_output():
-    """THE DEFECT, AS SOURCE. `if isinstance(today, date) and candidate > today:` let a bad clock
-    DISABLE the control instead of tripping it. The comparison must be UNCONDITIONAL — the type
-    question is answered at the seam, which raises. This fails if anyone "defensively" re-adds a
-    type test to that line."""
+def test_finra_refuses_a_future_settlement_before_emit_or_cursor_selection():
+    """A future poison row must be rejected, never clamped into a synthetic cursor.
+
+    The clock contract still validates first. The row-level refusal happens before dedup,
+    on_event, or candidate construction, so it cannot skip genuine interim settlements.
+    """
     src = inspect.getsource(mod.FinraShortInterestPoller.poll)
-    assert "if candidate > today:" in src, "the poison bound's comparison must be unconditional"
-    # CODE only — the comment above that line deliberately QUOTES the defect it replaced.
+    assert "if settlement > today:" in src
+    assert "FUTURE SETTLEMENT REFUSED" in src
     code = [ln for ln in src.splitlines() if not ln.strip().startswith("#")]
-    assert not any("isinstance(today" in ln for ln in code), \
-        "a type test on the bound's own condition lets a bad clock silently skip the bound"
+    assert not any("candidate = today" in ln for ln in code), \
+        "a future poison row must not create a cursor at today's date"
 
 
 # ---- (C) ONE CONTRACT: the same clock object must drive BOTH pollers -------------------
@@ -700,9 +960,9 @@ def test_finra_accepts_the_same_clock_object_edgar_brew_takes():
 
     poller = FinraShortInterestPoller(
         fetch=lambda c, n: [_row(settlementDate="2099-01-01", symbol="ZZZ")], clock=clock)
-    assert poller.poll(10.0, lambda e: None) == 1                 # no TypeError...
-    assert poller.cursor == date(2026, 7, 16)                     # ...and the bound RAN
-    assert poller.counters["clamped_cursor"] == 1
+    assert poller.poll(10.0, lambda e: None) == 0                 # no TypeError...
+    assert poller.cursor is None                                  # ...and the bound RAN
+    assert poller.counters["future_settlement"] == 1
 
     # ...and the IDENTICAL object drives the sibling poller. This is the claim the docs made and
     # the code did not honour.
@@ -719,8 +979,8 @@ def test_finra_narrows_the_aware_clock_to_a_utc_calendar_day_explicitly():
         fetch=lambda c, n: [_row(settlementDate="2026-07-17", symbol="ZZZ")],
         clock=lambda: datetime(2026, 7, 17, 1, 0, tzinfo=tokyo))
     poller.poll(10.0, lambda e: None)
-    assert poller.cursor == date(2026, 7, 16), "the aware clock was truncated, not converted"
-    assert poller.counters["clamped_cursor"] == 1
+    assert poller.cursor is None, "the future row must be refused using UTC's calendar day"
+    assert poller.counters["future_settlement"] == 1
 
 
 def test_finra_and_edgar_brew_share_ONE_clock_contract_error_type():
@@ -742,6 +1002,6 @@ def test_finra_default_clock_is_the_same_object_edgar_brew_defaults_to():
     import ingest.clock_contract as cc
     import ingest.edgar_brew as eb
 
-    assert mod._utc_now().tzinfo is not None, "the default clock must be tz-AWARE"
-    assert eb._utc_now is cc.utc_now
-    assert "edgar_brew" in mod._utc_now.__doc__, "FINRA must point back at its sibling"
+    finra_default = FinraShortInterestPoller(fetch=lambda _c, _n: [])._clock
+    edgar_default = eb.EdgarBrewPoller(fetch=lambda _c, _n: [])._clock
+    assert finra_default is edgar_default is cc.utc_now

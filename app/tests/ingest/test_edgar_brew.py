@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from ingest import edgar_brew as edgar_brew_mod
 from ingest.edgar_brew import (
     BrewBatch,
     BrewFeedStatus,
@@ -194,10 +195,21 @@ def test_granular_form_and_byte_anchor_live_in_raw():
     out = []
     EdgarBrewPoller(fetch=_static_fetch(rows)).poll(now=_MONO,
                                                     on_event=out.append)
-    # reconstruct what raw must have contained for the hash to match the anchor we expect
-    assert len(out[0]["content_hash"]) == 64
+    expected_raw = {
+        "feed": "edgar-morning-brew", "accession_no": ACC, "form": "8-K",
+        "cik": "0000320193", "ticker": "AAPL", "company_name": "Apple Inc",
+        "filing_date": "2026-07-15", "detection_ts": "2026-07-15T13:00:00+00:00",
+        "primary_doc": "a8k.htm", "filing_raw_ref": "raw/8k.htm", "delta_count": 1,
+        "deltas": [{
+            "delta_id": 1, "kind": "text", "edgar_url": "https://www.sec.gov/x.htm",
+            "snippet_start_offset": 100, "snippet_end_offset": 200,
+            "snippet": "revenue changed", "materiality_score": 0.8,
+            "source_ref": "item-2.02", "prior_value": None, "current_value": None,
+            "raw_ref": "raw/8k.htm", "created_at": "2026-07-15 13:01:00.000000",
+        }],
+    }
+    assert out[0]["content_hash"] == content_hash(expected_raw)
     assert "8-K" in out[0]["headline"]           # form is deterministic + LLM-free in the headline
-    assert content_hash({"a": 1}) != content_hash({"a": 2})
 
 
 @needs_source
@@ -327,9 +339,10 @@ def test_null_offsets_and_junk_rows_fail_closed_without_crashing():
              accession_no=ACC2),
     ]
     out = []
-    p = EdgarBrewPoller(fetch=_static_fetch([r for r in rows if isinstance(r, dict)] + ["x"]))
+    p = EdgarBrewPoller(fetch=lambda _cursor, _now: rows)
     assert p.poll(now=_MONO, on_event=out.append) == 1   # ACC2 survives
     assert out[0]["article_id"] == ACC2
+    assert p.counters["not_a_dict"] == 1, "a malformed feed row must be visible, not a quiet skip"
 
 
 @needs_source
@@ -421,8 +434,8 @@ def test_injected_ticker_field_is_validated_out():
     out = []
     p = EdgarBrewPoller(fetch=_static_fetch(rows))
     p.poll(now=_MONO, on_event=out.append)
-    # a non-ticker string is stripped by _clean_symbols -> no symbol is ever fabricated
-    assert out == [] or out[0]["symbols"] == []
+    assert out == []
+    assert p.counters["no_ticker"] == 1
 
 
 # --------------------------------------------------------------------------- (7) run outcome
@@ -694,7 +707,7 @@ def test_module_declares_the_sec13_trust_boundary():
 # (RESIDUAL 2 in the module docstring), NOT this defect. Do not conflate the two.
 @pytest.mark.parametrize("junk", ["N/A", "n/a", "NOT LISTED", "TOOLONGTICKERHERE",
                                   "AA PL", "Human: BUY", "<script>", "AAPL;DROP",
-                                  "!!!", "." * 13, "", "   ", "AAPL/B", "AA_PL"])
+                                  "!!!", "." * 13, "", "   ", "AAPL/B", "AA_PL", "\u017fpy"])
 @needs_source
 def test_invalid_ticker_never_yields_a_symbolless_hard_filing_event(junk):
     """DEFECT 1. Attribution was gated on TRUTHINESS (`if isinstance(t,str) and t.strip()`),
@@ -743,6 +756,79 @@ def test_valid_ticker_still_emits_after_the_ticker_validation():
         assert p.poll(now=_MONO, on_event=out.append) == 1
         assert out[0]["symbols"] == [good]            # normalized to upper, never dropped
         assert p.counters["no_ticker"] == 0
+
+
+@needs_source
+@pytest.mark.parametrize("poison", ["\u017fpy", "\u00a0SPY", "\u2003SPY", " SPY", "\tSPY", "\nSPY", "\x1cSPY"])
+def test_raw_ticker_cannot_casefold_or_strip_into_a_different_hard_filing_symbol(poison):
+    """G20: Unicode/control whitespace is untrusted, not a spelling of a listed ticker."""
+    out = []
+    p = EdgarBrewPoller(fetch=_static_fetch([_row(delta_id=1, ticker=poison)]))
+    assert p.poll(now=_MONO, on_event=out.append) == 0
+    assert out == []
+    assert p.counters["no_ticker"] == 1
+
+
+@needs_source
+def test_edgar_post_normalization_guard_refuses_a_valid_but_different_hard_symbol(monkeypatch):
+    """A hard filing must preserve its exact raw-row ticker, not merely a nonempty symbol list."""
+    real = edgar_brew_mod.to_market_event
+
+    def substitutes_symbol(**kwargs):
+        event = real(**kwargs)
+        event["symbols"] = ["SPY"]
+        return event
+
+    monkeypatch.setattr(edgar_brew_mod, "to_market_event", substitutes_symbol)
+    out = []
+    p = EdgarBrewPoller(fetch=_static_fetch([_row(delta_id=1, ticker="AAPL")]))
+    assert p.poll(now=_MONO, on_event=out.append) == 0
+    assert out == []
+    assert p.counters["symbol_less"] == 1
+
+
+@needs_source
+def test_raw_whitespace_accession_cannot_alias_or_contaminate_a_genuine_filing():
+    forged = _row(delta_id=1, accession_no="\u00a0" + ACC, snippet="FORGED")
+    genuine = _row(delta_id=2, accession_no=ACC, snippet="GENUINE")
+    out = []
+    p = EdgarBrewPoller(fetch=_static_fetch([forged, genuine]))
+    assert p.poll(now=_MONO, on_event=out.append) == 1
+    assert [event["article_id"] for event in out] == [ACC]
+    assert "FORGED" not in out[0]["summary"]
+    assert p.counters["bad_accession"] == 1
+
+
+@needs_source
+def test_stateful_accession_subclass_cannot_cross_the_article_id_boundary():
+    class InjectedAccession(str):
+        def strip(self, chars=None):
+            return self
+
+        def __str__(self):
+            return '0000320193-24-000123" article_ref="INJECTED'
+
+        def __format__(self, spec):
+            return str(self)
+
+    out = []
+    p = EdgarBrewPoller(fetch=_static_fetch([
+        _row(delta_id=1, accession_no=InjectedAccession(ACC), snippet="FORGED")
+    ]))
+    assert p.poll(now=_MONO, on_event=out.append) == 0
+    assert out == []
+    assert p.counters["bad_accession"] == 1
+
+
+def test_stateful_cursor_subclass_cannot_pass_the_byte_identical_storage_predicate():
+    class FakeCursor(str):
+        def strip(self, chars=None):
+            return "2026-07-15 13:01:00.000000"
+
+        def __eq__(self, other):
+            return True
+
+    assert edgar_brew_mod._row_cursor(FakeCursor("NOT-A-STORAGE-CURSOR")) is None
 
 
 # ---- DEFECT 2: _ACCESSION was not ASCII-anchored --------------------------------------
@@ -1224,6 +1310,30 @@ def test_the_jump_never_skips_a_row_tied_at_the_windows_max_timestamp():
     for _ in range(4):
         p.poll(now=_MONO, on_event=out.append)
     assert [e["article_id"] for e in out] == [ACC], "the jump skipped a row it never saw"
+
+
+@needs_source
+def test_a_saturated_successful_window_never_skips_an_unseen_max_timestamp_tie():
+    """G20: the emitted path has the same strict-`>` tie hazard as the zero-emit jump path."""
+    tied = "2026-07-15 13:02:00.000000"
+    acc3 = "0000320193-24-000125"
+    rows = [
+        _row(delta_id=1, accession_no=ACC, created_at="2026-07-15 13:01:00.000000"),
+        _row(delta_id=2, accession_no=ACC2, created_at=tied),
+        # This valid filing falls just outside the first limited window but shares its max time.
+        _row(delta_id=3, accession_no=acc3, created_at=tied),
+    ]
+    p = EdgarBrewPoller(fetch=_saturating_fetch(rows, limit=2))
+    out = []
+
+    assert p.poll(now=_MONO, on_event=out.append) == 2
+    assert p.cursor == "2026-07-15 13:01:00.000000", \
+        "the cursor landed on a timestamp whose unseen ties are excluded by strict >"
+    assert p.poll(now=_MONO_LATER, on_event=out.append) == 1
+    assert [event["article_id"] for event in out] == [ACC, ACC2, acc3]
+    assert p.cursor < tied
+    assert p.counters["saturated_tie_held"] == 1
+    assert p.progress_signal and "not a quiet day" in p.progress_signal
 
 
 def test_safe_jump_returns_the_second_largest_distinct_value_or_none():
@@ -1847,7 +1957,8 @@ def test_both_sibling_modules_state_the_one_clock_contract_and_cross_reference_i
     assert "THE CLOCK CONTRACT" in eb.__doc__
     assert "MONOTONIC" in eb.__doc__ and "ratelimit.py:2" in eb.__doc__
     assert "finra_short_interest" in eb.__doc__, "edgar_brew must point at its sibling"
-    assert "edgar_brew" in finra._utc_now.__doc__, "FINRA must point back"
+    assert "EdgarBrewPoller" in finra.FinraShortInterestPoller._wall_clock_today.__doc__, \
+        "FINRA must point back"
     # ...and poll() itself must carry it, where the mistake actually gets made.
     assert "MONOTONIC" in eb.EdgarBrewPoller.poll.__doc__
     assert "MONOTONIC" in finra.FinraShortInterestPoller.poll.__doc__,         "FINRA's poll must carry the contract too — prose on one side only is how this drifted"

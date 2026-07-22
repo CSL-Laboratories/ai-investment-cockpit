@@ -45,5 +45,52 @@ def test_symbols_field_cannot_smuggle_markers():
     assert ev["symbols"] == ["AAPL"]        # injected non-ticker entries validated out
 
 
+def test_unicode_symbol_cannot_casefold_into_a_different_ascii_ticker():
+    """G20 round-7: validate the raw alphabet before Unicode case conversion.
+
+    The long-s spelling of SPY uppercases to ASCII ``SPY`` in Python. It is an untrusted
+    different input, not an alternate spelling of the listed ticker, so it must never be
+    normalized into the genuine symbol.
+    """
+    ev = to_market_event(source="finnhub", article_id=1, symbols=["\u017fpy", "SPY"],
+                         headline="h", summary="s", ts=0)
+    assert ev["symbols"] == ["SPY"]
+
+
+@pytest.mark.parametrize("poison", ["\u00a0SPY", "\u2003SPY", " SPY", "\tSPY", "\nSPY", "\x1cSPY"])
+def test_raw_whitespace_cannot_be_stripped_into_a_genuine_ticker(poison):
+    """Ticker identity uses the exact raw wire value, before any whitespace cleanup."""
+    ev = to_market_event(source="finnhub", article_id=1, symbols=[poison, "SPY"],
+                         headline="h", summary="s", ts=0)
+    assert ev["symbols"] == ["SPY"]
+
+
+def test_ticker_boundary_rejects_stateful_string_subclasses():
+    """An injected seam must not validate one ticker and normalize another on a second pass."""
+    class FlipTicker(str):
+        def strip(self, chars=None):
+            return self
+
+        def isascii(self):
+            return True
+
+        def upper(self):
+            return "SPY"
+
+    ev = to_market_event(source="finnhub", article_id=1, symbols=[FlipTicker("AAPL"), "AAPL"],
+                         headline="h", summary="s", ts=0)
+    assert ev["symbols"] == ["AAPL"]
+
+
+def test_symbol_container_subclasses_cannot_fabricate_a_ticker_after_raw_validation():
+    class FabricatingSymbols(str):
+        def split(self, sep=None, maxsplit=-1):
+            return ["SPY"]
+
+    ev = to_market_event(source="finnhub", article_id=1, symbols=FabricatingSymbols("not-a-ticker"),
+                         headline="h", summary="s", ts=0)
+    assert ev["symbols"] == []
+
+
 def test_escape_handles_non_str_without_crashing():
     assert isinstance(escape_untrusted({"nested": "x"}), str)   # dict coerced, no TypeError

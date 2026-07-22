@@ -238,7 +238,7 @@ from pathlib import Path
 
 from ingest.clock_contract import ClockContractError, resolve_wall_clock, utc_now
 from ingest.dedup import Dedup
-from ingest.normalize import _TICKER, MAX_LEN, to_market_event
+from ingest.normalize import MAX_LEN, _canonical_ticker, to_market_event
 
 SOURCE = "sec:edgar"
 EVENT_TYPE = "filing"          # canonical bare string — budget.py:27 / triage_loop.py:47 frozenset
@@ -559,17 +559,19 @@ def _row_cursor(raw) -> str | None:
     the COUNTED path. Never canonicalize a non-canonical value into a cursor: that hands SQL one
     comparator and the poller another, which is the strand this invariant exists to prevent.
     """
-    if not isinstance(raw, str):
+    if type(raw) is not str:
         return None                      # a datetime/int is not what SQL stores or compares
     return raw if _canonical_cursor(raw) == raw else None
 
 
 def _accession_of(row) -> str | None:
     acc = row.get("accession_no")
-    if not isinstance(acc, str):
+    # This is a raw identity used in article_id/raw_ref. Reject subclasses and any raw spelling
+    # that would be transformed by whitespace cleanup; otherwise a forged value can alias a real
+    # accession or inject text after this boundary.
+    if type(acc) is not str or not acc.isascii() or acc != acc.strip():
         return None
-    acc = acc.strip()
-    return acc if _ACCESSION.match(acc) else None
+    return acc if _ACCESSION.fullmatch(acc) else None
 
 
 class BrewBatch(list):
@@ -651,10 +653,11 @@ class EdgarBrewPoller:
         #   saturated_all_deduped— ...and every unemitted row was already-emitted (benign)
         #   window_jumped        — the cursor was jumped past such a window to keep the feed alive
         #   wedge_blocked        — the signature fired but NO safe jump existed: still wedged
-        self.counters = {"bad_accession": 0, "no_ticker": 0, "symbol_less": 0,
+        self.counters = {"bad_accession": 0, "not_a_dict": 0, "no_ticker": 0, "symbol_less": 0,
                          "non_canonical_ts": 0, "build_error": 0,
                          "emit_error": 0, "future_ts": 0, "clamped_cursor": 0,
-                         "saturated_no_emit": 0, "saturated_all_deduped": 0,
+                          "saturated_no_emit": 0, "saturated_tie_held": 0,
+                          "saturated_all_deduped": 0,
                          "window_jumped": 0, "wedge_blocked": 0}
         # A clamp is NOT a quiet day. Silence caused by clamping must be readable as such, so
         # the last clamp leaves a durable, human-readable signal rather than only a count.
@@ -673,7 +676,7 @@ class EdgarBrewPoller:
     # `emit_error` is DELIBERATELY ABSENT: it is a transient downstream failure, the row is good
     # evidence, and it WILL be retried. Counting it here would let the saturated-window jump skip
     # a row that was never dropped at all — silent evidence loss. Do not "tidy" it back in.
-    _DROP_KEYS = ("bad_accession", "no_ticker", "symbol_less", "non_canonical_ts", "build_error")
+    _DROP_KEYS = ("bad_accession", "not_a_dict", "no_ticker", "symbol_less", "non_canonical_ts", "build_error")
 
     def _drop_total(self) -> int:
         return sum(self.counters[k] for k in self._DROP_KEYS)
@@ -732,7 +735,8 @@ class EdgarBrewPoller:
         for row in batch:
             fetched += 1
             try:
-                if not isinstance(row, dict):
+                if type(row) is not dict:
+                    self.counters["not_a_dict"] += 1
                     continue
                 # THE CANONICALITY INVARIANT, enforced at the boundary rows ENTER the poller: a
                 # created_at that is not ALREADY storage-format can never be a cursor (SQL
@@ -800,6 +804,7 @@ class EdgarBrewPoller:
             emitted_cursors = [c for c in emitted_cursors if c < barrier]
 
         moved = False
+        saturated_tie_held = False
         if emitted_cursors:
             candidate = max(emitted_cursors)
             # Poison guard (the created_at analogue of finnhub_poll's MAX_ID_GAP): a row
@@ -815,6 +820,17 @@ class EdgarBrewPoller:
                     "CLAMP artifact, NOT a quiet day."
                 )
                 candidate = wall_cursor
+            if saturated:
+                # `_SELECT` is `created_at > :cursor` with a LIMIT. A saturated successful
+                # window is still a prefix: setting the cursor to its maximum timestamp would
+                # orphan unseen rows tied at that timestamp. The second-largest distinct value
+                # is the furthest safe cursor, exactly as in the zero-emission jump path.
+                safe_ceiling = _safe_jump(window_cursors)
+                if safe_ceiling is None:
+                    saturated_tie_held = True
+                    candidate = None
+                elif candidate > safe_ceiling:
+                    candidate = safe_ceiling
             moved = self._advance_to(candidate)
 
         # THE FORWARD-PROGRESS INVARIANT. A full window that emitted nothing is the wedge
@@ -825,6 +841,19 @@ class EdgarBrewPoller:
         if saturated and emitted == 0:
             self._on_wedge_signature(wall_cursor, window_cursors, fetched,
                                      self._drop_total() - drops_before, deduped, retriable)
+        elif emit_barriers:
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS: cursor limited at {self._cursor}; "
+                f"{len(emit_barriers)} row(s) FAILED TO EMIT and remain re-fetchable. "
+                "This is a downstream-retry barrier, not a quiet day."
+            )
+        elif saturated_tie_held:
+            self.counters["saturated_tie_held"] += 1
+            self.progress_signal = (
+                f"NO FORWARD PROGRESS: cursor held at {self._cursor}; the saturated window "
+                "has no lossless timestamp cursor because unseen rows may tie its maximum. "
+                "Refusing to orphan them; this is not a quiet day."
+            )
         elif moved or emitted:
             self.progress_signal = None                  # progress made: the signal is not history
         return emitted
@@ -889,8 +918,7 @@ class EdgarBrewPoller:
         # There is deliberately NO FALLBACK to other rows. The fallback IS the defect: it trades
         # a counted drop for a mis-attributed hard event.
         first = rows[0]
-        ticker = first.get("ticker")
-        ticker = ticker.strip().upper() if isinstance(ticker, str) else None
+        ticker = _canonical_ticker(first.get("ticker"))
         # VALIDATE, don't merely test truthiness. _TICKER is imported from normalize (ONE
         # source of truth — never re-declare the pattern here, the two would drift).
         #
@@ -900,7 +928,7 @@ class EdgarBrewPoller:
         # member of budget.py:27 _HARD_EVENT_TYPES, tested at :234, which AUTO-CORROBORATES)
         # but whose `symbols` list is EMPTY. That is an unattributable hard event: it carries
         # hard-event weight while naming nobody. Reject it HERE, into the counted drop below.
-        if ticker is None or not _TICKER.match(ticker):
+        if ticker is None:
             # No company row maps this cik -> ticker, or the mapped ticker is not a valid symbol.
             # DROP it — a guessed ticker would attach hard-event corroboration to the wrong name.
             self.counters["no_ticker"] += 1
@@ -973,7 +1001,7 @@ class EdgarBrewPoller:
         # HARD event must never leave this module even if _TICKER and _clean_symbols ever drift
         # apart (they are the same object today; they might not be forever). Checked on the BUILT
         # event, i.e. against what normalize ACTUALLY produced — not against what we passed in.
-        if not event.get("symbols"):
+        if event.get("symbols") != [ticker]:
             self.counters["symbol_less"] += 1
             return None, None
         return event, (max(cursors) if cursors else None)

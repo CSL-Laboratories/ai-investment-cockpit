@@ -30,6 +30,24 @@ _ROLE_MARKERS = re.compile(
 )
 
 
+def _canonical_ticker(value) -> str | None:
+    """Return one canonical ASCII ticker, or ``None`` for an invalid source value.
+
+    The raw ASCII/no-whitespace check deliberately precedes ``upper()``. Python case conversion
+    and whitespace cleanup are not validation boundaries: the long-s spelling ``\u017fpy`` or a
+    padded spelling can alias ``SPY``. Accepting either would let an untrusted wire value
+    impersonate a different ticker and consume its dedup key.
+    """
+    # This is a raw-wire boundary, not a convenience normalizer. Reject a raw spelling that
+    # would change under ``strip``; Unicode or ASCII/control whitespace would otherwise vanish
+    # and impersonate a real ticker. Rejecting subclasses also prevents a stateful injected seam
+    # from returning one value to this check and a different value to ``to_market_event`` later.
+    if type(value) is not str or not value.isascii() or value != value.strip():
+        return None
+    ticker = value.upper()
+    return ticker if _TICKER.match(ticker) else None
+
+
 def escape_untrusted(text) -> str:
     if text is None or text == "":
         return ""
@@ -42,15 +60,18 @@ def escape_untrusted(text) -> str:
 
 
 def _clean_symbols(symbols) -> list[str]:
-    if isinstance(symbols, str):
+    # The container itself is an untrusted boundary too: a string/list subclass can fabricate
+    # primitive-looking members from an overridden ``split``/iteration method after the raw
+    # ticker gate has rejected its original value.
+    if type(symbols) is str:
         symbols = symbols.split(",")
-    if not isinstance(symbols, (list, tuple)):
+    if type(symbols) not in (list, tuple):
         return []
     out = []
     for s in symbols[:MAX_SYMBOLS]:
-        u = str(s).strip().upper()
-        if _TICKER.match(u):
-            out.append(u)
+        ticker = _canonical_ticker(s)
+        if ticker is not None:
+            out.append(ticker)
     return out
 
 
