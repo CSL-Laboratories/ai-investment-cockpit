@@ -90,7 +90,13 @@ def main(argv=None) -> int:
     parser.add_argument("--migrate", action="store_true",
                         help="copy a near-miss entry (e.g. alpaca-key) onto its canonical name "
                              "(alpaca_key). Non-destructive: the old entry is left in place.")
+    parser.add_argument("--force", action="store_true",
+                        help="with --migrate, OVERWRITE a canonical entry that already exists. "
+                             "Repair path for a canonical name holding the wrong value while "
+                             "the good value survives under a near-miss name.")
     args = parser.parse_args(argv)
+    if args.force and not args.migrate:
+        parser.error("--force only means something with --migrate")
 
     print(f"keyring service: {SERVICE}")
     print(f"backend:         {type(keyring.get_keyring()).__name__}\n")
@@ -99,10 +105,24 @@ def main(argv=None) -> int:
     for name, what, breaks in REQUIRED:
         state = describe(name)
         if state is not None:
+            # --force: the canonical name EXISTS but may hold the wrong value, while the good
+            # value survives under a near-miss name. That is not hypothetical -- it happened
+            # during RW-01 bring-up when an ad-hoc script wrote a placeholder over a real
+            # credential. Plain --migrate cannot fix it (it only fills a MISSING name), so the
+            # repair is explicit and opt-in rather than silently clobbering on every run.
+            source = next((v for v in variants(name) if get_secret(v) is not None), None)
+            if args.force and args.migrate and source is not None:
+                set_secret(name, get_secret(source).reveal())
+                healed.append((source, name))
+                print(f"  RESTORED {name:<20} {describe(name)}   (overwritten from {source!r})")
+                continue
             flag = "" if "clean=True" in state else "   <- STRIP WHITESPACE: re-paste this one"
             if flag:
                 dirty.append(name)
-            print(f"  OK       {name:<20} {state}{flag}")
+            note = ""
+            if source is not None and not args.migrate:
+                note = f"   (note: {source!r} also exists; --migrate --force to restore from it)"
+            print(f"  OK       {name:<20} {state}{flag}{note}")
             continue
 
         # Absent under the canonical name. Before calling it missing, look for the mis-spelling

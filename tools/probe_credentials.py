@@ -67,40 +67,82 @@ def _http_status(exc) -> str:
 
 
 # --------------------------------------------------------------------------- Alpaca
+ALPACA_WAIT_SECONDS = 12.0
+
+
 def probe_alpaca() -> Result:
-    """Open the REAL news WebSocket, authenticate, subscribe, and read one control exchange.
+    """Open the REAL news WebSocket, authenticate, subscribe — WITHOUT waiting for news.
 
     Drives ``main.build_alpaca_news_connect``, so this also exercises the auth-error path added
-    after RW-01 bring-up: a rejected key raises ``AlpacaStreamError`` rather than ending the
-    stream quietly. If that regressed, this probe would hang until the socket timed out instead
-    of failing fast — which is itself a signal worth having.
+    after RW-01 bring-up: a rejected key raises ``AlpacaStreamError`` instead of ending the
+    stream quietly.
+
+    WHY A DEADLINE AND A THREAD, NOT A BARE ``next()``.
+    The generator yields only NEWS frames; the auth/subscribe handshake is consumed inside it.
+    So the naive probe — ``next(stream)`` — blocks until an article is published. On a weekend,
+    or after hours, that is never: the first cut of this probe hung indefinitely on a perfectly
+    HEALTHY connection, which is a worse failure than the one it was written to catch.
+
+    The inference that replaces it is sound because the two outcomes have very different
+    timings. Alpaca rejects bad credentials IMMEDIATELY (an ``error`` control frame, then
+    close), so a raise arrives in well under a second. A healthy stream with a quiet tape
+    simply blocks. Therefore: still blocked at the deadline == authenticated. Absence of a news
+    article is NOT evidence about the credential, and this probe must not pretend otherwise.
+
+    The worker is a DAEMON thread and is deliberately abandoned if still blocked — closing a
+    generator from a second thread while it executes raises "generator already executing". This
+    is a short-lived CLI; the socket dies with the process.
     """
+    import threading
+
     key, secret = get_secret("alpaca_key"), get_secret("alpaca_secret")
     if key is None or secret is None:
         return _skip("alpaca news WebSocket", "alpaca_key / alpaca_secret")
 
-    connect = main_mod.build_alpaca_news_connect(key.reveal(), secret.reveal())
-    stream = connect()
-    try:
-        # The generator yields only NEWS frames; the auth/subscribe handshake happens before the
-        # first yield. So reaching this line at all means auth succeeded -- a rejected key would
-        # have raised out of next() instead. A quiet tape (no news yet) is a PASS, not a failure:
-        # we are probing the credential, not the market.
-        next(stream)
-        detail = "authenticated, subscribed, and a live news frame arrived"
-    except StopIteration:
-        detail = "authenticated and subscribed (stream closed before any news - tape is quiet)"
-    except main_mod.AlpacaStreamError as exc:
+    def bounded_connect(url):
+        """The app's own connect seam, with a bound on the TCP/handshake wait so an unreachable
+        endpoint fails fast instead of joining the quiet-tape case."""
+        from websockets.sync.client import connect as ws_connect
+
+        return ws_connect(url, open_timeout=10, close_timeout=2)
+
+    connect = main_mod.build_alpaca_news_connect(key.reveal(), secret.reveal(),
+                                                 ws_connect=bounded_connect)
+    outcome: dict = {}
+
+    def drain():
+        stream = connect()
+        try:
+            next(stream)
+            outcome["ok"] = "authenticated, subscribed, and a live news frame arrived"
+        except StopIteration:
+            outcome["ok"] = "authenticated and subscribed (server closed the idle stream)"
+        except BaseException as exc:                            # noqa: BLE001
+            outcome["err"] = exc
+        finally:
+            try:
+                stream.close()
+            except BaseException:                               # noqa: BLE001
+                pass
+
+    worker = threading.Thread(target=drain, daemon=True)
+    worker.start()
+    worker.join(ALPACA_WAIT_SECONDS)
+
+    exc = outcome.get("err")
+    if isinstance(exc, main_mod.AlpacaStreamError):
         return Result("alpaca news WebSocket", False, str(exc).split("(")[0].strip(),
                       "the key/secret pair was REJECTED. Regenerate on the Alpaca dashboard "
                       "(Paper Trading account) and re-run keyring set for BOTH values.")
-    except Exception as exc:                                    # noqa: BLE001
+    if exc is not None:
         return Result("alpaca news WebSocket", False, type(exc).__name__,
                       "could not reach stream.data.alpaca.markets - check connectivity, then "
                       "that the keys came from the Paper Trading dashboard.")
-    finally:
-        stream.close()
-    return Result("alpaca news WebSocket", True, detail)
+    if "ok" in outcome:
+        return Result("alpaca news WebSocket", True, outcome["ok"])
+    return Result("alpaca news WebSocket", True,
+                  f"authenticated and subscribed; no article in {ALPACA_WAIT_SECONDS:.0f}s "
+                  "(quiet tape - expected outside market hours, NOT a credential problem)")
 
 
 # --------------------------------------------------------------------------- Finnhub
@@ -235,16 +277,22 @@ def main(argv=None) -> int:
     print("Probing provisioned credentials against the live vendors.")
     print("No secret value is printed. --post publishes a visible message.\n")
 
-    probes = [probe_alpaca, probe_finnhub_news, probe_finnhub_calendar,
+    # Fast HTTP probes FIRST so the operator sees progress immediately; the WebSocket probe is
+    # last because it is the only one with a deadline to wait out (see probe_alpaca).
+    probes = [probe_finnhub_news, probe_finnhub_calendar,
               probe_discord_identity, probe_discord_channel]
     if args.post:
         probes.append(probe_discord_post)
+    probes.append(probe_alpaca)
 
     results = []
     for probe in probes:
+        if probe is probe_alpaca:
+            print(f"  ....  alpaca news WebSocket    connecting (up to "
+                  f"{ALPACA_WAIT_SECONDS:.0f}s; a quiet tape is normal)", flush=True)
         result = probe()
         results.append(result)
-        print(result.render())
+        print(result.render(), flush=True)
 
     failed = [r for r in results if not r.ok]
     print()
