@@ -90,17 +90,30 @@ keyring set ai-investment-cockpit alpaca_key
 keyring set ai-investment-cockpit alpaca_secret
 keyring set ai-investment-cockpit finnhub_key
 keyring set ai-investment-cockpit discord_bot_token
+keyring set ai-investment-cockpit cockpit_api_key
 ```
 
 | Secret name | Holds | Phase |
 |---|---|---|
 | `alpaca_key` / `alpaca_secret` | Alpaca API key id + secret (data/news + paper) | 1–2 |
-| `finnhub_key` | Finnhub free-tier key | 1 |
+| `finnhub_key` | Finnhub free-tier key — serves BOTH the news poller and the earnings calendar | 1 |
 | `discord_bot_token` | Discord bot token | 1 |
+| `cockpit_api_key` | The `X-API-Key` guarding the loopback orchestrator API — **you invent it** (`python -c "import secrets;print(secrets.token_urlsafe(32))"`), it is not a vendor credential. Unset ⇒ **every** route 401s, including `/status` (fails closed, never open) | 0.5 |
 | *(Robinhood MCP)* | via `claude mcp add` OAuth — lives in the MCP session, not keyring | 3 |
 
+**Spelling is load-bearing.** These names are read verbatim by `core.secrets`; a
+hyphen-for-underscore slip leaves the feature silently dark rather than erroring
+(`app/tests/system/test_rw01_market_day.py` pins the constants against this table).
+`audit-hmac-key` is deliberately absent: the app mints it into keyring itself on first
+`compose()` — never create it by hand.
+
 **Non-secret config** (env `COCKPIT_*` or a config file, not keyring): `guild_id`,
-`operator_user_id`, `mode` (defaults `read_only`).
+`operator_user_id` (as `COCKPIT_OPERATOR_IDS`), `mode` (defaults `read_only`), and the
+delivery channel ids — `COCKPIT_BRIEF_CHANNEL_ID` (your `#morning-brew`),
+`COCKPIT_ALERTS_CHANNEL_ID`, `COCKPIT_PROPOSALS_CHANNEL_ID`,
+`COCKPIT_SYSTEM_CHANNEL_ID`, `COCKPIT_AUDIT_LOG_CHANNEL_ID`. Each is independently
+optional; an unmapped channel fails closed (reported undelivered) rather than being
+redirected into another channel. See [[runbooks/rw01-live-smoke]] for the full bring-up.
 
 Verify a round-trip once the app exists:
 `python -c "from core.secrets import require_secret; print(require_secret('finnhub_key'))"`
@@ -130,7 +143,7 @@ and per-broker post-PDT house rules.
 - [ ] Alpaca account + API key/secret
 - [ ] Finnhub free key
 - [ ] Private Discord guild + bot (Message Content intent) + bot invited
-- [ ] `keyring set` all four secrets under `ai-investment-cockpit`
-- [ ] Guild id + operator user id recorded (config)
+- [ ] `keyring set` all five secrets under `ai-investment-cockpit`
+- [ ] Guild id + operator user id + `#morning-brew` channel id recorded (config)
 - [ ] Repo is private; BitLocker on
 - [ ] *(Phase 3 only)* Robinhood Agentic opt-in + funded, loss-tolerable account + MCP connected

@@ -226,7 +226,9 @@ def _log_unprovisioned(what: str, how: str) -> None:
     shape of a day with nothing to say. The operator must be able to tell those apart from the
     log alone — and again from ``IngestRunner.status()``, and again from the runbook's check.
     """
-    log.warning("NOT PROVISIONED: %s is OFF and will stay silent — silence from it is NOT a "
+    # ASCII only: this lands on a Windows console (cp1252), where a stray em-dash renders as
+    # mojibake and makes the one line an operator most needs to read look like a corruption.
+    log.warning("NOT PROVISIONED: %s is OFF and will stay silent. Silence from it is NOT a "
                 "quiet day. To enable: %s", what, how)
 
 

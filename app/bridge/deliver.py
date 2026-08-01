@@ -131,8 +131,9 @@ def build_deliver(channel_ids: dict, post_fn: Callable[[int, str], None]) -> Cal
             # FAIL CLOSED, LOUDLY. An unmapped channel means the operator has not configured
             # where this class of message goes; posting it somewhere else would be worse than
             # not posting it, and returning True would claim a delivery that did not happen.
-            log.warning("no channel id configured for %s — NOT delivered (set the "
-                        "COCKPIT_*_CHANNEL_ID for it)", channel)
+            # ASCII only (Windows console is cp1252) - see main._log_unprovisioned.
+            log.warning("no channel id configured for %s: NOT delivered (set the matching "
+                        "COCKPIT_*_CHANNEL_ID)", channel)
             return False
         try:
             post_fn(channel_id, clamp(render_payload(channel, payload)))
