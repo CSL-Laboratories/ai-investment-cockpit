@@ -83,6 +83,66 @@ def describe(name: str) -> str | None:
     return f"len={len(value):<4} clean={value == value.strip()}"
 
 
+# Format expectations, used ONLY to warn — never to reject. A vendor may change its key shape
+# at any time, and a tool that refuses a valid new format is worse than one that says "this
+# looks unusual". ``prefix`` is a public format marker, not secret material.
+_SHAPE = {
+    _ALPACA_KEY_NAME: ("PK", "an Alpaca PAPER key id normally starts 'PK' ('AK' = live)"),
+    _DISCORD_TOKEN_NAME: ("", "a Discord bot token has two dots in it"),
+}
+
+
+def set_one(name: str) -> int:
+    """Prompt for ONE secret and store it under a CANONICAL name.
+
+    THREE THINGS THIS DOES THAT A BARE ``keyring set`` DOES NOT, each earned during RW-01
+    bring-up:
+
+    1. IT REFUSES AN UNKNOWN NAME. ``keyring set ai-investment-cockpit alpaca-key`` succeeds
+       happily and the app never sees it — the entry looks perfectly healthy in Credential
+       Manager while the cockpit reports the feed unprovisioned. The valid names come from the
+       code (see the module docstring), so a typo is caught here instead of at 08:35.
+    2. IT STRIPS WHITESPACE. A value copied from a web dashboard often carries a trailing
+       newline; auth then fails with a generic 401 and nothing points at the cause.
+    3. IT ECHOES THE STORED LENGTH. The prompt is hidden, so a paste that silently did not
+       land is otherwise indistinguishable from one that did.
+    """
+    import getpass
+
+    canonical = {n for n, _w, _b in REQUIRED}
+    if name not in canonical:
+        near = next((c for c in canonical if c.replace("_", "-") == name
+                     or c == name.replace("-", "_")), None)
+        print(f"refusing to store {name!r}: it is not a name this app reads.")
+        if near:
+            print(f"  did you mean {near!r}?  (separators matter: a hyphenated entry is "
+                  "INVISIBLE to the cockpit)")
+        print("  valid names: " + ", ".join(sorted(canonical)))
+        return 2
+
+    raw = getpass.getpass(f"paste the value for {name} (input hidden): ")
+    value = raw.strip()
+    if not value:
+        print("nothing was entered: NOT stored. If your terminal swallows Ctrl+V at a hidden "
+              "prompt, try right-click paste (Windows Terminal: Ctrl+Shift+V).")
+        return 1
+    if value != raw:
+        print("  note: stripped surrounding whitespace from the pasted value")
+
+    set_secret(name, value)
+    stored = get_secret(name).reveal()
+    print(f"  stored {name}: len={len(stored)}  clean={stored == stored.strip()}")
+
+    prefix, hint = _SHAPE.get(name, ("", ""))
+    if prefix and not stored.startswith(prefix):
+        print(f"  WARNING: {hint}. Stored anyway. Check you copied the KEY ID, not the secret.")
+    elif name == _DISCORD_TOKEN_NAME and stored.count(".") != 2:
+        print(f"  WARNING: {hint}. Stored anyway. Check you copied the whole token.")
+    print("\nRe-run `python tools/verify_keys.py` to confirm the full set, then "
+          "`python tools/probe_credentials.py` to prove it works against the vendor.")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python tools/verify_keys.py",
@@ -94,9 +154,16 @@ def main(argv=None) -> int:
                         help="with --migrate, OVERWRITE a canonical entry that already exists. "
                              "Repair path for a canonical name holding the wrong value while "
                              "the good value survives under a near-miss name.")
+    parser.add_argument("--set", metavar="NAME", default=None,
+                        help="prompt for ONE secret and store it under a CANONICAL name. "
+                             "Refuses an unknown name (a mis-typed name is invisible to the "
+                             "app), strips stray whitespace, and echoes the stored length so a "
+                             "hidden paste is confirmable.")
     args = parser.parse_args(argv)
     if args.force and not args.migrate:
         parser.error("--force only means something with --migrate")
+    if args.set is not None:
+        return set_one(args.set)
 
     print(f"keyring service: {SERVICE}")
     print(f"backend:         {type(keyring.get_keyring()).__name__}\n")
