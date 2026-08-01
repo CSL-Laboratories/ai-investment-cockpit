@@ -492,6 +492,69 @@ def test_operator_delivery_is_none_without_a_configured_channel(tmp_path, monkey
     assert main_mod.build_operator_deliver(get_settings()) is None
 
 
+# =======================================================================================
+# run(): the assembly itself
+# =======================================================================================
+def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, provisioned,
+                                                                    monkeypatch):
+    """``run()`` is a five-line assembly, but two of those lines are order- and
+    argument-critical in ways nothing else would catch:
+
+      * ``build_scheduler`` MUST receive ``ingest=`` — drop it and every other test still
+        passes while production silently never polls a feed;
+      * ``start_streams()`` MUST happen BEFORE ``serve()`` — ``serve`` blocks forever, so
+        the reversed order means the news WebSocket never starts, in production only.
+
+    ``serve`` and ``scheduler.start`` are the only things replaced; the graph underneath is
+    the real composed one.
+    """
+    import orchestrator.app as app_mod
+    import orchestrator.scheduler as sched_mod
+
+    order: list[str] = []
+    seen: dict = {}
+
+    class FakeScheduler:
+        def start(self):
+            order.append("scheduler.start")
+
+    real_build_scheduler = sched_mod.build_scheduler
+
+    def fake_build_scheduler(state, clock=None, *, services=None, ingest=None):
+        seen["services"] = services
+        seen["ingest"] = ingest
+        # build the REAL scheduler too, so a broken cron spec still fails here
+        real_build_scheduler(state, clock, services=services, ingest=ingest)
+        return FakeScheduler()
+
+    def fake_serve(app, settings=None):
+        order.append("serve")
+        seen["bound_host"] = settings.api_host
+
+    # Compose the REAL graph FIRST, then hand it back from the patched compose. (Building it
+    # inside the patch would re-enter the patch — `_compose` calls `main.compose`.)
+    graph = _compose(tmp_path, transport=FakeTransport([]), deliver=Capture())[:3]
+
+    started: list = []
+    monkeypatch.setattr(sched_mod, "build_scheduler", fake_build_scheduler)
+    monkeypatch.setattr(app_mod, "serve", fake_serve)
+    monkeypatch.setattr(main_mod, "compose", lambda **_kw: graph)
+    monkeypatch.setattr(
+        "orchestrator.ingest_runner.IngestRunner.start_streams",
+        lambda self: (order.append("start_streams"), started.append(sorted(self.streams)))[0],
+    )
+
+    main_mod.run()
+
+    assert order == ["scheduler.start", "start_streams", "serve"], \
+        "serve() blocks forever — anything after it never runs"
+    assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
+    assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}
+    assert set(seen["services"]) == {"brew", "intraday", "eod"}
+    assert started == [[FEED_ALPACA_NEWS]]
+    assert seen["bound_host"] == "127.0.0.1", "the API must stay loopback-only"
+
+
 def test_discord_secret_name_matches_the_provisioning_doc():
     """RW-01 fixed a real mismatch: the code read ``discord-bot-token`` (hyphens) while
     docs/setup/accounts-and-keys.md §5 tells the operator to provision ``discord_bot_token``
