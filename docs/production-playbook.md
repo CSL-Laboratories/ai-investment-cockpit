@@ -2,7 +2,7 @@
 title: Production playbook — orchestrating the W-series pre-live property-closures with many Opus 4.8 agents
 type: playbook
 status: active
-last-verified: 2026-07-09
+last-verified: 2026-07-16
 related: [production-work-packages, path-to-production, security-hardening-backlog, security-architecture, ultracode-build-playbook, build-scaffold-ultracode]
 ---
 
@@ -962,6 +962,20 @@ do NOT commit or push; never imply SEC-11 is closed; never weaken an invariant.*
 > DO NOT: re-implement the state-machine gate metrics (gate.py:217-225), the Inv-2/SEC-08 pins (mode_ladder.py:79-93,240-244; gateway.py:334), daily disarm (scheduler.py:64-68), or the E-04 verifier itself (workflows/grounding.py) — all already exist. Do NOT close or imply-closed SEC-11 (that is W10; you consume the wired witness and fail closed without it). Do NOT rebuild the auto_veto coordinator or the OrderGateway. Do NOT wire the git/#audit-log adapters. Do NOT put any LLM on the gate or divergence computation. Do NOT commit or push. Read the code first; verify current state; ground every decision in a doc line or code symbol.
 
 ### W20 — Data breadth: first-party regulatory/fundamental feeds
+
+> **⚠ BUILT, GATE NOT CONVERGED (`043fc89`, branch `w20-edgar-brew-feed`, 2026-07-16). Do NOT paste
+> this kickoff as-is — its SCOPE CHANGED.** The cockpit now CONSUMES `edgar-morning-brew`'s SQLite
+> READ-ONLY rather than building an EDGAR poller (the brew already ships W20 (a)+(b) plus the
+> CIK->ticker precondition; only (c) FINRA was net-new). Suite 753 -> 995 passed / 3 skipped, ruff
+> clean. **G20 ran SIX rounds (repros 5 -> 4 -> 2 -> 1 -> 1 -> 1) and has NOT converged — the final
+> FINRA symbol fix has not faced a FRESH round.** See the W20 STATUS banner in
+> `production-work-packages.md` for the full attack -> fix -> regression record, the two documented
+> residuals, and the four half-applied-fix instances future W's must not repeat.
+>
+> **Two corrections this kickoff's own text carries:** (1) its ACCEPT requires a rate-denied poll to
+> "return 0, never burst" — the brew's port map calls that **exactly the anti-pattern** (a throttled
+> EDGAR masquerading as a quiet day); do not reintroduce it. (2) Its `{halt,filing}` line anchors
+> were STALE and are corrected inline below.
 *Adds first-party EDGAR filings + XBRL fundamentals + FINRA short-interest/Reg-SHO to the WP3 ingest layer; UPGRADES the SEC-21/SEC-15 corroboration substrate (does NOT close a register id) · Gate G20 · No hard W-dep (soft ⇢ W10 for the AUTO-corroboration trust-root use); RECOMMENDED EARLY, runs alongside W11..W16, NOT gated behind W19 · Orchestration: **4d (parallel-module-build)** one implementer per connector, then **4c (loop-until-green)**.*
 
 > You are completing PRODUCTION work package W20 — "Data breadth: first-party regulatory/fundamental feeds" — for the Local AI Investment Cockpit (repo root = cwd; source under app/, docs under docs/). This is a DATA-BREADTH, READ-ONLY, PAPER-SAFE package: it adds first-party ingest sources and does NOT touch the order path (Invariant 1). It is NOT a live-blocker and does NOT close a SEC/OPS register id — its one register-relevant effect is UPGRADING the corroboration SUBSTRATE (SEC-21/SEC-15) from a news-vendor "filing" tag to a first-party SEC accession-number trust root. Never imply SEC-11 is closed; never weaken an invariant. Do NOT commit or push.

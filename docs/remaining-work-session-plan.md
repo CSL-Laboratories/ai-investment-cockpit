@@ -210,6 +210,15 @@ operator provisioning acts. W17 needs W10+W11+W12+W13+W15+W16.
 
 ## Part 3 — W20 revised: EDGAR via the brew *(decided: read SQLite read-only)*
 
+> **✅ EXECUTED 2026-07-16 — `043fc89` on branch `w20-edgar-brew-feed` (NOT merged). Suite 753 -> 995
+> passed / 3 skipped. ⚠ GATE NOT CONVERGED:** G20 ran SIX rounds (repros 5 -> 4 -> 2 -> 1 -> 1 -> 1)
+> and the final FINRA symbol fix has NOT faced a FRESH round — required before W20 closes. The full
+> record (defects, the two documented residuals, the four half-applied-fix instances) is in the W20
+> STATUS banner in `production-work-packages.md`. Two scope facts confirmed while executing: the brew
+> has **never been run** (no `.db` on disk), and **no ingest poller is wired into production at all**
+> (`persist_events` is called only from tests; the scheduler has no ingest job) — so W20 shipped the
+> modules + factories but deliberately no scheduler ingest job.
+
 **The brew retires ~2/3 of W20.** It already ships (a) EDGAR-direct filings
 (`app/edgar/submissions_poll.py`), (b) XBRL fundamentals (`app/edgar/companyfacts.py` +
 `xbrl_fact`), **and** the CIK→ticker resolution W20 names as a hard precondition

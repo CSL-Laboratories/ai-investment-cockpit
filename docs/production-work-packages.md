@@ -2,7 +2,7 @@
 title: Production work packages — the W-series (pre-live / go-live) for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
 status: active
-last-verified: 2026-07-09
+last-verified: 2026-07-16
 related: [path-to-production, security-hardening-backlog, security-architecture, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions]
 ---
 
@@ -1369,6 +1369,109 @@ closed — state this in the WP completion note.*
 ---
 
 ### W20 — Data breadth: first-party regulatory/fundamental feeds
+
+> **STATUS: BUILT, GATE NOT CONVERGED (2026-07-16) — branch `w20-edgar-brew-feed` (`043fc89`, NOT
+> merged). Suite 753 -> 995 passed / 3 skipped (+242), ruff clean. DO NOT report W20 closed: the
+> final FINRA symbol fix has NOT faced a FRESH red-team round, and G20 requires one.** Repro
+> trajectory across SIX rounds: **5 -> 4 -> 2 -> 1 -> 1 -> 1**. The suite was GREEN at every round
+> (842 / 908 / 933 / 959 / 967 / 991) and every round still reproduced real defects — the clearest
+> demonstration yet that a green suite is not a property closure.
+>
+> **SCOPE CHANGED — the cockpit CONSUMES `edgar-morning-brew` instead of building an EDGAR poller.**
+> The sibling repo already ships W20 (a) EDGAR-direct filings and (b) XBRL fundamentals, plus the
+> CIK->ticker resolution this spec calls a hard precondition. It ships **zero FINRA**, so (c) stayed
+> net-new. `app/ingest/edgar_brew.py` opens the brew's SQLite **READ-ONLY** (`mode=ro` URI) and
+> normalizes its deterministic, LLM-FREE Delta rows through the EXISTING `to_market_event`. The
+> cockpit NEVER fetches sec.gov — the brew owns EDGAR fetching, its fair-access limiter and its
+> error taxonomy, and a second process polling sec.gov would risk a fair-access breach against the
+> same declared identity. The brew tree was verified untouched every round.
+>
+> **This ALSO avoided reimplementing a known-bad behaviour.** W20's original ACCEPT required a
+> rate-denied poll to *"return 0, never burst"* — which the brew's own `docs/cockpit-port-map.md`
+> calls **"EXACTLY THE ANTI-PATTERN"**, because a throttled EDGAR then masquerades as a quiet
+> filing day. `edgar_brew` therefore carries **no TokenBucket** (a deliberate, documented deviation:
+> a local SQLite read has no external quota) and establishes freshness POSITIVELY instead.
+>
+> **ONE EVENT PER ACCESSION, not per delta.** A filing has many deltas and `_HARD_EVENT_TYPES`
+> (`budget.py:27`, exact membership `:234`) auto-corroborates, so per-delta events would multiply a
+> single filing's corroboration N-fold. `event_type` is the canonical bare `"filing"`; the form
+> lives in `raw.form`.
+>
+> **DEGRADED != QUIET (the load-bearing requirement).** The brew's ATOMIC run-artifact **FILENAME**
+> is the signal (its body is a fixed one-liner with zero data — a data dead-end but a perfect
+> run-outcome signal). `BrewFeedStatus` models the brew's four outcomes **plus the two absences the
+> brew cannot report about itself**: `NOT_RUN` and `NOT_PROVISIONED`. `_PROBE_ORDER` probes
+> **DEGRADED before NOTHING_MATERIAL** so the worst outcome wins if two artifacts coexist.
+> "Provisioned" means `is_file()` **and** a readable SQLite magic header — never `sqlite3.connect`,
+> which CREATES a file at a bogus path (the opposite of a provisioning check).
+>
+> **FINRA is config-only, and that is the point.** Verified from primary sources 2026-07-16:
+> `api.finra.org` + OAuth2 client_credentials are CONFIRMED; the **dataset identifiers and path
+> pattern are console-gated => UNVERIFIABLE => config with NO default** (`make_finra_fetch` raises
+> rather than invent one). **Rule 4560 is REFUTED as a cadence source** — it says only "the second
+> business day after the reporting settlement date **designated by FINRA**", so the cadence has
+> ALWAYS lived in FINRA's published schedule, never the rulebook. The module therefore derives no
+> dates from constants and **a weekly transition is a config no-op**. **SR-FINRA-2026-012 DOES
+> propose weekly** (2x/mo -> weekly; member due T+2bd -> T+1bd; publication 7bd -> 5bd; SEC Release
+> 34-105482) — **but 2026-08-14 is an EXTENSION deadline** (Release 34-105824) and a THREE-WAY fork
+> (approve / disapprove / institute proceedings), and even approval only triggers a FUTURE
+> Regulatory Notice with no implementation date stated. **The cadence is about to be DECIDED, not to
+> change — monitor FINRA Regulatory Notices, NOT the Aug 14 SEC date.** FINRA's Reg SHO threshold
+> list is **OTC-ONLY**; exchange-listed names come from NYSE/Nasdaq/Cboe.
+>
+> **G20 DEFECTS CLOSED (attack -> fix -> regression; each pinned by a test whose NAME preserves the
+> attack, and each verified NON-VACUOUS by reverting the control in isolation):** a truthiness-only
+> ticker gate emitting a symbol-less HARD `"filing"`; `_ACCESSION` using `\d`, which matches UNICODE
+> digits; **raw_ref attribute injection** (`to_market_event` escapes headline/summary/event_type but
+> NOT `article_id`/`raw_ref`, and `grounding.extract_slice` hand-rolled an f-string interpolating
+> raw_ref into an HTML ATTRIBUTE) — **W20 is the FIRST feed whose `article_id` is
+> attacker-influenceable free text, which FALSIFIED the shipped safety comment at
+> `packets.py:70-71`**; a cursor format mismatch (`isoformat()` 'T'+offset vs space-separated SQLite
+> DATETIME TEXT, compared LEXICOGRAPHICALLY) silently stranding the feed; an opt-in freshness
+> control; a `.exists()` provisioning probe passing a DIRECTORY; **the head-of-line wedge — two
+> individually-sound, individually-TESTED properties whose INTERACTION wedged the feed forever while
+> `read_brew_run_outcome` reported `trustworthy=True`** (it measures the BREW's liveness, not the
+> POLLER's progress); **dedup-before-emit turning a transient downstream outage into SILENT EVIDENCE
+> LOSS**; unvalidated row-timestamp canonicality; and a clock contract that was real on one module
+> and theatre on its sibling.
+>
+> **THE RECURRING FAILURE WAS THE HALF-APPLIED FIX — FOUR INSTANCES. Future W's: when a fix lands,
+> GREP THE SIBLING for the same control.** (1) `exists()`->`is_file()` applied to the artifact probe
+> but not the db_path check. (2) The clock contract enforced on `edgar_brew` but a silent no-op on
+> FINRA. (3) **Both modules' docs then asserted a symmetry the code did not have** — *"a guard that
+> is present, documented as loud, and silent in fact is WORSE than an absent one: the next session
+> reads the cross-reference and believes it is covered."* (4) FINRA's symbol gated on PRESENCE not
+> VALIDITY — the identical round-1 edgar defect — which **survived FIVE ROUNDS because
+> `test_hostile_symbol_is_ticker_validated` was MISNAMED and PINNED THE DEFECT AS CORRECT**,
+> asserting `n == 1` / `symbols == []` as intended behaviour. **A test whose NAME claims a control
+> its ASSERTIONS do not enforce is invisible to a green suite — audit for that class.**
+>
+> **TWO FIXTURE-UNREALISM findings (same class, worth carrying):** the edgar fixtures used
+> `T`-separated offset-bearing timestamps — not what SQLAlchemy's SQLite dialect writes — which is
+> precisely what HID the cursor-format defect; and the `_provisioned_db` fixture wrote `b""`, so
+> **the entire artifact-axis suite had been asserting against a NOT-PROVISIONED feed and passing**
+> (hardening the probe failed 12 existing tests).
+>
+> **TWO DOCUMENTED RESIDUALS — bounded, disclosed. An UNDOCUMENTED residual is the breach; a
+> documented one is a boundary.** (1) `content_hash` hashes whatever dict is passed as `raw=`, so a
+> brew record binds the chain to **THE BREW'S RECORD, not the SEC bytes**: the real chain is cockpit
+> `content_hash` -> brew Delta byte-anchor (accession + snippet offsets) -> brew RawStore SHA-256 ->
+> the fetched SEC bytes. Real, but **ONE LINK LONGER than a direct poller's, and the added link
+> lives in ANOTHER REPO'S TRUST DOMAIN** — a cockpit audit replay proves "this is what the brew
+> recorded", not "this is what the SEC served". (2) The **cik->ticker attribution via the brew's
+> `company` table is a TRUSTED, cockpit-unverifiable input** — a tampered company row re-attributes
+> a byte-verifiable filing to a DIFFERENT ticker and the documented re-check still passes (this also
+> covers `"NONE"` / `"NULL"` / `"-"` passing `_TICKER`). Flagged for a later W: clamping the cursor
+> to `now` inherently skips rows timestamped before `now` but inserted later (pre-existing clamp
+> semantics).
+>
+> **STILL OPEN IN W20:** a FRESH G20 round on the FINRA symbol fix (required before closure); XBRL
+> fundamentals NOT exposed (the brew ships `xbrl_fact` — deferred, not dropped); and note **no
+> ingest poller is wired into production at all** (`persist_events` is called only from tests; the
+> scheduler has no ingest job), so W20 adds the modules + `build_ingest_fetchers` factories but
+> deliberately NO scheduler ingest job — that is the first production ingest path and its own
+> package. **The brew has NEVER been run — no `.db` exists on disk**; tests build fixture SQLite with
+> plain `sqlite3` and never import the brew.
 
 **One-liner.** Add FIRST-PARTY regulatory/fundamental feeds to the WP3 ingest layer — an
 EDGAR-direct filings connector (the high-value piece), EDGAR XBRL fundamentals, and a

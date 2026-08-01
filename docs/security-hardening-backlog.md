@@ -2,7 +2,7 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: active
-last-verified: 2026-07-09
+last-verified: 2026-07-16
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
@@ -127,7 +127,27 @@ Inv 7.
 **Test.** Injected packet under `auto_veto` → breaker trips and disarms *before* the
 window elapses; no order placed.
 
-### SEC-02 — MCP-response content is a first-class injection input
+### SEC-02
+
+> **W20 addendum (2026-07-16, `043fc89` — NOT merged; SEC-02 remains as W12 left it, this is a
+> NEW-FEED hardening note, not a closure).** W20's G20 round 1 reproduced a real attribute-injection
+> path that W12's closure did not cover: **`ingest/normalize.py :: to_market_event` escapes
+> `headline` / `summary` / `event_type` but NOT `article_id` (`str(article_id)`) and NOT `raw_ref`
+> (`f"{source}:{article_id}"`)**, and `workflows/grounding.py :: extract_slice` hand-rolled an
+> f-string interpolating `raw_ref` into an HTML **attribute** with no escaping. This was latent-safe
+> only because every prior feed's `article_id` was an int (finnhub) or a synthetic key — **W20 is
+> the FIRST feed whose `article_id` is attacker-influenceable free text (an accession read from
+> another repo's DB), which FALSIFIED the shipped safety comment at `workflows/packets.py:70-71`**
+> ("ALLOWED_SOURCES values (and raw_ref/ts) contain no `< > & \"` so `_attr_escape` is a no-op
+> here"). Fixed two ways: an ASCII-anchored accession filter at the feed boundary so `raw_ref` is
+> quote-free by construction, AND `extract_slice` now REUSES the shipped
+> `packets.wrap_untrusted`/`_attr_escape` — **no third escaper was authored** — with emitted bytes
+> pinned UNCHANGED for the existing news case (`test_extract_slice_bytes_are_unchanged_for_the_ordinary_news_item`
+> reproduces the original f-string and demands equality). The false comment is corrected.
+> **Lesson for any future feed: `article_id`/`raw_ref` are NOT escaped by `to_market_event` — a feed
+> whose id is untrusted free text must validate it at the boundary.** A fresh round-2 skeptic could
+> no longer reproduce the injection (`reproduced=false`).
+ — MCP-response content is a first-class injection input
 **Attack.** A compromised or relaying MCP endpoint returns portfolio/preview payloads
 whose **free-text fields** (instrument names, memos, the `review_equity_order` message)
 carry injected instructions. Because the read enters the decision context, the
