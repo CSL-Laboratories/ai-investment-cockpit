@@ -113,17 +113,64 @@ because two processes with different working directories would read different fi
 the connector refuses to invent them and no job is registered. That is correct for RW-01 —
 FINRA is two-week-stale enrichment, not brew input.
 
+**Turn the earnings calendar OFF for the first smoke:**
+
+```powershell
+[Environment]::SetEnvironmentVariable('COCKPIT_CALENDAR_LOOKAHEAD_DAYS','0','User')
+```
+
+The calendar is FULL-MARKET, and `morning_brew` builds its triage packet over the whole
+window with no pre-filter (unlike `triage_loop`, which filters on holdings/watchlist/
+hard-event types). Measured against the live free tier: a 3-day window is ~560 entries
+≈ 32k tokens of prompt per brew, a 14-day window ~1500 entries ≈ 86k — overwhelmingly
+names you do not hold. The first smoke should prove the PIPELINE (news → filings → brew →
+delivery), not spend the plan budget drowning it in earnings dates.
+
+Turn it back on once the brew packet is bounded; the calendar's fetch path is already
+proven by `probe_credentials.py`, so nothing is left untested by disabling it here.
+
 ## 4. Pre-flight (no market day needed)
+
+Three checks, in order. Each answers a different question, and skipping to the last one is
+how a bring-up burns an evening.
+
+**(a) Are the secrets stored under the names the app reads?**
+
+```powershell
+python tools/verify_keys.py
+```
+
+Five `OK` lines and exit 0. This is not the same as `keyring set` having succeeded:
+`keyring set` accepts ANY name, so a hyphen-for-underscore slip stores an entry that looks
+perfectly healthy in Credential Manager and is INVISIBLE to the cockpit. This tool imports
+the names from the code, so it cannot disagree with what the app looks up.
+
+If it reports `WRONG ... stored as 'alpaca-key'`, run `--migrate` (or `--migrate --force`
+if the canonical name already holds a wrong value). To (re-)enter one by hand, use
+`python tools/verify_keys.py --set alpaca_key` rather than `keyring set` — it refuses an
+unknown name, strips a stray trailing newline, and echoes the stored length so a hidden
+paste is confirmable.
+
+**(b) Do those secrets actually WORK?**
+
+```powershell
+python tools/probe_credentials.py --post
+```
+
+One real call per credential, driving the app's own code paths. `--post` publishes one
+message to your brief channel — the ONLY check that proves the bot can *send* there, since
+channel permission overwrites are invisible to every read-only probe. Run it once, then
+delete the message.
+
+Storage and validity are different questions. (a) proves the first, (b) proves the second,
+and only (b) can tell you a key was regenerated after you copied it.
+
+**(c) Does the whole graph compose, and which feeds are live?**
 
 ```powershell
 cd app
 python -m pytest -q
 ruff check .
-```
-
-Then check what the composition root actually wired, without starting anything:
-
-```powershell
 python -c "import main, json; s,a,_=main.compose(db_url='sqlite:///smoke-check.db', parquet_root='data/raw'); print(json.dumps(a.state.ingest.status(), indent=2, default=str))"
 ```
 
