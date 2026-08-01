@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     # NEVER here. Env: COCKPIT_AUDIT_LOG_CHANNEL_ID.
     audit_log_channel_id: int | None = None
 
+    # ---- RW-01 earnings-calendar window ------------------------------------------------
+    # How many days forward the earnings calendar is re-read each poll. NOT a cosmetic knob:
+    # the calendar is FULL-MARKET, so the window length directly sets how much lands in the
+    # morning brew's triage packet. Measured on the live free-tier feed: a 14-day window is
+    # ~1500 entries ~= 86k tokens of prompt, most of it names the operator does not hold —
+    # expensive, and it buries the signal it was meant to add.
+    #
+    # 3 days is the default because it covers "reporting imminently", which is the only part a
+    # morning brief can act on. 0 DISABLES the feed entirely (no poller, no job) — the honest
+    # setting until the dynamic universe (RW-05) can scope this to names that matter.
+    # Env: COCKPIT_CALENDAR_LOOKAHEAD_DAYS.
+    calendar_lookahead_days: int = Field(default=3, ge=0, le=90)
+
     # ---- RW-01 operator-surface channel map (docs/refactor-plan.md §5) ------------------
     # Discord channel ids the LOGICAL pipeline channels are delivered to (bridge/deliver.py).
     # Non-secret (the bot TOKEN is keyring-only, Inv 4). Each is INDEPENDENTLY optional: an

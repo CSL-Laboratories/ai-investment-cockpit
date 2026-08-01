@@ -55,7 +55,7 @@ _FINNHUB_KEY_NAME = "finnhub_key"
 ALPACA_NEWS_WS = "wss://stream.data.alpaca.markets/v1beta1/news"
 FINNHUB_NEWS_URL = "https://finnhub.io/api/v1/news"
 FINNHUB_EARNINGS_URL = "https://finnhub.io/api/v1/calendar/earnings"
-CALENDAR_LOOKAHEAD_DAYS = 14
+CALENDAR_LOOKAHEAD_DAYS = 3     # fallback only; settings.calendar_lookahead_days is the knob
 
 
 def _hmac_key() -> bytes:
@@ -413,9 +413,18 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
         from ingest.clock_contract import utc_now
 
         fetchers["finnhub"] = build_finnhub_news_fetch(finnhub_key.reveal(), http_get=http_get)
-        fetchers["calendar"] = build_earnings_calendar_fetch(
-            finnhub_key.reveal(), clock=clock if clock is not None else utc_now,
-            http_get=http_get)
+        # The calendar is FULL-MARKET, so its window length sets how much reaches the brew's
+        # triage packet (a 14-day window measured ~1500 entries / ~86k tokens on the live free
+        # tier). ``calendar_lookahead_days = 0`` turns the feed OFF outright — the honest
+        # setting until RW-05 can scope it to a universe rather than to every US issuer.
+        days = int(getattr(settings, "calendar_lookahead_days", CALENDAR_LOOKAHEAD_DAYS))
+        if days > 0:
+            fetchers["calendar"] = build_earnings_calendar_fetch(
+                finnhub_key.reveal(), clock=clock if clock is not None else utc_now,
+                http_get=http_get, days_ahead=days)
+        else:
+            _log_unprovisioned("calendar", "set COCKPIT_CALENDAR_LOOKAHEAD_DAYS > 0 "
+                                           "(deliberately disabled at 0)")
     else:
         _log_unprovisioned("finnhub + calendar", f"keyring set {_FINNHUB_KEY_NAME}")
 

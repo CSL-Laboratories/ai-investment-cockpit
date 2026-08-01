@@ -1,7 +1,7 @@
 """RW-01 — prove each provisioned credential is VALID, by making one real call with it.
 
     python tools/probe_credentials.py           # read-only checks
-    python tools/probe_credentials.py --post    # ...plus post one line to #morning-brew
+    python tools/probe_credentials.py --post    # ...plus post one line to the configured brief channel
 
 ``tools/verify_keys.py`` proves a secret is STORED under the name the app reads. It cannot
 prove the secret WORKS — only the vendor can say that, and without this the answer arrives at
@@ -204,7 +204,7 @@ def probe_discord_identity() -> Result:
 
 
 def probe_discord_channel() -> Result:
-    """Can the bot SEE the configured #morning-brew channel? Visibility only -- send permission
+    """Can the bot SEE the configured brief channel? Visibility only -- send permission
     is a separate overwrite and only ``--post`` proves it."""
     token = get_secret("discord_bot_token")
     settings = get_settings()
@@ -260,8 +260,10 @@ def probe_discord_post() -> Result:
         return Result("discord post (--post)", False, "bridge.deliver reported failure",
                       "the bot can SEE the channel but not SEND. Grant Send Messages on the "
                       "channel (a channel permission overwrite beats a guild-level grant).")
+    channel_hint = f"channel id {channel_ids[CHANNEL_BRIEF]}"
     return Result("discord post (--post)", True,
-                  "posted through bridge.deliver - check #morning-brew, then delete it")
+                  f"posted through bridge.deliver to {channel_hint} - check it, then "
+                  "delete the message")
 
 
 # --------------------------------------------------------------------------- driver
@@ -270,7 +272,7 @@ def main(argv=None) -> int:
         prog="python tools/probe_credentials.py",
         description="Make one real call per credential. Never prints a secret value.")
     parser.add_argument("--post", action="store_true",
-                        help="ALSO post one message to #morning-brew. Outward-facing: it "
+                        help="ALSO post one message to the configured brief channel. Outward-facing: "
                              "publishes to a real channel. The only proof the bot can SEND.")
     args = parser.parse_args(argv)
 
@@ -302,7 +304,7 @@ def main(argv=None) -> int:
         return 1
     print(f"All {len(results)} probes passed.")
     if not args.post:
-        print("NOT yet proven: that the bot can SEND to #morning-brew (channel permission "
+        print("NOT yet proven: that the bot can SEND to the brief channel (permission "
               "overwrites are invisible to a read-only probe). Run with --post to settle it.")
     return 0
 

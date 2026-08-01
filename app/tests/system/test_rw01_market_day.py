@@ -493,6 +493,42 @@ def test_operator_delivery_is_none_without_a_configured_channel(tmp_path, monkey
 
 
 # =======================================================================================
+# the calendar is FULL-MARKET: its window must be bounded and disableable
+# =======================================================================================
+def test_calendar_window_comes_from_settings(tmp_path, provisioned, monkeypatch):
+    """Measured on the live free tier: a 14-day window is ~1500 entries, ~86k tokens of brew
+    triage prompt, most of it names the operator does not hold. The window is the lever."""
+    monkeypatch.setenv("COCKPIT_CALENDAR_LOOKAHEAD_DAYS", "5")
+    http = FakeHttp()
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture(), http=http)
+    app.state.ingest.poll(FEED_CALENDAR)
+
+    call = next(c for c in http.calls if c["url"] == main_mod.FINNHUB_EARNINGS_URL)
+    span = (datetime.fromisoformat(call["params"]["to"])
+            - datetime.fromisoformat(call["params"]["from"])).days
+    assert span == 5
+
+
+def test_calendar_lookahead_zero_disables_the_feed_entirely(tmp_path, provisioned, monkeypatch):
+    """0 means OFF: no poller, no scheduler job. An honest absence, not a feed that polls a
+    zero-length window and reports a permanent quiet day."""
+    monkeypatch.setenv("COCKPIT_CALENDAR_LOOKAHEAD_DAYS", "0")
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture())
+    assert FEED_CALENDAR not in app.state.ingest.polls
+    assert FEED_FINNHUB in app.state.ingest.polls, "disabling the calendar must not kill news"
+
+
+def test_default_calendar_window_is_short(tmp_path, provisioned):
+    """The default must be the SAFE one. A 14-day default put ~86k tokens of full-market
+    earnings into every morning brew; a knob you have to know about is not a default."""
+    from config.settings import Settings
+
+    assert Settings().calendar_lookahead_days == 3
+
+
+# =======================================================================================
 # a REJECTED credential must be loud, not silent
 # =======================================================================================
 def test_alpaca_auth_failure_raises_instead_of_looking_like_a_quiet_news_day(tmp_path,
