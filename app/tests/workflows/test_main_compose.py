@@ -30,6 +30,16 @@ def test_compose_builds_state_app_and_services(tmp_path):
     assert set(services) == {"brew", "intraday", "eod"}
     assert state.audit.verify_chain().ok
     assert app.state.services is services
+    # RW-01: the ingest runner is composed too, and hangs off app.state beside the others (the
+    # return shape stays a 3-tuple so every existing caller keeps working). The env-driven
+    # feeds are unconfigured here, so they must be ABSENT — present-and-silent is the state
+    # this package exists to make unreachable. (Keyring-driven feeds are asserted in
+    # tests/system/test_rw01_market_day.py, which isolates its own keyring.)
+    assert app.state.ingest is not None
+    assert "sec:edgar" not in app.state.ingest.polls
+    assert "finra" not in app.state.ingest.polls
+    assert app.state.ingest.status()["feeds"].keys() == app.state.ingest.polls.keys() | \
+        app.state.ingest.streams.keys()
     # Inv 4 / SEC-05: the HMAC key was minted INTO keyring (never env/config)
     secret = get_secret("audit-hmac-key")
     assert secret is not None

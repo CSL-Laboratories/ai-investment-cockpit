@@ -89,3 +89,81 @@ def test_build_scheduler_registers_the_base_jobs(state):
     assert ids == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm",
                    "anchor_head"}
     assert not scheduler.running        # returned un-started
+
+
+# =======================================================================================
+# RW-01 — ingest jobs (one per PROVISIONED feed, on its own cadence)
+# =======================================================================================
+def _runner(state, tmp_path, feeds):
+    from ingest.calendars import CalendarPoller
+    from orchestrator.ingest_runner import IngestRunner
+
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=OPEN,
+                          monotonic=lambda: 0.0)
+    for name in feeds:
+        runner.add_poller(name, CalendarPoller(lambda: []))
+    return runner
+
+
+def test_build_scheduler_registers_one_job_per_provisioned_feed(state, tmp_path):
+    pytest.importorskip("apscheduler")
+    runner = _runner(state, tmp_path, ["finnhub", "sec:edgar"])
+    jobs = {j.id: j for j in sch.build_scheduler(state, OPEN, ingest=runner).get_jobs()}
+
+    assert "ingest_finnhub" in jobs and "ingest_sec:edgar" in jobs
+    assert "ingest_finra" not in jobs, "an UNPROVISIONED feed must get no job at all"
+    assert "ingest_calendar" not in jobs
+    # each on its OWN cadence, not one global tick
+    assert "minute='*/1'" in str(jobs["ingest_finnhub"].trigger)
+    assert "minute='*/5'" in str(jobs["ingest_sec:edgar"].trigger)
+    # the local brew read has no vendor quota and filings land at weekends -> not weekday-only
+    assert "day_of_week='mon-fri'" in str(jobs["ingest_finnhub"].trigger)
+    assert "day_of_week='mon-fri'" not in str(jobs["ingest_sec:edgar"].trigger)
+
+
+def test_each_ingest_job_polls_its_own_feed(state, tmp_path):
+    """Regression: a lambda closing over the LOOP VARIABLE would make every registered job poll
+    the last feed. Each job must be bound to its own."""
+    pytest.importorskip("apscheduler")
+    runner = _runner(state, tmp_path, ["finnhub", "sec:edgar", "calendar"])
+    polled = []
+    runner.poll = lambda feed: polled.append(feed)       # type: ignore[assignment]
+
+    for job in sch.build_scheduler(state, OPEN, ingest=runner).get_jobs():
+        if job.id.startswith("ingest_"):
+            job.func()
+    assert sorted(polled) == ["calendar", "finnhub", "sec:edgar"]
+
+
+def test_run_ingest_poll_without_a_runner_is_an_honest_skip(state):
+    assert sch.run_ingest_poll(state, OPEN, feed="finnhub") == {
+        "feed": "finnhub", "skipped": "no_ingest_runner"}
+
+
+def test_run_ingest_poll_reports_a_sick_feed_instead_of_raising(state, tmp_path):
+    """One sick vendor must not take down the scheduler thread — the fault is REPORTED."""
+    from orchestrator.ingest_runner import IngestRunner
+
+    class Sick:
+        def poll(self, now, on_event):
+            raise RuntimeError("vendor 500")
+
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=OPEN,
+                          monotonic=lambda: 0.0)
+    runner.add_poller("finnhub", Sick())
+    out = sch.run_ingest_poll(state, OPEN, feed="finnhub", runner=runner)
+    assert out["status"] == "error" and "vendor 500" in out["error"]
+
+
+def test_ingest_poll_runs_even_when_the_market_is_closed(state, tmp_path):
+    """Filings, calendar revisions and news land outside the session; ingest is awareness, not
+    execution, so it must NOT inherit the intraday market-open guard."""
+    from ingest.calendars import CalendarPoller
+    from orchestrator.ingest_runner import IngestRunner
+
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=CLOSED,
+                          monotonic=lambda: 0.0)
+    runner.add_poller("calendar", CalendarPoller(
+        lambda: [{"symbol": "AAPL", "date": "2026-07-30", "note": "Q3"}]))
+    out = sch.run_ingest_poll(state, CLOSED, feed="calendar", runner=runner)
+    assert out["status"] == "ok" and out["emitted"] == 1
