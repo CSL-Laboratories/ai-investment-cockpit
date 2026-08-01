@@ -79,9 +79,13 @@ def test_daily_disarm_noop_outside_auto(state):
     assert sch.run_daily_disarm(state, OPEN) is Mode.paper
 
 
-def test_build_scheduler_registers_four_jobs(state):
+def test_build_scheduler_registers_the_base_jobs(state):
+    """No ingest registry -> the BASE set only. ``anchor_head`` joined it in the SEC-11
+    hardening pass; RW-01's ``ingest_*`` jobs are registered per PROVISIONED feed and are
+    covered by ``test_build_scheduler_registers_one_job_per_provisioned_feed``."""
     pytest.importorskip("apscheduler")
     scheduler = sch.build_scheduler(state, OPEN)
     ids = {j.id for j in scheduler.get_jobs()}
-    assert ids == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm"}
+    assert ids == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm",
+                   "anchor_head"}
     assert not scheduler.running        # returned un-started

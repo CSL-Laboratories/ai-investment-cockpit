@@ -491,11 +491,15 @@ def test_g5_6_daily_disarm_noop_outside_auto(st):
     assert sch.run_daily_disarm(st, FrozenClock(OPEN_UTC)) is Mode.paper
 
 
-def test_g5_6_build_scheduler_registers_four_cron_jobs(st):
+def test_g5_6_build_scheduler_registers_the_base_cron_jobs(st):
+    """The BASE job set — no ingest registry passed, so no ``ingest_*`` job is registered
+    (RW-01 adds those per PROVISIONED feed; see test_scheduler.py). ``anchor_head`` joined the
+    base set in the WP6/WP7 SEC-11 hardening pass."""
     pytest.importorskip("apscheduler")
     scheduler = sch.build_scheduler(st, FrozenClock(OPEN_UTC))
     jobs = {j.id: j for j in scheduler.get_jobs()}
-    assert set(jobs) == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm"}
+    assert set(jobs) == {"premarket_brew", "intraday_loop", "eod_review", "daily_disarm",
+                         "anchor_head"}
     assert not scheduler.running                        # returned UN-started
     # expected cron triggers.
     assert "hour='8'" in str(jobs["premarket_brew"].trigger)
