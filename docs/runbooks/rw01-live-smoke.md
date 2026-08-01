@@ -63,6 +63,20 @@ keyring set ai-investment-cockpit cockpit_api_key      # <- any long random stri
 the loopback API so that even a local process must hold a key. The guard fails **closed**:
 unset means every route refuses, never that every caller is admitted.
 
+**You do not need to write any of these down.** keyring is a retrievable store, not a hash —
+the app reads them back on every call, and so can you:
+
+```powershell
+keyring get ai-investment-cockpit cockpit_api_key              # display it
+keyring get ai-investment-cockpit cockpit_api_key | Set-Clipboard   # copy, never shown
+```
+
+For the VENDOR secrets, prefer regenerating at the vendor over retrieving: a key you had to
+go looking for is a key you may have pasted somewhere. `cockpit_api_key` is the exception —
+you invented it and this app is its only consumer, so retrieving it is fine. If you would
+rather rotate it, `python tools/verify_keys.py --set cockpit_api_key` replaces it and the
+next `python main.py` picks the new one up.
+
 Verify a round trip prints the redaction, never the value:
 
 ```powershell
@@ -208,7 +222,9 @@ auto-disarm at 16:00.
 Within a couple of minutes:
 
 ```powershell
-$h = @{ "X-API-Key" = "<your cockpit_api_key>" }
+# Reads the key straight out of keyring into a variable -- never on screen, never in
+# scrollback, and nothing to look up or remember.
+$h = @{ "X-API-Key" = (keyring get ai-investment-cockpit cockpit_api_key).Trim() }
 Invoke-RestMethod -Uri http://127.0.0.1:8787/status -Headers $h | ConvertTo-Json -Depth 6
 ```
 
