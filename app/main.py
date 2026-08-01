@@ -232,15 +232,46 @@ def _log_unprovisioned(what: str, how: str) -> None:
                 "quiet day. To enable: %s", what, how)
 
 
+class AlpacaStreamError(RuntimeError):
+    """The Alpaca news stream reported an ERROR control frame (auth failure, bad subscribe...).
+
+    RAISED, never swallowed. ``AlpacaNewsConsumer.run`` treats an exception as a disconnect and
+    backs off/reconnects, so a persistent auth failure surfaces as a climbing ``errors`` count
+    in ``IngestRunner.status()``. Returning quietly instead would end the generator, which the
+    consumer reads as a CLEAN END OF STREAM: ``emitted=0, errors=0`` — a wrong API key rendered
+    as a quiet news day. That is the exact failure class this codebase exists to prevent, so the
+    error frame must be louder than the silence it would otherwise become.
+    """
+
+
 def _news_frames(raw):
-    """Parse one wire message into the news frames it carries. Alpaca sends a JSON ARRAY of
-    messages per socket frame; a malformed frame yields nothing rather than raising, because a
-    parse failure is attacker-influenced content and must not be mistaken for a disconnect."""
+    """Parse one wire message into the news frames it carries.
+
+    Alpaca sends a JSON ARRAY of messages per socket frame, mixing CONTROL frames
+    (``success`` / ``subscription`` / ``error``) with news (``T == "n"``).
+
+    A malformed frame yields nothing rather than raising: a parse failure is attacker-influenced
+    content and must not be mistaken for a disconnect (the same reasoning as
+    ``ingest/alpaca_news.py``'s per-frame try/except, which keeps hostile content from burning
+    the reconnect budget).
+
+    An ERROR control frame is the opposite case and RAISES — see ``AlpacaStreamError``. The
+    distinction is deliberate: a bad frame is one item we could not read, while an error frame is
+    the VENDOR telling us the session is not going to work. Only the message and code travel into
+    the exception; the credentials never do (Inv 4).
+    """
     try:
         decoded = json.loads(raw)
     except (TypeError, ValueError):
         return []
     messages = decoded if isinstance(decoded, list) else [decoded]
+    for message in messages:
+        if isinstance(message, dict) and message.get("T") == "error":
+            raise AlpacaStreamError(
+                f"alpaca news stream error code={message.get('code')!r} "
+                f"msg={message.get('msg')!r} (402/401 => the alpaca_key/alpaca_secret pair was "
+                "rejected; re-check `python tools/verify_keys.py` and the Alpaca dashboard)"
+            )
     return [m for m in messages if isinstance(m, dict) and m.get("T") == "n"]
 
 
@@ -261,6 +292,24 @@ def build_finnhub_news_fetch(api_key: str, *, http_get=None, category: str = "ge
         return payload if isinstance(payload, list) else []
 
     return fetch
+
+
+def _estimate(value, *, zero_is_missing: bool = False) -> str:
+    """Render a vendor estimate for operator eyes, distinguishing ABSENT from ZERO.
+
+    Finnhub returns ``0`` (not null) when it has no estimate, so the naive rendering printed
+    "rev est 0" for a company with no published revenue estimate — which reads as a FORECAST OF
+    ZERO REVENUE rather than "we don't know". SEC-17's principle is that the operator decides
+    from what they see, so a field that states a number we do not have is worse than one that
+    admits the gap.
+
+    ``zero_is_missing`` is set for REVENUE only. A genuine 0.0 EPS estimate is perfectly
+    plausible (a breakeven quarter) and must survive; a listed company reporting earnings never
+    has a real revenue estimate of exactly zero.
+    """
+    if value is None or (zero_is_missing and value == 0):
+        return "n/a"
+    return str(value)
 
 
 def build_earnings_calendar_fetch(api_key: str, *, clock, http_get=None,
@@ -299,7 +348,8 @@ def build_earnings_calendar_fetch(api_key: str, *, clock, http_get=None,
             entries.append({
                 "symbol": row.get("symbol"),
                 "date": row.get("date"),
-                "note": f"EPS est {row.get('epsEstimate')} · rev est {row.get('revenueEstimate')}"
+                "note": f"EPS est {_estimate(row.get('epsEstimate'))} · "
+                        f"rev est {_estimate(row.get('revenueEstimate'), zero_is_missing=True)}"
                         f" · {row.get('hour') or 'time TBD'}",
             })
         return entries

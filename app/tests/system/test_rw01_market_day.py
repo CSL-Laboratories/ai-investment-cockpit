@@ -493,6 +493,60 @@ def test_operator_delivery_is_none_without_a_configured_channel(tmp_path, monkey
 
 
 # =======================================================================================
+# a REJECTED credential must be loud, not silent
+# =======================================================================================
+def test_alpaca_auth_failure_raises_instead_of_looking_like_a_quiet_news_day(tmp_path,
+                                                                             provisioned):
+    """REGRESSION (found during RW-01 bring-up, before any live run).
+
+    Alpaca answers a bad key/secret with ``{"T":"error","code":402}`` and closes. The first
+    cut of ``_news_frames`` kept only ``T == "n"``, so the error frame was DROPPED, the
+    generator ended, and ``AlpacaNewsConsumer`` read that as a CLEAN END OF STREAM: emitted 0,
+    errors 0, feed reporting perfect health. A wrong API key was therefore indistinguishable
+    from a quiet news day — the exact failure this codebase exists to prevent.
+
+    The error frame must reach the consumer as an EXCEPTION so it lands in the errors count.
+    """
+    frames = [json.dumps([{"T": "error", "code": 402, "msg": "auth failed"}])]
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture(), sockets=frames)
+
+    out = app.state.ingest.run_stream(FEED_ALPACA_NEWS)
+    assert out["status"] == "error", "a rejected credential reported as a healthy feed"
+    assert "402" in out["error"]
+    feed = app.state.ingest.status()["feeds"][FEED_ALPACA_NEWS]
+    assert feed["errors"] == 1 and feed["persisted"] == 0
+
+
+def test_alpaca_control_frames_are_not_mistaken_for_news():
+    """The success/subscription handshake frames must pass through silently — only ``error``
+    is fatal. Otherwise a healthy connection would alarm on every reconnect."""
+    ok = json.dumps([{"T": "success", "msg": "authenticated"},
+                     {"T": "subscription", "news": ["*"]}])
+    assert main_mod._news_frames(ok) == []
+
+
+def test_a_malformed_frame_is_dropped_not_raised():
+    """Attacker-influenced content must not burn the reconnect budget — the distinction between
+    'one item we could not read' and 'the vendor says this session is broken'."""
+    assert main_mod._news_frames("{ not json") == []
+    assert main_mod._news_frames(json.dumps(["not-a-dict", 7])) == []
+
+
+@pytest.mark.parametrize(("value", "zero_missing", "expected"), [
+    (None, False, "n/a"),
+    (0, True, "n/a"),          # Finnhub sends 0 for an ABSENT revenue estimate
+    (0.0, False, "0.0"),       # ...but a genuine breakeven EPS estimate must survive
+    (-0.255, False, "-0.255"),
+    (357000, True, "357000"),
+])
+def test_absent_estimates_are_not_rendered_as_a_forecast_of_zero(value, zero_missing, expected):
+    """SEC-17: the operator decides from what they see. "rev est 0" reads as a forecast of zero
+    revenue; it actually meant Finnhub had no estimate. Admit the gap instead."""
+    assert main_mod._estimate(value, zero_is_missing=zero_missing) == expected
+
+
+# =======================================================================================
 # run(): the assembly itself
 # =======================================================================================
 def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, provisioned,
