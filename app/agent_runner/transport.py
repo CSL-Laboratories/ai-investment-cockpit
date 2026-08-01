@@ -6,8 +6,65 @@ G1b is hermetic (no real ``claude``/``codex`` process).
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass
+
+# cmd.exe metacharacters. A ``.cmd``/``.bat`` target is launched THROUGH cmd.exe, which applies
+# its own parsing to the command line AFTER Python's MSVCRT-style quoting — so an argv element
+# carrying one of these could break out of its argument and become a command. Python's quoting
+# does not escape them (this is the BatBadBut class of bug, CVE-2024-24576 in Rust's stdlib).
+_CMD_METACHARACTERS = frozenset('&|<>^"')
+
+
+class ExecutableNotFound(FileNotFoundError):
+    """The runtime CLI is not on PATH. Named so the failure says WHICH tool is missing.
+
+    A bare ``FileNotFoundError: [WinError 2] The system cannot find the file specified`` names
+    nothing, and the operator's reasonable first guess is a missing data file, not a missing
+    ``claude`` install.
+    """
+
+
+def resolve_executable(argv: list[str]) -> list[str]:
+    """Resolve ``argv[0]`` to a real path before spawning. Windows correctness, not cosmetics.
+
+    ``subprocess.run(["claude", ...])`` FAILS on Windows with ``FileNotFoundError`` even when
+    ``claude`` is on PATH and works fine in the shell. npm installs its CLIs as ``claude.CMD``,
+    and ``CreateProcess`` — unlike a shell — does not append ``.CMD``/``.BAT`` when resolving a
+    bare name; it only tries ``.exe``. So the brew's first agent call died at the spawn on the
+    deploy platform while every test passed, because tests inject a fake transport and never
+    spawn anything. ``shutil.which`` applies PATHEXT the way the shell does, and is a no-op on
+    POSIX (it returns the plain path).
+
+    SAFETY GATE FOR ``.cmd``/``.bat`` TARGETS. Such a target runs THROUGH cmd.exe, which parses
+    the command line again after Python has quoted it — and Python's quoting does not escape
+    cmd metacharacters. Today nothing untrusted reaches argv (``runner.build_argv`` emits only
+    config-derived values, and the prompt travels on STDIN), so this is defence in depth rather
+    than a live hole. It is here because that property is easy to lose silently: the day someone
+    threads a symbol, a filename or a model-supplied session id into argv, this refuses instead
+    of executing it.
+    """
+    if not argv:
+        return argv
+    resolved = shutil.which(argv[0])
+    if resolved is None:
+        raise ExecutableNotFound(
+            f"{argv[0]!r} is not on PATH. The cockpit spawns the runtime CLI as a subprocess; "
+            f"install it and confirm `{argv[0]} --version` works in the SAME shell that runs "
+            "the cockpit (a per-user npm install is not on a service account's PATH)."
+        )
+    if resolved.lower().endswith((".cmd", ".bat")):
+        for arg in argv[1:]:
+            bad = _CMD_METACHARACTERS.intersection(arg)
+            if bad:
+                raise ValueError(
+                    f"refusing to spawn the cmd-shim {resolved!r} with an argument containing "
+                    f"cmd metacharacter(s) {sorted(bad)!r}: a .cmd target is parsed by cmd.exe "
+                    "after Python quotes it, so this could execute as a command. Pass the value "
+                    "on stdin instead (that is how the prompt travels)."
+                )
+    return [resolved, *argv[1:]]
 
 
 @dataclass
@@ -20,6 +77,7 @@ class ProcResult:
 
 class SubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
+        argv = resolve_executable(argv)
         try:
             p = subprocess.run(
                 argv, input=input_text, capture_output=True, text=True,

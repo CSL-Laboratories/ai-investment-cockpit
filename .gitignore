@@ -20,6 +20,10 @@ venv/
 .env
 *.env
 secrets.*
+# ...but app/core/secrets.py is the keyring WRAPPER MODULE, not a secret file. The rule above
+# silently untracked it from WP0 until RW-01 (a clean checkout then failed to import
+# core.secrets while `git status` looked clean). Keep this exception.
+!**/secrets.py
 *.key
 *.pem
 

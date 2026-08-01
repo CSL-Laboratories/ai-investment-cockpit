@@ -136,15 +136,18 @@ def _mode_view(ladder: ModeLadder) -> dict:
 
 
 def create_app(state, *, auth: ApiKeyAuth | None = None,
-               services: dict | None = None) -> FastAPI:
+               services: dict | None = None, ingest=None) -> FastAPI:
     """Build the FastAPI app bound to an ``OrchestratorState``. ``auth`` is injectable for
     tests; production defaults to the keyring-backed key guard (every route requires it).
     ``services`` is the WP8 workflow registry ({"brew","intraday","eod"}); when absent the
-    brief endpoints stay honest 501s."""
+    brief endpoints stay honest 501s. ``ingest`` is the RW-01 ``IngestRunner``, surfaced on
+    ``GET /status``; ``main.compose`` assigns it after the app is built, so this parameter is
+    only for callers that already hold a runner."""
     guard = auth if auth is not None else ApiKeyAuth()
     app = FastAPI(title="AI Investment Cockpit — orchestrator", dependencies=[Depends(guard)])
     app.state.orch = state
     app.state.services = services
+    app.state.ingest = ingest
 
     # ---- jobs (execution: WP6) ---------------------------------------------------------
     @app.post("/jobs", status_code=status.HTTP_202_ACCEPTED)
@@ -361,6 +364,13 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                 "reason": r.reason,
                 "at": (r.tripped_at or r.cleared_at or r.created_at).isoformat(),
             }
+        # RW-01: the STORED totals answer "did anything land?", but not "is each feed alive?".
+        # A feed that is unprovisioned, wedged, or clamped produces zero events forever — which
+        # is shaped exactly like a quiet market — so the runner's per-feed health (including
+        # each poller's own progress/strand signals and EDGAR's brew freshness verdict) is
+        # reported alongside. Absent runner => "not_wired", never an empty-and-therefore-fine.
+        runner = getattr(app.state, "ingest", None)
+        feeds = runner.status() if runner is not None else {"status": "not_wired"}
         return {
             "mode": _mode_view(ladder),
             "usage": usage,
@@ -369,6 +379,7 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
             "ingest": {
                 "market_events": event_count,
                 "latest_event_ts": market_events.ingested_at.isoformat() if market_events else None,
+                "runner": feeds,
             },
         }
 

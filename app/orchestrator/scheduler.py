@@ -10,9 +10,20 @@ without pulling in the not-yet-built pipeline.
 ``run_daily_disarm`` is REAL now: it disarms auto modes to ``review_live`` at close through
 the mode ladder (SEC-23 — the dangerous end of the ladder re-arms each morning by hand).
 
-``build_scheduler`` registers the four cron jobs and returns the scheduler WITHOUT starting
+``build_scheduler`` registers the base cron jobs and returns the scheduler WITHOUT starting
 real time. APScheduler is imported lazily so this module (and the job callables) import
 cleanly even where APScheduler is not installed.
+
+RW-01 adds the INGEST jobs. They are registered one-per-PROVISIONED-FEED off an injected
+``IngestRunner`` (``orchestrator/ingest_runner.py``), so ``build_scheduler(state)`` with no
+ingest registry still yields exactly the base job set. Unlike the workflow services — which are
+always registered and dispatch to a raising stub — an unprovisioned feed gets NO job at all: a
+feed the operator has not configured has nothing to poll, and a job that exists only to no-op
+would make an unconfigured feed indistinguishable from a quiet one on the job list.
+
+The Alpaca news WebSocket is deliberately NOT a cron job. Its consumer BLOCKS
+(``ingest/alpaca_news.py`` runs its own reconnect loop), so it is driven by
+``IngestRunner.start_streams()`` on a daemon thread from ``main.run()``, not by a trigger.
 """
 from __future__ import annotations
 
@@ -27,6 +38,36 @@ INTRADAY_MINUTES = "*/15"
 EOD_HOUR, EOD_MINUTE = 16, 15
 DISARM_HOUR, DISARM_MINUTE = 16, 0
 ANCHOR_MINUTES = "*/30"                   # SEC-11 external-witness head-anchor cadence
+
+# ---- RW-01 ingest cadences ------------------------------------------------------------
+# Per-feed cron kwargs, keyed by the ``ingest_runner`` feed name. Each is sized to the feed's
+# OWN publication rhythm, not to a single global tick:
+#
+#   finnhub    every minute, WEEKDAYS ONLY but ALL DAY. The free tier is 60 calls/min and the
+#              poller carries its own TokenBucket, so a minute tick can never exceed the vendor
+#              cap; news breaks pre-market and after the close, so the window is not clamped to
+#              the session.
+#   sec:edgar  every 5 minutes, all week. This reads the edgar-morning-brew SQLite file (no
+#              network, no vendor quota — see ingest/edgar_brew.py "no TokenBucket"), and
+#              filings land on weekends too, so there is nothing to be polite about and no
+#              reason to skip Sat/Sun.
+#   calendar   twice daily on weekdays. A calendar is a re-published forward window, so polling
+#              it often buys nothing; 06:00 ET seeds the premarket brew (which runs 08:30) and
+#              17:00 ET picks up intraday revisions.
+#   finra      once each weekday morning. Short interest publishes TWICE A MONTH and is ~2
+#              weeks stale by the time it is readable (ingest/finra_short_interest.py) — a
+#              daily poll is already generous, and the connector never derives a date from a
+#              cadence rule, so a schedule change at FINRA is a no-op here.
+INGEST_CRON = {
+    "finnhub": {"minute": "*/1", "day_of_week": "mon-fri"},
+    "sec:edgar": {"minute": "*/5"},
+    "calendar": {"hour": "6,17", "minute": 0, "day_of_week": "mon-fri"},
+    "finra": {"hour": 7, "minute": 15, "day_of_week": "mon-fri"},
+}
+# The cadence for a feed nobody listed above. Registering it on a conservative default beats
+# silently NOT scheduling it (a feed that exists but never runs is the wedge this package is
+# meant to remove).
+INGEST_CRON_DEFAULT = {"minute": "*/15"}
 
 
 def _not_implemented_service(name: str) -> Callable:
@@ -91,9 +132,37 @@ def run_anchor_head(state, clock=None, *, actor: str = "scheduler"):
     return {"anchored_seq": seq, "head_hash": head_hash}
 
 
-def build_scheduler(state, clock=None, *, services: dict | None = None):
-    """Register the four cron jobs and return the (UN-started) scheduler. APScheduler is
-    imported here so the job callables above stay usable without APScheduler installed."""
+def run_ingest_poll(state, clock=None, *, feed: str, runner=None):
+    """RW-01 — one tick of ONE ingest feed. Read-only; no model, no order path.
+
+    Deliberately does NOT guard on ``is_market_open``: filings, calendar revisions and news all
+    land outside the session, and this is awareness (Engine 1), not execution. Cadence windows
+    live in ``INGEST_CRON``; the market-hours question is answered there per feed, not here.
+
+    Deliberately does NOT guard on HALT / ``watch_only`` / mode either. Those stop the ORDER
+    path. Blinding the feeds on a killswitch would leave the operator least-informed exactly
+    when they most need to see, and would make this feed's emptiness indistinguishable from a
+    quiet day — the failure the whole ingest layer is built to avoid.
+
+    Never raises for an ordinary feed fault (``IngestRunner.poll`` catches, counts and REPORTS
+    it) so one sick vendor cannot take down the scheduler thread or the other feeds. A
+    ``ClockContractError`` — a wiring bug — still propagates, by design.
+    """
+    clock = clock or state.clock
+    if runner is None:
+        return {"feed": feed, "skipped": "no_ingest_runner"}
+    return runner.poll(feed)
+
+
+def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=None):
+    """Register the cron jobs and return the (UN-started) scheduler. APScheduler is imported
+    here so the job callables above stay usable without APScheduler installed.
+
+    ``ingest`` is the RW-01 ``IngestRunner``. When given, ONE ``ingest_<feed>`` job is
+    registered per PROVISIONED poll feed on its ``INGEST_CRON`` cadence; when None (the WP5
+    posture, and every pre-RW-01 test) the job set is exactly the base five. Stream feeds get
+    no job — see the module docstring.
+    """
     from apscheduler.schedulers.background import BackgroundScheduler
     from apscheduler.triggers.cron import CronTrigger
 
@@ -131,4 +200,17 @@ def build_scheduler(state, clock=None, *, services: dict | None = None):
         CronTrigger(minute=ANCHOR_MINUTES, day_of_week="mon-fri", timezone=EASTERN),
         id="anchor_head", replace_existing=True,
     )
+    # RW-01: one job per PROVISIONED ingest poll feed, each on its own cadence. This is the
+    # wire that makes ingest/ actually run — before it, build_ingest_fetchers was called by
+    # nothing and persist_events was reached only from tests.
+    for feed in sorted(getattr(ingest, "polls", {}) or {}):
+        cron = INGEST_CRON.get(feed, INGEST_CRON_DEFAULT)
+        sched.add_job(
+            # default-arg bind, NOT a closure over the loop variable: a bare `lambda:
+            # run_ingest_poll(..., feed=feed, ...)` would capture the NAME, so every registered
+            # job would poll whichever feed the loop happened to end on.
+            lambda f=feed: run_ingest_poll(state, clock, feed=f, runner=ingest),
+            CronTrigger(timezone=EASTERN, **cron),
+            id=f"ingest_{feed}", replace_existing=True,
+        )
     return sched

@@ -69,6 +69,31 @@ class Settings(BaseSettings):
     # NEVER here. Env: COCKPIT_AUDIT_LOG_CHANNEL_ID.
     audit_log_channel_id: int | None = None
 
+    # ---- RW-01 earnings-calendar window ------------------------------------------------
+    # How many days forward the earnings calendar is re-read each poll. NOT a cosmetic knob:
+    # the calendar is FULL-MARKET, so the window length directly sets how much lands in the
+    # morning brew's triage packet. Measured on the live free-tier feed: a 14-day window is
+    # ~1500 entries ~= 86k tokens of prompt, most of it names the operator does not hold —
+    # expensive, and it buries the signal it was meant to add.
+    #
+    # 3 days is the default because it covers "reporting imminently", which is the only part a
+    # morning brief can act on. 0 DISABLES the feed entirely (no poller, no job) — the honest
+    # setting until the dynamic universe (RW-05) can scope this to names that matter.
+    # Env: COCKPIT_CALENDAR_LOOKAHEAD_DAYS.
+    calendar_lookahead_days: int = Field(default=3, ge=0, le=90)
+
+    # ---- RW-01 operator-surface channel map (docs/refactor-plan.md §5) ------------------
+    # Discord channel ids the LOGICAL pipeline channels are delivered to (bridge/deliver.py).
+    # Non-secret (the bot TOKEN is keyring-only, Inv 4). Each is INDEPENDENTLY optional: an
+    # unset channel fails closed with a warning and is reported as undelivered — never
+    # redirected into another channel. Phase-0.5 needs only brief_channel_id (the operator's
+    # #morning-brew). The names are LOGICAL, so renaming the Discord channel changes nothing
+    # above this line. Env: COCKPIT_BRIEF_CHANNEL_ID etc.
+    brief_channel_id: int | None = None        # <- #morning-brew (the Phase-0.5 deliverable)
+    alerts_channel_id: int | None = None
+    proposals_channel_id: int | None = None
+    system_channel_id: int | None = None
+
     # ---- W20 ingest feeds (docs/production-work-packages.md W20) ----------------------
     # NOTE for the later barrier merge: settings.py is also touched by W14(f)/W15/W16(c).
     # Everything W20 owns is inside THIS block; nothing above or below it is W20's.
