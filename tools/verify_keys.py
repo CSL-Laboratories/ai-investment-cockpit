@@ -56,22 +56,59 @@ APP_MINTED = [(_HMAC_SECRET_NAME, "audit-chain HMAC key (app mints this on first
 
 
 def variants(name: str) -> list[str]:
-    """Plausible mis-spellings of ``name`` to look for in the store.
+    """Plausible mis-spellings of ``name``, MOST-LIKELY FIRST.
 
     Hyphen/underscore is the one that actually bites: the docs, the code and muscle memory
     disagree about separators, and a hyphenated entry is INVISIBLE to the app while looking
     perfectly healthy in Credential Manager.
+
+    ORDER IS LOAD-BEARING, and case variants come LAST. Windows Credential Manager resolves
+    names CASE-INSENSITIVELY, so ``ALPACA_KEY`` reads back the entry stored as ``alpaca_key``:
+    it is the SAME entry wearing a different hat, not an alternative source. This list used to
+    be ``sorted()``, which put ``ALPACA_KEY`` first (uppercase sorts below lowercase in ASCII),
+    so ``--migrate --force`` picked the canonical entry as its own repair source and copied a
+    placeholder onto itself — reporting RESTORED five times while changing nothing.
+
+    Case variants are kept, because a case-SENSITIVE backend (Linux SecretService, macOS
+    Keychain) can genuinely hold ``ALPACA_KEY`` as a separate entry. They are simply tried
+    after the separator variants, and ``restore_source`` independently rejects any candidate
+    whose value is identical to what is already stored.
     """
-    candidates = {
-        name.replace("_", "-"),
+    ordered = [
+        name.replace("_", "-"),          # the real-world mistake
         name.replace("-", "_"),
-        name.upper(),
-        name.lower(),
         name.replace("_", ""),
         name.replace("_", ".") if "_" in name else name,
-    }
-    candidates.discard(name)
-    return sorted(candidates)
+        name.upper(),                    # case LAST: a no-op alias on Windows
+        name.lower(),
+    ]
+    seen, out = {name}, []
+    for candidate in ordered:
+        if candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    return out
+
+
+def restore_source(name: str) -> str | None:
+    """The variant holding a value that is genuinely DIFFERENT from what ``name`` holds.
+
+    The value comparison is the load-bearing part, not the name ordering. On a
+    case-insensitive store a "different name" can be the same entry, and copying an entry onto
+    itself is a silent no-op dressed up as a repair. Requiring the value to differ makes the
+    check backend-agnostic: it asks "is there another value to restore from?", which is the
+    actual question, instead of "is there another name?", which is a proxy that Windows breaks.
+    """
+    current = get_secret(name)
+    current_value = current.reveal() if current is not None else None
+    for candidate in variants(name):
+        found = get_secret(candidate)
+        if found is None:
+            continue
+        if current_value is not None and found.reveal() == current_value:
+            continue                     # same entry via a case alias, or an identical copy
+        return candidate
+    return None
 
 
 def describe(name: str) -> str | None:
@@ -177,7 +214,7 @@ def main(argv=None) -> int:
             # during RW-01 bring-up when an ad-hoc script wrote a placeholder over a real
             # credential. Plain --migrate cannot fix it (it only fills a MISSING name), so the
             # repair is explicit and opt-in rather than silently clobbering on every run.
-            source = next((v for v in variants(name) if get_secret(v) is not None), None)
+            source = restore_source(name)
             if args.force and args.migrate and source is not None:
                 set_secret(name, get_secret(source).reveal())
                 healed.append((source, name))
@@ -194,7 +231,7 @@ def main(argv=None) -> int:
 
         # Absent under the canonical name. Before calling it missing, look for the mis-spelling
         # that makes it invisible to the app while looking fine in Credential Manager.
-        found = next((v for v in variants(name) if get_secret(v) is not None), None)
+        found = restore_source(name)
         if found is None:
             missing.append((name, what, breaks))
             print(f"  MISSING  {name:<20} ({what}) -> {breaks}")
