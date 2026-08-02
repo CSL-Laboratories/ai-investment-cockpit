@@ -26,6 +26,7 @@ from tests.filings.test_wp4_structural import (
     _FORBIDDEN_TOKENS,
     _code_only,
     _core_py_files,
+    APP,
     CITE_DIR,
     DELTA_DIR,
     EDGAR_DIR,
@@ -118,6 +119,22 @@ def test_every_vendored_package_is_swept():
     }
     missed = sorted(str(p.relative_to(FILINGS)) for p in on_disk - swept)
     assert missed == [], f"vendored files not covered by the no-LLM sweep: {missed}"
+
+
+def test_the_cockpit_authored_pipeline_is_also_llm_free():
+    """``ingest/edgar_pipeline.py`` orchestrates the vendored core and must stay deterministic.
+
+    It sits OUTSIDE app/filings/ on purpose — that directory is vendored and
+    provenance-checked, so cockpit-authored code may not live in it. But being ours is not a
+    reason to be unguarded: it is the one module on this path with an obvious future
+    temptation to "just summarise the delta here", and it runs in a repo where the agent
+    runner is one import away.
+    """
+    pipeline = APP / "ingest" / "edgar_pipeline.py"
+    assert pipeline.exists(), "the EDGAR pipeline module is missing"
+    text = _code_only(pipeline.read_text(encoding="utf-8"))
+    offenders = [p.pattern for p in _FORBIDDEN_TOKENS if p.search(text)]
+    assert offenders == [], f"LLM/subprocess tokens in the EDGAR pipeline: {offenders}"
 
 
 def test_the_sweep_is_not_vacuous():
