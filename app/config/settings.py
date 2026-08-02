@@ -129,6 +129,41 @@ class Settings(BaseSettings):
     finra_rate_per_sec: float = Field(default=1.0, gt=0)
     # ---- end W20 block ----------------------------------------------------------------
 
+    # ---- RW-10 in-process EDGAR (app/filings/, vendored — see app/filings/PROVENANCE.md) --
+    # SEC EDGAR needs NO API key: it is free and unauthenticated. It requires exactly two
+    # things, a declared User-Agent and staying under 10 req/s, and BOTH are enforced inside
+    # the vendored client rather than here (filings/edgar/fetch.py:452 raises on a blank UA
+    # before building any request; :345 refuses a rate >= SEC_RATE_HARD_CEILING at
+    # construction). These fields configure that client; they are not the control.
+    #
+    # WHY NO-DEFAULT-REQUIRED, UNLIKE UPSTREAM. edgar-morning-brew declares sec_user_agent
+    # with NO default so ITS process refuses to start without one — correct there, because
+    # the brew IS the EDGAR app. The cockpit is not: it fails closed PER FEED on a missing
+    # secret rather than refusing to boot (main.compose docstring; the same shape as
+    # alpaca/finnhub/finra above). Copying upstream's required field would mean one
+    # unprovisioned feed takes down the order path, the risk engine, and the operator
+    # surface with it. Unset => the EDGAR feed is NOT PROVISIONED and is logged as such;
+    # sec.gov is still never called without a UA, because the client refuses.
+    # Env: COCKPIT_SEC_USER_AGENT. Non-secret (SEC asks for "Name email@example.com").
+    sec_user_agent: str | None = None
+    # Token-bucket rate for filings/edgar/fetch.py. The SEC fair-access ceiling is 10 req/s
+    # and the vendored client validates STRICTLY BELOW it, so this is a floor we choose, not
+    # a limit we are trusted to respect. Upstream's default is 2.0; keep it.
+    # Env: COCKPIT_SEC_RATE_LIMIT_PER_SEC.
+    sec_rate_limit_per_sec: float = Field(default=2.0, gt=0, lt=10.0)
+    # Byte budgets: one response, and one whole run. A filing is untrusted remote input of
+    # unbounded size, so both caps are fail-closed halts in the client, not advisory.
+    # Env: COCKPIT_SEC_MAX_RESPONSE_BYTES / COCKPIT_SEC_MAX_RUN_BYTES.
+    sec_max_response_bytes: int = Field(default=32 * 1024 * 1024, ge=1, le=512 * 1024 * 1024)
+    sec_max_run_bytes: int = Field(default=128 * 1024 * 1024, ge=1, le=2 * 1024 * 1024 * 1024)
+    # Fail-closed cap on new in-scope filings discovered in ONE cik poll — bounds how much a
+    # single surprise (an issuer dumping a backlog) can cost. Env: COCKPIT_SEC_MAX_NEW_FILINGS_PER_POLL.
+    sec_max_new_filings_per_poll: int = Field(default=25, ge=1, le=250)
+    # Free-disk reserve the write-once raw store keeps after publishing filing bytes, so a
+    # full disk is refused BEFORE a half-written filing lands. Env: COCKPIT_RAW_MIN_FREE_BYTES.
+    raw_min_free_bytes: int = Field(default=256 * 1024 * 1024, ge=0)
+    # ---- end RW-10 block ----------------------------------------------------------------
+
     log_level: str = "INFO"
 
 
