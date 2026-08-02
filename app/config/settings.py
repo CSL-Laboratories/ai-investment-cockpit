@@ -3,14 +3,116 @@
 Mode defaults to ``read_only`` (the safe floor of the autonomy ladder). Secrets are
 NOT read from env here — they live in keyring (``core.secrets``, Invariant 4). Env
 carries only non-secret operational config, prefixed ``COCKPIT_``.
+
+``.env`` SUPPORT AND WHY IT NEEDS A GUARD
+-----------------------------------------
+Until RW-10 there was no ``env_file``, so every ``COCKPIT_*`` value lived in the environment
+of whatever shell launched ``main.py`` — and nowhere else. A reboot, or simply a second
+terminal, silently lost ``COCKPIT_BRIEF_CHANNEL_ID``, and the cockpit then computed, stored
+and audited a brief before delivering it NOWHERE, logging a tidy NOT PROVISIONED line. The
+sibling project lost a soak day to the same class of fault and wrote the lesson down: "an
+interactive shell test is not proof that the scheduled-task identity can read its user
+environment and keyring." Durable config is the fix.
+
+But a config FILE is a tempting place to put a credential, and Invariant 4 says secrets live
+in Windows Credential Manager and nowhere else — not in the repo, not in prompts, not in
+logs. So ``.env`` support ships WITH ``assert_no_secrets_in_env_file``: startup FAILS CLOSED
+if any keyring secret name appears there. The file is gitignored (``.env``, ``*.env``), but
+gitignore only stops a commit — it does not stop a secret from sitting in plaintext on disk,
+being read by any process running as this user, or being pasted into a support thread. The
+guard is the control; the gitignore is a courtesy.
 """
 from __future__ import annotations
 
+import os
+import re
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Resolved relative to app/ (this file's parent's parent), so the cockpit finds the same file
+# whether it is launched from the repo root or from app/. An absolute COCKPIT_ENV_FILE wins,
+# which is what a Windows scheduled task should set — its cwd is not yours.
+_APP_DIR = Path(__file__).resolve().parents[1]
+ENV_FILE = Path(os.environ.get("COCKPIT_ENV_FILE") or (_APP_DIR / ".env"))
+
+
+class EnvFileSecretError(RuntimeError):
+    """A keyring secret name was found in the .env file (Invariant 4)."""
+
+
+# The keyring names main.py reads. Kept here as a literal rather than imported from main so a
+# settings import never drags the composition root in; test_env_file_guard.py asserts the two
+# lists agree, which is what stops this copy from silently going stale.
+_KEYRING_SECRET_NAMES = (
+    "audit-hmac-key", "discord_bot_token", "alpaca_key", "alpaca_secret",
+    "finnhub_key", "cockpit_api_key",
+)
+# Generic shapes that are a secret regardless of vendor. A name we have never seen before is
+# still refused if it looks like a credential — the allowlist is what may PASS, not what fails.
+_SECRETISH = re.compile(
+    r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|APIKEY|API_KEY|PRIVATE_KEY|CREDENTIAL|HMAC)"
+    r"(?:_|$)|(?:^|_)KEY(?:_|$)",
+    re.IGNORECASE,
+)
+# Explicitly NOT secrets, though they trip the shapes above. Each is a NAME or an ID, not a
+# credential, and each is already non-secret elsewhere in this file.
+_SECRETISH_ALLOWED = frozenset({
+    "COCKPIT_SEC_USER_AGENT", "COCKPIT_FINRA_USER_AGENT",
+    "COCKPIT_AUDIT_LOG_CHANNEL_ID", "COCKPIT_BRIEF_CHANNEL_ID",
+    "COCKPIT_ALERTS_CHANNEL_ID", "COCKPIT_PROPOSALS_CHANNEL_ID",
+    "COCKPIT_SYSTEM_CHANNEL_ID",
+})
+
+
+def _iter_env_file(path: Path):
+    """Yield ``(lineno, KEY)`` for each assignment in a dotenv file. Never yields a VALUE.
+
+    Deliberately does not parse or retain the right-hand side: this function exists to police
+    secrets, and a policing routine that carries the secret in memory (into a traceback, into
+    a log record) defeats itself.
+    """
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key.lower().startswith("export "):
+            key = key[len("export "):].strip()
+        yield lineno, key
+
+
+def assert_no_secrets_in_env_file(path: Path | None = None) -> None:
+    """FAIL CLOSED if the .env file carries anything that belongs in keyring (Inv 4).
+
+    Raises :class:`EnvFileSecretError` naming the KEY and LINE — never the value, so the
+    exception itself is safe to log, which is the whole point of raising one here rather
+    than printing a warning nobody reads.
+    """
+    path = ENV_FILE if path is None else path
+    if not path.is_file():
+        return
+    offenders: list[str] = []
+    for lineno, key in _iter_env_file(path):
+        bare = key[len("COCKPIT_"):] if key.startswith("COCKPIT_") else key
+        is_keyring_name = any(
+            n.replace("-", "_").upper() in (key.upper(), bare.upper())
+            for n in _KEYRING_SECRET_NAMES
+        )
+        looks_secret = bool(_SECRETISH.search(key)) and key.upper() not in _SECRETISH_ALLOWED
+        if is_keyring_name or looks_secret:
+            offenders.append(f"{key} (line {lineno})")
+    if offenders:
+        raise EnvFileSecretError(
+            f"{path} contains secret-shaped entries: {', '.join(offenders)}. Invariant 4: "
+            "secrets live in Windows Credential Manager only. Remove the line(s) and store "
+            "them with `python tools/verify_keys.py --set NAME`. If a name is genuinely not "
+            "a secret, add it to _SECRETISH_ALLOWED with a reason rather than loosening the "
+            "pattern."
+        )
 
 
 class Mode(str, Enum):
@@ -24,7 +126,37 @@ class Mode(str, Enum):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="COCKPIT_", extra="ignore")
+    # env_file is the DURABLE half of the config; a real environment variable still WINS over
+    # the file (pydantic-settings precedence), so an operator can override one value for one
+    # run without editing anything. Secrets are still refused — see
+    # ``assert_no_secrets_in_env_file``, called by ``get_settings``.
+    model_config = SettingsConfigDict(
+        env_prefix="COCKPIT_", extra="ignore",
+        env_file=str(ENV_FILE), env_file_encoding="utf-8",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_means_unset(cls, values):
+        """An empty value in .env (or env) means UNSET, not "parse '' as an int".
+
+        ``COCKPIT_BRIEF_CHANNEL_ID=`` is what an operator writes to say "I have not filled
+        this in yet" — and it is what every commented template produces the moment someone
+        runs ``cp .env.example .env``. Without this, that copy raises five ValidationErrors
+        and the cockpit REFUSES TO BOOT over blank optional fields, which is the opposite of
+        the per-feed fail-closed posture: an unset channel id should mean that ONE feed is
+        unprovisioned and logged, never that the process dies.
+
+        Only whitespace-only STRINGS are dropped, so the field's own default applies. A
+        present, non-blank value is untouched and still validated normally — this widens
+        nothing and cannot turn a bad value into a good one.
+        """
+        if isinstance(values, dict):
+            return {
+                k: v for k, v in values.items()
+                if not (isinstance(v, str) and v.strip() == "")
+            }
+        return values
 
     # Always boots OFF; the ladder only moves up through measured gates.
     mode: Mode = Mode.read_only
@@ -168,4 +300,11 @@ class Settings(BaseSettings):
 
 
 def get_settings() -> Settings:
+    """Build Settings, refusing to proceed if the .env file holds a secret (Inv 4).
+
+    The guard runs BEFORE construction on purpose. Reading the file first and complaining
+    afterwards would already have loaded the secret into the process — and into any
+    ``repr(settings)`` that later reaches a log line.
+    """
+    assert_no_secrets_in_env_file()
     return Settings()
