@@ -176,11 +176,159 @@ G-gates. Order-path-touching packages get an adversarial-review round.
 | **RW-07** | **Human surface + analytics** — `/research`, `/screen`, `/portfolio`, `/compare`; human-initiated `/trade` (paper) through the SAME order path; `analytics/` | Human-initiated trade provably routes through risk→approval→gateway (Inv 1) | RW-05, RW-06 |
 | **RW-08** *(optional / deferred)* | **Web dashboard** — read-only Tailscale-served data terminal. Build ONLY if interactive exploration is needed; else Discord embeds + edit-in-place boards + chart images (+ Koyfin for deep browse) cover it | Zero inbound ports; read-only | RW-04, RW-07 |
 | **RW-09** | **Optimization** — cost governor (X-03), backtest-lite (X-02), provider failover (E-08); scorecard/shadow-live as ladder rungs approach | Budget cap fails to `watch_only` on exhaustion; backtest honest under PIT | RW-04 |
+| **RW-10** | **EDGAR core absorption** — vendor `edgar-morning-brew`'s DETERMINISTIC core (SEC client, parser, delta engine, citation gate) into `app/filings/`; leave its LLM/publish/scheduler layers upstream | Ported golden tests reproduce upstream deltas byte-for-byte inside the cockpit; no-LLM-in-filings gate passes | RW-01 |
 
 **Safety go-live (the existing W-series in [[production-work-packages]]) runs as the
 gate on autonomy** — SEC-11 witness → paper soak → performance gate → `review_live`
 → `auto_veto` → `auto_full`. The RW-series makes the AI smarter and the human
 better-informed; it does **not** skip a single go-live gate.
+
+### 5.1 Bring-up backlog — the RW-01 tail
+
+RW-01's gate is met: 2026-08-02, one live market day ran end-to-end (659 window events
+→ 559 `prefiltered_ignore` + 100 `scored`, 0 deferred, `degraded=false`, delivered).
+What follows is everything the live run proved is *built but not reachable by the
+operator*. It is the RW-01 tail, not new scope — RW-02 should not start until the
+surface is actually usable, because RW-02 abstracts a surface nobody has yet driven.
+
+**Ordered by operator value.** Each item names its blocker, because three of the six
+are blocked on provisioning rather than on code.
+
+| # | Item | Blocker | Done when |
+|---|---|---|---|
+| **B1** | **Bot lifecycle / status management** — start, observe, and stop the bot itself. `build_bot` (`app/bridge/bot.py:98`) is called by NOTHING outside tests: the Discord *gateway* has never started, so no slash command has ever executed | code only | The gateway runs alongside `main.run()`; the operator can see the bot online and read its own health without tailing a log |
+| **B2** | **Components V2 delivery** — replace plaintext with `IS_COMPONENTS_V2` Container / TextDisplay / Separator so the brief reads as an official bot surface. Today: `bridge/deliver.py`, a `(channel, payload) -> bool` seam over stdlib `urllib`, plaintext capped at `MAX_CONTENT = 1900` | code only | The brief renders as a container; the 1900-char cap becomes a per-component budget, not a truncation cliff |
+| **B3** | **Real slash commands** — every body is still a stub replying `"/{name} acknowledged."`. Implement against the loopback API and sync the tree to the guild | code only | Read-only `/status` + `/brief` first; `/mode` `/limits` `/killswitch` second. **Approval buttons are order-path (Inv 1) and need their own adversarial round** |
+| **B4** | ~~**EDGAR brew feed** — provision `COCKPIT_BREW_DB_PATH`~~ **SUPERSEDED by RW-10 (§5.2)** — the cross-process SQLite handoff is being replaced by absorbing the brew's deterministic core in-process | — | See RW-10's gate |
+| **B5** | **FINRA short-interest / Reg SHO** — the last unwired feed. See below; it has an operator half AND a code half | **operator + code** | `fetchers["finra"]` is non-None in a real `run()` and a settlement row reaches the packet |
+| **B6** | **Robinhood MCP** — not connected. **This is a new BROKER: it lands on the order path (Inv 1), and MCP responses are UNTRUSTED input (SEC-02).** `robinhood_mcp` is a stub until W17 | gated by W17 + an adversarial round | Not before B1–B5. Scope deliberately; do not treat it as "just another connector" |
+
+#### B5 in detail — what FINRA support actually requires
+
+FINRA is **enrichment only** and must be calibrated as such before anyone spends a
+session on it: short interest publishes **twice monthly, 7 business days after the
+settlement date**, so a row is ~2 weeks stale on arrival. `ingest/finra_short_interest.py`
+enforces this — `_assert_enrichment_event_type` refuses to emit `halt` or `filing`, the
+entire membership of `_HARD_EVENT_TYPES`, so it can never drive SEC-21 urgency. The Reg
+SHO threshold list is **OTC-only**; exchange-listed names are published by each listing
+SRO, not FINRA. Treat this feed as context for a name you are already looking at, never
+as a trigger.
+
+The connector itself is **done and tested** (W20, six adversarial rounds). What is missing:
+
+1. **The dataset identifier is unverifiable from any primary source** — the base
+   `https://api.finra.org` is confirmed, but the dataset path pattern gates behind
+   `gateway.finra.org/app/dfo-console`. `make_finra_fetch` **raises rather than invent
+   one**, and that refusal is correct; do not guess a path to make the wiring compile.
+   *Operator act:* register for a free FINRA API account, use the **Mock credential
+   tier** to pin (a) the real dataset path and (b) the wire field names.
+2. **OAuth2 is mandatory** (client_credentials against
+   `https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token`; Basic Auth dead since
+   2022-06-01). *Operator act:* credentials into keyring (Inv 4), never settings.
+3. **`run()` never passes the FINRA closures.** `compose()` accepts
+   `finra_token_provider` / `finra_http_get` / `finra_row_mapper`, but `main.run()`
+   (`app/main.py:645`) calls `compose()` bare — so **even with both env vars set, FINRA
+   stays unprovisioned**. This is the one item on the list that is a genuine code gap
+   rather than a missing secret. `_urllib_json_get` (`main.py:163`) already satisfies
+   `http_get`; what is needed is a keyring-backed, TTL-caching `token_provider` and a
+   `row_mapper` onto the canonical keys the poller reads (`kind`, `settlementDate`,
+   `symbol`, `issueName`, `notes`, `ts`) — the passthrough default will not match.
+
+**Do not weaken the connector to land it.** The refusals above (no invented endpoint,
+no invented UA, no invented rate cap, no `halt`/`filing` emission) are the deliverable
+of W20's red-team rounds, not obstacles to it.
+
+### 5.2 RW-10 — absorbing the EDGAR deterministic core
+
+**Decided 2026-08-02.** W20 wired EDGAR as a *cross-process* feed: `edgar-morning-brew`
+writes a SQLite file, the cockpit reads it read-only through `ingest/edgar_brew.py`.
+RW-10 replaces that handoff by vendoring the brew's deterministic core **into** the
+cockpit. The upstream repo is **preserved and unchanged** — it remains Chaandan's and
+Samir's product, with its own soak, its own approve-before-send path, and its own digest.
+
+#### Why (the three facts that decided it)
+
+1. **The cockpit never read the brew's LLM output.** `ingest/edgar_brew.py:_SELECT`
+   joins `delta` / `filing` / `company` — deterministic WP4/WP5 rows. The brew's WP6
+   composer writes a `brief` table the cockpit does not touch. So the second model
+   inference was already dead weight *for this consumer*; removing it removes nothing
+   that was running.
+2. **The upstream blockers all sit in the layers we do not want.** The 14-day soak
+   qualifies WP7's approve-before-send path; the 2026-07-15 degraded run died on a
+   *scheduled-task* keyring visibility problem in WP8; the fenced-JSON quarantine risk
+   lives in the brew's `agent_runner`. Take the deterministic core and all three stop
+   being this project's problem — not by being waived, but by not being in scope.
+3. **There is no credential blocker and never was.** SEC EDGAR is free and
+   unauthenticated: it wants a declared User-Agent and <10 req/s. The brew's only
+   keyring secret is a *self-generated* audit HMAC key (`storage/bootstrap_audit_key.py`).
+
+The human gate is **not weakened by dropping WP7** — it moves up a layer. EDGAR deltas
+become an *input* to the cockpit's MorningBrief, which already passes through the
+cockpit's own approval path and hash-chained audit (Inv 6).
+
+#### Take / drop manifest
+
+**TAKE** (deterministic, no model call anywhere in it):
+
+| Upstream | Vendored as | Why |
+|---|---|---|
+| `app/edgar/` | `app/filings/edgar/` | SEC client + submissions poller; the only module that may touch sec.gov |
+| `app/parse/` | `app/filings/parse/` | 8-K items, 10-K/Q sections, XBRL facts |
+| `app/delta/` | `app/filings/delta/` | text + XBRL delta engine, materiality |
+| `app/cite/` | `app/filings/cite/` | citation builder, resolver, claim gate |
+| `app/storage/raw_store.py` | `app/filings/raw_store.py` | write-once filing bytes (Inv 8) |
+| `app/tests/fixtures/sec/` | `app/tests/fixtures/sec/` | real AAPL/NVDA filings — the golden-test ground truth |
+
+**DROP** (every one has a hardened cockpit equivalent already running):
+`brief/` (WP6 — the duplicate inference), `publish/` (WP7 — the cockpit has an approval
+path and an operator surface), `scheduler/` (WP8 — the cockpit has APScheduler),
+`agent_runner/`, `core/`, `config/`, `storage/audit.py`, `storage/engine.py`.
+
+#### The core is NOT frozen — pin it, do not fork-and-forget
+
+Measured over `db55e2f..bb90c53` (2026-07-09 → 07-16): the take-set gained **+432 lines
+across 7 files**, almost all in the SEC client (`submissions_poll.py` +272,
+`fetch.py` +121) — real hardening of the code most exposed to a live external service.
+The drop-set gained +4,865. So the split is right, but a blind one-time copy **will**
+drift away from upstream fixes to exactly the wrong module.
+
+`app/filings/PROVENANCE.md` therefore pins the upstream commit per package and records
+the rename map. Checking for upstream fixes stays one command:
+
+```bash
+git -C ../edgar-morning-brew diff <pinned-sha>..origin/main -- app/edgar app/parse app/delta app/cite
+```
+
+**Vendored files keep their upstream internal structure on purpose.** Restructuring them
+would make that diff unappliable, which is the whole value of the pin. Import rewriting is
+a pure prefix substitution (see PROVENANCE.md) precisely so the same map can be replayed
+against a future upstream diff.
+
+#### Deterministic gate (GR-10)
+
+1. The pre-existing cockpit suite still passes **unchanged** — absorption adds tests, it
+   does not edit them.
+2. **Golden reproduction**: the ported WP4 golden tests compute the same deltas from the
+   same AAPL/NVDA fixture bytes inside the cockpit as upstream does. A vendoring that
+   silently changes a computed delta is a failed vendoring.
+3. **`no-LLM-in-filings`** grep gate, mirroring `no-LLM-in-risk`: nothing under
+   `app/filings/` may import `agent_runner`, `workflows`, or any model-call seam. The
+   absorbed core is deterministic *by construction*; that must be enforced, not assumed.
+4. `ruff check .` clean.
+5. PROVENANCE.md pins resolve to real upstream commits.
+
+#### What RW-10 explicitly does NOT do
+
+- **It does not delete `ingest/edgar_brew.py`.** That reader survived six adversarial
+  rounds and is the only working EDGAR path today. It is retired in a *later* package,
+  after the in-process path has produced deltas on a real market day — never in the same
+  change that introduces its replacement.
+- **It does not change the order path, `risk/`, or the mode ladder.** Nothing in the
+  take-set can reach them.
+- **It does not make the cockpit predict better.** More and better-cited filing evidence
+  improves *awareness* — what changed, where, with a link to the bytes. Per §7 and
+  [[capability-expansion-master-plan]] §0, it does not manufacture alpha, and no part of
+  this package should be justified on that basis.
 
 ## 6. Sequencing
 
