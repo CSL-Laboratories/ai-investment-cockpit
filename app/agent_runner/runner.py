@@ -50,10 +50,19 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
         # Inv 2 / SEC-06: codex is research/coding only — NEVER a decision stage.
         if spec.decision_stage:
             raise ValueError("SEC-06/Inv2: codex may never run a decision-stage job")
-        # Codex uses its own sandbox mechanism (not --allowedTools); pin read-only.
+        # Codex uses its own sandbox mechanism (not --allowedTools); pin read-only. Put the
+        # option before ``resume`` because the current Codex CLI treats ``resume`` as a
+        # subcommand and rejects ``--sandbox`` after it. The final ``-`` is load-bearing:
+        # codex exec reads the prompt from stdin, which keeps prompts out of argv and gives
+        # Claude/Codex the same secret-boundary posture.
+        argv = ["codex", "exec", "--sandbox", "read-only"]
         if resume and spec.session_id:
-            return ["codex", "exec", "resume", spec.session_id, "--sandbox", "read-only", "--json"]
-        return ["codex", "exec", "--sandbox", "read-only", "--json"]
+            argv += ["resume", spec.session_id]
+        argv += [
+            "--model", _cli_model(spec.model_alias),
+            "--json", "-",
+        ]
+        return argv
     raise ValueError(f"unknown runtime {spec.runtime!r}")
 
 
@@ -69,25 +78,97 @@ def _no_nonfinite(_constant):
     raise ValueError(f"non-finite JSON constant {_constant!r}")
 
 
-def _parse_output(stdout: str):
+def _decode_json_value(value):
+    """Decode a JSON string returned inside a vendor envelope, preserving plain text."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value, parse_constant=_no_nonfinite)
+    except ValueError:
+        return value
+
+
+def _parse_codex_output(stdout: str, fallback_session_id: str | None = None):
+    """Parse Codex's documented JSONL event stream.
+
+    ``codex exec --json`` emits lifecycle events rather than Claude's single JSON envelope. The
+    final assistant answer is an ``item.completed`` event whose item type is ``agent_message``;
+    its text is normally the JSON object the runner validates. Keep the adapter here so the rest
+    of the runner retains one schema/repair/quarantine contract for both runtimes.
+    """
+    events = []
+    malformed_line = False
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line, parse_constant=_no_nonfinite)
+        except ValueError:
+            # JSONL is the promised protocol. A malformed line means the stream is not safely
+            # attributable to Codex, so fail closed rather than silently dropping output.
+            malformed_line = True
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+
+    if not events or malformed_line:
+        return None, fallback_session_id, None
+
+    session_id = fallback_session_id
+    body = None
+    has_error = False
+    for event in events:
+        session_id = (
+            event.get("thread_id")
+            or event.get("session_id")
+            or event.get("threadId")
+            or event.get("sessionId")
+            or session_id
+        )
+        event_type = str(event.get("type", "")).lower()
+        event_status = str(event.get("status", "")).lower()
+        if (event_type in {"error", "turn.failed"} or event.get("is_error")
+                or event_status in {"error", "failed"}):
+            has_error = True
+
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).lower()
+        if item_type in {"error", "turn.failed"} or item.get("is_error"):
+            has_error = True
+        if item_type == "agent_message" and "text" in item:
+            # Keep the last completed agent message: intermediate messages are allowed in a
+            # JSONL stream, while the final one is the answer subject to schema validation.
+            body = _decode_json_value(item.get("text"))
+
+    envelope = {"runtime": "codex", "is_error": has_error}
+    if has_error:
+        # Reuse the runner's existing vendor-error health-fault branch without pretending Codex
+        # emits Claude's ``subtype`` field.
+        envelope["subtype"] = "error_codex_event"
+    return envelope, session_id, body
+
+
+def _parse_output(stdout: str, runtime: str = "claude", fallback_session_id: str | None = None):
     """Return (envelope_or_None, session_id, body). None envelope => unparseable/empty."""
     s = (stdout or "").strip()
     if not s:
-        return None, None, None
+        return None, fallback_session_id, None
+    if runtime == "codex":
+        return _parse_codex_output(s, fallback_session_id=fallback_session_id)
     try:
         env = json.loads(s, parse_constant=_no_nonfinite)
     except ValueError:
-        return None, None, None
-    session_id, body = None, env
+        return None, fallback_session_id, None
+    session_id, body = fallback_session_id, env
     if isinstance(env, dict):
-        session_id = env.get("session_id") or env.get("sessionId")
+        session_id = (env.get("session_id") or env.get("sessionId") or session_id)
         if "result" in env:
             body = env["result"]
             if isinstance(body, str):
-                try:
-                    body = json.loads(body, parse_constant=_no_nonfinite)
-                except ValueError:
-                    pass
+                body = _decode_json_value(body)
     return env, session_id, body
 
 
@@ -140,8 +221,11 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         w = usage.trip(spec.runtime, "exhausted")            # a timeout opens the breaker
         return AgentResult(status=TIMEOUT, raw=proc.stdout, error="timeout", usage_state=w.state)
 
-    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    if proc.returncode != 0 or looks_like_limit(combined):
+    # Do not scan Codex's JSONL assistant messages for limit words: a valid research answer can
+    # discuss a rate limit without the vendor being rate-limited. Exit status and stderr are the
+    # transport-level health signals; structured Codex failure events are checked after parsing.
+    health_text = proc.stderr or ""
+    if proc.returncode != 0 or looks_like_limit(health_text):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="limit_or_error", usage_state=w.state)
 
@@ -150,7 +234,9 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         w = usage.trip(spec.runtime, "degraded")
         return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="empty_output", usage_state=w.state)
 
-    parsed, session_id, body = _parse_output(proc.stdout)
+    parsed, session_id, body = _parse_output(
+        proc.stdout, runtime=spec.runtime, fallback_session_id=spec.session_id
+    )
 
     # A claude JSON envelope can flag an errored/truncated turn (is_error / subtype
     # error_*) while still exiting 0 — treat it as a health fault (SEC-23).
@@ -191,8 +277,9 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
 
-    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    if getattr(proc, "timed_out", False) or proc.returncode != 0 or looks_like_limit(combined):
+    health_text = proc.stderr or ""
+    if (getattr(proc, "timed_out", False) or proc.returncode != 0
+            or looks_like_limit(health_text)):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
                            error="repair_failed", usage_state=w.state)
@@ -204,7 +291,9 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
                            error="repair_empty_output", usage_state=w.state)
 
     usage.record(spec.runtime)
-    parsed, sid2, body2 = _parse_output(proc.stdout)
+    parsed, sid2, body2 = _parse_output(
+        proc.stdout, runtime=spec.runtime, fallback_session_id=rspec.session_id
+    )
     if isinstance(parsed, dict) and (parsed.get("is_error") or str(parsed.get("subtype", "")).startswith("error")):
         w = usage.trip(spec.runtime, "degraded")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,

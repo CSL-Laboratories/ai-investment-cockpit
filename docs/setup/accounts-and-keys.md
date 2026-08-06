@@ -34,8 +34,13 @@ Don't over-provision early. Nothing here requires a funded live account until Ph
   `claude` → check it starts authenticated. Headless subscription use is sanctioned but
   **burns your normal plan limits** (the Agent-SDK credit is still paused — re-verified
   2026-07-06), so the design batches and budgets deep-model calls.
-- **Codex (ChatGPT plan)** — *optional*, research/coding only. It is **barred from the
-  decision/order path** by policy + Invariant 2. If you use it: `codex login --device-auth`.
+- **Codex CLI (ChatGPT plan)** — *optional*, supported for explicit research/coding jobs.
+  The cockpit invokes the official non-interactive `codex exec` CLI, not an OpenAI SDK or a
+  copied bearer token. Authenticate the CLI once with `codex login` (or
+  `codex login --device-auth` for a headless setup), then confirm `codex exec --help` works
+  in the same Windows account that runs the cockpit. No Codex API key is stored in this
+  project's keyring. Codex remains **barred from the auto decision/order path**; the runner
+  pins Codex jobs to `--sandbox read-only` and refuses a Codex decision-stage spec.
 - The decision-stage agents run with an **empty tool set** and never hold broker
   credentials or an MCP connection ([[security-hardening-backlog]] SEC-03/SEC-06).
 
@@ -140,6 +145,7 @@ and per-broker post-PDT house rules.
 ## Checklist
 
 - [ ] Claude Code (Max) authenticated
+- [ ] *(Optional)* Codex CLI installed and `codex login` authenticated for research/coding jobs
 - [ ] Alpaca account + API key/secret
 - [ ] Finnhub free key
 - [ ] Private Discord guild + bot (Message Content intent) + bot invited

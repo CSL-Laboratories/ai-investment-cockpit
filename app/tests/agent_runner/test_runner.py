@@ -38,6 +38,26 @@ def envelope(body, session_id="s1"):
     return ProcResult(0, json.dumps({"session_id": session_id, "result": json.dumps(body)}), "", False)
 
 
+def codex_envelope(body, thread_id="thread-1"):
+    """Mimic the documented ``codex exec --json`` JSONL event stream."""
+    events = [
+        {"type": "thread.started", "thread_id": thread_id},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {
+            "id": "item-1", "type": "agent_message", "text": json.dumps(body),
+        }},
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    return ProcResult(0, "\n".join(json.dumps(event) for event in events), "", False)
+
+
+def codex_spec(**kw):
+    base = dict(job_id="j-codex", runtime="codex", model_alias="codex", prompt="inspect this",
+                schema=SCHEMA, decision_stage=False)
+    base.update(kw)
+    return AgentSpec(**base)
+
+
 def spec(**kw):
     base = dict(job_id="j1", runtime="claude", model_alias="triage", prompt="classify this",
                 schema=SCHEMA, decision_stage=True)
@@ -138,6 +158,40 @@ def test_non_decision_codex_job_builds():
                            allowed_tools=["Read"]))
     assert argv[:2] == ["codex", "exec"]
     assert "--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "read-only"
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "gpt-5.5"
+    assert "--json" in argv and argv[-1] == "-"
+
+
+def test_codex_jsonl_happy_path():
+    t = FakeTransport([codex_envelope(VALID_BODY)])
+    r = run_agent(codex_spec(), transport=t, usage=UsageTracker())
+    assert r.status == OK
+    assert r.validated == VALID_BODY
+    assert r.session_id == "thread-1"
+
+
+def test_codex_jsonl_repair_resumes_thread():
+    bad = codex_envelope({"classification": "nope", "score": 70})
+    good = codex_envelope(VALID_BODY)
+    t = FakeTransport([bad, good])
+    r = run_agent(codex_spec(), transport=t, usage=UsageTracker())
+    assert r.status == OK and r.repaired is True
+    repair_argv = t.calls[1]["argv"]
+    assert repair_argv[repair_argv.index("resume") + 1] == "thread-1"
+    assert repair_argv.index("--sandbox") < repair_argv.index("resume")
+    assert repair_argv.count("--sandbox") == 1
+
+
+def test_codex_failed_event_fails_closed():
+    events = [
+        {"type": "thread.started", "thread_id": "thread-1"},
+        {"type": "turn.failed", "error": {"message": "provider unavailable"}},
+    ]
+    failed = ProcResult(0, "\n".join(json.dumps(event) for event in events), "", False)
+    u = UsageTracker()
+    r = run_agent(codex_spec(), transport=FakeTransport([failed]), usage=u)
+    assert r.status == LIMIT_HIT
+    assert u.window("codex").state == "degraded"
 
 
 def test_codex_decision_stage_rejected():

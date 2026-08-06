@@ -22,9 +22,14 @@ from agent_runner.transport import (
 )
 
 
-def test_resolves_a_bare_name_to_an_absolute_path():
+def test_resolves_a_bare_name_to_an_absolute_path(monkeypatch):
     """The fix in one line: a bare name becomes a real path, applying PATHEXT the way a shell
     does. On POSIX this is a no-op that returns the plain path."""
+    # A project-local virtual environment need not be added to the user's global PATH. Make the
+    # bare-name lookup precondition explicit so this test exercises ``resolve_executable`` rather
+    # than relying on whatever Python installation happens to be globally discoverable.
+    interpreter_dir = os.path.dirname(sys.executable)
+    monkeypatch.setenv("PATH", interpreter_dir + os.pathsep + os.environ.get("PATH", ""))
     resolved = resolve_executable([sys.executable.rsplit(os.sep, 1)[-1].replace(".exe", ""),
                                    "--version"])
     assert os.path.isabs(resolved[0])
@@ -119,6 +124,19 @@ def test_claude_cli_is_spawnable_when_installed():
     assert "Claude" in result.stdout or result.stdout.strip()
 
 
+def test_codex_cli_is_spawnable_when_installed():
+    """Codex is a supported non-decision runtime and must be spawnable through the same
+    Windows-aware transport as Claude. ``--version`` is local and does not spend a model turn."""
+    import shutil
+
+    if shutil.which("codex") is None:
+        pytest.skip("codex CLI not installed on this host")
+    result = SubprocessTransport().run(["codex", "--version"], input_text="",
+                                       timeout_s=120, cwd=None)
+    assert result.returncode == 0, f"codex is on PATH but did not spawn: {result.stderr!r}"
+    assert "codex" in result.stdout.lower() or result.stdout.strip()
+
+
 def test_subprocess_run_without_resolution_is_what_broke():
     """Documents the defect so a future 'simplification' back to a bare name fails loudly.
 
@@ -128,10 +146,13 @@ def test_subprocess_run_without_resolution_is_what_broke():
     """
     import shutil
 
-    if shutil.which("claude") is None:
+    resolved = shutil.which("claude")
+    if resolved is None:
         pytest.skip("claude CLI not installed on this host")
     if os.name != "nt":
         subprocess.run(["claude", "--version"], capture_output=True, timeout=120)
         return
+    if not resolved.lower().endswith((".cmd", ".bat")):
+        pytest.skip("claude resolves to a native executable, not a Windows cmd shim")
     with pytest.raises(FileNotFoundError):
         subprocess.run(["claude", "--version"], capture_output=True, timeout=120)

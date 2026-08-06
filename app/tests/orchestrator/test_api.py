@@ -152,6 +152,23 @@ def test_job_enqueue_and_fetch(client):
     assert client.get("/jobs/nope", headers=AUTH).status_code == 404
 
 
+def test_codex_runtime_is_a_valid_explicit_job_option(client):
+    r = client.post("/jobs", headers=AUTH, json={"model": "codex", "runtime": "codex"})
+    assert r.status_code == 202
+    assert r.json()["runtime"] == "codex"
+    assert r.json()["model_pinned"] == "gpt-5.5"
+
+
+def test_unknown_runtime_is_rejected_at_the_api_boundary(client):
+    r = client.post("/jobs", headers=AUTH, json={"model": "codex", "runtime": "openai"})
+    assert r.status_code == 422
+
+
+def test_runtime_cannot_be_mismatched_with_model_alias(client):
+    r = client.post("/jobs", headers=AUTH, json={"model": "triage", "runtime": "codex"})
+    assert r.status_code == 422
+
+
 def test_job_unknown_model_422(client):
     assert client.post("/jobs", headers=AUTH, json={"model": "bogus"}).status_code == 422
 

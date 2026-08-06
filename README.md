@@ -47,6 +47,30 @@ python -m pytest -q      # full suite incl. Invariant-1 call-site / no-LLM-in-ri
 ruff check .             # G-gate lint, clean as of 2026-07-08
 ```
 
+## Windows + Codex setup
+
+From PowerShell at the repository root, create the project-local Python environment:
+
+```powershell
+.\tools\bootstrap_windows.ps1
+```
+
+Then authenticate the already-installed Codex CLI in the **same Windows account** that will run
+the cockpit:
+
+```powershell
+codex login --device-auth
+codex login status
+```
+
+The current Codex integration is intentionally limited to explicit research, coding, and system
+maintenance jobs. It runs `codex exec` with a read-only sandbox and never stores an OpenAI API key
+in the project's keyring. The existing automatic decision/order path remains Claude-pinned by
+Invariant 2; with a Codex-only subscription, leave the cockpit in read-only/watch-only mode. A
+Codex decision-runtime replacement would be a separate security redesign, not a configuration
+toggle. See [`AGENTS.md`](AGENTS.md) and
+[`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
+
 ## Before you build
 
 - Provision accounts + keys into Windows Credential Manager — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).

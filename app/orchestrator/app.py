@@ -21,6 +21,7 @@ is unreachable from the API surface; the CI call-site gate must stay green.
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -102,7 +103,7 @@ class KillRequest(BaseModel):
 
 class JobCreate(BaseModel):
     model: str = "triage"
-    runtime: str | None = None
+    runtime: Literal["claude", "codex"] | None = None
     effort: str | None = None
     prompt_template: str | None = None
     input_refs: dict = {}
@@ -155,7 +156,14 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
         aliases = load_model_map()
         if body.model not in aliases:
             raise HTTPException(status_code=422, detail=f"unknown model alias {body.model!r}")
-        runtime = body.runtime or runtime_for(body.model)
+        configured_runtime = runtime_for(body.model)
+        runtime = body.runtime or configured_runtime
+        if body.runtime is not None and runtime != configured_runtime:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"runtime {runtime!r} does not match model alias {body.model!r}; "
+                        f"expected {configured_runtime!r}"),
+            )
         pinned = aliases[body.model].get("pinned", body.model)
         # Inv 6 (SEC-13) fail-closed: a QUEUED AgentJob is a state change and MUST carry a covering
         # AuditEntry written ATOMICALLY with the row — never a bare ``Repo.add`` (which the round-2

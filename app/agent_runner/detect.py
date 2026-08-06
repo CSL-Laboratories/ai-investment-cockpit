@@ -8,8 +8,8 @@ from __future__ import annotations
 import re
 
 _LIMIT_PATTERNS = [
-    re.compile(r"usage limit", re.I),
-    re.compile(r"rate limit", re.I),
+    re.compile(r"usage[_ -]?limit", re.I),
+    re.compile(r"rate[_ -]?limit", re.I),
     re.compile(r"\b429\b"),
     re.compile(r"\b503\b"),
     re.compile(r"\b529\b"),
@@ -20,7 +20,7 @@ _LIMIT_PATTERNS = [
     re.compile(r"resource[_ ]?exhausted", re.I),
     re.compile(r"error_max_turns", re.I),
     re.compile(r"\bcapacity\b", re.I),
-    re.compile(r"context length", re.I),
+    re.compile(r"context (?:length|window)", re.I),
     re.compile(r"too long", re.I),
 ]
 
