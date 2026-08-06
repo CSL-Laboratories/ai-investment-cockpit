@@ -11,6 +11,8 @@ venv/
 *.sqlite
 *.sqlite3
 *.db
+*.db-shm
+*.db-wal
 *.duckdb
 *.parquet
 /data/
