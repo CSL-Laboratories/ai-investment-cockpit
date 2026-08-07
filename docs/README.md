@@ -3,7 +3,7 @@ title: AI Investment Copilot — research, architecture & build index
 type: index
 status: active
 last-verified: 2026-07-08
-related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, path-to-production, production-work-packages, production-playbook]
+related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, capability-expansion-master-plan, upside-and-roi, path-to-production, production-work-packages, production-playbook, refactor-plan, integration-and-remote-operations-plan]
 ---
 
 # AI Investment Copilot — index
@@ -88,11 +88,12 @@ rollout beyond paper mode is governed by [[path-to-production]].
 | [[production-work-packages]] | The pre-live/go-live build SPEC — the production analog of [[build-scaffold-ultracode]]: the **coverage matrix** (every open/partial SEC-01…24 + OPS-01…07 → exactly one W, or done/deferred), the **W10→W19 dependency DAG + build order**, and each work package (scope, `Accept:`, the adversarial gate G10…G19, dependencies). W10 (audit-spine / SEC-11) is the keystone everything auto/live depends on. |
 | [[production-playbook]] | How to DRIVE the W-series with Opus 4.8 agents — the production analog of [[ultracode-build-playbook]]: the property-closure / adversarial-gate philosophy, the session bootstrap, reusable Workflow scripts, the G10…G19 gate table, and **paste-ready per-W kickoff prompts** for one-work-package-per-session execution. |
 
-**Refactor (the RW-series — operationalize + expand, 2026-08-01):**
+**Refactor and integration expansion (2026-08):**
 
 | File | What it contains |
 |---|---|
 | [[refactor-plan]] | From fixture-driven build to a running dual-surface cockpit: the three architectural decisions (abstract the operator surface, dynamic universe, data-provider abstraction), the RW-01…RW-09 work packages with their GR-xx gates, and the honesty ledger of what the refactor does NOT do |
+| [[integration-and-remote-operations-plan]] | The CXP-series for Discord/Telegram thread + group compatibility, Claude/Codex provider conformance, future OpenRouter/OpenCode spikes, credential/MCP isolation, multi-principal/account handling, and a restricted `cockpitctl` + SSH control path |
 | [[runbooks/rw01-live-smoke]] | **Operator-run.** RW-01's acceptance evidence: provision the keys + private guild, run one real market day, confirm the morning brew lands in `#morning-brew`. Read-only throughout — it proves the system *runs*, nothing about whether it should trade |
 
 The RW-series runs **alongside** the W-series, not instead of it: RW work makes the AI
