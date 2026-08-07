@@ -6,9 +6,14 @@ G1b is hermetic (no real ``claude``/``codex`` process).
 """
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
 from dataclasses import dataclass
+
+REAP_GRACE_SECONDS = 5.0
+KILL_GRACE_SECONDS = 10.0
 
 # cmd.exe metacharacters. A ``.cmd``/``.bat`` target is launched THROUGH cmd.exe, which applies
 # its own parsing to the command line AFTER Python's MSVCRT-style quoting — so an argv element
@@ -75,18 +80,47 @@ class ProcResult:
     timed_out: bool = False
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Best-effort termination of a child and every descendant it spawned."""
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=KILL_GRACE_SECONDS,
+            )
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001 - timeout cleanup must remain fail-closed
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001 - an already-exited child is harmless
+        pass
+
+
 class SubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
         argv = resolve_executable(argv)
+        popen_kwargs = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "cwd": cwd,
+        }
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(argv, **popen_kwargs)
         try:
-            p = subprocess.run(
-                argv, input=input_text, capture_output=True, text=True,
-                timeout=timeout_s, cwd=cwd,
-            )
-            return ProcResult(p.returncode, p.stdout or "", p.stderr or "", False)
-        except subprocess.TimeoutExpired as e:
-            out = e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
-            err = e.stderr.decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            out, err = proc.communicate(input_text, timeout=timeout_s)
+            return ProcResult(proc.returncode, out or "", err or "", False)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            try:
+                out, err = proc.communicate(timeout=REAP_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                out, err = "", ""
             return ProcResult(124, out, err + "\n[timeout]", True)
 
 
