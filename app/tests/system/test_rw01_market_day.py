@@ -598,6 +598,7 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
     ``serve`` and ``scheduler.start`` are the only things replaced; the graph underneath is
     the real composed one.
     """
+    import core.logging as logging_mod
     import orchestrator.app as app_mod
     import orchestrator.scheduler as sched_mod
 
@@ -621,14 +622,23 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
         order.append("serve")
         seen["bound_host"] = settings.api_host
 
+    def fake_configure_logging(level):
+        order.append(f"configure_logging:{level}")
+
     # Compose the REAL graph FIRST, then hand it back from the patched compose. (Building it
     # inside the patch would re-enter the patch — `_compose` calls `main.compose`.)
     graph = _compose(tmp_path, transport=FakeTransport([]), deliver=Capture())[:3]
 
     started: list = []
+    monkeypatch.setattr(logging_mod, "configure_logging", fake_configure_logging)
     monkeypatch.setattr(sched_mod, "build_scheduler", fake_build_scheduler)
     monkeypatch.setattr(app_mod, "serve", fake_serve)
-    monkeypatch.setattr(main_mod, "compose", lambda **_kw: graph)
+
+    def fake_compose(**_kw):
+        order.append("compose")
+        return graph
+
+    monkeypatch.setattr(main_mod, "compose", fake_compose)
     monkeypatch.setattr(
         "orchestrator.ingest_runner.IngestRunner.start_streams",
         lambda self: (order.append("start_streams"), started.append(sorted(self.streams)))[0],
@@ -636,7 +646,7 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
 
     main_mod.run()
 
-    assert order == ["scheduler.start", "start_streams", "serve"], \
+    assert order == ["configure_logging:INFO", "compose", "scheduler.start", "start_streams", "serve"], \
         "serve() blocks forever — anything after it never runs"
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
     assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}

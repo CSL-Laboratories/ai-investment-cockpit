@@ -630,13 +630,24 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     under test (``compose`` in tests/workflows/test_main_compose.py, the composed market day in
     tests/system/test_rw01_market_day.py), so what is left here is the sequence, not logic.
     """
+    from config.settings import get_settings
+    from core.logging import configure_logging
     from orchestrator.app import serve
     from orchestrator.scheduler import build_scheduler
+
+    configure_logging(get_settings().log_level)
 
     state, app, services = compose()
     ingest = app.state.ingest
     build_scheduler(state, services=services, ingest=ingest).start()
     ingest.start_streams()
+    log.info(
+        "cockpit up: mode=%s api=http://%s:%s feeds=%s",
+        state.settings.mode.value,
+        state.settings.api_host,
+        state.settings.api_port,
+        ingest.feed_names or "NONE",
+    )
     serve(app, state.settings)
 
 
