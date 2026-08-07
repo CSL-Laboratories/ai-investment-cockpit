@@ -117,6 +117,16 @@ def test_still_malformed_output_quarantines_job(st):
     assert BreakerEngine(st).is_watch_only("claude") is False  # quarantine is NOT exhaustion
 
 
+def test_agent_job_audit_records_fixed_result_outcome(st):
+    bad = envelope({"question": "q?", "pattern": "nope"})
+    result, _job = _call(st, FakeTransport([bad, bad]))
+
+    assert result.status == NEEDS_HUMAN
+    payload = _events(st, EVENT_AGENT_JOB)[0].payload
+    assert payload["result_error"] == "repair_still_invalid"
+    assert payload["repaired"] is True
+
+
 def test_generation_stamp_survives_a_trip(st):
     # exhaust (generation bumps), recover the window, then a fresh call stamps the new gen
     _call(st, FakeTransport([ProcResult(1, "", "Error: usage limit reached", False)]))

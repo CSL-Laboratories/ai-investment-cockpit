@@ -204,3 +204,29 @@ def test_not_wired_endpoints_return_501(client):
     assert client.post("/automations", headers=AUTH).status_code == 501
     body = client.get("/brief/today", headers=AUTH).json()
     assert body["status"] == "not_wired"
+
+
+def test_ingest_poll_exposes_only_provisioned_pollers(state):
+    class Runner:
+        polls = {"calendar": object()}
+        streams = {}
+
+        def poll(self, feed):
+            return {"feed": feed, "status": "ok", "emitted": 2}
+
+        def poll_all(self):
+            return {name: self.poll(name) for name in self.polls}
+
+    app = create_app(
+        state,
+        auth=ApiKeyAuth(key_provider=lambda: KEY),
+        ingest=Runner(),
+    )
+    ingest_client = TestClient(app)
+
+    response = ingest_client.post("/ingest/poll?feed=calendar", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {
+        "polled": {"calendar": {"feed": "calendar", "status": "ok", "emitted": 2}}
+    }
+    assert ingest_client.post("/ingest/poll?feed=unknown", headers=AUTH).status_code == 404

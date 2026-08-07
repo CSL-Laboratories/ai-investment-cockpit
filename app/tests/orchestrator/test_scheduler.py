@@ -91,6 +91,17 @@ def test_build_scheduler_registers_the_base_jobs(state):
     assert not scheduler.running        # returned un-started
 
 
+def test_scheduler_jobs_have_operational_names(state, tmp_path):
+    """Logs must identify the real job instead of seven indistinguishable lambdas."""
+    pytest.importorskip("apscheduler")
+    runner = _runner(state, tmp_path, ["calendar"])
+
+    jobs = sch.build_scheduler(state, OPEN, ingest=runner).get_jobs()
+
+    assert jobs
+    assert {job.name for job in jobs} == {job.id for job in jobs}
+
+
 # =======================================================================================
 # RW-01 — ingest jobs (one per PROVISIONED feed, on its own cadence)
 # =======================================================================================

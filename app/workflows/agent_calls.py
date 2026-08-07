@@ -92,6 +92,10 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             "status": job_status, "model": alias, "runtime": runtime,
             "prompt_template": prompt_ref, "schema_id": schema_name,
             "result_status": result.status, "generation": generation,
+            # Fixed internal tokens only; never model/feed text. This makes timeout and
+            # quarantine causes observable without reading a CLI session transcript.
+            "result_error": result.error,
+            "repaired": bool(getattr(result, "repaired", False)),
         },
     )
 

@@ -174,31 +174,31 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
         lambda: run_premarket_brew(state, clock, service=services.get("brew")),
         CronTrigger(hour=PREMARKET_HOUR, minute=PREMARKET_MINUTE,
                     day_of_week="mon-fri", timezone=EASTERN),
-        id="premarket_brew", replace_existing=True,
+        id="premarket_brew", name="premarket_brew", replace_existing=True,
     )
     sched.add_job(
         lambda: run_intraday_loop(state, clock, service=services.get("intraday")),
         CronTrigger(minute=INTRADAY_MINUTES, day_of_week="mon-fri", timezone=EASTERN),
-        id="intraday_loop", replace_existing=True,
+        id="intraday_loop", name="intraday_loop", replace_existing=True,
     )
     sched.add_job(
         lambda: run_eod_review(state, clock, service=services.get("eod")),
         CronTrigger(hour=EOD_HOUR, minute=EOD_MINUTE,
                     day_of_week="mon-fri", timezone=EASTERN),
-        id="eod_review", replace_existing=True,
+        id="eod_review", name="eod_review", replace_existing=True,
     )
     sched.add_job(
         lambda: run_daily_disarm(state, clock),
         CronTrigger(hour=DISARM_HOUR, minute=DISARM_MINUTE,
                     day_of_week="mon-fri", timezone=EASTERN),
-        id="daily_disarm", replace_existing=True,
+        id="daily_disarm", name="daily_disarm", replace_existing=True,
     )
     # SEC-11 external-witness cadence: anchor the verified head every 30 min on weekdays so a
     # tail-truncation/replay is caught by the gate + mode oracle. No-op when no store is wired.
     sched.add_job(
         lambda: run_anchor_head(state, clock),
         CronTrigger(minute=ANCHOR_MINUTES, day_of_week="mon-fri", timezone=EASTERN),
-        id="anchor_head", replace_existing=True,
+        id="anchor_head", name="anchor_head", replace_existing=True,
     )
     # RW-01: one job per PROVISIONED ingest poll feed, each on its own cadence. This is the
     # wire that makes ingest/ actually run — before it, build_ingest_fetchers was called by
@@ -211,6 +211,6 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
             # job would poll whichever feed the loop happened to end on.
             lambda f=feed: run_ingest_poll(state, clock, feed=f, runner=ingest),
             CronTrigger(timezone=EASTERN, **cron),
-            id=f"ingest_{feed}", replace_existing=True,
+            id=f"ingest_{feed}", name=f"ingest_{feed}", replace_existing=True,
         )
     return sched

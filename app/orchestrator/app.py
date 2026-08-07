@@ -221,6 +221,38 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
             return _not_wired("/brief/run", "WP8")
         return services["brew"](state, state.clock)
 
+    # ---- ingest (RW-01) ---------------------------------------------------------------
+    @app.post("/ingest/poll")
+    def ingest_poll(feed: str | None = None):
+        """Force one ingest tick without waiting for a feed's scheduler window."""
+        runner = getattr(app.state, "ingest", None)
+        if runner is None:
+            return _not_wired("/ingest/poll", "RW-01")
+        if feed is not None and feed not in runner.polls and feed not in runner.streams:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"no such feed {feed!r}; "
+                    f"provisioned poll feeds: {sorted(runner.polls)}"
+                ),
+            )
+        if feed is None:
+            return {"polled": runner.poll_all()}
+        if feed in runner.polls:
+            return {"polled": {feed: runner.poll(feed)}}
+
+        stream = runner.streams[feed]
+        is_alive = getattr(stream.thread, "is_alive", lambda: False)
+        return {
+            "polled": {
+                feed: {
+                    "feed": feed,
+                    "skipped": "stream_feed_runs_on_its_own_thread",
+                    "alive": bool(is_alive()),
+                }
+            }
+        }
+
     # ---- proposals (WP8 produces; WP6 adjudicates; WP7 executes) ------------------------
     @app.get("/proposals")
     def list_proposals():
