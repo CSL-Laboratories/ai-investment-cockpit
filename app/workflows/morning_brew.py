@@ -22,6 +22,7 @@ from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from core.ids import new_id
 from schemas.models.brief_record import BriefRecord
 from workflows.agent_calls import call_agent
+from workflows.budget import _HARD_EVENT_TYPES
 from workflows.constants import EVENT_BRIEF, EVENT_TRIAGE_BATCH
 from workflows.events import events_in_window
 from workflows.packets import build_packet
@@ -31,6 +32,24 @@ from workflows.scrubber import scrub_output_fields
 # MorningBrief free-text fields the SEC-09 scrubber must cover before store/audit/post.
 PROSE_FIELDS = ("market_regime", "portfolio_changes", "watch_items", "thesis_updates",
                 "risk_flags", "proposed_actions")
+MAX_PACKET_EVENTS = 150
+
+
+def select_for_packet(events, cap: int, holdings_symbols: frozenset[str]) -> list:
+    """Select a deterministic bounded packet while preserving presentation order."""
+    if cap < 1:
+        raise ValueError("Morning Brew packet cap must be positive")
+    if len(events) <= cap:
+        return list(events)
+
+    def rank(event):
+        hard = 0 if event.event_type in _HARD_EVENT_TYPES else 1
+        held = 0 if event.symbol and event.symbol in holdings_symbols else 1
+        ingested = event.ingested_at.timestamp() if event.ingested_at else 0
+        return hard, held, -ingested, event.id
+
+    selected_ids = {event.id for event in sorted(events, key=rank)[:cap]}
+    return [event for event in events if event.id in selected_ids]
 
 
 def _audit_batch(state, *, batch_id: str, window_start: str, window_end: str,
@@ -56,7 +75,8 @@ def _audit_batch(state, *, batch_id: str, window_start: str, window_end: str,
 
 
 def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_root=None,
-                 window_hours: int = 18, holdings_symbols: frozenset[str] = frozenset()) -> dict:
+                 window_hours: int = 18, holdings_symbols: frozenset[str] = frozenset(),
+                 max_packet_events: int = MAX_PACKET_EVENTS) -> dict:
     """Run the pre-market brew. ``deliver`` is ``(channel: str, payload: dict) -> bool``;
     a False/raising deliver marks the brief undelivered but never raises. Returns a
     JSON-native summary dict (also served by POST /brief/run)."""
@@ -80,7 +100,8 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         return {"status": "no_events", "date": date,
                 "window_start": window_start, "window_end": window_end}
 
-    packet = build_packet(events)
+    dispatched = select_for_packet(events, max_packet_events, holdings_symbols)
+    packet = build_packet(dispatched)
     batch_id = new_id("tb")
     dispositions: dict[str, str] = {ev.id: "deferred" for ev in events}
 
@@ -106,7 +127,7 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     if t_result.status != OK:
         return _bail("quarantined", scored=[], degraded=False)
 
-    by_ref = {ev.raw_ref: ev for ev in events}
+    by_ref = {ev.raw_ref: ev for ev in dispatched}
     scored_entries: list[dict] = []
     class_by_event: dict[str, str] = {}
     for item in t_result.validated.get("scored", []):

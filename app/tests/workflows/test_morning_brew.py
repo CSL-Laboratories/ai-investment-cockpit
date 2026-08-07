@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import select
 
 from agent_runner.transport import ProcResult
@@ -192,3 +193,56 @@ def test_failed_delivery_is_reported_never_raised(st, clock, tmp_path):
                           parquet_root=tmp_path / "raw")
     assert result["status"] == "ok" and result["delivered"] is False
     assert len(_rows(st, BriefRecord)) == 1, "the brief is stored even when delivery fails"
+
+
+def test_triage_packet_is_bounded_without_dropping_window_events(st, clock, tmp_path):
+    events = [
+        _mk(f"cap-{index}", "AAPL", f"AAPL headline {index}")
+        for index in range(160)
+    ]
+    persisted = persist_events(st, events, parquet_root=tmp_path / "raw", clock=clock)
+    assert len(persisted.stored) == 160
+
+    transport = FakeTransport([ProcResult(1, "", "Error: usage limit reached", False)])
+    result = morning_brew(st, clock, transport=transport, parquet_root=tmp_path / "raw")
+
+    assert result["status"] == "degraded_watch_only"
+    job = _rows(st, AgentJob)[0]
+    assert len(job.input_refs["raw_refs"]) == 150
+    batch = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload
+    assert len(batch["dispositions"]) == 160
+    assert all(label == "deferred" for label in batch["dispositions"].values())
+
+
+def test_packet_selection_prioritizes_hard_events_and_holdings():
+    from datetime import datetime, timezone
+
+    from workflows.morning_brew import select_for_packet
+
+    class Event:
+        def __init__(self, event_id, event_type, symbol, minute):
+            self.id = event_id
+            self.event_type = event_type
+            self.symbol = symbol
+            self.ingested_at = datetime(2026, 7, 7, 14, minute, tzinfo=timezone.utc)
+
+    events = [
+        Event("ordinary-new", "news", "MSFT", 59),
+        Event("filing-old", "filing", "ZZZZ", 1),
+        Event("holding-old", "news", "AAPL", 2),
+        Event("ordinary-old", "news", "MSFT", 3),
+    ]
+
+    selected = select_for_packet(events, 3, frozenset({"AAPL"}))
+    assert [event.id for event in selected] == [
+        "ordinary-new",
+        "filing-old",
+        "holding-old",
+    ]
+
+
+def test_packet_selection_rejects_a_disabled_cap():
+    from workflows.morning_brew import select_for_packet
+
+    with pytest.raises(ValueError, match="cap must be positive"):
+        select_for_packet([], 0, frozenset())
