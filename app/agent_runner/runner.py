@@ -11,6 +11,7 @@ transport, and enforces the safety envelope:
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 
 import jsonschema
@@ -78,12 +79,29 @@ def _no_nonfinite(_constant):
     raise ValueError(f"non-finite JSON constant {_constant!r}")
 
 
+_FENCE_RE = re.compile(
+    r"\A```[A-Za-z0-9_+-]*[ \t]*\r?\n(?P<body>.*?)\r?\n?```\s*\Z",
+    re.S,
+)
+
+
+def _strip_code_fence(text: str) -> str:
+    """Unwrap only a fence spanning the entire value; leave all other text unchanged."""
+    stripped = (text or "").strip()
+    match = _FENCE_RE.match(stripped)
+    return match.group("body").strip() if match else stripped
+
+
+def _loads(text: str):
+    return json.loads(_strip_code_fence(text), parse_constant=_no_nonfinite)
+
+
 def _decode_json_value(value):
     """Decode a JSON string returned inside a vendor envelope, preserving plain text."""
     if not isinstance(value, str):
         return value
     try:
-        return json.loads(value, parse_constant=_no_nonfinite)
+        return _loads(value)
     except ValueError:
         return value
 
@@ -159,7 +177,7 @@ def _parse_output(stdout: str, runtime: str = "claude", fallback_session_id: str
     if runtime == "codex":
         return _parse_codex_output(s, fallback_session_id=fallback_session_id)
     try:
-        env = json.loads(s, parse_constant=_no_nonfinite)
+        env = _loads(s)
     except ValueError:
         return None, fallback_session_id, None
     session_id, body = fallback_session_id, env
