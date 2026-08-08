@@ -127,6 +127,23 @@ def test_b_mode_without_order_authority_refuses(st, mode):
     assert not out.ok and out.stage == "mode" and broker.calls == 0
 
 
+def test_b_paper_scoped_gateway_allows_paper_but_not_live_modes(st):
+    paper_broker = RecordingBroker()
+    paper_gateway = OrderGateway(paper_broker, st=st, execution_scope="paper")
+    paper = build_scenario(st, broker=paper_broker, gateway=paper_gateway, mode=Mode.paper)
+    out = paper.gateway.submit(paper.order, **paper.submit_kwargs())
+    assert out.ok and paper_broker.calls == 1
+
+    paper.ladder.set_mode(Mode.review_live, actor="op")
+    refused = paper.gateway.submit(paper.order, **paper.submit_kwargs())
+    assert not refused.ok and refused.stage == "mode" and paper_broker.calls == 1
+
+
+def test_b_unknown_execution_scope_is_rejected():
+    with pytest.raises(ValueError, match="execution_scope"):
+        OrderGateway(RecordingBroker(), execution_scope="anything")
+
+
 def test_b_watch_only_refuses(scenario):
     broker = RecordingBroker()
     sc = _fresh(scenario, broker)

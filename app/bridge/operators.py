@@ -1,22 +1,23 @@
 """WP6 — the single-operator allowlist (Inv 1; SEC — approval-actor authentication).
 
-The ONE gate that decides whether a Discord user id may adjudicate a proposal. The set of
-authorized operator ids is OPERATIONAL config, never an LLM-reachable path: it is read from
-``Settings`` (env ``COCKPIT_OPERATOR_IDS`` — comma/space separated — or an injected config
-seam), so no model output can add itself to the allowlist. A foreign/unknown Discord user id
+The ONE gate that decides whether a Discord user id may adjudicate a proposal. The single
+authorized numeric Discord id is OPERATIONAL config, never an LLM-reachable path: it is read from
+``Settings`` (env ``COCKPIT_OPERATOR_IDS`` or an injected config seam), so no model output can add
+itself to the allowlist. A foreign/unknown Discord user id
 is NOT authorized; the approval gateway (``bridge/approval.py``) and the auto-veto path
 (``bridge/veto.py``) both refuse and audit any decision from a non-allowlisted actor.
 
-``COCKPIT_OPERATOR_IDS`` is deliberately read from the environment directly (pydantic-settings
-uses ``extra="ignore"`` so it is not a declared ``Settings`` field): keeping it out of the
-typed settings surface means it can never be mutated by the normal config-write paths and is
-only ever consulted read-only here.
+Production ``Settings`` loads ``COCKPIT_OPERATOR_IDS`` once from environment/``.env`` and exposes
+only an immutable startup snapshot through its ``operator_ids`` property. The direct environment
+read remains the fallback for injected/legacy settings without that snapshot. No normal
+config-write path can replace the frozen authorization set while the process is running.
 """
 from __future__ import annotations
 
 import os
 
 _ENV_KEY = "COCKPIT_OPERATOR_IDS"
+_MISSING = object()
 
 
 def _parse(raw) -> frozenset[str]:
@@ -30,15 +31,30 @@ def _parse(raw) -> frozenset[str]:
     return frozenset(s.strip() for s in items if s and s.strip())
 
 
+def _validated(raw) -> frozenset[str]:
+    """Apply the Settings grammar/bounds to every source; malformed input denies everyone."""
+    from config.settings import normalize_operator_ids
+
+    if isinstance(raw, (set, frozenset, list, tuple)):
+        raw = ",".join(str(value) for value in raw)
+    try:
+        normalized = normalize_operator_ids(raw)
+    except (TypeError, ValueError):
+        return frozenset()
+    return _parse(normalized)
+
+
 def authorized_operator_ids(settings=None) -> frozenset[str]:
-    """The allowlisted Discord operator ids. Precedence: an explicit ``operator_ids`` attr on
-    ``settings`` (the injected config seam, if a deployment carries one) -> the
-    ``COCKPIT_OPERATOR_IDS`` env var. NEVER an LLM-produced field."""
+    """The allowlisted Discord operator ids. Precedence: an immutable/injected
+    ``operator_ids`` seam on settings -> direct ``COCKPIT_OPERATOR_IDS`` environment fallback.
+    NEVER an LLM-produced field."""
     if settings is not None:
-        seam = getattr(settings, "operator_ids", None)
-        if seam:
-            return _parse(seam)
-    return _parse(os.environ.get(_ENV_KEY))
+        seam = getattr(settings, "operator_ids", _MISSING)
+        if seam is not _MISSING:
+            # Presence is authoritative even when empty: a startup deny-all snapshot must never
+            # become permissive because somebody mutates os.environ later in the process.
+            return _validated(seam)
+    return _validated(os.environ.get(_ENV_KEY))
 
 
 def is_authorized(user_id, settings=None) -> bool:

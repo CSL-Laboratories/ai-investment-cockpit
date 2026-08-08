@@ -8,7 +8,8 @@ related: [accounts-and-keys, security-hardening-backlog, security-architecture, 
 
 # Low-privilege decision-agent account
 
-> **Why.** Decision-stage agents (`triage` / `deep`) run as `claude -p` subprocesses. If they run
+> **Why.** Decision-stage agents (`triage` / `deep`) run as `claude -p` or hardened `codex exec`
+> subprocesses. If they run
 > under the same Windows account as the orchestrator, an injected/compromised decision agent can
 > read `~/.codex/auth.json`, the Claude CLI session store, and the keyring — and a harvested bearer
 > places orders with **zero** contact with this app (backlog SEC-05, L201-216). The order path's

@@ -22,9 +22,22 @@ def test_imports_clean(mod):
 
 
 def test_mode_defaults_read_only():
-    from config.settings import Mode, get_settings
+    from config.settings import DecisionRuntime, Mode, get_settings
 
     assert get_settings().mode is Mode.read_only
+    assert get_settings().decision_runtime is DecisionRuntime.claude
+
+
+def test_decision_runtime_accepts_only_supported_providers(monkeypatch):
+    from pydantic import ValidationError
+
+    from config.settings import DecisionRuntime, Settings
+
+    monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "codex")
+    assert Settings().decision_runtime is DecisionRuntime.codex
+    monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "other")
+    with pytest.raises(ValidationError):
+        Settings()
 
 
 def test_api_binds_loopback():
@@ -46,12 +59,17 @@ def test_secret_roundtrip_via_keyring():
     assert get_secret("a_missing_secret_name") is None
 
 
-def test_model_map_pins_claude_on_decision_aliases():
-    from config.models import load_model_map, runtime_for
+def test_model_map_keeps_claude_default_and_declares_codex_decision_overrides():
+    from config.models import cli_model_for, load_model_map, pinned_model_for, runtime_for
 
     m = load_model_map()
     assert {"triage", "deep"} <= set(m)
-    # decision aliases must be Claude (Invariant 2); codex is research-only
+    # The conservative/default auto-compatible mapping stays Claude.
     assert runtime_for("triage") == "claude"
     assert runtime_for("deep") == "claude"
+    # Human-gated read_only/paper workflows may explicitly select Codex for the same roles.
+    assert runtime_for("triage", "codex") == "codex"
+    assert runtime_for("deep", "codex") == "codex"
+    assert cli_model_for("triage", "codex") == "gpt-5.5"
+    assert pinned_model_for("deep", "codex") == "gpt-5.5"
     assert runtime_for("codex") == "codex"

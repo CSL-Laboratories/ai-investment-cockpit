@@ -306,14 +306,30 @@ def test_g5_3_arm_refuses_non_claude_decision_stage_explicit(st):
     assert lad.current() is Mode.review_live           # nothing persisted
 
 
+def test_g5_3_arm_refuses_deployment_configured_for_codex_paper_decisions(st):
+    from config.settings import DecisionRuntime
+
+    lad = ModeLadder(st)
+    _to_review_live(lad)
+    # Simulate changing provider config while a prior Claude deployment left review_live
+    # persisted. Arm-time resolution must still use the current Codex selection and refuse.
+    st.settings.decision_runtime = DecisionRuntime.codex
+    res = lad.arm_auto_mode(
+        Mode.auto_veto, gate_result=_good_gate("auto_veto"), operator="op"
+    )
+    assert not res.armed
+    assert any("not claude" in reason for reason in res.reasons)
+    assert lad.current() is Mode.review_live
+
+
 def test_g5_3_arm_refuses_when_model_map_configures_codex_decision_stage(st, monkeypatch):
     """Simulate a codex-configured decision stage in the model map: the default runtime
     resolver returns codex for 'deep'. arm_auto_mode (default runtimes) must refuse."""
     from orchestrator import mode_ladder as ml
     real = ml.runtime_for
 
-    def fake(alias):
-        return "codex" if alias == "deep" else real(alias)
+    def fake(alias, selected_runtime=None):
+        return "codex" if alias == "deep" else real(alias, selected_runtime)
 
     monkeypatch.setattr(ml, "runtime_for", fake)
     assert "codex" in default_decision_stage_runtimes()   # sanity: the sim took effect
@@ -346,7 +362,19 @@ def test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm(st):
     with pytest.raises(ExecutionRuntimeError):
         lad.assert_execution_runtime(Mode.auto_full, "openai")
     assert_execution_runtime(Mode.auto_full, "claude")  # claude allowed
-    assert_execution_runtime(Mode.review_live, "codex")  # non-auto unaffected
+    with pytest.raises(ExecutionRuntimeError):
+        assert_execution_runtime(Mode.review_live, "codex")  # live remains Claude-only
+
+
+def test_g5_3_codex_configuration_cannot_enter_review_live(st):
+    from config.settings import DecisionRuntime
+
+    st.settings.decision_runtime = DecisionRuntime.codex
+    lad = ModeLadder(st)
+    lad.set_mode(Mode.paper, actor="op")
+    with pytest.raises(IllegalTransition, match="requires COCKPIT_DECISION_RUNTIME=claude"):
+        lad.set_mode(Mode.review_live, actor="op")
+    assert lad.current() is Mode.paper
 
 
 # =======================================================================================

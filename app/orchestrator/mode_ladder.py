@@ -39,6 +39,7 @@ _LADDER: list[Mode] = [
 ]
 _RUNG: dict[Mode, int] = {m: i for i, m in enumerate(_LADDER)}
 _AUTO_MODES: frozenset[Mode] = frozenset({Mode.auto_veto, Mode.auto_full})
+_LIVE_MODES: frozenset[Mode] = frozenset({Mode.review_live, Mode.auto_veto, Mode.auto_full})
 _DECISION_STAGE_ALIASES = ("triage", "deep")
 
 
@@ -47,7 +48,7 @@ class IllegalTransition(Exception):
 
 
 class ExecutionRuntimeError(Exception):
-    """SEC-08 — an auto mode refused a non-Claude producing runtime at execution time."""
+    """SEC-08 — a live/auto mode refused a non-Claude runtime at execution time."""
 
 
 @dataclass
@@ -76,19 +77,30 @@ def legal_transition(src: Mode, dst: Mode) -> bool:
     return False             # equal (0) or skip-up (>=2)
 
 
-def default_decision_stage_runtimes() -> list[str]:
-    """Inv 2: the runtimes of the decision-stage aliases ('triage','deep') — both must be
-    ``claude`` for an auto mode to arm."""
-    return [runtime_for(a) for a in _DECISION_STAGE_ALIASES]
+def default_decision_stage_runtimes(settings=None) -> list[str]:
+    """Resolve decision roles for this deployment.
+
+    The auto gate below still requires both to be Claude. Passing Settings makes a configured
+    Codex paper deployment visibly fail that gate instead of inspecting the legacy YAML default.
+    """
+    from config.models import configured_decision_runtime
+
+    selected = configured_decision_runtime(settings) if settings is not None else None
+    return [
+        runtime_for(a) if selected is None else runtime_for(a, selected)
+        for a in _DECISION_STAGE_ALIASES
+    ]
 
 
 def assert_execution_runtime(mode, producing_runtime: str) -> None:
-    """SEC-08 — the future WP7 ``OrderGateway`` calls this immediately before an auto-submit
-    (not only at arm time). REFUSES (raises) when an auto mode would execute an order whose
-    producing job runtime is not Claude (Inv 2)."""
-    if _as_mode(mode) in _AUTO_MODES and producing_runtime != "claude":
+    """SEC-08 — refuse non-Claude provenance at every live broker submit.
+
+    Codex parity is intentionally paper-only. This final submit-time backstop means a persisted
+    review-live mode or stale proposal cannot turn the provider switch into live access.
+    """
+    if _as_mode(mode) in _LIVE_MODES and producing_runtime != "claude":
         raise ExecutionRuntimeError(
-            f"auto mode refuses non-claude execution runtime {producing_runtime!r} "
+            f"live/auto mode refuses non-claude execution runtime {producing_runtime!r} "
             "(SEC-08 / Inv 2)"
         )
 
@@ -198,6 +210,15 @@ class ModeLadder:
                 return src                                   # idempotent no-op
             if target in _AUTO_MODES:
                 raise IllegalTransition(f"enter {target.value} via arm_auto_mode, not set_mode")
+            if target is Mode.review_live:
+                from config.models import configured_decision_runtime
+
+                runtime = configured_decision_runtime(self.st.settings)
+                if runtime != "claude":
+                    raise IllegalTransition(
+                        "review_live requires COCKPIT_DECISION_RUNTIME=claude; "
+                        f"configured runtime is {runtime!r}"
+                    )
             if not legal_transition(src, target):
                 raise IllegalTransition(f"{src.value} -> {target.value} is not a legal ladder move")
             self._persist(src, target, "manual", actor, reason or "manual mode change", clock)
@@ -239,7 +260,7 @@ class ModeLadder:
                 if gt not in (target.value, target):
                     reasons.append(f"performance gate target {gt!r} != requested {target.value}")
 
-            runtimes = (default_decision_stage_runtimes()
+            runtimes = (default_decision_stage_runtimes(self.st.settings)
                         if decision_stage_runtimes is None else list(decision_stage_runtimes))
             non_claude = sorted({r for r in runtimes if r != "claude"})
             if non_claude:
@@ -250,7 +271,7 @@ class ModeLadder:
             # so a wiring that made a decision job tool-bearing is caught at ARM time, not first run.
             from agent_runner import tool_inspector
             specs = (decision_stage_specs if decision_stage_specs is not None
-                     else tool_inspector.default_decision_stage_specs())
+                     else tool_inspector.default_decision_stage_specs(self.st.settings))
             try:
                 tool_inspector.assert_all_decision_specs_tool_starved(specs)
             except tool_inspector.ToolStarvationError as exc:

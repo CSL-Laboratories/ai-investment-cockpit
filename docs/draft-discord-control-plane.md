@@ -121,7 +121,7 @@ quote freshness, and buttons:
 | `/mode set <mode>` | Move on the autonomy ladder (gate-checked) |
 | `/killswitch` | Global kill, instant |
 | `/brief now` | Force a brew run |
-| `/watchlist add\|remove\|list` | Manage triage universe |
+| `/watchlist add\|remove\|list` | **Deferred (W18).** Current paper operation uses restart-only `COCKPIT_WATCHLIST`; no runtime/agent mutation route exists. |
 | `/limits set <key> <value>` | Risk + budget knobs |
 | `/triage threshold <0-100>` | Escalation sensitivity |
 | `/status` | Usage windows, mode, breakers, positions |
@@ -188,8 +188,10 @@ Modes (stored server-side; Discord is just the lever):
 
 **Design consequence:** `auto_veto`/`auto_full` **pin the decision path to Claude
 runtimes** (the orchestrator refuses auto modes if any decision-stage job is
-configured for Codex/OpenAI). Codex stays on research/coding in all modes. In
-`review_live`, either vendor may propose since a human reviews.
+configured for Codex/OpenAI). Codex may run the same schema-gated analysis and
+proposal jobs as Claude in `read_only` and human-approved `paper`, using its hardened
+tool-free profile. `review_live` and every live/auto rung remain outside that Codex
+boundary until a separate pre-live review changes it.
 
 So the real value of the human layer, ordered: (1) capital protection while the
 strategy is unproven, (2) OpenAI-policy compliance if their models ever sit on the

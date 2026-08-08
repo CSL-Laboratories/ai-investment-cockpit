@@ -30,7 +30,7 @@ from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolved relative to app/ (this file's parent's parent), so the cockpit finds the same file
@@ -66,6 +66,61 @@ _SECRETISH_ALLOWED = frozenset({
     "COCKPIT_ALERTS_CHANNEL_ID", "COCKPIT_PROPOSALS_CHANNEL_ID",
     "COCKPIT_SYSTEM_CHANNEL_ID",
 })
+
+# Static operator-configured paper universe.  This is intentionally conservative: a bounded
+# list keeps one bad config value from widening the deterministic risk allowlist or exploding
+# the intraday prompt.  Symbols are normalized before Settings is exposed to any workflow.
+_WATCHLIST_SYMBOL = re.compile(r"^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$")
+_WATCHLIST_MAX_SYMBOLS = 25
+_WATCHLIST_MAX_RAW_CHARS = 512
+_WATCHLIST_MAX_SYMBOL_CHARS = 10
+_OPERATOR_IDS_MAX_RAW_CHARS = 512
+_OPERATOR_IDS_MAX_ENTRIES = 1
+_OPERATOR_ID = re.compile(r"^\d{15,22}$")
+
+
+def normalize_watchlist(raw: str | None) -> str:
+    """Validate and canonicalize a comma/whitespace-separated public-equity watchlist.
+
+    The result remains a non-secret Settings string for durable ``.env`` compatibility.  Callers
+    consume :attr:`Settings.watchlist_symbols`, never the raw text.  No model/runtime mutation
+    surface exists: changing this value requires an operator config edit plus restart.
+    """
+    if raw is None or not str(raw).strip():
+        return ""
+    text = str(raw)
+    if len(text) > _WATCHLIST_MAX_RAW_CHARS:
+        raise ValueError(f"watchlist text may contain at most {_WATCHLIST_MAX_RAW_CHARS} characters")
+    tokens = [token.strip().upper() for token in re.split(r"[\s,]+", text) if token.strip()]
+    if len(tokens) > _WATCHLIST_MAX_SYMBOLS:
+        raise ValueError(f"watchlist may contain at most {_WATCHLIST_MAX_SYMBOLS} entries")
+    ordered = list(dict.fromkeys(tokens))
+    invalid = [
+        symbol for symbol in ordered
+        if len(symbol) > _WATCHLIST_MAX_SYMBOL_CHARS or not _WATCHLIST_SYMBOL.fullmatch(symbol)
+    ]
+    if invalid:
+        raise ValueError(f"invalid watchlist symbol(s): {', '.join(invalid)}")
+    return ",".join(ordered)
+
+
+def normalize_operator_ids(raw: str | None) -> str:
+    """Validate the one numeric Discord snowflake without exposing a mutation seam."""
+    if raw is None or not str(raw).strip():
+        return ""
+    text = str(raw)
+    if len(text) > _OPERATOR_IDS_MAX_RAW_CHARS:
+        raise ValueError(
+            f"operator IDs may contain at most {_OPERATOR_IDS_MAX_RAW_CHARS} characters"
+        )
+    tokens = [token.strip() for token in re.split(r"[\s,]+", text) if token.strip()]
+    if len(tokens) > _OPERATOR_IDS_MAX_ENTRIES:
+        raise ValueError("operator allowlist may contain exactly one Discord ID at most")
+    ordered = list(dict.fromkeys(tokens))
+    invalid = [token for token in ordered if not _OPERATOR_ID.fullmatch(token)]
+    if invalid:
+        raise ValueError(f"invalid operator ID(s): {', '.join(invalid)}")
+    return ",".join(ordered)
 
 
 def _iter_env_file(path: Path):
@@ -125,6 +180,18 @@ class Mode(str, Enum):
     auto_full = "auto_full"
 
 
+class DecisionRuntime(str, Enum):
+    """Provider used for human-gated analysis and proposal jobs.
+
+    This is deliberately narrower than the autonomy ladder: selecting a provider does not
+    grant it broker tools or make it eligible for live/auto execution.  The latter remains a
+    separate, hard-coded policy in ``orchestrator.mode_ladder``.
+    """
+
+    claude = "claude"
+    codex = "codex"
+
+
 class Settings(BaseSettings):
     # env_file is the DURABLE half of the config; a real environment variable still WINS over
     # the file (pydantic-settings precedence), so an operator can override one value for one
@@ -134,6 +201,7 @@ class Settings(BaseSettings):
         env_prefix="COCKPIT_", extra="ignore",
         env_file=str(ENV_FILE), env_file_encoding="utf-8",
     )
+    _operator_ids_frozen: frozenset[str] = PrivateAttr(default_factory=frozenset)
 
     @model_validator(mode="before")
     @classmethod
@@ -171,6 +239,48 @@ class Settings(BaseSettings):
     # Triage escalation sensitivity 0-100 (docs/draft-discord-control-plane /triage threshold).
     triage_threshold: int = Field(default=60, ge=0, le=100)
 
+    # Static, operator-approved public-equity universe.  This is read-only at runtime and is
+    # threaded into both triage relevance and the deterministic symbol allowlist.  Decision
+    # models receive the resulting set but have no API/tool that can widen it.
+    # Env: COCKPIT_WATCHLIST=MSFT,AAPL,...
+    watchlist: str = ""
+
+    @field_validator("watchlist", mode="before")
+    @classmethod
+    def _validate_watchlist(cls, value):
+        return normalize_watchlist(value)
+
+    @property
+    def watchlist_symbols(self) -> frozenset[str]:
+        return frozenset(self.watchlist.split(",")) if self.watchlist else frozenset()
+
+    # Approval authority is loaded once at startup from the dedicated non-secret env name and
+    # frozen into a private set.  ``operator_ids_config`` is excluded from dumps/repr; changing
+    # that raw field later cannot change the authorization seam consumed by bridge.operators.
+    operator_ids_config: str = Field(
+        default="",
+        validation_alias=AliasChoices("COCKPIT_OPERATOR_IDS", "operator_ids_config"),
+        exclude=True,
+        repr=False,
+    )
+
+    @field_validator("operator_ids_config", mode="before")
+    @classmethod
+    def _validate_operator_ids(cls, value):
+        return normalize_operator_ids(value)
+
+    def model_post_init(self, __context) -> None:
+        del __context
+        frozen = (
+            frozenset(self.operator_ids_config.split(","))
+            if self.operator_ids_config else frozenset()
+        )
+        object.__setattr__(self, "_operator_ids_frozen", frozen)
+
+    @property
+    def operator_ids(self) -> frozenset[str]:
+        return self._operator_ids_frozen
+
     # ---- order-path knobs (WP6/WP7) ---------------------------------------------------
     # A live order at/above this notional needs the operator's modal double-confirm (SEC-15;
     # bridge/approval.py). Env: COCKPIT_MODAL_CONFIRM_NOTIONAL.
@@ -183,6 +293,12 @@ class Settings(BaseSettings):
     approval_ttl_seconds: int = Field(default=900, ge=0)
 
     # ---- SEC-05/06 decision-agent starvation (W11) ------------------------------------
+    # Provider for triage, deep proposal, grounding, briefing, and fresh-interrogation jobs.
+    # Both providers share schema validation -> repair once -> quarantine. Codex additionally
+    # runs under the hardened tool-free/read-only/ephemeral CLI profile in agent_runner/runner.py.
+    # This switch is valid only for read_only/paper human-gated work; it cannot relax the
+    # Claude-only auto/live runtime pin. Env: COCKPIT_DECISION_RUNTIME.
+    decision_runtime: DecisionRuntime = DecisionRuntime.claude
     # The separate LOW-PRIVILEGE Windows account decision-stage subprocesses run under. When set,
     # main.compose() FAILS CLOSED unless that account provably cannot read the bearer stores
     # (agent_runner/account_guard.py; docs/setup/low-priv-agent-account.md). None => dev, the

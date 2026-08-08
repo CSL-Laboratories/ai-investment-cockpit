@@ -2,9 +2,8 @@
 
 ``AlpacaPaperBroker`` is the concrete broker seam the ``OrderGateway`` holds PRIVATELY. Its
 HTTP client is INJECTABLE (``client=`` in ``__init__``); the default is a small in-process
-``FakeAlpaca`` simulator so unit tests need no network and no credentials. The live adapter
-would swap in an ``alpaca-py`` REST client behind the same ``submit_order`` /
-``get_account`` / ``get_positions`` surface — this file never opens a socket.
+``FakeAlpaca`` simulator so unit tests need no network and no credentials. Production injects
+``AlpacaPaperHTTPClient``, a deliberately small client pinned to Alpaca's PAPER hostname.
 
 ``submit_order(canonical_tuple)`` accepts ONLY the canonical resolved-order tuple from
 ``brokers.order_tuple`` (the gateway computes it), so the adapter can never be handed an
@@ -14,13 +13,180 @@ an ``OrchestratorState`` is supplied they persist it through the audited state-c
 """
 from __future__ import annotations
 
-from decimal import Decimal
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import httpx
 
 from core.clock import default_clock
 from core.ids import new_id
 from schemas.models.portfolio_snapshot import PortfolioSnapshot
 
 EVENT_PORTFOLIO_SNAPSHOT = "portfolio_snapshot"
+PAPER_BASE_URL = "https://paper-api.alpaca.markets"
+DATA_BASE_URL = "https://data.alpaca.markets"
+
+
+class AlpacaPaperError(RuntimeError):
+    """A sanitized Alpaca paper-API failure. Credentials and response bodies stay private."""
+
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 request_id: str | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = request_id
+
+
+def _decimal_text(value: Any) -> str:
+    """JSON-safe decimal text without float conversion."""
+    try:
+        return str(value if isinstance(value, Decimal) else Decimal(str(value)))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise AlpacaPaperError("invalid numeric value in paper order") from exc
+
+
+class AlpacaPaperHTTPClient:
+    """Minimal synchronous client for Alpaca's fixed PAPER trading endpoint.
+
+    The base URL is intentionally not configurable: accepting an environment-provided URL here
+    could silently redirect a paper-mode process to Alpaca live trading or to an attacker host.
+    ``http_client`` is injectable only for hermetic tests; production constructs the default
+    ``httpx.Client`` and sends credentials solely in request headers.
+    """
+
+    def __init__(self, key_id: str, secret_key: str, *, http_client=None,
+                 timeout_seconds: float = 10.0, clock=None) -> None:
+        if not str(key_id).strip() or not str(secret_key).strip():
+            raise AlpacaPaperError("both Alpaca paper credentials are required")
+        self._headers = {
+            "APCA-API-KEY-ID": str(key_id).strip(),
+            "APCA-API-SECRET-KEY": str(secret_key).strip(),
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        self._client = http_client or httpx.Client(timeout=timeout_seconds)
+        self._owns_client = http_client is None
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return "AlpacaPaperHTTPClient(base_url='https://paper-api.alpaca.markets')"
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def _request(self, method: str, base_url: str, path: str, *, json=None, params=None):
+        try:
+            response = self._client.request(
+                method,
+                f"{base_url}{path}",
+                headers=self._headers,
+                json=json,
+                params=params,
+            )
+        except httpx.HTTPError as exc:
+            raise AlpacaPaperError("Alpaca paper API network failure") from exc
+        request_id = response.headers.get("X-Request-ID")
+        if response.status_code >= 400:
+            raise AlpacaPaperError(
+                f"Alpaca paper API rejected the request (HTTP {response.status_code})",
+                status_code=response.status_code,
+                request_id=request_id,
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise AlpacaPaperError(
+                "Alpaca paper API returned invalid JSON",
+                status_code=response.status_code,
+                request_id=request_id,
+            ) from exc
+
+    def submit_order(self, canonical: dict) -> dict:
+        payload = {
+            "symbol": canonical["symbol"],
+            "qty": _decimal_text(canonical["qty"]),
+            "side": canonical["side"],
+            "type": canonical["order_type"],
+            "time_in_force": canonical["tif"],
+        }
+        if canonical.get("limit_price") is not None:
+            payload["limit_price"] = _decimal_text(canonical["limit_price"])
+        # Generated by OrderGateway from the durable local order id. Alpaca enforces uniqueness,
+        # providing a broker-side replay backstop without changing the approved tuple hash.
+        if canonical.get("client_order_id"):
+            payload["client_order_id"] = str(canonical["client_order_id"])[:128]
+        body = self._request("POST", PAPER_BASE_URL, "/v2/orders", json=payload)
+        broker_order_id = body.get("id")
+        if not broker_order_id:
+            raise AlpacaPaperError("Alpaca paper order response omitted its order id")
+        return {
+            "broker_order_id": str(broker_order_id),
+            "status": str(body.get("status") or "accepted"),
+            "filled_qty": Decimal(str(body.get("filled_qty") or "0")),
+            "avg_fill_price": (
+                None if body.get("filled_avg_price") is None
+                else Decimal(str(body["filled_avg_price"]))
+            ),
+        }
+
+    def account_info(self) -> dict:
+        body = self._request("GET", PAPER_BASE_URL, "/v2/account")
+        return {
+            # Do not persist/log Alpaca's account number or account UUID.
+            "account": "alpaca-paper",
+            "cash": body.get("cash", "0"),
+            "buying_power": body.get("buying_power", "0"),
+            "exposure": body.get("long_market_value", "0"),
+            "holdings": [],
+            "open_orders": [],
+        }
+
+    def positions_info(self) -> list:
+        rows = self._request("GET", PAPER_BASE_URL, "/v2/positions")
+        if not isinstance(rows, list):
+            raise AlpacaPaperError("Alpaca paper positions response was not a list")
+        return [
+            {
+                "symbol": str(row.get("symbol", "")).upper(),
+                "qty": row.get("qty", "0"),
+                "market_value": row.get("market_value", "0"),
+                "avg_entry_price": row.get("avg_entry_price"),
+                "side": row.get("side"),
+            }
+            for row in rows
+            if row.get("symbol")
+        ]
+
+    def latest_quote(self, symbol: str) -> dict:
+        clean = str(symbol).strip().upper()
+        if not clean or not clean.replace(".", "").replace("-", "").isalnum():
+            raise AlpacaPaperError("invalid equity symbol for quote request")
+        body = self._request(
+            "GET", DATA_BASE_URL, f"/v2/stocks/{clean}/quotes/latest", params={"feed": "iex"}
+        )
+        quote = body.get("quote") or {}
+        bid = Decimal(str(quote.get("bp") or "0"))
+        ask = Decimal(str(quote.get("ap") or "0"))
+        positive = [p for p in (bid, ask) if p > 0]
+        if not positive:
+            raise AlpacaPaperError("Alpaca latest quote had no positive bid or ask")
+        price = sum(positive, Decimal("0")) / Decimal(len(positive))
+        spread_pct = Decimal("0")
+        if bid > 0 and ask > 0 and ask >= bid:
+            spread_pct = ((ask - bid) / price) * Decimal("100")
+        ts = quote.get("t")
+        age_s = float("inf")
+        if ts:
+            try:
+                parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                age_s = max(0.0, (self._clock() - parsed).total_seconds())
+            except (TypeError, ValueError):
+                pass
+        return {"price": price, "age_s": age_s, "spread_pct": spread_pct, "ts": ts}
 
 
 class FakeAlpaca:

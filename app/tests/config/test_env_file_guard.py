@@ -190,6 +190,62 @@ def test_settings_load_from_an_env_file(tmp_path, monkeypatch):
     assert s.log_level == "DEBUG"
 
 
+def test_operator_watchlist_is_normalized_deduplicated_and_durable(tmp_path, monkeypatch):
+    env = write_env(
+        tmp_path,
+        "COCKPIT_WATCHLIST=intc, AAPL spcx,googl,WDC,aapl\n",
+    )
+    monkeypatch.delenv("COCKPIT_WATCHLIST", raising=False)
+    s = Settings(_env_file=str(env))
+    assert s.watchlist == "INTC,AAPL,SPCX,GOOGL,WDC"
+    assert s.watchlist_symbols == frozenset({"INTC", "AAPL", "SPCX", "GOOGL", "WDC"})
+
+
+def test_operator_allowlist_loads_from_env_file_and_is_frozen_at_startup(tmp_path, monkeypatch):
+    synthetic_id = "123456789012345678"
+    env = write_env(tmp_path, f"COCKPIT_OPERATOR_IDS={synthetic_id}\n")
+    monkeypatch.delenv("COCKPIT_OPERATOR_IDS", raising=False)
+    s = Settings(_env_file=str(env))
+    assert s.operator_ids == frozenset({synthetic_id})
+    assert "operator_ids_config" not in s.model_dump()
+
+    # Reassigning the raw pydantic field cannot alter the private authorization snapshot.
+    s.operator_ids_config = "999999999999999999"
+    assert s.operator_ids == frozenset({synthetic_id})
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "bad operator!",
+        "123456789012345678,234567890123456789",
+        "x" * 513,
+    ],
+)
+def test_operator_allowlist_fails_closed_on_malformed_or_unbounded_config(raw):
+    with pytest.raises(Exception) as exc:
+        Settings(operator_ids_config=raw)
+    assert "operator" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "AAPL,$SPY",
+        "AAPL;MSFT",
+        "A-",
+        "A..B",
+        ",".join(f"S{i}" for i in range(26)),
+        ",".join(["AAPL"] * 26),
+        "A" * 513,
+    ],
+)
+def test_operator_watchlist_fails_closed_on_bad_or_unbounded_input(raw):
+    with pytest.raises(Exception) as exc:
+        Settings(watchlist=raw)
+    assert "watchlist" in str(exc.value)
+
+
 def test_a_real_environment_variable_overrides_the_file(tmp_path, monkeypatch):
     """Precedence matters for a one-off run: env WINS, so nobody has to edit a file to
     override a single value for a single invocation."""

@@ -58,6 +58,16 @@ def codex_spec(**kw):
     return AgentSpec(**base)
 
 
+def codex_decision_spec(**kw):
+    base = dict(
+        job_id="j-codex-decision", runtime="codex", model_alias="triage",
+        prompt="classify this", schema=SCHEMA, schema_path="/schemas/TriageResult.schema.json",
+        decision_stage=True, allowed_tools=[],
+    )
+    base.update(kw)
+    return AgentSpec(**base)
+
+
 def spec(**kw):
     base = dict(job_id="j1", runtime="claude", model_alias="triage", prompt="classify this",
                 schema=SCHEMA, decision_stage=True)
@@ -194,10 +204,31 @@ def test_codex_failed_event_fails_closed():
     assert u.window("codex").state == "degraded"
 
 
-def test_codex_decision_stage_rejected():
-    # SEC-06 / Inv 2: codex may never run a decision-stage job
-    with pytest.raises(ValueError, match="Inv2"):
-        build_argv(spec(runtime="codex", model_alias="codex", decision_stage=True))
+def test_codex_decision_stage_uses_hardened_tool_free_ephemeral_profile():
+    argv = build_argv(codex_decision_spec())
+    assert argv[:4] == ["codex", "exec", "--sandbox", "read-only"]
+    assert {"--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config"} <= set(argv)
+    assert argv[argv.index("-c") + 1] == 'web_search="disabled"'
+    assert argv[argv.index("--output-schema") + 1].endswith("TriageResult.schema.json")
+    assert argv[-2:] == ["--json", "-"]
+
+
+def test_codex_decision_jsonl_happy_path():
+    t = FakeTransport([codex_envelope(VALID_BODY)])
+    r = run_agent(codex_decision_spec(), transport=t, usage=UsageTracker())
+    assert r.status == OK and r.validated == VALID_BODY
+
+
+def test_codex_decision_repair_is_fresh_and_ephemeral():
+    bad = codex_envelope({"classification": "nope", "score": 70})
+    good = codex_envelope(VALID_BODY, thread_id="thread-2")
+    t = FakeTransport([bad, good])
+    r = run_agent(codex_decision_spec(), transport=t, usage=UsageTracker())
+    assert r.status == OK and r.repaired is True
+    assert len(t.calls) == 2
+    for call in t.calls:
+        assert "--ephemeral" in call["argv"]
+        assert "resume" not in call["argv"]
 
 
 def test_decision_job_requires_schema():

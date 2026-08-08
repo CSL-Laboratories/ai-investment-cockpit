@@ -55,7 +55,7 @@ load-bearing claim below is cited to a verified fact or marked **[est.]**.
 2. No LLM call executes inside `risk/` (Inv 5). Risk is deterministic pure
    functions over typed inputs.
 3. No LLM output enters the pipeline before JSON-Schema validation (Inv 3).
-4. Auto modes (`auto_veto`/`auto_full`) refuse to arm if any decision-stage job
+4. Live/auto modes (`review_live`/`auto_veto`/`auto_full`) refuse execution if any decision-stage job
    runs on a non-Claude runtime (Inv 2 — OpenAI's own policy bars automating
    high-stakes financial decisions without human review; [[research-supplement]] §3).
 5. Live mode is off by default (`read_only`), re-arms daily, and drops on any
@@ -134,7 +134,7 @@ execution problem.
 | **L2 — Deterministic risk engine** | O1/O2: no LLM authority over eligibility | Inv 5 | `risk/` is pure functions; a test asserts **no LLM/subprocess import** under `risk/`; property test: no input yields an approved decision with a failed hard check (WP4) |
 | **L3 — Schema-gated LLM output** | Internal buggy/hallucinated output; injection payloads | Inv 3 | `jsonschema` validate → one repair attempt → quarantine + `needs_human_review`. Mocked-subprocess tests for malformed/repair/quarantine (WP1b) |
 | **L4 — Human/approval gate** | O2: the safety layer the platform does **not** provide | Inv 1 | Robinhood does **not** enforce approval — verified ([[research-report]] §2); the gate is hard-coded in `approval-center`, not prompt-based. `ApprovalRecord` written before any live submit |
-| **L5 — Mode ladder + performance gate + Claude-runtime pin** | O2: premature or non-compliant automation | Inv 2 | Mode state machine rejects illegal transitions; gate calculator evaluates from stored proposals/approvals; auto modes **refuse to arm** with a Codex-configured decision stage (WP5) |
+| **L5 — Mode ladder + performance gate + live/auto Claude-runtime pin** | O2: premature or non-compliant automation | Inv 2 | Mode state machine rejects illegal transitions; gate calculator evaluates from stored proposals/approvals; Codex may analyze and draft in human-gated `read_only`/`paper`, while live/auto modes **refuse to arm** with a Codex-configured decision stage (WP5 + CXP-05a) |
 | **L6 — Deterministic circuit breakers** | O5: runaway loss / degraded inputs | Inv 5, 7 | Five breakers — loss limit, N consecutive losses, schema-failure spike, stale data, broker-error spike — **auto-drop to `review_live`** + `#system` ping. (Usage-window exhaustion is handled separately by L8 → **watch-only**, not `review_live`; and a synchronous **injection/anomaly breaker** is required — [[security-hardening-backlog]] SEC-01.) Deliberate breaker-trip test (WP9) |
 | **L7 — Global kill switch** | O2/O5: instant containment | Inv 1 | `POST /killswitch`: cancel unapproved proposals, disable order path, disarm auto modes, and **disconnect the MCP** (this last is an explicit **extension to the WP5 `/killswitch` contract** in [[draft-discord-control-plane]] — noted so the two stay in sync). An in-process handler cannot preempt a wedged loop, so it is backed by an **out-of-band HALT sentinel** the order gateway checks before every submit ([[security-hardening-backlog]] SEC-04). |
 | **L8 — Usage-window degradation** | O5: never trade on stale analysis | Inv 7 | **Watch-only** = order path disabled, no new trades, events queued + expired (never dropped, never `review_live`). Fail-closed trigger: any limit-hit **or** any empty/truncated/timed-out/non-schema-valid decision response trips it (not only a known limit-error string). A monotonic `usage_window_generation` stamps every analysis so the submit path refuses anything produced before exhaustion; recovery is fail-closed to `review_live` (never a silent auto re-arm). [[security-hardening-backlog]] SEC-23. Mid-loop limit-hit test (WP9) |
@@ -162,7 +162,7 @@ source, `models.yaml`, prompts, logs, or Discord (Inv 4).
 | Process | Secrets it holds | Rationale |
 |---|---|---|
 | Orchestrator / bridge (WP0 `core/secrets.py`) | Loads broker/data/bot creds from keyring **at start** | Single trusted loader; holds the outbound connections |
-| `claude -p` / `codex exec` agents | **None** | Agents never receive credentials **and never hold an MCP connection**. The `brokers/` layer owns the single Robinhood MCP session and performs *all* MCP reads and the gated order path; portfolio/quote data reaches a model only as a pre-fetched, `<untrusted-content>`-wrapped input packet ([[prompt-injection-defense]] §4/§9). The decision-stage agent runs `--allowedTools none` and cannot call MCP. Prompts never carry keys ([[cockpit-review-and-integrated-plan]] §1). |
+| `claude -p` / `codex exec` agents | **None** | Agents never receive credentials **and never hold an MCP connection**. The `brokers/` layer owns the broker session and performs all reads/submits through the gated order path; portfolio/quote data reaches a model only as a pre-fetched, `<untrusted-content>`-wrapped packet ([[prompt-injection-defense]] §4/§9). Claude uses `--allowedTools none`; Codex decision jobs ignore user config/rules, run ephemeral/read-only, explicitly disable shell/web/apps/browser/computer/MCP features, and are argv-inspected before spawn. Prompts never carry keys ([[cockpit-review-and-integrated-plan]] §1). |
 
 This is the concrete meaning of "the LLM has no order authority" at the secrets
 layer: the model literally never holds anything that could authenticate an order
@@ -217,14 +217,16 @@ silent malicious republish. Review new/transitive deps before adding; prefer the
 small settled stack (FastAPI, discord.py, APScheduler, SQLAlchemy, DuckDB,
 `jsonschema`, `keyring`) over breadth.
 
-**Minimal tool grants per agent.** Every `claude -p` call passes an explicit,
-minimal `--allowedTools` list; `codex exec` uses its own sandbox/approval mechanism
-(there is no `--allowedTools` flag on Codex — configure the equivalent minimal
-sandbox). **The trading/decision agent needs an *empty* set** — no filesystem
-read/write, no shell, no network ([[cockpit-review-and-integrated-plan]] §1). A test
-inspects the *actual constructed subprocess arg list* and fails if any read/shell/
-network tool is present (capability starvation, not just filesystem-write sandboxing)
-— [[security-hardening-backlog]] SEC-06.
+**Minimal tool grants per agent.** Every `claude -p` decision call passes
+`--allowedTools none`. Codex has no equivalent single flag, so decision calls use
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--sandbox read-only`, an
+explicitly disabled web-search config, and a deny list covering shell, apps, browser,
+computer use, skills/plugins, MCP elicitation, and multi-agent execution. **The
+trading/decision agent needs an empty capability set** — no filesystem read/write,
+shell, network, or MCP ([[cockpit-review-and-integrated-plan]] §1). A test inspects the
+actual subprocess argv and fails if any required denial disappears (capability
+starvation, not merely filesystem-write sandboxing) —
+[[security-hardening-backlog]] SEC-06.
 
 **Pinned working directory + sandbox.** Build/run agents get a pinned working
 directory. The decision-stage agent operates on stored input packets, not free
@@ -400,9 +402,10 @@ marked **(blocker)**.
 11. **Injection canary.** Cross-reference [[prompt-injection-defense]] — a seeded
     canary instruction in the news stream must be detected and must never yield an
     executable proposal (§3, §11).
-12. **Auto-mode arming guard (blocker).** Auto modes refuse to arm below the
-    performance gate **or** with any decision-stage job on a non-Claude runtime
-    (Inv 2, §4 L5).
+12. **Live/auto runtime guard (blocker).** `review_live` refuses Codex
+    configuration, and auto modes refuse to arm below the performance gate **or**
+    with any decision-stage job on a non-Claude runtime (Inv 2, §4 L5). The
+    gateway repeats the provenance pin immediately before every live submit.
 
 ---
 

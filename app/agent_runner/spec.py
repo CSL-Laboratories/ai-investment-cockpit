@@ -11,6 +11,7 @@ class AgentSpec:
     model_alias: str                   # "triage" | "deep" | "codex"
     prompt: str
     schema: dict | None = None         # jsonschema the output must satisfy (Inv 3)
+    schema_path: str | None = None     # optional CLI structured-output contract (still revalidated)
     max_turns: int = 6
     allowed_tools: list[str] = field(default_factory=list)
     timeout_s: float = 120.0

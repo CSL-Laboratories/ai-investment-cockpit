@@ -60,8 +60,12 @@ assert {
     BYPASS_RESUBMIT_AFTER_DENIED,
 } <= BYPASS_EVENTS
 
-# Modes with LIVE order authority (paper is simulated; read_only has none).
-_ORDER_AUTHORITY_MODES = frozenset({"review_live", "auto_veto", "auto_full"})
+# Broker-specific authority sets. A paper transport must never be reachable from a live mode,
+# and a live transport must never become reachable merely because the operator selected paper.
+_ORDER_AUTHORITY_BY_SCOPE = {
+    "paper": frozenset({"paper"}),
+    "live": frozenset({"review_live", "auto_veto", "auto_full"}),
+}
 _AUTO_MODES = frozenset({"auto_veto", "auto_full"})
 
 # Defaults for the SEC-07 pending-exposure cap and approval time-to-live (Settings/limits
@@ -117,6 +121,7 @@ class OrderGateway:
         token_registry: TokenRegistry | None = None,
         pending_exposure_cap: Decimal | None = None,
         approval_ttl_seconds: int | None = None,
+        execution_scope: str = "live",
     ) -> None:
         # SEC-03: broker + registry are PRIVATE instance state — never module globals, never
         # dispatched by string name. ``st`` (the TRUST ROOT — the HMAC-signed audit chain + its DB)
@@ -129,6 +134,10 @@ class OrderGateway:
         self._registry = token_registry or TokenRegistry()
         self._cap_override = pending_exposure_cap
         self._ttl_override = approval_ttl_seconds
+        if execution_scope not in _ORDER_AUTHORITY_BY_SCOPE:
+            raise ValueError(f"unknown broker execution_scope {execution_scope!r}")
+        self._execution_scope = execution_scope
+        self._allowed_modes = _ORDER_AUTHORITY_BY_SCOPE[execution_scope]
 
     def _resolve_state(self, ladder):
         """Return the pinned TRUST ROOT for gate (e). The signed audit chain is the order authority;
@@ -330,8 +339,12 @@ class OrderGateway:
             return ("mode", None, "vendor usage window is watch-only; order path disabled")
         mode = ladder.current()
         mode_v = mode.value if hasattr(mode, "value") else str(mode)
-        if mode_v not in _ORDER_AUTHORITY_MODES:
-            return ("mode", None, f"mode {mode_v!r} has no live order authority")
+        if mode_v not in self._allowed_modes:
+            return (
+                "mode",
+                None,
+                f"mode {mode_v!r} cannot use {self._execution_scope!r} broker transport",
+            )
 
         # (c) SEC-01 synchronous injection/anomaly breaker.
         if breaker_engine.check_order_path(context=order) is not None:
@@ -669,7 +682,12 @@ class OrderGateway:
                                      actor=producing_runtime)
                 return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
             # The private broker call (SEC-03: never a module global / string dispatch).
-            result = self._broker.submit_order(canonical)
+            # ``client_order_id`` is a broker-side idempotency backstop derived from the durable
+            # local order id. It is transport metadata, deliberately outside the operator-approved
+            # canonical tuple/hash, and cannot change symbol/side/size/price/TIF.
+            broker_request = dict(canonical)
+            broker_request["client_order_id"] = f"cockpit-{order.id}"[:128]
+            result = self._broker.submit_order(broker_request)
             # Result AFTER the broker call — the two-phase pair keyed on the intent seq.
             st.audit.result(
                 intent, "order_submit",

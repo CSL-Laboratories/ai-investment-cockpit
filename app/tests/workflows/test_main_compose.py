@@ -52,6 +52,60 @@ def test_compose_builds_state_app_and_services(tmp_path):
     assert state.audit.verify_chain().ok
 
 
+def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway(
+    tmp_path, monkeypatch
+):
+    from brokers.alpaca_paper import FakeAlpaca
+    import workflows.services as service_module
+
+    class PaperClient(FakeAlpaca):
+        def latest_quote(self, _symbol):
+            return {"price": "150", "age_s": 0, "spread_pct": "0.1"}
+
+    captured = {}
+
+    def capture_triage(_state, _clock, **kwargs):
+        captured["watchlist"] = kwargs["watchlist"]
+        return {"status": "captured"}
+
+    monkeypatch.setattr(service_module, "triage_loop", capture_triage)
+    monkeypatch.setenv("COCKPIT_WATCHLIST", "INTC,AAPL,SPCX,GOOGL,WDC")
+    state, app, services = compose(
+        db_url=f"sqlite:///{(tmp_path / 'paper.db').as_posix()}",
+        parquet_root=str(tmp_path / "raw-paper"),
+        paper_client=PaperClient(),
+    )
+    assert app.state.paper is not None
+    assert app.state.paper.account()["account"] == "alpaca-paper"
+    expected = frozenset({"INTC", "AAPL", "SPCX", "GOOGL", "WDC"})
+    assert app.state.paper._watchlist() == expected  # noqa: SLF001 - composition contract
+    assert app.state.watchlist == expected
+
+    # Reassigning the legacy-mutable Settings object cannot widen the frozen production set.
+    state.settings.watchlist = "NVDA"
+    services["intraday"](state, state.clock)
+    assert captured["watchlist"] == expected
+    assert app.state.paper._watchlist() == expected  # noqa: SLF001
+    assert app.state.watchlist == expected
+
+    # Fresh deterministic risk consumes that same set: an in-universe symbol passes the
+    # allowlist check, while the attempted post-compose widening remains rejected.
+    def proposal(symbol):
+        return {
+            "proposal_id": f"p-{symbol}", "symbol": symbol, "side": "buy",
+            "asset_type": "equity", "quantity": "1", "notional": "150",
+            "order_type": "limit", "sizing_basis": "capped",
+        }
+
+    inside, _ = app.state.paper._fresh_risk(proposal("INTC"), "INTC")  # noqa: SLF001
+    outside, _ = app.state.paper._fresh_risk(proposal("NVDA"), "NVDA")  # noqa: SLF001
+    inside_checks = {row["name"]: row["passed"] for row in inside["checks"]}
+    outside_checks = {row["name"]: row["passed"] for row in outside["checks"]}
+    assert inside_checks["symbol_allowlist"] is True
+    assert outside_checks["symbol_allowlist"] is False
+    assert state.audit.verify_chain().ok
+
+
 def test_compose_wires_durable_git_witness_not_file_anchor(tmp_path, monkeypatch):
     """SEC-11 (W10, hardened by the G10 red-team): compose() wires a NON-NULL
     GitAuditLogAnchorStore (NEVER FileAnchorStore). In the default (Discord-deferred) deployment
@@ -136,7 +190,9 @@ def test_compose_fails_closed_when_a_decision_job_is_not_tool_starved(tmp_path, 
 
     tool_bearing = AgentSpec(job_id="triage", runtime="claude", model_alias="triage", prompt="",
                              schema={}, allowed_tools=["Bash"], decision_stage=True)
-    monkeypatch.setattr(tool_inspector, "default_decision_stage_specs", lambda: [tool_bearing])
+    monkeypatch.setattr(
+        tool_inspector, "default_decision_stage_specs", lambda _settings=None: [tool_bearing]
+    )
     with pytest.raises(tool_inspector.ToolStarvationError):
         compose(db_url=f"sqlite:///{(tmp_path / 'ts.db').as_posix()}",
                 parquet_root=str(tmp_path / "raw"))

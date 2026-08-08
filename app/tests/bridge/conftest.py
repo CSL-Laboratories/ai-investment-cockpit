@@ -18,8 +18,8 @@ from schemas.models.risk_decision import RiskDecision
 from storage.engine import create_all, make_engine, make_session_factory
 
 KEY = b"wp6-unit-key"
-OPERATOR = "operator-1"
-FOREIGN = "stranger-9"
+OPERATOR = "123456789012345678"
+FOREIGN = "234567890123456789"
 NOW = datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)
 
 

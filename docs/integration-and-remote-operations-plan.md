@@ -45,16 +45,17 @@ Treat these as separate authentication and billing paths:
 
 | Path | Meaning | Plan |
 |---|---|---|
-| **Codex CLI signed in with ChatGPT** | Subscription-backed Codex usage through `codex exec` | Supported now for research, coding, and maintenance only |
+| **Codex CLI signed in with ChatGPT** | Subscription-backed Codex usage through `codex exec` | Supported for research/maintenance and the same schema-gated analysis/proposal roles as Claude in human-gated `read_only`/`paper` |
 | **OpenAI API** | Usage-based API access through an API key and an API adapter | Optional future provider; not implied by a ChatGPT subscription |
 
-The current Claude/Codex split remains correct: Claude is the only allowed decision-stage runtime in auto modes; Codex stays outside the decision/order path. A provider abstraction must not turn that rule into a configurable bypass.
+Claude remains the only allowed decision-stage runtime in `review_live`/auto modes. Codex may be selected for human-gated `read_only`/`paper` analysis and proposal drafting, but stays outside risk and broker capabilities. A provider switch must not turn that distinction into a configurable live/auto bypass.
 
 ### 1.3 Multiple MCPs belong on an isolated research plane
 
 The current runner rejects MCP flags for every cockpit-spawned agent. Relaxing that globally would violate the security architecture. Instead, add a second, explicit job class:
 
-- **Decision jobs:** Claude-pinned, schema-required, tool-starved, MCP-free.
+- **Human-gated decision jobs:** Claude- or Codex-selectable, schema-required, tool-starved, MCP-free; Codex uses ignored config/rules, ephemeral read-only execution, and explicit feature denials.
+- **Live/auto decision jobs:** Claude-pinned in addition to the same schema/tool/MCP controls.
 - **Research jobs:** provider-selectable, read-only by default, isolated by agent profile, and granted only an allowlisted MCP profile.
 - **Broker MCP:** owned by `brokers/` and reachable only through the existing risk → mode → approval/veto → `OrderGateway` path. A model never receives broker credentials or direct order tools.
 
@@ -95,7 +96,7 @@ The FastAPI service stays loopback-only. SSH is key-only, restricted to a dedica
 | Surface abstraction | Workflows already emit logical channels | `bridge/` is still Discord-specific; RW-02 is not complete |
 | Identity | Discord IDs are checked against one allowlist | No canonical principal, roles, Telegram/CLI identities, conversation membership, or account scope |
 | Claude | `claude -p`, JSON output, resume, model aliases, schema validation | Runtime capabilities are implicit and provider-specific |
-| OpenAI | `codex exec` JSONL parsing and resume exist | This is Codex/ChatGPT-plan support, not a generic OpenAI API adapter |
+| OpenAI | `codex exec` JSONL parsing, provider-aware triage/deep aliases, structured-output hints, and human-gated paper parity exist | This is Codex/ChatGPT-plan support, not a generic OpenAI API adapter; the full adapter/capability probe remains |
 | MCP | `tool_inspector.py` rejects MCP on spawned agents | No separately isolated research-agent/MCP plane |
 | Secrets | One keyring service with redacted access | No credential profiles, ownership, scope metadata, or per-worker vault isolation |
 | Low-privilege agents | ACL guard and transport contract exist | The production spawn-under-account launcher is not implemented |
@@ -241,20 +242,27 @@ Each package is one reviewable change with tests. Anything that changes approval
 
 ### CXP-05 — AI provider and runtime conformance
 
+**Status (2026-08-07): CXP-05a complete.** `COCKPIT_DECISION_RUNTIME=claude|codex`
+selects all briefing/triage/grounding/proposal/fresh-interrogation roles. Codex is
+hardened and argv-inspected, both providers share the validation/repair/quarantine
+pipeline, paper execution requires the currently selected runtime, and auto arming
+still rejects Codex. The `ProviderAdapter` refactor and startup capability/version
+record below remain as CXP-05b.
+
 **Scope**
 
 - Refactor the two branches in `agent_runner/runner.py` behind `ProviderAdapter` implementations for Claude CLI and Codex CLI.
 - Separate `provider`, `runtime`, `auth_mode`, `model_alias`, and exact `model_pin` in configuration/audit lineage.
 - Add startup feature probes for non-interactive mode, structured output, session resume, sandbox/tool controls, timeouts, and usage metadata.
 - Preserve one shared schema-validate → repair once → quarantine pipeline above the adapters.
-- Keep auto-arm enforcement expressed as a role policy: decision profiles must resolve to the approved Claude provider and be tool/MCP-starved.
+- Keep live/auto enforcement expressed as a role policy: those profiles must resolve to the approved Claude provider and be tool/MCP-starved. Human-gated `read_only`/`paper` profiles may resolve to Codex only through its hardened capability-denial profile.
 
 **Gate**
 
 - A provider conformance suite runs the same fake start/resume/timeout/malformed/limit fixtures against both adapters.
 - A live smoke records exact CLI version, auth mode, model pin, and supported capabilities without exposing credentials.
 - ChatGPT-plan Codex and API-key OpenAI are reported as different auth/billing modes.
-- No provider configuration can make a non-Claude profile a decision stage or put a model on the order path.
+- No provider configuration can make a non-Claude profile eligible for live/auto or put any model directly on the broker/risk/order path.
 
 ### CXP-06 — Future provider spikes: OpenAI API, OpenRouter, and OpenCode
 

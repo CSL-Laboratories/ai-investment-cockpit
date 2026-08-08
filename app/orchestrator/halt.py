@@ -129,7 +129,11 @@ def halt_is_set(path: Path | str) -> bool:
     except FileNotFoundError as e:
         # True not-found ONLY: POSIX ENOENT, or Windows winerror 2. Every other Windows winerror
         # (a dropped/not-ready/bad-netpath mount collapsed onto errno 2) fails CLOSED (SET).
-        return os.name == "nt" and getattr(e, "winerror", 2) != 2
+        # Inspect the exception rather than ``os.name`` so the Windows error family can be
+        # simulated faithfully in cross-platform safety tests. Native POSIX ENOENT has no
+        # ``winerror`` attribute and remains a definitive absence.
+        winerror = getattr(e, "winerror", None)
+        return winerror is not None and winerror != 2
     except ValueError:
         # A NUL byte in the path -> os.stat raises ValueError, which neither the FileNotFoundError
         # nor the OSError branch would catch. Fail closed.

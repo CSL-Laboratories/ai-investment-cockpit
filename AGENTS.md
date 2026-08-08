@@ -6,14 +6,19 @@ copilot. It is paper-first: no live capital moves until the pre-live gates in
 
 ## Codex boundary
 
-- Use Codex for repository maintenance and explicit research/coding jobs.
-- Do not put Codex, another model runtime, or an MCP server on the risk or
-  order path.
-- Codex research jobs use `codex exec --sandbox read-only`; prompts are passed
-  over standard input, never on the command line.
-- The current architecture deliberately keeps Codex out of decision-stage and
-  auto-trading jobs. Do not change that boundary without an explicitly scoped,
-  adversarially reviewed safety redesign.
+- Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
+  grounding, proposal drafting, and fresh interrogation) in `read_only` and
+  human-approved `paper` mode.
+- Do not put either model runtime or an MCP server inside `app/risk/`, give a
+  model broker credentials/tools, or add a direct route from a model to
+  `OrderGateway`.
+- Codex decision jobs use the hardened profile in `app/agent_runner/runner.py`:
+  prompt over standard input, read-only sandbox, ephemeral session, ignored
+  user config/rules, and shell/web/apps/browser/computer/MCP capabilities
+  disabled. The actual argv is inspected before spawn.
+- `review_live`, `auto_veto`, and `auto_full` remain outside the Codex decision
+  boundary. Do not relax that pin without a separately scoped, adversarially
+  reviewed safety redesign and the pre-live gates.
 
 ## Invariants
 

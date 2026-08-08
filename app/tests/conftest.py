@@ -30,3 +30,15 @@ def _in_memory_keyring():
     keyring.set_keyring(InMemoryKeyring())
     yield
     keyring.set_keyring(prev)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_audit_head(tmp_path, monkeypatch):
+    """Never let a test anchor its temporary DB into the operator's runtime head file.
+
+    ``audit_head_file`` is relative to the process cwd by default. The suite also runs from
+    ``app/``, so composed scheduler tests previously advanced ``app/data/audit-head.json`` with
+    temporary chains, making the real DB correctly fail closed with ``AnchorRewind``. Give every
+    test its own witness mirror; tests that need a specific path may still override this env value.
+    """
+    monkeypatch.setenv("COCKPIT_AUDIT_HEAD_FILE", str(tmp_path / "audit-head.json"))

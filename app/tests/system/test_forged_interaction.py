@@ -61,7 +61,7 @@ from bridge.approval import EVENT_UNAUTHORIZED, Rejection, record_decision
 
 from tests.system.harness import approved_risk_recheck
 
-OPERATOR = "lucas"        # the genuine, allowlisted operator (positive control + idempotency)
+OPERATOR = "123456789012345678"  # genuine allowlisted Discord operator (positive control)
 INTRUDER = "mallory"      # a foreign Discord user id that is NOT on the allowlist
 
 

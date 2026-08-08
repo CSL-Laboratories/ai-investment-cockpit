@@ -18,12 +18,18 @@ from __future__ import annotations
 from agent_runner.result import LIMIT_HIT, NEEDS_HUMAN, OK, TIMEOUT
 from agent_runner.runner import run_agent
 from agent_runner.spec import AgentSpec
-from config.models import load_model_map, runtime_for
+from config.models import (
+    configured_decision_runtime,
+    pinned_model_for,
+    runtime_allowed_for_mode,
+    runtime_for,
+)
 from core.ids import new_id
 from orchestrator.breakers import BreakerEngine
+from orchestrator.mode_ladder import ModeLadder
 from schemas.models.agent_job import AgentJob
 from workflows.constants import EVENT_AGENT_JOB
-from workflows.schema_loader import load_schema
+from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
 _STATUS_MAP = {OK: "done", NEEDS_HUMAN: "quarantined"}
@@ -39,7 +45,14 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     guarded by the PRE-CALL watch-only state, because the runner itself already trips the
     usage window before we observe the result. Callers must inspect ``result.status`` and
     degrade (defer events, never drop them — Inv 7)."""
-    runtime = runtime_for(alias)
+    selected_runtime = configured_decision_runtime(state.settings)
+    runtime = runtime_for(alias, selected_runtime)
+    mode = ModeLadder(state).current()
+    if not runtime_allowed_for_mode(runtime, mode):
+        raise RuntimeError(
+            f"decision runtime {runtime!r} is not allowed in mode {mode.value!r}; "
+            "Codex is limited to human-gated read_only/paper work"
+        )
     engine = BreakerEngine(state)
     was_watch_only = engine.is_watch_only(runtime)
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
@@ -52,6 +65,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         model_alias=alias,
         prompt=prompt,
         schema=load_schema(schema_name),
+        schema_path=schema_path(schema_name),
         max_turns=max_turns,
         allowed_tools=[],            # SEC-06: decision stages are tool-starved
         timeout_s=timeout_s,
@@ -69,7 +83,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
 
     refs = dict(input_refs or {})
     refs["_generation"] = generation
-    pinned = load_model_map().get(alias, {}).get("pinned") or alias
+    pinned = pinned_model_for(alias, runtime)
     job_status = _STATUS_MAP.get(result.status, "failed")
     job = AgentJob(
         id=job_id,

@@ -399,7 +399,11 @@ def test_halt_probe_fails_closed_on_winerror_not_file_not_found(st, monkeypatch)
         # ERROR_PATH_NOT_FOUND(3) — the sentinel's mount transiently dropped; os.stat collapses it
         # onto FileNotFoundError(errno 2) with winerror 3. Only the sentinel path faults.
         if str(p) == str(target):
-            raise FileNotFoundError(2, "dropped network/removable/subst mount", str(target), 3)
+            error = FileNotFoundError(2, "dropped network/removable/subst mount", str(target))
+            # POSIX ignores the Windows-only fourth constructor argument, so set the attribute
+            # explicitly to keep this Windows deployment-path simulation portable on macOS/Linux.
+            error.winerror = 3
+            raise error
         return real_stat(p, *a, **k)
 
     monkeypatch.setattr(os, "stat", _stat_dropped_mount)

@@ -77,7 +77,7 @@ def _latest_snapshot(state) -> PortfolioSnapshot | None:
     return snap
 
 
-def _build_risk_context(state, *, quote, watchlist: frozenset[str]) -> RiskContext:
+def build_risk_context(state, *, quote, watchlist: frozenset[str]) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
     (absent -> zeros -> risk fails conservatively) + the injected quote (None ->
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
@@ -206,7 +206,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
 
     # ---- deterministic risk gate (Invariant 5: evaluate() only) --------------------------
     quote = quote_fn(str(proposal.get("symbol", "")).upper()) if quote_fn is not None else None
-    ctx = _build_risk_context(state, quote=quote, watchlist=watchlist)
+    ctx = build_risk_context(state, quote=quote, watchlist=watchlist)
     rd = evaluate(proposal, ctx)
     now = clock.now()
     rd_row = RiskDecision(

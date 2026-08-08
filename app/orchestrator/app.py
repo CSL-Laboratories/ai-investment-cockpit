@@ -15,8 +15,9 @@ passing); ``GET /proposals`` reads persisted ``ProposalRecord`` rows. The audite
 reader was EXTRACTED to ``orchestrator/limits.py`` (SEC-15); thin aliases below keep this
 module's public surface unchanged. ``POST /automations`` stays 501 (SEC-19 deferred).
 
-CRITICAL (Invariant 1): NO handler places an order or imports ``brokers/``. The order path
-is unreachable from the API surface; the CI call-site gate must stay green.
+CRITICAL (Invariant 1): handlers never call a broker order method. The optional paper endpoints
+delegate to a composed service in ``brokers/`` whose only dispatch is the existing guarded
+``OrderGateway``; the CI call-site gate remains the mechanical backstop.
 """
 from __future__ import annotations
 
@@ -119,6 +120,13 @@ class DecisionRequest(BaseModel):
     reason: str | None = None
 
 
+class PaperDecisionRequest(BaseModel):
+    actor: str
+    decision: Literal["approve", "reject"]
+    request_id: str
+    confirm_symbol: str | None = None
+
+
 def _not_wired(endpoint: str, wp: str) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -137,7 +145,8 @@ def _mode_view(ladder: ModeLadder) -> dict:
 
 
 def create_app(state, *, auth: ApiKeyAuth | None = None,
-               services: dict | None = None, ingest=None) -> FastAPI:
+               services: dict | None = None, ingest=None, paper=None,
+               watchlist=None) -> FastAPI:
     """Build the FastAPI app bound to an ``OrchestratorState``. ``auth`` is injectable for
     tests; production defaults to the keyring-backed key guard (every route requires it).
     ``services`` is the WP8 workflow registry ({"brew","intraday","eod"}); when absent the
@@ -149,6 +158,14 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
     app.state.orch = state
     app.state.services = services
     app.state.ingest = ingest
+    app.state.paper = paper
+    # Freeze once at composition. Settings remains mutable for a few legacy/test seams, so reading
+    # it per request would make the claimed restart-only allowlist silently runtime-mutable.
+    configured_watchlist = frozenset(
+        watchlist if watchlist is not None
+        else getattr(state.settings, "watchlist_symbols", frozenset())
+    )
+    app.state.watchlist = configured_watchlist
 
     # ---- jobs (execution: WP6) ---------------------------------------------------------
     @app.post("/jobs", status_code=status.HTTP_202_ACCEPTED)
@@ -274,6 +291,55 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
     @app.post("/proposals/{proposal_id}/decision")
     def decide_proposal(proposal_id: str, body: DecisionRequest):
         return _not_wired(f"/proposals/{proposal_id}/decision", "WP6")
+
+    # ---- Alpaca Paper Trading (human-gated; never a direct broker call) ----------------
+    @app.get("/paper/account")
+    def paper_account():
+        if paper is None:
+            return _not_wired("/paper/account", "paper transport")
+        try:
+            return paper.account()
+        except Exception as exc:  # noqa: BLE001 - sanitize vendor failures at the API boundary
+            raise HTTPException(status_code=503, detail="Alpaca paper account unavailable") from exc
+
+    @app.get("/watchlist")
+    def watchlist():
+        """Read the static operator-approved universe; there is deliberately no write route."""
+        symbols = sorted(configured_watchlist)
+        return {
+            "symbols": symbols,
+            "count": len(symbols),
+            "source": "operator_config",
+            "runtime_mutable": False,
+        }
+
+    @app.get("/paper/orders/{order_id}/preview")
+    def paper_order_preview(order_id: str):
+        if paper is None:
+            return _not_wired(f"/paper/orders/{order_id}/preview", "paper transport")
+        try:
+            return paper.preview(order_id)
+        except Exception as exc:  # noqa: BLE001 - service errors are mapped without vendor text
+            code = int(getattr(exc, "status_code", 409))
+            detail = str(getattr(exc, "message", "paper order preview refused"))
+            raise HTTPException(status_code=code, detail=detail) from exc
+
+    @app.post("/paper/orders/{order_id}/decision")
+    def paper_order_decision(order_id: str, body: PaperDecisionRequest):
+        if paper is None:
+            return _not_wired(f"/paper/orders/{order_id}/decision", "paper transport")
+        try:
+            return paper.decide(
+                order_id,
+                actor=body.actor,
+                decision=body.decision,
+                confirm_symbol=body.confirm_symbol,
+                request_id=body.request_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed and avoid raw broker bodies
+            code = int(getattr(exc, "status_code", 409))
+            detail = str(getattr(exc, "message", "paper order decision refused"))
+            raise HTTPException(status_code=code, detail=detail) from exc
 
     # ---- mode (ladder + arm guard) -----------------------------------------------------
     @app.get("/mode")

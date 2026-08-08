@@ -9,12 +9,15 @@ SQLite, FakeTransport (no real subprocesses).
 """
 from __future__ import annotations
 
+import json
+
+import pytest
 from sqlalchemy import select
 
 from agent_runner.result import LIMIT_HIT, NEEDS_HUMAN, OK
 from agent_runner.transport import ProcResult
 from config.models import load_model_map
-from config.settings import Mode
+from config.settings import DecisionRuntime, Mode
 from orchestrator.breakers import BreakerEngine
 from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_WATCH_ONLY
@@ -26,6 +29,18 @@ from workflows.constants import EVENT_AGENT_JOB
 
 VALID = {"question": "q?", "answer": "grounded answer", "pattern": "fresh",
          "session_id": None, "generated_at": NOW.isoformat()}
+
+
+def _codex_envelope(body, thread_id="thread-codex"):
+    events = [
+        {"type": "thread.started", "thread_id": thread_id},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {
+            "id": "item-1", "type": "agent_message", "text": json.dumps(body),
+        }},
+        {"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}},
+    ]
+    return ProcResult(0, "\n".join(json.dumps(event) for event in events), "", False)
 
 
 def _call(st, transport, **kw):
@@ -72,6 +87,36 @@ def test_ok_persists_provenance_job(st):
     assert len(covered) == 1
     assert covered[0].refs["row_id"] == row.id                         # Inv 6 coverage
     assert covered[0].payload["status"] == "done"
+
+
+def test_codex_selected_runtime_runs_same_job_and_records_codex_pin(st):
+    st.settings.decision_runtime = DecisionRuntime.codex
+    t = FakeTransport([_codex_envelope(VALID)])
+    result, job = _call(st, t)
+
+    assert result.status == OK and result.validated == VALID
+    assert job.runtime == "codex"
+    assert job.model == "triage"
+    assert job.model_pinned == "gpt-5.5"
+    argv = t.calls[0]["argv"]
+    assert "--ephemeral" in argv and "--ignore-user-config" in argv
+    assert argv[argv.index("--output-schema") + 1].endswith("InterrogationAnswer.schema.json")
+
+
+def test_codex_selected_runtime_refuses_live_mode_before_spawn(st):
+    st.settings.decision_runtime = DecisionRuntime.codex
+    ladder = ModeLadder(st)
+    ladder.set_mode(Mode.paper, actor="op")
+    # Simulate a persisted live rung from a previous Claude-configured process. The workflow
+    # policy still refuses Codex before the transport is touched; the gateway repeats this pin.
+    st.settings.decision_runtime = DecisionRuntime.claude
+    ladder.set_mode(Mode.review_live, actor="op")
+    st.settings.decision_runtime = DecisionRuntime.codex
+
+    t = FakeTransport([])
+    with pytest.raises(RuntimeError, match="not allowed"):
+        _call(st, t)
+    assert t.calls == []
 
 
 def test_argv_is_tool_starved_and_never_resumes(st):

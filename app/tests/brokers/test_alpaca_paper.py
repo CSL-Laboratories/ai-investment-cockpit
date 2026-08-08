@@ -3,11 +3,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import os
 
+import httpx
 import pytest
 from sqlalchemy import select
 
-from brokers.alpaca_paper import AlpacaPaperBroker, FakeAlpaca
+from brokers.alpaca_paper import (
+    AlpacaPaperBroker,
+    AlpacaPaperError,
+    AlpacaPaperHTTPClient,
+    FakeAlpaca,
+)
 from brokers.order_tuple import canonical_order_tuple
 from config.settings import Settings
 from core.clock import FrozenClock
@@ -68,3 +75,98 @@ def test_get_positions_populates_holdings(st):
     broker = AlpacaPaperBroker(client=fake)
     snap = broker.get_positions(st=st, clock=CLK)
     assert snap.holdings == [{"symbol": "AAPL", "qty": "5"}]
+
+
+def _http_client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _credentials():
+    # Generated at runtime so no credential-shaped literal enters the source tree.
+    return os.urandom(8).hex(), os.urandom(16).hex()
+
+
+def test_http_client_posts_only_to_paper_endpoint_and_normalizes_ack():
+    seen = {}
+
+    def handler(request):
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"id": "paper-order-1", "status": "accepted", "filled_qty": "0",
+                  "filled_avg_price": None},
+        )
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    result = client.submit_order({
+        "symbol": "AAPL", "side": "buy", "qty": "1", "order_type": "limit",
+        "limit_price": "150.25", "tif": "day", "client_order_id": "cockpit-ord-1",
+    })
+
+    request = seen["request"]
+    assert str(request.url) == "https://paper-api.alpaca.markets/v2/orders"
+    assert request.headers["APCA-API-KEY-ID"] == key_id
+    assert request.headers["APCA-API-SECRET-KEY"] == secret_key
+    assert request.read()
+    assert result == {
+        "broker_order_id": "paper-order-1", "status": "accepted",
+        "filled_qty": Decimal("0"), "avg_fill_price": None,
+    }
+    assert key_id not in repr(client) and secret_key not in repr(client)
+
+
+def test_http_client_account_positions_and_quote_are_sanitized():
+    now = CLK.now()
+
+    def handler(request):
+        if request.url.path == "/v2/account":
+            return httpx.Response(200, json={
+                "id": "private-account-id", "account_number": "private-number",
+                "cash": "100000", "buying_power": "200000", "long_market_value": "500",
+            })
+        if request.url.path == "/v2/positions":
+            return httpx.Response(200, json=[{
+                "symbol": "aapl", "qty": "2", "market_value": "500",
+                "avg_entry_price": "200", "side": "long",
+            }])
+        if request.url.path == "/v2/stocks/AAPL/quotes/latest":
+            return httpx.Response(200, json={
+                "quote": {"bp": "199", "ap": "201", "t": now.isoformat()}
+            })
+        return httpx.Response(404)
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    account = client.account_info()
+    positions = client.positions_info()
+    quote = client.latest_quote("aapl")
+
+    assert account["account"] == "alpaca-paper"
+    assert "private-account-id" not in str(account) and "private-number" not in str(account)
+    assert positions == [{
+        "symbol": "AAPL", "qty": "2", "market_value": "500",
+        "avg_entry_price": "200", "side": "long",
+    }]
+    assert quote["price"] == Decimal("200")
+    assert quote["spread_pct"] == Decimal("1")
+    assert quote["age_s"] == 0
+
+
+def test_http_client_rejects_without_leaking_response_body():
+    marker = "do-not-echo-private-body"
+
+    def handler(_request):
+        return httpx.Response(403, headers={"X-Request-ID": "req-1"},
+                              json={"message": marker})
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(key_id, secret_key, http_client=_http_client(handler))
+    with pytest.raises(AlpacaPaperError) as exc:
+        client.account_info()
+    assert exc.value.status_code == 403 and exc.value.request_id == "req-1"
+    assert marker not in str(exc.value)

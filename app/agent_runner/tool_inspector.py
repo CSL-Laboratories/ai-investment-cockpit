@@ -16,6 +16,7 @@ builder, an injected flag — is caught HERE, on the bytes that will actually la
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 # Any MCP flag turns a tool-starved decision agent into one holding a live capability (the very
 # thing SEC-03/P-B forbids on the decision path). Matched case-insensitively as a whole token,
@@ -35,10 +36,87 @@ _PERMISSION_LOOSENERS = {"--dangerously-skip-permissions", "--permission-mode",
 # The empty/sentinel values ``build_argv`` emits for a tool-starved agent (``--allowedTools none``).
 _EMPTY_TOOL_SENTINELS = {"", "none", "[]"}
 
+# A Codex decision job is allowed only through this exact capability-denial profile. The feature
+# names come from ``codex features list`` and are emitted centrally by runner.build_argv.
+_CODEX_REQUIRED_FLAGS = {
+    "--ignore-user-config", "--ignore-rules", "--ephemeral", "--strict-config", "--json",
+}
+_CODEX_FORBIDDEN_FLAGS = {
+    "--enable", "--profile", "-p", "--image", "-i", "--add-dir", "--oss",
+    "--local-provider", "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust", "--output-last-message", "-o",
+}
+
 
 class ToolStarvationError(Exception):
     """A decision-stage agent's actual argv (or cwd) violates the SEC-06 deny-by-default
     tool/MCP starvation. Raised to FAIL CLOSED — the job must not run; an auto mode must not arm."""
+
+
+def _flag_value(tokens: list[str], *names: str) -> str | None:
+    for i, tok in enumerate(tokens):
+        flag, sep, inline = tok.partition("=")
+        if flag.lower() not in names:
+            continue
+        if sep:
+            return inline
+        return tokens[i + 1] if i + 1 < len(tokens) else None
+    return None
+
+
+def _inspect_codex_decision_argv(tokens: list[str]) -> None:
+    """Prove the Codex argv is tool/MCP/egress-starved, not merely read-only.
+
+    Codex loads user plugins, MCPs and feature configuration by default. Therefore a read-only
+    sandbox alone is insufficient: it stops writes but could still permit reads/egress. This
+    inspector requires the builder's ignored-config + disabled-feature profile byte-for-byte.
+    """
+    from agent_runner.runner import CODEX_DECISION_DISABLED_FEATURES
+
+    low_tokens = [t.lower() for t in tokens]
+    if len(tokens) < 3 or Path(tokens[0]).name.lower() != "codex" or tokens[1] != "exec":
+        raise ToolStarvationError("Codex decision argv must start with `codex exec` (SEC-06)")
+    missing = sorted(flag for flag in _CODEX_REQUIRED_FLAGS if flag not in low_tokens)
+    if missing:
+        raise ToolStarvationError(f"Codex decision argv is missing required safety flags {missing}")
+    if tokens[-1] != "-":
+        raise ToolStarvationError("Codex decision prompt must be read from stdin (`-`), not argv")
+    if "resume" in low_tokens:
+        raise ToolStarvationError("Codex decision jobs must be ephemeral and cannot resume")
+    sandbox = _flag_value(tokens, "--sandbox", "-s")
+    if sandbox != "read-only":
+        raise ToolStarvationError(
+            f"Codex decision sandbox must be read-only, got {sandbox!r} (SEC-06)"
+        )
+    for tok in tokens:
+        flag = tok.lower().split("=", 1)[0]
+        if flag in _CODEX_FORBIDDEN_FLAGS:
+            raise ToolStarvationError(
+                f"Codex decision argv contains capability-granting flag {tok!r} (SEC-06)"
+            )
+
+    # The only config override allowed is the exact deny value for built-in web search.
+    config_values: list[str] = []
+    for i, tok in enumerate(tokens):
+        flag, sep, inline = tok.partition("=")
+        if flag.lower() not in {"-c", "--config"}:
+            continue
+        config_values.append(inline if sep else (tokens[i + 1] if i + 1 < len(tokens) else ""))
+    if config_values != ['web_search="disabled"']:
+        raise ToolStarvationError(
+            "Codex decision argv must carry only `-c web_search=\"disabled\"` (SEC-06)"
+        )
+
+    disabled = {
+        tokens[i + 1]
+        for i, tok in enumerate(tokens[:-1])
+        if tok.lower() == "--disable"
+    }
+    missing_features = sorted(set(CODEX_DECISION_DISABLED_FEATURES) - disabled)
+    if missing_features:
+        raise ToolStarvationError(
+            f"Codex decision argv leaves capability features enabled: {missing_features}"
+        )
 
 
 def _tool_entries(value: str) -> list[str]:
@@ -53,6 +131,8 @@ def inspect_argv(argv, *, decision_stage: bool = True) -> None:
     non-decision argv (e.g. a codex research job in its own read-only sandbox) is not tool-starved
     here, but an MCP attachment is refused on ANY cockpit-spawned agent."""
     tokens = [str(t) for t in argv]
+    if decision_stage and tokens and Path(tokens[0]).name.lower() == "codex":
+        _inspect_codex_decision_argv(tokens)
     for i, tok in enumerate(tokens):
         low = tok.lower()
         flag = low.split("=", 1)[0]
@@ -91,17 +171,20 @@ def assert_decision_cwd(cwd, *, pinned_cwd) -> None:
         )
 
 
-def default_decision_stage_specs():
+def default_decision_stage_specs(settings=None):
     """Representative specs for the canonical decision-stage aliases (triage, deep) — the argv the
     deployment WOULD launch. ``arm_auto_mode`` inspects these when the caller passes no explicit
     specs, so a wiring that made a decision alias non-Claude (Inv 2) or tool-bearing (SEC-06) is
     caught at arm time, not at first run."""
     from agent_runner.spec import AgentSpec
-    from config.models import runtime_for
+    from config.models import configured_decision_runtime, runtime_for
 
     aliases = ("triage", "deep")
+    selected = configured_decision_runtime(settings) if settings is not None else None
     return [
-        AgentSpec(job_id=f"arm-check:{a}", runtime=runtime_for(a), model_alias=a, prompt="",
+        AgentSpec(job_id=f"arm-check:{a}",
+                  runtime=(runtime_for(a) if selected is None else runtime_for(a, selected)),
+                  model_alias=a, prompt="",
                   schema={}, allowed_tools=[], decision_stage=True)
         for a in aliases
     ]

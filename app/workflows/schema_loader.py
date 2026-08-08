@@ -24,3 +24,15 @@ def load_schema(name: str) -> dict:
     """
     path = _SCHEMA_DIR / f"{name}.schema.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def schema_path(name: str) -> str:
+    """Return the repository path for a schema after proving it exists.
+
+    Codex can consume this as ``--output-schema``. The runner still validates the returned JSON
+    itself; the CLI constraint is defense in depth, never the trust boundary.
+    """
+    path = _SCHEMA_DIR / f"{name}.schema.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"unknown schema {name!r}: {path}")
+    return str(path)

@@ -61,13 +61,18 @@ def test_eod_review_without_drawdown_fn_records_nothing(st, clock):
 
 def test_holdings_and_watchlist_fns_are_reevaluated_per_tick(st, clock):
     """The reconciled sets move intraday; the closures must consult the fns each run."""
-    calls = {"holdings": 0}
+    calls = {"holdings": 0, "watchlist": 0}
 
     def holdings_fn():
         calls["holdings"] += 1
         return {"AAPL"}
 
-    services = build_services(st, holdings_fn=holdings_fn)
+    def watchlist_fn():
+        calls["watchlist"] += 1
+        return {"MSFT"}
+
+    services = build_services(st, holdings_fn=holdings_fn, watchlist_fn=watchlist_fn)
     services["intraday"](st, clock)
     services["intraday"](st, clock)
     assert calls["holdings"] == 2
+    assert calls["watchlist"] == 2

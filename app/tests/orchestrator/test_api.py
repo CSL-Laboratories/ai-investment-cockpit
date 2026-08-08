@@ -230,3 +230,51 @@ def test_ingest_poll_exposes_only_provisioned_pollers(state):
         "polled": {"calendar": {"feed": "calendar", "status": "ok", "emitted": 2}}
     }
     assert ingest_client.post("/ingest/poll?feed=unknown", headers=AUTH).status_code == 404
+
+
+def test_paper_api_delegates_only_after_api_auth(state):
+    class Paper:
+        def __init__(self):
+            self.decisions = []
+
+        def account(self):
+            return {"account": "alpaca-paper", "cash": "100000", "holdings": []}
+
+        def preview(self, order_id):
+            return {"order_id": order_id, "symbol": "AAPL", "state": "proposed"}
+
+        def decide(self, order_id, **body):
+            self.decisions.append((order_id, body))
+            return {"status": "submitted", "order_id": order_id}
+
+    paper = Paper()
+    app = create_app(
+        state, auth=ApiKeyAuth(key_provider=lambda: KEY), paper=paper,
+        watchlist={"AAPL", "MSFT"},
+    )
+    paper_client = TestClient(app)
+
+    assert paper_client.get("/paper/account").status_code == 401
+    assert paper_client.get("/watchlist", headers=AUTH).json() == {
+        "symbols": ["AAPL", "MSFT"],
+        "count": 2,
+        "source": "operator_config",
+        "runtime_mutable": False,
+    }
+    for method in ("post", "put", "patch", "delete"):
+        assert getattr(paper_client, method)("/watchlist", headers=AUTH).status_code == 405
+    assert paper_client.get("/paper/account", headers=AUTH).json()["account"] == "alpaca-paper"
+    assert paper_client.get("/paper/orders/o1/preview", headers=AUTH).json()["symbol"] == "AAPL"
+    response = paper_client.post(
+        "/paper/orders/o1/decision",
+        headers=AUTH,
+        json={
+            "actor": "lucas", "decision": "approve", "request_id": "req-1",
+            "confirm_symbol": "AAPL",
+        },
+    )
+    assert response.status_code == 200 and response.json()["status"] == "submitted"
+    assert paper.decisions == [("o1", {
+        "actor": "lucas", "decision": "approve", "request_id": "req-1",
+        "confirm_symbol": "AAPL",
+    })]

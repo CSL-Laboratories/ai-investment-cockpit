@@ -144,8 +144,9 @@ def test_arm_full_requires_being_in_auto_veto(st):
 
 # ---- SEC-08 execution runtime pin -----------------------------------------------------
 def test_assert_execution_runtime():
-    assert_execution_runtime(Mode.review_live, "codex")     # allowed outside auto
     assert_execution_runtime(Mode.auto_full, "claude")      # allowed
+    with pytest.raises(ExecutionRuntimeError):
+        assert_execution_runtime(Mode.review_live, "codex")
     with pytest.raises(ExecutionRuntimeError):
         assert_execution_runtime(Mode.auto_full, "codex")
     with pytest.raises(ExecutionRuntimeError):

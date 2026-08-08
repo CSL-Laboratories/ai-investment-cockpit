@@ -25,13 +25,14 @@ from typing import Callable
 from agent_runner.result import OK
 from agent_runner.runner import run_agent
 from agent_runner.spec import AgentSpec
-from config.models import runtime_for
+from config.models import configured_decision_runtime, runtime_allowed_for_mode, runtime_for
 from core.ids import new_id
 from ingest.normalize import escape_untrusted
+from orchestrator.mode_ladder import ModeLadder
 from workflows.constants import EVENT_GROUNDING
 from workflows.packets import wrap_untrusted
 from workflows.prompts import load_prompt
-from workflows.schema_loader import load_schema
+from workflows.schema_loader import load_schema, schema_path
 
 _TICKERISH = re.compile(r"^[A-Z]{2,5}$")
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
@@ -172,12 +173,17 @@ def run_grounding_check(state, proposal: dict, raw_items: list[dict], *,
             evidence_slice=extract_slice(raw_items),
         )
         alias = "triage"
+        runtime = configured_decision_runtime(state.settings)
+        mode = ModeLadder(state).current()
+        if not runtime_allowed_for_mode(runtime, mode):
+            return None
         spec = AgentSpec(
             job_id=new_id("job"),
-            runtime=runtime_for(alias),
+            runtime=runtime_for(alias, runtime),
             model_alias=alias,
             prompt=prompt,
             schema=load_schema("GroundingCheck"),
+            schema_path=schema_path("GroundingCheck"),
             decision_stage=True,
             allowed_tools=[],
         )

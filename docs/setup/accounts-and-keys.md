@@ -113,12 +113,17 @@ hyphen-for-underscore slip leaves the feature silently dark rather than erroring
 `compose()` — never create it by hand.
 
 **Non-secret config** (env `COCKPIT_*` or a config file, not keyring): `guild_id`,
-`operator_user_id` (as `COCKPIT_OPERATOR_IDS`), `mode` (defaults `read_only`), and the
+`operator_user_id` (as `COCKPIT_OPERATOR_IDS`), `mode` (defaults `read_only`), the static
+operator-approved public-equity universe (`COCKPIT_WATCHLIST`, comma/space separated), and the
 delivery channel ids — `COCKPIT_BRIEF_CHANNEL_ID` (your `#morning-brew`),
 `COCKPIT_ALERTS_CHANNEL_ID`, `COCKPIT_PROPOSALS_CHANNEL_ID`,
 `COCKPIT_SYSTEM_CHANNEL_ID`, `COCKPIT_AUDIT_LOG_CHANNEL_ID`. Each is independently
 optional; an unmapped channel fails closed (reported undelivered) rather than being
 redirected into another channel. See [[runbooks/rw01-live-smoke]] for the full bring-up.
+
+The watchlist is validated and bounded at startup, read-only while the process runs, and feeds
+both intraday relevance and the deterministic symbol allowlist. There is intentionally no API or
+agent tool that can add a symbol; an operator edits the non-secret config and restarts the cockpit.
 
 Verify a round-trip once the app exists:
 `python -c "from core.secrets import require_secret; print(require_secret('finnhub_key'))"`

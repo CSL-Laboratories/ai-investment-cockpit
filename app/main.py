@@ -21,10 +21,12 @@ audited, and then went nowhere. Three wires close that:
      which ``build_scheduler`` schedules and ``run()`` streams;
   3. ``build_operator_deliver`` supplies the ``deliver`` seam so ``#brief`` reaches Discord.
 
-STILL PAPER-FIRST. Nothing here touches ``risk/``, ``brokers/`` or the order path; the mode
-ladder still boots at ``read_only`` (``config/settings.py``), no model is on the ingest path,
-and every new feed's text is neutralized at the boundary by ``ingest.normalize.to_market_event``
--> ``escape_untrusted`` (SEC-02/M3) before it can reach a prompt.
+STILL PAPER-FIRST. Production may compose the fixed Alpaca PAPER transport, but the mode ladder
+still boots at ``read_only`` and the transport remains unreachable until an audited transition to
+``paper`` plus deterministic risk plus an allowlisted human approval. No model is on the ingest
+path, and every new feed's text is neutralized at the boundary by
+``ingest.normalize.to_market_event`` -> ``escape_untrusted`` (SEC-02/M3) before it can reach a
+prompt.
 
 NOT-PROVISIONED IS A FIRST-CLASS STATE. Every secret read here uses ``get_secret`` (-> ``None``)
 rather than ``require_secret`` (-> raise), because a dev box with no Alpaca key must still
@@ -110,7 +112,7 @@ def run_startup_security_checks(settings):
 
     cred = account_guard.assert_credential_starved(settings)
     tool_inspector.assert_all_decision_specs_tool_starved(
-        tool_inspector.default_decision_stage_specs()
+        tool_inspector.default_decision_stage_specs(settings)
     )
     if not cred.enforced:
         logging.getLogger("cockpit.security").warning(
@@ -544,10 +546,57 @@ def build_operator_deliver(settings):
     return discord_rest_deliver(channel_ids, token.reveal())
 
 
+def build_paper_execution(state, *, client=None, watchlist_fn=None):
+    """Compose the real Alpaca PAPER seam behind the existing guarded ``OrderGateway``.
+
+    Missing credentials leave the service absent and visible as ``501 not_wired``; they never
+    fall back to ``FakeAlpaca`` in production. The fixed-host HTTP client is constructed only
+    after both keyring values exist. ``client`` is an injectable no-network seam for tests.
+    """
+    from brokers.alpaca_paper import AlpacaPaperBroker, AlpacaPaperHTTPClient
+    from brokers.capability import TokenRegistry
+    from brokers.gateway import OrderGateway
+    from brokers.paper_execution import PaperExecutionService
+    from core.secrets import get_secret
+
+    if client is None:
+        key = get_secret(_ALPACA_KEY_NAME)
+        secret = get_secret(_ALPACA_SECRET_NAME)
+        if key is None or secret is None:
+            _log_unprovisioned(
+                "alpaca paper trading",
+                f"keyring set {_ALPACA_KEY_NAME} / {_ALPACA_SECRET_NAME}",
+            )
+            return None
+        client = AlpacaPaperHTTPClient(
+            key.reveal(), secret.reveal(), clock=state.clock.now
+        )
+
+    broker = AlpacaPaperBroker(client=client)
+    registry = TokenRegistry()
+    gateway = OrderGateway(
+        broker,
+        st=state,
+        token_registry=registry,
+        pending_exposure_cap=state.settings.pending_exposure_cap,
+        approval_ttl_seconds=state.settings.approval_ttl_seconds,
+        execution_scope="paper",
+    )
+    log.info("Alpaca PAPER execution transport wired behind OrderGateway")
+    return PaperExecutionService(
+        state,
+        broker=broker,
+        gateway=gateway,
+        token_registry=registry,
+        quote_fn=client.latest_quote,
+        watchlist_fn=watchlist_fn,
+    )
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw",
             clock=None, transport=None, deliver=None, ingest_fetchers=None,
             http_get=None, ws_connect=None, finra_token_provider=None, finra_http_get=None,
-            finra_row_mapper=None):
+            finra_row_mapper=None, paper_client=None):
     """Build the full application graph: ``(state, app, services)``.
 
     RETURN SHAPE IS UNCHANGED (a 3-tuple) ON PURPOSE. The RW-01 ingest runner is reachable as
@@ -594,13 +643,24 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     # then delivered nowhere, because compose passed no `deliver` at all.
     deliver = deliver if deliver is not None else build_operator_deliver(settings)
     # SEC-05: decision-stage agents spawn under the low-priv account when one is configured.
-    # Inv 2 is NOT relaxed by the injectable transport: the runtime pin lives in the model map
-    # (config/models.yaml -> runtime_for) and is enforced by the agent runner + the arm gate, so
-    # a transport swap changes HOW a decision job is spawned, never WHICH runtime may decide.
+    # The transport swap changes only HOW the configured provider is spawned. Codex/Claude may
+    # both produce schema-validated, human-gated paper proposals; the mode ladder independently
+    # keeps Codex out of live/auto and every provider out of direct broker/risk authority.
     transport = transport if transport is not None else build_decision_transport(settings)
+    # A static operator config is the only production watchlist source.  The runtime model can
+    # read this bounded set during triage but has no mutation seam that could widen order scope.
+    configured_watchlist = frozenset(settings.watchlist_symbols)
+
+    def watchlist_fn():
+        return configured_watchlist
+
+    paper = build_paper_execution(state, client=paper_client, watchlist_fn=watchlist_fn)
     services = build_services(state, transport=transport,
-                              deliver=deliver, parquet_root=parquet_root)
-    app = create_app(state, services=services)
+                              deliver=deliver, parquet_root=parquet_root,
+                              quote_fn=paper.quote if paper is not None else None,
+                              holdings_fn=(paper.holdings_symbols if paper is not None else None),
+                              watchlist_fn=watchlist_fn)
+    app = create_app(state, services=services, paper=paper, watchlist=configured_watchlist)
     # RW-01: ingest -> scheduler. Built AFTER the state so the pollers persist through the same
     # audited session factory, and hung off app.state so /status and run() can reach it.
     fetchers = ingest_fetchers if ingest_fetchers is not None else build_ingest_fetchers(

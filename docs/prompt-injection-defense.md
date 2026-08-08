@@ -140,13 +140,15 @@ proposal and the broker** — there the deterministic backstops in
 
 ## 4. Structural mitigations (deterministic — these are the boundary)
 
-**M1 — Strict role + tool separation.** Decision-stage agents get the *minimum*
-`--allowedTools`. Concretely:
+**M1 — Strict role + tool separation.** Decision-stage agents get an empty capability
+set: Claude via `--allowedTools none`; Codex via ignored config/rules, an ephemeral
+read-only sandbox, and explicit shell/web/apps/browser/computer/MCP feature denials.
+Concretely:
 
-| Agent | `--allowedTools` | Rationale |
+| Agent | Capability grant | Rationale |
 |---|---|---|
-| Triage (`triage`→haiku-class) | **none** | Reads the biggest untrusted batch; needs zero tools to score `ignore/watch/material/urgent`. |
-| Deep proposer (`deep`→opus-class) | **none** | Drafts `TradeProposal` from an already-classified packet. No web, no MCP, no fs write. |
+| Triage (`triage`) | **none** | Reads the biggest untrusted batch; needs zero tools to score `ignore/watch/material/urgent`. |
+| Deep proposer (`deep`) | **none** | Drafts `TradeProposal` from an already-classified packet. No web, no MCP, no filesystem access. |
 | Grounding verifier (§7) | **none** | Reads untrusted packet; must never act. |
 | Broker MCP interaction | isolated connector, **not** a decision-stage agent | Order placement lives in `brokers/`, reached only via the Invariant-1 path — never as a tool the proposing model can call. |
 
@@ -364,7 +366,8 @@ make these mandatory, not optional:
 Robinhood's Agentic MCP grants a connected client **read access to ALL accounts**
 (verified, [[research-report]] §1). In this design the **`brokers/` layer — not any
 decision-stage agent — holds the MCP connection and performs the reads** (the
-triage/deep/verifier agents run `--allowedTools none` and have no MCP tool, M1); the
+triage/deep/verifier agents run with the provider-specific empty capability profile
+and have no MCP tool, M1); the
 orchestrator pre-fetches a bounded portfolio snapshot and passes it to a model only as
 a `<untrusted-content>`-wrapped input packet. Two consequences follow:
 

@@ -1,17 +1,25 @@
-# WP0 — alias -> model map. Swap models by editing here only (config-only, no code change).
-# 'cli' is what claude/codex receives via --model; 'pinned' is the exact id recorded in the
-# audit lineage for reproducibility (docs/enhancements-and-additions E-06). 'runtime' pins the
-# vendor — auto modes refuse to arm a non-claude decision stage (Invariant 2).
+# WP0 + CXP-05a — role alias -> provider/model map. The base mapping stays Claude for backward
+# compatibility and the Claude-only auto/live pin. COCKPIT_DECISION_RUNTIME may select a declared
+# provider override for read_only/paper human-gated work. 'cli' is passed via --model; 'pinned' is
+# recorded in audit lineage (E-06). A provider switch never grants broker/order tools.
 aliases:
   triage:
     cli: haiku
     pinned: claude-haiku-4-5-20251001
     runtime: claude
+    providers:
+      codex:
+        cli: gpt-5.5
+        pinned: gpt-5.5
   deep:
     cli: opus
     pinned: claude-opus-4-8
     runtime: claude
-  codex:            # research / coding / system-maintenance ONLY — never a decision stage (Inv 2)
+    providers:
+      codex:
+        cli: gpt-5.5
+        pinned: gpt-5.5
+  codex:            # explicit research / coding / system-maintenance role
     cli: gpt-5.5
     pinned: gpt-5.5
     runtime: codex

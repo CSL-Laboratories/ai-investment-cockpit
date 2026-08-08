@@ -75,6 +75,15 @@ def _token_nonce(approval_id: str) -> str:
     return f"subtok_{approval_id}"
 
 
+def token_nonce_for_approval(approval_id: str) -> str:
+    """Public read-only derivation used by trusted operator surfaces after approval.
+
+    This value is replay protection, not order authority: the gateway independently requires
+    the persisted HMAC-signed adjudication that binds the exact order tuple.
+    """
+    return _token_nonce(approval_id)
+
+
 def _dec(x) -> Decimal | None:
     if x is None:
         return None

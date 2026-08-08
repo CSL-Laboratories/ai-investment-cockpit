@@ -23,11 +23,33 @@ from agent_runner.spec import AgentSpec
 from agent_runner.tool_inspector import assert_decision_cwd, inspect_argv
 from agent_runner.transport import SubprocessTransport
 from agent_runner.usage import UsageTracker
-from config.models import load_model_map
+from config.models import cli_model_for
 
 
-def _cli_model(alias: str) -> str:
-    return load_model_map().get(alias, {}).get("cli", alias)
+# Codex exposes agentic tools as feature flags rather than Claude's ``--allowedTools none``.
+# This is the exact deny profile verified against the installed CLI. ``--ignore-user-config``
+# also prevents a user's plugins/MCPs from silently reappearing in a cockpit decision job.
+CODEX_DECISION_DISABLED_FEATURES = (
+    "shell_tool",
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "image_generation",
+    "multi_agent",
+    "multi_agent_v2",
+    "standalone_web_search",
+    "tool_call_mcp_elicitation",
+    "skill_search",
+    "skill_mcp_dependency_install",
+    "code_mode_host",
+    "unified_exec",
+)
+
+
+def _cli_model(alias: str, runtime: str) -> str:
+    return cli_model_for(alias, runtime)
 
 
 def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
@@ -40,7 +62,8 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
     if spec.runtime == "claude":
         argv = [
             "claude", "-p", "--output-format", "json",
-            "--model", _cli_model(spec.model_alias), "--max-turns", str(spec.max_turns),
+            "--model", _cli_model(spec.model_alias, spec.runtime),
+            "--max-turns", str(spec.max_turns),
         ]
         if resume and spec.session_id:
             argv += ["--resume", spec.session_id]
@@ -48,21 +71,32 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
         argv += ["--allowedTools", ",".join(spec.allowed_tools) if spec.allowed_tools else "none"]
         return argv
     if spec.runtime == "codex":
-        # Inv 2 / SEC-06: codex is research/coding only — NEVER a decision stage.
-        if spec.decision_stage:
-            raise ValueError("SEC-06/Inv2: codex may never run a decision-stage job")
-        # Codex uses its own sandbox mechanism (not --allowedTools); pin read-only. Put the
-        # option before ``resume`` because the current Codex CLI treats ``resume`` as a
-        # subcommand and rejects ``--sandbox`` after it. The final ``-`` is load-bearing:
-        # codex exec reads the prompt from stdin, which keeps prompts out of argv and gives
-        # Claude/Codex the same secret-boundary posture.
+        # Codex has no ``--allowedTools none``. Decision jobs therefore use a stronger,
+        # mechanically inspected profile: read-only sandbox; ignore all user config/rules;
+        # ephemeral state; web explicitly disabled; and every acting/read/egress feature disabled.
+        # ``--strict-config`` makes a renamed/removed safety switch fail closed after CLI upgrades.
+        # Repair is a fresh turn because ephemeral sessions cannot be resumed safely.
         argv = ["codex", "exec", "--sandbox", "read-only"]
-        if resume and spec.session_id:
+        if spec.decision_stage:
+            if resume:
+                raise ValueError("SEC-06: an ephemeral Codex decision job cannot resume")
+            argv += [
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--ephemeral",
+                "--strict-config",
+                "-c", 'web_search="disabled"',
+            ]
+            for feature in CODEX_DECISION_DISABLED_FEATURES:
+                argv += ["--disable", feature]
+        elif resume and spec.session_id:
             argv += ["resume", spec.session_id]
         argv += [
-            "--model", _cli_model(spec.model_alias),
-            "--json", "-",
+            "--model", _cli_model(spec.model_alias, spec.runtime),
         ]
+        if spec.decision_stage and spec.schema_path:
+            argv += ["--output-schema", spec.schema_path]
+        argv += ["--json", "-"]
         return argv
     raise ValueError(f"unknown runtime {spec.runtime!r}")
 
@@ -287,8 +321,16 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         + "\n\nYour previous output was rejected: " + str(reason)[:500]
         + "\nReturn ONLY corrected JSON that matches the required schema; no prose."
     )
-    rspec = replace(spec, prompt=repair_prompt, session_id=session_id or spec.session_id)
-    argv = build_argv(rspec, resume=bool(session_id))
+    # Codex decision sessions are intentionally ephemeral (SEC-24). Repair gets the complete
+    # original prompt plus validation error, so it can be a fresh turn without weakening the
+    # one-repair contract. Non-decision Codex and Claude retain their existing resume behavior.
+    codex_ephemeral = spec.runtime == "codex" and spec.decision_stage
+    rspec = replace(
+        spec,
+        prompt=repair_prompt,
+        session_id=None if codex_ephemeral else (session_id or spec.session_id),
+    )
+    argv = build_argv(rspec, resume=bool(session_id) and not codex_ephemeral)
     if rspec.decision_stage:
         inspect_argv(argv, decision_stage=True)
         assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)

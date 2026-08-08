@@ -106,10 +106,32 @@ def test_tool_bearing_decision_spec_refused():
         assert_all_decision_specs_tool_starved([_decision_spec(allowed_tools=["Bash"])])
 
 
-def test_codex_decision_spec_refused():
-    with pytest.raises(ToolStarvationError):
-        assert_all_decision_specs_tool_starved(
-            [_decision_spec(runtime="codex", model_alias="codex")])
+def test_hardened_codex_decision_spec_is_accepted():
+    assert_all_decision_specs_tool_starved(
+        [_decision_spec(runtime="codex", model_alias="triage")]
+    )
+
+
+def test_codex_decision_argv_missing_required_disable_is_refused():
+    from agent_runner.runner import build_argv
+
+    argv = build_argv(_decision_spec(runtime="codex", model_alias="triage"))
+    i = argv.index("shell_tool")
+    del argv[i - 1:i + 1]
+    with pytest.raises(ToolStarvationError, match="shell_tool"):
+        inspect_argv(argv, decision_stage=True)
+
+
+def test_codex_decision_argv_cannot_enable_web_or_resume():
+    from agent_runner.runner import build_argv
+
+    base = build_argv(_decision_spec(runtime="codex", model_alias="triage"))
+    web = list(base)
+    web[web.index('web_search="disabled"')] = 'web_search="live"'
+    with pytest.raises(ToolStarvationError, match="web_search"):
+        inspect_argv(web, decision_stage=True)
+    with pytest.raises(ToolStarvationError, match="resume"):
+        inspect_argv([*base[:-1], "resume", "thread-x", "-"], decision_stage=True)
 
 
 # ---- arm-time gate ---------------------------------------------------------------------

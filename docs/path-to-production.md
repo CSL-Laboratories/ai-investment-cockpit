@@ -319,8 +319,9 @@ is complete without these — Discord is the control plane.
 
 **Deferred features** ([[build-scaffold-ultracode]] §"Deferred", lines 201–205):
 PWA dashboard (Phase-4 polish, not core — no inbound ports on the box); options
-support (re-check beta scope first); Codex research jobs (Codex stays off the
-decision path per Invariant 2).
+support (re-check beta scope first). The baseline also deferred Codex jobs; CXP-05a
+has since enabled Codex for hardened, schema-gated `read_only`/human-approved `paper`
+analysis while retaining the Claude-only live/auto pin.
 
 **Enhancement catalog** ([[enhancements-and-additions]] E-01…E-12) — value-adds
 beyond the WP0–9 baseline, several gate-blocking for the *auto* rungs but none

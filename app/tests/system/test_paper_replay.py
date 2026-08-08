@@ -46,7 +46,7 @@ from tests.system.replay import (
     run_paper_replay,
 )
 
-OPERATOR = "lucas"
+OPERATOR = "123456789012345678"
 DAYS = 10
 
 
