@@ -64,6 +64,71 @@ class RiskContext:
     quote_spread_pct: Decimal
     mode: str = "paper"
 
+    # ---- QT-06: execution verification (quant/verify.py). Appended AFTER `mode` because
+    # every preceding field is non-defaulted, so a new field must carry a default or every
+    # existing construction site breaks.
+    quant_verdict: object | None = None
+    """A ``quant.verify.QuantVerdict`` for THIS proposal, or None when the engine is running
+    without a book. Typed as ``object`` so ``risk/`` keeps a single import of the quant
+    package (the helpers below), rather than importing its types as well — the smaller the
+    surface between the risk engine and anything else, the easier Invariant 5 is to hold."""
+
+    require_quant_verdict: bool = False
+    """When True, a missing or stale verdict forces human review instead of being ignored.
+    Off by default so the engine still works with no book wired; ON is the fail-closed
+    posture and is what the cockpit should run once a quote/book feed exists."""
+
+    max_execution_cost_bps: Decimal = Decimal("100")
+    """HARD ceiling on modelled execution cost. Above this the order cannot pay for itself
+    before the thesis has to be right about anything."""
+
+    quant_verdict_max_age_ns: int = 5_000_000_000
+    quant_book_seq: int | None = None
+    """The book sequence the caller is about to trade against. When it has moved past the
+    verdict's ``book_seq``, the verdict describes a book that no longer exists."""
+
+
+def _verdict_state(ctx: RiskContext) -> tuple[str, str]:
+    """Classify the attached execution verdict. PURE — reads the context, fetches nothing.
+
+    Duck-typed rather than isinstance-checked against ``quant.verify.QuantVerdict``, so the
+    risk engine depends on the SHAPE of the verdict and not on the quant package's class
+    identity. That keeps Invariant 5's surface as small as it can be: a future caller can
+    supply an equivalent record from anywhere, and this module never grows a second import.
+
+    Returns ``(state, detail)`` where state is one of:
+        absent | stale | insufficient_data | uneconomic | marginal | ok
+    """
+    verdict = ctx.quant_verdict
+    if verdict is None:
+        return "absent", "no execution verdict attached"
+
+    seq = getattr(verdict, "book_seq", None)
+    if ctx.quant_book_seq is not None and seq is not None and ctx.quant_book_seq > seq:
+        return "stale", (
+            f"verdict describes book seq {seq}, the order would trade against "
+            f"{ctx.quant_book_seq}"
+        )
+
+    raw = getattr(verdict, "verdict", None)
+    name = getattr(raw, "value", raw)
+    if name in ("insufficient_data", "uneconomic", "marginal", "ok"):
+        return str(name), ""
+    return "insufficient_data", f"unrecognised verdict {name!r}"
+
+
+def _verdict_cost_bps(ctx: RiskContext) -> Decimal:
+    """Modelled execution cost in bps, or NaN when there is nothing to read.
+
+    NaN rather than 0: a zero would compare favourably against every ceiling, so an absent
+    or malformed verdict would read as a free trade — the exact direction a fail-closed
+    control must never fail in.
+    """
+    verdict = ctx.quant_verdict
+    if verdict is None:
+        return Decimal("NaN")
+    return _d(getattr(verdict, "expected_cost_bps", None))
+
 
 def order_notional(proposal: dict, ctx: RiskContext) -> Decimal:
     """Size on the LARGER of a supplied notional and quantity*quote_price, so the gate can
@@ -115,6 +180,25 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
 
     concentration_ok = (not is_buy) or port <= 0 or ((held_val + notional) / port) <= ctx.concentration_pct
 
+    # ---- QT-06: execution verification (Tier B). See quant/verify.py.
+    #
+    # HARD blocks only on a verdict that is PRESENT and says the trade cannot pay for itself.
+    # A missing verdict is handled by the SOFT check below, because "we have no book" and
+    # "the book says no" are different states and conflating them would either block every
+    # order on a system with no feed, or wave through the ones that matter.
+    verdict_state, verdict_detail = _verdict_state(ctx)
+    cost_bps = _verdict_cost_bps(ctx)
+    cost_over_ceiling = cost_bps.is_finite() and cost_bps > ctx.max_execution_cost_bps
+    execution_cost_sane = verdict_state != "uneconomic" and not cost_over_ceiling
+
+    # SOFT -> human review. Fires on a marginal trade AND, when a verdict is required, on a
+    # missing / stale / unusable one. Fail closed (Invariant 7): stale data degrades to "a
+    # human looks at this", never to "proceed without analysis".
+    quality_unclear = verdict_state in ("marginal", "insufficient_data")
+    if ctx.require_quant_verdict and verdict_state in ("absent", "stale"):
+        quality_unclear = True
+    execution_quality_ok = not quality_unclear
+
     checks = [
         CheckResult("notional_positive", size_finite and notional > 0, True,
                     "order size must be a finite, positive amount"),
@@ -148,12 +232,18 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
                     f"equity >= Reg-T ${REG_T_MIN_EQUITY} (post-PDT, no day-trade counts)"),
         CheckResult("mode_allows_order", ctx.mode != "read_only", True,
                     "orders are disabled in read_only mode"),
+        CheckResult("execution_cost_sane", execution_cost_sane, True,
+                    f"modelled execution cost {cost_bps} <= {ctx.max_execution_cost_bps}bps "
+                    f"and the book can absorb the order (QT-06; verdict={verdict_state})"),
         # SOFT -> human review
         CheckResult("sizing_not_max",
                     str(proposal.get("sizing_basis", "")).lower() not in ("max", "maximum", "all"),
                     False, "a max-sized proposal is forced to human review (SEC-15)"),
         CheckResult("priced_not_market", proposal.get("order_type") != "market", False,
                     "market orders lack a firm gate price -> human review"),
+        CheckResult("execution_quality", execution_quality_ok, False,
+                    f"execution verdict is {verdict_state}"
+                    f"{': ' + verdict_detail if verdict_detail else ''} -> human review (QT-06)"),
     ]
 
     failed_hard = [c.name for c in checks if c.hard and not c.passed]

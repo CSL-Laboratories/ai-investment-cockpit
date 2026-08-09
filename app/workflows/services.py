@@ -17,10 +17,16 @@ from workflows.triage_loop import triage_loop
 
 
 def build_services(state, *, transport=None, deliver=None, parquet_root=None,
-                   quote_fn=None, holdings_fn=None, watchlist_fn=None) -> dict:
+                   quote_fn=None, book_fn=None, verify_params=None,
+                   holdings_fn=None, watchlist_fn=None) -> dict:
     """Build the injected scheduler services: ``{"brew", "intraday", "eod"}``, each a
     plain ``(state, clock) -> dict`` closing over the seams. ``holdings_fn`` /
-    ``watchlist_fn`` are re-evaluated per tick (the reconciled sets move intraday)."""
+    ``watchlist_fn`` are re-evaluated per tick (the reconciled sets move intraday).
+
+    ``book_fn(symbol) -> BookSnapshot | None`` is the QT-05 execution-verification seam,
+    threaded through to ``draft_proposal`` alongside ``quote_fn``. Absent (the state of the
+    tree today, since no book feed exists) the verification tiers stay dormant and the risk
+    gate behaves exactly as it did before QT — the check is additive, not a new requirement."""
 
     def _holdings() -> frozenset:
         return frozenset(holdings_fn()) if holdings_fn is not None else frozenset()
@@ -29,8 +35,9 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
         return frozenset(watchlist_fn()) if watchlist_fn is not None else frozenset()
 
     def _propose(st, clock, **kw):
-        # draft_proposal with the composed quote seam (proposals never fetch quotes itself)
-        return draft_proposal(st, clock, quote_fn=quote_fn, **kw)
+        # draft_proposal with the composed quote + book seams (proposals never fetch either)
+        return draft_proposal(st, clock, quote_fn=quote_fn, book_fn=book_fn,
+                              verify_params=verify_params, **kw)
 
     def brew(st, clock) -> dict:
         return morning_brew(st, clock, transport=transport, deliver=deliver,
