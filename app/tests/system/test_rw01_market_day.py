@@ -39,6 +39,7 @@ from schemas.models.market_event import MarketEvent
 import main as main_mod
 from bridge.deliver import CHANNEL_BRIEF, build_deliver
 from core.secrets import set_secret
+from orchestrator.auth import API_KEY_HEADER, API_KEY_SECRET_NAME
 from orchestrator import scheduler as sch
 from orchestrator.ingest_runner import (
     FEED_ALPACA_NEWS,
@@ -59,6 +60,7 @@ from tests.workflows.fixtures_market_day import (
 OPEN_UTC = datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)
 DAY = OPEN_UTC.date().isoformat()
 BREW_CHANNEL_ID = 555_000_111          # the operator's #morning-brew channel
+API_KEY = "rw01-test-api-key"          # the X-API-Key every route requires
 
 ACCESSION = "0000320193-24-000123"
 
@@ -245,6 +247,9 @@ def provisioned(tmp_path, monkeypatch):
     set_secret("alpaca_key", "test-alpaca-key")
     set_secret("alpaca_secret", "test-alpaca-secret")
     set_secret("finnhub_key", "test-finnhub-key")
+    # The routes authenticate through the REAL keyring-backed guard, so the key is provisioned
+    # the way an operator provisions it rather than by overriding the dependency.
+    set_secret(API_KEY_SECRET_NAME, API_KEY)
     monkeypatch.setenv("COCKPIT_BREW_DB_PATH", str(brew_db))
     monkeypatch.setenv("COCKPIT_BREW_RUNS_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("COCKPIT_BRIEF_CHANNEL_ID", str(BREW_CHANNEL_ID))
@@ -666,3 +671,78 @@ def test_discord_secret_name_matches_the_provisioning_doc():
     for name in (main_mod._ALPACA_KEY_NAME, main_mod._ALPACA_SECRET_NAME,
                  main_mod._FINNHUB_KEY_NAME):
         assert f"keyring set ai-investment-cockpit {name}" in text
+
+
+# =======================================================================================
+# POST /ingest/poll — force a tick without waiting for cron
+#
+# main tests this route as a UNIT against a stub Runner (tests/orchestrator/test_api.py).
+# These drive the REAL composed app through the REAL keyring-backed guard, which is the only
+# arrangement that can catch a wiring fault between the route, the composed ingest runner and
+# the audited session factory.
+# =======================================================================================
+def _client(app):
+    """A TestClient over the COMPOSED app, authenticating through the REAL guard
+    (``provisioned`` puts the key in the isolated keyring). Overriding the dependency would
+    skip the one control every route depends on."""
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    return TestClient(app), {API_KEY_HEADER: API_KEY}
+
+
+def test_ingest_poll_forces_a_tick_and_persists(tmp_path, provisioned):
+    """The operator control the smoke needs: several feeds are weekday-only cron, so without
+    this an operator cannot prove ingest works until the next window opens."""
+    state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                            deliver=Capture())
+    client, headers = _client(app)
+
+    body = client.post("/ingest/poll", headers=headers).json()
+    assert body["polled"][FEED_FINNHUB]["status"] == "ok"
+    assert body["polled"][FEED_CALENDAR]["status"] == "ok"
+    assert len(_events(state)) >= 2, "forcing a poll did not persist anything"
+    assert state.audit.verify_chain().ok
+
+
+def test_ingest_poll_is_idempotent(tmp_path, provisioned):
+    state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                            deliver=Capture())
+    client, headers = _client(app)
+    client.post("/ingest/poll", headers=headers)
+    first = len(_events(state))
+    client.post("/ingest/poll", headers=headers)
+    assert len(_events(state)) == first, "a second forced poll duplicated rows"
+
+
+def test_ingest_poll_can_target_one_feed(tmp_path, provisioned):
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture())
+    client, headers = _client(app)
+    body = client.post(f"/ingest/poll?feed={FEED_FINNHUB}", headers=headers).json()
+    assert set(body["polled"]) == {FEED_FINNHUB}
+
+
+def test_ingest_poll_rejects_an_unknown_feed(tmp_path, provisioned):
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture())
+    client, headers = _client(app)
+    assert client.post("/ingest/poll?feed=nope", headers=headers).status_code == 404
+
+
+def test_ingest_poll_does_not_block_on_a_stream_feed(tmp_path, provisioned):
+    """A stream consumer BLOCKS by design; forcing it from a request would hang the API."""
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture())
+    client, headers = _client(app)
+    body = client.post(f"/ingest/poll?feed={FEED_ALPACA_NEWS}", headers=headers).json()
+    assert "stream_feed_runs_on_its_own_thread" in body["polled"][FEED_ALPACA_NEWS]["skipped"]
+
+
+def test_the_poll_route_refuses_an_unauthenticated_caller(tmp_path, provisioned):
+    """CONTROL for _client: if the guard were not actually in the path, every test above would
+    pass just as well with no key at all."""
+    _state, app, _services, _http = _compose(tmp_path, transport=FakeTransport([]),
+                                             deliver=Capture())
+    client, _headers = _client(app)
+    assert client.post("/ingest/poll").status_code in (401, 403)

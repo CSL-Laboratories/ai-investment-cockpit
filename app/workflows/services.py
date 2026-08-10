@@ -40,8 +40,13 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
                               verify_params=verify_params, **kw)
 
     def brew(st, clock) -> dict:
+        # The watchlist is what keeps the brew's calendar pre-filter from being holdings-only.
+        # ``intraday`` has always received it; ``brew`` was the one caller that did not, which
+        # is why its filter could not distinguish "a company you are watching" from "any of the
+        # ~500 companies reporting this week".
         return morning_brew(st, clock, transport=transport, deliver=deliver,
-                            parquet_root=parquet_root, holdings_symbols=_holdings())
+                            parquet_root=parquet_root, holdings_symbols=_holdings(),
+                            watchlist=_watchlist())
 
     def intraday(st, clock) -> dict:
         return triage_loop(st, clock, transport=transport, deliver=deliver,

@@ -34,6 +34,72 @@ PROSE_FIELDS = ("market_regime", "portfolio_changes", "watch_items", "thesis_upd
                 "risk_flags", "proposed_actions")
 MAX_PACKET_EVENTS = 150
 
+# The triage call's timeout, sized to the BATCH rather than left at call_agent's flat 120s.
+#
+# THE CAP ALONE DID NOT FIX THE TIMEOUT. Bounding the packet to 150 events was the first
+# response to the first live run; the second run capped correctly and TIMED OUT ANYWAY,
+# because triage is OUTPUT-bound. A 150-event packet is only ~10k tokens of prompt, but the
+# model must emit one scored entry PER ITEM — ~9k output tokens — and the run took ~214s
+# against a 120s limit. Input grew 4x from 38 events to 150; the time grew with the OUTPUT.
+#
+# Two live runs measured it: 150 events in ~214s (1.43 s/event) and 100 events in ~187s
+# (1.87 s/event). 2.5 s/event takes the WORSE of the two and adds margin, because the cost of
+# being generous is a slower failure while the cost of being tight is a false timeout on a
+# healthy run — and a false timeout trips the vendor breaker. The base covers CLI + model
+# startup. The point is that the bound tracks the work, so a cap change cannot silently
+# re-create a timeout that no batch can meet.
+TRIAGE_TIMEOUT_BASE_SECONDS = 90.0
+TRIAGE_TIMEOUT_PER_EVENT_SECONDS = 2.5
+
+# The deep brief call's timeout. ESTIMATED, not measured — no live run has reached this stage
+# yet, so this is stated as a guess rather than dressed up as data.
+#
+# Scaled differently from triage on purpose. The brief emits PROSE over the material/urgent
+# subset, not one entry per item, so its output does not grow with the packet the way triage's
+# does — but it runs on `deep` (opus, config/models.yaml), which is several times slower per
+# token than triage's haiku. Hence the large base and the shallower slope.
+#
+# Erring generous is the cheap direction: a false timeout trips the vendor breaker and degrades
+# the whole cockpit, whereas a generous ceiling only delays a genuine failure — and since the
+# transport now actually kills the process tree, an overrun can no longer hang the orchestrator.
+BRIEF_TIMEOUT_BASE_SECONDS = 180.0
+BRIEF_TIMEOUT_PER_EVENT_SECONDS = 2.0
+
+# Bulk reference data, not news. The earnings-calendar feed publishes a forward window for the
+# WHOLE MARKET — the first live bring-up ingested 559 calendar rows against 38 news items — so
+# without a filter the calendar drowns out everything the brief exists to surface.
+_BULK_CALENDAR_PREFIX = "calendar:"
+
+
+def partition_by_relevance(events, holdings_symbols: frozenset[str],
+                           watchlist: frozenset[str]) -> tuple[list, list]:
+    """Split the window into ``(eligible, ignored)`` BEFORE any model call.
+
+    The intraday loop has always pre-filtered; the brew never did, and that is why its first
+    live run dispatched the entire market's earnings calendar. But the brew must NOT copy the
+    intraday filter: that one keeps only held/watched/hard events, which is right for
+    *reacting* and wrong for a morning brief, whose whole job is awareness of things you do
+    not yet hold. A brief filtered to your existing positions can only ever tell you what you
+    already own.
+
+    So the brew filters exactly one thing — BULK CALENDAR ROWS for symbols the operator
+    neither holds nor watches. An earnings date for a company you have no relationship with is
+    reference data; it is not something a human needs read to them at 08:30. News, filings and
+    halts all stay eligible regardless of symbol.
+
+    Ignored events are recorded as ``prefiltered_ignore``, the disposition ``triage_loop``
+    already uses for "deliberately not analyzed" — distinct from ``deferred``, which promises
+    re-coverage. Conflating the two would either lie in the audit or re-dispatch the whole
+    market forever. Nothing is lost either way: ``deterministic_urgency`` reads calendar rows
+    straight from the table, so a filtered row still corroborates urgency the day it matters.
+    """
+    relevant_symbols = holdings_symbols | watchlist
+    eligible, ignored = [], []
+    for ev in events:
+        bulk = (ev.event_type or "").startswith(_BULK_CALENDAR_PREFIX)
+        (ignored if bulk and ev.symbol not in relevant_symbols else eligible).append(ev)
+    return eligible, ignored
+
 
 def select_for_packet(events, cap: int, holdings_symbols: frozenset[str]) -> list:
     """Select a deterministic bounded packet while preserving presentation order."""
@@ -76,6 +142,7 @@ def _audit_batch(state, *, batch_id: str, window_start: str, window_end: str,
 
 def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_root=None,
                  window_hours: int = 18, holdings_symbols: frozenset[str] = frozenset(),
+                 watchlist: frozenset[str] = frozenset(),
                  max_packet_events: int = MAX_PACKET_EVENTS) -> dict:
     """Run the pre-market brew. ``deliver`` is ``(channel: str, payload: dict) -> bool``;
     a False/raising deliver marks the brief undelivered but never raises. Returns a
@@ -100,18 +167,48 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         return {"status": "no_events", "date": date,
                 "window_start": window_start, "window_end": window_end}
 
-    dispatched = select_for_packet(events, max_packet_events, holdings_symbols)
+    # FILTER, then BOUND. Bulk calendar noise is deliberately not analyzed; whatever survives
+    # that and still exceeds the cap keeps its "deferred" disposition, so it is audited as
+    # deferred and re-covered next loop. Neither path drops an event (Inv 7).
+    eligible, ignored = partition_by_relevance(events, holdings_symbols, watchlist)
+    dispatched = select_for_packet(eligible, max_packet_events, holdings_symbols)
     packet = build_packet(dispatched)
     batch_id = new_id("tb")
     dispositions: dict[str, str] = {ev.id: "deferred" for ev in events}
+    dispositions.update({ev.id: "prefiltered_ignore" for ev in ignored})
+    over_cap = len(eligible) - len(dispatched)
+
+    def _result(status: str, **extra) -> dict:
+        deferred = sorted(k for k, v in dispositions.items() if v == "deferred")
+        out = {"status": status, "date": date, "window_start": window_start,
+               "window_end": window_end, "window_events": len(events),
+               "prefiltered": len(ignored),
+               "dispatched": len(dispatched), "deferred_count": len(deferred),
+               # A COUNT plus a bounded sample, never the whole list: the first live run
+               # returned 659 ids in one response body. The complete set is in the audited
+               # EVENT_TRIAGE_BATCH payload, which is the record that matters.
+               "deferred_sample": deferred[:20]}
+        if over_cap:
+            out["over_cap"] = over_cap
+            out["note"] = (f"{over_cap} event(s) exceeded the {max_packet_events}-event triage "
+                           "cap and were deferred to the next loop, not dropped")
+        out.update(extra)
+        return out
+
+    if not dispatched:
+        # Everything in the window was bulk calendar noise. That is a COMPLETE run, not a
+        # degraded one — there was nothing for a model to read, so no model was asked, and
+        # nothing is owed re-coverage.
+        _audit_batch(state, batch_id=batch_id, window_start=window_start,
+                     window_end=window_end, scored=[], dispositions=dispositions,
+                     degraded=False, consumed=True)
+        return _result("no_relevant_events")
 
     def _bail(status: str, *, scored: list[dict], degraded: bool) -> dict:
         _audit_batch(state, batch_id=batch_id, window_start=window_start,
                      window_end=window_end, scored=scored, dispositions=dispositions,
                      degraded=degraded, consumed=False)
-        return {"status": status, "date": date, "window_start": window_start,
-                "window_end": window_end,
-                "deferred": sorted(k for k, v in dispositions.items() if v == "deferred")}
+        return _result(status)
 
     # ---- ONE batched triage call --------------------------------------------------------
     t_tmpl = load_prompt("triage_batch")
@@ -121,6 +218,8 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         state, alias="triage", prompt_ref=t_tmpl.ref, prompt_hash=t_tmpl.sha256,
         prompt=t_prompt, schema_name="TriageResult",
         input_refs={"raw_refs": sorted(packet.dispatched_refs)}, transport=transport,
+        timeout_s=TRIAGE_TIMEOUT_BASE_SECONDS
+        + TRIAGE_TIMEOUT_PER_EVENT_SECONDS * len(dispatched),
     )
     if t_result.status in (LIMIT_HIT, TIMEOUT):
         return _bail("degraded_watch_only", scored=[], degraded=True)
@@ -150,6 +249,8 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         state, alias="deep", prompt_ref=b_tmpl.ref, prompt_hash=b_tmpl.sha256,
         prompt=b_prompt, schema_name="MorningBrief",
         input_refs={"raw_refs": sorted(brief_packet.dispatched_refs)}, transport=transport,
+        timeout_s=BRIEF_TIMEOUT_BASE_SECONDS
+        + BRIEF_TIMEOUT_PER_EVENT_SECONDS * len(brief_events),
     )
     if b_result.status in (LIMIT_HIT, TIMEOUT):
         return _bail("degraded_watch_only", scored=scored_entries, degraded=True)
@@ -192,9 +293,5 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         except Exception:
             delivered = False   # delivery failure is reported, never raised
 
-    return {
-        "status": "ok", "date": date, "brief_id": row.id, "degraded": degraded_refs,
-        "delivered": delivered, "window_start": window_start, "window_end": window_end,
-        "scored": len(scored_entries),
-        "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
-    }
+    return _result("ok", brief_id=row.id, degraded=degraded_refs, delivered=delivered,
+                   scored=len(scored_entries))

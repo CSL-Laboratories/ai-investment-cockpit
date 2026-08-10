@@ -11,6 +11,7 @@ transport, and enforces the safety envelope:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import replace
 
@@ -24,6 +25,13 @@ from agent_runner.tool_inspector import assert_decision_cwd, inspect_argv
 from agent_runner.transport import SubprocessTransport
 from agent_runner.usage import UsageTracker
 from config.models import cli_model_for
+
+log = logging.getLogger(__name__)
+
+# Bound on a schema-rejection reason carried into a log line. jsonschema echoes the offending
+# INSTANCE into its error text, and that instance is model output derived from untrusted feed
+# text — so the reason is bounded and stays local-log only, never an operator-facing surface.
+_REASON_TAIL = 300
 
 
 # Codex exposes agentic tools as feature flags rather than Claude's ``--allowedTools none``.
@@ -138,6 +146,73 @@ def _decode_json_value(value):
         return _loads(value)
     except ValueError:
         return value
+
+
+def _is_model_payload(stdout: str) -> bool:
+    """Does stdout parse as a model payload — Claude's single JSON envelope, or Codex's JSONL?
+
+    The channel test behind ``_limit_signal``. Anything that parses as one of the two promised
+    protocols came from the MODEL and is derived from untrusted feed text; anything else is the
+    CLI itself talking, and the CLI is the vendor.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return False
+    try:
+        json.loads(text, parse_constant=_no_nonfinite)
+        return True                      # claude: one envelope
+    except ValueError:
+        pass
+    lines = [ln for ln in (line.strip() for line in text.splitlines()) if ln]
+    if not lines:
+        return False
+    for line in lines:                   # codex: JSONL, every line an object
+        try:
+            json.loads(line, parse_constant=_no_nonfinite)
+        except ValueError:
+            return False
+    return True
+
+
+def _limit_signal(stdout: str, stderr: str) -> bool:
+    """Is there a VENDOR limit/health signal here? Scans the CLI's OWN channels, NEVER the
+    model's payload.
+
+    THE MODEL'S OUTPUT IS DERIVED FROM UNTRUSTED FEED TEXT, so it must not be able to decide
+    vendor health. ``detect.py``'s patterns include ``\\bcapacity\\b``, ``quota``,
+    ``overloaded`` and ``too long`` — ordinary market vocabulary. Found live: a triage batch
+    containing "British Airways-owner IAG trims capacity outlook" came back with "capacity" in
+    the model's own rationale, so a SUCCESSFUL 187s run was reported as a usage limit, the
+    breaker tripped, and the whole cockpit degraded to watch-only. Every news day mentioning
+    production capacity would have done the same.
+
+    It is also an injection vector, which is what makes this structural rather than cosmetic: a
+    headline reading "usage limit reached" would let any feed force the cockpit into watch-only.
+    Feed text is DATA, never control (M2/M3) — and a breaker is control.
+
+    NEITHER PRIOR VERSION WAS CORRECT AGAINST BOTH RUNTIMES.
+
+    * main narrowed the scan to stderr only. That closed the injection hole but went blind to a
+      real channel: a vendor limit printed as raw text on stdout with exit 0 no longer produced
+      LIMIT_HIT. It fell through to "output was not valid JSON", burned a repair round, and
+      returned NEEDS_HUMAN — so the breaker never tripped and the next job hammered an
+      exhausted vendor.
+    * rw01 scanned stdout when ``json.loads`` of the WHOLE buffer failed. That is correct for
+      Claude's single envelope and wrong for Codex, which emits JSONL: the whole-buffer parse
+      always fails, so it fell back to scanning the model's own ``agent_message`` text and
+      reopened SEC-25 for that runtime. rw01 predates Codex support and could not have known.
+
+    Both promised protocols are recognised here, so the excluded channel is exactly the one the
+    vendor cannot speak through, on either runtime. Real signals are unaffected: a limit arrives
+    as a non-zero exit (checked by the caller), as text on stderr, as raw non-JSON text on
+    stdout, or as an ``is_error``/``subtype: error_*`` envelope (checked after parsing).
+    """
+    if looks_like_limit(stderr or ""):
+        return True
+    text = (stdout or "").strip()
+    if not text or _is_model_payload(text):
+        return False
+    return looks_like_limit(text)
 
 
 def _parse_codex_output(stdout: str, fallback_session_id: str | None = None):
@@ -273,11 +348,9 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         w = usage.trip(spec.runtime, "exhausted")            # a timeout opens the breaker
         return AgentResult(status=TIMEOUT, raw=proc.stdout, error="timeout", usage_state=w.state)
 
-    # Do not scan Codex's JSONL assistant messages for limit words: a valid research answer can
-    # discuss a rate limit without the vendor being rate-limited. Exit status and stderr are the
-    # transport-level health signals; structured Codex failure events are checked after parsing.
-    health_text = proc.stderr or ""
-    if proc.returncode != 0 or looks_like_limit(health_text):
+    # SEC-25: the model's payload never decides vendor health, but raw CLI text on stdout does.
+    # See _limit_signal — stderr-only went blind to a limit printed on stdout with exit 0.
+    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or ""):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="limit_or_error", usage_state=w.state)
 
@@ -310,6 +383,12 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     if reason is None:
         return AgentResult(status=OK, validated=body, raw=proc.stdout, session_id=session_id)
 
+    # Say WHY the repair round is happening. Without this a quarantine is a status code with
+    # no cause attached, and the only way to learn what the schema objected to was to reproduce
+    # the run. Bounded and local-log only — see _REASON_TAIL.
+    log.warning("job %s: schema %s rejected the output, attempting repair: %.*s",
+                spec.job_id, spec.schema_path or "<inline>", _REASON_TAIL, str(reason))
+
     # one repair attempt, then quarantine (Inv 3)
     return _repair(spec, reason, transport, usage, session_id, secret_values, pinned_cwd)
 
@@ -337,9 +416,8 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
 
-    health_text = proc.stderr or ""
     if (getattr(proc, "timed_out", False) or proc.returncode != 0
-            or looks_like_limit(health_text)):
+            or _limit_signal(proc.stdout or "", proc.stderr or "")):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
                            error="repair_failed", usage_state=w.state)
@@ -358,11 +436,17 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         w = usage.trip(spec.runtime, "degraded")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
                            error="repair_vendor_error", usage_state=w.state)
-    if parsed is not None and _validate(body2, spec.schema) is None:
+    reason2 = "output was not valid JSON" if parsed is None else _validate(body2, spec.schema)
+    if reason2 is None:
         return AgentResult(
             status=OK, validated=body2, raw=proc.stdout,
             session_id=sid2 or session_id, repaired=True,
         )
+    # The second rejection is the interesting one: the model was TOLD what was wrong and still
+    # produced something the schema refuses. Quarantine is correct, but the reason is the only
+    # evidence of whether the prompt or the schema is at fault.
+    log.warning("job %s: the repaired output was still rejected, quarantining: %.*s",
+                spec.job_id, _REASON_TAIL, str(reason2))
     return AgentResult(
         status=NEEDS_HUMAN, raw=proc.stdout, session_id=sid2 or session_id,
         repaired=True, error="repair_still_invalid",
