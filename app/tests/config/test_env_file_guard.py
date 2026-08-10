@@ -18,6 +18,7 @@ So the file ships with a guard, and this module is the guard's test. It asserts 
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -309,3 +310,64 @@ def test_blank_handling_did_not_turn_a_BAD_value_into_a_good_one(tmp_path, monke
     with pytest.raises(Exception) as exc:
         Settings(_env_file=str(env))
     assert field in str(exc.value)
+
+
+# ---- the template must keep pace with the Settings class --------------------------------
+def _documented_env_names() -> set[str]:
+    """Every ``COCKPIT_*`` name the shipped template mentions, commented-out lines included —
+    a commented default is documentation, which is what this guards."""
+    text = (Path(__file__).resolve().parents[2] / ".env.example").read_text(encoding="utf-8")
+    return set(re.findall(r"^\s*#?\s*(COCKPIT_[A-Z0-9_]+)\s*=", text, flags=re.MULTILINE))
+
+
+def _env_names_for(name: str, field) -> set[str]:
+    """The env names pydantic-settings will actually accept for ``field``. Must honour
+    ``validation_alias``/``AliasChoices`` — ``operator_ids_config`` reads COCKPIT_OPERATOR_IDS,
+    not COCKPIT_OPERATOR_IDS_CONFIG, and a naive f"COCKPIT_{name.upper()}" reports it missing
+    when it is in fact documented."""
+    alias = getattr(field, "validation_alias", None)
+    if alias is None:
+        return {f"COCKPIT_{name.upper()}"}
+    choices = getattr(alias, "choices", None) or [alias]
+    return {str(c).upper() if str(c).startswith("COCKPIT_") else f"COCKPIT_{str(c).upper()}"
+            for c in choices}
+
+
+def test_every_setting_is_documented_in_the_env_template():
+    """An operator provisions from ``.env.example``; a field absent from it is a control they
+    cannot know exists. That is not hypothetical — COCKPIT_DECISION_AGENT_CWD was undocumented
+    here, and setting it silently disabled the SEC-14 grounding verifier (see
+    tests/workflows/test_grounding.py::test_grounding_survives_a_pinned_decision_cwd)."""
+    documented = _documented_env_names()
+    missing = sorted(
+        name for name, field in Settings.model_fields.items()
+        if not (_env_names_for(name, field) & documented)
+    )
+    assert not missing, (
+        f"{len(missing)} Settings field(s) missing from app/.env.example: {missing}"
+    )
+
+
+# Read from os.environ at import time (settings.py:40) to LOCATE the env file, so it cannot
+# itself be a Settings field. A scheduled task whose cwd is not the repo needs it, so it is
+# documented on purpose.
+_NOT_SETTINGS_FIELDS = {"COCKPIT_ENV_FILE"}
+
+
+def test_the_env_template_does_not_document_names_that_no_longer_exist():
+    """The other direction: a stale name in the template is a value an operator can set and
+    watch do nothing, because ``extra='ignore'`` swallows it silently."""
+    known: set[str] = set(_NOT_SETTINGS_FIELDS)
+    for name, field in Settings.model_fields.items():
+        known |= _env_names_for(name, field)
+    stale = sorted(_documented_env_names() - known)
+    assert not stale, f"app/.env.example documents unknown setting(s): {stale}"
+
+
+def test_the_documented_api_port_is_the_one_the_app_binds():
+    """The template said 8765 while Settings defaulted to 8787, so an operator who uncommented
+    the line moved the loopback API out from under every runbook."""
+    text = (Path(__file__).resolve().parents[2] / ".env.example").read_text(encoding="utf-8")
+    documented = re.search(r"^\s*#?\s*COCKPIT_API_PORT\s*=\s*(\d+)", text, flags=re.MULTILINE)
+    assert documented is not None
+    assert int(documented.group(1)) == Settings().api_port
