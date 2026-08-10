@@ -288,3 +288,47 @@ def test_the_existing_brew_reader_can_read_the_rows_this_pipeline_writes(
     row = rows[0]
     for key in ("delta_id", "accession_no", "cik", "created_at"):
         assert key in row, f"reader row is missing {key}"
+
+
+# ---------------------------------------------------------------------------------------
+# BUG-053: first contact with an established CIK must baseline, not fault forever
+# ---------------------------------------------------------------------------------------
+def _audit_log(sf):
+    from storage.audit import AuditLog
+
+    return AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=CLOCK)
+
+
+def test_first_contact_with_an_established_cik_baselines_instead_of_faulting(sf, store):
+    """BUG-053: the recorded NVDA window holds 26 in-scope filings — one more than the
+    production cap of 25. Before the fix, the first audited poll of any established issuer
+    raised PollFilingLimitExceeded and did so again on EVERY subsequent run: the baseline
+    machinery built for exactly this was dead wiring (baseline_on_first_poll defaulted
+    False and nothing called baseline_missing). First contact must record the audited feed
+    position, ingest nothing, and leave the next run quiet."""
+    prod_cap = Settings(sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+                        sec_max_new_filings_per_poll=25)
+    result = run_edgar_pipeline(
+        sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+    )
+    assert result.poll_errors == [], "first contact must baseline, not trip the cap"
+    assert result.ok is True
+    assert result.filings_ingested == 0, "first contact records position; it never backfills"
+
+    result2 = run_edgar_pipeline(
+        sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+    )
+    assert result2.poll_errors == [] and result2.filings_ingested == 0
+    assert result2.ok is True
+
+
+def test_unaudited_runs_keep_the_visible_cap_fault(sf, store):
+    """Without an audit log a production-shaped baseline may not be written (the store
+    refuses unaudited baseline writes), so the cap fault stays — and stays VISIBLE as a
+    per-CIK error rather than becoming a silent unaudited baseline."""
+    low_cap = Settings(sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+                       sec_max_new_filings_per_poll=25)
+    result = run(sf, store, low_cap)
+    assert any("PollFilingLimitExceeded" in reason for _c, reason in result.poll_errors)
