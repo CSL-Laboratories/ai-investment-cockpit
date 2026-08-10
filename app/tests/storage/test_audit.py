@@ -193,3 +193,62 @@ def test_completeness_report_aggregates_all_gaps(env):
     clean = audit.completeness_report([])
     assert clean == {"unresolved_intents": [], "orphan_results": [], "uncovered": {}}
     assert audit.verify_chain().ok
+
+
+def test_full_erasure_is_not_a_virgin_chain(env):
+    """BUG-067: deleting EVERY audit row AND the audit_meta watermark used to re-green
+    verify_chain() — a total wipe was indistinguishable from first boot. Within one
+    process the log knows better: a head below one it has already appended or verified
+    is an erasure, not a fresh start. (Wipes that span a restart are the external
+    anchor's job — verify_against_anchor pins those.)"""
+    from storage.audit import audit_meta
+
+    audit, sf = env
+    audit.append("e", payload={"x": 1})
+    audit.append("e", payload={"x": 2})
+    assert audit.verify_chain().ok
+    with sf() as s, s.begin():
+        s.execute(delete(AuditEntry))                   # erase the whole chain
+        s.execute(audit_meta.delete())                  # AND the signed watermark
+    v = audit.verify_chain()
+    assert not v.ok
+    assert "erasure" in (v.error or "")
+
+
+def test_empty_chain_on_a_fresh_log_still_verifies_ok(env):
+    """Regression guard for BUG-067: a genuinely virgin chain (nothing ever appended or
+    verified by this log) must keep verifying ok — first boot is not a tamper."""
+    audit, _ = env
+    v = audit.verify_chain()
+    assert v.ok and v.head_seq == 0
+
+
+def test_result_double_resolve_is_atomic_under_races(env):
+    """BUG-068: the double-resolve guard and the result append must be ONE atomic step.
+    Racing threads used to both pass the check-then-act guard and append duplicate
+    result rows that neither unresolved_intents() nor orphan_results() could ever see."""
+    audit, _ = env
+    for round_no in range(12):
+        it = audit.intent("op", payload={"round": round_no})
+        start = threading.Barrier(4)
+        outcomes: list[str] = []
+
+        def go():
+            start.wait()
+            try:
+                audit.result(it, "op", payload={})
+                outcomes.append("ok")
+            except ValueError:
+                outcomes.append("dup")
+
+        threads = [threading.Thread(target=go) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        rows = [r for r in audit._rows()
+                if (r.payload or {}).get("_phase") == "result"
+                and (r.refs or {}).get("intent_seq") == it.seq]
+        assert len(rows) == 1, f"round {round_no}: {len(rows)} result rows for one intent"
+        assert outcomes.count("ok") == 1, f"round {round_no}: {outcomes}"
+    assert audit.verify_chain().ok

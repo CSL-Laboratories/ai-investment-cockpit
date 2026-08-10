@@ -97,6 +97,13 @@ class AuditLog:
         self._key = hmac_key if isinstance(hmac_key, bytes) else str(hmac_key).encode()
         self._clock = clock
         self._lock = threading.Lock()   # in-process serialization; cross-process => seq UNIQUE + retry
+        # BUG-067: highest head this PROCESS has appended or verified. A total erasure
+        # (rows AND watermark deleted) leaves DB state identical to a virgin chain, so it
+        # is undetectable from the DB alone; within a process lifetime this floor makes
+        # verify_chain() fail closed on it. Erasures that span a restart are the external
+        # anchor's job (verify_against_anchor) — same boundary as the captured-watermark
+        # replay caveat in the module docstring.
+        self._observed_head = 0
 
     # ---- hashing / signing -------------------------------------------------
     def _hash(self, entry_id, seq, prev_hash, event_type, actor, refs, payload) -> str:
@@ -176,7 +183,8 @@ class AuditLog:
                     with self._sf() as s, s.begin():
                         row = self._insert(s, event_type, actor, refs, payload)
                         s.expunge(row)
-                        return row
+                    self._observed_head = max(self._observed_head, row.seq)   # post-commit only
+                    return row
                 except (IntegrityError, OperationalError):
                     if attempt >= 6:
                         raise
@@ -209,20 +217,38 @@ class AuditLog:
         return self.append(f"intent:{op}", refs=refs, payload=p)
 
     def result(self, intent_entry: AuditEntry, op: str, refs=None, payload=None) -> AuditEntry:
-        with self._sf() as s:
-            rows = s.execute(select(AuditEntry)).scalars().all()
-        by_seq = {r.seq: r for r in rows}
-        it = by_seq.get(intent_entry.seq)
-        if it is None or (it.payload or {}).get("_phase") != "intent":
-            raise ValueError(f"result: no intent at seq {intent_entry.seq}")
-        if any((r.payload or {}).get("_phase") == "result" and (r.refs or {}).get("intent_seq") == intent_entry.seq
-               for r in rows):
-            raise ValueError(f"result: intent seq {intent_entry.seq} already resolved")
+        """BUG-068: the existence + double-resolve guard and the insert are ONE atomic
+        step — same lock, same transaction. Check-then-act across two transactions let
+        racing callers both pass the guard and append duplicate result rows that neither
+        ``unresolved_intents`` nor ``orphan_results`` could ever flag. Cross-process, the
+        seq-UNIQUE collision retry re-runs the guard against the fresh state, so the
+        loser of a same-seq race observes the winner's result and raises."""
         r = dict(refs or {})
         r["intent_seq"] = intent_entry.seq
         p = dict(payload or {})
         p["_phase"], p["_op"] = "result", op
-        return self.append(f"result:{op}", refs=r, payload=p)
+        for attempt in range(1, 7):
+            with self._lock:
+                try:
+                    with self._sf() as s, s.begin():
+                        rows = s.execute(select(AuditEntry)).scalars().all()
+                        by_seq = {row.seq: row for row in rows}
+                        it = by_seq.get(intent_entry.seq)
+                        if it is None or (it.payload or {}).get("_phase") != "intent":
+                            raise ValueError(f"result: no intent at seq {intent_entry.seq}")
+                        if any((row.payload or {}).get("_phase") == "result"
+                               and (row.refs or {}).get("intent_seq") == intent_entry.seq
+                               for row in rows):
+                            raise ValueError(f"result: intent seq {intent_entry.seq} already resolved")
+                        row = self._insert(s, f"result:{op}", None, r, p)
+                        s.expunge(row)
+                    self._observed_head = max(self._observed_head, row.seq)   # post-commit only
+                    return row
+                except (IntegrityError, OperationalError):
+                    if attempt >= 6:
+                        raise
+            time.sleep(0.02 * attempt)   # cross-process seq collision -> retry against fresh head
+        raise RuntimeError("result: exhausted retries")
 
     def _rows(self):
         with self._sf() as s:
@@ -334,6 +360,17 @@ class AuditLog:
         # (the refill allocates ABOVE the high-water and shows as the seq gap caught above).
         if wm is not None and head_seq < wm:
             return VerifyResult(False, head_seq, prev, f"truncation: head seq {head_seq} < high-water {wm}")
+        # BUG-067: a TOTAL erasure (rows AND watermark) is DB-indistinguishable from a
+        # virgin chain, so neither guard above can fire. Within this process lifetime the
+        # observed-head floor closes it: a head below anything this log has appended or
+        # verified is an erasure, never a fresh start. Restart-spanning erasures are
+        # caught by the external anchor (verify_against_anchor), not here.
+        with self._lock:
+            if head_seq < self._observed_head:
+                return VerifyResult(False, head_seq, prev,
+                                    f"erasure/rollback: head seq {head_seq} below previously "
+                                    f"observed head {self._observed_head}")
+            self._observed_head = head_seq
         return VerifyResult(True, head_seq, prev)
 
     def verify_against_anchor(self, anchored_seq: int, anchored_hash: str) -> VerifyResult:
