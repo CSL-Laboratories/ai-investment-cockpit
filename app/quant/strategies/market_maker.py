@@ -94,6 +94,20 @@ class MarketMakerParams:
     of thousands of ticks; quoting it would be harmless in simulation and catastrophic in the
     verifier, which reads the same parameters."""
 
+    max_skew_ticks: int = 50
+    """The SAME sanity clamp, for the inventory skew — the term that actually runs away.
+
+    ``sigma`` is converted to price units by multiplying by the mid, so ``variance_term``
+    grows with mid SQUARED and the skew ``inventory * variance_term`` with it. Clamping only
+    the half-spread left that unbounded: with real inventory the reservation price landed
+    through the market, the quote was added to the book, THAT raised the mid, and the next
+    iteration squared the new mid. It reaches inf in ~60 events and dies in
+    ``math.floor(inf)``. The ``ask <= bid`` guard does not help — it fixes the pair's internal
+    ordering, not its distance from the market.
+
+    Keep this at or above ``max_spread_ticks``; below it the clamp binds before the spread
+    does and the inventory skew stops meaning anything."""
+
     vol_lambda: float = 0.94
 
     vol_sample_ns: int = 1_000_000
@@ -207,7 +221,14 @@ class MarketMaker(Strategy):
         inventory = ctx.position(book.symbol)
         variance_term = p.gamma * sigma * sigma * tau
 
-        reservation = mid - inventory * variance_term
+        # Clamp the SKEW, not just the spread. Unbounded, this is quadratic in the mid (see
+        # max_skew_ticks) and feeds back through the book into a runaway that ends in
+        # math.floor(inf). Clamping the deviation rather than the reservation itself keeps the
+        # skew's sign and its behaviour everywhere below the bound.
+        skew = inventory * variance_term
+        cap = float(p.max_skew_ticks)
+        skew = max(-cap, min(cap, skew))
+        reservation = mid - skew
         half_spread = 0.5 * (variance_term + (2.0 / p.gamma) * math.log1p(p.gamma / p.kappa))
         half_spread = max(p.min_spread_ticks / 2.0, min(p.max_spread_ticks / 2.0, half_spread))
 

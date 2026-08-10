@@ -263,3 +263,58 @@ def _as_live(intents):
         if isinstance(intent, NewOrder):
             oms.register(intent, strategy="mm")
     return tuple(oms.live_orders())
+
+
+# ---- the reservation skew is bounded ----------------------------------------------------
+
+
+def test_the_inventory_skew_cannot_walk_the_quote_off_the_book():
+    """SANITY CLAMPS COVER THE SPREAD BUT NOT THE SKEW — and the skew is the quadratic one.
+
+    ``_sigma_ticks`` converts return-vol to price-vol by multiplying by the mid, so
+    ``variance_term = gamma * sigma^2 * tau`` grows with mid SQUARED, and the skew
+    ``inventory * variance_term`` grows with it. Only ``half_spread`` was clamped
+    (``max_spread_ticks``), so with any real inventory the reservation price landed far
+    through the market. The quote is then added to the book, which RAISES the mid, and the
+    next iteration squares the new mid: a positive feedback loop that reaches inf in ~60
+    events and dies in ``math.floor(inf)`` with an uncaught OverflowError.
+
+    ``ask <= bid`` at the end of ``quotes()`` fixes internal ordering only. It says nothing
+    about how far from the market the pair sits, which is the thing that runs away.
+    """
+    mm = _maker(max_inventory=1_000, max_skew_ticks=50)
+    _warm(mm)
+    ctx = context(snapshot(bid=9_999, ask=10_001), positions={"TEST": 1_000})
+    mid = 10_000
+
+    quote = mm.quotes(ctx)
+    assert quote is not None
+    bid, ask = quote
+    # Bounded by the skew clamp plus at most a full max spread of half-width on each side.
+    limit = 50 + mm.params.max_spread_ticks
+    assert abs(bid - mid) <= limit, f"bid {bid} ran {abs(bid - mid)} ticks from mid {mid}"
+    assert abs(ask - mid) <= limit, f"ask {ask} ran {abs(ask - mid)} ticks from mid {mid}"
+
+
+def test_a_short_position_is_clamped_symmetrically():
+    """The runaway is sign-symmetric: short inventory skews the reservation UP by the same
+    quadratic term, so a one-sided clamp would just move the crash to the other side."""
+    mm = _maker(max_inventory=1_000, max_skew_ticks=50)
+    _warm(mm)
+    ctx = context(snapshot(bid=9_999, ask=10_001), positions={"TEST": -1_000})
+    quote = mm.quotes(ctx)
+    assert quote is not None
+    bid, ask = quote
+    limit = 50 + mm.params.max_spread_ticks
+    assert abs(bid - 10_000) <= limit and abs(ask - 10_000) <= limit
+
+
+def test_the_skew_is_still_present_below_the_clamp():
+    """CONTROL. A clamp that always binds would silently delete the inventory skew, which is
+    the entire model. At small inventory the skew must still move the quote DOWN when long."""
+    mm = _maker(max_inventory=1_000, max_skew_ticks=10_000)
+    _warm(mm)
+    flat = mm.quotes(context(snapshot(bid=9_999, ask=10_001), positions={}))
+    long_ = mm.quotes(context(snapshot(bid=9_999, ask=10_001), positions={"TEST": 5}))
+    assert flat is not None and long_ is not None
+    assert long_[0] < flat[0] and long_[1] < flat[1], "long inventory must skew both quotes down"

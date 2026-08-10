@@ -139,3 +139,44 @@ def test_the_simulation_is_deterministic_across_http_calls(client):
     first = client.post("/quant/sim", json=payload, headers=AUTH).json()
     second = client.post("/quant/sim", json=payload, headers=AUTH).json()
     assert first["attribution"] == second["attribution"]
+
+
+# ---- operator input is bounded, not just counted -------------------------------------------
+
+
+@pytest.mark.parametrize("payload", [
+    {"strategy": "market_maker", "quote_size": 0},
+    {"strategy": "market_maker", "quote_size": -100},
+    {"strategy": "market_maker", "max_inventory": -1},
+    {"strategy": "market_maker", "requote_threshold_ticks": -5},
+    {"strategy": "market_maker", "events": 0},
+    {"strategy": "market_maker", "events": -1},
+])
+def test_a_nonsense_sim_parameter_is_rejected_not_a_500(client, payload):
+    """``events`` was the only bounded field. Everything else went straight into
+    ``MarketMakerParams``, so a plausible operator value came back as an unhandled 500 from
+    the loopback control plane rather than a validation error naming the field.
+
+    The module docstring argues the event cap is 'a safety property of the control plane, not
+    a nicety' — the same argument covers every other parameter reaching the same run loop.
+    """
+    r = client.post("/quant/sim", json=payload, headers=AUTH)
+    assert r.status_code == 422, f"{payload} -> {r.status_code}"
+    assert "detail" in r.json()
+
+
+def test_a_large_quote_size_does_not_run_the_book_away(client):
+    """quote_size=500 is an ordinary value, and it used to reach an uncaught OverflowError:
+    the unclamped inventory skew walked the quote off the book (see
+    tests/quant/strategies/test_market_maker.py). Bounded input is only half the fix — this
+    asserts the run itself now completes."""
+    r = client.post("/quant/sim",
+                    json={"strategy": "market_maker", "quote_size": 500, "events": 2_000},
+                    headers=AUTH)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["events"] > 0
+    best_bid, best_ask = body["book"]["best_bid_ticks"], body["book"]["best_ask_ticks"]
+    for px in (best_bid, best_ask):
+        if px is not None:
+            assert 0 < px < 10_000_000, f"book price {px} is not a plausible tick value"

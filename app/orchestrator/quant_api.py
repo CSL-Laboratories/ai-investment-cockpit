@@ -34,7 +34,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MAX_SIM_EVENTS = 50_000
 """Hard ceiling on one simulated run. See the module docstring — this keeps the loopback
@@ -50,13 +50,26 @@ misapplied one. It remains fully available in-process and under test."""
 
 
 class SimRequest(BaseModel):
+    """Every field is bounded, because every field is operator input.
+
+    ``events`` was the only one that was, and the module docstring's argument for it — the
+    cap is a safety property of the control plane, not a nicety — applies unchanged to the
+    rest: they all reach the same run loop on the same loopback process that serves
+    ``/killswitch``. Unbounded, a plausible value came back as an unhandled 500 rather than a
+    422 naming the field, which tells the operator nothing and leaves a traceback in the log
+    of the process they may be trying to halt.
+    """
+
     strategy: str = "market_maker"
+    # NOT bounded here on purpose: ``run_sim`` already rejects it with a message that names
+    # the ceiling AND why it exists. A Field bound would pre-empt that with pydantic's generic
+    # "less than or equal to 50000", which tells an operator the number but not the reason.
     events: int = DEFAULT_SIM_EVENTS
     seed: int = 3
-    symbol: str = "SIM"
-    quote_size: int = 100
-    max_inventory: int = 1_000
-    requote_threshold_ticks: int = 2
+    symbol: str = Field(default="SIM", min_length=1, max_length=16)
+    quote_size: int = Field(default=100, gt=0, le=1_000_000)
+    max_inventory: int = Field(default=1_000, ge=0, le=100_000_000)
+    requote_threshold_ticks: int = Field(default=2, ge=0, le=100_000)
     no_fees: bool = False
 
 
