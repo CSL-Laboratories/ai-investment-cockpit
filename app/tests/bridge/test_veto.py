@@ -173,8 +173,6 @@ def test_mode_no_longer_auto_veto_cancels(st):
 
 # ---- BUG-080: settled tickets are bounded ----------------------------------------------
 def test_settled_tickets_are_pruned_beyond_the_bound(coordinator_factory=None):
-    from decimal import Decimal
-
     from bridge.veto import AutoVetoCoordinator
 
     # A minimal stand-in state: only .lock is touched by schedule/_prune_settled.

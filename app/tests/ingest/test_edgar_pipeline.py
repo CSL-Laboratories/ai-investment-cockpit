@@ -358,9 +358,9 @@ def test_same_day_prior_resolves_to_the_earlier_accession(sf):
 
     with sf() as s:
         e = s.execute(select(Filing).where(Filing.accession_no.like("%000001"))).scalar_one()
-        l = s.execute(select(Filing).where(Filing.accession_no.like("%000002"))).scalar_one()
+        later_row = s.execute(select(Filing).where(Filing.accession_no.like("%000002"))).scalar_one()
 
-    prior_of_later = _prior_same_form(sf, l)
+    prior_of_later = _prior_same_form(sf, later_row)
     assert prior_of_later is not None
     assert prior_of_later.accession_no == e.accession_no
 

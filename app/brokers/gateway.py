@@ -26,19 +26,32 @@ consuming the single-use approval and advancing the order to ``submitted`` (both
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-import logging
-
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-log = logging.getLogger(__name__)
-
 from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
 from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
+
+from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
+from orchestrator.halt import default_halt_path, halt_is_set
+from orchestrator.mode_ladder import ExecutionRuntimeError
+from orchestrator.state import (
+    BYPASS_EVENTS,
+    EVENT_ADJUDICATION,
+    EVENT_ORDER_TRANSITION,
+    OrchestratorState,
+)
+from schemas.models.approval_record import ApprovalRecord
+from schemas.models.audit_entry import AuditEntry
+from schemas.models.order import Order
+from schemas.models.risk_decision import RiskDecision
+
+log = logging.getLogger(__name__)
 
 # BUG-052: the broker statuses that are DEFINITIVE about an order's fate at submit time,
 # mapped onto FSM states. Anything absent here ("new", "accepted", "pending_new", ...) is
@@ -93,19 +106,7 @@ def _ack_consistent(ack_state: str, result: dict, order) -> bool:
     if ack_state == "partially_filled":
         return 0 < fq < qty
     return False
-from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
-from orchestrator.halt import default_halt_path, halt_is_set
-from orchestrator.mode_ladder import ExecutionRuntimeError
-from orchestrator.state import (
-    BYPASS_EVENTS,
-    EVENT_ADJUDICATION,
-    EVENT_ORDER_TRANSITION,
-    OrchestratorState,
-)
-from schemas.models.approval_record import ApprovalRecord
-from schemas.models.audit_entry import AuditEntry
-from schemas.models.order import Order
-from schemas.models.risk_decision import RiskDecision
+
 
 # ---- refusal / bypass audit event names -----------------------------------------------
 EVENT_ORDER_REFUSED = "order_refused"                 # generic gate refusal (not a bypass)
