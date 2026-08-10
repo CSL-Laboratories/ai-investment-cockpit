@@ -251,6 +251,28 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/brief/run -Headers $h 
 The response tells you what happened. `"status": "ok"` with `"delivered": true` is the
 pass. Anything else, see §6.
 
+The counts alongside it account for **every** event in the window — that is the Inv 7
+property, and they should always add up:
+
+| Field | Meaning |
+|---|---|
+| `window_events` | everything ingested in the 18h window |
+| `prefiltered` | bulk calendar rows for symbols you neither hold nor watch — deliberately not read |
+| `dispatched` | what actually went to the triage model (capped at `MAX_PACKET_EVENTS`) |
+| `deferred_count` | not analysed this run, and owed re-coverage next run |
+| `deferred_sample` | the first 20 deferred ids; the complete set is in the audited `EVENT_TRIAGE_BATCH` payload |
+| `over_cap` | present only when relevance alone did not get under the cap |
+
+A large `prefiltered` is normal: the earnings-calendar feed publishes a forward window for
+the whole market, so a typical day is several hundred calendar rows against a few dozen news
+items. `"status": "no_relevant_events"` means the window held nothing but that reference
+data — a **complete** run that asked no model, not a failure.
+
+`prefiltered` and `deferred_count` mean different things and the distinction matters when
+reading a run: prefiltered rows were deliberately not analysed and are owed nothing, while
+deferred events will be re-covered next loop. If `deferred_count` stays high across
+consecutive runs, the window is arriving faster than the cap can clear it.
+
 ### 5c. Exercise the kill switch
 
 From a **separate** terminal — the point is that it works without the orchestrator's event

@@ -11,8 +11,14 @@ venv/
 *.sqlite
 *.sqlite3
 *.db
+# SQLite's sidecars carry live page data — as sensitive as the .db itself — and `*.db` does
+# NOT match them: -shm/-wal/-journal are a different suffix, not an extension. All three were
+# tracked at one point, so every run left a dirty tree, which permanently violated the "no
+# soak/replay on a dirty tree" rule. -journal is the rollback-mode sidecar; it appears whenever
+# journal_mode is not WAL, so ignoring only the WAL pair leaves a gap.
 *.db-shm
 *.db-wal
+*.db-journal
 *.duckdb
 *.parquet
 /data/

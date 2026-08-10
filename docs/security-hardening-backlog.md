@@ -98,6 +98,7 @@ depth). "Gate" = the earliest ladder rung the fix must precede.
 | **SEC-22** | Delimiter escape is a byte denylist (homoglyphs bypass) | P1 | live | prompt-inj §4 M3; Inv 3 |
 | **SEC-23** | `auto_veto` fires on silence even when undelivered | P0 | auto | draft-2 §ladder; Inv 7 |
 | **SEC-24** | Portfolio PII persists in the CLI session store | P1 | live | sec-arch §5; Inv 4/8 |
+| **SEC-25** | A headline can trip the vendor breaker (denial of awareness) | P1 | live | prompt-inj §4 M2/M3; Inv 7 |
 | **OPS-01** | Multi-writer race on the audit chain head | P0 | live | build-scaffold WP2; Inv 6 |
 | **OPS-02** | No backup / DR / retention for audit + parquet + keyring | P1 | live | enhancements E-03 |
 | **OPS-03** | SQLite locking/journal mode unspecified on Windows | P1 | live | build-scaffold WP2 |
@@ -919,6 +920,47 @@ transcript lifetime (also SEC-18).
 **Amends.** [[security-architecture]] §5. Inv 4, 8.
 **Test.** The PII grep scans the session-store dir; session files older than the TTL are
 purged.
+
+### SEC-25 — Untrusted text must not reach a breaker (vendor-health detection)
+**Attack.** `agent_runner/runner.py` decided vendor health by running
+`detect.looks_like_limit` over the model's payload — and that payload is derived from
+untrusted feed text (M2/M3). The pattern list includes `\bcapacity\b`, `quota`, `overloaded`
+and `too long`, so an attacker who can land one headline in a triage batch — trivially, via
+any wire the ingest layer reads — makes the runner report a vendor usage limit. That trips the
+usage breaker, bumps the SEC-23 generation, and drops the cockpit to L8 watch-only. It is
+**denial of awareness**: cheap, repeatable, indistinguishable from a genuine vendor outage,
+and it blinds the operator exactly when an attacker wants them blind. The relationship to
+SEC-21 is worth naming — that one starves the deep budget so a real event gets no analysis;
+this one shuts the pipeline off outright, one headline at a time.
+**Required control.** Health detection reads only channels the VENDOR speaks through: stderr,
+the process exit code, an `is_error`/`subtype: error_*` envelope, and stdout **only when it
+does not parse as a model payload**. Model output is never an input to a control decision.
+**Amends.** [[prompt-injection-defense]] §4 M2/M3. Inv 7, SEC-23.
+**Test.** A batch whose model output contains every limit keyword returns `OK` with the
+breaker untripped; a real limit on each vendor channel still fails closed.
+
+**Found live and closed (RW-01, 2026-08-02; re-closed for Codex 2026-08-09 — property
+HOLDS).** Not theoretical: a healthy 187-second triage run over 100 real news events was
+reported as `limit_hit` and degraded the cockpit, because the batch contained *"British
+Airways-owner IAG trims **capacity** outlook"* (Reuters) and the model echoed the word in its
+rationale.
+
+`runner._limit_signal` scopes the scan to the vendor's own channels. **"Parses as a model
+payload" must recognise BOTH runtimes** — Claude's single JSON envelope and Codex's JSONL
+event stream. The first fix tested only the single-envelope form, which meant Codex's stream
+never parsed, the guard fell through, and the scan hit the model's own `agent_message` text:
+the hole was closed for one runtime and open for the other. A protocol-shaped test is
+therefore not enough on its own; the test set must cover every runtime the tree can spawn.
+`tests/agent_runner/test_limit_signal_boundary.py` pins both directions on both runtimes,
+including a test that the live headline still matches `detect.py` so the regression cannot
+start passing for the wrong reason.
+
+**Residual:** if the CLI ever echoes the prompt to stderr on a parse error, feed text reaches
+the detector again. That direction is fail-safe (a spurious degrade, never a spurious
+proceed), and the pattern list is deliberately left broad rather than tuned — but it means the
+boundary is enforced by channel, not by content. A stream that is neither valid JSON nor valid
+JSONL is treated as vendor text and fails closed, which is the correct default for bytes that
+cannot be attributed to either protocol.
 
 ### SEC-20 — Compute the performance gate from the verified chain
 **Attack.** The unlock metrics (≥30 adjudicated proposals, ≥80% approval, drawdown-in-
