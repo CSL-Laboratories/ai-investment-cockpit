@@ -140,6 +140,73 @@ def _decode_json_value(value):
         return value
 
 
+def _is_model_payload(stdout: str) -> bool:
+    """Does stdout parse as a model payload — Claude's single JSON envelope, or Codex's JSONL?
+
+    The channel test behind ``_limit_signal``. Anything that parses as one of the two promised
+    protocols came from the MODEL and is derived from untrusted feed text; anything else is the
+    CLI itself talking, and the CLI is the vendor.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return False
+    try:
+        json.loads(text, parse_constant=_no_nonfinite)
+        return True                      # claude: one envelope
+    except ValueError:
+        pass
+    lines = [ln for ln in (line.strip() for line in text.splitlines()) if ln]
+    if not lines:
+        return False
+    for line in lines:                   # codex: JSONL, every line an object
+        try:
+            json.loads(line, parse_constant=_no_nonfinite)
+        except ValueError:
+            return False
+    return True
+
+
+def _limit_signal(stdout: str, stderr: str) -> bool:
+    """Is there a VENDOR limit/health signal here? Scans the CLI's OWN channels, NEVER the
+    model's payload.
+
+    THE MODEL'S OUTPUT IS DERIVED FROM UNTRUSTED FEED TEXT, so it must not be able to decide
+    vendor health. ``detect.py``'s patterns include ``\\bcapacity\\b``, ``quota``,
+    ``overloaded`` and ``too long`` — ordinary market vocabulary. Found live: a triage batch
+    containing "British Airways-owner IAG trims capacity outlook" came back with "capacity" in
+    the model's own rationale, so a SUCCESSFUL 187s run was reported as a usage limit, the
+    breaker tripped, and the whole cockpit degraded to watch-only. Every news day mentioning
+    production capacity would have done the same.
+
+    It is also an injection vector, which is what makes this structural rather than cosmetic: a
+    headline reading "usage limit reached" would let any feed force the cockpit into watch-only.
+    Feed text is DATA, never control (M2/M3) — and a breaker is control.
+
+    NEITHER PRIOR VERSION WAS CORRECT AGAINST BOTH RUNTIMES.
+
+    * main narrowed the scan to stderr only. That closed the injection hole but went blind to a
+      real channel: a vendor limit printed as raw text on stdout with exit 0 no longer produced
+      LIMIT_HIT. It fell through to "output was not valid JSON", burned a repair round, and
+      returned NEEDS_HUMAN — so the breaker never tripped and the next job hammered an
+      exhausted vendor.
+    * rw01 scanned stdout when ``json.loads`` of the WHOLE buffer failed. That is correct for
+      Claude's single envelope and wrong for Codex, which emits JSONL: the whole-buffer parse
+      always fails, so it fell back to scanning the model's own ``agent_message`` text and
+      reopened SEC-25 for that runtime. rw01 predates Codex support and could not have known.
+
+    Both promised protocols are recognised here, so the excluded channel is exactly the one the
+    vendor cannot speak through, on either runtime. Real signals are unaffected: a limit arrives
+    as a non-zero exit (checked by the caller), as text on stderr, as raw non-JSON text on
+    stdout, or as an ``is_error``/``subtype: error_*`` envelope (checked after parsing).
+    """
+    if looks_like_limit(stderr or ""):
+        return True
+    text = (stdout or "").strip()
+    if not text or _is_model_payload(text):
+        return False
+    return looks_like_limit(text)
+
+
 def _parse_codex_output(stdout: str, fallback_session_id: str | None = None):
     """Parse Codex's documented JSONL event stream.
 
@@ -273,11 +340,9 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
         w = usage.trip(spec.runtime, "exhausted")            # a timeout opens the breaker
         return AgentResult(status=TIMEOUT, raw=proc.stdout, error="timeout", usage_state=w.state)
 
-    # Do not scan Codex's JSONL assistant messages for limit words: a valid research answer can
-    # discuss a rate limit without the vendor being rate-limited. Exit status and stderr are the
-    # transport-level health signals; structured Codex failure events are checked after parsing.
-    health_text = proc.stderr or ""
-    if proc.returncode != 0 or looks_like_limit(health_text):
+    # SEC-25: the model's payload never decides vendor health, but raw CLI text on stdout does.
+    # See _limit_signal — stderr-only went blind to a limit printed on stdout with exit 0.
+    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or ""):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="limit_or_error", usage_state=w.state)
 
@@ -337,9 +402,8 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
 
-    health_text = proc.stderr or ""
     if (getattr(proc, "timed_out", False) or proc.returncode != 0
-            or looks_like_limit(health_text)):
+            or _limit_signal(proc.stdout or "", proc.stderr or "")):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
                            error="repair_failed", usage_state=w.state)
