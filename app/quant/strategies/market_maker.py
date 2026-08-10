@@ -260,12 +260,22 @@ class MarketMaker(Strategy):
         return self._reconcile(ctx, *target)
 
     def on_fill(self, fill, ctx: StrategyContext) -> list[Intent]:
-        """A fill retires the quote it filled, then lets the next book update requote.
+        """A fill that EXHAUSTS a quote retires it; a partial keeps it tracked.
 
         Requoting from inside ``on_fill`` would use the book state as it was BEFORE the trade
         that just happened is reflected — quoting against a book we know to be stale. Letting
         the next update drive it costs one event of latency and is honest about what we knew.
+
+        BUG-057: retiring on ANY fill orphaned a partially-filled quote's REMAINDER — the
+        matcher reduces it in place (queue position preserved), so it kept resting, but the
+        strategy forgot it: requotes cancel only the tracked id, so leaked remainders
+        accumulated, filled at stale prices, and pushed realized position past
+        ``max_inventory`` (the hard bound only gates NEW intents). The OMS folds the fill in
+        before this hook runs, so liveness in ``ctx`` is post-fill truth: still live means
+        still ours to manage.
         """
+        if any(o.client_id == fill.order_id for o in ctx.live_orders):
+            return []                                     # partial: the remainder stays tracked
         if fill.order_id == self._bid_id:
             self._bid_id, self._bid_ticks = None, None
         elif fill.order_id == self._ask_id:

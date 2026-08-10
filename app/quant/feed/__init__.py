@@ -103,6 +103,17 @@ def validate_ordering(events: Iterable[Event]) -> Iterator[Event]:
                 "A gap or regression here means dropped messages, which is invisible in the "
                 "time domain — every queue position after this point is wrong."
             )
+        if previous is not None and event.seq > previous + 1:
+            # BUG-077: the module claims sequence is THE gap-detection mechanism, yet only
+            # regressions were rejected — a forward gap (a genuinely dropped message)
+            # replayed as if the capture were complete, and every queue position and
+            # volume statistic after it was wrong by an unknown amount.
+            raise FeedOrderingError(
+                f"sequence gap for {event.symbol}: {previous} -> {event.seq} skips "
+                f"{event.seq - previous - 1} message(s). A dropped message is exactly what "
+                "this check exists to refuse — reject the capture rather than replay "
+                "corrupted queue positions."
+            )
         last_recv = event.recv_ts
         last_seq[event.symbol] = event.seq
         yield event

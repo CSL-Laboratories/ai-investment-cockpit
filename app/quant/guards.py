@@ -133,20 +133,41 @@ class Guards:
             return self._blocked(f"unknown intent type {type(intent).__name__}")
 
         limits = self.limits
+        if intent.qty <= 0:
+            # BUG-089: the gate only had an UPPER bound, so a zero/negative-qty intent
+            # passed and killed the whole run downstream on AggressiveOrder's ValueError —
+            # the one class of intent a pre-trade gate exists to intercept.
+            return self._blocked(f"order qty {intent.qty} must be positive")
+        if intent.price_ticks is None:
+            # BUG-074: an unpriced (market) intent contributes exactly 0 to every
+            # tick-denominated exposure number (``abs((price or 0) * qty)`` here and in
+            # ``OMS.exposure_ticks``), so the gross cap — whose own docstring says a limit
+            # that undercounts is "a limit you can exceed by sending fast" — measured
+            # nothing for the market-order path. Until exposure can be marked against a
+            # reference price, refuse at the gate: fail closed beats a bypassable cap.
+            return self._blocked(
+                "market order (price_ticks=None): no price for exposure accounting"
+            )
         if intent.qty > limits.max_order_qty:
             return self._blocked(
                 f"order qty {intent.qty} exceeds max_order_qty {limits.max_order_qty}"
             )
 
         if oms is not None:
+            # BUG-091: project against the WORST-CASE fill — realized position plus every
+            # live same-side order's remaining size. Position alone let N same-side orders
+            # each pass individually while their sum blew through the cap; the gross check
+            # counted in-flight, the position check did not.
             position = oms.position(intent.symbol)
-            projected = position + intent.side.sign * intent.qty
+            open_same_side = oms.open_side_qty(intent.symbol, intent.side)
+            projected = position + intent.side.sign * (open_same_side + intent.qty)
             if abs(projected) > limits.max_position:
                 return self._blocked(
-                    f"projected position {projected} exceeds max_position {limits.max_position}"
+                    f"projected position {projected} (incl. {open_same_side} in-flight "
+                    f"same-side) exceeds max_position {limits.max_position}"
                 )
 
-            exposure = oms.exposure_ticks() + abs((intent.price_ticks or 0) * intent.qty)
+            exposure = oms.exposure_ticks() + abs(intent.price_ticks * intent.qty)
             if exposure > limits.max_gross_exposure_ticks:
                 return self._blocked(
                     f"gross exposure {exposure} exceeds "
@@ -172,6 +193,8 @@ class Guards:
           a second order and trip the gross cap on a strategy that is not growing its risk.
         """
         limits = self.limits
+        if intent.new_qty is not None and intent.new_qty <= 0:
+            return self._blocked(f"replace qty {intent.new_qty} must be positive")  # BUG-089
         if intent.new_qty is not None and intent.new_qty > limits.max_order_qty:
             return self._blocked(
                 f"replace qty {intent.new_qty} exceeds max_order_qty {limits.max_order_qty}"
@@ -180,11 +203,26 @@ class Guards:
         if oms is not None:
             order = oms.get(intent.client_id)
             if order is not None:
-                qty = intent.new_qty if intent.new_qty is not None else order.remaining_qty
+                # BUG-075: ``new_qty`` is a NEW TOTAL (OMS sets ``order.qty = new_qty``)
+                # while position is derived from fills — so ``position + sign*new_qty``
+                # counted this order's own filled shares TWICE, and a legitimate resize
+                # landing exactly on a limit was refused against a number describing
+                # nothing. Project the worst case from the REMAINING size after the
+                # replace: filled shares live in position, remaining lives here, once each.
+                filled = order.qty - order.remaining_qty
+                new_total = intent.new_qty if intent.new_qty is not None else order.qty
+                remaining_after = max(new_total - filled, 0)
                 price = (intent.new_price_ticks if intent.new_price_ticks is not None
                          else order.price_ticks)
+                if price is None:
+                    return self._blocked(
+                        "replace: no price for exposure accounting"      # BUG-074, same hole
+                    )
 
-                projected = oms.position(order.symbol) + order.side.sign * qty
+                other_same_side = (oms.open_side_qty(order.symbol, order.side)
+                                   - order.remaining_qty)                # BUG-091 parity
+                projected = (oms.position(order.symbol)
+                             + order.side.sign * (other_same_side + remaining_after))
                 if abs(projected) > limits.max_position:
                     return self._blocked(
                         f"projected position {projected} exceeds max_position "
@@ -192,7 +230,7 @@ class Guards:
                     )
 
                 current = abs((order.price_ticks or 0) * order.remaining_qty)
-                exposure = oms.exposure_ticks() - current + abs((price or 0) * qty)
+                exposure = oms.exposure_ticks() - current + abs(price * remaining_after)
                 if exposure > limits.max_gross_exposure_ticks:
                     return self._blocked(
                         f"gross exposure {exposure} exceeds "

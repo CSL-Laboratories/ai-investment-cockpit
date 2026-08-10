@@ -224,14 +224,25 @@ class AutoLoop:
                     self.oms.on_cancelled(intent.client_id, ts=ts, reason="strategy_cancel")
             elif isinstance(intent, ReplaceOrder):
                 order = self.oms.get(intent.client_id)
-                if order is not None and order.is_live and intent.client_id in self.venue.book:
-                    self.venue.book.replace(intent.client_id,
-                                            new_price_ticks=intent.new_price_ticks,
-                                            new_qty=intent.new_qty, ts=ts)
-                    # Same reason as Runner._replace: the book and the OMS must not describe
-                    # different orders. See OMS.on_replaced.
-                    self.oms.on_replaced(intent.client_id, new_qty=intent.new_qty,
-                                         new_price_ticks=intent.new_price_ticks, ts=ts)
+                if order is not None and order.is_live:
+                    # BUG-078: the old guard also required ``client_id in self.venue.book``,
+                    # so a reprice of an order still IN FLIGHT (accepted, not yet released
+                    # by advance) was silently dropped — counted as submitted, applied
+                    # nowhere — and the order later landed and filled at the OLD terms the
+                    # strategy believed it had replaced. replace_order handles both homes;
+                    # a replace that finds the order in neither (it just fully filled) is
+                    # COUNTED, not swallowed.
+                    if self.venue.replace_order(intent.client_id,
+                                                new_qty=intent.new_qty,
+                                                new_price_ticks=intent.new_price_ticks,
+                                                ts=ts):
+                        # Same reason as Runner._replace: the book and the OMS must not
+                        # describe different orders. See OMS.on_replaced.
+                        self.oms.on_replaced(intent.client_id, new_qty=intent.new_qty,
+                                             new_price_ticks=intent.new_price_ticks, ts=ts)
+                    else:
+                        reasons = self.result.blocked_reasons
+                        reasons["replace_missed"] = reasons.get("replace_missed", 0) + 1
 
     def _absorb_outcomes(self, outcomes: list) -> None:
         """Fold in what the venue did, and keep the OMS honest about it.
