@@ -122,8 +122,12 @@ class Guards:
         if self.watch_only_fn is not None and self.watch_only_fn():
             return self._blocked("system is watch_only")
 
+        # A replace is NOT waved through. It used to be, and that made every limit below
+        # bypassable: an intent blocked as a NewOrder was allowed as a resize of a one-lot.
+        # Worst of all it exempted the requote loop that ``order_rate_window_ns`` documents
+        # itself as "the only limit that catches" — because a requote IS a ReplaceOrder.
         if isinstance(intent, ReplaceOrder):
-            return GuardVerdict.ok()
+            return self._check_replace(intent, oms=oms, ts=ts)
 
         if not isinstance(intent, NewOrder):
             return self._blocked(f"unknown intent type {type(intent).__name__}")
@@ -148,6 +152,52 @@ class Guards:
                     f"gross exposure {exposure} exceeds "
                     f"{limits.max_gross_exposure_ticks} (in-flight orders included)"
                 )
+
+        if not self._rate_ok(ts):
+            return self._blocked(
+                f"order rate exceeded {limits.max_orders_per_window} per "
+                f"{limits.order_rate_window_ns}ns"
+            )
+        return GuardVerdict.ok()
+
+    def _check_replace(self, intent: ReplaceOrder, *, oms, ts: int) -> GuardVerdict:
+        """The same four limits a NewOrder faces, measured against the order's NEW terms.
+
+        Two things differ from the NewOrder path, both because the order already exists:
+
+        * an omitted ``new_qty``/``new_price_ticks`` means "keep it", so the existing value is
+          what gets checked — not zero, which would make a pure reprice look free; and
+        * the order is ALREADY counted in ``exposure_ticks()``, so its old contribution is
+          swapped out rather than added on top. Adding would make an unchanged reprice read as
+          a second order and trip the gross cap on a strategy that is not growing its risk.
+        """
+        limits = self.limits
+        if intent.new_qty is not None and intent.new_qty > limits.max_order_qty:
+            return self._blocked(
+                f"replace qty {intent.new_qty} exceeds max_order_qty {limits.max_order_qty}"
+            )
+
+        if oms is not None:
+            order = oms.get(intent.client_id)
+            if order is not None:
+                qty = intent.new_qty if intent.new_qty is not None else order.remaining_qty
+                price = (intent.new_price_ticks if intent.new_price_ticks is not None
+                         else order.price_ticks)
+
+                projected = oms.position(order.symbol) + order.side.sign * qty
+                if abs(projected) > limits.max_position:
+                    return self._blocked(
+                        f"projected position {projected} exceeds max_position "
+                        f"{limits.max_position}"
+                    )
+
+                current = abs((order.price_ticks or 0) * order.remaining_qty)
+                exposure = oms.exposure_ticks() - current + abs((price or 0) * qty)
+                if exposure > limits.max_gross_exposure_ticks:
+                    return self._blocked(
+                        f"gross exposure {exposure} exceeds "
+                        f"{limits.max_gross_exposure_ticks} (in-flight orders included)"
+                    )
 
         if not self._rate_ok(ts):
             return self._blocked(

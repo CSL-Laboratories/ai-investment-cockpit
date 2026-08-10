@@ -352,6 +352,11 @@ class Runner:
             return
         book.replace(intent.client_id, new_price_ticks=intent.new_price_ticks,
                      new_qty=intent.new_qty, seq=event.seq, ts=event.exchange_ts)
+        # The book now holds different terms than the OMS does. Told only the book, the OMS
+        # keeps sizing and pricing the ORIGINAL order: the next fill trips the overfill guard,
+        # and exposure_ticks() reports a number describing an order that no longer exists.
+        self.oms.on_replaced(intent.client_id, new_qty=intent.new_qty,
+                             new_price_ticks=intent.new_price_ticks, ts=event.ingest_ts)
 
     def _absorb_fills(self, fills: list[Fill], ctx: StrategyContext) -> None:
         for fill in fills:

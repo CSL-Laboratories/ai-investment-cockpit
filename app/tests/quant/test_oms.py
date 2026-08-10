@@ -198,3 +198,92 @@ def test_client_ids_are_deterministic_so_two_runs_of_one_replay_are_diffable():
     first = OrderIdSequence(prefix="mm")
     second = OrderIdSequence(prefix="mm")
     assert [first.next() for _ in range(3)] == [second.next() for _ in range(3)]
+
+
+# ---- a replace must reach the OMS, not just the book ---------------------------------------
+
+
+def test_a_replace_that_grows_the_order_does_not_blow_up_the_next_fill(oms):
+    """THE OMS HAD NO on_replaced AT ALL. Both Runner._replace and AutoLoop._route called
+    ``book.replace`` and left ManagedOrder.qty / .price_ticks at their original values, so the
+    OMS and the book disagreed about the order from that moment on.
+
+    The visible failure is a fill larger than the OMS believes is outstanding, which raises
+    IllegalTransition and kills the run. The quieter one is worse: exposure_ticks() is
+    computed from the stale price, so every limit derived from it — including the gross
+    exposure guard on a subsequent replace — is measured against a number that no longer
+    describes any order that exists.
+    """
+    oms.register(_new(qty=100, price=50), strategy="s", ts=0)
+    oms.on_acknowledged("c1", ts=0)
+
+    oms.on_replaced("c1", new_qty=5_000, new_price_ticks=60, ts=1)
+
+    order = oms.get("c1")
+    assert order.qty == 5_000 and order.price_ticks == 60
+    assert oms.exposure_ticks() == 5_000 * 60
+
+    # The fill that used to raise: 3,000 against an OMS that still believed qty=100.
+    oms.on_fill(_fill("c1", Side.BUY, 3_000, price=60))
+    assert oms.get("c1").filled_qty == 3_000
+    assert oms.position("TEST") == 3_000
+
+
+def test_an_omitted_field_in_a_replace_keeps_its_current_value(oms):
+    """A pure reprice leaves new_qty None, and a pure resize leaves new_price_ticks None.
+    Treating either as zero would silently retire the order's size or its price."""
+    oms.register(_new(qty=100, price=50), strategy="s", ts=0)
+    oms.on_acknowledged("c1", ts=0)
+
+    oms.on_replaced("c1", new_price_ticks=55, ts=1)
+    assert oms.get("c1").qty == 100 and oms.get("c1").price_ticks == 55
+
+    oms.on_replaced("c1", new_qty=250, ts=2)
+    assert oms.get("c1").qty == 250 and oms.get("c1").price_ticks == 55
+
+
+def test_replacing_a_terminal_order_raises_rather_than_resurrecting_it(oms):
+    """A replace arriving after a cancel must not quietly bring the order back."""
+    oms.register(_new(qty=100, price=50), strategy="s", ts=0)
+    oms.on_acknowledged("c1", ts=0)
+    oms.on_cancelled("c1", ts=1)
+    with pytest.raises(IllegalTransition):
+        oms.on_replaced("c1", new_qty=200, ts=2)
+
+
+def test_a_replace_below_the_filled_quantity_is_refused(oms):
+    """Shrinking an order below what already traded would make remaining_qty negative and
+    corrupt every exposure number derived from it."""
+    oms.register(_new(qty=100, price=50), strategy="s", ts=0)
+    oms.on_acknowledged("c1", ts=0)
+    oms.on_fill(_fill("c1", Side.BUY, 60, price=50))
+    with pytest.raises(IllegalTransition):
+        oms.on_replaced("c1", new_qty=10, ts=2)
+
+
+def test_a_fill_on_a_terminal_order_leaves_no_trace_of_itself(oms):
+    """CHECK BEFORE MUTATE. ``on_fill`` incremented filled_qty, fill_notional_ticks and the
+    POSITION, and only then called ``_transition``, which raises for a terminal order. The
+    caller sees an exception and reasonably assumes nothing happened — but the position had
+    already moved, so the OMS's inventory now reflects a fill it simultaneously refuses to
+    acknowledge, and every downstream number is silently wrong.
+
+    ``test_overfilling_an_order_raises_rather_than_clamping`` covers the sibling path, which
+    was already correct because its guard sits above the mutations. This is the one that was
+    not, and it is reachable whenever a strategy's on_fill cancels an order that has further
+    fills later in the same batch.
+    """
+    oms.register(_new(qty=100), strategy="s", ts=0)
+    oms.on_acknowledged("c1", ts=0)
+    oms.on_cancelled("c1", ts=1)
+
+    before_position = oms.position("TEST")
+    before_filled = oms.get("c1").filled_qty
+    before_notional = oms.get("c1").fill_notional_ticks
+
+    with pytest.raises(IllegalTransition):
+        oms.on_fill(_fill("c1", Side.BUY, 100))
+
+    assert oms.position("TEST") == before_position, "the refused fill moved the position"
+    assert oms.get("c1").filled_qty == before_filled
+    assert oms.get("c1").fill_notional_ticks == before_notional

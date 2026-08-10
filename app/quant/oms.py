@@ -225,6 +225,39 @@ class OMS:
         self._transition(order, OrderState.CANCELLED, ts=ts, reason=reason)
         return order
 
+    def on_replaced(self, client_id: str, *, new_qty: int | None = None,
+                    new_price_ticks: int | None = None, ts: int = 0) -> ManagedOrder:
+        """Apply an accepted reprice/resize to the OMS's view of the order.
+
+        THIS DID NOT EXIST, and both callers of ``book.replace`` went without it — so from the
+        first replace onward the OMS described an order that no longer existed. Two things
+        broke. The loud one: a fill against the grown order exceeds ``remaining_qty`` computed
+        from the OLD size and ``on_fill`` raises ``IllegalTransition``, killing the run. The
+        quiet one is worse — ``exposure_ticks()`` multiplies the STALE price by the STALE
+        remaining size, so every limit derived from it is measured against a number describing
+        nothing.
+
+        A replace does not change lifecycle state: an order being repriced is still working,
+        or still partially filled. It only changes the terms. ``None`` means "leave this one
+        alone", so a pure reprice does not silently retire the order's size.
+        """
+        order = self._require(client_id)
+        if order.is_terminal:
+            raise IllegalTransition(
+                f"cannot replace {client_id!r}: it is terminal ({order.state.value})"
+            )
+        if new_qty is not None:
+            if new_qty < order.filled_qty:
+                raise IllegalTransition(
+                    f"replace of {client_id!r} to qty {new_qty} is below the "
+                    f"{order.filled_qty} already filled; remaining_qty would go negative"
+                )
+            order.qty = new_qty
+        if new_price_ticks is not None:
+            order.price_ticks = new_price_ticks
+        order.updated_ts = ts
+        return order
+
     def on_fill(self, fill: Fill) -> ManagedOrder:
         """Fold a fill into the order and the position. THE ONLY THING THAT MOVES POSITION.
 
@@ -239,10 +272,22 @@ class OMS:
                 f"fill of {fill.qty} exceeds {order.remaining_qty} remaining on "
                 f"{fill.order_id!r}: the venue and the OMS disagree about what was live"
             )
+        # BOTH checks run before ANY mutation. The overfill guard above always did; the
+        # transition check did not — it lived inside _transition, AFTER filled_qty,
+        # fill_notional_ticks and the POSITION had already been updated. A fill on a terminal
+        # order therefore raised while leaving the position moved, so a caller that treated
+        # the exception as "nothing happened" carried a phantom position from then on.
+        target = (OrderState.FILLED if order.remaining_qty - fill.qty == 0
+                  else OrderState.PARTIALLY_FILLED)
+        if not legal_transition(order.state, target):
+            raise IllegalTransition(
+                f"order {order.client_id!r}: {order.state.value} -> {target.value} is not a "
+                "legal transition; the ack and fill streams disagree about reality"
+            )
+
         order.filled_qty += fill.qty
         order.fill_notional_ticks += fill.price_ticks * fill.qty
         self._positions[order.symbol] = self._positions.get(order.symbol, 0) + fill.signed_qty
-        target = OrderState.FILLED if order.remaining_qty == 0 else OrderState.PARTIALLY_FILLED
         self._transition(order, target, ts=fill.ingest_ts)
         return order
 

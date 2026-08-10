@@ -228,6 +228,10 @@ class AutoLoop:
                     self.venue.book.replace(intent.client_id,
                                             new_price_ticks=intent.new_price_ticks,
                                             new_qty=intent.new_qty, ts=ts)
+                    # Same reason as Runner._replace: the book and the OMS must not describe
+                    # different orders. See OMS.on_replaced.
+                    self.oms.on_replaced(intent.client_id, new_qty=intent.new_qty,
+                                         new_price_ticks=intent.new_price_ticks, ts=ts)
 
     def _absorb_outcomes(self, outcomes: list) -> None:
         """Fold in what the venue did, and keep the OMS honest about it.

@@ -405,3 +405,78 @@ def test_a_self_trade_cancellation_is_reflected_in_the_oms():
     assert ask is not None and not ask.is_live, (
         f"OMS still believes the STP-cancelled quote is live (state={ask.state if ask else None})"
     )
+
+
+# ---- guards apply to a replace, not only to a new order ------------------------------------
+
+
+def _guarded(**limit_kwargs):
+    from quant.oms import OMS
+    limits = GuardLimits(**limit_kwargs)
+    return Guards(limits=limits), OMS()
+
+
+def _resting(oms, *, client_id="o1", qty=10, price=100):
+    from quant.oms import NewOrder as _New
+    intent = _New(client_id=client_id, symbol="S", side=Side.BUY, qty=qty, price_ticks=price)
+    oms.register(intent, strategy="s", ts=0)
+    oms.on_acknowledged(client_id, ts=0)
+    return intent
+
+
+def test_a_replace_cannot_exceed_the_order_size_limit():
+    """EVERY LIMIT WAS BYPASSABLE BY REPLACING. ``check`` returned ok() for ReplaceOrder before
+    the qty, position, exposure and rate checks — so an intent blocked as a NewOrder was
+    allowed as a resize of a one-lot. The string 'ReplaceOrder' appeared in ZERO test files,
+    which is how it survived."""
+    from quant.oms import ReplaceOrder as _Replace
+    guards, oms = _guarded(max_order_qty=10)
+    _resting(oms)
+    verdict = guards.check(_Replace(client_id="o1", new_qty=1_000_000_000),
+                           oms=oms, ts=0)
+    assert not verdict.allowed and "max_order_qty" in verdict.reason
+
+
+def test_a_replace_cannot_exceed_the_gross_exposure_limit():
+    from quant.oms import ReplaceOrder as _Replace
+    guards, oms = _guarded(max_order_qty=10_000, max_position=10_000,
+                           max_gross_exposure_ticks=5_000)
+    _resting(oms, qty=10, price=100)          # 1,000 ticks of exposure
+    verdict = guards.check(_Replace(client_id="o1", new_price_ticks=1_000, new_qty=10_000),
+                           oms=oms, ts=0)
+    assert not verdict.allowed and "gross exposure" in verdict.reason
+
+
+def test_a_requote_loop_is_caught_by_the_rate_limit():
+    """``order_rate_window_ns`` is documented as 'the only limit that catches' a strategy stuck
+    in a requote loop emitting tens of thousands of orders a second — and a requote IS a
+    ReplaceOrder. The existing rate test uses a strategy that emits NewOrder, so it proved
+    nothing about the shape the docstring names."""
+    from quant.oms import ReplaceOrder as _Replace
+    guards, oms = _guarded(max_order_qty=10_000, max_position=1_000_000,
+                           max_gross_exposure_ticks=10 ** 12,
+                           max_orders_per_window=5, order_rate_window_ns=1_000_000_000)
+    _resting(oms, qty=1, price=1)
+    allowed = sum(1 for _ in range(1_000)
+                  if guards.check(_Replace(client_id="o1", new_price_ticks=1, new_qty=1),
+                                  oms=oms, ts=0).allowed)
+    assert allowed == 5, f"{allowed} of 1000 same-nanosecond requotes were allowed"
+
+
+def test_a_replace_is_still_allowed_when_it_breaches_nothing():
+    """CONTROL. Guards that blocked every replace would pass the three tests above and break
+    the maker, whose whole loop is reprice-in-place."""
+    from quant.oms import ReplaceOrder as _Replace
+    guards, oms = _guarded(max_order_qty=10_000, max_position=10_000,
+                           max_gross_exposure_ticks=10 ** 9)
+    _resting(oms, qty=10, price=100)
+    assert guards.check(_Replace(client_id="o1", new_price_ticks=101), oms=oms, ts=0).allowed
+
+
+def test_a_cancel_is_still_permitted_after_the_kill_switch():
+    """CONTROL for the ordering of the new branch: the cancel escape hatch must stay ABOVE
+    everything, including the replace checks. Blocking cancels would strand live orders at the
+    exact moment the system decided something was wrong."""
+    guards, oms = _guarded()
+    guards.trip("test")
+    assert guards.check(CancelOrder(client_id="o1"), oms=oms, ts=0).allowed
