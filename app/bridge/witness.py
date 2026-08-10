@@ -99,7 +99,15 @@ class GitCommitWitness:
             return
         msg = f"audit-anchor: seq {seq} {head_hash[:12]}"
         try:
-            subprocess.run(["git", "-C", str(self._repo), "add", str(self._file)],
+            # BUG-056: git resolves a relative pathspec against the ``-C`` directory, and
+            # ``_repo`` defaults to the head file's PARENT — so passing the caller-relative
+            # path doubled the prefix (``git -C data add data/audit-head.json`` looks for
+            # ``data/data/audit-head.json``, exit 128) and every real anchor commit failed.
+            # The resolved absolute path is unambiguous regardless of ``-C``/CWD; ``--``
+            # pins it as a pathspec. (``-C`` on a subdirectory still commits to the
+            # enclosing repo — git discovers the work tree upward.)
+            subprocess.run(["git", "-C", str(self._repo), "add", "--",
+                            str(self._file.resolve())],
                            check=True, capture_output=True)
             subprocess.run(["git", "-C", str(self._repo), "commit", "-m", msg,
                             "--author", f"{self._committer} <noreply@localhost>"],

@@ -179,3 +179,51 @@ def test_rewriting_the_git_mirror_cannot_lower_the_witness(tmp_path):
     (tmp_path / "head.json").write_text('{"head_hash":"hx","seq":1}', encoding="utf-8")
     assert git.read_latest() == (1, "hx")     # the mirror was successfully rewound...
     assert store.latest() == (4, "h4")        # ...but the out-of-domain witness is unmoved
+
+
+# ---- BUG-056: the DEFAULT _commit path, which every other test injects away ------------
+def _real_repo(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"],
+                   check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"],
+                   check=True, capture_output=True)
+    return repo
+
+
+def _log(repo):
+    import subprocess
+
+    out = subprocess.run(["git", "-C", str(repo), "log", "--oneline"],
+                         capture_output=True, text=True)
+    return out.stdout
+
+
+def test_default_commit_really_commits_a_relative_subdir_head_file(tmp_path, monkeypatch):
+    """BUG-056: the production shape — ``GitCommitWitness("data/audit-head.json")`` with no
+    ``repo_dir`` — made ``_repo`` the SUBDIRECTORY and then ran ``git -C data add
+    data/audit-head.json``. Git resolves pathspecs relative to the ``-C`` directory, so the
+    prefix doubled (``data/data/...``), every real anchor commit exited 128, and the 30-min
+    ``run_anchor_head`` raised AnchorError forever. Invisible until now because every other
+    test injects ``commit_fn``."""
+    from pathlib import Path
+
+    repo = _real_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    w = GitCommitWitness(Path("data") / "audit-head.json")     # production default: no repo_dir
+    w.publish(1, "a" * 64)
+    assert "audit-anchor: seq 1" in _log(repo)
+
+
+def test_default_commit_with_an_explicit_repo_dir_still_works(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    repo = _real_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    w = GitCommitWitness(Path("data") / "audit-head.json", repo_dir=repo)
+    w.publish(3, "b" * 64)
+    assert "audit-anchor: seq 3" in _log(repo)
