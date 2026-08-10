@@ -67,15 +67,27 @@ class BreakerThresholds:
 
 @dataclass
 class BreakerSignals:
-    """Runtime signals sampled by the intraday loop. All default to a benign value so a
-    partial sample never spuriously trips."""
+    """Runtime signals sampled by the intraday loop.
 
-    realized_loss_today: Decimal = Decimal("0")    # positive == a loss
-    consecutive_losses: int = 0
-    schema_failures: int = 0
-    schema_validations: int = 0
-    max_data_age_s: float = 0.0
-    broker_errors: int = 0
+    BUG-058: ``None`` means NOT SAMPLED this run — that breaker cannot fire and is listed
+    by :func:`unsampled` so the absence is visible on the surface. The old defaults were
+    benign VALUES (0 / 0.0), which made an unmeasured signal indistinguishable from a
+    measured-and-healthy one: four of the five breakers could never fire in production
+    because their only caller sampled schema counts alone, while the stale-data breaker —
+    Invariant 5's fail-closed control — read "fresh" forever. A sampled-but-benign signal
+    must now be passed explicitly.
+
+    Sampling status: ``schema_*`` and ``broker_errors`` are wired (triage tick / gateway).
+    ``realized_loss_today``/``consecutive_losses`` arrive with the paper P&L loop (W-22)
+    and ``max_data_age_s`` with the RW-14 quote poller — until then they are honestly
+    unsampled, never silently fine."""
+
+    realized_loss_today: Decimal | None = None     # positive == a loss
+    consecutive_losses: int | None = None
+    schema_failures: int | None = None
+    schema_validations: int | None = None
+    max_data_age_s: float | None = None
+    broker_errors: int | None = None
 
 
 # ---- pure predicates (deterministic; no I/O) ------------------------------------------
@@ -100,21 +112,46 @@ def breach_broker_errors(errors: int, limit: int) -> bool:
 
 
 def evaluate(signals: BreakerSignals, th: BreakerThresholds | None = None) -> list[str]:
-    """Return the names of every breaker whose predicate trips for these signals (pure)."""
+    """Return the names of every breaker whose predicate trips for these signals (pure).
+    An unsampled (None) signal cannot trip — and cannot read as healthy either; it is
+    reported by :func:`unsampled`."""
     th = th or BreakerThresholds()
     tripped: list[str] = []
-    if breach_daily_loss(signals.realized_loss_today, th.daily_loss_limit):
+    if signals.realized_loss_today is not None and breach_daily_loss(
+            signals.realized_loss_today, th.daily_loss_limit):
         tripped.append(BRK_DAILY_LOSS)
-    if breach_consecutive_losses(signals.consecutive_losses, th.max_consecutive_losses):
+    if signals.consecutive_losses is not None and breach_consecutive_losses(
+            signals.consecutive_losses, th.max_consecutive_losses):
         tripped.append(BRK_CONSECUTIVE_LOSSES)
-    if breach_schema_failures(signals.schema_failures, signals.schema_validations,
-                              th.schema_failure_rate, th.schema_min_sample):
+    if (signals.schema_failures is not None and signals.schema_validations is not None
+            and breach_schema_failures(signals.schema_failures, signals.schema_validations,
+                                       th.schema_failure_rate, th.schema_min_sample)):
         tripped.append(BRK_SCHEMA_FAILURES)
-    if breach_stale_data(signals.max_data_age_s, th.data_staleness_s):
+    if signals.max_data_age_s is not None and breach_stale_data(
+            signals.max_data_age_s, th.data_staleness_s):
         tripped.append(BRK_STALE_DATA)
-    if breach_broker_errors(signals.broker_errors, th.broker_error_limit):
+    if signals.broker_errors is not None and breach_broker_errors(
+            signals.broker_errors, th.broker_error_limit):
         tripped.append(BRK_BROKER_ERRORS)
     return tripped
+
+
+def unsampled(signals: BreakerSignals) -> list[str]:
+    """The breakers that CANNOT fire this run because their signal was never sampled.
+    Surfaced (audited batch payload / status) so a dead wire reads as ABSENT, not healthy —
+    the '/quant/status advertising a check that could never fire' rule."""
+    out: list[str] = []
+    if signals.realized_loss_today is None:
+        out.append(BRK_DAILY_LOSS)
+    if signals.consecutive_losses is None:
+        out.append(BRK_CONSECUTIVE_LOSSES)
+    if signals.schema_failures is None or signals.schema_validations is None:
+        out.append(BRK_SCHEMA_FAILURES)
+    if signals.max_data_age_s is None:
+        out.append(BRK_STALE_DATA)
+    if signals.broker_errors is None:
+        out.append(BRK_BROKER_ERRORS)
+    return out
 
 
 def default_injection_predicate(context=None) -> bool:

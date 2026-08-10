@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from core.ids import new_id
-from orchestrator.breakers import BreakerEngine, BreakerSignals
+from orchestrator.breakers import BreakerEngine, BreakerSignals, unsampled
 from orchestrator.limits import current_limits
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
@@ -386,9 +386,16 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             if deliver is not None and not _safe_deliver(deliver, "#alerts", alert):
                 undelivered.append(ev.id)
 
-    # ---- L6 sampling: schema failures from THIS run's agent-job statuses -----------------
+    # ---- L6 sampling: schema failures from THIS run's agent-job statuses, plus the
+    # gateway's broker-error counter (BUG-058, sample-and-reset under the state lock).
+    # Loss/staleness signals stay UNSAMPLED (None) until W-22 / RW-14 wire their sources —
+    # visibly absent via breakers.unsampled(), never silently healthy.
+    with state.lock:
+        broker_errors = state.broker_errors_since_sample
+        state.broker_errors_since_sample = 0
     signals = BreakerSignals(schema_failures=jobs_failed_schema,
-                             schema_validations=jobs_total)
+                             schema_validations=jobs_total,
+                             broker_errors=broker_errors)
     system_events.extend(engine.evaluate_and_trip(signals))
 
     _audit_batch(state, batch_id=batch_id, window_start=window_start,
@@ -397,6 +404,8 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     return {
         "status": "degraded_watch_only" if degraded else "ok",
         "window_start": window_start, "window_end": window_end,
+        # BUG-058: breakers with no sampled signal this run — visible absence, not health.
+        "breakers_unsampled": unsampled(signals),
         "escalated": escalated,
         "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
         "demoted": sorted(k for k, v in dispositions.items()

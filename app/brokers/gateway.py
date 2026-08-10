@@ -711,6 +711,9 @@ class OrderGateway:
                 # and fail closed. The capability token was consumed at gate (g) and stays
                 # consumed: a failed submit needs a fresh human approval, not a free retry.
                 reason = f"broker submit failed: {exc}"
+                # BUG-058: this is the BRK_BROKER_ERRORS production signal — sampled and
+                # reset by the intraday triage tick. Already under st.lock here.
+                st.broker_errors_since_sample += 1
                 st.audit.result(
                     intent, "order_submit",
                     refs={"order_id": order.id, "aborted": "broker_error"},

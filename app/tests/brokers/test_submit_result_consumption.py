@@ -88,3 +88,12 @@ def test_broker_exception_completes_the_two_phase_pair(st):
     assert st.audit.unresolved_intents() == []          # the dangling-intent hole
     assert _row_state(st, sc.order.id) == "proposed"    # never claimed submitted
     assert st.audit.verify_chain().ok
+
+
+def test_broker_exception_feeds_the_breaker_signal(st):
+    """BUG-058: the failed submit is the BRK_BROKER_ERRORS production source — each one
+    increments the counter the triage tick samples."""
+    assert getattr(st, "broker_errors_since_sample", 0) == 0
+    sc = build_scenario(st, broker=ExplodingBroker())
+    sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert st.broker_errors_since_sample == 1
