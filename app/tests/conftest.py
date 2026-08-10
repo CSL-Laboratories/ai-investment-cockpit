@@ -1,6 +1,8 @@
 """WP0 test fixtures — an in-memory keyring so secret round-trips run on any CI host
-(Windows Credential Manager is unavailable on Linux CI)."""
+(the OS credential store differs per platform and is unavailable on headless Linux CI)."""
 from __future__ import annotations
+
+import os
 
 import keyring
 import pytest
@@ -30,6 +32,23 @@ def _in_memory_keyring():
     keyring.set_keyring(InMemoryKeyring())
     yield
     keyring.set_keyring(prev)
+
+
+# Defined BEFORE _isolate_audit_head on purpose: same-scope autouse fixtures run in
+# definition order, so the wipe must happen before anything sets a COCKPIT_* value it needs.
+@pytest.fixture(autouse=True)
+def _no_ambient_cockpit_env(monkeypatch):
+    """The suite must not read the developer's shell.
+
+    A test asserting an unconfigured default constructs a bare ``Settings()``, which reads the
+    real environment — so on a machine with operator config exported (COCKPIT_BRIEF_CHANNEL_ID,
+    COCKPIT_OPERATOR_IDS, COCKPIT_HALT_PATH are the usual three) it fails, while the same
+    commit is green in CI. That is the worst shape of flake: it tracks who ran it, not what
+    changed. Tests that WANT a value still set it themselves — their own monkeypatch runs after
+    this one.
+    """
+    for name in [k for k in os.environ if k.startswith("COCKPIT_")]:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)
