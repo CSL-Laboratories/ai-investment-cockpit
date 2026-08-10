@@ -40,6 +40,20 @@ class RiskDecision(Base):
 
     human_required: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # QT-06 — the execution verdict (quant/verify.py) this decision was evaluated against.
+    #
+    # It lives HERE, on the deterministic risk record, rather than only in the audit payload,
+    # for one structural reason: SEC-17 says no risk value an operator reads may originate
+    # from a model-emitted field. The operator embed is allowed to render the RiskDecision and
+    # nothing else, so putting the verdict on this row is what makes it renderable AT ALL —
+    # anywhere else and the embed would have to accept it from a caller who might have taken
+    # it off the model-authored proposal.
+    #
+    # NULLABLE, and null is the normal state today: no book feed exists in the tree, so most
+    # decisions are evaluated with no verdict. Readers must treat null as "not evaluated",
+    # never as "evaluated and fine".
+    execution_verdict: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     # timestamps -> DateTime(timezone=True)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

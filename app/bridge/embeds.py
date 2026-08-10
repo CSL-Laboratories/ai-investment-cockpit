@@ -77,6 +77,61 @@ def render_risk_section(risk_decision) -> dict:
     }
 
 
+_VERDICT_LABEL = {
+    "ok": "OK",
+    "marginal": "MARGINAL — human review",
+    "uneconomic": "UNECONOMIC — blocked",
+    "insufficient_data": "NOT PRICEABLE — no usable book",
+}
+
+
+def render_execution_section(risk_decision) -> dict:
+    """The execution-quality block (QT-06), sourced STRICTLY from the ``RiskDecision`` row.
+
+    Same rule as ``render_risk_section`` and for the same reason: the operator decides from
+    what they see, so nothing here may originate from a model-authored field. The verdict is
+    computed server-side by ``quant/verify.py`` from a book snapshot and persisted on this
+    row — it is a deterministic risk fact, and it is read from the deterministic record.
+
+    This function DELIBERATELY takes the ``RiskDecision`` rather than a verdict dict. Given a
+    verdict parameter, some future caller would eventually pass
+    ``proposal["execution_verdict"]`` — a model-authored field on a model-authored object —
+    and a hijacked agent could then paint "cost: 1bp, plenty of depth" over an order that has
+    neither. Taking the row makes that call impossible to write.
+
+    ``None`` when no verdict was computed, which is the normal state while no book feed is
+    wired. Rendered as "not evaluated" — never as "evaluated and fine".
+    """
+    verdict = getattr(risk_decision, "execution_verdict", None)
+    if not isinstance(verdict, dict) or not verdict:
+        return {
+            "evaluated": False,
+            "summary": "not evaluated — no order book was available for this symbol",
+        }
+
+    name = str(verdict.get("verdict", ""))
+    fillable = verdict.get("fillable_now")
+    qty = verdict.get("qty")
+    return {
+        "evaluated": True,
+        "verdict": name,
+        "label": _VERDICT_LABEL.get(name, name or "unknown"),
+        "expected_cost_bps": verdict.get("expected_cost_bps"),
+        "expected_slippage_bps": verdict.get("expected_slippage_bps"),
+        "expected_fee_bps": verdict.get("expected_fee_bps"),
+        "participation_rate": verdict.get("participation_rate"),
+        "fillable_now": fillable,
+        # The operator's most actionable single fact: can the visible market absorb this at
+        # all? Stated as a boolean rather than left implicit in two numbers they must compare.
+        "fully_fillable": (isinstance(fillable, int) and isinstance(qty, int) and fillable >= qty),
+        # A MEASUREMENT, not a fill probability — see quant/verify.py for why no probability
+        # is produced for a resting order anywhere in this system.
+        "queue_ahead_shares": verdict.get("queue_ahead_shares"),
+        "book_seq": verdict.get("book_seq"),
+        "reasons": list(verdict.get("reasons") or []),
+    }
+
+
 def render_proposal_embed(proposal: dict, risk_decision,
                           raw_excerpt_fn: Callable[[dict], str] | None = None) -> dict:
     """Build the operator-facing embed dict for a proposal + its RiskDecision.
@@ -126,6 +181,8 @@ def render_proposal_embed(proposal: dict, risk_decision,
         "proposal_id": p.get("proposal_id"),
         "order": order,
         "risk": render_risk_section(risk_decision),
+        # QT-06. Deterministic, from the RiskDecision row only — never from ``proposal``.
+        "execution": render_execution_section(risk_decision),
         # model prose, explicitly labelled — informational, never a risk fact:
         "model_thesis": p.get("thesis"),
         "model_invalidation": p.get("invalidation"),

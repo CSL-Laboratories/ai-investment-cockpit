@@ -3,7 +3,7 @@ title: AI Investment Copilot — research, architecture & build index
 type: index
 status: active
 last-verified: 2026-07-08
-related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, capability-expansion-master-plan, upside-and-roi, path-to-production, production-work-packages, production-playbook, refactor-plan, integration-and-remote-operations-plan]
+related: [research-report, research-supplement, cockpit-plan-original, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, capability-expansion-master-plan, upside-and-roi, path-to-production, production-work-packages, production-playbook, refactor-plan, integration-and-remote-operations-plan, quant-engine]
 ---
 
 # AI Investment Copilot — index
@@ -95,6 +95,7 @@ rollout beyond paper mode is governed by [[path-to-production]].
 | [[refactor-plan]] | From fixture-driven build to a running dual-surface cockpit: the three architectural decisions (abstract the operator surface, dynamic universe, data-provider abstraction), the RW-01…RW-09 work packages with their GR-xx gates, and the honesty ledger of what the refactor does NOT do |
 | [[integration-and-remote-operations-plan]] | The CXP-series for Discord/Telegram thread + group compatibility, Claude/Codex provider conformance, future OpenRouter/OpenCode spikes, credential/MCP isolation, multi-principal/account handling, and a restricted `cockpitctl` + SSH control path |
 | [[runbooks/rw01-live-smoke]] | **Operator-run.** RW-01's acceptance evidence: provision the keys + private guild, run one real market day, confirm the morning brew lands in `#morning-brew`. Read-only throughout — it proves the system *runs*, nothing about whether it should trade |
+| [[quant-engine]] | **QT.** The microstructure half the cockpit never had: a real FIFO order book with queue position, strategies, replay, realistic per-share costs, PnL attribution. Consumed at three tiers — advisory scoring, a hard pre-trade check inside `risk/`, and an autonomous loop that is contained to a simulated venue by an AST import gate rather than by convention. Includes the honest limitations (the replay counterfactual, aggregate-feed queue estimates) and the A/B showing that requoting on every tick wins *fewer* passive fills |
 
 The RW-series runs **alongside** the W-series, not instead of it: RW work makes the AI
 smarter and the operator better-informed, and does not skip a single go-live gate. Live

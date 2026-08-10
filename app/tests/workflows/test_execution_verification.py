@@ -1,0 +1,241 @@
+"""QT-05/QT-06 — execution verification wired into the REAL proposal pipeline.
+
+The tier tests elsewhere prove the verifier computes correctly (``tests/quant/test_verify``)
+and that the risk engine acts on a verdict (``tests/risk/test_execution_gate``). This file
+proves the two are actually CONNECTED — that ``draft_proposal`` builds a verdict from the
+injected book seam, hands it to ``evaluate``, and audits it as evidence. A correct verifier
+with no caller changes nothing.
+
+THE GAP THIS CLOSES, STATED PRECISELY
+--------------------------------------
+It is NOT "the cockpit would allow a huge order" — it would not. ``max_notional`` defaults to
+$1,000 and catches size in dollars perfectly well.
+
+The gap is that EVERY pre-existing check is denominated in DOLLARS, and none of them can see
+LIQUIDITY. ``max_notional``, ``buying_power``, ``concentration``, ``pending_exposure`` — all
+of them price the order and none of them ask whether the market can absorb it. So a $1,000
+order in a name showing three shares at the touch passes every single check, because $1,000
+is a perfectly reasonable amount of money and nothing in the tree knows what three shares
+means.
+
+That is the case exercised below, and it is a more interesting failure than a large order:
+it is small, well-funded, well-diversified, and undeployable.
+
+The properties pinned:
+
+  * WITH A BOOK, a fully-funded proposal that exceeds displayed depth is REJECTED.
+  * WITHOUT A BOOK, the identical proposal is APPROVED — which is exactly the pre-QT
+    behaviour. The tree has no book feed, and an additive check that changed existing
+    outcomes would be a regression wearing a feature's name.
+  * THE VERDICT IS AUDITED as evidence on the risk decision, so a later reader can
+    reconstruct why a decision went the way it did.
+  * ``book_fn`` IS AN INJECTED SEAM, exactly like ``quote_fn``. Nothing in the workflow
+    fetches a book.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+
+from config.settings import Mode
+from orchestrator.mode_ladder import ModeLadder
+from quant.book.lob import BookSnapshot, LevelSnapshot
+from tests.workflows.conftest import FakeTransport, envelope
+from tests.workflows.test_proposals import (
+    HOLDINGS,
+    WATCHLIST,
+    _payloads,
+    _grounding_body,
+    _persist_event,
+    _proposal_body,
+    _quote_fn,
+    _seed_snapshot,
+)
+from workflows.packets import build_packet
+from workflows.proposals import draft_proposal
+
+
+def _book(*, ask_depth: int = 800, seq: int = 7, asks=None) -> BookSnapshot:
+    """A book around $100.00 on a penny grid — matching ``_quote_fn``'s price of 100.
+
+    ``ask_depth`` is the knob that matters here. Every proposal in this file is TEN SHARES,
+    i.e. exactly the $1,000 that ``max_notional`` permits; what changes between tests is how
+    much liquidity exists to fill it. That isolates the new check from every pre-existing
+    dollar-denominated one.
+    """
+    if asks is None:
+        asks = ((10_002, ask_depth),)
+    return BookSnapshot(
+        symbol="AAPL", seq=seq, ts=0,
+        bids=(LevelSnapshot(price_ticks=10_000, qty=800, order_count=3),),
+        asks=tuple(LevelSnapshot(price_ticks=p, qty=q, order_count=1) for p, q in asks),
+    )
+
+
+def _draft(st, clock, tmp_path, *, quantity, book_fn=None):
+    ModeLadder(st).set_mode(Mode.paper, actor="op")
+    _seed_snapshot(st)
+    row = _persist_event(st, clock, tmp_path)
+    packet = build_packet([row])
+    transport = FakeTransport([
+        envelope(_proposal_body(refs=[row.raw_ref], quantity=quantity)),
+        envelope(_grounding_body("prop-1", [row.raw_ref])),
+    ])
+    return draft_proposal(
+        st, clock, event=row, packet=packet, transport=transport,
+        parquet_root=tmp_path / "raw", quote_fn=_quote_fn, book_fn=book_fn,
+        holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
+    )
+
+
+def _check(outcome, name: str) -> dict:
+    return next(c for c in outcome.risk_decision.checks if c["name"] == name)
+
+
+# ---- the case the cockpit could not previously see -------------------------------------------
+
+
+def test_a_fully_funded_proposal_is_REJECTED_when_the_book_cannot_absorb_it(st, clock, tmp_path):
+    """Ten shares — exactly the $1,000 ``max_notional`` allows — into a book showing THREE.
+
+    Every dollar-denominated check passes: the notional is at the limit, buying power is
+    $200k, concentration is fine. Only the depth check can see that this order is three times
+    the entire displayed offer.
+    """
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=3))
+
+    assert outcome.risk_decision.decision == "rejected"
+    assert "execution_cost_sane" in outcome.risk_decision.failed_checks
+    assert outcome.order is None, "a rejected proposal must never resolve an order tuple"
+    assert any("displayed depth" in r for r in outcome.reasons)
+    # And prove it was DEPTH that rejected it, not a dollar limit that happened to fire.
+    assert "max_notional" not in outcome.risk_decision.failed_checks
+    assert "buying_power" not in outcome.risk_decision.failed_checks
+
+
+def test_the_IDENTICAL_proposal_is_APPROVED_when_no_book_is_attached(st, clock, tmp_path):
+    """THE control, and the most important test in this file.
+
+    Same ten shares, same everything, no ``book_fn``. Approved — which is exactly the pre-QT
+    behaviour, and proves the rejection above is caused by the book rather than by the order
+    tripping some pre-existing limit. It is also the gap, stated as an experiment: without
+    depth, an order for three times the available liquidity is indistinguishable from a good
+    one.
+    """
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=None)
+
+    assert outcome.risk_decision.decision == "approved"
+    assert _check(outcome, "execution_cost_sane")["passed"]
+    assert _check(outcome, "execution_quality")["passed"]
+
+
+def test_the_same_proposal_passes_when_the_book_is_deep_enough(st, clock, tmp_path):
+    """CONTROL for the rejection: a verifier that rejected everything would pass that test.
+    Only ``ask_depth`` changed."""
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=800))
+
+    assert outcome.risk_decision.decision == "approved"
+    assert outcome.order is not None
+    assert _check(outcome, "execution_cost_sane")["passed"]
+
+
+def test_a_marginal_proposal_goes_to_a_human_rather_than_through_or_away(st, clock, tmp_path):
+    """Ten shares into a book of thirty: 33% participation. Inside the displayed depth, so
+    not fatal — but above the 25% ceiling at which walk-the-book slippage stops being a
+    reliable estimate. Not fatal, not fine, so: a human."""
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=30))
+
+    assert outcome.risk_decision.decision == "needs_human"
+    assert "execution_quality" in outcome.risk_decision.warnings
+    assert outcome.risk_decision.human_required is True
+    assert _check(outcome, "execution_cost_sane")["passed"], "marginal must not hard-block"
+
+
+# ---- additive, not a new requirement --------------------------------------------------------------
+
+
+def test_a_book_fn_returning_None_behaves_exactly_like_no_book_fn(st, clock, tmp_path):
+    """A symbol with no book must not be penalised. ``require_quant_verdict`` is off by
+    default precisely so a partial feed does not send every uncovered name to review."""
+    with_none = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: None)
+    assert with_none.risk_decision.decision == "approved"
+
+
+def test_a_one_sided_book_degrades_to_human_review_not_to_approval(st, clock, tmp_path):
+    """Fail closed (Invariant 7): the book could not answer, which is not permission."""
+    one_sided = _book(asks=())
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: one_sided)
+
+    assert outcome.risk_decision.decision == "needs_human"
+    assert "execution_quality" in outcome.risk_decision.warnings
+
+
+# ---- evidence ---------------------------------------------------------------------------------------------
+
+
+def test_the_verdict_is_audited_as_evidence_on_the_risk_decision(st, clock, tmp_path):
+    """So a later reader can reconstruct WHY a decision went the way it did, rather than
+    seeing only that it did."""
+    _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=3))
+
+    payloads = _payloads(st, "risk_decision")
+    assert payloads, "the risk decision must be audited"
+    verdicts = [p["execution_verdict"] for p in payloads if "execution_verdict" in p]
+    assert verdicts, "the execution verdict must ride in the audit payload"
+    recorded = verdicts[-1]
+    assert recorded["verdict"] == "uneconomic"
+    assert recorded["book_seq"] == 7
+    assert recorded["qty"] == 10
+
+
+def test_the_audit_chain_still_verifies_with_a_verdict_in_the_payload(st, clock, tmp_path):
+    """The chain's canonical encoder has no ``default=`` — it fails closed on anything it
+    cannot serialise. A Decimal or an Enum leaking into the payload would break the chain,
+    which is why ``QuantVerdict.as_dict`` is JSON-native only."""
+    _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=3))
+    assert st.audit.verify_chain().ok
+
+
+def test_no_verdict_key_is_written_when_no_book_was_consulted(st, clock, tmp_path):
+    """An absent measurement must be absent from the record, not present-and-empty — a
+    reader must be able to tell 'we did not look' from 'we looked and found nothing'."""
+    _draft(st, clock, tmp_path, quantity=10, book_fn=None)
+
+    payloads = _payloads(st, "risk_decision")
+    assert payloads
+    assert all("execution_verdict" not in p for p in payloads)
+
+
+# ---- the seam ------------------------------------------------------------------------------------------------
+
+
+def test_book_fn_is_injected_and_the_workflow_never_fetches(st, clock, tmp_path):
+    """Same discipline as ``quote_fn``: no fetcher exists in the tree, and the workflow is
+    not where one would go."""
+    calls: list[str] = []
+
+    def recording_book_fn(symbol):
+        calls.append(symbol)
+        return _book()
+
+    _draft(st, clock, tmp_path, quantity=10, book_fn=recording_book_fn)
+    assert calls == ["AAPL"], "the seam is called once, with the proposal's symbol"
+
+
+def test_build_services_threads_the_book_seam_through_to_draft_proposal():
+    """The registry is the established extension point; a seam that stops at the workflow
+    boundary would never reach a scheduled run."""
+    import inspect
+
+    from workflows.services import build_services
+
+    assert "book_fn" in inspect.signature(build_services).parameters
+    source = inspect.getsource(build_services)
+    assert "book_fn=book_fn" in source
+
+
+def test_the_default_verify_params_use_a_penny_grid(st, clock, tmp_path):
+    """A verdict computed on the wrong tick scale misreads every price. The default is
+    stated once and is overridable per call for finer-grid names."""
+    from workflows.proposals import DEFAULT_VERIFY_PARAMS
+
+    assert DEFAULT_VERIFY_PARAMS.scale.tick_size == Decimal("0.01")
