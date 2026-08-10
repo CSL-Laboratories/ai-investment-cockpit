@@ -99,6 +99,31 @@ def _pending_deferred_ids(state) -> set[str]:
     return {eid for eid, label in latest.items() if label == "deferred"}
 
 
+def _escalated_ids(state) -> set[str]:
+    """Event ids ever labeled ``escalated`` in ANY HMAC-verified batch — consumed or NOT.
+
+    BUG-055: escalation is TERMINAL across batches. A mid-loop degradation writes its
+    batch ``consumed=False`` so the window cursor stays put and the window is re-covered —
+    correct for the deferred candidates, but the events escalated BEFORE the degradation
+    already have a proposal/alert (and a spent deep-budget unit) minted for them. Without
+    this set the re-covered window re-scored them, spent a second budget unit, and drafted
+    a second proposal/order for the same event — both reaching the human."""
+    with state.session_factory() as s:
+        entries = s.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_TRIAGE_BATCH)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    out: set[str] = set()
+    for e in entries:
+        if not state.audit.verify_entry(e):
+            continue
+        for eid, label in ((e.payload or {}).get("dispositions") or {}).items():
+            if label == "escalated":
+                out.add(eid)
+    return out
+
+
 def _events_by_ids(state, ids) -> list[MarketEvent]:
     if not ids:
         return []
@@ -168,6 +193,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     extra = _events_by_ids(state, _pending_deferred_ids(state) - present)
     if extra:
         events = sorted(events + extra, key=lambda ev: (ev.ingested_at, ev.id))
+    # BUG-055: never re-handle an event a prior batch (consumed or not) already escalated —
+    # its proposal exists; re-covering a degraded window must pick up only the DEFERRED ones.
+    already_escalated = _escalated_ids(state)
+    if already_escalated:
+        events = [ev for ev in events if ev.id not in already_escalated]
     if not events:
         return {"status": "no_events", "window_start": window_start,
                 "window_end": window_end}

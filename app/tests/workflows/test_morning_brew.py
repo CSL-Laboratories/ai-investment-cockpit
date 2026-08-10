@@ -373,3 +373,29 @@ def test_the_deep_brief_call_gets_its_own_larger_budget(st, clock, tmp_path):
     assert transport.timeouts[1] == (BRIEF_TIMEOUT_BASE_SECONDS
                                      + BRIEF_TIMEOUT_PER_EVENT_SECONDS * 1)
     assert transport.timeouts[1] > 120.0, "the deep call must not inherit the flat default"
+
+
+def test_success_path_keeps_prefiltered_labels(st, clock, tmp_path):
+    """BUG-054: the SUCCESS path's final disposition loop overwrote every event back to
+    scored/deferred, silently erasing prefiltered_ignore — the audit lied (Inv 6) and the
+    whole filtered calendar became a 'deferred' re-dispatch obligation for the intraday
+    loop (each calendar row is its own calendar match in deterministic_urgency, so it
+    survives corroboration and drains deep budget). The degraded path already had a test;
+    THIS is the path that fired every quiet morning."""
+    res = persist_events(st, [_cal(f"cal-{i}", f"SY{i}") for i in range(6)]
+                         + [_mk("news-1", "NVDA", "NVDA unveils new accelerator")],
+                         parquet_root=tmp_path / "raw", clock=clock)
+    news = next(r for r in res.stored if r.symbol == "NVDA")
+    scored = [{"article_id": news.raw_ref, "symbols": ["NVDA"],
+               "classification": "material", "score": 70, "rationale": "r"}]
+    transport = FakeTransport([envelope(_triage_body(scored)),
+                               envelope(_brief_body([news.raw_ref]))])
+    result = morning_brew(st, clock, transport=transport, parquet_root=tmp_path / "raw")
+    assert result["status"] == "ok"
+    assert result["prefiltered"] == 6
+    assert result["deferred_count"] == 0, "prefiltered rows leaked into the deferred lane"
+
+    labels = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload["dispositions"]
+    assert sorted(labels.values()).count("prefiltered_ignore") == 6
+    assert labels[news.id] == "scored"
+    assert st.audit.verify_chain().ok
