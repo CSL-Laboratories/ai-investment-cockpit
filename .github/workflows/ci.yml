@@ -6,7 +6,21 @@ on:
 
 jobs:
   gates:
-    runs-on: ubuntu-latest
+    # The cockpit targets Ubuntu, Windows and macOS. Until now CI ran ubuntu-latest ONLY,
+    # while development and deployment happened on Windows — so every Windows defect had to
+    # be found by hand on the dev box. Two in the RW-01 history alone ("the claude CLI could
+    # never be spawned on Windows", "verify_keys picked a case-alias as its own repair
+    # source on Windows") were invisible to CI by construction. macOS has never been tested
+    # at all.
+    #
+    # fail-fast is off on purpose: when one platform breaks, the others must still report,
+    # because the useful signal is WHICH platforms differ.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: app
@@ -14,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install deps (WP0–WP7)
         # Full runtime set from app/pyproject.toml so the API, scheduler, ingest, and order-path
         # tests actually RUN in CI (they self-skip via importorskip when a dep is absent). discord.py
@@ -22,6 +36,18 @@ jobs:
         run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler pytest ruff
       - name: Lint
         run: ruff check .
+      # Pinned SHORT because pytest nests its generated tmp dirs under the runner temp path,
+      # and combined with this repo's deep fixture paths that crosses MAX_PATH — surfacing as
+      # ~80 bogus WinError 3 / WinError 206 failures in the parquet and tempfile paths that
+      # have nothing to do with the code under test. Set via GITHUB_ENV rather than a step
+      # `env:` block so the other two platforms are not handed an empty TMP.
+      - name: Pin a short TMP (Windows MAX_PATH)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\t | Out-Null
+          "TMP=C:\t"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TEMP=C:\t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Gates + tests (merge blockers)
         # Includes the Invariant-1 call-site, no-LLM-in-risk, and secrets-grep gates (test_invariants.py).
         run: python -m pytest -q
