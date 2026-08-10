@@ -97,6 +97,20 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _derived_notional(resolved_order) -> Decimal | None:
+    """BUG-060: the modal gate's notional, derived from the RESOLVED ORDER rather than
+    trusted to a caller parameter. qty*limit_price for a priced order; a MARKET order has
+    no client-side price, so its notional is UNKNOWABLE here -> None, which the gate
+    treats as above-threshold (fail closed)."""
+    if not isinstance(resolved_order, dict):
+        return None
+    qty = _dec(resolved_order.get("qty"))
+    px = _dec(resolved_order.get("limit_price"))
+    if qty is None or px is None:
+        return None
+    return abs(qty * px)
+
+
 def _modal_threshold(settings) -> Decimal:
     raw = getattr(settings, "modal_confirm_notional", None)
     d = _dec(raw)
@@ -205,12 +219,19 @@ def record_decision(
         oth = order_tuple_hash(resolved_order)
 
         if decision == "approve":
-            # (iv) modal double-confirm for a live order above threshold.
+            # (iv) modal double-confirm for a live order above threshold. BUG-060: the gate
+            # used to fire only when the CALLER supplied a notional — and the bot's default
+            # is notional=None, so SEC-15 was opt-in. The notional now falls back to the
+            # resolved order itself, and an UNKNOWABLE notional (a live market order, or
+            # garbage) requires the modal rather than skipping it.
             live = _current_mode(st, mode) in _LIVE_MODES
             n = _dec(notional)
-            if live and n is not None and n > _modal_threshold(st.settings) and not modal_confirmed:
+            if n is None:
+                n = _derived_notional(resolved_order)
+            if live and not modal_confirmed and (n is None or n > _modal_threshold(st.settings)):
+                shown = "unknowable" if n is None else str(n)
                 return Rejection(
-                    f"live order notional {n} exceeds modal-confirm threshold "
+                    f"live order notional {shown} exceeds modal-confirm threshold "
                     f"{_modal_threshold(st.settings)}; a modal double-confirm is required",
                     "modal_required", proposal_id, interaction_id,
                 )

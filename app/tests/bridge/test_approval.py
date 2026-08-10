@@ -221,3 +221,53 @@ def test_bad_decision_raises(st):
             actor_user_id=OPERATOR, user_decision="explode", surface="discord",
             interaction_id="i-1",
         )
+
+
+# ---- BUG-060: the modal gate must not be opt-in ----------------------------------------
+def test_modal_required_when_caller_omits_notional_but_order_is_big(st):
+    """BUG-060: the gate was ``live and n is not None and n > threshold`` — and the bot's
+    default is ``notional=None``, so omitting the parameter skipped SEC-15 entirely for any
+    size. The notional is now derived from the resolved order itself."""
+    reg = TokenRegistry()
+    big_order = make_order(order_type="limit", qty="1000",
+                           limit_price=str(DEFAULT_MODAL_CONFIRM_NOTIONAL))
+    out = record_decision(
+        st, proposal_id="prop-1", risk_decision=make_risk(), resolved_order=big_order,
+        actor_user_id=OPERATOR, user_decision="approve", surface="discord",
+        interaction_id="i-1", mode=Mode.review_live, token_registry=reg,
+    )
+    assert isinstance(out, Rejection) and out.code == "modal_required"
+    assert reg.live_count() == 0
+
+
+def test_modal_required_for_live_market_order_with_unknowable_notional(st):
+    """A live MARKET order has no client-side price: its notional is unknowable at the
+    gate, so it must require the modal (fail closed), never skip it."""
+    reg = TokenRegistry()
+    out = record_decision(
+        st, proposal_id="prop-1", risk_decision=make_risk(), resolved_order=make_order(),
+        actor_user_id=OPERATOR, user_decision="approve", surface="discord",
+        interaction_id="i-1", mode=Mode.review_live, token_registry=reg,
+    )
+    assert isinstance(out, Rejection) and out.code == "modal_required"
+    # confirmed, it goes through
+    ok = record_decision(
+        st, proposal_id="prop-1", risk_decision=make_risk(), resolved_order=make_order(),
+        actor_user_id=OPERATOR, user_decision="approve", surface="discord",
+        interaction_id="i-2", mode=Mode.review_live, modal_confirmed=True,
+        token_registry=reg,
+    )
+    assert not isinstance(ok, Rejection)
+
+
+def test_small_derivable_live_order_still_needs_no_modal(st):
+    """The gate stays proportionate: a small LIMIT order (derivable, under threshold)
+    approves on one tap."""
+    reg = TokenRegistry()
+    small = make_order(order_type="limit", qty="2", limit_price="100")   # $200
+    ok = record_decision(
+        st, proposal_id="prop-1", risk_decision=make_risk(), resolved_order=small,
+        actor_user_id=OPERATOR, user_decision="approve", surface="discord",
+        interaction_id="i-1", mode=Mode.review_live, token_registry=reg,
+    )
+    assert not isinstance(ok, Rejection)
