@@ -246,3 +246,130 @@ def test_packet_selection_rejects_a_disabled_cap():
 
     with pytest.raises(ValueError, match="cap must be positive"):
         select_for_packet([], 0, frozenset())
+
+
+# =======================================================================================
+# RW-01 bring-up regression — the packet must be RELEVANT, not merely bounded
+# =======================================================================================
+def _cal(article_id, symbol, minutes_ago=30):
+    return to_market_event(source="finnhub", article_id=article_id, symbols=[symbol],
+                           headline=f"{symbol} reports Q3", summary="",
+                           ts=(NOW - timedelta(minutes=minutes_ago)).isoformat(),
+                           event_type="calendar:earnings")
+
+
+def test_bulk_calendar_is_prefiltered_but_held_and_watched_symbols_survive():
+    """THE CAP ALONE DID NOT FIX IT. The second live run capped the packet at 150 and STILL
+    timed out — because 150 of 659 whole-market earnings dates is still 150 earnings dates.
+    A cap bounds cost; only relevance decides what is worth reading."""
+    from workflows.morning_brew import partition_by_relevance
+
+    class Ev:
+        def __init__(self, i, event_type, symbol):
+            self.id, self.event_type, self.symbol = f"e{i}", event_type, symbol
+
+    events = [Ev(i, "calendar:earnings", f"SY{i}") for i in range(50)]
+    events += [Ev(90, "calendar:earnings", "AAPL"),    # HELD -> keep
+               Ev(91, "calendar:earnings", "TSLA"),    # WATCHED -> keep
+               Ev(92, "news", "NVDA"),                 # news on an unheld symbol -> keep
+               Ev(93, "filing", "MSFT"),               # hard event -> keep
+               Ev(94, "halt", "GME")]                  # hard event -> keep
+
+    eligible, ignored = partition_by_relevance(
+        events, frozenset({"AAPL"}), frozenset({"TSLA"}))
+
+    assert len(ignored) == 50, "bulk calendar rows should not reach the model"
+    kept = {e.id for e in eligible}
+    assert kept == {"e90", "e91", "e92", "e93", "e94"}
+    # The brief exists for AWARENESS: news about something you do not own yet is the point.
+    assert "e92" in kept, "the brew must not copy triage_loop's holdings-only filter"
+
+
+def test_prefiltered_events_are_not_labelled_deferred(st, clock, tmp_path):
+    """``deferred`` promises re-coverage next loop; ``prefiltered_ignore`` does not. Conflating
+    them would either lie in the audit or re-dispatch the whole market forever."""
+    persist_events(st, [_cal(f"cal-{i}", f"SY{i}") for i in range(6)]
+                   + [_mk("news-1", "NVDA", "NVDA unveils new accelerator")],
+                   parquet_root=tmp_path / "raw", clock=clock)
+
+    transport = FakeTransport([ProcResult(1, "", "Error: usage limit reached", False)])
+    result = morning_brew(st, clock, transport=transport, parquet_root=tmp_path / "raw")
+
+    assert result["window_events"] == 7
+    assert result["prefiltered"] == 6
+    assert result["dispatched"] == 1, "only the news item was worth a model call"
+    assert result["deferred_count"] == 1, "prefiltered rows must not inflate the deferred lane"
+
+    payload = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload
+    labels = payload["dispositions"]
+    assert len(labels) == 7, "an event vanished from the audited dispositions"
+    assert sorted(labels.values()).count("prefiltered_ignore") == 6
+    assert st.audit.verify_chain().ok
+
+
+def test_calendar_only_window_asks_no_model_and_is_a_complete_run(st, clock, tmp_path):
+    """A window of pure reference data is not a degraded run — there was nothing to read, so
+    nothing was asked and nothing is owed re-coverage."""
+    persist_events(st, [_cal(f"only-{i}", f"SY{i}") for i in range(4)],
+                   parquet_root=tmp_path / "raw", clock=clock)
+
+    # An EMPTY transport raises on any agent call, so this also proves no model was dispatched.
+    result = morning_brew(st, clock, transport=FakeTransport([]),
+                          parquet_root=tmp_path / "raw")
+
+    assert result["status"] == "no_relevant_events"
+    assert result["prefiltered"] == 4 and result["dispatched"] == 0
+    assert result["deferred_count"] == 0
+    payload = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload
+    assert payload["consumed"] is True and payload["degraded"] is False
+    assert not _rows(st, BriefRecord)
+
+
+class _TimeoutSpy(FakeTransport):
+    """Records the timeout each agent call was actually bounded by."""
+
+    def __init__(self, results):
+        super().__init__(results)
+        self.timeouts: list[float] = []
+
+    def run(self, argv, input_text, timeout_s, cwd):
+        self.timeouts.append(timeout_s)
+        return super().run(argv, input_text, timeout_s, cwd)
+
+
+def test_triage_timeout_scales_with_the_batch(st, clock, tmp_path):
+    """The flat 120s timeout was the mismatch that killed the second live run: triage is
+    OUTPUT-bound (one scored entry per item), so the bound has to track the batch size."""
+    from workflows.morning_brew import (
+        TRIAGE_TIMEOUT_BASE_SECONDS,
+        TRIAGE_TIMEOUT_PER_EVENT_SECONDS,
+    )
+
+    rows = _persist(st, clock, tmp_path)
+    transport = _TimeoutSpy([envelope(_triage_body(_scored(rows))),
+                             envelope(_brief_body([rows["AAPL"].raw_ref]))])
+    assert morning_brew(st, clock, transport=transport,
+                        parquet_root=tmp_path / "raw")["status"] == "ok"
+
+    assert transport.timeouts[0] == (TRIAGE_TIMEOUT_BASE_SECONDS
+                                     + TRIAGE_TIMEOUT_PER_EVENT_SECONDS * 2)
+
+
+def test_the_deep_brief_call_gets_its_own_larger_budget(st, clock, tmp_path):
+    """The brief runs on `deep` (opus), far slower than triage's haiku — leaving it on
+    call_agent's flat 120s default would have been the next thing to time out."""
+    from workflows.morning_brew import (
+        BRIEF_TIMEOUT_BASE_SECONDS,
+        BRIEF_TIMEOUT_PER_EVENT_SECONDS,
+    )
+
+    rows = _persist(st, clock, tmp_path)
+    transport = _TimeoutSpy([envelope(_triage_body(_scored(rows))),
+                             envelope(_brief_body([rows["AAPL"].raw_ref]))])
+    assert morning_brew(st, clock, transport=transport,
+                        parquet_root=tmp_path / "raw")["status"] == "ok"
+
+    # one of the two persisted events was scored "material" -> exactly one brief event
+    assert transport.timeouts[1] == (BRIEF_TIMEOUT_BASE_SECONDS
+                                     + BRIEF_TIMEOUT_PER_EVENT_SECONDS * 1)
+    assert transport.timeouts[1] > 120.0, "the deep call must not inherit the flat default"
