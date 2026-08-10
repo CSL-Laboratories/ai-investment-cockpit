@@ -169,3 +169,31 @@ def test_mode_no_longer_auto_veto_cancels(st):
     assert res.executed is False
     assert res.reason == "mode_changed"
     assert reg.live_count() == 0
+
+
+# ---- BUG-080: settled tickets are bounded ----------------------------------------------
+def test_settled_tickets_are_pruned_beyond_the_bound(coordinator_factory=None):
+    from decimal import Decimal
+
+    from bridge.veto import AutoVetoCoordinator
+
+    # A minimal stand-in state: only .lock is touched by schedule/_prune_settled.
+    import threading
+
+    class _St:
+        lock = threading.RLock()
+
+    class _Rd:
+        id = "rd-1"
+
+    coord = AutoVetoCoordinator(_St(), None)
+    coord._MAX_SETTLED_TICKETS = 5
+    order = {"symbol": "AAPL", "side": "buy", "qty": "1", "order_type": "limit",
+             "limit_price": "100", "tif": "day"}
+    for i in range(30):
+        t = coord.schedule(proposal_id=f"p-{i}", risk_decision=_Rd(), resolved_order=order)
+        t.resolved = True                     # settle immediately
+    assert len(coord._tickets) <= 5 + 1, "settled tickets must be bounded"
+    # live tickets are never pruned
+    live = coord.schedule(proposal_id="p-live", risk_decision=_Rd(), resolved_order=order)
+    assert live.proposal_id in {t.proposal_id for t in coord._tickets.values()}

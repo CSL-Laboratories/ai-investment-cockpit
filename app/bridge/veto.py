@@ -117,6 +117,7 @@ class AutoVetoCoordinator:
         the window clock only starts once delivery is confirmed (SEC-23)."""
         oth = order_tuple_hash(resolved_order)
         with self.st.lock:
+            self._prune_settled()
             ticket = VetoTicket(
                 proposal_id=proposal_id,
                 risk_decision_id=risk_decision.id,
@@ -125,6 +126,19 @@ class AutoVetoCoordinator:
             )
             self._tickets[proposal_id] = ticket
             return ticket
+
+    _MAX_SETTLED_TICKETS = 1024
+
+    def _prune_settled(self) -> None:
+        """BUG-080: ``_tickets`` grew by one per adjudicated proposal for the life of the
+        process — append-only, never pruned. Settled tickets (resolved or vetoed) are kept
+        only as a bounded recent-history window, oldest dropped first (dict preserves
+        insertion order). LIVE tickets are never dropped. Caller holds ``st.lock``."""
+        settled = [pid for pid, t in self._tickets.items() if t.resolved or t.vetoed]
+        excess = len(settled) - self._MAX_SETTLED_TICKETS
+        if excess > 0:
+            for pid in settled[:excess]:
+                del self._tickets[pid]
 
     def confirm_delivery(self, proposal_id: str) -> VetoTicket:
         """Mark that the operator ACTUALLY received the proposal (the Discord post/DM was

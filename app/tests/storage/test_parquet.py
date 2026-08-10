@@ -44,3 +44,14 @@ def test_post_ingest_edit_detected(tmp_path):
     pq.write_table(pa.Table.from_pylist([{"symbol": "AAPL", "price": 999.0, "ts": "x"}]),
                    snapshot_path(tmp_path, "2026-07-06", "AAPL"))
     assert verify_snapshot(tmp_path, "2026-07-06", "AAPL", h) is False   # bound hash no longer matches
+
+
+# ---- BUG-094: one serialization, both sides --------------------------------------------
+def test_mixed_int_float_column_still_verifies(tmp_path):
+    """Pyarrow infers ONE column type: int 5 in a float column round-trips as 5.0. Hashing
+    the pre-persist objects made this legitimately-written snapshot FAIL verification."""
+    from storage.parquet_store import verify_snapshot, write_snapshot
+
+    records = [{"symbol": "AAPL", "px": 5}, {"symbol": "MSFT", "px": 5.5}]
+    _, digest = write_snapshot(tmp_path, "2026-08-10", "MIX", records)
+    assert verify_snapshot(tmp_path, "2026-08-10", "MIX", digest) is True

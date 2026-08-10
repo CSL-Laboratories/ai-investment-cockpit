@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -74,15 +75,21 @@ class SnapshotSource:
 
     _latest: dict = field(default_factory=dict, repr=False)
     _version: int = field(default=0, repr=False)
+    # BUG-081: publish (engine thread) and read (event-loop thread) each touch TWO fields;
+    # unsynchronized, a read could pair the new version with the stale snapshot (or miss a
+    # fresh one). One lock makes the pair atomic in both directions.
+    _lock: object = field(default_factory=threading.Lock, repr=False)
 
     def publish(self, snapshot: dict) -> int:
         """Replace the current snapshot. Called by the engine; returns the new version."""
-        self._latest = snapshot
-        self._version += 1
-        return self._version
+        with self._lock:
+            self._latest = snapshot
+            self._version += 1
+            return self._version
 
     def read(self) -> tuple[int, dict]:
-        return self._version, self._latest
+        with self._lock:
+            return self._version, self._latest
 
     @property
     def version(self) -> int:
