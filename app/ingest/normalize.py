@@ -75,6 +75,24 @@ def _clean_symbols(symbols) -> list[str]:
     return out
 
 
+_REF_SAFE = re.compile(r"[^A-Za-z0-9._:\-]")
+
+
+def _safe_ref_component(value) -> str:
+    """BUG-085: ``raw_ref`` is interpolated into a prompt attribute downstream
+    (``workflows/grounding.extract_slice``) — the reason the edgar poller gates accession
+    ids with its ASCII ``_ACCESSION`` regex before they reach the same field. The other
+    feeds passed raw wire ids straight through. Strip anything outside a conservative
+    charset; when anything WAS stripped, bind a short content hash so a hostile or
+    malformed id stays unique without its bytes ever reaching a prompt."""
+    s = str(value)
+    cleaned = _REF_SAFE.sub("", s)[:128]
+    if cleaned == s:
+        return cleaned
+    digest = hashlib.sha256(s.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+    return f"{cleaned}~{digest}"
+
+
 def _safe_ts(ts):
     if ts is None:
         return None
@@ -101,6 +119,6 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         "headline": escape_untrusted(headline),
         "summary": escape_untrusted(summary),
         "ts": _safe_ts(ts),
-        "raw_ref": f"{source}:{article_id}",
+        "raw_ref": f"{source}:{_safe_ref_component(article_id)}",   # BUG-085: prompt-bound
         "content_hash": content_hash(raw),
     }

@@ -332,3 +332,38 @@ def test_unaudited_runs_keep_the_visible_cap_fault(sf, store):
                        sec_max_new_filings_per_poll=25)
     result = run(sf, store, low_cap)
     assert any("PollFilingLimitExceeded" in reason for _c, reason in result.poll_errors)
+
+
+# ---------------------------------------------------------------------------------------
+# BUG-083: same-day same-form "prior" must be the EARLIER-submitted filing
+# ---------------------------------------------------------------------------------------
+def test_same_day_prior_resolves_to_the_earlier_accession(sf):
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from ingest.edgar_pipeline import _prior_same_form
+    from schemas.models.filing import Filing, FormType
+
+    day = date(2026, 7, 8)
+    earlier = Filing(cik="0000000001", accession_no="0000000001-26-000001",
+                     form_type=FormType("8-K"), filing_date=day,
+                     detection_ts=CLOCK.now(), raw_ref="a1")
+    later = Filing(cik="0000000001", accession_no="0000000001-26-000002",
+                   form_type=FormType("8-K"), filing_date=day,
+                   detection_ts=CLOCK.now(), raw_ref="a2")
+    with sf() as s, s.begin():
+        s.add(earlier)
+        s.add(later)
+
+    with sf() as s:
+        e = s.execute(select(Filing).where(Filing.accession_no.like("%000001"))).scalar_one()
+        l = s.execute(select(Filing).where(Filing.accession_no.like("%000002"))).scalar_one()
+
+    prior_of_later = _prior_same_form(sf, l)
+    assert prior_of_later is not None
+    assert prior_of_later.accession_no == e.accession_no
+
+    # BUG-083: the earlier filing's "prior" used to resolve to the LATER-submitted one,
+    # diffing it against a chronologically-later baseline. It must resolve to nothing.
+    assert _prior_same_form(sf, e) is None

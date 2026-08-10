@@ -117,18 +117,26 @@ def _prior_same_form(session_factory, filing) -> Any:
     Ordered by ``filing_date`` then ``accession_no`` so two filings on one day resolve
     deterministically (Inv 2) rather than by whatever order the DB happens to return.
     """
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
 
     from schemas.models.filing import Filing
 
     with session_factory() as s:
+        # BUG-083: "prior" means strictly earlier in (filing_date, accession_no) order. SEC
+        # accession sequences are assigned in submission-receipt order, so for a same-day
+        # same-form pair the old `date <= current` filter with an accession DESC sort
+        # resolved the EARLIER filing's prior to the LATER-submitted one — a delta diffed
+        # against a chronologically-later baseline.
         return s.execute(
             select(Filing)
             .where(
                 Filing.cik == filing.cik,
                 Filing.form_type == filing.form_type,
-                Filing.accession_no != filing.accession_no,
-                Filing.filing_date <= filing.filing_date,
+                or_(
+                    Filing.filing_date < filing.filing_date,
+                    and_(Filing.filing_date == filing.filing_date,
+                         Filing.accession_no < filing.accession_no),
+                ),
             )
             .order_by(Filing.filing_date.desc(), Filing.accession_no.desc())
             .limit(1)

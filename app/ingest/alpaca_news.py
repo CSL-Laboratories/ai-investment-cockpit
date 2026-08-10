@@ -47,6 +47,9 @@ class AlpacaNewsConsumer:
         self._backoff = backoff or (lambda n: min(30.0, 2.0 ** n))
         self._sleep = sleep or (lambda _s: None)
         self._max_reconnects = max_reconnects
+        # emit_error — on_event raised: TRANSIENT/RETRIABLE, key rolled back (BUG-069).
+        # frame_error — the FRAME itself was bad (structural), nothing was committed.
+        self.counters = {"emit_error": 0, "frame_error": 0}
 
     def run(self, on_event, max_frames: int | None = None) -> int:
         emitted, seen, attempt = 0, 0, 0
@@ -57,11 +60,24 @@ class AlpacaNewsConsumer:
                     seen += 1
                     try:                                   # a bad FRAME is dropped, NOT treated as a disconnect
                         aid = _frame_id(msg)
-                        if self._dedup.add(_dedup_key(msg, aid)):
-                            on_event(_to_event(msg))
-                            emitted += 1
+                        key = _dedup_key(msg, aid)
+                        event = _to_event(msg)
                     except Exception:
-                        pass
+                        self.counters["frame_error"] += 1  # structural: nothing was committed
+                        continue
+                    if self._dedup.add(key):
+                        try:
+                            on_event(event)
+                            emitted += 1
+                        except Exception:
+                            # BUG-069: the per-frame try/except was built to isolate a bad
+                            # FRAME but also swallowed a failed EMIT after the key was
+                            # committed — a momentary downstream outage permanently burned
+                            # every frame it touched. A FAILED EMIT IS NOT A DROP: give
+                            # the key back (Dedup.discard) so a redelivered/re-seen frame
+                            # can still emit, and count it.
+                            self._dedup.discard(key)
+                            self.counters["emit_error"] += 1
                     if max_frames is not None and seen >= max_frames:
                         return emitted
                 return emitted                             # clean end of stream

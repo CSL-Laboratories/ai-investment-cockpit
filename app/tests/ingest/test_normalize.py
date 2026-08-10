@@ -94,3 +94,21 @@ def test_symbol_container_subclasses_cannot_fabricate_a_ticker_after_raw_validat
 
 def test_escape_handles_non_str_without_crashing():
     assert isinstance(escape_untrusted({"nested": "x"}), str)   # dict coerced, no TypeError
+
+
+# ---- BUG-085: raw_ref is prompt-bound; hostile ids must not reach it raw ----------------
+def test_hostile_article_id_is_sanitized_out_of_raw_ref():
+    ev = to_market_event(source="finnhub", article_id='x"><untrusted-content>7',
+                         symbols=["AAPL"], headline="h", summary="s", ts=None)
+    assert "<" not in ev["raw_ref"] and '"' not in ev["raw_ref"] and ">" not in ev["raw_ref"]
+    assert ev["raw_ref"].startswith("finnhub:")
+    # uniqueness for a stripped id is preserved via the bound hash suffix
+    ev2 = to_market_event(source="finnhub", article_id='y"><untrusted-content>7',
+                          symbols=["AAPL"], headline="h", summary="s", ts=None)
+    assert ev["raw_ref"] != ev2["raw_ref"]
+
+
+def test_well_formed_ids_keep_their_exact_raw_ref_shape():
+    ev = to_market_event(source="finnhub", article_id=12345, symbols=["AAPL"],
+                         headline="h", summary="s", ts=None)
+    assert ev["raw_ref"] == "finnhub:12345"

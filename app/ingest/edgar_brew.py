@@ -490,6 +490,20 @@ def _as_iso(value) -> str | None:
     return None
 
 
+def _storage_as_iso(cursor: str | None) -> str | None:
+    """BUG-084: render a canonical STORAGE-format string (``_STORAGE_FMT`` below — space-
+    separated, tz-dropped-but-UTC, the shape ``max(cursors)`` carries) as the tz-aware ISO
+    shape every other feed's ``ts`` uses. DISPLAY PATH ONLY — its output lands in ``ts``,
+    never in ``self._cursor`` (see _canonical_cursor). An unexpected shape returns None so
+    the caller's fallback chain continues rather than emitting a mis-shapen timestamp."""
+    if not cursor:
+        return None
+    try:
+        return datetime.strptime(cursor, _STORAGE_FMT).replace(tzinfo=timezone.utc).isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
 # THE CURSOR'S ONE TRUE FORMAT — see _canonical_cursor. Load-bearing, do not mix formats.
 #
 # The brew stores every timestamp via SQLAlchemy ``DateTime(timezone=True)``. On SQLite that
@@ -984,7 +998,7 @@ class EdgarBrewPoller:
             "deltas": deltas,
         }
         ts = (_as_iso(first.get("detection_ts"))
-              or (max(cursors) if cursors else None)
+              or (_storage_as_iso(max(cursors)) if cursors else None)
               or _as_iso(first.get("filing_date"))
               or _stringify(first.get("filing_date")))
         event = to_market_event(

@@ -1974,3 +1974,13 @@ def test_both_sibling_modules_state_the_one_clock_contract_and_cross_reference_i
         src = inspect.getsource(mod)
         assert "resolve_wall_clock" in src,             f"{mod.__name__} does not call the ONE shared clock validator"
         assert "clock_contract" in src, f"{mod.__name__} must point at the ONE contract"
+
+
+# ---- BUG-084: the ts fallback must carry the ISO shape every other feed uses ------------
+def test_storage_format_cursor_fallback_renders_iso():
+    from ingest.edgar_brew import _storage_as_iso
+
+    iso = _storage_as_iso("2026-07-15 13:01:00.000000")
+    assert iso == "2026-07-15T13:01:00+00:00"
+    assert _storage_as_iso("not a timestamp") is None
+    assert _storage_as_iso(None) is None
