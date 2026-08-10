@@ -1,7 +1,7 @@
 ---
 title: Gap-fill supplement — market data, PDT/regulatory, AI-provider policy
 type: research-report
-status: verified
+status: reference
 last-verified: 2026-07-02
 related: [README, research-report, cockpit-review-and-integrated-plan]
 ---

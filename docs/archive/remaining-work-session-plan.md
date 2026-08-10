@@ -1,7 +1,7 @@
 ---
 title: Remaining work — session plan for the W-series tail (sequencing, drift repair, paste-ready prompts)
 type: implementation-plan
-status: active
+status: archive
 last-verified: 2026-07-16
 related: [production-work-packages, production-playbook, security-hardening-backlog, path-to-production, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions]
 ---

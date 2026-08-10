@@ -1,10 +1,12 @@
 ---
 title: Build scaffold — work packages for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
-status: built
-last-verified: 2026-07-08
+status: reference
+last-verified: 2026-08-09
 related: [README, cockpit-review-and-integrated-plan, draft-discord-control-plane, research-report, research-supplement]
 ---
+
+> **[REFERENCE]** STILL LOAD-BEARING despite reading like a build-session artifact: this is the WP-series contract register and **43 files in `app/` cite it**. Do not move or renumber it.
 
 > **BUILD COMPLETE — 2026-07-08.** WP0→WP9 all shipped to `main` and green, in the scaffold's build order (WP0 → WP1a → WP1b → WP2 → {WP3, WP4} → WP5 → {WP6, WP7} → WP8 → WP9). WP9 (system test harness) = commit 9f6ff44; test suite 586 passed / 3 skipped, ruff clean; the §3 gate table G0–G9 in [[ultracode-build-playbook]] is fully green. Every WP `Accept:` line and all 9 invariants below remain the settled spec and are preserved verbatim — this banner is additive, nothing below it is superseded. See [[path-to-production]].
 >

@@ -1,10 +1,12 @@
 ---
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
-status: active
-last-verified: 2026-07-16
+status: live
+last-verified: 2026-08-09
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
+
+> **[LIVE]** STILL LIVE — the SEC-* findings register. Claims go in [[REGISTER]]; the write-ups stay here.
 
 # Security hardening backlog
 

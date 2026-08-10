@@ -1,3 +1,8 @@
+---
+title: QT — the quantitative engine
+type: implementation-plan
+status: live
+---
 # QT — the quantitative engine
 
 > Work package **QT**. Code lives in `app/quant/`, tests in `app/tests/quant/`.

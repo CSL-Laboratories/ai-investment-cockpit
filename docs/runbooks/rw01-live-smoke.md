@@ -1,7 +1,7 @@
 ---
 title: RW-01 live smoke — one real market day, end to end
 type: runbook
-status: active
+status: live
 last-verified: 2026-08-01
 related:
   - refactor-plan

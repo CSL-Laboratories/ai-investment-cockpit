@@ -1,7 +1,7 @@
 ---
 title: Integration and remote-operations plan — conversations, AI providers, MCP isolation, accounts, and SSH
 type: roadmap
-status: draft
+status: archive
 last-verified: 2026-08-06
 related:
   - refactor-plan

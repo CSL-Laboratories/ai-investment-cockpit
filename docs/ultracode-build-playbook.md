@@ -1,10 +1,12 @@
 ---
 title: Ultracode build playbook — orchestrating the cockpit build with many Opus 4.8 agents
 type: playbook
-status: built
-last-verified: 2026-07-08
+status: reference
+last-verified: 2026-08-09
 related: [build-scaffold-ultracode, cockpit-review-and-integrated-plan, draft-discord-control-plane, security-architecture, prompt-injection-defense, security-hardening-backlog, enhancements-and-additions, upside-and-roi, research-report, research-supplement]
 ---
+
+> **[REFERENCE]** Build-session orchestration for a finished run. Kept because 4 files in `app/` cite its adversarial-review pattern, which is still the house rule for any order-path change.
 
 > **BUILD COMPLETE — 2026-07-08.** All nine Workflow phases in §3 have run; the
 > gates G0–G9 in §5 are green and WP0→WP9 are merged to `main` (WP9 = commit

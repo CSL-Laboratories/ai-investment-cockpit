@@ -1,7 +1,7 @@
 ---
 title: Path to production — from green build to live-capable product
 type: roadmap
-status: active
+status: archive
 last-verified: 2026-07-09
 related:
   - build-scaffold-ultracode

@@ -1,10 +1,12 @@
 ---
 title: Production work packages — the W-series (pre-live / go-live) for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
-status: active
-last-verified: 2026-07-16
+status: reference
+last-verified: 2026-08-09
 related: [path-to-production, security-hardening-backlog, security-architecture, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions]
 ---
+
+> **[REFERENCE]** The W-series definitions. The build session is over, but code comments cite W-IDs and this is where they resolve. NEW W-IDs are claimed in [[REGISTER]].
 
 > **This is the production analog of [[build-scaffold-ultracode]].** Where the build scaffold defined WP0→WP9 (all shipped to `main`, green; WP9 = commit 9f6ff44; 586 passed / 3 skipped, ruff clean; gate table G0–G9 green in [[ultracode-build-playbook]]), this file defines W10→W19: the OPEN/PARTIAL hardening delta that stands between "the build is green" and "real capital may move."
 >

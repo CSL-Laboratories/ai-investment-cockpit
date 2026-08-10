@@ -1,10 +1,12 @@
 ---
 title: Enhancements & additions — value-adds beyond the Fable 5 baseline
 type: design-proposal
-status: draft
-last-verified: 2026-07-03
+status: superseded
+last-verified: 2026-08-09
 related: [research-report, research-supplement, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, security-architecture, prompt-injection-defense, security-hardening-backlog, upside-and-roi]
 ---
+
+> **[SUPERSEDED]** Idea backlog predating the MVP definition. Superseded by [[PLAN]] §1 for scope and [[REGISTER]] for claims. Nothing here is scheduled until it has an ID.
 
 # Enhancements & additions
 

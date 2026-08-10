@@ -1,8 +1,8 @@
 ---
 title: Security architecture — Local AI Investment Cockpit
 type: security-architecture
-status: active
-last-verified: 2026-07-03
+status: reference
+last-verified: 2026-08-09
 related: [research-report, research-supplement, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, prompt-injection-defense, security-hardening-backlog, upside-and-roi, enhancements-and-additions]
 ---
 

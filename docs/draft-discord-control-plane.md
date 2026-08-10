@@ -1,10 +1,12 @@
 ---
 title: Draft 2 — Discord-centralized control plane with graduated autonomy
 type: design-draft
-status: draft
-last-verified: 2026-07-02
+status: superseded
+last-verified: 2026-08-09
 related: [README, cockpit-review-and-integrated-plan, research-report, research-supplement]
 ---
+
+> **[SUPERSEDED]** A DRAFT (its own title says so), superseded by [[PLAN]] and by what shipped in `app/bridge/`. Kept in place because 8 files in `app/` cite it for the graduated-autonomy ladder, which is still the live model.
 
 # Draft 2: local model API + Discord control plane + graduated autonomy
 

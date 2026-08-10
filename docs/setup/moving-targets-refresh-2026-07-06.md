@@ -1,7 +1,7 @@
 ---
 title: Moving-targets refresh — 2026-07-06
 type: verification-note
-status: active
+status: reference
 last-verified: 2026-07-06
 related: [research-report, research-supplement, security-architecture, upside-and-roi, accounts-and-keys]
 ---

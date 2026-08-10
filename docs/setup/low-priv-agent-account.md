@@ -1,7 +1,7 @@
 ---
 title: Low-privilege decision-agent account (SEC-05 / OPS-06)
 type: setup
-status: active
+status: live
 last-verified: 2026-07-09
 related: [accounts-and-keys, security-hardening-backlog, security-architecture, production-work-packages]
 ---

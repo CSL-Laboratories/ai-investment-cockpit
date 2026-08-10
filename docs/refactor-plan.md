@@ -1,8 +1,8 @@
 ---
 title: Refactor plan — from fixture-driven build to a running dual-surface cockpit
 type: roadmap
-status: draft
-last-verified: 2026-08-01
+status: live
+last-verified: 2026-08-09
 related:
   - README
   - capability-expansion-master-plan
@@ -13,6 +13,8 @@ related:
   - security-architecture
   - security-hardening-backlog
 ---
+
+> **[LIVE]** STILL LIVE — owns the RW-series. RW-11/RW-12 (wiring, then retiring, the EDGAR path) are scheduled in [[REGISTER]] and detailed here.
 
 # Refactor plan
 

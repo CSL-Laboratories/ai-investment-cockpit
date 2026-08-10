@@ -1,8 +1,8 @@
 ---
 title: Capability expansion & master plan — optimizing the cockpit for a dual (AI + human) workflow
 type: roadmap
-status: draft
-last-verified: 2026-08-01
+status: superseded
+last-verified: 2026-08-09
 related:
   - README
   - enhancements-and-additions
@@ -14,6 +14,8 @@ related:
   - security-architecture
   - security-hardening-backlog
 ---
+
+> **[SUPERSEDED]** Superseded by [[PLAN]] for sequencing and scope. Kept in place rather than archived because production code cites it. Read it for capability IDEAS; take the order of work from [[PLAN]] and claim it in [[REGISTER]].
 
 # Capability expansion & master plan
 

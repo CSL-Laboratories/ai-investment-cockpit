@@ -1,7 +1,7 @@
 ---
 title: Production playbook — orchestrating the W-series pre-live property-closures with many Opus 4.8 agents
 type: playbook
-status: active
+status: archive
 last-verified: 2026-07-16
 related: [production-work-packages, path-to-production, security-hardening-backlog, security-architecture, ultracode-build-playbook, build-scaffold-ultracode]
 ---

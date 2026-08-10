@@ -1,7 +1,7 @@
 ---
 title: Cockpit plan review — CLI-vs-SDK verdict and integrated build plan
 type: design-review
-status: active
+status: archive
 last-verified: 2026-07-02
 related: [README, research-report, research-supplement, cockpit-plan-original]
 ---
