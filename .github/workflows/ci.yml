@@ -1,8 +1,19 @@
 name: ci
 
 on:
+  # `push` is scoped to main. Unscoped, a branch with an open PR matched BOTH triggers and
+  # ran the whole matrix twice — tolerable at 2 jobs, 12 once the matrix landed.
   push:
+    branches: [main]
   pull_request:
+
+# A new push supersedes the run it interrupted. Without this, force-pushing a branch three
+# times leaves three full matrices racing, and only the last one's answer matters. main is
+# excluded from cancellation: its history is what the merge queue reasons about, so every
+# commit on it gets a result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   gates:

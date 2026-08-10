@@ -18,6 +18,7 @@ bridge (SEC-03).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 
@@ -32,6 +33,8 @@ from ingest.normalize import escape_untrusted
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
+from quant.events import PriceScale
+from quant.verify import VerifyParams, verify_proposal
 from risk.engine import RiskContext, evaluate, order_notional
 from schemas.models.market_event import MarketEvent
 from schemas.models.order import Order
@@ -77,7 +80,15 @@ def _latest_snapshot(state) -> PortfolioSnapshot | None:
     return snap
 
 
-def build_risk_context(state, *, quote, watchlist: frozenset[str]) -> RiskContext:
+log = logging.getLogger(__name__)
+
+DEFAULT_VERIFY_PARAMS = VerifyParams(scale=PriceScale(tick_size=Decimal("0.01")))
+"""QT-05 defaults: a penny tick grid. Injectable per call, because a sub-dollar name trades
+on a finer grid and a verdict computed on the wrong scale misreads every price."""
+
+
+def build_risk_context(state, *, quote, watchlist: frozenset[str],
+                       quant_verdict=None, quant_book_seq=None) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
     (absent -> zeros -> risk fails conservatively) + the injected quote (None ->
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
@@ -112,6 +123,12 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str]) -> RiskContex
         quote_age_s=quote_age_s,
         quote_spread_pct=quote_spread if quote_spread.is_finite() else Decimal("0"),
         mode=ModeLadder(state).current().value,
+        # QT-06. ``require_quant_verdict`` stays at its default False: no book feed exists in
+        # the tree yet, and flipping it on before one does would send EVERY proposal to human
+        # review with "no execution verdict attached" — a control that fires on everything is
+        # a control nobody reads. Turn it on in the same change that wires a real book_fn.
+        quant_verdict=quant_verdict,
+        quant_book_seq=quant_book_seq,
     )
 
 
@@ -139,7 +156,8 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
 
 
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
-                   transport=None, parquet_root=None, quote_fn=None,
+                   transport=None, parquet_root=None, quote_fn=None, book_fn=None,
+                   verify_params: VerifyParams | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
                    account: str = "paper") -> ProposalOutcome:
@@ -147,6 +165,12 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
 
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
     seam (no fetcher exists in the tree); None fails the risk gate conservatively.
+
+    ``book_fn(symbol) -> BookSnapshot | None`` is the QT-05 execution-verification seam, and
+    is deliberately the SAME SHAPE as ``quote_fn``: injected, never fetched here, and None
+    when no book is available. With it, the proposal is priced against real depth before the
+    risk gate runs — which is the only thing in the system able to notice that an order is
+    being drafted for three times the liquidity the market is showing.
     Returns everything; the caller (services/bridge) owns delivery + veto scheduling."""
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
@@ -205,8 +229,47 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         reasons.extend(grounding.reasons)
 
     # ---- deterministic risk gate (Invariant 5: evaluate() only) --------------------------
-    quote = quote_fn(str(proposal.get("symbol", "")).upper()) if quote_fn is not None else None
-    ctx = build_risk_context(state, quote=quote, watchlist=watchlist)
+    symbol = str(proposal.get("symbol", "")).upper()
+    quote = quote_fn(symbol) if quote_fn is not None else None
+
+    # ---- QT-05: price the proposal against real depth BEFORE the risk gate ---------------
+    # Pure and deterministic (quant/verify.py is import-clean so risk/ may consume it under
+    # Invariant 5). A failure here degrades to "no verdict", which the risk gate treats as
+    # the absent case — it must never take down the proposal pipeline, because an advisory
+    # measurement that can halt the thing it advises on is a liability rather than a control.
+    verdict = None
+    book_seq = None
+    if book_fn is not None:
+        try:
+            book = book_fn(symbol)
+            if book is not None:
+                candidate = verify_proposal(proposal, book,
+                                            verify_params or DEFAULT_VERIFY_PARAMS)
+                # READ THE SEAM AGAIN, at gate time. ``_verdict_state`` calls a verdict stale
+                # when ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would
+                # trade against has moved past the one the verdict describes. Passing the
+                # SAME snapshot's seq to both sides made that condition ``seq > seq``, which
+                # is never true however far the book moved, so the Invariant 6 staleness
+                # control was wired shut while /quant/status reported it as live. Two
+                # observations are the only arrangement in which the seqs can differ.
+                current = book_fn(symbol)
+                verdict = candidate
+                book_seq = current.seq if current is not None else book.seq
+                if verdict.reasons:
+                    reasons.extend(f"execution: {r}" for r in verdict.reasons)
+        except Exception as exc:
+            # The comment above promises this, and there was no try/except behind it. A real
+            # book feed does I/O and raises for ordinary reasons; unguarded, every one of
+            # them killed the draft. Degrade to the absent-verdict case the risk gate already
+            # handles, and say so — silently losing a control is how the two dead checks
+            # above went unnoticed.
+            log.warning("execution verification unavailable for %s: %s: %s",
+                        symbol, type(exc).__name__, exc)
+            verdict = None
+            book_seq = None
+
+    ctx = build_risk_context(state, quote=quote, watchlist=watchlist,
+                             quant_verdict=verdict, quant_book_seq=book_seq)
     rd = evaluate(proposal, ctx)
     now = clock.now()
     rd_row = RiskDecision(
@@ -214,11 +277,19 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         failed_checks=rd["failed_checks"], warnings=rd["warnings"],
         max_allowed_notional=_dec(rd["max_allowed_notional"]),
         human_required=bool(rd["human_required"]), evaluated_at=now, created_at=now,
+        # Stored on the ROW, not only in the audit payload — see the column's docstring. This
+        # is what lets the operator embed show execution quality at all under SEC-17: the
+        # RiskDecision is the only source the embed is permitted to read a risk fact from.
+        execution_verdict=verdict.as_dict() if verdict is not None else None,
     )
-    state.audit.record_state_change(
-        rd_row, "risk_decision", actor="risk",
-        payload={"proposal_id": pid, "decision": rd["decision"]},
-    )
+    # The verdict rides in the audit payload as EVIDENCE, so a later reader can reconstruct
+    # why a decision went the way it did. Serialised via ``as_dict`` (JSON-native only) —
+    # the audit chain's canonical encoder has no ``default=`` and fails closed on anything
+    # it cannot encode rather than guessing.
+    rd_payload = {"proposal_id": pid, "decision": rd["decision"]}
+    if verdict is not None:
+        rd_payload["execution_verdict"] = verdict.as_dict()
+    state.audit.record_state_change(rd_row, "risk_decision", actor="risk", payload=rd_payload)
 
     # ---- resolve the canonical order tuple ONLY on an approved, UNFLAGGED decision -------
     # SEC-14: a grounding-flagged proposal is review-only — never the order path, even if the

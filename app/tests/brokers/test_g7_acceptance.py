@@ -202,10 +202,22 @@ def test_g7_review_provably_precedes_place(st, monkeypatch):
 # =======================================================================================
 def _submit_order_call_sites():
     """Every ``.submit_order(...)`` call across the brokers package, tagged with the module and
-    the innermost enclosing function it lives in."""
+    the innermost enclosing function it lives in.
+
+    RECURSIVE (``rglob``), not ``glob``. With a non-recursive scan a subpackage —
+    ``brokers/anything/adapter.py`` — escaped this gate entirely, AND escaped the Invariant-1
+    regex in ``tests/test_invariants.py`` at the same time, because that one skips any path
+    whose first component is ``brokers``. The two controls have exactly one shared blind spot
+    and it was the same one, so an ungated broker reach could have been added there with both
+    gates green. Fixed under QT-07 (docs/quant-engine.md).
+
+    ``py.stem`` is kept as the module tag rather than the relative path so the assertion
+    below still reads as module names; a subpackage file with a colliding stem would show up
+    as an extra call site, which is the failure we want.
+    """
     brokers_dir = pathlib.Path(brokers.__file__).parent
     sites: list[tuple[str, str | None, int]] = []
-    for py in sorted(brokers_dir.glob("*.py")):
+    for py in sorted(brokers_dir.rglob("*.py")):
         tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
         parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
         for node in ast.walk(tree):

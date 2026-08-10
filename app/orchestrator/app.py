@@ -146,19 +146,45 @@ def _mode_view(ladder: ModeLadder) -> dict:
 
 def create_app(state, *, auth: ApiKeyAuth | None = None,
                services: dict | None = None, ingest=None, paper=None,
-               watchlist=None) -> FastAPI:
+               watchlist=None, quant_snapshots=None, quant_key_provider=None) -> FastAPI:
     """Build the FastAPI app bound to an ``OrchestratorState``. ``auth`` is injectable for
     tests; production defaults to the keyring-backed key guard (every route requires it).
     ``services`` is the WP8 workflow registry ({"brew","intraday","eod"}); when absent the
     brief endpoints stay honest 501s. ``ingest`` is the RW-01 ``IngestRunner``, surfaced on
     ``GET /status``; ``main.compose`` assigns it after the app is built, so this parameter is
-    only for callers that already hold a runner."""
+    only for callers that already hold a runner.
+
+    ``quant_snapshots`` is a QT-08 ``SnapshotSource``. When supplied, a READ-ONLY WebSocket
+    at ``/ws/quant`` broadcasts engine state at 10Hz; when absent, no socket is registered at
+    all — an orchestrator with no quant engine exposes no extra surface rather than an
+    endpoint with nothing to say. The socket never reads a frame from the client, so it adds
+    no control path around the key-gated, audited HTTP routes."""
     guard = auth if auth is not None else ApiKeyAuth()
     app = FastAPI(title="AI Investment Cockpit — orchestrator", dependencies=[Depends(guard)])
     app.state.orch = state
     app.state.services = services
     app.state.ingest = ingest
     app.state.paper = paper
+    app.state.quant_snapshots = quant_snapshots
+
+    # QT-09: the quant engine's operator surface. READ-ONLY and SIMULATION-ONLY — no route
+    # in that module mutates cockpit state or reaches a venue. See orchestrator/quant_api.py.
+    from .quant_api import register_quant_routes
+
+    register_quant_routes(app, state)
+
+    if quant_snapshots is not None:
+        from .auth import keyring_api_key_provider
+        from .quant_ws import register_quant_ws
+
+        # The WebSocket handshake is checked EXPLICITLY rather than through the app-level
+        # dependency above: relying on a silent equivalence between HTTP and WebSocket
+        # dependency handling would risk an unauthenticated endpoint on a system whose whole
+        # posture is "even loopback callers must hold the key".
+        register_quant_ws(
+            app, quant_snapshots,
+            key_provider=quant_key_provider or keyring_api_key_provider,
+        )
     # Freeze once at composition. Settings remains mutable for a few legacy/test seams, so reading
     # it per request would make the claimed restart-only allowlist silently runtime-mutable.
     configured_watchlist = frozenset(

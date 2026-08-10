@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 
 log = logging.getLogger("cockpit.main")
 
@@ -593,6 +594,61 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None):
     )
 
 
+def build_operator_bot(state):
+    """QT-09 — the Discord COMMAND surface, or ``None`` when unprovisioned.
+
+    Until now Discord was PUSH-ONLY. ``compose`` wired ``deliver`` (REST posts to the operator
+    channels) but nothing ever called ``bridge.bot.build_bot``, so no gateway connection
+    existed and no slash command could fire — ``/mode``, ``/status``, ``/killswitch`` and the
+    rest were registered on a tree that was never constructed, let alone connected. The bot
+    module was reachable only from its own unit tests.
+
+    Two preconditions, both fail-closed, mirroring ``build_operator_deliver``:
+
+      * THE BOT TOKEN. Keyring only (Invariant 4) — never env, never code.
+      * A NON-EMPTY OPERATOR ALLOWLIST. This one is a safety precondition, not a convenience:
+        every command re-checks ``is_authorized``, so a gateway with no allowlisted operators
+        can do nothing except answer "Not authorized" to strangers. Opening a command channel
+        that nobody is authorized to use is pure attack surface with no operator benefit, so
+        it is not opened at all.
+
+    Returns a zero-arg callable that BLOCKS, or ``None``. Absent, the cockpit runs exactly as
+    it did before: ingest, scheduler, loopback API, and REST delivery outward. An operator
+    without a token loses the command channel, not the system.
+
+    WHAT THIS DOES NOT WIRE: the per-proposal Approve/Reject buttons. ``build_bot`` accepts a
+    ``controls`` argument it has never used, and wiring the approval surface means wiring the
+    token-mint path — a change to the order path itself, which is deliberately not bundled
+    into a quant work package. Approvals stay where they are today.
+    """
+    from bridge.bot import bot_available, build_bot, run_bot
+    from bridge.operators import authorized_operator_ids
+    from core.secrets import get_secret
+
+    if not bot_available():
+        _log_unprovisioned("Discord command bot", "pip install discord.py")
+        return None
+
+    operators = authorized_operator_ids(state.settings)
+    token = get_secret(_DISCORD_TOKEN_NAME)
+    if token is None or not operators:
+        _log_unprovisioned(
+            "Discord command bot",
+            f"keyring set {_DISCORD_TOKEN_NAME} and set COCKPIT_OPERATOR_IDS "
+            "(the allowlisted Discord user ids)")
+        return None
+
+    guild_id = getattr(state.settings, "guild_id", None)
+    log.info("discord command bot wired for %d operator(s); guild=%s",
+             len(operators), guild_id or "GLOBAL (sync may take up to 1h to propagate)")
+
+    def _start() -> None:
+        client, tree = build_bot(state, token_registry=None)
+        run_bot(client, tree, token.reveal(), guild_id=guild_id)
+
+    return _start
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw",
             clock=None, transport=None, deliver=None, ingest_fetchers=None,
             http_get=None, ws_connect=None, finra_token_provider=None, finra_http_get=None,
@@ -701,6 +757,16 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     ingest = app.state.ingest
     build_scheduler(state, services=services, ingest=ingest).start()
     ingest.start_streams()
+
+    # QT-09: the Discord command surface. A DAEMON thread, for the same reason the stream
+    # readers are: ``client.run`` blocks forever and so does ``serve``, so whichever ran
+    # second would never start — and a daemon dies with the process, so Ctrl-C tears the
+    # gateway down instead of hanging on a socket. Absent a token or an operator allowlist
+    # this is None and the cockpit runs exactly as it did before.
+    start_bot = build_operator_bot(state)
+    if start_bot is not None:
+        threading.Thread(target=start_bot, name="discord-bot", daemon=True).start()
+
     log.info(
         "cockpit up: mode=%s api=http://%s:%s feeds=%s",
         state.settings.mode.value,
