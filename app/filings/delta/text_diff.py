@@ -39,8 +39,16 @@ def _is_prose(text: str) -> bool:
     return sum(c.isalpha() for c in text) >= _MIN_PROSE_ALPHA
 
 
-def _snippet(raw: bytes, start: int, end: int) -> str:
-    return verbatim(raw, start, end)
+def _snippet(raw: bytes, start: int, end: int) -> str | None:
+    """BUG-086: the citation contract is utf-8 by construction (see ``verbatim``), and the
+    resolver enforces byte-length parity under utf-8 — a latin-1/cp1252 byte in a changed
+    run CANNOT satisfy the stored contract. It used to raise UnicodeDecodeError out of the
+    whole filing's delta computation, silently costing every OTHER delta of that filing.
+    Contain it to the one uncitable delta: return None and let the caller skip it."""
+    try:
+        return verbatim(raw, start, end)
+    except UnicodeDecodeError:
+        return None
 
 
 def _atom_span(atoms: list[TextRun], j1: int, j2: int) -> tuple[int, int]:
@@ -86,6 +94,9 @@ def _diff_atoms(
             # A bare-number / table-cell change — covered by the numeric XBRL delta. Skip.
             continue
         prior_text = " ".join(prior_texts[i1:i2]).strip() if op == "replace" else ""
+        snippet = _snippet(raw, start, end)
+        if snippet is None:
+            continue                       # BUG-086: uncitable bytes cost ONE delta, not the filing
         out.append(
             TextDelta(
                 unit_id=unit.unit_id,
@@ -94,7 +105,7 @@ def _diff_atoms(
                 raw_ref=accession,
                 byte_start=start,
                 byte_end=end,
-                snippet=_snippet(raw, start, end),
+                snippet=snippet,
                 prior_text=prior_text,
                 current_text=cur_text,
                 changed_runs=(j2 - j1),
@@ -118,16 +129,20 @@ def _diff_matched_unit(
     )
 
 
-def _new_section_delta(raw: bytes, accession: str, unit: ParsedUnit) -> TextDelta | None:
+def _new_section_delta(raw: bytes, accession: str, unit: ParsedUnit,
+                       *, change_type: str = "new_section") -> TextDelta | None:
     if not unit.runs:
         return None
     anchor_runs = unit.runs[:_NEW_SECTION_ANCHOR_RUNS]
     start = anchor_runs[0].byte_start
     end = anchor_runs[-1].byte_end
+    snippet = _snippet(raw, start, end)
+    if snippet is None:
+        return None                        # BUG-086: uncitable bytes cost one delta, not the filing
     return TextDelta(
         unit_id=unit.unit_id,
         title=unit.title,
-        change_type="new_section",
+        change_type=change_type,
         raw_ref=accession,
         byte_start=start,
         byte_end=end,
@@ -163,25 +178,46 @@ def _reconcile_sections(current: ParsedFiling, prior: ParsedFiling) -> None:
     pri = {u.unit_id for u in prior.units if u.part is not None}
     if cur == pri:
         return
-    prior_only = sorted(pri - cur)
-    current_only = sorted(cur - pri)
+    # BUG-072: distinguish the two mismatch classes. REPARENTING — the same item number
+    # present in both filings under DIFFERENT parts (the unparsed-Part-divider failure this
+    # guard exists for) — still quarantines: the sections cannot be matched 1:1. A CLEAN
+    # add/drop of a whole item (its number absent from the other filing entirely) is
+    # legitimate filing variation — a 10-Q omits Item 1A when risk factors are unchanged,
+    # exhibit items come and go — and used to quarantine the ENTIRE filing, silently
+    # costing every delta it had. The differ already handles it fail-closed: current-only
+    # sections mint new_section, prior-only sections are the pure-deletion case.
+    cur_only_items = {u.item for u in current.units
+                      if u.part is not None and u.unit_id not in pri}
+    pri_only_items = {u.item for u in prior.units
+                      if u.part is not None and u.unit_id not in cur}
+    reparented = sorted(str(i) for i in (cur_only_items & pri_only_items))
+    if not reparented:
+        return
     raise ParseError(
         "10-K/10-Q section identity mismatch between paired filings "
-        f"{current.accession!r} and {prior.accession!r} — a whole Part+item section is "
-        "unmatched, indicating a section-identity failure (e.g. an unparsed Part divider "
-        "reparenting its items). Quarantine rather than emit false new_section deltas / drop "
-        f"the real diff (Inv 12). prior_only={prior_only} current_only={current_only}"
+        f"{current.accession!r} and {prior.accession!r} — item(s) {reparented} appear in "
+        "BOTH filings under DIFFERENT parts, indicating a section-identity failure (e.g. an "
+        "unparsed Part divider reparenting its items). Quarantine rather than emit false "
+        "new_section deltas / drop the real diff (Inv 12). "
+        f"prior_only={sorted(pri - cur)} current_only={sorted(cur - pri)}"
     )
 
 
-def diff_filings(current: ParsedFiling, prior: ParsedFiling) -> list[TextDelta]:
+def diff_filings(current: ParsedFiling, prior: ParsedFiling,
+                 *, removed_direction: bool = False) -> list[TextDelta]:
     """Section-aware text deltas of ``current`` vs the prior same-form filing.
 
     Iterates the current filing's units in document order; matches each to the prior filing's
     unit of the same ``unit_id``. Matched units are run-diffed. Before diffing, the two filings'
-    Part+item section identities are reconciled (:func:`_reconcile_sections`): an unmatched whole
+    Part+item section identities are reconciled (:func:`_reconcile_sections`): a REPARENTED
     section quarantines fail-closed rather than fabricating a ``new_section`` delta and dropping
     the real change (Invariant 12). Deterministic and byte-anchored.
+
+    ``removed_direction=True`` is for the engine's REVERSED pass (``diff_filings(prior,
+    current)``): a section found only in the first argument is then a section the real
+    current filing REMOVED, and is labeled ``removed_section`` (BUG-071) — every
+    consecutive-8-K pair hit this, publishing the old filing's items as brand-new
+    ``new_section`` deltas (with the materiality bump) attributed to the prior filing.
     """
     _reconcile_sections(current, prior)
     prior_map = prior.unit_map
@@ -189,7 +225,10 @@ def diff_filings(current: ParsedFiling, prior: ParsedFiling) -> list[TextDelta]:
     for unit in current.units:
         prior_unit = prior_map.get(unit.unit_id)
         if prior_unit is None:
-            nd = _new_section_delta(current.raw, current.accession, unit)
+            nd = _new_section_delta(
+                current.raw, current.accession, unit,
+                change_type="removed_section" if removed_direction else "new_section",
+            )
             if nd is not None:
                 deltas.append(nd)
             continue

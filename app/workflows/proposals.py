@@ -132,10 +132,27 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
     )
 
 
+def _resolve_proposal_id(state, proposal: dict) -> str:
+    """BUG-093: resolve the FINAL proposal id BEFORE any other row captures it. A hostile
+    model can replay an existing proposal_id; the remint used to live only inside
+    ``_persist_record`` — which runs AFTER the RiskDecision and Order rows were created —
+    so exactly when the replay guard fired, the record got a fresh id while the risk/order
+    rows still referenced the OLD (other proposal's) id, linking the approval chain to the
+    wrong source material. Mutates ``proposal['proposal_id']`` to the resolved id."""
+    pid = str(proposal.get("proposal_id") or new_id("prop"))
+    with state.session_factory() as s:
+        if s.get(ProposalRecord, pid) is not None:     # a hostile model may replay an id
+            pid = new_id("prop")
+    proposal["proposal_id"] = pid
+    return pid
+
+
 def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
                     job_id: str | None, risk_decision_id: str | None = None,
                     order_id: str | None = None) -> ProposalRecord:
     now = clock.now()
+    # Backstop only: draft_proposal resolves the id up front (BUG-093); direct callers and
+    # a new_id-collision race still get the collision check here.
     pid = str(proposal.get("proposal_id") or new_id("prop"))
     with state.session_factory() as s:
         if s.get(ProposalRecord, pid) is not None:     # a hostile model may replay an id
@@ -193,7 +210,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                                (f"deep output quarantined ({result.error})",))
 
     proposal = dict(result.validated)
-    pid = str(proposal.get("proposal_id", ""))
+    pid = _resolve_proposal_id(state, proposal)        # BUG-093: final id before any row uses it
 
     # ---- guard: an order-shaped proposal needs a size -----------------------------------
     if proposal.get("quantity") is None and proposal.get("notional") is None:

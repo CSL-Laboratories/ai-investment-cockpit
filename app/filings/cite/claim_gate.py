@@ -75,19 +75,20 @@ def numeric_value_from_snippet(snippet: Any) -> Decimal | None:
     if not m:
         return None
     attrs, inner = m.group(1), m.group(2)
-    text = html.unescape(_TAG_RE.sub("", inner)).strip().replace(",", "")
-    if not _NUMERIC_TEXT_RE.fullmatch(text):
-        return None
-    try:
-        val = Decimal(text)
-    except InvalidOperation:
-        return None
-    scale = re.search(r"scale\s*=\s*[\"']?(-?\d+)", attrs, re.I)
-    if scale:
-        val *= Decimal(10) ** int(scale.group(1))
-    if re.search(r"sign\s*=\s*[\"']?-", attrs, re.I):
-        val = -abs(val)
-    return val
+    # BUG-073: delegate the displayed-number parse to THE routine WP4 anchored the value
+    # with (``xbrl_facts._parse_displayed``). The private re-implementation here accepted
+    # only a bare ``-?\d+(\.\d+)?`` — no parenthesized negatives, and ``html.unescape``
+    # turns ``&#160;`` into a literal NBSP that stayed inside the number — so a single
+    # ``(1,234)`` or ``1&#160;234`` figure WP4 parsed fine made ``grounded`` None and the
+    # all-or-nothing gate flipped the ENTIRE brief unapprovable, permanently. One parser,
+    # one home; a WP4 display-format fix now reaches this gate automatically.
+    from filings.parse.xbrl_facts import _parse_displayed
+
+    text = html.unescape(_TAG_RE.sub("", inner))
+    scale_m = re.search(r"scale\s*=\s*[\"']?(-?\d+)", attrs, re.I)
+    scale = int(scale_m.group(1)) if scale_m else 0
+    sign = -1 if re.search(r"sign\s*=\s*[\"']?-", attrs, re.I) else 1
+    return _parse_displayed(text, scale, sign)
 
 
 def _as_decimal(value: Any) -> Decimal | None:

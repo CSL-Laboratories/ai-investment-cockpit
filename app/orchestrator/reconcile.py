@@ -103,6 +103,13 @@ class ReconcileReport:
     orphan_results: tuple[int, ...]
     uncovered: dict[str, tuple[str, ...]]
     ok: bool
+    # order_submit intents resolved as aborted:broker_error whose ORDER ROW is still
+    # non-terminal — the submit outcome is AMBIGUOUS: a timeout/5xx can be response loss
+    # on an order that LANDED at the broker, and the covering abort result would otherwise
+    # make it invisible to every later look (BUG-052/062 adversarial round, F2). Alerted at
+    # every startup, and ``ok`` stays False, until the operator (or a future status poll)
+    # settles the order to a terminal state.
+    ambiguous_aborts: tuple[int, ...] = ()
 
 
 # C1 (false-heal) fail-closed: an explicit terminal-LANDED status set. A broker reply is
@@ -232,6 +239,32 @@ def reconcile_startup(
             )
             alerted.append(seq)
 
+    # F2 (BUG-052/062 adversarial round): a broker_error abort is AMBIGUOUS, not settled.
+    # The covering result keeps SEC-13's 1:1 pairing tidy, but a timeout can be response
+    # loss on an order that LANDED — so every broker_error abort whose order row is still
+    # non-terminal is re-alerted here until something settles it. Erasing the ambiguity
+    # would understate pending exposure, the exact direction _pending_ok fails closed on.
+    from brokers.order_state_machine import TERMINAL_STATES
+    from schemas.models.order import Order
+
+    ambiguous: list[int] = []
+    with st.session_factory() as s:
+        rows2 = s.execute(select(AuditEntry)).scalars().all()
+        aborted = [((r.refs or {}).get("intent_seq"), (r.refs or {}).get("order_id"))
+                   for r in rows2
+                   if (r.payload or {}).get("_phase") == "result"
+                   and (r.refs or {}).get("aborted") == "broker_error"]
+        for iseq, oid in aborted:
+            row = s.get(Order, oid) if oid else None
+            if row is None or row.state not in TERMINAL_STATES:
+                ambiguous.append(int(iseq) if iseq is not None else -1)
+                alerter(
+                    f"#system reconcile: order intent seq {iseq} (order_id={oid}) was aborted "
+                    f"on a broker error but the order is not settled "
+                    f"(state={getattr(row, 'state', None)!r}) — the submit outcome is "
+                    "AMBIGUOUS; confirm against the broker and cancel or settle the order."
+                )
+
     # 1:1 completeness gate — orphan results + uncovered domain rows (bypassed record_state_change).
     orphans = tuple(audit.orphan_results())
     for oseq in orphans:
@@ -247,11 +280,12 @@ def reconcile_startup(
                 f"audit entry (state change bypassed record_state_change): {list(gaps)}"
             )
 
-    ok = not alerted and not orphans and not uncovered
+    ok = not alerted and not orphans and not uncovered and not ambiguous
     return ReconcileReport(
         healed=tuple(healed),
         alerted=tuple(alerted),
         orphan_results=orphans,
         uncovered=uncovered,
         ok=ok,
+        ambiguous_aborts=tuple(ambiguous),
     )

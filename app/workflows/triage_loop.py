@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from core.ids import new_id
-from orchestrator.breakers import BreakerEngine, BreakerSignals
+from orchestrator.breakers import BreakerEngine, BreakerSignals, unsampled
 from orchestrator.limits import current_limits
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
@@ -99,6 +99,31 @@ def _pending_deferred_ids(state) -> set[str]:
     return {eid for eid, label in latest.items() if label == "deferred"}
 
 
+def _escalated_ids(state) -> set[str]:
+    """Event ids ever labeled ``escalated`` in ANY HMAC-verified batch — consumed or NOT.
+
+    BUG-055: escalation is TERMINAL across batches. A mid-loop degradation writes its
+    batch ``consumed=False`` so the window cursor stays put and the window is re-covered —
+    correct for the deferred candidates, but the events escalated BEFORE the degradation
+    already have a proposal/alert (and a spent deep-budget unit) minted for them. Without
+    this set the re-covered window re-scored them, spent a second budget unit, and drafted
+    a second proposal/order for the same event — both reaching the human."""
+    with state.session_factory() as s:
+        entries = s.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_TRIAGE_BATCH)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    out: set[str] = set()
+    for e in entries:
+        if not state.audit.verify_entry(e):
+            continue
+        for eid, label in ((e.payload or {}).get("dispositions") or {}).items():
+            if label == "escalated":
+                out.add(eid)
+    return out
+
+
 def _events_by_ids(state, ids) -> list[MarketEvent]:
     if not ids:
         return []
@@ -168,6 +193,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     extra = _events_by_ids(state, _pending_deferred_ids(state) - present)
     if extra:
         events = sorted(events + extra, key=lambda ev: (ev.ingested_at, ev.id))
+    # BUG-055: never re-handle an event a prior batch (consumed or not) already escalated —
+    # its proposal exists; re-covering a degraded window must pick up only the DEFERRED ones.
+    already_escalated = _escalated_ids(state)
+    if already_escalated:
+        events = [ev for ev in events if ev.id not in already_escalated]
     if not events:
         return {"status": "no_events", "window_start": window_start,
                 "window_end": window_end}
@@ -386,9 +416,16 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             if deliver is not None and not _safe_deliver(deliver, "#alerts", alert):
                 undelivered.append(ev.id)
 
-    # ---- L6 sampling: schema failures from THIS run's agent-job statuses -----------------
+    # ---- L6 sampling: schema failures from THIS run's agent-job statuses, plus the
+    # gateway's broker-error counter (BUG-058, sample-and-reset under the state lock).
+    # Loss/staleness signals stay UNSAMPLED (None) until W-22 / RW-14 wire their sources —
+    # visibly absent via breakers.unsampled(), never silently healthy.
+    with state.lock:
+        broker_errors = state.broker_errors_since_sample
+        state.broker_errors_since_sample = 0
     signals = BreakerSignals(schema_failures=jobs_failed_schema,
-                             schema_validations=jobs_total)
+                             schema_validations=jobs_total,
+                             broker_errors=broker_errors)
     system_events.extend(engine.evaluate_and_trip(signals))
 
     _audit_batch(state, batch_id=batch_id, window_start=window_start,
@@ -397,6 +434,8 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     return {
         "status": "degraded_watch_only" if degraded else "ok",
         "window_start": window_start, "window_end": window_end,
+        # BUG-058: breakers with no sampled signal this run — visible absence, not health.
+        "breakers_unsampled": unsampled(signals),
         "escalated": escalated,
         "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
         "demoted": sorted(k for k, v in dispositions.items()

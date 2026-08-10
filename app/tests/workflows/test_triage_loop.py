@@ -372,3 +372,52 @@ def test_burst_deferred_events_are_repicked_by_next_loop(st, clock, tmp_path):
 
 def test_no_events_is_a_clean_noop(st, clock):
     assert triage_loop(st, clock)["status"] == "no_events"
+
+
+def test_degraded_batch_does_not_re_escalate_already_escalated_events(st, clock, tmp_path):
+    """BUG-055: tick T escalates the first candidate (proposal drafted, budget spent), then
+    the second candidate's deep call degrades — the batch lands consumed=False so the
+    window is re-covered next tick. The re-covered window used to re-score the FIRST event
+    too, spend a second budget unit, and mint a second proposal/order for it — both
+    reaching the human. Escalation must be terminal across batches."""
+    rows = _persist(st, clock, tmp_path, [
+        _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),
+        _mk("f-m", "MSFT", "8-K filing: MSFT agreement", event_type="filing"),
+    ])
+    by = {r.symbol: r for r in rows}
+    holdings = frozenset({"AAPL", "MSFT"})
+    scored = [_scored(by["AAPL"].raw_ref, "AAPL", "urgent", 95),
+              _scored(by["MSFT"].raw_ref, "MSFT", "urgent", 90)]
+
+    drafted1: list[str] = []
+
+    def draft_then_degrade(state, clock_, **kw):
+        drafted1.append(kw["event"].id)
+        if len(drafted1) == 1:
+            return _stub_outcome()                          # first candidate: drafted
+        BreakerEngine(state).enter_watch_only("claude", "deep limit_hit (stub)")
+        return _stub_outcome(status="degraded")             # second: degrades mid-loop
+
+    res1 = triage_loop(st, clock, transport=FakeTransport([envelope(_triage_body(scored))]),
+                       parquet_root=tmp_path / "raw", holdings_symbols=holdings,
+                       propose_fn=draft_then_degrade)
+    assert res1["status"] == "degraded_watch_only"
+    first = drafted1[0]
+    batch1 = _payloads(st, EVENT_TRIAGE_BATCH)[-1]
+    assert batch1["consumed"] is False
+    assert batch1["dispositions"][first] == "escalated"
+
+    BreakerEngine(st).recover_from_watch_only("claude", Mode.read_only)
+    drafted2: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        drafted2.append(kw["event"].id)
+        return _stub_outcome()
+
+    res2 = triage_loop(st, clock, transport=FakeTransport([envelope(_triage_body(scored))]),
+                       parquet_root=tmp_path / "raw", holdings_symbols=holdings,
+                       propose_fn=ok_propose)
+    assert res2["status"] == "ok"
+    assert first not in drafted2, "an already-escalated event was re-drafted (duplicate order)"
+    assert set(drafted2) == {by["AAPL"].id, by["MSFT"].id} - {first}, \
+        "the genuinely deferred event must still be picked up"

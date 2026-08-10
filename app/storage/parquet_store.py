@@ -32,7 +32,13 @@ def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[P
         raise FileExistsError(f"snapshot already exists (write-once): {p}")
     p.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pylist(records), p)
-    return p, content_hash(records)
+    # BUG-094: hash what was PERSISTED, not the pre-persist Python objects. Pyarrow infers
+    # one column type, so a mixed int/float column round-trips int 5 as float 5.0 — hashing
+    # the inputs made a legitimately-written snapshot fail verify_snapshot later (a false
+    # alarm), while a value whose ``default=str`` rendering coincides (Decimal('1.5') vs
+    # float 1.5) hashed identically across a substitution. Write-hash and verify-hash now
+    # both derive from the same read-back representation of the same file.
+    return p, content_hash(read_snapshot(root, date, symbol))
 
 
 def read_snapshot(root, date: str, symbol: str) -> list[dict]:

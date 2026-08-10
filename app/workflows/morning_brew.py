@@ -280,6 +280,14 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     )
 
     for ev in events:
+        # BUG-054: the ignored (bulk calendar) events keep their prefiltered_ignore label.
+        # This loop used to overwrite EVERY event back to scored/deferred, which (a) made
+        # the audited dispositions lie (Inv 6) and (b) turned the whole filtered calendar
+        # into a 'deferred' re-dispatch obligation that the intraday loop then re-fetched,
+        # re-corroborated (a calendar row is its own calendar match) and fed to the triage
+        # model — the deep-budget drain the pre-filter exists to stop.
+        if dispositions.get(ev.id) == "prefiltered_ignore":
+            continue
         dispositions[ev.id] = "scored" if ev.id in class_by_event else "deferred"
     _audit_batch(state, batch_id=batch_id, window_start=window_start,
                  window_end=window_end, scored=scored_entries, dispositions=dispositions,

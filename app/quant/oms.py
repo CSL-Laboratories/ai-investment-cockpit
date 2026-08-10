@@ -316,6 +316,12 @@ class OMS:
             if (o := self._orders[cid]).is_live and (symbol is None or o.symbol == symbol)
         ]
 
+    def open_side_qty(self, symbol: str, side) -> int:
+        """Total remaining size of LIVE orders on ``side`` for ``symbol`` — the worst-case
+        fill the position cap must project against (BUG-091: position alone let in-flight
+        same-side orders each pass the cap individually)."""
+        return sum(o.remaining_qty for o in self.live_orders(symbol=symbol) if o.side is side)
+
     def exposure_ticks(self, symbol: str | None = None) -> int:
         """Absolute working notional in ticks*shares, including in-flight orders.
 

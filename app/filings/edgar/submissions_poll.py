@@ -164,7 +164,15 @@ def iter_recent_filings(submissions: dict, cik: str) -> Iterator[RecentFiling]:
 
 
 class PollCursorStore:
-    """Persist / read the per-CIK :class:`PollCursor` (Invariant 11 — survives restart)."""
+    """Persist / read the per-CIK :class:`PollCursor` (Invariant 11 — survives restart).
+
+    ROLE (BUG-088, pinned deliberately): TELEMETRY + FIRST-CONTACT DETECTION, never a scan
+    bound. ``last_accession_no`` records the newest EMITTED item, so cutting the feed walk
+    at it would permanently skip anything older that previously ERRORED — silent evidence
+    loss. Bounding the walk is the :class:`PollBaselineStore`'s job: its marker only moves
+    past a CONTIGUOUS handled range (failed accessions stay above it for retry). The cursor
+    is read exactly once, in :meth:`SubmissionsPoller.baseline`, where an existing cursor
+    marks a CIK as legacy-active so it is never silently re-baselined."""
 
     def __init__(self, session_factory, clock: Clock = default_clock):
         self._sf = session_factory

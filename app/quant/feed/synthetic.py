@@ -153,7 +153,11 @@ class SyntheticFeed:
             )
             roll = rng.random()
             if roll < p.trade_probability and resting:
-                yield self._trade(rng, s, stamps)
+                # BUG-076: a zero-fill aggressor is a non-event for the tape. Emit book
+                # flow under the same stamps instead, so the per-symbol seq stays
+                # contiguous (validate_ordering rejects gaps — BUG-077).
+                trade = self._trade(rng, s, stamps)
+                yield trade if trade is not None else self._add(rng, s, stamps)
             elif roll < p.trade_probability + cancel_intensity and resting:
                 yield self._cancel(rng, s, stamps)
             else:
@@ -204,7 +208,7 @@ class SyntheticFeed:
                           price_ticks=order.price_ticks, qty=order.qty,
                           order_ref=int(order.order_id), **stamps)
 
-    def _trade(self, rng: random.Random, s: dict, stamps: dict) -> Trade:
+    def _trade(self, rng: random.Random, s: dict, stamps: dict) -> Trade | None:
         """An aggressive order crossing. The consumer turns this into a real match.
 
         Deliberately emitted as a ``Trade`` rather than as a pre-computed set of executions:
@@ -228,8 +232,13 @@ class SyntheticFeed:
         )
         # Report what actually traded, not what was requested. A trade event claiming more
         # size than the book held would inject phantom aggression on the consumer's side.
-        traded = result.filled_qty or qty
-        return Trade(price_ticks=touch, qty=traded, aggressor=aggressor, **stamps)
+        # BUG-076: ``filled_qty or qty`` did the exact opposite of this comment — a zero
+        # fill (all resting liquidity on the aggressor's own side, touch INVENTED at
+        # fair±1) substituted the full requested size and printed it at a price that was
+        # never on the book. No fill -> no print.
+        if result.filled_qty <= 0:
+            return None
+        return Trade(price_ticks=touch, qty=result.filled_qty, aggressor=aggressor, **stamps)
 
     @staticmethod
     def _any_resting(s: dict) -> bool:

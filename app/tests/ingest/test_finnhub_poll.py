@@ -65,3 +65,43 @@ def test_poison_id_does_not_strand_cursor():
     p = FinnhubPoller(fetch=fetch)
     p.poll(now=1.0, on_event=out.append)
     assert p.poll(now=3.0, on_event=out.append) == 1   # cursor clamped -> real item still fetched
+
+
+# ---- BUG-069: a failed emit is not a drop ----------------------------------------------
+def test_failed_emit_rolls_back_the_key_and_holds_the_cursor():
+    """The key was committed before the emit and stayed committed on failure, while a
+    later success advanced the cursor past the failed id — burned in dedup, skipped by
+    the cursor, never delivered. Rollback + cursor clamp make the next poll retry it."""
+    items = [{"id": 100, "related": "AAPL", "headline": "h100", "datetime": 1},
+             {"id": 105, "related": "MSFT", "headline": "h105", "datetime": 2}]
+
+    def fetch(min_id, _now):
+        return [i for i in items if i["id"] > min_id]
+
+    p = FinnhubPoller(fetch)
+    calls = {"n": 0}
+
+    def flaky(event):
+        calls["n"] += 1
+        if event["article_id"] == "100" and calls["n"] == 1:
+            raise RuntimeError("persist_events down")
+
+    assert p.poll(1.0, flaky) == 1                     # 105 emitted; 100 failed + rolled back
+    assert p.counters["emit_error"] == 1
+    assert p._min_id < 100, "the cursor must never advance past a failed emit"
+
+    delivered = []
+    assert p.poll(2.0, lambda e: delivered.append(e["article_id"])) == 1
+    assert delivered == ["100"], "the failed story must be re-fetched and delivered"
+    assert p._min_id == 105, "once everything is handled the cursor catches up"
+
+
+def test_duplicate_only_poll_still_advances_the_cursor():
+    items = [{"id": 7, "related": "AAPL", "headline": "h", "datetime": 1}]
+
+    def fetch(min_id, _now):
+        return [i for i in items if i["id"] > min_id]
+
+    p = FinnhubPoller(fetch)
+    assert p.poll(1.0, lambda e: None) == 1
+    assert p._min_id == 7

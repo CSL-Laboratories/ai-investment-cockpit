@@ -30,10 +30,28 @@ from collections.abc import Iterator
 from filings.parse.models import TextRun
 
 # Every tag, comment, or processing instruction. The gaps between matches are text runs.
-_TAG_RE = re.compile(rb"<[^>]*>")
+# BUG-070: the original ``<[^>]*>`` was exact only for the documented Workiva fixture class.
+# The production poller downloads ANY primary_document for a watchlist CIK, and two legal
+# constructs mis-segmented silently: a ``>`` inside a QUOTED attribute value split the tag
+# early (the remainder became a garbage text run that then byte-verified, because the
+# resolver re-slices the same bytes), and comments containing ``>`` did the same. The
+# alternation below matches comments/CDATA whole and lets quoted attribute values carry
+# ``>``; byte offsets stay exact by construction.
+_TAG_RE = re.compile(
+    rb"<!--.*?-->"                                          # comments (may contain > and quotes)
+    rb"|<!\[CDATA\[.*?\]\]>"                                # CDATA sections
+    rb"|<[^>\"']*(?:\"[^\"]*\"[^>\"']*|'[^']*'[^>\"']*)*>",  # tags; quoted attrs may hold >
+    re.DOTALL,
+)
 
 # The inline-XBRL hidden fact block — non-displayed content, excluded from segmentation.
 _HIDDEN_RE = re.compile(rb"<ix:hidden\b.*?</ix:hidden>", re.IGNORECASE | re.DOTALL)
+
+# BUG-070: ``<script>``/``<style>`` bodies are code, not displayed text — a real (non-
+# Workiva) filing carrying either would otherwise leak its body into citable runs.
+_CODE_BLOCK_RE = re.compile(
+    rb"<(script|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL
+)
 
 # A run that is only whitespace / non-breaking spaces once cleaned carries no signal.
 _WS_ONLY = re.compile(r"^\s*$")
@@ -66,7 +84,9 @@ def clean(chunk: bytes) -> str:
 
 
 def _hidden_spans(raw: bytes) -> list[tuple[int, int]]:
-    return [(m.start(), m.end()) for m in _HIDDEN_RE.finditer(raw)]
+    spans = [(m.start(), m.end()) for m in _HIDDEN_RE.finditer(raw)]
+    spans += [(m.start(), m.end()) for m in _CODE_BLOCK_RE.finditer(raw)]   # BUG-070
+    return spans
 
 
 def iter_runs(raw: bytes, *, skip_hidden: bool = True) -> Iterator[TextRun]:

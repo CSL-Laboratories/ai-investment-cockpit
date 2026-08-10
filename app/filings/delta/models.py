@@ -38,7 +38,7 @@ class TextDelta:
 
     unit_id: str
     title: str
-    change_type: str  # "replace" | "insert" | "new_section"
+    change_type: str  # "replace" | "insert" | "new_section" | "removed_section" (BUG-071)
     raw_ref: str
     byte_start: int
     byte_end: int

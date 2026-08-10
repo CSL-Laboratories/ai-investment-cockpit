@@ -174,7 +174,30 @@ def _is_model_payload(stdout: str) -> bool:
     return True
 
 
-def _limit_signal(stdout: str, stderr: str) -> bool:
+def _scrub_prompt_echo(stderr: str, prompt: str | None) -> str:
+    """BUG-063 (SEC-25): a CLI can echo its prompt back on stderr on a parse error
+    (transport.py keeps the stderr tail for diagnostics and says exactly this), and the
+    prompt carries untrusted feed text — so the unattributed stderr scan let a headline's
+    words ("capacity", "too long") trip the vendor breaker from the one channel the
+    docstring claimed was excluded. A stderr line that appears VERBATIM inside our own
+    prompt is an echo of untrusted input, not vendor speech: drop it before scanning.
+    Lines shorter than 12 chars are kept so generic fragments ('Error:') cannot vanish
+    merely because the prompt happens to contain them. If a feed engineers a real vendor
+    phrase into a headline, suppressing its echo is the INTENDED fail direction — feed
+    text is data, never control; a genuine vendor limit still lands via the non-zero
+    exit, raw stdout text, or an error envelope."""
+    if not prompt or not stderr:
+        return stderr or ""
+    kept = []
+    for line in stderr.splitlines():
+        s = line.strip()
+        if len(s) >= 12 and s in prompt:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _limit_signal(stdout: str, stderr: str, prompt: str | None = None) -> bool:
     """Is there a VENDOR limit/health signal here? Scans the CLI's OWN channels, NEVER the
     model's payload.
 
@@ -207,12 +230,32 @@ def _limit_signal(stdout: str, stderr: str) -> bool:
     as a non-zero exit (checked by the caller), as text on stderr, as raw non-JSON text on
     stdout, or as an ``is_error``/``subtype: error_*`` envelope (checked after parsing).
     """
-    if looks_like_limit(stderr or ""):
+    if looks_like_limit(_scrub_prompt_echo(stderr or "", prompt)):    # BUG-063
         return True
     text = (stdout or "").strip()
-    if not text or _is_model_payload(text):
+    if not text:
         return False
-    return looks_like_limit(text)
+    try:
+        json.loads(text, parse_constant=_no_nonfinite)
+        return False                     # claude: one valid envelope — the model's channel
+    except ValueError:
+        pass
+    lines = [ln for ln in (line.strip() for line in text.splitlines()) if ln]
+    unparsed = []
+    for line in lines:
+        try:
+            json.loads(line, parse_constant=_no_nonfinite)
+        except ValueError:
+            unparsed.append(line)
+    if not unparsed:
+        return False                     # codex: fully JSONL — the model's channel
+    if len(unparsed) < len(lines):
+        # BUG-064: a MIXED stream (JSONL plus a stray non-JSON line — a truncated tail, a
+        # vendor banner) used to downgrade the WHOLE buffer to "not a model payload" and
+        # scan the model's agent_message text with it. Only the lines that are NOT the
+        # promised protocol are the CLI's own speech; scan exactly those.
+        return looks_like_limit("\n".join(unparsed))
+    return looks_like_limit(text)        # nothing parsed: pure CLI text
 
 
 def _parse_codex_output(stdout: str, fallback_session_id: str | None = None):
@@ -350,7 +393,7 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
 
     # SEC-25: the model's payload never decides vendor health, but raw CLI text on stdout does.
     # See _limit_signal — stderr-only went blind to a limit printed on stdout with exit 0.
-    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or ""):
+    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or "", spec.prompt):
         w = usage.trip(spec.runtime, "exhausted")
         return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="limit_or_error", usage_state=w.state)
 
@@ -416,11 +459,19 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
 
-    if (getattr(proc, "timed_out", False) or proc.returncode != 0
-            or _limit_signal(proc.stdout or "", proc.stderr or "")):
+    # BUG-065: a limit/timeout on the REPAIR round used to return NEEDS_HUMAN after
+    # tripping the window — so call_agent labeled it "quarantined" (a schema problem),
+    # never entered the audited watch-only path, and the exhaustion was invisible unless a
+    # LATER call happened to observe the open breaker. A vendor limit is a vendor limit on
+    # either round: return the limit statuses so the caller's EVENT_WATCH_ONLY audit fires.
+    if getattr(proc, "timed_out", False):
         w = usage.trip(spec.runtime, "exhausted")
-        return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
-                           error="repair_failed", usage_state=w.state)
+        return AgentResult(status=TIMEOUT, raw=proc.stdout, repaired=True,
+                           error="repair_timeout", usage_state=w.state)
+    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or "", rspec.prompt):
+        w = usage.trip(spec.runtime, "exhausted")
+        return AgentResult(status=LIMIT_HIT, raw=proc.stdout, repaired=True,
+                           error="repair_limit_or_error", usage_state=w.state)
 
     if not (proc.stdout or "").strip():
         # SEC-23: the repair path is fail-closed on a degraded/empty response too.

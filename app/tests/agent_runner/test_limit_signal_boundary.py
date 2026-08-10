@@ -156,13 +156,16 @@ def test_the_repair_attempt_uses_the_same_boundary():
 
 
 def test_a_real_limit_during_repair_still_fails_closed():
-    from agent_runner.result import NEEDS_HUMAN
-
+    """BUG-065: a vendor limit is a vendor limit on either round. This used to return
+    NEEDS_HUMAN('repair_failed'), which call_agent mapped to a 'quarantined' job — a
+    SCHEMA label — and the audited watch-only entry never fired. LIMIT_HIT routes it
+    through the same EVENT_WATCH_ONLY path as a first-round limit."""
     bad = envelope({"nope": True})
     u = UsageTracker()
     t = FakeTransport([bad, ProcResult(0, "", "Error: usage limit reached", False)])
     r = run_agent(spec(), transport=t, usage=u)
-    assert r.status == NEEDS_HUMAN and r.error == "repair_failed"
+    assert r.status == LIMIT_HIT and r.error == "repair_limit_or_error"
+    assert r.repaired is True
     assert u.window("claude").state == "exhausted"
 
 
@@ -238,3 +241,61 @@ def test_a_malformed_codex_stream_is_not_treated_as_a_model_payload():
                        transport=FakeTransport([ProcResult(0, stdout, "", False)]),
                        usage=UsageTracker())
     assert result.status == LIMIT_HIT
+
+
+# =======================================================================================
+# BUG-063: stderr channel attribution — a prompt echo is not vendor speech
+# =======================================================================================
+def test_prompt_echo_on_stderr_cannot_trip_the_breaker():
+    """transport.py documents that 'a CLI can echo its prompt back on a parse error, and
+    the prompt carries untrusted feed text' — yet stderr was scanned with no attribution,
+    so the echoed IAG headline tripped LIMIT_HIT from the supposedly-excluded channel."""
+    from agent_runner.runner import _limit_signal
+
+    prompt = ("triage this packet:\n"
+              "British Airways-owner IAG trims capacity outlook for the summer\n"
+              "second headline about oil quota decisions\n")
+    echoed = ("parse error near line 2:\n"
+              "British Airways-owner IAG trims capacity outlook for the summer\n")
+    assert _limit_signal("", echoed, prompt) is False
+
+
+def test_a_real_vendor_limit_on_stderr_still_trips_with_a_prompt_present():
+    from agent_runner.runner import _limit_signal
+
+    prompt = "triage this packet:\nsome ordinary headline\n"
+    assert _limit_signal("", "Error: usage limit reached", prompt) is True
+
+
+def test_engineered_vendor_phrase_in_the_prompt_is_suppressed_not_obeyed():
+    """A headline that CONTAINS the vendor phrase must not become control when echoed —
+    feed text is data (M2/M3). The other channels (exit code, envelope) stay live."""
+    from agent_runner.runner import _limit_signal
+
+    prompt = "packet:\nBREAKING: usage limit reached says analyst note\n"
+    echoed = "BREAKING: usage limit reached says analyst note"
+    assert _limit_signal("", echoed, prompt) is False
+
+
+# =======================================================================================
+# BUG-064: one malformed JSONL line must not re-expose the model's text to the scan
+# =======================================================================================
+def test_mixed_jsonl_scans_only_the_cli_lines():
+    """A truncated tail / vendor banner amid valid JSONL used to downgrade the WHOLE
+    stream to 'not a model payload', letting the model's own agent_message words
+    ('capacity') trip the breaker — SEC-25 reopened for codex by a single stray line."""
+    from agent_runner.runner import _limit_signal
+
+    model_line = json.dumps({"type": "item.completed",
+                             "item": {"type": "agent_message",
+                                      "text": "IAG trims capacity outlook; quota chatter"}})
+    stray = "warning: telemetry upload skipped"
+    assert _limit_signal(model_line + "\n" + stray, "") is False
+
+
+def test_a_real_limit_line_amid_jsonl_still_trips():
+    from agent_runner.runner import _limit_signal
+
+    model_line = json.dumps({"type": "item.completed",
+                             "item": {"type": "agent_message", "text": "all quiet today"}})
+    assert _limit_signal(model_line + "\nError: usage limit reached", "") is True

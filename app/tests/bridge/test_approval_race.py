@@ -41,10 +41,13 @@ def test_concurrent_same_interaction_id_yields_one_record_one_token(st):
     def worker():
         try:
             barrier.wait()                             # maximize the race window
+            # modal_confirmed: a live MARKET order now (BUG-060) requires the modal — this
+            # test races the DELIVERY of one confirmed click, not the modal gate itself.
             results.append(record_decision(
                 st, proposal_id="prop-1", risk_decision=rd, resolved_order=order,
                 actor_user_id=OPERATOR, user_decision="approve", surface="discord",
-                interaction_id="i-REPLAY", token_registry=reg, mode=Mode.review_live))
+                interaction_id="i-REPLAY", token_registry=reg, mode=Mode.review_live,
+                modal_confirmed=True))
         except Exception as e:                         # noqa: BLE001 - surface any thread error
             errors.append(e)
 

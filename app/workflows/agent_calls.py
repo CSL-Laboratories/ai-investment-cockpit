@@ -35,6 +35,28 @@ from workflows.schema_loader import load_schema, schema_path
 _STATUS_MAP = {OK: "done", NEEDS_HUMAN: "quarantined"}
 
 
+def _provisioned_secret_values() -> list[str]:
+    """BUG-092 (Inv 4): the runner's argv/prompt secret check iterates ``secret_values or
+    []`` — and production hardcoded ``None``, so the check inspected NOTHING and a future
+    refactor interpolating a credential into a prompt would have passed silently. Feed it
+    the PROVISIONED keyring values. Read per call, uncached: a handful of sub-ms local
+    credential-store reads per decision call, and a rotated secret is honoured
+    immediately. ``reveal()`` scope: the plaintext exists only to be compared against the
+    argv/prompt inside ``_assert_no_secret``."""
+    from config.settings import _KEYRING_SECRET_NAMES  # test_env_file_guard pins this list
+    from core.secrets import get_secret
+
+    values: list[str] = []
+    for name in _KEYRING_SECRET_NAMES:
+        secret = get_secret(name)
+        if secret is None:
+            continue
+        value = secret.reveal()
+        if value:
+            values.append(value)
+    return values
+
+
 def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: str,
                schema_name: str, input_refs: dict, transport=None, timeout_s: float = 120.0,
                max_turns: int = 6):
@@ -76,7 +98,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd, and — SEC-05 —
     # refuses to spawn a decision job under the orchestrator's privileged token when a low-priv
     # account is configured (the transport must launch the child under it). All fail-closed.
-    result = run_agent(spec, transport=transport, usage=state.usage, secret_values=None,
+    result = run_agent(spec, transport=transport, usage=state.usage,
+                       secret_values=_provisioned_secret_values(),   # BUG-092: Inv 4 check armed
                        pinned_cwd=pinned_cwd,
                        decision_agent_account=getattr(state.settings, "decision_agent_account", None))
     completed = state.clock.now()

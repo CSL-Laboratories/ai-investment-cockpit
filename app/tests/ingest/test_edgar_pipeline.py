@@ -288,3 +288,82 @@ def test_the_existing_brew_reader_can_read_the_rows_this_pipeline_writes(
     row = rows[0]
     for key in ("delta_id", "accession_no", "cik", "created_at"):
         assert key in row, f"reader row is missing {key}"
+
+
+# ---------------------------------------------------------------------------------------
+# BUG-053: first contact with an established CIK must baseline, not fault forever
+# ---------------------------------------------------------------------------------------
+def _audit_log(sf):
+    from storage.audit import AuditLog
+
+    return AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=CLOCK)
+
+
+def test_first_contact_with_an_established_cik_baselines_instead_of_faulting(sf, store):
+    """BUG-053: the recorded NVDA window holds 26 in-scope filings — one more than the
+    production cap of 25. Before the fix, the first audited poll of any established issuer
+    raised PollFilingLimitExceeded and did so again on EVERY subsequent run: the baseline
+    machinery built for exactly this was dead wiring (baseline_on_first_poll defaulted
+    False and nothing called baseline_missing). First contact must record the audited feed
+    position, ingest nothing, and leave the next run quiet."""
+    prod_cap = Settings(sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+                        sec_max_new_filings_per_poll=25)
+    result = run_edgar_pipeline(
+        sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+    )
+    assert result.poll_errors == [], "first contact must baseline, not trip the cap"
+    assert result.ok is True
+    assert result.filings_ingested == 0, "first contact records position; it never backfills"
+
+    result2 = run_edgar_pipeline(
+        sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+    )
+    assert result2.poll_errors == [] and result2.filings_ingested == 0
+    assert result2.ok is True
+
+
+def test_unaudited_runs_keep_the_visible_cap_fault(sf, store):
+    """Without an audit log a production-shaped baseline may not be written (the store
+    refuses unaudited baseline writes), so the cap fault stays — and stays VISIBLE as a
+    per-CIK error rather than becoming a silent unaudited baseline."""
+    low_cap = Settings(sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+                       sec_max_new_filings_per_poll=25)
+    result = run(sf, store, low_cap)
+    assert any("PollFilingLimitExceeded" in reason for _c, reason in result.poll_errors)
+
+
+# ---------------------------------------------------------------------------------------
+# BUG-083: same-day same-form "prior" must be the EARLIER-submitted filing
+# ---------------------------------------------------------------------------------------
+def test_same_day_prior_resolves_to_the_earlier_accession(sf):
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from ingest.edgar_pipeline import _prior_same_form
+    from schemas.models.filing import Filing, FormType
+
+    day = date(2026, 7, 8)
+    earlier = Filing(cik="0000000001", accession_no="0000000001-26-000001",
+                     form_type=FormType("8-K"), filing_date=day,
+                     detection_ts=CLOCK.now(), raw_ref="a1")
+    later = Filing(cik="0000000001", accession_no="0000000001-26-000002",
+                   form_type=FormType("8-K"), filing_date=day,
+                   detection_ts=CLOCK.now(), raw_ref="a2")
+    with sf() as s, s.begin():
+        s.add(earlier)
+        s.add(later)
+
+    with sf() as s:
+        e = s.execute(select(Filing).where(Filing.accession_no.like("%000001"))).scalar_one()
+        later_row = s.execute(select(Filing).where(Filing.accession_no.like("%000002"))).scalar_one()
+
+    prior_of_later = _prior_same_form(sf, later_row)
+    assert prior_of_later is not None
+    assert prior_of_later.accession_no == e.accession_no
+
+    # BUG-083: the earlier filing's "prior" used to resolve to the LATER-submitted one,
+    # diffing it against a chronologically-later baseline. It must resolve to nothing.
+    assert _prior_same_form(sf, e) is None

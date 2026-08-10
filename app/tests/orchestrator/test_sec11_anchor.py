@@ -30,7 +30,7 @@ from orchestrator.mode_ladder import ModeLadder
 from orchestrator.killswitch import killswitch
 from orchestrator.state import EVENT_MODE_CHANGE, OrchestratorState
 from schemas.models.audit_entry import AuditEntry
-from storage.audit import audit_meta
+from storage.audit import AuditLog, audit_meta
 from storage.engine import create_all, make_engine, make_session_factory
 
 KEY = b"sec11-anchor-key"
@@ -86,6 +86,15 @@ def _replay_rollback(st, to_seq, captured_watermark):
             s.execute(audit_meta.insert().values(k=k, v=v))
 
 
+def _restart_cockpit(st):
+    """Swap in a fresh ``AuditLog`` over the same DB — the post-BUG-067 shape of the
+    deferred hole. Same-process, the observed-head floor catches a rollback outright, so
+    the replay only defeats the in-DB check when it lands while the cockpit is DOWN and a
+    fresh process (no observed head) does the verifying. That restart-spanning window is
+    exactly the class only the external anchor closes."""
+    st.audit = AuditLog(st.session_factory, hmac_key=KEY, clock=st.clock)
+
+
 # =======================================================================================
 # THE deferred hole, now closed: replayed watermark defeats verify_chain, anchor catches it
 # =======================================================================================
@@ -108,7 +117,12 @@ def test_watermark_replay_rollback_closed_by_external_anchor(st):
     # THE REPLAY: roll the chain back to the auto-arm head and replay the captured watermark.
     _replay_rollback(st, arm_seq, captured)
 
-    # The in-DB check is DEFEATED — exactly the WP5-deferred hole (present, signed, head==wm).
+    # Same-process, the BUG-067 observed-head floor fails closed on the rollback already.
+    assert not st.audit.verify_chain().ok
+
+    # The surviving window is a rollback landing across a cockpit restart: a fresh process
+    # has no observed head, so the in-DB check is DEFEATED (present, signed, head==wm).
+    _restart_cockpit(st)
     assert st.audit.verify_chain().ok
 
     # ...but the EXTERNAL anchor closes it: both the mode oracle and the gate fail CLOSED.
@@ -138,8 +152,10 @@ def test_current_fails_closed_when_anchor_ahead_of_head(st):
     killswitch(st, actor="op", reason="panic")
     post_head_anchor(st, record=False)
     _replay_rollback(st, arm_seq, captured)
+    assert not st.audit.verify_chain().ok           # same-process: BUG-067 floor fails closed
+    _restart_cockpit(st)                            # across a restart the in-DB check is defeated...
     assert st.audit.verify_chain().ok
-    assert lad.current() is Mode.read_only
+    assert lad.current() is Mode.read_only          # ...and the anchor still closes it
 
 
 # =======================================================================================
@@ -205,6 +221,8 @@ def test_replay_rollback_closed_by_durable_witness(st_durable):
     assert anchored_seq > arm_seq
 
     _replay_rollback(st, arm_seq, captured)                       # roll back + replay the watermark
+    assert not st.audit.verify_chain().ok                         # same-process: BUG-067 floor holds
+    _restart_cockpit(st)                                          # restart-spanning replay:
     assert st.audit.verify_chain().ok                             # in-DB defeated (the deferred hole)
 
     # the DURABLE out-of-domain witness (git + #audit-log) closes it: gate + oracle fail CLOSED
@@ -255,6 +273,8 @@ def test_git_head_file_rewrite_cannot_unlock_with_durable_witness(st_durable, tm
     # the keyless writer ALSO rewrites the same-domain git head file to the captured lower head
     (tmp_path / "audit-head.json").write_text(
         f'{{"head_hash":"stale","seq":{arm_seq}}}', encoding="utf-8")
+    assert not st.audit.verify_chain().ok                         # same-process: BUG-067 floor holds
+    _restart_cockpit(st)                                          # restart-spanning replay:
     assert st.audit.verify_chain().ok                             # in-DB defeated
     assert lad.current() is Mode.read_only                        # out-of-domain witness still catches it
     assert not compute_gate(st, Mode.auto_veto).unlockable

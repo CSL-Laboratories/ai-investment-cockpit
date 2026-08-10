@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Date, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Date, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.ids import new_id
@@ -48,14 +48,21 @@ class XbrlFact(Base):
     __table_args__ = (
         # [est.] Inv 11 (idempotent ingestion): a companyfacts fact is uniquely pinned by
         # its filing + concept + unit + period; replaying a feed must not duplicate it.
-        UniqueConstraint(
+        # BUG-095: a plain UniqueConstraint over nullable ``period_start`` never deduped
+        # INSTANT facts — SQLite (and the SQL standard) treats NULLs as distinct, so the
+        # commonest fact shape (balance-sheet instants, NULL start) inserted a duplicate
+        # row on every replay. A functional unique INDEX coalesces the NULL to a sentinel
+        # date so instant facts share one identity. (Latent until fact persistence is
+        # wired; fixed before it ships looking idempotent.)
+        Index(
+            "uq_xbrl_fact_identity",
             "accession_no",
             "taxonomy",
             "concept",
             "unit",
-            "period_start",
+            text("coalesce(period_start, '0001-01-01')"),
             "period_end",
-            name="uq_xbrl_fact_identity",
+            unique=True,
         ),
     )
 

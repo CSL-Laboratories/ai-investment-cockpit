@@ -10,17 +10,20 @@ cockpit takes only the part that computes filing deltas and binds every claim to
 
 ## Pins
 
-Vendored from `edgar-morning-brew` at `bb90c53756b629f10e2b0112c56b5e6c62694285`
-(2026-07-16, `main`). Per-package pins are the last upstream commit that touched each path —
+Vendored from `edgar-morning-brew` at `92027d7990a98f9d9bcf8ff4e3ef0452f86d16f9`
+(2026-08-10, `cockpit/pre-plan-bug-sweep` — the 2026-08-09 sweep's seven fixes flowed UP and
+were re-pinned per this document's contract; merge that branch to upstream `main` when
+convenient, the pin is to the commit, not the branch name). Per-package pins are the last
+upstream commit that touched each path —
 they are what a re-sync diffs against, so they are recorded separately rather than assuming
 one repo-wide SHA covers everything:
 
 | Vendored path | Upstream path | Pinned at |
 |---|---|---|
-| `filings/edgar/` | `app/edgar/` | `982693cb78fad454379b83faa6341ff9248a6dae` |
-| `filings/parse/` | `app/parse/` | `0f9f3263e6e9d399173c9794a2adcbcba683d6c4` |
-| `filings/delta/` | `app/delta/` | `982693cb78fad454379b83faa6341ff9248a6dae` |
-| `filings/cite/` | `app/cite/` | `982693cb78fad454379b83faa6341ff9248a6dae` |
+| `filings/edgar/` | `app/edgar/` | `92027d7990a98f9d9bcf8ff4e3ef0452f86d16f9` |
+| `filings/parse/` | `app/parse/` | `92027d7990a98f9d9bcf8ff4e3ef0452f86d16f9` |
+| `filings/delta/` | `app/delta/` | `92027d7990a98f9d9bcf8ff4e3ef0452f86d16f9` |
+| `filings/cite/` | `app/cite/` | `92027d7990a98f9d9bcf8ff4e3ef0452f86d16f9` |
 | `filings/raw_store.py` | `app/storage/raw_store.py` | `982693cb78fad454379b83faa6341ff9248a6dae` |
 | `tests/fixtures/sec/` | `app/tests/fixtures/sec/` | `a61c2515efa9f4b786eb631584409bf6d62ea29a` |
 

@@ -269,3 +269,35 @@ def test_degraded_deep_call_returns_degraded_and_persists_nothing(st, clock, tmp
     assert outcome.status == "degraded"
     assert outcome.record is None and outcome.order is None
     assert _rows(st, ProposalRecord) == []
+
+
+def test_replayed_proposal_id_keeps_risk_and_order_rows_on_the_final_id(st, clock, tmp_path):
+    """BUG-093: exactly when the replay guard fired (a model emitting an EXISTING
+    proposal_id), the ProposalRecord was reminted a fresh id INSIDE _persist_record —
+    after the RiskDecision and Order rows had already captured the colliding id — so the
+    approval chain linked the order to the WRONG proposal's source material. The id is now
+    resolved before any row references it."""
+    ModeLadder(st).set_mode(Mode.paper, actor="op")
+    _seed_snapshot(st)
+    # the id the hostile model will replay, already taken by an unrelated proposal
+    taken = ProposalRecord(id="prop-1", symbol="ZZZ", side="sell", status="draft",
+                           payload={"proposal_id": "prop-1"}, flagged=False,
+                           created_at=NOW, updated_at=NOW)
+    st.audit.record_state_change(taken, EVENT_PROPOSAL, actor="test",
+                                 payload={"proposal_id": "prop-1", "status": "draft"})
+
+    row = _persist_event(st, clock, tmp_path)
+    packet = build_packet([row])
+    transport = FakeTransport([
+        envelope(_proposal_body(pid="prop-1", refs=[row.raw_ref])),   # the replay
+        envelope(_grounding_body("prop-1", [row.raw_ref])),
+    ])
+    outcome = draft_proposal(st, clock, event=row, packet=packet, transport=transport,
+                             parquet_root=tmp_path / "raw", quote_fn=_quote_fn,
+                             holdings_symbols=HOLDINGS, watchlist=WATCHLIST)
+    assert outcome.status == "drafted"
+    assert outcome.record.id != "prop-1", "the replayed id must be reminted"
+    assert outcome.risk_decision.proposal_id == outcome.record.id
+    assert outcome.order is not None
+    assert outcome.order.proposal_id == outcome.record.id, \
+        "the order must reference the FINAL proposal id, not the replayed one"

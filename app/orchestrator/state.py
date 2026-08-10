@@ -94,6 +94,12 @@ class OrchestratorState:
     # gate + mode oracle require the in-DB head to be >= the last external anchor; when None
     # (pre-WP6 tests) behavior is exactly the in-DB verify_chain() posture.
     anchor_store: "AnchorStore | None" = field(default=None, compare=False)
+    # BUG-058: the BRK_BROKER_ERRORS production signal. The gateway increments this (under
+    # ``lock``) when a broker submit raises; the intraday triage tick samples-and-resets it
+    # into ``BreakerSignals.broker_errors``. In-memory on purpose — a breaker measures a
+    # SPIKE in the current session, and every increment already has its own audit record
+    # (the order_submit result + refusal), so no separate durable counter is warranted.
+    broker_errors_since_sample: int = field(default=0, compare=False)
 
     @classmethod
     def build(

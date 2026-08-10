@@ -193,7 +193,10 @@ def _paired_text_deltas(
     deltas: list[TextDelta] = []
     deltas += diff_filings(current, prior)
     deltas += diff_filings_coalesced(current, prior)
-    deltas += diff_filings(prior, current)
+    # BUG-071: the reversed pass cites REMOVED material to the prior filing — its
+    # prior-only sections are removals and must not read as new_section (which would both
+    # mislabel the change and collect the new-section materiality bump).
+    deltas += diff_filings(prior, current, removed_direction=True)
     deltas += diff_filings_coalesced(prior, current)
     return _dedup_text(deltas)
 

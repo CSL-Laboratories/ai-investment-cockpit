@@ -74,3 +74,35 @@ def test_malformed_frame_is_not_a_disconnect():
     out = []
     # max_reconnects=0: if the bad frame were treated as a disconnect, run() would raise
     assert AlpacaNewsConsumer(connect=lambda: iter(frames), max_reconnects=0).run(out.append) == 2
+
+
+# ---- BUG-069: a failed emit is not a drop (streaming side) -----------------------------
+def test_failed_emit_rolls_back_the_key_so_a_reseen_frame_can_emit():
+    frame = {"id": 42, "headline": "h", "created_at": "2026-07-07T14:00:00Z",
+             "symbols": ["AAPL"], "summary": "s"}
+    batches = [[frame], [frame]]                        # the frame is seen again later
+
+    def connect():
+        return iter(batches.pop(0))
+
+    consumer = AlpacaNewsConsumer(connect)
+    calls = {"n": 0}
+
+    def flaky(event):
+        calls["n"] += 1
+        raise RuntimeError("persist_events down")
+
+    assert consumer.run(flaky, max_frames=1) == 0       # emit failed
+    assert consumer.counters["emit_error"] == 1
+
+    delivered = []
+    assert consumer.run(lambda e: delivered.append(e["article_id"]), max_frames=1) == 1
+    assert delivered == ["42"], "the rolled-back key must let the re-seen frame emit"
+
+
+def test_a_structurally_bad_frame_is_counted_and_commits_nothing():
+    bad = "not-a-dict-frame"                            # msg.get raises AttributeError
+    consumer = AlpacaNewsConsumer(lambda: iter([bad]))
+    assert consumer.run(lambda e: None, max_frames=1) == 0
+    assert consumer.counters["frame_error"] == 1
+    assert consumer.counters["emit_error"] == 0

@@ -34,9 +34,10 @@ rule. (That is not hypothetical: the first draft of this docstring tripped the g
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass, field, replace
 
-from quant.book.lob import LimitOrderBook
+from quant.book.lob import BookSnapshot, LimitOrderBook
 from quant.book.matching import AggressiveOrder, MatchResult, TimeInForce, match
 from quant.events import Event, Fill
 from quant.oms import NewOrder
@@ -118,13 +119,30 @@ class SimVenue:
     latency: LatencyModel = field(default_factory=LatencyModel)
     book: LimitOrderBook = field(init=False)
     _pending: list[_Pending] = field(default_factory=list, init=False, repr=False)
+    # (apply_ts, seq, client_id) — cancels IN FLIGHT (BUG-090). Applied by advance() in
+    # arrival order interleaved with order releases, so a cancel can genuinely LOSE the
+    # withdraw-vs-fill race instead of always winning it instantly.
+    _pending_cancels: list[tuple[int, int, str]] = field(default_factory=list, init=False,
+                                                         repr=False)
+    # Bounded book history for the DELAYED view (BUG-079); populated only when
+    # market_data_ns is nonzero.
+    _history: deque = field(default_factory=lambda: deque(maxlen=8192), init=False,
+                            repr=False)
     _seq: int = field(default=0, init=False, repr=False)
     accepted: int = field(default=0, init=False)
     cancelled: int = field(default=0, init=False)
     expired_in_flight: int = field(default=0, init=False)
+    cancel_misses: int = field(default=0, init=False)
+
+    _HISTORY_LEVELS = 10
 
     def __post_init__(self) -> None:
         self.book = LimitOrderBook(self.symbol)
+
+    def _record_state(self, ts: int | None = None) -> None:
+        """Capture the post-mutation book for the delayed view (BUG-079)."""
+        if self.latency.market_data_ns:
+            self._history.append(self.book.snapshot(levels=self._HISTORY_LEVELS, ts=ts))
 
     # ---- our order flow ---------------------------------------------------------------
 
@@ -143,11 +161,21 @@ class SimVenue:
     def cancel_order(self, client_id: str, *, ts: int = 0) -> bool:
         """Withdraw a resting order, or drop one still in flight.
 
-        Cancelling an in-flight order succeeds here without modelling the race in which the
-        cancel arrives after the order has already traded. That race is real; representing it
-        properly needs a cancel to travel with its own latency and lose, which is a refinement
-        worth making before any result from this venue is treated as a latency measurement.
+        BUG-090: ``cancel_ns`` was declared, read by ``is_instant``, and never applied —
+        every cancel landed instantly, so a requote-heavy strategy always won the
+        withdraw-vs-fill race for free. With a nonzero ``cancel_ns`` and a real ``ts``, the
+        cancel now TRAVELS: it is queued and applied by ``advance`` in arrival order, where
+        it can genuinely arrive after the order has traded (a miss, counted). ``ts=0``
+        (the pre-existing instant path used by direct/unit callers) keeps the old
+        semantics, as does an instant latency model.
         """
+        if self.latency.cancel_ns and ts:
+            self._seq += 1
+            self._pending_cancels.append((ts + self.latency.cancel_ns, self._seq, client_id))
+            return True                     # accepted for transmission; it may lose the race
+        return self._cancel_now(client_id)
+
+    def _cancel_now(self, client_id: str) -> bool:
         if client_id in self.book:
             self.book.cancel(client_id)
             self.cancelled += 1
@@ -156,6 +184,32 @@ class SimVenue:
             if pending.intent.client_id == client_id:
                 self._pending.pop(index)
                 self.expired_in_flight += 1
+                return True
+        return False
+
+    def replace_order(self, client_id: str, *, new_qty: int | None = None,
+                      new_price_ticks: int | None = None, ts: int = 0) -> bool:
+        """Apply a reprice/resize to a RESTING order — or to one still IN FLIGHT.
+
+        BUG-078: ``AutoLoop`` only replaced orders already in the book, so a reprice of an
+        order still travelling (accepted, not yet released by ``advance``) was silently
+        dropped: the order later landed and filled at the OLD terms the strategy believed
+        it had replaced. An in-flight replace rewrites the pending intent itself. Returns
+        False when the order exists nowhere (e.g. it just fully filled) so the caller can
+        count the miss instead of swallowing it.
+        """
+        if client_id in self.book:
+            self.book.replace(client_id, new_price_ticks=new_price_ticks,
+                              new_qty=new_qty, ts=ts)
+            return True
+        for pending in self._pending:
+            if pending.intent.client_id == client_id:
+                pending.intent = replace(
+                    pending.intent,
+                    qty=new_qty if new_qty is not None else pending.intent.qty,
+                    price_ticks=(new_price_ticks if new_price_ticks is not None
+                                 else pending.intent.price_ticks),
+                )
                 return True
         return False
 
@@ -173,14 +227,26 @@ class SimVenue:
         object in hand and reads them directly; ``AutoLoop`` goes through this venue and so
         could not, which is exactly how it ended up stranding orders.
         """
-        if not self._pending:
-            return []
         ready = [p for p in self._pending if p.arrive_ts <= ts]
-        if not ready:
+        due_cancels = [c for c in self._pending_cancels if c[0] <= ts]
+        if not ready and not due_cancels:
             return []
         self._pending = [p for p in self._pending if p.arrive_ts > ts]
-        ready.sort(key=lambda p: (p.arrive_ts, p.seq))
-        return [self._apply(pending, ts) for pending in ready]
+        self._pending_cancels = [c for c in self._pending_cancels if c[0] > ts]
+        # One arrival stream: orders and cancels land in wire order (BUG-090), so a cancel
+        # can arrive after the order it targets has already traded — and miss.
+        actions: list[tuple[int, int, object]] = [(p.arrive_ts, p.seq, p) for p in ready]
+        actions += [(apply_ts, seq, client_id) for apply_ts, seq, client_id in due_cancels]
+        actions.sort(key=lambda a: (a[0], a[1]))
+        outcomes: list[VenueOutcome] = []
+        for arrive, _seq, payload in actions:
+            if isinstance(payload, _Pending):
+                outcomes.append(self._apply(payload, ts))
+            else:
+                if not self._cancel_now(payload):
+                    self.cancel_misses += 1     # the race, lost: it filled before the cancel
+            self._record_state(arrive)          # BUG-079: history at each mutation instant
+        return outcomes
 
     def _apply(self, pending: _Pending, ts: int) -> VenueOutcome:
         intent = pending.intent
@@ -208,20 +274,32 @@ class SimVenue:
         """
         from quant.runner import apply_market_event as _apply
 
-        return _apply(self.book, event)
+        fills = _apply(self.book, event)
+        self._record_state(getattr(event, "exchange_ts", None))   # BUG-079
+        return fills
 
     # ---- reads ---------------------------------------------------------------------------
 
     def visible_book(self, ts: int, levels: int = 5):
-        """The book AS THE STRATEGY SEES IT — stamped back by the market-data delay.
+        """The book AS THE STRATEGY SEES IT — genuinely delayed by ``market_data_ns``.
 
-        The stamp is what makes the staleness visible downstream; the contents are current,
-        because reconstructing a delayed book properly needs a history of snapshots. That is
-        a known simplification and it is stated here rather than discovered later: with a
-        nonzero ``market_data_ns`` this venue models entry latency honestly and market-data
-        latency only in the timestamp.
+        BUG-079: this used to back-date only the snapshot's ``ts`` while returning CURRENT
+        contents — and no strategy reads ``book.ts``, so a configured data latency changed
+        nothing: the maker still reacted to a move at the instant of the move, the exact
+        zero-latency flattery the LatencyModel documents itself as avoiding. The venue now
+        keeps a bounded post-mutation snapshot history and serves the newest state at or
+        before ``ts - market_data_ns``. Before any data is old enough to have arrived, the
+        strategy sees an EMPTY book — it has received nothing yet, which is the truth.
         """
-        return self.book.snapshot(levels=levels, ts=max(0, ts - self.latency.market_data_ns))
+        delay = self.latency.market_data_ns
+        if not delay:
+            return self.book.snapshot(levels=levels, ts=ts)
+        cutoff = ts - delay
+        for snap in reversed(self._history):
+            if snap.ts is not None and snap.ts <= cutoff:
+                return BookSnapshot(symbol=snap.symbol, seq=snap.seq, ts=snap.ts,
+                                    bids=snap.bids[:levels], asks=snap.asks[:levels])
+        return BookSnapshot(symbol=self.symbol, seq=0, ts=max(0, cutoff), bids=(), asks=())
 
     @property
     def in_flight(self) -> int:

@@ -117,18 +117,26 @@ def _prior_same_form(session_factory, filing) -> Any:
     Ordered by ``filing_date`` then ``accession_no`` so two filings on one day resolve
     deterministically (Inv 2) rather than by whatever order the DB happens to return.
     """
-    from sqlalchemy import select
+    from sqlalchemy import and_, or_, select
 
     from schemas.models.filing import Filing
 
     with session_factory() as s:
+        # BUG-083: "prior" means strictly earlier in (filing_date, accession_no) order. SEC
+        # accession sequences are assigned in submission-receipt order, so for a same-day
+        # same-form pair the old `date <= current` filter with an accession DESC sort
+        # resolved the EARLIER filing's prior to the LATER-submitted one — a delta diffed
+        # against a chronologically-later baseline.
         return s.execute(
             select(Filing)
             .where(
                 Filing.cik == filing.cik,
                 Filing.form_type == filing.form_type,
-                Filing.accession_no != filing.accession_no,
-                Filing.filing_date <= filing.filing_date,
+                or_(
+                    Filing.filing_date < filing.filing_date,
+                    and_(Filing.filing_date == filing.filing_date,
+                         Filing.accession_no < filing.accession_no),
+                ),
             )
             .order_by(Filing.filing_date.desc(), Filing.accession_no.desc())
             .limit(1)
@@ -328,8 +336,32 @@ def run_edgar_pipeline(
 
     poller = SubmissionsPoller(
         fetcher, raw_store, session_factory, clock=clock, audit_log=audit_log,
+        baseline_on_first_poll=audit_log is not None,
         max_new_filings_per_poll=getattr(settings, "sec_max_new_filings_per_poll", 25),
     )
+    # BUG-053: first contact with a CIK records the current feed position (an AUDITED
+    # PollBaseline) instead of treating the issuer's whole recent window as new work —
+    # which, for any established company, exceeds sec_max_new_filings_per_poll and made
+    # the first poll raise PollFilingLimitExceeded on every run, forever. The baseline
+    # store refuses unaudited writes, so a run without an audit_log keeps the VISIBLE
+    # cap fault rather than silently writing an unaudited boundary.
+    if audit_log is not None:
+        from filings.edgar.fetch import SecFairAccessHalt, SecResourceLimitHalt
+        from filings.edgar.submissions_poll import pad_cik
+
+        for cik in cik_list:
+            try:
+                poller.baseline(cik)
+            except (SecFairAccessHalt, SecResourceLimitHalt):
+                # Fair access wins over first contact, same as the poll fan-out.
+                log.warning("SEC fair-access halt during first-contact baselining: "
+                            "run stopped before polling")
+                return result
+            except Exception as exc:  # noqa: BLE001 — per-issuer isolation, as in _poll_isolated
+                result.poll_errors.append((pad_cik(cik), f"baseline: {exc!r}"))
+    else:
+        log.warning("EDGAR: no audit_log wired — first-contact CIKs cannot be baselined; "
+                    "an established issuer's first poll will trip the filing cap")
     polled, halted = _poll_isolated(poller, cik_list, result)
     result.ciks_polled = len(polled)
     if halted:
