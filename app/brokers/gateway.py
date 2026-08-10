@@ -30,7 +30,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+import logging
+
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
+
+log = logging.getLogger(__name__)
 
 from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
 from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
@@ -47,6 +52,47 @@ _BROKER_STATUS_TO_STATE: dict[str, str] = {
     "expired": "expired",
     "rejected": "rejected",
 }
+
+
+def _sanitize_broker_response(result) -> dict:
+    """Adversarial-review hardening (BUG-052 round 2, F1): the broker RESPONSE is network
+    data and must satisfy a shape contract BEFORE anything dereferences it — a None/str
+    return, or a non-JSON-native field value, used to crash AFTER the try block, inside
+    the audit-result construction, re-opening the exact dangling-intent hole BUG-062
+    closed. Raises on a non-dict (caught by the caller's except into the covered abort
+    path); normalizes every field this module consumes to JSON-native-or-None. A garbage
+    ``filled_qty`` becomes None — it must never FABRICATE a fill."""
+    if not isinstance(result, dict):
+        raise TypeError(f"broker returned {type(result).__name__}, expected a dict response")
+    boid = result.get("broker_order_id")
+    fq = _dec(result.get("filled_qty")) if result.get("filled_qty") is not None else None
+    afp = _dec(result.get("avg_fill_price")) if result.get("avg_fill_price") is not None else None
+    return {
+        "broker_order_id": None if boid is None else str(boid)[:128],
+        "status": None if result.get("status") is None else str(result.get("status"))[:64],
+        "filled_qty": fq if (fq is None or fq.is_finite()) else None,
+        "avg_fill_price": afp if (afp is None or afp.is_finite()) else None,
+    }
+
+
+def _ack_consistent(ack_state: str, result: dict, order) -> bool:
+    """F3: a TERMINAL, exposure-draining transition needs fill data CONSISTENT with the
+    claimed status — the status string alone must not drain the SEC-07 cap. 'filled'
+    requires filled_qty == order.qty (> 0); 'partially_filled' requires 0 < filled_qty <
+    qty. Cancel/expire/reject at submit time carry no fill data and stand as the response
+    of record. Inconsistent fill data leaves the order 'submitted' (open, over-counted —
+    the fail-safe direction) and is audited as ignored."""
+    if ack_state in ("cancelled", "expired", "rejected"):
+        return True
+    fq = result.get("filled_qty")
+    qty = _dec(order.qty)
+    if fq is None or not fq.is_finite() or not qty.is_finite():
+        return False
+    if ack_state == "filled":
+        return fq > 0 and fq == qty
+    if ack_state == "partially_filled":
+        return 0 < fq < qty
+    return False
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.mode_ladder import ExecutionRuntimeError
@@ -701,8 +747,11 @@ class OrderGateway:
             broker_request = dict(canonical)
             broker_request["client_order_id"] = f"cockpit-{order.id}"[:128]
             try:
-                result = self._broker.submit_order(broker_request)
-            except Exception as exc:                                     # noqa: BLE001
+                # F1: the response-shape contract is validated INSIDE the protected region,
+                # so a broker that RETURNS garbage (None/str/non-JSON-native fields) takes
+                # the same covered abort path as a broker that raises.
+                result = _sanitize_broker_response(self._broker.submit_order(broker_request))
+            except BaseException as exc:                                 # noqa: BLE001
                 # BUG-062: a broker failure between the intent and its result used to leave
                 # the SEC-13 intent dangling FOREVER — the production reconciler is wired
                 # with _no_broker_history and can only alert a not-landed intent, never heal
@@ -710,6 +759,16 @@ class OrderGateway:
                 # two-phase pair (same shape as the halt-abort above), record the refusal,
                 # and fail closed. The capability token was consumed at gate (g) and stays
                 # consumed: a failed submit needs a fresh human approval, not a free retry.
+                # BaseException so a SystemExit/KeyboardInterrupt mid-call still covers the
+                # intent before propagating (F1).
+                #
+                # AMBIGUITY IS RECORDED, NOT ERASED (F2): a timeout/5xx can be response
+                # loss on an order that LANDED. The abort result resolves the SEC-13 pair,
+                # and reconcile_startup alerts on every broker_error abort whose order row
+                # is still non-terminal until the operator (or a future status poll)
+                # settles it. A retry cannot double-execute at the broker: client_order_id
+                # derives from the durable order id, so a landed original makes the retry
+                # idempotent broker-side.
                 reason = f"broker submit failed: {exc}"
                 # BUG-058: this is the BRK_BROKER_ERRORS production signal — sampled and
                 # reset by the intraday triage tick. Already under st.lock here.
@@ -721,16 +780,20 @@ class OrderGateway:
                 )
                 self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
                                      actor=producing_runtime)
+                if not isinstance(exc, Exception):
+                    raise
                 return GateOutcome(False, "broker_error", reason,
                                    order_tuple_hash=resolved_hash)
             # Result AFTER the broker call — the two-phase pair keyed on the intent seq.
+            # Every field below is sanitized JSON-native-or-None (F1).
             st.audit.result(
                 intent, "order_submit",
-                refs={"order_id": order.id, "broker_order_id": result.get("broker_order_id")},
-                payload={"status": result.get("status"),
-                         "filled_qty": str(result.get("filled_qty", 0)),
-                         "avg_fill_price": (None if result.get("avg_fill_price") is None
-                                            else str(result.get("avg_fill_price")))},
+                refs={"order_id": order.id, "broker_order_id": result["broker_order_id"]},
+                payload={"status": result["status"],
+                         "filled_qty": str(result["filled_qty"] if result["filled_qty"]
+                                           is not None else 0),
+                         "avg_fill_price": (None if result["avg_fill_price"] is None
+                                            else str(result["avg_fill_price"]))},
             )
 
             # Consume the single-use approval (audited state change).
@@ -748,9 +811,9 @@ class OrderGateway:
             transition(
                 st, order, "submitted", actor=producing_runtime,
                 reason="submitted to broker", clock=clock,
-                broker_order_id=result.get("broker_order_id"),
-                filled_qty=result.get("filled_qty", 0),
-                avg_fill_price=result.get("avg_fill_price"),
+                broker_order_id=result["broker_order_id"],
+                filled_qty=result["filled_qty"] if result["filled_qty"] is not None else 0,
+                avg_fill_price=result["avg_fill_price"],
             )
 
             # BUG-052: consume the broker's ACK. A paper market order fills synchronously
@@ -758,19 +821,45 @@ class OrderGateway:
             # production caller and _pending_ok counted the full notional as open FOREVER —
             # the SEC-07 cap degraded into a one-time budget that self-blocked the order
             # path. Only DEFINITIVE statuses advance the state; indeterminate ones stay
-            # 'submitted' for the (future) order-status poll to resolve.
-            ack_state = _BROKER_STATUS_TO_STATE.get(str(result.get("status") or "").lower())
+            # 'submitted' for the (future) order-status poll to resolve. F3: a terminal,
+            # exposure-draining move additionally requires fill data CONSISTENT with the
+            # claimed status — a bare status string cannot manufacture cap headroom; an
+            # inconsistent ACK is audited as ignored and the order stays open (over-counted,
+            # the fail-safe direction). F4: a transient DB failure on this LAST write must
+            # not escape as a raw exception over an already-recorded submit — the order
+            # stays 'submitted' (fail-safe) for the same poll to resolve; a tamper-shaped
+            # AuditIntegrityError still propagates.
+            ack_state = _BROKER_STATUS_TO_STATE.get((result["status"] or "").lower())
             if ack_state and ack_state != "submitted" and legal_order_transition(order.state, ack_state):
-                transition(
-                    st, order, ack_state, actor=producing_runtime,
-                    reason=f"broker reported {result.get('status')!r} at submit", clock=clock,
-                    broker_order_id=result.get("broker_order_id"),
-                    filled_qty=result.get("filled_qty", 0),
-                    avg_fill_price=result.get("avg_fill_price"),
-                )
+                if not _ack_consistent(ack_state, result, order):
+                    st.audit.append(
+                        "order_ack_ignored", actor=producing_runtime,
+                        refs={"order_id": order.id},
+                        payload={"status": result["status"],
+                                 "filled_qty": (None if result["filled_qty"] is None
+                                                else str(result["filled_qty"])),
+                                 "qty": str(order.qty),
+                                 "reason": "fill data inconsistent with claimed status (F3)"},
+                    )
+                else:
+                    try:
+                        transition(
+                            st, order, ack_state, actor=producing_runtime,
+                            reason=f"broker reported {result['status']!r} at submit",
+                            clock=clock,
+                            broker_order_id=result["broker_order_id"],
+                            filled_qty=result["filled_qty"],
+                            avg_fill_price=result["avg_fill_price"],
+                        )
+                    except (IntegrityError, OperationalError) as exc:
+                        log.warning(
+                            "order %s: ack transition to %r failed transiently (%s); order "
+                            "stays 'submitted' (open, fail-safe) for a later poll to resolve",
+                            order.id, ack_state, exc,
+                        )
 
-        return GateOutcome(True, "submitted", broker_order_id=result.get("broker_order_id"),
-                           broker_status=result.get("status"), order_tuple_hash=resolved_hash)
+        return GateOutcome(True, "submitted", broker_order_id=result["broker_order_id"],
+                           broker_status=result["status"], order_tuple_hash=resolved_hash)
 
     # ---- public: place = review THEN submit (review provably precedes submit) -----------
     def place_equity_order(self, order, *, approval, risk_decision, ladder, breaker_engine,

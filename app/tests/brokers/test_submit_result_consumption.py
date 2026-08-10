@@ -97,3 +97,98 @@ def test_broker_exception_feeds_the_breaker_signal(st):
     sc = build_scenario(st, broker=ExplodingBroker())
     sc.gateway.submit(sc.order, **sc.submit_kwargs())
     assert st.broker_errors_since_sample == 1
+
+
+# ---- adversarial-round hardening (BUG-052/062 round 2) ---------------------------------
+class GarbageBroker:
+    """A broker that RETURNS (does not raise) a non-dict — F1's crash-after-the-try."""
+
+    def __init__(self, garbage):
+        self._garbage = garbage
+
+    def submit_order(self, canonical):
+        return self._garbage
+
+
+class ExoticTypesBroker:
+    """JSON-hostile field types that used to crash inside the audit-result construction."""
+
+    def submit_order(self, canonical):
+        return {"broker_order_id": Decimal("12345"), "status": b"accepted",
+                "filled_qty": "not-a-number", "avg_fill_price": float("nan")}
+
+
+def _events(st, event_type):
+    from sqlalchemy import select as _select
+
+    from schemas.models.audit_entry import AuditEntry
+
+    with st.session_factory() as s:
+        rows = s.execute(_select(AuditEntry)).scalars().all()
+    return [r for r in rows if r.event_type == event_type]
+
+
+def test_none_response_takes_the_covered_abort_path(st):
+    sc = build_scenario(st, broker=GarbageBroker(None))
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert not out.ok and out.stage == "broker_error"
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+def test_string_response_takes_the_covered_abort_path(st):
+    sc = build_scenario(st, broker=GarbageBroker("HTTP 502 Bad Gateway"))
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert not out.ok and out.stage == "broker_error"
+    assert st.audit.unresolved_intents() == []
+
+
+def test_exotic_field_types_are_sanitized_not_crashed(st):
+    sc = build_scenario(st, broker=ExoticTypesBroker())
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert out.ok                                       # the submit itself succeeded
+    assert st.audit.unresolved_intents() == []
+    assert _row_state(st, sc.order.id) == "submitted"   # garbage fill data drains nothing
+    assert st.audit.verify_chain().ok
+
+
+def test_filled_status_with_zero_fill_does_not_drain_the_cap(st):
+    """F3: a bare status string must not manufacture cap headroom."""
+    sc = build_scenario(st, broker=FillAtSubmitBroker(status="filled",
+                                                      filled_qty=Decimal("0"), avg=None))
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert out.ok
+    assert _row_state(st, sc.order.id) == "submitted", "an inconsistent fill must stay open"
+    assert _events(st, "order_ack_ignored"), "the ignored ACK must be audited"
+
+
+def test_filled_status_with_wrong_qty_does_not_terminalize(st):
+    sc = build_scenario(st, broker=FillAtSubmitBroker(status="filled",
+                                                      filled_qty=Decimal("4")))  # qty is 10
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert out.ok
+    assert _row_state(st, sc.order.id) == "submitted"
+
+
+def test_partial_fill_requires_a_sane_quantity(st):
+    sc = build_scenario(st, broker=FillAtSubmitBroker(status="partially_filled",
+                                                      filled_qty=Decimal("10")))  # == qty
+    out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert out.ok
+    assert _row_state(st, sc.order.id) == "submitted"
+
+
+def test_broker_error_abort_is_alerted_as_ambiguous_at_reconcile(st):
+    """F2: the covering abort result must not erase the landed-after-timeout ambiguity —
+    reconcile re-alerts it (and stays not-ok) until the order row is settled."""
+    from orchestrator.reconcile import reconcile_startup
+
+    sc = build_scenario(st, broker=ExplodingBroker())
+    sc.gateway.submit(sc.order, **sc.submit_kwargs())
+    assert st.audit.unresolved_intents() == []          # SEC-13 pair is complete...
+
+    alerts: list[str] = []
+    report = reconcile_startup(st, broker_history_fn=lambda oid: [], alerter=alerts.append)
+    assert report.ambiguous_aborts, "...but the ambiguity must stay visible"
+    assert report.ok is False
+    assert any("AMBIGUOUS" in a for a in alerts)
