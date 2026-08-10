@@ -20,6 +20,7 @@ can only ever *reduce* autonomy — never silently grant it (SEC-23 fail-closed)
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from sqlalchemy import func, select
 
@@ -145,7 +146,15 @@ class ModeLadder:
                 return Mode.read_only
             entry = self._latest_entry(s)
             if entry is None:
-                return self.st.settings.mode
+                # BUG-059: this fallback is ENV-CONFIGURABLE (COCKPIT_MODE) and was
+                # returned VERBATIM — a fresh DB (or one truncated to empty across a
+                # restart) plus COCKPIT_MODE=auto_full made the live mode oracle read
+                # auto_full with no SEC-20 gate, no signed arm, no anchor. An un-audited
+                # boot may start at most at 'paper' (no order authority); review_live and
+                # the auto rungs exist only as signed mode_change entries written through
+                # set_mode / arm_auto_mode.
+                m = self.st.settings.mode
+                return m if m in (Mode.read_only, Mode.paper) else Mode.read_only
             if not self.st.audit.verify_entry(entry):
                 return Mode.read_only                 # tampered signing entry
             to = (entry.payload or {}).get("to")
@@ -156,6 +165,23 @@ class ModeLadder:
             if row is not None and row.mode != to:
                 return Mode.read_only                 # mutable row diverges from signed record
             m = _as_mode(to)
+            if m in _AUTO_MODES:
+                # BUG-061: ``armed_until`` is signed into the arming payload precisely so
+                # the arm is BOUNDED — and was then never read back. Disarm rode entirely
+                # on the 16:00 cron firing (APScheduler default misfire grace ~1s), so a
+                # process down at close kept auto armed overnight, and an early-close day
+                # kept it armed 13:00-16:00. The oracle now enforces the signed bound at
+                # read time: past ``armed_until`` an auto entry reads as ``review_live`` —
+                # the rung the scheduled disarm lands at (SEC-23's one-tap re-arm next
+                # morning), keeping human-gated authority while dropping autonomy.
+                until_iso = (entry.payload or {}).get("armed_until")
+                if not until_iso:
+                    return Mode.read_only     # an auto arm without its signed bound: tamper-shaped
+                try:
+                    if self.st.clock.now() >= datetime.fromisoformat(until_iso):
+                        return Mode.review_live
+                except (ValueError, TypeError):
+                    return Mode.read_only     # malformed / naive bound -> fail closed
             # SEC-11: an AUTO mode-read must ALSO clear the external witness. A replayed
             # watermark can resurrect an old (validly-signed) auto-arm that verify_chain()
             # accepts; only the out-of-DB anchor catches that rollback. When an anchor store is
