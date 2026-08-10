@@ -11,6 +11,7 @@ transport, and enforces the safety envelope:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import replace
 
@@ -24,6 +25,13 @@ from agent_runner.tool_inspector import assert_decision_cwd, inspect_argv
 from agent_runner.transport import SubprocessTransport
 from agent_runner.usage import UsageTracker
 from config.models import cli_model_for
+
+log = logging.getLogger(__name__)
+
+# Bound on a schema-rejection reason carried into a log line. jsonschema echoes the offending
+# INSTANCE into its error text, and that instance is model output derived from untrusted feed
+# text — so the reason is bounded and stays local-log only, never an operator-facing surface.
+_REASON_TAIL = 300
 
 
 # Codex exposes agentic tools as feature flags rather than Claude's ``--allowedTools none``.
@@ -375,6 +383,12 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     if reason is None:
         return AgentResult(status=OK, validated=body, raw=proc.stdout, session_id=session_id)
 
+    # Say WHY the repair round is happening. Without this a quarantine is a status code with
+    # no cause attached, and the only way to learn what the schema objected to was to reproduce
+    # the run. Bounded and local-log only — see _REASON_TAIL.
+    log.warning("job %s: schema %s rejected the output, attempting repair: %.*s",
+                spec.job_id, spec.schema_path or "<inline>", _REASON_TAIL, str(reason))
+
     # one repair attempt, then quarantine (Inv 3)
     return _repair(spec, reason, transport, usage, session_id, secret_values, pinned_cwd)
 
@@ -422,11 +436,17 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         w = usage.trip(spec.runtime, "degraded")
         return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
                            error="repair_vendor_error", usage_state=w.state)
-    if parsed is not None and _validate(body2, spec.schema) is None:
+    reason2 = "output was not valid JSON" if parsed is None else _validate(body2, spec.schema)
+    if reason2 is None:
         return AgentResult(
             status=OK, validated=body2, raw=proc.stdout,
             session_id=sid2 or session_id, repaired=True,
         )
+    # The second rejection is the interesting one: the model was TOLD what was wrong and still
+    # produced something the schema refuses. Quarantine is correct, but the reason is the only
+    # evidence of whether the prompt or the schema is at fault.
+    log.warning("job %s: the repaired output was still rejected, quarantining: %.*s",
+                spec.job_id, _REASON_TAIL, str(reason2))
     return AgentResult(
         status=NEEDS_HUMAN, raw=proc.stdout, session_id=sid2 or session_id,
         repaired=True, error="repair_still_invalid",

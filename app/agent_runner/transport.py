@@ -6,11 +6,17 @@ G1b is hermetic (no real ``claude``/``codex`` process).
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import signal
 import subprocess
 from dataclasses import dataclass
+
+log = logging.getLogger(__name__)
+
+# Bound on the stderr excerpt carried into a log line. See _log_failure.
+_STDERR_TAIL = 400
 
 REAP_GRACE_SECONDS = 5.0
 KILL_GRACE_SECONDS = 10.0
@@ -91,12 +97,36 @@ def _kill_tree(proc: subprocess.Popen) -> None:
             )
         else:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except Exception:  # noqa: BLE001 - timeout cleanup must remain fail-closed
-        pass
+    except Exception as exc:  # noqa: BLE001 - timeout cleanup must remain fail-closed
+        # Still best-effort, but no longer INVISIBLE. A taskkill that fails leaves a live
+        # descendant holding the sandbox, and a bare `pass` made that indistinguishable from
+        # a clean kill.
+        log.warning("could not kill the agent process tree (pid=%s): %s: %s",
+                    proc.pid, type(exc).__name__, exc)
     try:
         proc.kill()
-    except Exception:  # noqa: BLE001 - an already-exited child is harmless
-        pass
+    except Exception as exc:  # noqa: BLE001 - an already-exited child is harmless
+        log.debug("agent process already gone before kill (pid=%s): %s", proc.pid, exc)
+
+
+def _log_failure(argv: list[str], result: ProcResult) -> None:
+    """Name a failed agent spawn in the log. Silent on success.
+
+    The AgentJob row records THAT a job failed; only this says why. The first live failure was
+    a 44ms non-zero exit whose cause is permanently unrecoverable, because nothing anywhere
+    captured the child's stderr.
+
+    The tail is BOUNDED at 400 bytes deliberately: a CLI can echo its prompt back on a parse
+    error, and the prompt carries untrusted feed text. This is a local log line, never an
+    operator-facing surface, and it must not become a channel for pasting a whole packet
+    somewhere it will be read as trustworthy.
+    """
+    if not result.timed_out and result.returncode == 0:
+        return
+    tail = (result.stderr or "").strip()[-_STDERR_TAIL:]
+    log.warning("agent subprocess %s: rc=%s timed_out=%s stderr_tail=%r",
+                os.path.basename(argv[0]) if argv else "?",
+                result.returncode, result.timed_out, tail)
 
 
 class SubprocessTransport:
@@ -114,14 +144,20 @@ class SubprocessTransport:
         proc = subprocess.Popen(argv, **popen_kwargs)
         try:
             out, err = proc.communicate(input_text, timeout=timeout_s)
-            return ProcResult(proc.returncode, out or "", err or "", False)
+            result = ProcResult(proc.returncode, out or "", err or "", False)
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
             try:
                 out, err = proc.communicate(timeout=REAP_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
+                # The pipes are abandoned rather than waited on forever: the tree is already
+                # killed, and blocking here would turn a bounded timeout into an unbounded one.
+                log.warning("agent pipes did not drain within %ss after the kill; "
+                            "abandoning them", REAP_GRACE_SECONDS)
                 out, err = "", ""
-            return ProcResult(124, out, err + "\n[timeout]", True)
+            result = ProcResult(124, out, err + "\n[timeout]", True)
+        _log_failure(argv, result)
+        return result
 
 
 def _logon_launch(account, argv, input_text, timeout_s, cwd):  # pragma: no cover - Windows/logon
