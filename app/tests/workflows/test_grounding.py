@@ -218,6 +218,21 @@ def test_run_grounding_check_invalid_schema_returns_none(st):
     assert run_grounding_check(st, proposal(), [dict(RAW_ITEM)], transport=t) is None
 
 
+def test_grounding_survives_a_pinned_decision_cwd(state_with, tmp_path):
+    """SEC-06 reachability. ``decision_agent_cwd`` had NO test anywhere in the suite, and
+    grounding built its AgentSpec without ``cwd`` while passing ``pinned_cwd`` to the runner.
+    ``assert_decision_cwd(None, pinned_cwd=...)`` therefore refused EVERY grounding spawn, and
+    the bare ``except Exception: return None`` mapped that refusal to 'flagged' — so on any
+    deployment that actually set the pin, the SEC-14 verifier was silently dead: no log, no
+    audit event, no AgentJob row. Green only because the pin is unset in dev."""
+    pinned = str(tmp_path / "sandbox")
+    st = state_with(decision_agent_cwd=pinned)
+    t = FakeTransport([envelope(check_body())])
+    out = run_grounding_check(st, proposal(), [dict(RAW_ITEM)], transport=t)
+    assert out == check_body()
+    assert t.calls[0]["cwd"] == pinned   # and the sandbox is actually honoured, not just accepted
+
+
 # ---- evaluate_grounding (fail-closed) --------------------------------------------------
 def _grounding_entries(st):
     with st.session_factory() as s:

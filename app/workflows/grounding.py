@@ -18,21 +18,19 @@ is the deterministic SEC-01 seam passed to ``BreakerEngine.check_order_path`` /
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Callable
 
 from agent_runner.result import OK
-from agent_runner.runner import run_agent
-from agent_runner.spec import AgentSpec
-from config.models import configured_decision_runtime, runtime_allowed_for_mode, runtime_for
-from core.ids import new_id
 from ingest.normalize import escape_untrusted
-from orchestrator.mode_ladder import ModeLadder
+from workflows.agent_calls import call_agent
 from workflows.constants import EVENT_GROUNDING
 from workflows.packets import wrap_untrusted
 from workflows.prompts import load_prompt
-from workflows.schema_loader import load_schema, schema_path
+
+log = logging.getLogger(__name__)
 
 _TICKERISH = re.compile(r"^[A-Z]{2,5}$")
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
@@ -162,39 +160,42 @@ def run_grounding_check(state, proposal: dict, raw_items: list[dict], *,
                         transport=None) -> dict | None:
     """One tool-starved triage-tier verifier call over the extracted slice. Returns the
     schema-validated GroundingCheck dict, or None on ANY failure (limit, timeout,
-    quarantine, exception) — the caller treats None as flagged (fail closed)."""
+    quarantine, exception) — the caller treats None as flagged (fail closed).
+
+    THIS GOES THROUGH ``agent_calls.call_agent``, THE CHOKE POINT — it must not rebuild the
+    dispatch preamble by hand. It used to, and the copy drifted: the hand-built ``AgentSpec``
+    never set ``cwd``, so once ``decision_agent_cwd`` was configured the runner's SEC-06
+    assertion refused EVERY grounding spawn and the bare ``except`` below turned the refusal
+    into an ordinary 'flagged'. The SEC-14 verifier was dead wherever the pin was actually
+    set, with no log, no audit event and no ``AgentJob`` row — because the provenance write
+    was among the things the copy omitted. It also skipped the SEC-23 generation stamp and
+    the Inv 7 watch-only escalation on limit/timeout. Routing through ``call_agent`` gets all
+    five for free and keeps them from drifting again."""
+    template = load_prompt("grounding_check")
+    minimized = {k: proposal.get(k) for k in
+                 ("proposal_id", "symbol", "side", "thesis", "invalidation", "source_refs")}
+    prompt = template.render(
+        proposal_id=str(proposal.get("proposal_id", "")),
+        proposal_json=json.dumps(minimized, sort_keys=True, default=str),
+        evidence_slice=extract_slice(raw_items),
+    )
+    cited = [str(item.get("raw_ref", "")) for item in raw_items if item.get("raw_ref")]
     try:
-        template = load_prompt("grounding_check")
-        minimized = {k: proposal.get(k) for k in
-                     ("proposal_id", "symbol", "side", "thesis", "invalidation", "source_refs")}
-        prompt = template.render(
-            proposal_id=str(proposal.get("proposal_id", "")),
-            proposal_json=json.dumps(minimized, sort_keys=True, default=str),
-            evidence_slice=extract_slice(raw_items),
+        result, _job = call_agent(
+            state, alias="triage",
+            prompt_ref=template.ref, prompt_hash=template.sha256, prompt=prompt,
+            schema_name="GroundingCheck",
+            input_refs={"proposal_id": str(proposal.get("proposal_id", "")),
+                        "raw_refs": sorted(cited)},
+            transport=transport,
         )
-        alias = "triage"
-        runtime = configured_decision_runtime(state.settings)
-        mode = ModeLadder(state).current()
-        if not runtime_allowed_for_mode(runtime, mode):
-            return None
-        spec = AgentSpec(
-            job_id=new_id("job"),
-            runtime=runtime_for(alias, runtime),
-            model_alias=alias,
-            prompt=prompt,
-            schema=load_schema("GroundingCheck"),
-            schema_path=schema_path("GroundingCheck"),
-            decision_stage=True,
-            allowed_tools=[],
-        )
-        # W11 SEC-05/06: thread the low-priv account + pinned cwd so the runner's spawn backstop
-        # covers the grounding decision spawn too (not only workflows/agent_calls.py).
-        result = run_agent(
-            spec, transport=transport, usage=state.usage,
-            pinned_cwd=getattr(state.settings, "decision_agent_cwd", None),
-            decision_agent_account=getattr(state.settings, "decision_agent_account", None),
-        )
-    except Exception:
+    except Exception as exc:
+        # Still fail closed (SEC-14) — but never SILENTLY. A spawn refused by SEC-05/06, a
+        # runtime barred by the mode ladder, and a vendor hiccup all used to collapse into an
+        # indistinguishable ``None``. That is precisely how the pinned-cwd defect above
+        # survived: flagging everything looks identical to a working, cautious verifier.
+        log.warning("grounding check could not run (proposal=%s): %s: %s",
+                    proposal.get("proposal_id", ""), type(exc).__name__, exc)
         return None
     if result.status != OK or not isinstance(result.validated, dict):
         return None

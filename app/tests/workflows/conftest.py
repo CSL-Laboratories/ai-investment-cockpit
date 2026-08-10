@@ -34,11 +34,22 @@ def clock():
 
 
 @pytest.fixture
-def st(tmp_path, clock):
-    engine = make_engine(f"sqlite:///{(tmp_path / 'wp8.db').as_posix()}")
-    create_all(engine)
-    sf = make_session_factory(engine)
-    return OrchestratorState.build(sf, hmac_key=KEY, settings=Settings(), clock=clock)
+def state_with(tmp_path, clock):
+    """Build a state whose Settings differ from the default — for the SEC-05/06 controls,
+    which are inactive under ``Settings()`` and so are invisible to the ``st`` fixture."""
+    def _build(**settings_kw):
+        name = f"wp8-{len(settings_kw)}-{abs(hash(tuple(sorted(settings_kw))))}.db"
+        engine = make_engine(f"sqlite:///{(tmp_path / name).as_posix()}")
+        create_all(engine)
+        sf = make_session_factory(engine)
+        return OrchestratorState.build(sf, hmac_key=KEY,
+                                       settings=Settings(**settings_kw), clock=clock)
+    return _build
+
+
+@pytest.fixture
+def st(state_with):
+    return state_with()
 
 
 # ---- FakeTransport / envelope (canonical pattern from tests/agent_runner/test_runner.py)
@@ -48,7 +59,7 @@ class FakeTransport:
         self.calls = []
 
     def run(self, argv, input_text, timeout_s, cwd):
-        self.calls.append({"argv": argv, "input": input_text})
+        self.calls.append({"argv": argv, "input": input_text, "cwd": cwd})
         return self._results.pop(0)
 
 
