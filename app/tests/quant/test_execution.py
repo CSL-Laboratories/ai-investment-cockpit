@@ -331,3 +331,77 @@ def test_a_breach_is_audited_with_its_reason():
     loop.run(_feed(20))
     breaches = [p for t, p in written if t == "quant_sim_breach"]
     assert breaches and breaches[0]["reason"] == "HALT is set"
+
+
+# ---- the loop reconciles the OMS with what the venue actually did -------------------------
+
+
+def _stranded_ids(oms, book) -> list[str]:
+    """Live in the OMS but absent from the book. An order still RESTING is correctly live —
+    conflating the two would make a working maker look broken at the end of every run."""
+    return [o.client_id for o in oms.live_orders() if o.client_id not in book]
+
+
+def test_a_remainder_that_never_rested_does_not_strand_the_loop():
+    """THE UNATTENDED LOOP MUST NOT GO SILENT. ``Runner._place`` reconciles the OMS when an
+    aggressive order leaves no resting remainder, and says why in a comment: 'it stays live
+    forever and every strategy that checks its own open orders goes permanently silent — a
+    deadlock that looks like a strategy with no signal'.
+
+    ``AutoLoop`` registered, sent and acked, then never reconciled — reproducing that exact
+    bug in the ONE component with no human watching. Nothing reported it either:
+    ``AutoLoopResult`` had no field for a stranded order, so the run looked clean while the
+    strategy did a few percent of its work and stopped.
+    """
+    from quant.runner import Runner
+
+    events = _feed(4_000)
+    mm = lambda: MarketMaker(name="mm", symbols=("S",),                      # noqa: E731
+                             params=MarketMakerParams(requote_threshold_ticks=1))
+
+    runner = Runner(feed=iter(list(events)), strategies=[mm()], scale=PENNY)
+    r_result = runner.run()
+
+    venue = SimVenue(symbol="S", latency=LatencyModel.instant())
+    loop = AutoLoop(venue=venue, strategies=[mm()], scale=PENNY)
+    a_result = loop.run(iter(list(events)))
+
+    stranded = _stranded_ids(loop.oms, venue.book)
+    assert not stranded, f"orders live in the OMS but absent from the book: {stranded}"
+    assert a_result.stranded_orders == 0, "the run must also REPORT that it stranded nothing"
+
+    # The real symptom was throughput collapse: 6 submissions against the Runner's 126.
+    assert a_result.intents_submitted >= r_result.intents_submitted // 2, (
+        f"autoloop submitted {a_result.intents_submitted} vs runner "
+        f"{r_result.intents_submitted} — the loop went silent"
+    )
+
+
+def test_a_self_trade_cancellation_is_reflected_in_the_oms():
+    """``matching.py``'s own docstring says 'a market maker quoting both sides WILL eventually
+    cross itself', so STP is the steady state, not an edge case. ``SimVenue._apply`` dropped
+    ``MatchResult.stp_cancelled`` on the floor, leaving the OMS holding an order the book no
+    longer has — which inflates exposure_ticks forever and makes the maker's own reconcile
+    believe a pulled quote is still resting."""
+    venue = SimVenue(symbol="S", latency=LatencyModel.instant())
+    loop = AutoLoop(venue=venue, strategies=[], scale=PENNY)
+
+    resting = NewOrder(client_id="q-ask", symbol="S", side=Side.SELL, qty=100,
+                       price_ticks=10_000)
+    loop.oms.register(resting, strategy="mm", ts=0)
+    venue.accept_order(resting, owner="mm", ts=0)
+    loop.oms.on_acknowledged("q-ask", ts=0)
+    venue.advance(0)
+
+    crossing = NewOrder(client_id="q-bid", symbol="S", side=Side.BUY, qty=100,
+                        price_ticks=10_000)
+    loop.oms.register(crossing, strategy="mm", ts=1)
+    venue.accept_order(crossing, owner="mm", ts=1)
+    loop.oms.on_acknowledged("q-bid", ts=1)
+    loop._absorb_outcomes(venue.advance(1))
+
+    assert "q-ask" not in venue.book, "STP should have pulled the resting quote from the book"
+    ask = loop.oms.get("q-ask")
+    assert ask is not None and not ask.is_live, (
+        f"OMS still believes the STP-cancelled quote is live (state={ask.state if ask else None})"
+    )

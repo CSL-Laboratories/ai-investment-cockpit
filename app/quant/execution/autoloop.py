@@ -68,6 +68,14 @@ class AutoLoopResult:
     blocked_reasons: dict[str, int] = field(default_factory=dict)
     final_position: int = 0
     attribution: dict | None = None
+    stranded_orders: int = 0
+    """Orders still live in the OMS when the run ended.
+
+    Reported because the failure it detects is SILENT: an unreconciled order leaves the
+    strategy waiting on a fill that can never arrive, and a loop doing a few percent of its
+    work looks exactly like a loop with nothing to do. Nonzero here means the OMS and the
+    venue disagree about what is outstanding — investigate before reading any other number,
+    because every one of them was produced by a strategy that had stopped."""
 
     @property
     def stopped_early(self) -> bool:
@@ -119,7 +127,7 @@ class AutoLoop:
                 break
 
             self.result.events += 1
-            self._absorb(self.venue.advance(event.ingest_ts))
+            self._absorb_outcomes(self.venue.advance(event.ingest_ts))
             try:
                 self._absorb(self.venue.apply_market_event(event))
             except OrderNotFound:
@@ -144,6 +152,11 @@ class AutoLoop:
 
         self.result.final_position = self.oms.position(self.venue.symbol)
         self.result.attribution = self.pnl.snapshot().as_dict()
+        # Orders resting on the book at the end are legitimately live; ones the book does not
+        # hold are the stranded kind this counts.
+        self.result.stranded_orders = sum(
+            1 for order in self.oms.live_orders() if order.client_id not in self.venue.book
+        )
         self._audit(EVENT_QUANT_SIM_SESSION, {
             "phase": "end", "events": self.result.events,
             "fills": len(self.result.fills), "blocked": self.result.intents_blocked,
@@ -215,6 +228,39 @@ class AutoLoop:
                     self.venue.book.replace(intent.client_id,
                                             new_price_ticks=intent.new_price_ticks,
                                             new_qty=intent.new_qty, ts=ts)
+
+    def _absorb_outcomes(self, outcomes: list) -> None:
+        """Fold in what the venue did, and keep the OMS honest about it.
+
+        THE SAME THREE STEPS ``Runner._place`` DOES, IN THE SAME ORDER. The loop used to do
+        only the middle one, and the two it skipped are the two that keep the OMS's view of
+        "what is still live" equal to the book's:
+
+          1. Self-trade prevention pulled some of our resting orders off the book. Left
+             untold, the OMS reports them live forever, ``exposure_ticks`` counts them
+             against the gross limit permanently, and ``MarketMaker._reconcile`` believes a
+             quote it no longer has. ``matching.py`` says a two-sided maker WILL cross itself,
+             so this is the steady state, not an edge case.
+          2. Absorb the fills.
+          3. An order that left no resting remainder is DONE. Left untold, it stays live
+             forever and every strategy that checks its own open orders goes silent — a
+             deadlock that reads as a strategy with no signal. In the unattended loop, with
+             nobody watching, that silence is the whole failure.
+        """
+        for outcome in outcomes:
+            for cancelled in outcome.result.stp_cancelled:
+                order = self.oms.get(cancelled)
+                if order is not None and order.is_live:
+                    self.oms.on_cancelled(cancelled, ts=outcome.ts,
+                                          reason="self_trade_prevention")
+
+        self._absorb([fill for outcome in outcomes for fill in outcome.fills])
+
+        for outcome in outcomes:
+            order = self.oms.get(outcome.client_id)
+            if order is not None and order.is_live and not outcome.rested:
+                self.oms.on_cancelled(outcome.client_id, ts=outcome.ts,
+                                      reason=outcome.result.status.value)
 
     def _absorb(self, fills: list[Fill]) -> None:
         for fill in fills:

@@ -82,6 +82,29 @@ class _Pending:
     seq: int
 
 
+@dataclass(frozen=True, slots=True)
+class VenueOutcome:
+    """What the venue did with one released order.
+
+    Carries the ``client_id`` alongside the ``MatchResult`` because the result alone cannot
+    identify the order that produced it: ``resting_order_id`` is None precisely in the case a
+    caller most needs to detect — an aggressive order that fully traded or was killed and so
+    never rested at all.
+    """
+
+    client_id: str
+    result: MatchResult
+    ts: int
+
+    @property
+    def fills(self) -> list[Fill]:
+        return self.result.fills
+
+    @property
+    def rested(self) -> bool:
+        return self.result.resting_order_id is not None
+
+
 @dataclass(slots=True)
 class SimVenue:
     """An in-process matching venue. NOT a broker, and structurally unable to become one.
@@ -136,12 +159,19 @@ class SimVenue:
                 return True
         return False
 
-    def advance(self, ts: int) -> list[Fill]:
+    def advance(self, ts: int) -> list[VenueOutcome]:
         """Release every in-flight order that has arrived by ``ts``, matching each one.
 
         Orders are released in ARRIVAL order, then by send order for ties — the venue sees
         them in the order they land on the wire, and a stable tiebreak keeps a replay
         deterministic when two orders arrive in the same nanosecond.
+
+        Returns the FULL outcome per released order, not just its fills. It used to return
+        only ``result.fills``, which threw away the two facts a caller needs to keep its OMS
+        honest: whether the order left a resting remainder, and which of the caller's other
+        orders self-trade prevention just pulled off the book. ``Runner._place`` has the book
+        object in hand and reads them directly; ``AutoLoop`` goes through this venue and so
+        could not, which is exactly how it ended up stranding orders.
         """
         if not self._pending:
             return []
@@ -150,13 +180,9 @@ class SimVenue:
             return []
         self._pending = [p for p in self._pending if p.arrive_ts > ts]
         ready.sort(key=lambda p: (p.arrive_ts, p.seq))
+        return [self._apply(pending, ts) for pending in ready]
 
-        fills: list[Fill] = []
-        for pending in ready:
-            fills.extend(self._apply(pending, ts))
-        return fills
-
-    def _apply(self, pending: _Pending, ts: int) -> list[Fill]:
+    def _apply(self, pending: _Pending, ts: int) -> VenueOutcome:
         intent = pending.intent
         result: MatchResult = match(
             self.book,
@@ -168,7 +194,8 @@ class SimVenue:
             ingest_ts=max(ts, pending.arrive_ts + self.latency.market_data_ns),
         )
         self.accepted += 1
-        return result.fills
+        return VenueOutcome(client_id=intent.client_id, result=result,
+                            ts=max(ts, pending.arrive_ts + self.latency.market_data_ns))
 
     # ---- market flow -------------------------------------------------------------------
 
