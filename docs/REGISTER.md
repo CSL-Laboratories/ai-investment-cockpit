@@ -39,9 +39,10 @@ and the claim board, not the specification.
 |---|---|---|---|---|
 | `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | open | — | cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
 | `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | open | — | opened *with* RW-11, not after it |
-| `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn` from the L1 quote | open | — | `quant_book_seq` advances between observations on a live day |
+| `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn` from the L1 quote; stamp `last_quote_ts` and sample `max_data_age_s` into `BreakerSignals` (the stale-data wire) | open | — | `quant_book_seq` advances between observations on a live day |
+| `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] §4/M4 for the full §5 scope | open | — | a resting limit order reaches a terminal state on a live day with no operator action, **and** `reconcile_startup` heals (not merely alerts) a lost-response order |
 | `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | open | — | cost-sensitivity curve; the dollar threshold where a trade goes cash-flow negative |
-| `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask | open | — | two unattended market days a week apart, `verify_chain().ok` throughout |
+| `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask; wire the loss signals into `BreakerSignals` (daily loss from snapshots, consecutive losses from round trips) | open | — | two unattended market days a week apart, `verify_chain().ok` throughout |
 | `RW-13` | Event-driven intraday trigger off the existing stream (post-MVP) | open | — | see [[PLAN]] §3 — **not in the MVP** |
 
 ---
@@ -128,6 +129,7 @@ Not bugs. Work that cannot start until someone chooses.
 | `DEC-01` | Is `BookSnapshot.ts` epoch or feed-relative? *(Answered by `RW-14`: polled quotes make it epoch.)* | `BUG-040` |
 | `DEC-02` | Ubuntu keyring backend: require `gnome-keyring`+dbus, accept `keyrings.alt`, or declare Ubuntu dev-only? Tests pass via an in-memory backend, so **CI is green while a real Ubuntu deploy cannot store a secret.** | any Linux deployment |
 | `DEC-03` | Niche selection — CEF discounts / small merger-arb / stay strategy-agnostic | post-MVP; see [[PLAN]] §1 |
+| `DEC-04` | Partial-fill notional: `_pending_ok` takes the MAX signed notional across an order's history precisely to defeat laundering, so counting only the REMAINING notional after a partial needs a **new** signed payload field (`remaining_notional`), never a semantics change to `notional`. Decide the field contract before RW-15 implements the refinement. | the partial-fill cap refinement inside `RW-15` |
 
 ---
 

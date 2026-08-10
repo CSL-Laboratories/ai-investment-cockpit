@@ -194,6 +194,10 @@ state became permanent and we pay for both.
 - Add a daily-bars poller alongside the quote poller (same Alpaca credentials, free). Cache per
   symbol, refresh daily. Yields **ADV and realized volatility**.
 - Synthesize `book_fn` from the L1 quote — one level per side, timestamped from the quote.
+- Stamp `last_quote_ts` per symbol as the poller observes quotes; the intraday tick samples
+  `max_data_age_s` into `BreakerSignals` — the stale-data breaker's wire (`BUG-058` left it
+  honestly UNSAMPLED until this package exists). Gate the sampling on market hours, and keep
+  the 120s threshold coherent with the poll cadence.
 - **Gate:** `quant_book_seq` advances between observations on a live day, so the staleness
   control in `risk/engine.py` can actually fire (it currently cannot — see `BUG-040`).
 
@@ -218,8 +222,35 @@ audited.
 - **Fills modelled at bid/ask, never mid.** The research is explicit that mid-quote fills are
   the single most common way a paper result flatters itself.
 - Discord carries the whole loop: brief, proposal, question, approve/veto, fill confirmation.
+- Loss signals into `BreakerSignals` (the two `BUG-058` left unsampled): daily loss derived
+  from portfolio snapshots (day-open vs current equity — decide whether the breaker means
+  realized-only or drawdown, and rename accordingly, one home); consecutive losses derived
+  from round trips once fills flow. Neither is wired before this package because neither
+  input exists before it.
 - **Gate:** an unattended market day, end to end, with `verify_chain().ok` over the whole
   sequence — and a second one, a week later, with no human intervention in between.
+
+**`RW-15` — order-status poll + real broker reconciliation. A named prerequisite of this
+gate, scheduled NOW so the temporary state cannot become permanent (the RW-10 lesson).**
+The 2026-08-09 sweep made fills-at-submit work (`BUG-052`), which covers marketable orders
+only: without a status poll, a RESTING limit order holds the SEC-07 cap forever, a partial
+never progresses, a lost-response submit stays an `ambiguous_abort` the operator must clear
+by hand, and `reconcile_startup` can only alert (never heal) because `_no_broker_history`
+returns nothing. A degenerate M4 using only market orders would LOOK done while all of that
+stays broken — which is precisely how a gate gets gamed by accident. Scope, per §5:
+
+1. **Operator change:** resting/partial orders settle without intervention; ambiguous
+   aborts clear themselves; the reconcile report can heal.
+2. **Extends:** the gateway's existing ACK machinery (`_sanitize_broker_response` →
+   `_BROKER_STATUS_TO_STATE` → `_ack_consistent`, reused verbatim — one parser, one home)
+   plus a scheduler job over orders in open states; lookups by ``broker_order_id``, and by
+   ``client_order_id`` (= ``cockpit-{order.id}``) for the lost-response case.
+3. **Retirement:** ``main._no_broker_history`` is deleted in the same PR.
+4. **Reachability test:** a system test that fails when the poll job is not scheduled.
+5. **Claims:** `RW-15`; settles `ReconcileReport.ambiguous_aborts`; the partial-fill
+   remaining-notional refinement waits on `DEC-04` (see [[REGISTER]]).
+6. **Platforms:** pure httpx polling, no subprocess/paths — CI-neutral.
+7. **Size:** one package (~300–400 LOC + tests). Order path → adversarial-review round.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
