@@ -180,3 +180,32 @@ def test_generation_stamp_survives_a_trip(st):
     gen = w.generation
     _, job = _call(st, FakeTransport([envelope(VALID)]))
     assert job.input_refs["_generation"] == gen                        # SEC-23 mint-time stamp
+
+
+def test_repair_round_limit_enters_watch_only_with_audit(st):
+    """BUG-065: a limit on the REPAIR round used to come back NEEDS_HUMAN — job status
+    'quarantined' (a schema label), no EVENT_WATCH_ONLY, exhaustion invisible until some
+    LATER call observed the open breaker. It must take the same audited path as a
+    first-round limit."""
+    bad = envelope({"nope": True})                                     # schema-invalid -> repair
+    t = FakeTransport([bad, ProcResult(0, "", "Error: usage limit reached", False)])
+    result, job = _call(st, t)
+    assert result.status == LIMIT_HIT and result.error == "repair_limit_or_error"
+    assert job.status == "failed", "a vendor limit is not a schema quarantine"
+    assert BreakerEngine(st).is_watch_only("claude") is True
+    assert len(_events(st, EVENT_WATCH_ONLY)) == 1, "the degradation must be on the chain"
+
+
+def test_provisioned_secret_in_the_prompt_is_refused(st):
+    """BUG-092: production hardcoded secret_values=None, so the Inv 4 argv/prompt check
+    iterated an empty list and could never fire. call_agent now feeds it the provisioned
+    keyring values — a prompt carrying one is refused before any spawn."""
+    import keyring
+
+    keyring.set_password("ai-investment-cockpit", "finnhub_key", "sekret-value-123")
+    try:
+        with pytest.raises(ValueError, match="Inv 4"):
+            _call(st, FakeTransport([]),
+                  prompt="summarize with key sekret-value-123 attached")
+    finally:
+        keyring.delete_password("ai-investment-cockpit", "finnhub_key")
