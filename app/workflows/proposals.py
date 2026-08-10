@@ -18,6 +18,7 @@ bridge (SEC-03).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 
@@ -78,6 +79,8 @@ def _latest_snapshot(state) -> PortfolioSnapshot | None:
             s.expunge(snap)
     return snap
 
+
+log = logging.getLogger(__name__)
 
 DEFAULT_VERIFY_PARAMS = VerifyParams(scale=PriceScale(tick_size=Decimal("0.01")))
 """QT-05 defaults: a penny tick grid. Injectable per call, because a sub-dollar name trades
@@ -237,13 +240,33 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     verdict = None
     book_seq = None
     if book_fn is not None:
-        book = book_fn(symbol)
-        if book is not None:
-            verdict = verify_proposal(proposal, book,
-                                      verify_params or DEFAULT_VERIFY_PARAMS)
-            book_seq = book.seq
-            if verdict.reasons:
-                reasons.extend(f"execution: {r}" for r in verdict.reasons)
+        try:
+            book = book_fn(symbol)
+            if book is not None:
+                candidate = verify_proposal(proposal, book,
+                                            verify_params or DEFAULT_VERIFY_PARAMS)
+                # READ THE SEAM AGAIN, at gate time. ``_verdict_state`` calls a verdict stale
+                # when ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would
+                # trade against has moved past the one the verdict describes. Passing the
+                # SAME snapshot's seq to both sides made that condition ``seq > seq``, which
+                # is never true however far the book moved, so the Invariant 6 staleness
+                # control was wired shut while /quant/status reported it as live. Two
+                # observations are the only arrangement in which the seqs can differ.
+                current = book_fn(symbol)
+                verdict = candidate
+                book_seq = current.seq if current is not None else book.seq
+                if verdict.reasons:
+                    reasons.extend(f"execution: {r}" for r in verdict.reasons)
+        except Exception as exc:
+            # The comment above promises this, and there was no try/except behind it. A real
+            # book feed does I/O and raises for ordinary reasons; unguarded, every one of
+            # them killed the draft. Degrade to the absent-verdict case the risk gate already
+            # handles, and say so — silently losing a control is how the two dead checks
+            # above went unnoticed.
+            log.warning("execution verification unavailable for %s: %s: %s",
+                        symbol, type(exc).__name__, exc)
+            verdict = None
+            book_seq = None
 
     ctx = build_risk_context(state, quote=quote, watchlist=watchlist,
                              quant_verdict=verdict, quant_book_seq=book_seq)

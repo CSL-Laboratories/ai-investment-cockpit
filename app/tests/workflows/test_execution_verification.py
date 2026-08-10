@@ -218,7 +218,14 @@ def test_book_fn_is_injected_and_the_workflow_never_fetches(st, clock, tmp_path)
         return _book()
 
     _draft(st, clock, tmp_path, quantity=10, book_fn=recording_book_fn)
-    assert calls == ["AAPL"], "the seam is called once, with the proposal's symbol"
+    # TWICE, deliberately, and only ever with the proposal's own symbol. The first read is
+    # what the verdict is computed from; the second is taken at gate time so the Invariant 6
+    # staleness check has two observations to compare. One read made that check `seq > seq`,
+    # which is never true — see
+    # test_a_book_that_moved_between_verification_and_the_gate_is_reported_stale.
+    # The property this test exists for is unchanged: the seam is INJECTED, and nothing in
+    # the workflow fetches a book itself.
+    assert calls == ["AAPL", "AAPL"], "the seam is read twice, both times for the proposal's symbol"
 
 
 def test_build_services_threads_the_book_seam_through_to_draft_proposal():
@@ -239,3 +246,53 @@ def test_the_default_verify_params_use_a_penny_grid(st, clock, tmp_path):
     from workflows.proposals import DEFAULT_VERIFY_PARAMS
 
     assert DEFAULT_VERIFY_PARAMS.scale.tick_size == Decimal("0.01")
+
+
+# ---- the staleness control is actually reachable --------------------------------------------
+
+
+def test_a_book_that_moved_between_verification_and_the_gate_is_reported_stale(st, clock,
+                                                                               tmp_path):
+    """INVARIANT 6, WIRED SHUT. ``_verdict_state`` calls a verdict stale when
+    ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would trade against has
+    moved past the one the verdict describes.
+
+    ``draft_proposal`` read the book ONCE and passed that same snapshot's seq as both sides
+    of the comparison, so the condition was ``seq > seq``: never true, however far the book
+    moved. A fail-closed control that cannot fire is worse than none, because
+    ``/quant/status`` reports it as wired. The existing stale-verdict test passes because it
+    hand-builds a RiskContext and never goes through this path.
+    """
+    seqs = iter([7, 99])          # verify against 7; the book has moved to 99 by the gate
+
+    def moving_book(_symbol):
+        return _book(ask_depth=800, seq=next(seqs, 99))
+
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=moving_book)
+    rd = outcome.risk_decision
+    blob = " ".join(str(x) for x in (rd.warnings, rd.failed_checks, rd.checks))
+    assert "stale" in blob.lower(), f"a book that advanced 7 -> 99 was not reported stale: {blob}"
+
+
+def test_a_still_book_is_not_reported_stale(st, clock, tmp_path):
+    """CONTROL. Re-reading the seam must not make every verdict stale — the common case is a
+    book that has not moved, and crying wolf on it would make the control useless."""
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=800))
+    rd = outcome.risk_decision
+    blob = " ".join(str(x) for x in (rd.warnings, rd.failed_checks))
+    assert "stale" not in blob.lower(), blob
+
+
+def test_a_raising_book_fn_degrades_to_no_verdict_instead_of_killing_the_proposal(st, clock,
+                                                                                  tmp_path):
+    """The comment above this call says a failure here 'must never take down the proposal
+    pipeline, because an advisory measurement that can halt the thing it advises on is a
+    liability rather than a control' — and then there was no try/except. A book feed doing
+    real I/O raises for ordinary reasons, and every one of them would have killed the draft.
+    """
+    def exploding_book(_symbol):
+        raise RuntimeError("book feed went away mid-draft")
+
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=exploding_book)
+    # Degrades to exactly the no-book case, which this file already pins as APPROVED.
+    assert outcome.risk_decision.decision == "approved", outcome.risk_decision
