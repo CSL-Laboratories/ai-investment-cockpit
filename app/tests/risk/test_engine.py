@@ -173,3 +173,31 @@ def test_property_no_approval_with_failed_hard():
             assert all(c["passed"] for c in d["checks"] if c["hard"])
         # SEC-19: a rule is only ever advertised on an approved decision
         assert d["matched_rule"] is None or d["decision"] == "approved"
+
+
+# ---- BUG-066: a poisoned holding must fail closed, never crash the gate ----------------
+def test_null_market_value_in_one_holding_fails_closed_instead_of_crashing():
+    """BUG-066: a broker snapshot row like {"symbol": "TSLA", "market_value": null} made
+    the portfolio sum NaN, and the first NaN comparison raised decimal.InvalidOperation out
+    of evaluate() — an unhandled crash on the intraday loop instead of the documented
+    'risk fails conservatively' posture."""
+    ctx = clean_ctx(holdings={"AAPL": {"market_value": D("5000")},
+                              "TSLA": {"market_value": Decimal("NaN")}})
+    d = evaluate(clean_proposal(), ctx)                 # must not raise
+    assert d["decision"] in ("rejected", "needs_human")
+    assert "reg_t_minimum" in d["failed_checks"], (
+        "unverifiable equity must read as NO equity (fail closed), not as a crash")
+
+
+def test_nan_held_value_cannot_back_a_sell():
+    ctx = clean_ctx(holdings={"AAPL": {"market_value": Decimal("NaN")},
+                              "MSFT": {"market_value": D("100000")}})
+    d = evaluate(clean_proposal(side="sell", notional="1000"), ctx)   # must not raise
+    assert "sell_backed" in d["failed_checks"], (
+        "a holding whose value cannot be verified must not back a sell")
+
+
+def test_garbage_realized_loss_fails_the_daily_loss_check():
+    ctx = clean_ctx(realized_loss_today=Decimal("NaN"))
+    d = evaluate(clean_proposal(), ctx)                 # must not raise
+    assert "daily_loss_limit" in d["failed_checks"]

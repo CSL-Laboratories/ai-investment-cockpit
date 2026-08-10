@@ -175,8 +175,22 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     size_finite = raw.is_finite()
     notional = raw if size_finite else Decimal("0")     # 0 for non-finite -> safe comparisons
     opening_new = is_buy and symbol not in ctx.holdings
+    # BUG-066: Decimal NaN COMPARISONS raise InvalidOperation, so a single poisoned input
+    # (a broker snapshot holding with market_value null/garbage) used to crash evaluate()
+    # instead of failing conservatively. Every non-finite monetary derivation normalizes to
+    # its most conservative value BEFORE any comparison: unverifiable equity reads as NO
+    # equity (fails reg_t_minimum, shrinks concentration headroom) and an unverifiable
+    # holding value reads as 0 (cannot back a sell).
     port = _portfolio_value(ctx)
+    if not port.is_finite():
+        port = Decimal("0")
     held_val = _d(ctx.holdings.get(symbol, {}).get("market_value", 0))
+    if not held_val.is_finite():
+        held_val = Decimal("0")
+    realized_loss = _d(ctx.realized_loss_today)
+    loss_limit = _d(ctx.daily_loss_limit)
+    daily_loss_ok = (realized_loss.is_finite() and loss_limit.is_finite()
+                     and realized_loss <= loss_limit)
 
     concentration_ok = (not is_buy) or port <= 0 or ((held_val + notional) / port) <= ctx.concentration_pct
 
@@ -224,7 +238,7 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
                     f"open positions {ctx.open_positions}(+1) <= {ctx.max_positions}"),
         CheckResult("concentration", concentration_ok, True,
                     f"post-trade {symbol} concentration <= {ctx.concentration_pct}"),
-        CheckResult("daily_loss_limit", ctx.realized_loss_today <= ctx.daily_loss_limit, True,
+        CheckResult("daily_loss_limit", daily_loss_ok, True,
                     f"realized loss {ctx.realized_loss_today} <= {ctx.daily_loss_limit}"),
         CheckResult("pending_exposure", ctx.pending_notional + notional <= ctx.pending_exposure_cap, True,
                     f"pending {ctx.pending_notional} + {notional} <= {ctx.pending_exposure_cap} (SEC-07)"),
