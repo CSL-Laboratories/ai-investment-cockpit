@@ -1,7 +1,7 @@
 ---
 title: Accounts & keys — provisioning the cockpit's credentials
 type: setup-guide
-status: active
+status: live
 last-verified: 2026-07-06
 related: [security-architecture, security-hardening-backlog, research-report, research-supplement, build-scaffold-ultracode]
 ---

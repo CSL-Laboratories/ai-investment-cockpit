@@ -1,7 +1,7 @@
 ---
 title: Solo-dev AI investing copilot — main deep-research report
 type: research-report
-status: verified
+status: reference
 last-verified: 2026-07-02
 related: [README, research-supplement, cockpit-review-and-integrated-plan]
 ---

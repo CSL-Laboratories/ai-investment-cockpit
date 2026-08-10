@@ -1,7 +1,7 @@
 ---
 title: Upside & ROI analysis — what this system realistically returns
 type: analysis
-status: draft
+status: reference
 last-verified: 2026-07-02
 related: [README, research-report, research-supplement, build-scaffold-ultracode]
 ---

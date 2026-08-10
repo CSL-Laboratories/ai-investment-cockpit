@@ -1,8 +1,8 @@
 ---
 title: Prompt-injection defense — hardening the untrusted-content ingest surface
 type: security-spec
-status: draft
-last-verified: 2026-07-03
+status: reference
+last-verified: 2026-08-09
 related: [security-architecture, security-hardening-backlog, research-report, research-supplement, draft-discord-control-plane, build-scaffold-ultracode, upside-and-roi]
 ---
 
