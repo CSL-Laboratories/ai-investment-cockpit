@@ -113,6 +113,10 @@ def diff_facts(
         anchor = find_inline_anchor(f_cur, inline)
         if anchor is None:
             return  # uncitable in the current filing -> skip (fail-closed)
+        try:
+            snippet = anchor_snippet(current_raw, anchor)
+        except UnicodeDecodeError:
+            return  # BUG-086: a non-utf8 anchor is uncitable — skip this fact, not the filing
         key = (f_cur.concept, f_cur.unit, anchor.byte_start)
         if key in emitted:
             return
@@ -129,7 +133,7 @@ def diff_facts(
                 # Verbatim citation snippet in the SAME utf-8 encoding as the Citation contract,
                 # so byte_end - byte_start == len(snippet.encode("utf-8")) and the raw slice
                 # decodes back to this snippet (Invariant 1 round-trip).
-                snippet=anchor_snippet(current_raw, anchor),
+                snippet=snippet,
                 prior_value=f_prior.value,
                 current_value=f_cur.value,
                 abs_change=abs_change,
@@ -157,10 +161,23 @@ def diff_facts(
             collided_periods.add(pkey)  # ambiguous prior -> poison this key
             continue
         prior_by_period.setdefault(pkey, f)
-    for f_cur in current_facts:
-        pkey = (f_cur.concept, f_cur.unit, f_cur.period_key)
-        if pkey in collided_periods:
-            continue  # duplicate-period collision in the prior filing -> no restatement
+    # BUG-087: the same collision can live on the CURRENT side — an amended companyfacts
+    # payload listing one concept+period twice with different values (as-reported vs
+    # as-restated). Without the mirror check, BOTH rows paired against the single prior
+    # value and minted two contradictory is_restatement deltas. Same fail-closed rule,
+    # both directions: an ambiguous side poisons the key.
+    cur_by_period: dict[tuple[str, str, tuple], ParsedFact] = {}
+    cur_collided: set[tuple[str, str, tuple]] = set()
+    for f in current_facts:
+        pkey = (f.concept, f.unit, f.period_key)
+        existing = cur_by_period.get(pkey)
+        if existing is not None and existing.value != f.value:
+            cur_collided.add(pkey)
+            continue
+        cur_by_period.setdefault(pkey, f)
+    for pkey, f_cur in cur_by_period.items():
+        if pkey in collided_periods or pkey in cur_collided:
+            continue  # duplicate-period collision on either side -> no restatement
         f_prior = prior_by_period.get(pkey)
         if f_prior is not None:
             emit(f_cur, f_prior, restatement=True)
