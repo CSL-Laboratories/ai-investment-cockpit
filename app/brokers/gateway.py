@@ -33,7 +33,20 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 
 from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
-from brokers.order_state_machine import TERMINAL_STATES, transition
+from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
+
+# BUG-052: the broker statuses that are DEFINITIVE about an order's fate at submit time,
+# mapped onto FSM states. Anything absent here ("new", "accepted", "pending_new", ...) is
+# indeterminate and the order stays 'submitted' — never invent a fill. Alpaca spells
+# cancellation "canceled"; both spellings map to the FSM's "cancelled".
+_BROKER_STATUS_TO_STATE: dict[str, str] = {
+    "filled": "filled",
+    "partially_filled": "partially_filled",
+    "canceled": "cancelled",
+    "cancelled": "cancelled",
+    "expired": "expired",
+    "rejected": "rejected",
+}
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.mode_ladder import ExecutionRuntimeError
@@ -687,7 +700,26 @@ class OrderGateway:
             # canonical tuple/hash, and cannot change symbol/side/size/price/TIF.
             broker_request = dict(canonical)
             broker_request["client_order_id"] = f"cockpit-{order.id}"[:128]
-            result = self._broker.submit_order(broker_request)
+            try:
+                result = self._broker.submit_order(broker_request)
+            except Exception as exc:                                     # noqa: BLE001
+                # BUG-062: a broker failure between the intent and its result used to leave
+                # the SEC-13 intent dangling FOREVER — the production reconciler is wired
+                # with _no_broker_history and can only alert a not-landed intent, never heal
+                # it — while the raw exception escaped the locked submit. Complete the
+                # two-phase pair (same shape as the halt-abort above), record the refusal,
+                # and fail closed. The capability token was consumed at gate (g) and stays
+                # consumed: a failed submit needs a fresh human approval, not a free retry.
+                reason = f"broker submit failed: {exc}"
+                st.audit.result(
+                    intent, "order_submit",
+                    refs={"order_id": order.id, "aborted": "broker_error"},
+                    payload={"aborted": reason[:500]},
+                )
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                                     actor=producing_runtime)
+                return GateOutcome(False, "broker_error", reason,
+                                   order_tuple_hash=resolved_hash)
             # Result AFTER the broker call — the two-phase pair keyed on the intent seq.
             st.audit.result(
                 intent, "order_submit",
@@ -717,6 +749,22 @@ class OrderGateway:
                 filled_qty=result.get("filled_qty", 0),
                 avg_fill_price=result.get("avg_fill_price"),
             )
+
+            # BUG-052: consume the broker's ACK. A paper market order fills synchronously
+            # at submit; leaving it 'submitted' meant the filled/cancelled FSM edges had no
+            # production caller and _pending_ok counted the full notional as open FOREVER —
+            # the SEC-07 cap degraded into a one-time budget that self-blocked the order
+            # path. Only DEFINITIVE statuses advance the state; indeterminate ones stay
+            # 'submitted' for the (future) order-status poll to resolve.
+            ack_state = _BROKER_STATUS_TO_STATE.get(str(result.get("status") or "").lower())
+            if ack_state and ack_state != "submitted" and legal_order_transition(order.state, ack_state):
+                transition(
+                    st, order, ack_state, actor=producing_runtime,
+                    reason=f"broker reported {result.get('status')!r} at submit", clock=clock,
+                    broker_order_id=result.get("broker_order_id"),
+                    filled_qty=result.get("filled_qty", 0),
+                    avg_fill_price=result.get("avg_fill_price"),
+                )
 
         return GateOutcome(True, "submitted", broker_order_id=result.get("broker_order_id"),
                            broker_status=result.get("status"), order_tuple_hash=resolved_hash)
