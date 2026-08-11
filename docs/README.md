@@ -46,6 +46,8 @@ defects got fixed twice on two branches.
 | [[refactor-plan]] | The **RW-series**. RW-11/RW-12 wire and then retire the EDGAR path |
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
+| [[congress-copytrade]] | **RW-16** — congressional copy-trading. Paper-complete and **live-blocked on SEC-08**; read the banner and §8 before planning on top of it |
+| [[runbooks/congress-autoexec]] | **RW-17** — operating the zero-touch **paper** copy lane: on/off, the kill switch, every refusal reason, and quiet-day-vs-broken-lane |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |

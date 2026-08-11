@@ -142,6 +142,13 @@ def create_order(
         # symbol so pending exposure is derivable from the ledger, not mutable columns.
         "notional": _payload_notional(order),
         "symbol": symbol,
+        # RW-17: the SIDE, so a reader can tell an opening trade from a closing one from the
+        # signed ledger alone. ``copytrade/budget.py``'s open-position rail needs it to release
+        # a slot when a position is closed OUTSIDE the auto lane (by the operator, by hand);
+        # without it the rail replayed only its own adjudications and ratcheted toward a
+        # permanent floor it could never come back from. Entries written before this field
+        # existed simply carry no ``side`` and are ignored by that reader.
+        "side": side,
     }
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)
     return order
@@ -197,6 +204,8 @@ def transition(
         # symbol so pending exposure is derivable from the ledger, not mutable columns.
         "notional": _payload_notional(order),
         "symbol": order.symbol,
+        # RW-17: the SIDE — see ``create_order`` for why the open-position rail needs it.
+        "side": order.side,
     }
     # record_state_change UPDATEs the existing row AND appends its audit entry in ONE txn.
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)

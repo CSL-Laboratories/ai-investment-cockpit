@@ -221,18 +221,24 @@ def build_alpaca_news_connect(api_key: str, api_secret: str, *, url: str = ALPAC
     return connect
 
 
-def _log_unprovisioned(what: str, how: str) -> None:
+def _log_unprovisioned(what: str, how: str) -> str:
     """Say plainly that something is OFF, and how to turn it on.
 
     Not a debug line: an unprovisioned feed produces zero events forever, which is exactly the
     shape of a quiet market, and an unprovisioned surface delivers nothing, which is exactly the
     shape of a day with nothing to say. The operator must be able to tell those apart from the
     log alone — and again from ``IngestRunner.status()``, and again from the runbook's check.
+
+    RETURNS the reason, so the caller can carry the SAME sentence into
+    ``IngestRunner.mark_unprovisioned`` instead of writing a second one. A startup WARNING has
+    scrolled off the console by the time anyone asks /status why a feed is quiet; two
+    independently-worded explanations of one absence is how they start disagreeing.
     """
     # ASCII only: this lands on a Windows console (cp1252), where a stray em-dash renders as
     # mojibake and makes the one line an operator most needs to read look like a corruption.
     log.warning("NOT PROVISIONED: %s is OFF and will stay silent. Silence from it is NOT a "
                 "quiet day. To enable: %s", what, how)
+    return f"{what} is OFF. To enable: {how}"
 
 
 class AlpacaStreamError(RuntimeError):
@@ -360,6 +366,303 @@ def build_earnings_calendar_fetch(api_key: str, *, clock, http_get=None,
     return fetch
 
 
+def build_congress_providers(settings, *, http_get=None):
+    """RW-16 — build the congressional PTR disclosure providers (House Clerk + Senate EFD).
+
+    Returns ``(providers, None)`` when wired and ``(None, reason)`` when not — the reason being
+    the same sentence that went to the log, so ``IngestRunner.status()`` and the startup
+    warning can never drift into two different explanations of one absence.
+
+    TWO INDEPENDENT SWITCHES, BOTH FAIL CLOSED:
+
+      * ``COCKPIT_CONGRESS_ENABLED`` — off by default. This feed does not merely watch: its
+        disclosures feed a deterministic copy engine that proposes orders, so it is opt-in.
+      * ``COCKPIT_CONGRESS_USER_AGENT`` — a declared contact string. Without one this returns
+        ``None`` rather than fetching anonymously. That is not politeness theatre: a suppressed
+        UA is empirically how a .gov host answers 403, and an anonymous scraper is how a solo
+        deployment gets an IP block that then looks exactly like "Congress filed nothing".
+
+    NEVER RAISES. A composition root that dies because one optional feed's constructor moved
+    would take the order path, the risk engine and the operator surface down with it — the
+    per-feed fail-closed posture the whole module is built on (see ``build_ingest_fetchers``).
+    Any construction failure is logged as NOT PROVISIONED, carries its ``repr`` as the reason,
+    and is reported by ``IngestRunner.status()`` under ``unprovisioned``.
+
+    THE CONSTRUCTOR IS NOT PINNED BY THE RW-16 CONTRACT — only ``name`` and
+    ``fetch(*, since, today)`` are — so the kwargs below are offered, not assumed: each
+    provider receives exactly the ones its signature declares (``_supported_kwargs``). The ONE
+    kwarg that is mandatory is ``user_agent``: a provider that cannot accept our declared
+    contact string is refused rather than constructed, because "fetch house.gov anonymously"
+    is not a degraded mode of this feed, it is a different and worse one.
+    """
+    if not getattr(settings, "congress_enabled", False):
+        return None, _log_unprovisioned(
+            "congress (congressional PTR disclosures)",
+            "set COCKPIT_CONGRESS_ENABLED=true (and COCKPIT_CONGRESS_USER_AGENT, and a "
+            "non-empty COCKPIT_CONGRESS_FOLLOW - an empty follow list copies nobody)")
+    user_agent = str(getattr(settings, "congress_user_agent", "") or "").strip()
+    if not user_agent:
+        return None, _log_unprovisioned(
+            "congress (congressional PTR disclosures)",
+            "set COCKPIT_CONGRESS_USER_AGENT to a contact string ('Cockpit you@example.com'); "
+            "this feed will not fetch a .gov host without one")
+
+    offered = {
+        "user_agent": user_agent,
+        # A politeness floor WE choose (neither house.gov nor efdsearch.senate.gov publishes a
+        # documented cap), passed as a rate rather than a TokenBucket: the RW-16 provider
+        # contract is ``fetch(*, since, today)``, which has no monotonic seam for a bucket to
+        # read, so the pacing has to live inside the provider that owns the requests.
+        "rate_per_sec": float(getattr(settings, "congress_rate_per_sec", 0.5)),
+        "http_get": http_get,
+    }
+    try:
+        from ingest.congress.house_clerk import HouseClerkProvider
+
+        specs = [("house", HouseClerkProvider)]
+        if getattr(settings, "congress_senate_enabled", False):
+            from ingest.congress.senate_efd import SenateEfdProvider
+
+            specs.append(("senate", SenateEfdProvider))
+
+        providers = []
+        for name, cls in specs:
+            kwargs = _supported_kwargs(cls, offered)
+            if "user_agent" not in kwargs:
+                return None, _log_unprovisioned(
+                    f"congress ({name} provider)",
+                    f"{cls.__name__} does not accept user_agent=; refusing to fetch a .gov "
+                    "host without a declared contact string (wiring bug, not a config gap)")
+            providers.append(cls(**kwargs))
+    except Exception as exc:            # noqa: BLE001 - one optional feed never kills compose
+        return None, _log_unprovisioned(
+            "congress (congressional PTR disclosures)",
+            f"fix the provider wiring: {exc!r}")
+
+    if not getattr(settings, "congress_follow", ""):
+        # Explicitly NOT a refusal to build. The follow list gates the COPY ENGINE, not the
+        # feed: with it empty the disclosures are still fetched, stored and visible (Engine 1,
+        # awareness), and ``CopyPolicy.follows`` copies nobody. Saying so once at startup stops
+        # "why did it propose nothing" from being a mystery later.
+        log.warning("congress: COCKPIT_CONGRESS_FOLLOW is empty, so disclosures will be "
+                    "INGESTED but copied for NOBODY (an empty follow list is an empty "
+                    "allowlist, never 'everyone').")
+    log.info("congress providers wired: %s (ua=%r, %.2f req/s)",
+             [getattr(p, "name", type(p).__name__) for p in providers],
+             user_agent, offered["rate_per_sec"])
+    return tuple(providers), None
+
+
+def _supported_kwargs(target, offered: dict) -> dict:
+    """The subset of ``offered`` that ``target``'s signature actually accepts.
+
+    The composition root is the one place that has to survive an interface it does not own:
+    RW-16 pins the providers' ``fetch``, not their ``__init__``. Passing an unexpected kwarg
+    would raise ``TypeError`` inside ``compose()``; passing none would build a provider with no
+    contact string. So we offer what we have and let the callee's declared signature decide —
+    then the CALLER checks that the load-bearing ones survived (see ``user_agent`` above).
+    A ``**kwargs`` provider gets everything.
+    """
+    import inspect
+
+    try:
+        params = inspect.signature(target).parameters
+    except (TypeError, ValueError):     # builtins / C-implemented callables have no signature
+        return dict(offered)
+    if any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return dict(offered)
+    return {k: v for k, v in offered.items() if k in params}
+
+
+class CongressPollAdapter:
+    """RW-16 — adapts ``ingest.congress.poller.CongressPoller`` to the poll-feed contract.
+
+    TWO SHAPES, ONE SEAM, AND THIS IS WHERE THEY MEET. Every WP3 poller is
+    ``poll(now, on_event) -> int``: the runner owns the sink and hands it in per tick.
+    ``CongressPoller`` is ``poll() -> PollResult`` with ``on_event`` and ``store`` bound at
+    CONSTRUCTION. Both are defensible; they are not the same, and neither may be renegotiated
+    here. The composition root is the correct home for the difference — teaching
+    ``orchestrator/ingest_runner.py`` about one feed's constructor would put a feed-specific
+    branch inside the generic driver, and changing either signature would break a pinned
+    contract for the agent who owns it.
+
+    NOTHING IS SUMMED AWAY. ``PollResult`` carries the counted outcomes this feed exists to
+    make visible (documents seen, parse errors, skips) and ``IngestRunner._signals`` reads
+    ``counters`` / ``progress_signal`` / ``strand_signal`` / ``cursor`` off the poller object it
+    was handed. So this object FORWARDS all four rather than reducing a poll to its emitted
+    count: a count that reaches nobody is the same as no count at all, and a congressional feed
+    that parsed 40 documents into 0 usable disclosures must never read as "nothing was filed".
+
+    THE POLLER IS BUILT LAZILY, ON THE FIRST TICK. Its ``on_event`` is the runner's
+    ``PersistSink``, which does not exist until ``add_poller`` has run. It is rebuilt if a
+    DIFFERENT sink ever arrives (a test driving one adapter through two runners), because a
+    poller silently persisting through the previous run's sink is the kind of bug that only
+    shows up as events landing in the wrong place.
+    """
+
+    # Fields a PollResult might carry the emitted count in. Checked in order; the contract
+    # pins the type's existence and that it counts, not its field names.
+    _EMITTED_FIELDS = ("emitted", "events_emitted", "emitted_events", "events", "persisted")
+
+    def __init__(self, providers, *, store, clock, dedup=None, poller_factory=None):
+        self._providers = tuple(providers)
+        self._store = store
+        self._clock = clock
+        self._dedup = dedup
+        self._factory = poller_factory
+        self._poller = None
+        self._bound_sink = None
+        self._result_counts: dict = {}
+        self._shape_signal: str | None = None
+        # The adapter's OWN non-emitting outcomes. Named and counted for the same reason every
+        # poller in ingest/ names its drops: an uncounted skip is a silent one.
+        self._counters = {"adapter_polls": 0, "adapter_unreadable_result": 0,
+                          "adapter_rebound_sink": 0}
+
+    # ---- the poll-feed contract ---------------------------------------------------------
+    def poll(self, now, on_event) -> int:
+        """One tick. ``now`` is the runner's MONOTONIC reading and is deliberately unused: the
+        congressional providers are date-driven (``fetch(*, since, today)``) and take their
+        calendar from the injected wall clock, never from a number that reads as 1970 when
+        parsed as a date (``ingest/clock_contract.py``)."""
+        del now
+        poller = self._poller_for(on_event)
+        self._counters["adapter_polls"] += 1
+        result = poller.poll()
+        self._result_counts = _poll_result_counts(result)
+        return self._emitted_from(result)
+
+    def _poller_for(self, on_event):
+        if self._poller is not None and self._bound_sink is on_event:
+            return self._poller
+        if self._poller is not None:
+            self._counters["adapter_rebound_sink"] += 1
+        factory = self._factory
+        if factory is None:
+            from ingest.congress.poller import CongressPoller
+
+            factory = CongressPoller
+        kwargs = _supported_kwargs(factory, {
+            "on_event": on_event, "store": self._store,
+            "clock": self._clock, "dedup": self._dedup,
+        })
+        # THE LOAD-BEARING KWARGS MUST HAVE SURVIVED THE FILTER. ``_supported_kwargs`` drops
+        # anything the callee's signature does not declare, and its own docstring makes the
+        # caller responsible for checking that the ones that matter came through (the provider
+        # path does exactly this for ``user_agent``). This path had no such check, and the two
+        # seams it silently drops are the two that carry the evidence:
+        #
+        #   * ``on_event`` — the emit sink. Dropped, every disclosure is parsed and then
+        #     reaches nobody.
+        #   * ``store``    — the persistence seam. Dropped, the poller builds with store=None
+        #     and NOTHING IS EVER WRITTEN.
+        #
+        # Either one would render a wiring bug as a feed that polls cleanly, counts documents
+        # and produces a tidy zero — "the congressional feed was quiet today" — which is
+        # precisely the failure mode this package's counters exist to make impossible. So a
+        # missing seam is a REFUSAL, not a degraded mode. Raising here is the correct shape:
+        # ``IngestRunner.poll`` catches it, counts it, and reports the feed as ``status="error"``
+        # with the repr, exactly as the note below describes.
+        missing = [k for k in ("on_event", "store") if k not in kwargs]
+        if missing:
+            raise TypeError(
+                f"{getattr(factory, '__name__', factory)!r} does not accept {missing}; refusing "
+                "to build a congressional poller that would parse filings and then silently "
+                "drop them (wiring bug, not a config gap)"
+            )
+        # A construction failure PROPAGATES: ``IngestRunner.poll`` catches it, counts it, and
+        # reports the feed as ``status="error"`` with the repr. Swallowing it into a 0 here
+        # would render a wiring bug as a quiet day, which is the one outcome this file's
+        # docstring forbids.
+        self._poller = factory(self._providers, **kwargs)
+        self._bound_sink = on_event
+        return self._poller
+
+    def _emitted_from(self, result) -> int:
+        """The emitted count, or 0 with the shortfall NAMED rather than assumed."""
+        for field_name in self._EMITTED_FIELDS:
+            value = getattr(result, field_name, None)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                return int(value)
+            if isinstance(value, (list, tuple, set, frozenset)):
+                return len(value)
+        self._counters["adapter_unreadable_result"] += 1
+        self._shape_signal = (
+            f"congress PollResult carried no readable emitted count "
+            f"(looked for {list(self._EMITTED_FIELDS)}, saw {sorted(self._result_counts)})"
+        )
+        return 0
+
+    # ---- the signals IngestRunner._signals reads ----------------------------------------
+    @property
+    def counters(self) -> dict:
+        merged = dict(self._counters)
+        inner = getattr(self._poller, "counters", None)
+        if isinstance(inner, dict):
+            merged.update(inner)
+        merged.update(self._result_counts)
+        return merged
+
+    @property
+    def progress_signal(self):
+        inner = getattr(self._poller, "progress_signal", None)
+        both = [s for s in (inner, self._shape_signal) if s]
+        return "; ".join(both) if both else None
+
+    @property
+    def strand_signal(self):
+        return getattr(self._poller, "strand_signal", None)
+
+    @property
+    def cursor(self):
+        return getattr(self._poller, "cursor", None)
+
+
+def _poll_result_counts(result) -> dict:
+    """Flatten a ``PollResult`` into named integer counters for ``status()``.
+
+    Shape-tolerant on purpose (the RW-16 contract pins that the result COUNTS, not what its
+    fields are called): ints pass through, collections become their length, and anything else
+    is dropped rather than stringified into a status payload. ``IngestRunner._signals`` filters
+    the zeroes, so a clean poll stays quiet and a poll that dropped 12 documents does not.
+    """
+    fields = getattr(result, "__dict__", None) or {}
+    counts: dict = {}
+    for name, value in fields.items():
+        if name.startswith("_"):
+            continue
+        if isinstance(value, bool):
+            counts[name] = int(value)
+        elif isinstance(value, int):
+            counts[name] = value
+        elif isinstance(value, (list, tuple, set, frozenset, dict)):
+            counts[f"{name}_count"] = len(value)
+    return counts
+
+
+class IngestFetchers(dict):
+    """The per-feed closure map, plus the REASON each absent feed is absent.
+
+    A plain ``{feed: closure | None}`` says a feed is off but never why, so the reason lived
+    only in a startup WARNING that has scrolled away by the time anyone reads /status.
+    Subclassing ``dict`` keeps every existing caller, test and injected fixture working
+    unchanged (a plain dict is still accepted everywhere — ``build_ingest_runner`` reads this
+    attribute with ``getattr``).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unprovisioned: dict[str, str] = {}
+
+    def absent(self, feed: str, reason: str) -> None:
+        """Record WHY ``feed`` has no closure. The value stays ``None``, so no caller can
+        mistake a recorded reason for a working feed."""
+        self[feed] = None
+        self.unprovisioned[feed] = reason
+
+
 def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
                           finra_token_provider=None, finra_http_get=None,
                           finra_row_mapper=None, clock=None):
@@ -368,15 +671,18 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
 
     Returns one entry per feed, keyed by the ``orchestrator.ingest_runner`` feed name::
 
-        {"alpaca:benzinga": connect | None,   # a connect() factory (the WS stream)
-         "finnhub":         fetch   | None,
-         "sec:edgar":       fetch   | None,
-         "calendar":        fetch   | None,
-         "finra":           fetch   | None}
+        {"alpaca:benzinga": connect   | None,   # a connect() factory (the WS stream)
+         "finnhub":         fetch     | None,
+         "sec:edgar":       fetch     | None,
+         "calendar":        fetch     | None,
+         "finra":           fetch     | None,
+         "congress":        providers | None}   # RW-16: a tuple of DisclosureProviders
 
     A None value means NOT PROVISIONED, and a caller MUST NOT read it as "no events" —
-    ``build_ingest_runner`` registers no poller for it, so it is visibly absent rather than
-    silently quiet. For EDGAR specifically, consult ``fetch.brew_status(day)``
+    ``build_ingest_runner`` registers no poller for it and records the REASON on the runner
+    (``IngestFetchers.unprovisioned`` -> ``IngestRunner.mark_unprovisioned``), so the feed is
+    visibly, explicably absent rather than silently quiet. For EDGAR specifically, consult
+    ``fetch.brew_status(day)``
     (``ingest/edgar_brew.py:make_brew_fetch``), whose NOT_PROVISIONED / NOT_RUN / DEGRADED
     statuses are deliberately distinguishable from a legitimate quiet day; the runner wires that
     reader into ``status()`` for exactly this reason.
@@ -395,8 +701,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
     from ingest.edgar_brew import make_brew_fetch
     from ingest.finra_short_interest import make_finra_fetch
 
-    fetchers = {"alpaca:benzinga": None, "finnhub": None, "sec:edgar": None,
-                "calendar": None, "finra": None}
+    fetchers = IngestFetchers({"alpaca:benzinga": None, "finnhub": None, "sec:edgar": None,
+                               "calendar": None, "finra": None, "congress": None})
 
     alpaca_key = get_secret(_ALPACA_KEY_NAME)
     alpaca_secret = get_secret(_ALPACA_SECRET_NAME)
@@ -404,8 +710,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
         fetchers["alpaca:benzinga"] = build_alpaca_news_connect(
             alpaca_key.reveal(), alpaca_secret.reveal(), ws_connect=ws_connect)
     else:
-        _log_unprovisioned("alpaca:benzinga",
-                           f"keyring set {_ALPACA_KEY_NAME} / {_ALPACA_SECRET_NAME}")
+        fetchers.absent("alpaca:benzinga", _log_unprovisioned(
+            "alpaca:benzinga", f"keyring set {_ALPACA_KEY_NAME} / {_ALPACA_SECRET_NAME}"))
 
     finnhub_key = get_secret(_FINNHUB_KEY_NAME)
     if finnhub_key is not None:
@@ -426,16 +732,20 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
                 finnhub_key.reveal(), clock=clock if clock is not None else utc_now,
                 http_get=http_get, days_ahead=days)
         else:
-            _log_unprovisioned("calendar", "set COCKPIT_CALENDAR_LOOKAHEAD_DAYS > 0 "
-                                           "(deliberately disabled at 0)")
+            fetchers.absent("calendar", _log_unprovisioned(
+                "calendar", "set COCKPIT_CALENDAR_LOOKAHEAD_DAYS > 0 "
+                            "(deliberately disabled at 0)"))
     else:
-        _log_unprovisioned("finnhub + calendar", f"keyring set {_FINNHUB_KEY_NAME}")
+        reason = _log_unprovisioned("finnhub + calendar", f"keyring set {_FINNHUB_KEY_NAME}")
+        fetchers.absent("finnhub", reason)
+        fetchers.absent("calendar", reason)
 
     if settings.brew_db_path:
         fetchers["sec:edgar"] = make_brew_fetch(settings.brew_db_path,
                                                 runs_dir=settings.brew_runs_dir)
     else:
-        _log_unprovisioned("sec:edgar", "set COCKPIT_BREW_DB_PATH (+ COCKPIT_BREW_RUNS_DIR)")
+        fetchers.absent("sec:edgar", _log_unprovisioned(
+            "sec:edgar", "set COCKPIT_BREW_DB_PATH (+ COCKPIT_BREW_RUNS_DIR)"))
 
     if settings.finra_endpoint and settings.finra_user_agent and finra_token_provider \
             and finra_http_get:
@@ -457,8 +767,17 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
         fetchers["finra"].bucket = TokenBucket(rate_per_sec=settings.finra_rate_per_sec,
                                                capacity=settings.finra_rate_per_sec)
     else:
-        _log_unprovisioned("finra", "set COCKPIT_FINRA_ENDPOINT + COCKPIT_FINRA_USER_AGENT and "
-                                    "pass finra_token_provider/finra_http_get to compose()")
+        fetchers.absent("finra", _log_unprovisioned(
+            "finra", "set COCKPIT_FINRA_ENDPOINT + COCKPIT_FINRA_USER_AGENT and "
+                     "pass finra_token_provider/finra_http_get to compose()"))
+
+    # RW-16: the congressional disclosure providers. Off unless BOTH switches are set, and
+    # never fatal — see build_congress_providers.
+    congress, congress_reason = build_congress_providers(settings, http_get=http_get)
+    if congress:
+        fetchers["congress"] = congress
+    else:
+        fetchers.absent("congress", congress_reason or "congress providers were not built")
     return fetchers
 
 
@@ -480,6 +799,11 @@ def build_ingest_runner(state, *, parquet_root, fetchers, settings=None, clock=N
     FINRA's bucket is passed through from the closure per its documented contract
     (``FinraShortInterestPoller(fetch, bucket=fetch.bucket)``) — the rate lives with the
     poller, not the fetch.
+
+    RW-16 adds the congressional feed, behind ``CongressPollAdapter`` (its poller has the other
+    signature — see that class), and closes the loop on absence: every feed WITHOUT a closure is
+    recorded on the runner with the reason it is off, so ``status()`` answers "unprovisioned or
+    quiet?" without anyone having to find the startup log.
     """
     from ingest.alpaca_news import AlpacaNewsConsumer
     from ingest.calendars import CalendarPoller
@@ -489,6 +813,7 @@ def build_ingest_runner(state, *, parquet_root, fetchers, settings=None, clock=N
     from orchestrator.ingest_runner import (
         FEED_ALPACA_NEWS,
         FEED_CALENDAR,
+        FEED_CONGRESS,
         FEED_EDGAR,
         FEED_FINNHUB,
         FEED_FINRA,
@@ -518,10 +843,579 @@ def build_ingest_runner(state, *, parquet_root, fetchers, settings=None, clock=N
         finra_fetch = fetchers[FEED_FINRA]
         runner.add_poller(FEED_FINRA, FinraShortInterestPoller(
             finra_fetch, bucket=getattr(finra_fetch, "bucket", None), clock=wall_clock))
+    if fetchers.get(FEED_CONGRESS):
+        # ``store`` is the audited session factory the rest of the graph writes through, so a
+        # persisted disclosure lands in the SAME database as the events, orders and audit chain
+        # that will later cite it (Inv 8: raw inputs stored separately from summaries, but in
+        # one replayable store). ``clock`` is the same tz-aware wall clock the EDGAR and FINRA
+        # pollers take — one contract, now three seams.
+        runner.add_poller(FEED_CONGRESS, CongressPollAdapter(
+            fetchers[FEED_CONGRESS], store=state.session_factory, clock=wall_clock))
 
-    log.info("ingest wired: poll feeds=%s stream feeds=%s",
-             sorted(runner.polls) or "NONE", sorted(runner.streams) or "NONE")
+    # Every feed we KNOW about and did not wire, with the reason (RW-16). Absence is now
+    # reported, not merely observable: an operator reading /status sees "congress: OFF because
+    # COCKPIT_CONGRESS_USER_AGENT is unset" instead of a feed list that simply lacks a name
+    # they were looking for. Falls back to a generic reason for an injected plain-dict
+    # ``fetchers`` (every test does that), which is still better than nothing at all.
+    recorded = getattr(fetchers, "unprovisioned", {}) or {}
+    for feed, value in sorted(fetchers.items()):
+        if value is None and feed not in runner.polls and feed not in runner.streams:
+            runner.mark_unprovisioned(feed, recorded.get(
+                feed, "no fetch closure was built for this feed (see the startup log)"))
+
+    log.info("ingest wired: poll feeds=%s stream feeds=%s unprovisioned=%s",
+             sorted(runner.polls) or "NONE", sorted(runner.streams) or "NONE",
+             sorted(runner.unprovisioned) or "NONE")
     return runner
+
+
+# =========================================================================================
+# RW-17 — the PAPER auto-execution lane (the copy CYCLE is now scheduled; read this first)
+# =========================================================================================
+# WHAT CHANGED, AND WHAT DID NOT.
+#
+# RW-16 left the copy CYCLE unscheduled and said so here: "a cron job would quietly manufacture
+# proposals off a 30-45 day-old signal into an approval queue nobody asked to fill." The
+# operator has REVERSED that, in their own words: "i do not want to do any approvals when this
+# tool is running, i want it to make trades for me. all i ask is for notifications." So the
+# queue is now asked for, and RW-17 adjudicates it without them — on PAPER, inside a cancel
+# window, against budget rails, with every outcome notified.
+#
+# WHAT DID NOT CHANGE IS EVERYTHING THAT PROTECTS REAL CAPITAL:
+#
+#   * ``producing_runtime`` is still ``"deterministic:copytrade"`` and
+#     ``assert_execution_runtime`` still REFUSES it in review_live/auto_veto/auto_full, so the
+#     cycle scheduled below emits NOTHING in any live rung. SEC-08 is untouched and RW-16-LIVE
+#     stays open.
+#   * The auto rungs are still LIVE modes with their own gates (SEC-11 anchor, four weeks of
+#     history, 30 adjudicated proposals). Nothing here arms one, and nothing here needs one:
+#     this lane runs at ``mode == paper`` and re-checks that at every resolve.
+#   * The gateway this lane submits through is the PAPER-scoped one built in
+#     ``build_paper_execution``. ``_ORDER_AUTHORITY_BY_SCOPE`` maps ``paper`` to the paper
+#     transport and the auto rungs to the LIVE one; reusing the existing gateway rather than
+#     constructing a second one is what keeps Invariant 1's single order path single.
+#   * The approval step is REPLACED, not removed. The executor writes a real, persisted,
+#     HMAC-signed adjudication the gateway re-loads and re-verifies — the same shape
+#     ``bridge/veto.py`` uses for ``auto_veto``. There is no bypass and no second path.
+#
+# ALL-OR-NOTHING, AND OFF BY DEFAULT. ``build_paper_autoexec`` fails closed to ABSENT unless
+# every part of the lane exists: the opt-in flag, a paper gateway, a notification seam, and a
+# valid copy policy. A half-built lane is the one shape forbidden — a lane that trades but
+# cannot notify is precisely what the operator did not ask for. When it is absent, NO copy-cycle
+# job and NO resolve job are registered, so a congress-awareness-only deployment keeps exactly
+# the RW-16 posture it had: the cycle stays operator-triggered and creates nothing on a timer.
+
+
+class AutoExecWiring:
+    """The composed RW-17 lane, or the REASON it is absent — the same device ``IngestFetchers``
+    uses for feeds, for the same reason.
+
+    An absent auto-execution lane produces zero trades forever, which is shaped exactly like a
+    month in which no followed member filed anything. The operator's only interface is now
+    notifications, so "nothing happened" has to be answerable as either "nothing was disclosed"
+    or "the lane is OFF because X" — never left to be inferred from silence. ``status()``
+    mirrors ``IngestRunner.status()``'s ``unprovisioned`` shape so a reader (and
+    ``GET /status``, via ``app.state.autoexec``) sees the same vocabulary it already knows.
+    """
+
+    def __init__(self, executor=None, *, reason: str | None = None, window_seconds: int = 0,
+                 budget: dict | None = None, notify=None) -> None:
+        self.executor = executor
+        self.reason = reason
+        self.window_seconds = window_seconds
+        self.budget = dict(budget or {})
+        # Kept so the DAILY DIGEST job can reach the typed notifier. The executor's own seam is
+        # deliberately the narrow ``notify(event, payload) -> bool``; the digest carries
+        # ``DigestTrade``/``DigestRefusal`` rows, which that signature cannot express.
+        self.notify = notify
+
+    @property
+    def enabled(self) -> bool:
+        return self.executor is not None
+
+    def status(self) -> dict:
+        if self.executor is None:
+            return {"kind": "not_provisioned", "reason": self.reason or "not composed"}
+        return {
+            "kind": "armed",
+            # Stated on every read, because it is the claim the whole package rests on. The
+            # executor re-derives it at resolve time; this is the composition-time answer.
+            "execution_scope": "paper",
+            "cancel_window_seconds": self.window_seconds,
+            "budget": dict(self.budget),
+        }
+
+
+# Factory names ``copytrade.notify`` may expose for the delivery seam. The composition root is
+# the one place that has to survive an interface it does not own (the same posture as
+# ``_supported_kwargs`` above): the module is owned elsewhere, its factory name is not pinned by
+# the RW-17 contract, and guessing wrong must be a NAMED refusal rather than a silent lane with
+# no notifications.
+_AUTOEXEC_NOTIFY_FACTORIES = ("build_notifier", "build_notify", "build_copy_notifier",
+                              "make_notifier", "build_autoexec_notify")
+
+
+def _notify_channel_ids(settings):
+    """The configured logical-channel map, or ``None`` when there is nothing to check against.
+
+    ``None`` means "this deployment's ``deliver`` was not built from these settings" — the
+    injected-seam shape every test uses, and the shape a future non-Discord adapter will use. It
+    is not a hole in production: a settings object with no channel ids at all makes
+    ``build_operator_deliver`` return None, and a lane with no ``deliver`` is already refused."""
+    try:
+        from bridge.deliver import channel_ids_from_settings
+    except Exception:                       # noqa: BLE001 - never fatal to compose()
+        return None
+    return channel_ids_from_settings(settings) or None
+
+
+def build_autoexec_notify(settings, deliver, *, clock=None, st=None):
+    """RW-17 — the notification seam the auto-execution lane reports through.
+
+    Returns ``(notify, None)`` or ``(None, reason)``. Routed through ``copytrade.notify``, which
+    renders deterministically from stored facts and posts via the existing ``bridge/deliver.py``
+    seam — never a hardwired Discord type, because the operator surface is abstracted (CLAUDE.md)
+    and Discord is one adapter among several.
+
+    ``st`` is offered so ``copytrade.notify`` can read the stored ``RiskDecision`` row back by
+    id when it renders the queued message's risk block. SEC-17 requires that block to come from
+    the record and from nowhere else, and a composition root that withheld the only way to read
+    the record would leave the renderer no honest source for it.
+
+    NO DELIVER MEANS NO LANE. This returns a reason rather than a working notifier when
+    ``deliver`` is None, and the caller treats that as fatal to the whole lane. That is stricter
+    than the morning brief (which is computed, stored and audited even when it reaches nobody)
+    and it must be: a brief that reaches nobody loses the push, while a TRADE that reaches
+    nobody is an unannounced position in the operator's account. The executor independently
+    refuses to resolve a ticket whose notification was never confirmed delivered, so an
+    undeliverable lane would in any case be a queue that never fires and never explains itself.
+    """
+    if deliver is None:
+        return None, _log_unprovisioned(
+            "congress paper auto-execution (no notification seam)",
+            f"keyring set {_DISCORD_TOKEN_NAME} and set COCKPIT_BRIEF_CHANNEL_ID; an "
+            "auto-executing lane that cannot tell you what it did will not be composed")
+    try:
+        from copytrade import notify as _notify
+    except Exception as exc:                # noqa: BLE001 - never fatal to compose()
+        return None, _log_unprovisioned(
+            "congress paper auto-execution (notification module)",
+            f"copytrade.notify is not importable: {exc!r}")
+
+    # EVERY CHANNEL THIS LANE USES MUST BE MAPPED — "a deliver exists" is not the same question.
+    #
+    # ``build_deliver`` needs only ONE channel id to be a working callable, and it fails closed
+    # PER CHANNEL: an unmapped logical channel returns False. ``CHANNEL_BY_EVENT`` routes
+    # ``queued`` to #proposals and ``submitted``/``refused``/``cancelled`` to #alerts, so a
+    # proposals-only configuration produced a lane that armed cleanly, confirmed its queued
+    # notice, executed the trade — and then could never deliver a submitted, refused or
+    # cancelled message again. Every named refusal, which is this lane's only health signal,
+    # would reach a log line and nothing else. That is exactly the half-built lane
+    # ``build_paper_autoexec`` refuses to compose for the gateway and the gate-(d) seam, so it is
+    # refused here too.
+    #
+    # An EMPTY map is not checked here and does not need to be: with no channel configured at
+    # all, ``build_operator_deliver`` returns None and the branch above has already refused. A
+    # non-empty map that is missing a channel is the dangerous case, because it looks configured.
+    configured = _notify_channel_ids(settings)
+    if configured is not None:
+        missing = sorted(set(_notify.CHANNEL_BY_EVENT.values()) - set(configured))
+        if missing:
+            return None, _log_unprovisioned(
+                "congress paper auto-execution (unmapped notification channels)",
+                f"the lane posts to {sorted(set(_notify.CHANNEL_BY_EVENT.values()))} but "
+                f"{missing} have no channel id configured; set the matching "
+                "COCKPIT_*_CHANNEL_ID. A lane that can announce a trade and then never report "
+                "what it did is not composed")
+
+    offered = {"deliver": deliver, "settings": settings, "clock": clock, "st": st}
+    for name in _AUTOEXEC_NOTIFY_FACTORIES:
+        factory = getattr(_notify, name, None)
+        if factory is None:
+            continue
+        try:
+            return factory(**_supported_kwargs(factory, offered)), None
+        except Exception as exc:            # noqa: BLE001
+            return None, _log_unprovisioned(
+                "congress paper auto-execution (notification seam)",
+                f"copytrade.notify.{name} refused to build: {exc!r}")
+    return None, _log_unprovisioned(
+        "congress paper auto-execution (notification seam)",
+        f"copytrade.notify exposes none of {list(_AUTOEXEC_NOTIFY_FACTORIES)}; refusing to "
+        "compose a lane that would trade without telling you (wiring bug, not a config gap)")
+
+
+def _paper_scoped_gateway(paper):
+    """The PAPER-scoped ``OrderGateway`` the ``PaperExecutionService`` was composed with.
+
+    Returns ``(gateway, None)`` or ``(None, reason)``. Two properties are checked, and the
+    second one is the single most important line in this module:
+
+      1. it is the SAME gateway object the human gate already submits through, not a second one
+         built here. Invariant 1 is "one order path"; two gateway instances over one broker is
+         two paths that merely happen to agree today.
+      2. its ``execution_scope`` is literally ``"paper"``. ``_ORDER_AUTHORITY_BY_SCOPE`` maps
+         ``paper`` to ``{paper}`` and ``live`` to the three live/auto rungs, so a gateway with
+         any other scope would put this lane's zero-touch adjudication in front of a LIVE
+         transport. If that ever becomes possible, the lane must REFUSE TO EXIST rather than
+         discover it at submit time. Unknown scope is refused too — an attribute we cannot read
+         is not an attribute we may assume.
+    """
+    if paper is None:
+        return None, _log_unprovisioned(
+            "congress paper auto-execution (no paper transport)",
+            f"keyring set {_ALPACA_KEY_NAME} / {_ALPACA_SECRET_NAME}")
+    gateway = getattr(paper, "gateway", None)
+    if gateway is None:
+        gateway = getattr(paper, "_gateway", None)
+    if gateway is None:
+        return None, _log_unprovisioned(
+            "congress paper auto-execution (no order gateway)",
+            "PaperExecutionService exposed no gateway; refusing to build a second one "
+            "(wiring bug, not a config gap)")
+    scope = getattr(gateway, "execution_scope", None)
+    if scope is None:
+        scope = getattr(gateway, "_execution_scope", None)
+    if scope != "paper":
+        return None, _log_unprovisioned(
+            "congress paper auto-execution (non-paper gateway)",
+            f"the composed OrderGateway's execution_scope is {scope!r}, not 'paper'; this lane "
+            "adjudicates without a human and may exist ONLY in front of the paper transport")
+    return gateway, None
+
+
+def build_paper_autoexec(state, *, paper=None, deliver=None, clock=None):
+    """RW-17 — compose the zero-touch PAPER auto-execution lane, or say why it is absent.
+
+    Returns an :class:`AutoExecWiring`, never raises, and never returns a partially-built lane.
+    The preconditions, each fail-closed and each named in the log and in ``status()``:
+
+      * ``COCKPIT_CONGRESS_AUTOEXEC`` — opt-in, default false. Turning it on is the operator's
+        explicit act; ``Settings`` has already REFUSED to boot if it is on while the congress
+        feed is off or the follow list is empty, so reaching here means the lane can actually
+        see disclosures.
+      * a PAPER-scoped ``OrderGateway`` (see ``_paper_scoped_gateway``);
+      * a notification seam (see ``build_autoexec_notify``);
+      * a valid ``CopyPolicy`` — a ``PolicyError`` here is a config error that would otherwise
+        surface hours later as a lane that queues nothing.
+
+    THE MODE IS NOT CHECKED HERE, DELIBERATELY. Composition happens at boot, where the ladder is
+    normally ``read_only``; refusing on the boot-time mode would make the lane unbuildable on
+    every real deployment. The check that matters is at RESOLVE time, where the executor
+    re-reads ``ModeLadder.current()`` under the lock and voids any ticket that is not
+    ``Mode.paper`` — a mode change mid-window cancels the trade rather than following it.
+    """
+    settings = state.settings
+    if not getattr(settings, "congress_autoexec", False):
+        return AutoExecWiring(reason=_log_unprovisioned(
+            "congress PAPER auto-execution (zero-touch copy trading)",
+            "set COCKPIT_CONGRESS_AUTOEXEC=true (opt-in; it replaces your approval tap with an "
+            "audited, budget-railed, paper-only auto-adjudication)"))
+
+    gateway, reason = _paper_scoped_gateway(paper)
+    if gateway is None:
+        return AutoExecWiring(reason=reason)
+    notify, reason = build_autoexec_notify(settings, deliver, clock=clock, st=state)
+    if notify is None:
+        return AutoExecWiring(reason=reason)
+
+    # GATE (d) IS NOT OPTIONAL, SO ITS SEAM IS NOT OPTIONAL EITHER. ``OrderGateway`` re-runs
+    # risk against a fresh quote and a fresh positions snapshot immediately before the broker
+    # call, and ``PaperAutoExecutor`` cannot compute that verdict itself — it has no broker and
+    # no quote seam. Left unwired, the executor's default factory REJECTS every re-check
+    # ('autoexec_risk_recheck_not_wired'): a lane that arms, notifies, counts down and then
+    # refuses every single ticket, which an operator who has stopped watching a queue would
+    # read as "nothing was disclosed today". That is the exact silence this package exists to
+    # make impossible, so it is a REFUSAL TO COMPOSE rather than a degraded mode.
+    risk_recheck_factory = getattr(paper, "autoexec_risk_recheck", None)
+    positions_fn = getattr(paper, "positions_snapshot", None)
+    if not callable(risk_recheck_factory) or not callable(positions_fn):
+        return AutoExecWiring(reason=_log_unprovisioned(
+            "congress PAPER auto-execution (no risk re-check seam)",
+            "PaperExecutionService exposes no autoexec_risk_recheck/positions_snapshot; "
+            "refusing to arm a lane that would refuse every ticket at gateway gate (d) "
+            "(wiring bug, not a config gap)"))
+
+    budget = {
+        "max_daily_notional": str(settings.congress_autoexec_max_daily_notional),
+        "max_trades_per_day": int(settings.congress_autoexec_max_trades_per_day),
+        "max_open_positions": int(settings.congress_autoexec_max_open_positions),
+        "max_notional_per_symbol_per_day":
+            str(settings.congress_autoexec_max_notional_per_symbol_per_day),
+    }
+    window = int(settings.congress_autoexec_window_seconds)
+    try:
+        from copytrade.autoexec import PaperAutoExecutor
+        from copytrade.policy import policy_from_settings
+
+        offered = {
+            "window_seconds": window,
+            "notify": notify,
+            "clock": clock if clock is not None else state.clock,
+            "policy": policy_from_settings(settings),
+            "risk_recheck_factory": risk_recheck_factory,
+            "positions_fn": positions_fn,
+        }
+        kwargs = _supported_kwargs(PaperAutoExecutor, offered)
+        # THE LOAD-BEARING KWARGS MUST HAVE SURVIVED THE FILTER — the same check
+        # ``build_congress_providers`` makes for ``user_agent`` and ``CongressPollAdapter``
+        # makes for ``on_event``/``store``, and for the same reason: ``_supported_kwargs``
+        # silently drops anything the callee does not declare, and each of these three drops
+        # into a DIFFERENT silent failure. No ``notify``: the lane trades without telling
+        # anyone (or, because delivery gates execution, never trades and never says why). No
+        # ``risk_recheck_factory``: every ticket is refused at gate (d). A silent drop here is
+        # a wiring bug wearing the costume of a quiet week.
+        missing = [k for k in ("notify", "risk_recheck_factory", "positions_fn")
+                   if k not in kwargs]
+        if missing:
+            raise TypeError(
+                f"PaperAutoExecutor does not accept {missing}; refusing to arm a zero-touch "
+                "lane whose notification or gate-(d) seam would be silently absent"
+            )
+        executor = PaperAutoExecutor(state, gateway, **kwargs)
+    except Exception as exc:                # noqa: BLE001 - one optional lane never kills compose
+        return AutoExecWiring(reason=_log_unprovisioned(
+            "congress PAPER auto-execution", f"fix the lane wiring: {exc!r}"))
+
+    # RESTART RECOVERY, BEFORE THE LANE IS HANDED ANY NEW WORK. A ticket the PREVIOUS process
+    # announced ("this WILL execute unless you cancel it") and never resolved is a promise this
+    # deployment is now responsible for. ``recover_orphans`` reads the signed ticket ledger,
+    # settles each one as a named, notified ``abandoned_restart`` refusal, and writes the
+    # settlement back to the chain so it is idempotent. Without it, every deploy inside a cancel
+    # window silently voided the trades queued in it — no execution, no refusal, no message, and
+    # a ``/cancel`` that answers "unknown ticket".
+    try:
+        orphans = executor.recover_orphans()
+    except Exception as exc:                # noqa: BLE001 - recovery never blocks the boot
+        orphans = []
+        log.exception("RW-17: restart recovery failed (%r); the lane is still armed", exc)
+    log.warning(
+        "RW-17 PAPER auto-execution is ARMED: congressional copy trades will execute on the "
+        "PAPER transport %ds after you are notified, with no approval tap. Your only lever is "
+        "/cancel inside that window. Rails/day: %s notional, %s trades, %s open positions, %s "
+        "per symbol. Tickets abandoned by the last restart and settled now: %d.",
+        window, budget["max_daily_notional"], budget["max_trades_per_day"],
+        budget["max_open_positions"], budget["max_notional_per_symbol_per_day"], len(orphans),
+    )
+    return AutoExecWiring(executor, window_seconds=window, budget=budget, notify=notify)
+
+
+def _queued_context(intent) -> dict:
+    """The filing facts a queued notification is rendered from, as JSON-native values.
+
+    Carried on ``AutoTicket.context``, which ``PaperAutoExecutor._notify_payload`` merges into
+    every notification for that ticket. JSON-native (dates as ISO strings, the notional as a
+    string) because the payload crosses an abstract operator surface that may serialise it, and
+    ``copytrade.notify.queued_facts_from_payload`` parses them back.
+
+    NOTHING IS INVENTED WHEN THE INTENT IS ABSENT. An empty context yields a message missing its
+    load-bearing facts, ``missing_queued_facts`` refuses to render it, delivery is never
+    confirmed and the ticket never fires. A trade the operator could not have judged does not
+    happen — which is the right answer, and a strictly better one than a message with a
+    plausible-looking blank where the disclosure lag should be.
+    """
+    if intent is None:
+        return {}
+    return {
+        "filer_display": str(getattr(intent, "filer_display", "") or ""),
+        "tx_date": _iso_or_empty(getattr(intent, "tx_date", None)),
+        "filed_date": _iso_or_empty(getattr(intent, "filed_date", None)),
+        "amount_label": str(getattr(intent, "amount_label", "") or ""),
+        "sizing_reason": str(getattr(intent, "reason", "") or ""),
+        "sizing_notes": [str(n) for n in (getattr(intent, "sizing_notes", ()) or ())],
+        "source_key": str(getattr(intent, "source_key", "") or ""),
+        "translated_from": getattr(intent, "translated_from", None),
+    }
+
+
+def _iso_or_empty(value) -> str:
+    return value.isoformat() if hasattr(value, "isoformat") else ""
+
+
+def build_copy_cycle_service(state, *, quote_fn=None, autoexec=None):
+    """RW-17 — the scheduler service for one congressional copy CYCLE.
+
+    ``(st, clock) -> dict``, the same shape as every other injected scheduler service. It does
+    three things and nothing else: load the disclosure window, run the deterministic cycle, and
+    hand each resulting ``Order`` to the auto-executor to be QUEUED behind a cancel window.
+
+    THE WINDOW IS THE POLICY'S, NOT A NUMBER CHOSEN HERE. ``copytrade.engine`` reads a symbol's
+    contest (a followed member buying what another exited) off the WHOLE batch, ahead of every
+    time-varying gate, so ``run_copy_cycle`` refuses a batch that cannot cover
+    ``policy.max_age_days``. Loading exactly that window is what makes the refusal not fire —
+    and when the row cap bites anyway the cycle refuses rather than planning against a batch it
+    cannot trust. Neither is worked around here.
+
+    QUEUING IS PER-ORDER AND ISOLATED. One order whose lineage cannot be bound (its
+    ``RiskDecision`` row unreadable) must not cost the other orders in the same cycle their
+    tickets, so each is scheduled inside its own guard and every failure is counted under a name.
+    A failure means that order simply stays where ``run_copy_cycle`` left it — an un-adjudicated
+    ``proposed`` row — which is the fail-closed direction: no ticket, no auto-execution.
+
+    EVERY TICKET CARRIES ITS FILING. ``copytrade/notify.py`` REFUSES to render a queued message
+    that cannot name the filer, the trade date, the disclosure lag, the disclosed range and why
+    the size is what it is — and a refused render is an unconfirmed delivery, which is a ticket
+    that never fires. Those facts are discrete fields on the ``CopyIntent`` the cycle planned
+    from and are only woven into prose by the time they reach the persisted proposal, so the
+    intent is carried across on the ticket's ``context`` rather than re-parsed out of a
+    sentence later.
+    """
+    from schemas.models.congress_disclosure import load_disclosures
+    from workflows.copytrade_orders import run_copy_cycle
+
+    def copy_cycle(st, clock) -> dict:
+        from datetime import timedelta
+
+        from copytrade.policy import policy_from_settings
+        from schemas.models.risk_decision import RiskDecision
+        from storage.repositories import Repo
+
+        policy = policy_from_settings(st.settings)
+        window_start = clock.now().date() - timedelta(days=int(policy.max_age_days))
+        disclosures = load_disclosures(st.session_factory, window_start=window_start)
+        result = run_copy_cycle(st, policy=policy, disclosures=disclosures, clock=clock,
+                                quote_fn=quote_fn)
+
+        queued, failures = 0, {}
+        if autoexec is not None:
+            risk_decisions = Repo(st.session_factory, RiskDecision)
+            for order in result.orders:
+                try:
+                    risk_decision = risk_decisions.get(order.risk_decision_id)
+                    if risk_decision is None:
+                        # The gateway binds the adjudication to the risk decision by id; an
+                        # order whose decision we cannot read is one we cannot bind, so it is
+                        # left for a human rather than queued against a decision we assumed.
+                        failures["risk_decision_missing"] = \
+                            failures.get("risk_decision_missing", 0) + 1
+                        continue
+                    autoexec.schedule(
+                        order=order, risk_decision=risk_decision,
+                        proposal_id=order.proposal_id,
+                        context=_queued_context(result.order_intents.get(order.id)),
+                    )
+                    queued += 1
+                except Exception as exc:    # noqa: BLE001 - one order never costs the others
+                    log.exception("RW-17 could not queue copy order %s: %r",
+                                  getattr(order, "id", "?"), exc)
+                    failures[type(exc).__name__] = failures.get(type(exc).__name__, 0) + 1
+        return {
+            "proposed": result.proposed, "approved": result.approved,
+            "needs_human": result.needs_human, "rejected": result.rejected,
+            "skipped": len(result.skipped), "reasons": list(result.reasons),
+            "queued_for_autoexec": queued, "queue_failures": failures,
+        }
+
+    return copy_cycle
+
+
+def build_autoexec_resolve_service(executor):
+    """RW-17 — the scheduler service for one ``resolve_due`` tick. ``(st, clock) -> list``.
+
+    A one-line adapter on purpose: every decision about whether a due ticket may execute (mode,
+    HALT, breaker, chain verification, confirmed delivery, budget rails) belongs to the executor,
+    under its own lock, at the instant of firing. A wrapper that pre-filtered any of that here
+    would be a second, staler copy of the gate — and the gap between the two copies is exactly
+    where a ticket executes on a condition that stopped being true.
+    """
+
+    def resolve(st, clock):
+        del st
+        return executor.resolve_due(now=clock.now())
+
+    return resolve
+
+
+def build_autoexec_digest_service(wiring):
+    """RW-17 — the scheduler service for the lane's END-OF-DAY STATEMENT. ``(st, clock) -> dict``.
+
+    Returns ``None`` when the lane has no typed notifier to send through, so ``build_scheduler``
+    registers no job rather than one that silently no-ops.
+
+    THE ROWS COME FROM THE SIGNED CHAIN, NOT FROM ``executor.counts``. That histogram is an
+    in-memory dict on one object: empty after every restart, and therefore guaranteed to
+    under-report on exactly the days the digest is worth reading. ``copytrade/digest.py`` reads
+    the HMAC-verified ticket ledger instead. The BUDGET section is likewise re-derived from the
+    chain by ``budget_state``, which is the same number the rails themselves enforce — a digest
+    quoting a different remaining-budget figure than the one that will refuse tomorrow's first
+    trade would be worse than no digest.
+
+    An UNREADABLE ledger is reported as unreadable (empty rails, which the renderer prints as
+    "unavailable — the lane trades nothing"), never as a quiet day.
+    """
+    notifier = getattr(wiring, "notify", None)
+    if notifier is None or not hasattr(notifier, "daily_digest"):
+        return None
+
+    def digest(st, clock) -> dict:
+        from copytrade.budget import AutoExecBudget, budget_state
+        from copytrade.digest import digest_rows
+
+        day = clock.now().date()
+        rows = digest_rows(st, day=day)
+        budget = AutoExecBudget.from_settings(st.settings)
+        remaining = budget_state(st, day=day).remaining(budget) if rows.readable else {}
+        result = notifier.daily_digest(day=day, executed=rows.executed, refused=rows.refused,
+                                       budget_remaining=remaining)
+        delivered = bool(getattr(result, "confirmed", False))
+        if not delivered:
+            # The digest is the message that makes silence answerable, so a digest that reached
+            # nobody is itself worth an error line in the file the operator greps.
+            log.error("RW-17: the daily digest for %s was NOT delivered (%s)", day,
+                      getattr(result, "status", "unknown"))
+        return {"day": day.isoformat(), "readable": rows.readable, "error": rows.error,
+                "executed": len(rows.executed), "refused": len(rows.refused),
+                "delivered": delivered}
+
+    return digest
+
+
+def build_autoexec_fills_service(wiring):
+    """RW-17 — the scheduler service that PRODUCES the ``filled`` event. ``(st, clock) -> dict``.
+
+    The integration seam ``copytrade.notify.build_fill_service`` documents in its own docstring,
+    and which no caller had: the renderer, the announcer, the signed "already announced" marker
+    and the scheduler job (``AUTOEXEC_FILLS_CRON``) all existed, wired to nothing. Composed here
+    beside the digest for the same reason: both are the lane's REPORTS, and the lane's reports
+    are the operator's entire interface now that the approval queue is gone.
+
+    Returns ``None`` when the lane has no usable notification seam, so ``build_scheduler``
+    registers no job rather than one that silently drops every fill.
+    """
+    notify = getattr(wiring, "notify", None)
+    if notify is None:
+        return None
+    from copytrade.notify import build_fill_service
+
+    return build_fill_service(notify)
+
+
+def build_order_status_service(paper):
+    """RW-15 (minimal, paper lane) — the scheduler service for one order-status reconcile tick.
+
+    ``(st, clock) -> dict``, or ``None`` when the composed transport exposes no status reader.
+
+    WHY THE COMPOSITION ROOT HAS TO CARE. ``brokers/order_status_poll.py`` is the module that
+    drains a resting order out of ``submitted``; without a call site the SEC-07 pending-exposure
+    cap only ever goes UP, because a paper LIMIT order that does not cross acks ``accepted`` and
+    no state-machine edge consumes it. RW-16 prices this lane's orders as LIMIT at the gate
+    quote, so resting is the NORMAL case: unwired, the lane fills the cap and then refuses every
+    subsequent order forever, with nobody in the approval queue to notice.
+
+    NOT A SECOND ORDER PATH (Inv 1): the only broker call passed through here is a READ of an
+    order's status, injected exactly the way ``orchestrator.reconcile`` injects
+    ``broker_history_fn``. See that module's header for the fail-closed rules.
+    """
+    status_fn = getattr(paper, "order_status", None) if paper is not None else None
+    if not callable(status_fn):
+        return None
+
+    def poll(st, clock) -> dict:
+        from brokers.order_status_poll import run_order_status_poll
+
+        return run_order_status_poll(st, clock, status_fn=status_fn)
+
+    return poll
 
 
 def build_operator_deliver(settings):
@@ -594,7 +1488,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None):
     )
 
 
-def build_operator_bot(state):
+def build_operator_bot(state, autoexec=None):
     """QT-09 — the Discord COMMAND surface, or ``None`` when unprovisioned.
 
     Until now Discord was PUSH-ONLY. ``compose`` wired ``deliver`` (REST posts to the operator
@@ -620,6 +1514,13 @@ def build_operator_bot(state):
     ``controls`` argument it has never used, and wiring the approval surface means wiring the
     token-mint path — a change to the order path itself, which is deliberately not bundled
     into a quant work package. Approvals stay where they are today.
+
+    RW-17 threads the auto-execution lane through so ``/cancel`` has something to cancel. That
+    is a VETO surface, not an approval surface: the operator never has to act for a trade to
+    proceed, which is the whole point of the lane. With no lane composed the command still
+    registers and answers plainly that nothing is queued — a command that silently disappears
+    is indistinguishable from a bot that is not responding, which is the worst possible thing
+    for the one control that stops a trade.
     """
     from bridge.bot import bot_available, build_bot, run_bot
     from bridge.operators import authorized_operator_ids
@@ -643,7 +1544,7 @@ def build_operator_bot(state):
              len(operators), guild_id or "GLOBAL (sync may take up to 1h to propagate)")
 
     def _start() -> None:
-        client, tree = build_bot(state, token_registry=None)
+        client, tree = build_bot(state, token_registry=None, autoexec=autoexec)
         run_bot(client, tree, token.reveal(), guild_id=guild_id)
 
     return _start
@@ -726,6 +1627,39 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     )
     app.state.ingest = build_ingest_runner(state, parquet_root=parquet_root, fetchers=fetchers,
                                            settings=settings, clock=clock)
+    # RW-17: the PAPER auto-execution lane. Hung off app.state next to the ingest runner (the
+    # place composed collaborators live and /status reads), and its two scheduler services are
+    # added to the SAME registry the workflow services use — so ``build_scheduler`` registers
+    # the copy-cycle and resolve jobs if and only if the lane was fully composed. Absent, this
+    # adds no key, no job runs, and the cockpit behaves exactly as it did under RW-16.
+    app.state.autoexec = build_paper_autoexec(state, paper=paper, deliver=deliver, clock=clock)
+    if app.state.autoexec.enabled:
+        executor = app.state.autoexec.executor
+        services["copy_cycle"] = build_copy_cycle_service(
+            state, quote_fn=paper.quote if paper is not None else None, autoexec=executor)
+        services["autoexec_resolve"] = build_autoexec_resolve_service(executor)
+        # The end-of-day statement. Registered here rather than being optional, because it is
+        # the ONE message that arrives whether or not anything happened — see
+        # ``build_autoexec_digest_service`` and ``scheduler.run_autoexec_digest``.
+        digest = build_autoexec_digest_service(app.state.autoexec)
+        if digest is not None:
+            services["autoexec_digest"] = digest
+        # The other half of "submitted". ``copytrade.notify`` could always RENDER a ``filled``
+        # message and, until this line, nothing ever produced one — so the operator's last word
+        # on every trade was that it had been sent to the broker, which for a resting LIMIT order
+        # (this lane's normal shape) is not the same fact as a position. ``build_fill_service``
+        # returns None when there is no usable seam, so an unusable notifier gets NO job rather
+        # than one that silently drops fills.
+        fills = build_autoexec_fills_service(app.state.autoexec)
+        if fills is not None:
+            services["autoexec_fills"] = fills
+    # RW-15 (minimal): the order-status reconcile tick. NOT gated on the auto-exec lane — a
+    # resting order placed by the HUMAN paper path ratchets the SEC-07 pending-exposure cap in
+    # exactly the same way, and the cap is global. Composed whenever a paper transport with a
+    # status reader exists; absent, no job is registered and the posture is unchanged.
+    status_poll = build_order_status_service(paper)
+    if status_poll is not None:
+        services["order_status_poll"] = status_poll
     return state, app, services
 
 
@@ -763,16 +1697,19 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     # second would never start — and a daemon dies with the process, so Ctrl-C tears the
     # gateway down instead of hanging on a socket. Absent a token or an operator allowlist
     # this is None and the cockpit runs exactly as it did before.
-    start_bot = build_operator_bot(state)
+    autoexec = getattr(app.state, "autoexec", None)
+    start_bot = build_operator_bot(
+        state, autoexec=autoexec.executor if autoexec is not None else None)
     if start_bot is not None:
         threading.Thread(target=start_bot, name="discord-bot", daemon=True).start()
 
     log.info(
-        "cockpit up: mode=%s api=http://%s:%s feeds=%s",
+        "cockpit up: mode=%s api=http://%s:%s feeds=%s autoexec=%s",
         state.settings.mode.value,
         state.settings.api_host,
         state.settings.api_port,
         ingest.feed_names or "NONE",
+        autoexec.status() if autoexec is not None else "not_composed",
     )
     serve(app, state.settings)
 

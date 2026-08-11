@@ -62,6 +62,12 @@ FEED_FINNHUB = "finnhub"
 FEED_EDGAR = "sec:edgar"
 FEED_CALENDAR = "calendar"
 FEED_FINRA = "finra"
+# RW-16 congressional periodic-transaction reports (House Clerk + Senate EFD). ONE feed name
+# for BOTH chambers on purpose: the chamber is a property of the disclosure
+# (``copytrade.models.Disclosure.chamber``), not of the pipeline, and splitting it here would
+# mean two runner entries, two scheduler jobs and two dedup windows for one logical feed whose
+# events are already keyed ``chamber:doc_id:line_no``.
+FEED_CONGRESS = "congress"
 
 # Restart backoff for a stream reader whose consumer returned or exhausted its own reconnect
 # budget. The consumer (``ingest/alpaca_news.py``) already does fine-grained exponential backoff
@@ -162,6 +168,11 @@ class IngestRunner:
         self._clock = clock
         self.polls: dict[str, PollFeed] = {}
         self.streams: dict[str, StreamFeed] = {}
+        # Feeds this deployment KNOWS ABOUT and deliberately did not wire, with the reason.
+        # See ``mark_unprovisioned`` — an absent key in ``polls`` says nothing to an operator
+        # reading /status, because a feed that was never invented is absent in exactly the
+        # same way as one whose credential is missing.
+        self.unprovisioned: dict[str, str] = {}
         self._stop = threading.Event()
 
     # ---- registration -------------------------------------------------------------------
@@ -174,13 +185,40 @@ class IngestRunner:
         freshness reader when it has one (EDGAR's ``fetch.brew_status``)."""
         feed = PollFeed(name=name, poller=poller, sink=self._sink(name), status_fn=status_fn)
         self.polls[name] = feed
+        self.unprovisioned.pop(name, None)      # a wired feed is not an absent one
         return feed
 
     def add_stream(self, name: str, consumer) -> StreamFeed:
         """Register a push feed whose ``run`` blocks (driven on its own thread)."""
         feed = StreamFeed(name=name, consumer=consumer, sink=self._sink(name))
         self.streams[name] = feed
+        self.unprovisioned.pop(name, None)
         return feed
+
+    def mark_unprovisioned(self, name: str, reason: str) -> str:
+        """Record that a KNOWN feed was deliberately not wired, and WHY (RW-16).
+
+        THE ABSENCE HAS TO BE NAMED. Until now an unprovisioned feed registered no poller and
+        therefore vanished from ``status()`` entirely — correct as far as it went (it is
+        genuinely not running, gets no scheduler job, and can never be mistaken for a live feed
+        with nothing to say), but it left the operator's real question unanswered. "Is the
+        congressional feed quiet, or did I never set COCKPIT_CONGRESS_USER_AGENT?" is not
+        answerable from a key that is simply not there, and the composition root's startup
+        WARNING has long since scrolled away by the time anyone reads /status.
+
+        Reported under a SEPARATE top-level ``status()`` key, never inside ``feeds``: a feed
+        with no poller has no polls, no emissions and no errors, so giving it a feed entry
+        would put a row of zeroes next to the live feeds — the exact "present and silent"
+        shape this package exists to make unreachable. ``feeds`` therefore continues to hold
+        exactly the wired feeds (pinned by tests/workflows/test_main_compose.py), and absence
+        gets its own vocabulary.
+        """
+        if name in self.polls or name in self.streams:
+            raise ValueError(
+                f"feed {name!r} is registered and cannot also be reported unprovisioned"
+            )
+        self.unprovisioned[name] = str(reason)
+        return name
 
     @property
     def feed_names(self) -> list[str]:
@@ -317,6 +355,10 @@ class IngestRunner:
         verdict is INCLUDED, because "0 events" from that feed is only good news under exactly
         one status (``nothing-material``). Reporting throughput without it would let a
         NOT_PROVISIONED / NOT_RUN / DEGRADED feed read as a quiet day.
+
+        ``unprovisioned`` carries the feeds this deployment knows about and did NOT wire, with
+        the reason each is off (``mark_unprovisioned``). It is a sibling of ``feeds``, not a
+        member of it — see that method for why an un-wired feed must not get a feed row.
         """
         day = day if day is not None else self._today()
         feeds: dict = {}
@@ -336,7 +378,14 @@ class IngestRunner:
                 "alive": bool(feed.thread is not None and feed.thread.is_alive()),
                 **feed.sink.counters(),
             }
-        return {"day": day, "feeds": feeds}
+        return {
+            "day": day,
+            "feeds": feeds,
+            "unprovisioned": {
+                name: {"kind": "not_provisioned", "reason": reason}
+                for name, reason in sorted(self.unprovisioned.items())
+            },
+        }
 
     @staticmethod
     def _read_status(feed: PollFeed, day) -> dict:

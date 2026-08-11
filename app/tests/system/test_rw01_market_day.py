@@ -655,7 +655,12 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
         "serve() blocks forever — anything after it never runs"
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
     assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}
-    assert set(seen["services"]) == {"brew", "intraday", "eod"}
+    # RW-15 (minimal): this fixture composes a PAPER transport, so the order-status reconcile
+    # service is composed too and the scheduler gets a job that drains the SEC-07 pending-exposure
+    # cap. Without it the cap only ever rises and the gateway eventually refuses every order from
+    # every caller — so its presence here is the assertion, not an incidental extra key. The lane
+    # services (congress_copy_cycle/autoexec_*) stay absent: this deployment never opted in.
+    assert set(seen["services"]) == {"brew", "intraday", "eod", "order_status_poll"}
     assert started == [[FEED_ALPACA_NEWS]]
     assert seen["bound_host"] == "127.0.0.1", "the API must stay loopback-only"
 

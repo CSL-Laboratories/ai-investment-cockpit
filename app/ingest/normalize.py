@@ -3,8 +3,10 @@
 Source allowlist + provenance (prompt-injection-defense §5). ALL free-text fields (headline,
 summary, event_type) run through the neutralizer; symbols are validated as tickers (a whole
 field must not skip the escaper — wf_005fd06c). NFKC-fold + role/delimiter marker neutralization
-is BEST-EFFORT (M3 / SEC-22); the real injection boundary is downstream grounding. `&` is escaped
-FIRST so the transform is idempotent and pre-encoded entities can't round-trip back to delimiters.
+is BEST-EFFORT (M3 / SEC-22); the real injection boundary is downstream grounding.
+``escape_untrusted`` is IDEMPOTENT — ``f(f(x)) == f(x)`` — which is what makes "escape at every
+boundary" (the pattern every feed, packets.py and mcp_untrusted.py rely on) safe rather than
+corrupting. See that function for why ``&`` is deliberately NOT entity-encoded.
 content_hash binds the raw item into the audit chain (SEC-13 / Invariant 8).
 """
 from __future__ import annotations
@@ -20,13 +22,19 @@ import unicodedata
 # contents import-order-dependent and un-greppable). "sec:edgar" = the edgar-morning-brew Delta
 # feed (ingest/edgar_brew.py); "finra" = short-interest/Reg SHO enrichment (W20,
 # ingest/finra_short_interest.py).
-ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra"}
+ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra", "congress"}
 MAX_LEN = 4000
 MAX_SYMBOLS = 64
 _TICKER = re.compile(r"^[A-Z0-9.\-]{1,12}$")
+# The delimiter spellings are matched in BOTH their literal (``<``) and entity (``&lt;``) forms.
+# The entity alternatives are not decoration: because this transform is a fixed point (see
+# ``escape_untrusted``), an ALREADY-escaped delimiter arrives here spelled ``&lt;/untrusted-content``
+# on a re-escape pass, and a filer/headline can type that spelling directly. Matching only the
+# literal form would let the entity spelling reach a prompt as a recognisable closing delimiter.
 _ROLE_MARKERS = re.compile(
     r"(?i)\b(?:system|assistant|human|developer|user|tool|function)\s*:"
-    r"|</?untrusted-content|<\|im_(?:start|end)\|>|\[/?INST\]|###\s*instruction",
+    r"|(?:<|&lt;)/?untrusted-content|(?:<|&lt;)\|im_(?:start|end)\|(?:>|&gt;)"
+    r"|\[/?INST\]|###\s*instruction",
 )
 
 
@@ -49,13 +57,49 @@ def _canonical_ticker(value) -> str | None:
 
 
 def escape_untrusted(text) -> str:
+    """Neutralize one untrusted free-text field (M3): NFKC-fold, blunt role/delimiter markers,
+    entity-encode ``<``/``>``, cap the length.
+
+    WHY ``&`` IS NOT ENTITY-ENCODED — this is a deliberate security decision, not an omission.
+    -----------------------------------------------------------------------------------------
+    This function is applied at EVERY boundary a value crosses, on purpose: the parse boundary
+    (``ingest/congress/ptr_parse.py``), the packet builder (``workflows/packets.py``), the MCP
+    hardener (``brokers/mcp_untrusted.py``), the copy-order thesis (``workflows/copytrade_orders``).
+    That pattern is only safe if the transform is a FIXED POINT, and it only stays honest if
+    escaping twice is indistinguishable from escaping once.
+
+    The previous implementation also mapped ``&`` -> ``&amp;`` "first, so the transform is
+    idempotent". It is not, and it cannot be: the claim confuses ORDER-safety within one pass
+    with idempotence across passes. ``escape_untrusted("AT&T")`` -> ``AT&amp;T`` ->
+    ``AT&amp;amp;T`` -> ..., so a filing for AT&T or Procter & Gamble reached the operator
+    visibly corrupted, one ``amp;`` per boundary crossed.
+
+    The two properties are mathematically incompatible over an entity alphabet: if ``&lt;`` is in
+    the image of ``f`` (it is — any legitimate ``<`` produces it) then idempotence FORCES
+    ``f("&lt;") == "&lt;"``, i.e. a pre-encoded entity must survive untouched. So "each pass adds
+    an encode layer, so a pre-encoded entity can never decode back to a delimiter" had to go.
+    Nothing in this repo HTML-unescapes an escaped field (``html.unescape`` appears only in
+    ``filings/`` over raw SEC HTML, a different input path), so that layering bought no live
+    defense; what it cost was legible operator text. The residual — an attacker typing ``&lt;``
+    directly — is closed better at the DETECTION end: ``_ROLE_MARKERS`` matches the entity
+    spelling of the delimiters too, so ``&lt;/untrusted-content&gt;`` is neutralized just like
+    ``</untrusted-content>``.
+
+    The M3 requirement in docs/prompt-injection-defense.md §4 is "entity-encode ``<``/``>``,
+    neutralize role markers" — exactly what remains. ``&`` is not a delimiter in any consumer:
+    element text in the ``<untrusted-content>`` prompt block (a string, never XML-parsed) and
+    operator surfaces (Discord markdown). ATTRIBUTE context is a different escaper with a
+    different job — ``workflows.packets._attr_escape``, which does neutralize ``&`` and ``"``.
+    """
     if text is None or text == "":
         return ""
     if not isinstance(text, str):
         text = json.dumps(text, default=str)              # coerce dict/list/num safely (no crash)
     t = unicodedata.normalize("NFKC", text)
     t = _ROLE_MARKERS.sub("[role-marker]", t)
-    t = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")   # & FIRST -> idempotent
+    # Fixed point: the output holds no ``<``/``>`` and no marker match, NFKC is stable over it,
+    # and re-truncating a truncated string is a no-op — so a second pass changes nothing.
+    t = t.replace("<", "&lt;").replace(">", "&gt;")
     return t[:MAX_LEN]
 
 

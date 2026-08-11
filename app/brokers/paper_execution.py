@@ -11,11 +11,15 @@ checks before the fixed Alpaca PAPER transport is reached.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+import logging
 
 from bridge.approval import Rejection, record_decision, token_nonce_for_approval
 from brokers.order_tuple import canonical_order_tuple
 from config.models import configured_decision_runtime
+from copytrade.policy import policy_from_settings
+from copytrade.universe import current_universe
 from orchestrator.breakers import BreakerEngine
 from orchestrator.mode_ladder import ModeLadder
 from risk.engine import evaluate
@@ -23,7 +27,10 @@ from schemas.models.agent_job import AgentJob
 from schemas.models.order import Order
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
+from workflows.copytrade_orders import COPYTRADE_RUNTIME, UNIVERSE_BOUNDS_REF
 from workflows.proposals import build_risk_context
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -56,8 +63,63 @@ class PaperExecutionService:
         self._quote_fn = quote_fn
         self._watchlist_fn = watchlist_fn or (lambda: frozenset())
 
-    def _watchlist(self) -> frozenset[str]:
-        return frozenset(str(s).upper() for s in self._watchlist_fn())
+    def _watchlist(self, *, producing_runtime: str | None = None,
+                   agent_job: AgentJob | None = None) -> frozenset[str]:
+        """The SEC-15 allowlist this submit-time re-check judges against.
+
+        The static operator watchlist, PLUS — for a copy-path order only — the audited copy
+        universe. Without the union this re-check consulted a strictly NARROWER allowlist than
+        the one the draft passed: ``workflows.copytrade_orders`` evaluates against
+        ``static_watchlist | copytrade.universe.current_universe(...)``, so every promoted
+        symbol (which is every copy-traded symbol, by definition — the point of the feed is
+        that it surfaces names the operator did not pick) passed at draft and was GUARANTEED to
+        fail here. The human gate refused the order it had just been asked to approve.
+
+        This is NOT a widening of SEC-15. The static list is untouched, and the universe is the
+        same audited, HMAC-signed, bounded, TTL-expiring promotion lane the draft read, read
+        from the same authority — see ``copytrade/universe.py``. The union is applied ONLY when
+        the order's own stored lineage names the deterministic copy producer, so a
+        model-authored proposal is judged against exactly the allowlist it always was.
+        """
+        static = frozenset(str(s).upper() for s in self._watchlist_fn())
+        if producing_runtime != COPYTRADE_RUNTIME:
+            return static
+        return static | self._copy_universe(agent_job)
+
+    def _copy_universe(self, agent_job: AgentJob | None = None) -> frozenset[str]:
+        """The promoted copy universe, under THE BOUNDS THAT DRAFTED THE ORDER, or the EMPTY set.
+
+        Same chain, same authority — and now the same BOUNDS. Re-deriving them from ``Settings``
+        read the same audited entries through a different ``universe_ttl_days`` /
+        ``max_universe_symbols``, so the submit-time allowlist could be strictly WIDER than the
+        one that authorised the draft: a cycle run with ``universe_ttl_days=1`` drafted an NVDA
+        order and, five days later, the drafting policy's universe was empty while the
+        settings-derived one (TTL 120) still admitted NVDA. ``copytrade/universe.py`` names that
+        hazard by name; the bounds are therefore recorded on the proposal's own lineage
+        (``copytrade_orders.UNIVERSE_BOUNDS_REF``) and read back from it here.
+
+        Fail closed in the only direction available here: no recorded bounds, or an unreadable or
+        unverifiable promotion chain, yields nothing. That can refuse an order that should have
+        passed but can never admit one that should not — including an order drafted before the
+        bounds were recorded, which is the correct answer for a proposal whose drafting authority
+        is unknown.
+        """
+        bounds = (agent_job.input_refs or {}).get(UNIVERSE_BOUNDS_REF) if agent_job else None
+        if not isinstance(bounds, dict):
+            log.warning("paper execution: the copy proposal records no universe bounds; SEC-15 "
+                        "falls back to the static watchlist")
+            return frozenset()
+        try:
+            drafting = replace(
+                policy_from_settings(self.state.settings),
+                universe_ttl_days=int(bounds["universe_ttl_days"]),
+                max_universe_symbols=int(bounds["max_universe_symbols"]),
+            )
+            return frozenset(current_universe(self.state, drafting))
+        except Exception as exc:  # noqa: BLE001 - an unreadable universe is an empty universe
+            log.warning("paper execution: copy universe unavailable (%s: %s); "
+                        "SEC-15 falls back to the static watchlist", type(exc).__name__, exc)
+            return frozenset()
 
     def account(self) -> dict:
         snap = self._broker.get_positions(st=self.state, clock=self.state.clock)
@@ -83,6 +145,68 @@ class PaperExecutionService:
 
     def quote(self, symbol: str) -> dict:
         return self._quote_fn(symbol)
+
+    # ---- RW-17: the two seams the zero-touch PAPER lane composes against -----------------
+    # ``copytrade/autoexec.py`` adjudicates without a human but still has to satisfy gateway
+    # gate (d), which re-runs risk against a FRESH quote and a FRESH positions snapshot
+    # immediately before the broker call. Neither of those lives in the executor (it has no
+    # broker and no quote seam, deliberately — it is not a market-data component), and neither
+    # may be faked: an auto-executing lane that skipped gate (d) would be the single order path
+    # with one of its gates removed for exactly the caller least entitled to it.
+    #
+    # So the lane borrows THIS service's re-check — the same ``_fresh_risk`` the human gate
+    # uses, against the same allowlist, the same snapshot and the same quote. One
+    # implementation of "is this order still acceptable right now", used by both approvers.
+
+    def positions_snapshot(self):
+        """The fresh reconciled positions handed to gate (d). Raises on a broker fault, which
+        the gateway turns into a refusal — an order path that cannot see the account is one
+        that must not place an order."""
+        return self._broker.get_positions(st=self.state, clock=self.state.clock)
+
+    def order_status(self, broker_order_id: str) -> dict:
+        """RW-15 — the composed transport's order-status READER, injected into
+        ``brokers.order_status_poll`` as its ``status_fn``.
+
+        Deliberately a bare delegation with no gate of its own: this reads an order's status and
+        can neither place nor amend one, and the poll validates every reply through the gateway's
+        own ACK machinery before a single state moves. Raises when the transport cannot answer,
+        which the poll turns into a named ``read_failed`` that leaves the order OPEN — the
+        fail-closed direction, since an order left open only ever refuses more trading.
+        """
+        return self._broker.order_status(broker_order_id)
+
+    def autoexec_risk_recheck(self, order):
+        """``(order) -> callable(positions) -> verdict`` for the RW-17 lane's gate (d).
+
+        FAILS CLOSED AS A VERDICT, NEVER AS AN EXCEPTION. This factory is called inside the
+        executor's locked firing block; raising there would abort a whole ``resolve_due`` tick
+        and leave the remaining tickets unresolved and uncounted. An order whose lineage cannot
+        be loaded therefore comes back as a REJECTED verdict naming why, which the gateway
+        refuses and the executor counts and notifies — the same outcome, reported instead of
+        thrown.
+        """
+        try:
+            bundle = self._load_bundle(order.id)
+        except Exception as exc:            # noqa: BLE001 - an unreadable lineage is a rejection
+            log.warning("paper execution: no lineage for auto-execution of order %s (%s: %s); "
+                        "gate (d) will REJECT", getattr(order, "id", "?"),
+                        type(exc).__name__, exc)
+
+            def _rejected(_positions):
+                return {"decision": "rejected",
+                        "failed_checks": ["autoexec_lineage_unreadable"]}
+
+            return _rejected
+
+        def _recheck(_positions):
+            result, _snapshot = self._fresh_risk(
+                bundle.proposal.payload, bundle.order.symbol,
+                bundle.agent_job.runtime, bundle.agent_job,
+            )
+            return result
+
+        return _recheck
 
     def _load_bundle(self, order_id: str) -> _Bundle:
         with self.state.session_factory() as session:
@@ -141,12 +265,15 @@ class PaperExecutionService:
             "mode": ModeLadder(self.state).current().value,
         }
 
-    def _fresh_risk(self, proposal_payload: dict, symbol: str):
+    def _fresh_risk(self, proposal_payload: dict, symbol: str, producing_runtime=None,
+                    agent_job=None):
         try:
             snapshot = self._broker.get_positions(st=self.state, clock=self.state.clock)
             quote = self._quote_fn(symbol)
             ctx = build_risk_context(
-                self.state, quote=quote, watchlist=self._watchlist()
+                self.state, quote=quote,
+                watchlist=self._watchlist(producing_runtime=producing_runtime,
+                                          agent_job=agent_job),
             )
             return evaluate(proposal_payload, ctx), snapshot
         except Exception:  # noqa: BLE001 - any vendor/data fault means no order authority
@@ -154,6 +281,51 @@ class PaperExecutionService:
                 "decision": "rejected",
                 "failed_checks": ["paper_broker_or_quote_unavailable"],
             }, None
+
+    def _assert_producing_runtime(self, agent_job: AgentJob) -> None:
+        """Who is allowed to have produced an order that a human may submit to the broker.
+
+        Two admissible producers, and the difference between them is the whole reason this is
+        a function rather than a set membership test:
+
+          * THE CONFIGURED DECISION RUNTIME (``claude`` / ``codex``). Unchanged. The proposal
+            must come from the runtime this deployment is currently configured to decide with,
+            so flipping the provider switch cannot resurrect a stale proposal from the other
+            one. This is the Invariant-2 / SEC-08 binding for MODEL-authored orders.
+          * THE DETERMINISTIC COPY PRODUCER (``COPYTRADE_RUNTIME``). There is no model in its
+            provenance at all, so "is it the configured DECISION runtime" is not a question
+            that has an answer for it — and answering "no" meant a copy order could be drafted
+            and then never adjudicated by the only wired human gate.
+
+        The deterministic branch is admitted ONLY in ``paper``, re-checked here rather than
+        relying on the ladder check further down, so the allowance cannot survive a future
+        reordering of this method. SEC-08 is untouched and still bites twice above this layer:
+        ``run_copy_cycle`` refuses to build anything in a live/auto rung, and
+        ``OrderGateway`` re-runs ``assert_execution_runtime`` at submit with this same string.
+
+        A job that did not finish is refused in both branches — an order whose producer
+        crashed is an order whose provenance is a guess.
+        """
+        runtime = str(agent_job.runtime)
+        if agent_job.status != "done":
+            raise PaperExecutionError(
+                "runtime_not_allowed",
+                "paper execution requires a proposal from a run that completed",
+            )
+        if runtime == COPYTRADE_RUNTIME:
+            if ModeLadder(self.state).current().value != "paper":
+                raise PaperExecutionError(
+                    "paper_mode_required",
+                    "the deterministic copy path is paper-only (SEC-08)",
+                )
+            return
+        selected_runtime = configured_decision_runtime(self.state.settings)
+        if runtime not in {"claude", "codex"} or runtime != selected_runtime:
+            raise PaperExecutionError(
+                "runtime_not_allowed",
+                "paper execution requires a successful proposal from the currently configured "
+                f"decision runtime ({selected_runtime})",
+            )
 
     def decide(self, order_id: str, *, actor: str, decision: str, confirm_symbol: str | None,
                request_id: str) -> dict:
@@ -177,14 +349,7 @@ class PaperExecutionService:
             raise PaperExecutionError(
                 "order_not_submittable", f"order state {order.state!r} is not submittable"
             )
-        selected_runtime = configured_decision_runtime(self.state.settings)
-        if (agent_job.status != "done" or agent_job.runtime not in {"claude", "codex"}
-                or agent_job.runtime != selected_runtime):
-            raise PaperExecutionError(
-                "runtime_not_allowed",
-                "paper execution requires a successful proposal from the currently configured "
-                f"decision runtime ({selected_runtime})",
-            )
+        self._assert_producing_runtime(agent_job)
         if ModeLadder(self.state).current().value != "paper":
             raise PaperExecutionError(
                 "paper_mode_required", "cockpit must be in audited paper mode"
@@ -198,7 +363,8 @@ class PaperExecutionService:
                     f"type the exact symbol {order.symbol.upper()} to approve this paper order",
                     422,
                 )
-            fresh, _snapshot = self._fresh_risk(proposal.payload, order.symbol)
+            fresh, _snapshot = self._fresh_risk(proposal.payload, order.symbol,
+                                                agent_job.runtime, agent_job)
             if fresh.get("decision") != "approved":
                 raise PaperExecutionError(
                     "fresh_risk_failed",
@@ -229,7 +395,8 @@ class PaperExecutionService:
             }
 
         def risk_recheck(_positions):
-            result, _snap = self._fresh_risk(proposal.payload, order.symbol)
+            result, _snap = self._fresh_risk(proposal.payload, order.symbol,
+                                             agent_job.runtime, agent_job)
             return result
 
         latest = self._broker.get_positions(st=self.state, clock=self.state.clock)

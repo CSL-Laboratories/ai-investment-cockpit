@@ -3,8 +3,10 @@
 All the load-bearing logic lives in the core modules (``operators`` / ``approval`` / ``veto`` /
 ``embeds`` / ``fallback`` / ``anchor``). This file ONLY adapts Discord surfaces onto them:
 Approve/Reject/Modify/Interrogate buttons, the slash commands (``/mode``, ``/killswitch``,
-``/brief``, ``/status``, ``/limits``, ``/triage``, ``/ask``, ``/automation``), and thread
-replies. Every entry point re-verifies the operator id via ``bridge.operators.is_authorized``
+``/brief``, ``/status``, ``/limits``, ``/triage``, ``/ask``, ``/automation``, ``/quant``,
+``/cancel``), and thread replies. ``/cancel`` (RW-17) is the odd one out and deliberately so:
+every other control here APPROVES something, while that one is a VETO over a paper trade that
+is going to happen anyway — see :class:`CancelCommands`. Every entry point re-verifies the operator id via ``bridge.operators.is_authorized``
 before it touches the core, and forwards to the loopback orchestrator API / core functions.
 
 ``import discord`` is GUARDED so this module imports even when discord.py is absent — the core
@@ -151,13 +153,100 @@ class QuantCommands:
             return f"⚠ /quant {action} failed: {type(exc).__name__}: {exc}"
 
 
+class CancelCommands:
+    """RW-17 — the discord-free core for ``/cancel``: the operator's ONE lever over the paper
+    auto-execution lane. Same shape as ``ProposalControls`` and ``QuantCommands``.
+
+    THIS IS A VETO, AND THE DISTINCTION IS THE ENTIRE FEATURE. Every other operator control on
+    this surface is an APPROVAL — a trade waits for a tap and does not happen without one. This
+    one is the inverse: the trade happens on its own, and the tap is the only thing that stops
+    it. The operator asked for exactly that ("i do not want to do any approvals ... all i ask is
+    for notifications"), so nothing in this class may ever become a precondition for a trade. An
+    operator who never types ``/cancel`` gets the behaviour they asked for; one who is asleep
+    when the notification lands has lost nothing they were promised.
+
+    AUTHORIZATION IS THE EXISTING ONE, NOT A NEW ONE. ``bridge.operators.is_authorized`` against
+    the frozen ``COCKPIT_OPERATOR_IDS`` snapshot — the same check ``ProposalControls.on_decision``
+    and ``AutoVetoCoordinator.veto`` make. A second auth path for a cancel surface would be a
+    second thing to get wrong, and the failure mode of getting it wrong here is a stranger
+    cancelling the operator's trades. (The cancel itself re-verifies inside
+    ``PaperAutoExecutor.cancel``, which also AUDITS an unauthorized attempt; this check is the
+    outer one, so an unauthorized user gets a plain answer instead of a stack trace.)
+
+    NEVER RAISES, for the reason ``QuantCommands.handle`` gives and more sharply: an exception
+    inside a Discord handler surfaces as an interaction timeout, and an operator who typed
+    ``/cancel`` and saw silence has no way to tell "cancelled" from "the trade is still coming".
+    Every path returns text that says which one it was.
+    """
+
+    UNAUTHORIZED = "Not authorized."
+    NOT_WIRED = ("Paper auto-execution is not running, so there is nothing queued to cancel. "
+                 "(It is opt-in: COCKPIT_CONGRESS_AUTOEXEC.)")
+    USAGE = ("Usage: `/cancel proposal_id:<id>` — the id is in the queued-trade notification. "
+             "This VETOES a queued paper trade; you never need to act for one to proceed.")
+
+    def __init__(self, st, executor=None) -> None:
+        self.st = st
+        self._executor = executor
+
+    def handle(self, interaction: Any, *, proposal_id: str = "") -> str:
+        """Route one ``/cancel`` invocation to a rendered message."""
+        uid = _extract_user_id(interaction)
+        if not is_authorized(uid, self.st.settings):
+            return self.UNAUTHORIZED
+        if self._executor is None:
+            return self.NOT_WIRED
+        proposal_id = str(proposal_id or "").strip()
+        if not proposal_id:
+            return "\n".join([self.USAGE, self._pending_summary()]).strip()
+        try:
+            outcome = self._executor.cancel(proposal_id, actor_user_id=uid)
+        except Exception as exc:                       # noqa: BLE001 - a handler must not die
+            return (f"⚠ /cancel {proposal_id} FAILED: {type(exc).__name__}: {exc}. The trade may "
+                    "still be queued — check the notification channel.")
+        return self._render(proposal_id, outcome)
+
+    @staticmethod
+    def _render(proposal_id: str, outcome) -> str:
+        """Render a ``CancelOutcome`` without assuming more of its shape than RW-17 pins.
+
+        ``cancelled`` and ``reason`` are read defensively because this adapter does not own that
+        type. The fallback is deliberately NOT "cancelled": an outcome this surface cannot read
+        must never be reported to the operator as a trade that was stopped.
+        """
+        cancelled = getattr(outcome, "cancelled", None)
+        if cancelled is None:
+            cancelled = getattr(outcome, "vetoed", None)
+        reason = getattr(outcome, "reason", None) or "no reason given"
+        if cancelled is True:
+            return f"🛑 CANCELLED {proposal_id} — it will not be submitted. ({reason})"
+        if cancelled is False:
+            return f"⚠ NOT cancelled: {proposal_id} — {reason}."
+        return (f"⚠ /cancel {proposal_id} returned an unreadable outcome ({outcome!r}); treat "
+                "the trade as STILL QUEUED and check the notification channel.")
+
+    def _pending_summary(self) -> str:
+        """A best-effort list of what is currently queued. Optional by design: RW-17 pins
+        ``schedule``/``cancel``/``resolve_due`` and nothing else, so an executor without a
+        listing seam degrades to the usage line rather than to an error."""
+        pending = getattr(self._executor, "pending", None)
+        if not callable(pending):
+            return ""
+        try:
+            ids = [str(getattr(t, "proposal_id", t)) for t in (pending() or [])]
+        except Exception:                              # noqa: BLE001 - a listing is a nicety
+            return ""
+        return f"Queued now: {', '.join(ids)}" if ids else "Nothing is queued right now."
+
+
 # Slash-command names the bot registers (draft-discord-control-plane). The adapter validates the
 # operator on each; the actual command bodies forward to the orchestrator loopback API.
 SLASH_COMMANDS = (
     "mode", "killswitch", "brief", "status", "limits", "triage", "ask", "automation", "quant",
+    "cancel",
 )
 
-_WIRED_COMMANDS = frozenset({"quant"})
+_WIRED_COMMANDS = frozenset({"quant", "cancel"})
 """Commands with a REAL body below, excluded from the acknowledge-only registration loop.
 
 The rest are still WP6 stubs that reply "acknowledged". Listing the wired ones explicitly
@@ -167,7 +256,8 @@ order."""
 
 
 def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControls | None = None,
-              quant: "QuantCommands | None" = None, intents: Any = None):
+              quant: "QuantCommands | None" = None, autoexec=None,
+              cancel: "CancelCommands | None" = None, intents: Any = None):
     """Construct the discord.py client + command tree wired to the core. Raises ``RuntimeError``
     if discord.py is not installed (the core paths do not need it). The command bodies stay thin:
     verify the operator, forward to the loopback orchestrator API / core."""
@@ -230,6 +320,21 @@ def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControl
         await interaction.followup.send(message, ephemeral=True)
 
     tree.command(name="quant", description="Quant engine status / simulation (read-only)")(_quant)
+
+    # ---- /cancel (RW-17): VETO a queued paper auto-execution ----------------------------
+    cancel_core = cancel if cancel is not None else CancelCommands(st, autoexec)
+
+    async def _cancel(interaction, proposal_id: str = ""):  # noqa: ANN001
+        # EPHEMERAL, like every other control on this surface, but NOT deferred: the cancel is
+        # an in-memory flag flip under a lock and answers well inside Discord's three seconds.
+        # Deferring would add a round trip to the one command whose latency competes with a
+        # closing cancel window.
+        await interaction.response.send_message(
+            cancel_core.handle(interaction, proposal_id=proposal_id), ephemeral=True)
+
+    tree.command(name="cancel",
+                 description="Cancel a queued paper auto-trade (veto; never needed to proceed)")(
+        _cancel)
 
     return client, tree
 

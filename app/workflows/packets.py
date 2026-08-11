@@ -20,8 +20,13 @@ from schemas.models.market_event import MarketEvent
 def _attr_escape(value) -> str:
     """Escape ONE attribute VALUE for a double-quoted wrapper attribute. An attacker-controlled
     MCP ``source``/field value must not be able to break out of the quoted attribute, so & < >
-    AND the double-quote are neutralized (& first -> idempotent). This is the attribute-context
-    twin of ``escape_untrusted`` (which guards element text)."""
+    AND the double-quote are neutralized. ``&`` is escaped FIRST so the transform is ORDER-safe
+    within its single pass — that is NOT idempotence, and this function must therefore be applied
+    EXACTLY ONCE per value (it is: ``wrap_untrusted`` below is the only caller). Unlike
+    ``escape_untrusted`` — the element-text twin, which is a fixed point precisely because it
+    leaves ``&`` alone — attribute values really are entity-decoded by a consumer, so dropping
+    the ``&`` encoding here would reopen the quoted-attribute breakout. Different context,
+    different job: do not "unify" the two escapers."""
     s = value if isinstance(value, str) else str(value)
     return (s.replace("&", "&amp;").replace("<", "&lt;")
              .replace(">", "&gt;").replace('"', "&quot;"))

@@ -323,13 +323,31 @@ class OrderGateway:
             return row
 
     def _adjudication_binds(self, st, approval_id, *, proposal_id, risk_decision_id,
-                            order_tuple_hash) -> bool:
+                            order_tuple_hash, order_id=None) -> bool:
         """A covering ``EVENT_ADJUDICATION`` AuditEntry (refs.row_id == approval_id) whose
         HMAC-VERIFIED SIGNED payload binds EXACTLY (decision=approve, proposal_id,
         risk_decision_id, order_tuple_hash). The signed payload — not the mutable
         ``ApprovalRecord`` columns — is the root of trust: a keyless writer cannot forge it
         (SEC-12), and a caller holding the gateway cannot substitute the binding via a by-value
-        object because we re-derive everything from the chain (the reproduced-bypass fix)."""
+        object because we re-derive everything from the chain (the reproduced-bypass fix).
+
+        RW-17 ADDS THE ORDER ROW TO THE BINDING, WHEN THE PAYLOAD CARRIES IT. Those four fields
+        are order-row-AGNOSTIC: two distinct ``Order`` rows under one proposal, with one risk
+        decision and the same canonical tuple, satisfy the same adjudication. That was
+        acceptable while every approval was consumed by the human tap that created it, and it
+        stopped being acceptable when RW-17 started leaving UNCONSUMED auto-approvals on the
+        chain as a routine artefact (any gateway refusal after ``_mint_approval`` closes the
+        ticket and leaves the row un-consumed for the rest of its 900s TTL, with no human
+        anywhere to notice the orphan). So: when the signed payload names an ``order_id`` — every
+        auto-adjudication does, and ``bridge/approval`` will as it is extended — it MUST be the
+        order being submitted.
+
+        BACKWARDS-COMPATIBLE BY CONSTRUCTION, IN THE SAFE DIRECTION: an entry with no
+        ``order_id`` key behaves exactly as before (older chains keep verifying), and a caller
+        that does not pass ``order_id`` cannot accidentally tighten a check it did not intend —
+        ``mint_live_submit_token`` is such a caller, since no order row exists yet at mint time.
+        The check can only ever REFUSE more, never admit more.
+        """
         with st.session_factory() as s:
             entries = s.execute(
                 select(AuditEntry).where(AuditEntry.event_type == EVENT_ADJUDICATION)
@@ -340,6 +358,9 @@ class OrderGateway:
             if not st.audit.verify_entry(e):
                 continue
             p = e.payload or {}
+            bound_order = p.get("order_id")
+            if order_id is not None and bound_order is not None and bound_order != order_id:
+                continue
             if (p.get("decision") == "approve"
                     and p.get("proposal_id") == proposal_id
                     and p.get("risk_decision_id") == risk_decision_id
@@ -446,7 +467,8 @@ class OrderGateway:
                     "approval authorizes an order whose risk decision is not approved")
         if not self._adjudication_binds(st, db_appr.id, proposal_id=order.proposal_id,
                                         risk_decision_id=db_appr.risk_decision_id,
-                                        order_tuple_hash=resolved_hash):
+                                        order_tuple_hash=resolved_hash,
+                                        order_id=getattr(order, "id", None)):
             return ("approval", None,
                     "no HMAC-signed adjudication binds this approval to this order")
         ttl = self._ttl_seconds(st)

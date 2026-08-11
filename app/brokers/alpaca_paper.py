@@ -131,6 +131,30 @@ class AlpacaPaperHTTPClient:
             ),
         }
 
+    def order_status(self, broker_order_id: str) -> dict:
+        """RW-15 — READ one order's current status. Never places, cancels or amends anything.
+
+        Returns the same shape ``submit_order`` does, because
+        ``brokers.order_status_poll`` runs the reply through the gateway's OWN
+        ``_sanitize_broker_response`` / ``_BROKER_STATUS_TO_STATE`` / ``_ack_consistent``
+        machinery rather than re-deciding any of it. A missing/blank id is refused here rather
+        than being turned into a ``GET /v2/orders/`` (which lists ALL orders and whose first row
+        would then be applied to the wrong order).
+        """
+        clean = str(broker_order_id or "").strip()
+        if not clean or "/" in clean or "?" in clean:
+            raise AlpacaPaperError("invalid broker order id for a status read")
+        body = self._request("GET", PAPER_BASE_URL, f"/v2/orders/{clean}")
+        return {
+            "broker_order_id": str(body.get("id") or clean),
+            "status": str(body.get("status") or ""),
+            "filled_qty": Decimal(str(body.get("filled_qty") or "0")),
+            "avg_fill_price": (
+                None if body.get("filled_avg_price") is None
+                else Decimal(str(body["filled_avg_price"]))
+            ),
+        }
+
     def account_info(self) -> dict:
         body = self._request("GET", PAPER_BASE_URL, "/v2/account")
         return {
@@ -205,15 +229,42 @@ class FakeAlpaca:
         self.holdings = holdings if holdings is not None else []
         self.positions = positions if positions is not None else []
         self.submitted: list[dict] = []
+        #: broker_order_id -> the reply ``order_status`` will give. Seeded at submit time with
+        #: the RESTING answer; a test moves an order on with :meth:`settle`.
+        self.statuses: dict[str, dict] = {}
 
     def submit_order(self, canonical: dict) -> dict:
         oid = new_id("alp")
         self.submitted.append({"broker_order_id": oid, **canonical})
-        return {
+        ack = {
             "broker_order_id": oid,
             "status": "accepted",
             "filled_qty": Decimal("0"),
             "avg_fill_price": None,
+        }
+        self.statuses[oid] = dict(ack)
+        return ack
+
+    def order_status(self, broker_order_id: str) -> dict:
+        """The RW-15 status READ. Every order this simulator accepted stays ``accepted`` (i.e.
+        RESTING) until a test explicitly settles it via :meth:`settle`, which is the whole point:
+        the resting order is the case the reconcile tick exists to drain, so the default must be
+        the resting one and a fill must be something a test asked for."""
+        oid = str(broker_order_id or "")
+        if oid not in self.statuses:
+            raise AlpacaPaperError(f"unknown paper order {oid!r}")
+        return dict(self.statuses[oid])
+
+    def settle(self, broker_order_id: str, status: str, *, filled_qty="0",
+               avg_fill_price=None) -> None:
+        """Test/simulator seam: say what the broker would now report for this order."""
+        oid = str(broker_order_id)
+        self.statuses[oid] = {
+            "broker_order_id": oid,
+            "status": str(status),
+            "filled_qty": Decimal(str(filled_qty)),
+            "avg_fill_price": (None if avg_fill_price is None
+                               else Decimal(str(avg_fill_price))),
         }
 
     def account_info(self) -> dict:
@@ -233,6 +284,17 @@ class AlpacaPaperBroker:
         """Submit the canonical resolved-order tuple. Returns
         ``{broker_order_id, status, filled_qty, avg_fill_price}``."""
         return self._client.submit_order(canonical_tuple)
+
+    def order_status(self, broker_order_id: str) -> dict:
+        """RW-15 — READ one order's status through the same private client seam.
+
+        A READ, not a placement: this is the only broker call ``brokers.order_status_poll`` makes,
+        and the module asserts at import that the states it can reach never include a pre-broker
+        one, so Invariant 1's single order path stays single. Absent on a client that cannot
+        answer (``AttributeError``), which the poll reports as ``read_failed`` and which leaves
+        the order OPEN — the fail-closed direction.
+        """
+        return self._client.order_status(broker_order_id)
 
     def _snapshot(self, *, clock) -> PortfolioSnapshot:
         info = self._client.account_info()

@@ -33,6 +33,12 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The ONE upper bound on the options haircut, imported rather than restated. ``copytrade.policy``
+# is a leaf (stdlib only, no config import), so this cannot cycle — and the alternative, a second
+# literal here, is exactly the disagreement that let ``le=1`` accept the value ``CopyPolicy``
+# refuses and turn a boot-time config error into a silently dead feature at runtime.
+from copytrade.policy import MAX_OPTIONS_HAIRCUT
+
 # Resolved relative to app/ (this file's parent's parent), so the cockpit finds the same file
 # whether it is launched from the repo root or from app/. An absolute COCKPIT_ENV_FILE wins,
 # which is what a Windows scheduled task should set — its cwd is not yours.
@@ -78,6 +84,15 @@ _OPERATOR_IDS_MAX_RAW_CHARS = 512
 _OPERATOR_IDS_MAX_ENTRIES = 1
 _OPERATOR_ID = re.compile(r"^\d{15,22}$")
 
+# RW-16 congressional follow list. The ENTRY count is bounded by copytrade.policy
+# (MAX_FOLLOW_ENTRIES); this is the raw-text bound, the same defence-in-depth the watchlist
+# gets — a config value that arrives megabyte-sized is a bug or an attack, never a follow list.
+_CONGRESS_FOLLOW_MAX_RAW_CHARS = 2048
+# The default options handling, spelled here so this module never imports copytrade just to
+# state a default. The VALIDATION set is still read from copytrade.policy.OPTIONS_POLICIES
+# (normalize_congress_options_policy), so the two files cannot disagree about what is legal.
+_CONGRESS_OPTIONS_DEFAULT = "underlying"
+
 
 def normalize_watchlist(raw: str | None) -> str:
     """Validate and canonicalize a comma/whitespace-separated public-equity watchlist.
@@ -121,6 +136,80 @@ def normalize_operator_ids(raw: str | None) -> str:
     if invalid:
         raise ValueError(f"invalid operator ID(s): {', '.join(invalid)}")
     return ",".join(ordered)
+
+
+def normalize_congress_follow(raw: str | None) -> str:
+    """RW-16 — validate the ``;``-separated congressional follow allowlist AT STARTUP.
+
+    WHY EAGER. ``copytrade.policy.parse_follow_list`` already refuses an unparseable entry, but
+    it is called at PLAN time — hours or days after the operator edited ``.env``. Deferring the
+    check there means a misspelled name ("Pelosi Nancy P" with the comma dropped, a stray
+    ``,`` separator that tears every name in half) surfaces either as a dead feature or, worse,
+    as a follow set that quietly omits the one member the operator meant to follow. An empty
+    follow list follows NOBODY by design, so "parsed to nothing" and "configured nothing" are
+    indistinguishable downstream — which is precisely why the distinction has to be made here,
+    while the operator is still looking at the file they just changed.
+
+    Returns the CANONICAL RAW TEXT (``;``-joined entries), not slugs: ``policy_from_settings``
+    re-parses this field, so it must stay in the shape ``parse_follow_list`` accepts. Duplicate
+    spellings of one member ("Pelosi, Nancy" / "PELOSI, NANCY P.") collapse to the first
+    spelling seen, because they normalize to one slug and keeping both would misreport the
+    follow count in every log line and status view.
+
+    ``copytrade`` is imported INSIDE the function on purpose: a ``config.settings`` import is
+    on every module's path in this app, and it must not drag the copy engine in behind it. The
+    import only happens when the operator actually configured a follow list.
+    """
+    if raw is None or not str(raw).strip():
+        return ""
+    text = str(raw)
+    if len(text) > _CONGRESS_FOLLOW_MAX_RAW_CHARS:
+        raise ValueError(
+            f"congress follow list may contain at most {_CONGRESS_FOLLOW_MAX_RAW_CHARS} "
+            "characters"
+        )
+    from copytrade.policy import PolicyError, normalize_filer, parse_follow_list
+
+    entries = [entry.strip() for entry in text.split(";") if entry.strip()]
+    if not entries:
+        # Separators and nothing else (";;;", " ; "). Blank means "follow nobody" and is a
+        # legitimate setting, but this is not blank — someone typed something and meant it. It
+        # must not fail closed SILENTLY into the empty allowlist, or the operator's next
+        # question is "why did it copy nobody" with no line to answer it.
+        raise ValueError(
+            "congress follow list contains separators but no names; leave it EMPTY to follow "
+            "nobody, or write ';'-separated entries like 'Pelosi, Nancy; Tuberville, Tommy'"
+        )
+    try:
+        parse_follow_list(";".join(entries))     # raises on an unparseable/oversized list
+    except PolicyError as exc:
+        # Re-raised as ValueError so pydantic reports it as a field error naming
+        # COCKPIT_CONGRESS_FOLLOW, rather than as an opaque copytrade exception at boot.
+        raise ValueError(str(exc)) from exc
+    canonical: dict[str, str] = {}
+    for entry in entries:
+        canonical.setdefault(normalize_filer(entry), entry)
+    return ";".join(canonical.values())
+
+
+def normalize_congress_options_policy(raw: str | None) -> str:
+    """RW-16 — validate ``COCKPIT_CONGRESS_OPTIONS_POLICY`` against the policy's own literals.
+
+    Checked against ``copytrade.policy.OPTIONS_POLICIES`` rather than a copy of the strings, so
+    a third policy can never exist in one file and not the other. A typo ("underlyng") must
+    fail at startup: ``CopyPolicy.__post_init__`` would otherwise raise at PLAN time, turning a
+    one-character config error into a feature that looks configured and silently never runs.
+    """
+    if raw is None or not str(raw).strip():
+        return _CONGRESS_OPTIONS_DEFAULT
+    from copytrade.policy import OPTIONS_POLICIES
+
+    text = str(raw).strip().lower()
+    if text not in OPTIONS_POLICIES:
+        raise ValueError(
+            f"congress_options_policy must be one of {sorted(OPTIONS_POLICIES)}, got {raw!r}"
+        )
+    return text
 
 
 def _iter_env_file(path: Path):
@@ -411,6 +500,282 @@ class Settings(BaseSettings):
     # full disk is refused BEFORE a half-written filing lands. Env: COCKPIT_RAW_MIN_FREE_BYTES.
     raw_min_free_bytes: int = Field(default=256 * 1024 * 1024, ge=0)
     # ---- end RW-10 block ----------------------------------------------------------------
+
+    # ---- RW-16 congressional copy-trading (docs/refactor-plan.md RW-16) ------------------
+    # Congressional periodic-transaction reports (House Clerk + Senate EFD). Read the shape of
+    # this feature before touching a number here: a PTR is disclosed up to 45 days AFTER the
+    # trade, so this is an AWARENESS feed first (what did they file?) and a copy engine second.
+    # Every knob below exists to bound what the DETERMINISTIC copy engine may do with a signal
+    # that is, by construction, weeks old. No model is on this path (Inv 1/5, "execution stays
+    # model-free"); ``copytrade.policy.policy_from_settings`` is the only reader.
+    #
+    # OFF BY DEFAULT, DELIBERATELY. Turning this on starts fetching two .gov sites AND starts
+    # proposing orders, so it is opt-in: an operator who has not read the docs gets nothing.
+    # Env: COCKPIT_CONGRESS_ENABLED.
+    congress_enabled: bool = False
+    # The declared contact string sent as User-Agent on every house.gov / senate.gov request.
+    # NON-SECRET — a name and an email, the same shape and purpose as COCKPIT_SEC_USER_AGENT,
+    # and published to the remote host on every single request by design. (Checked against
+    # _SECRETISH: "CONGRESS_USER_AGENT" contains none of SECRET/TOKEN/KEY/CREDENTIAL/HMAC, so
+    # it does NOT trip the .env guard and needs no _SECRETISH_ALLOWED entry. That list is for
+    # names that DO trip the shape; adding a name that does not would be dead config that
+    # misleads the next reader about which names are dangerous.)
+    # Unset => the feed is NOT PROVISIONED and stays silent: main.build_congress_providers
+    # refuses to build a provider that would scrape a government site anonymously (SEC's own
+    # fair-access posture, and a suppressed UA is empirically how you earn a 403).
+    # Env: COCKPIT_CONGRESS_USER_AGENT.
+    congress_user_agent: str = ""
+    # Self-imposed politeness floor in requests/sec. Neither the Clerk nor the EFD publishes a
+    # documented rate cap, so this is a limit WE choose, not one we are trusted to respect —
+    # the same posture as finra_rate_per_sec. 0.5/s (one request every two seconds) is already
+    # generous for a feed that reads a handful of documents a day. The ``le`` ceiling bounds
+    # OUR aggression: a fat-fingered 500 must not turn one config edit into a flood against a
+    # .gov host. Env: COCKPIT_CONGRESS_RATE_PER_SEC.
+    congress_rate_per_sec: float = Field(default=0.5, gt=0, le=5.0)
+    # The follow ALLOWLIST: ``;``-separated member names ("Pelosi, Nancy; Tuberville, Tommy").
+    # ``;`` and not ``,`` because a comma-separated list tears every "Last, First" in half.
+    # EMPTY FOLLOWS NOBODY (copytrade.policy.CopyPolicy.follows) — there is deliberately no
+    # "everyone" value, because the feed carries both chambers and a config oversight would
+    # otherwise become several hundred positions. Validated eagerly; see
+    # normalize_congress_follow for why that has to happen here and not at plan time.
+    # Env: COCKPIT_CONGRESS_FOLLOW.
+    congress_follow: str = ""
+    # Refuse any disclosure whose TRADE is older than this. 45 days is the STOCK Act reporting
+    # deadline, so the default means "act on a filing that arrived on time, refuse one that did
+    # not". The upper bound is a year: a knob that can be set to 3650 is not a staleness gate.
+    # Env: COCKPIT_CONGRESS_MAX_AGE_DAYS.
+    congress_max_age_days: int = Field(default=45, ge=1, le=365)
+    # Fraction of the position given up at maximum age, linearly (0.5 => a 45-day-old trade is
+    # sized at half a same-day one). 0 prices a 44-day-old signal as if it were fresh, which is
+    # allowed but not advised. Env: COCKPIT_CONGRESS_STALENESS_DECAY.
+    congress_staleness_decay: Decimal = Field(default=Decimal("0.5"), ge=0, le=1)
+    # Fraction of YOUR portfolio value for a baseline (weight 1.0) copied buy. ``le=1`` because
+    # a copy fraction above 100% of the portfolio is not a configuration, it is a typo.
+    # Env: COCKPIT_CONGRESS_COPY_FRACTION.
+    congress_copy_fraction: Decimal = Field(default=Decimal("0.02"), gt=0, le=1)
+    # Hard per-intent ceiling, applied after every other sizing factor. The risk engine has its
+    # own caps; this one bounds a policy misconfiguration BEFORE it reaches the engine, so the
+    # two controls fail independently. Env: COCKPIT_CONGRESS_MAX_NOTIONAL_PER_TRADE.
+    congress_max_notional_per_trade: Decimal = Field(default=Decimal("500"), gt=0)
+    # Below this the intent is DROPPED rather than emitted: a $3 order is all cost and no
+    # exposure, and it still spends a human approval. Env: COCKPIT_CONGRESS_MIN_NOTIONAL_PER_TRADE.
+    congress_min_notional_per_trade: Decimal = Field(default=Decimal("25"), ge=0)
+    # Ignore disclosures whose LOW amount bound is under this. The bottom PTR bucket starts at
+    # $1,001, so the default admits everything and raising it filters a member's smallest
+    # positions. Env: COCKPIT_CONGRESS_MIN_AMOUNT_LOW.
+    congress_min_amount_low: Decimal = Field(default=Decimal("1001"), ge=0)
+    # "underlying" (translate an options disclosure to a haircut position in the underlying) or
+    # "ignore" (surface for awareness only, never act). There is no "copy the contract" value:
+    # the risk engine does not support options as an asset type at all, and putting a hard
+    # expiry on the end of a 30-45 day information lag is not a strategy.
+    # Env: COCKPIT_CONGRESS_OPTIONS_POLICY.
+    congress_options_policy: str = _CONGRESS_OPTIONS_DEFAULT
+    # Options-derived intents are sized at this multiple of an equivalent equity copy — the
+    # discount for translating a leveraged instrument into an unleveraged one. ``gt=0`` because
+    # a zero haircut means "emit intents worth nothing", which is a silent no-op dressed as a
+    # feature. The upper bound is ``copytrade.policy.MAX_OPTIONS_HAIRCUT`` and NOT 1: the old
+    # ``le=1`` accepted the exact value ``CopyPolicy`` forbids, so a boot-time config error
+    # surfaced instead as a runtime ``PolicyError`` swallowed by
+    # ``brokers.paper_execution._copy_universe``'s broad except — an empty copy universe and
+    # every promoted symbol silently refused at submit. Env: COCKPIT_CONGRESS_OPTIONS_HAIRCUT.
+    congress_options_haircut: Decimal = Field(
+        default=Decimal("0.25"), gt=0, le=MAX_OPTIONS_HAIRCUT)
+    # Drop an options-derived intent whose disclosed expiry is nearer than this: by the time a
+    # PTR arrives the contract may already have expired, and translating a signal whose own
+    # thesis window has closed is guessing. ``ge=1`` because 0 admits a 0-DTE contract as a fresh
+    # multi-week long — see CopyPolicy.options_min_days_to_expiry.
+    # Env: COCKPIT_CONGRESS_OPTIONS_MIN_DAYS_TO_EXPIRY.
+    congress_options_min_days_to_expiry: int = Field(default=30, ge=1, le=365)
+    # Copy disclosed SALES as exits of positions actually held. ON by default and independent
+    # of buys on purpose: mirroring only the buys builds a portfolio that never sells.
+    # Env: COCKPIT_CONGRESS_MIRROR_SELLS.
+    congress_mirror_sells: bool = True
+    # Bounds on the DYNAMIC copy universe (copytrade/universe.py): how many disclosure-promoted
+    # symbols may be live at once, and how long a symbol survives without a fresh disclosure.
+    # Both exist so the deterministic allowlist stays small enough to reason about and current
+    # enough to be honest. Env: COCKPIT_CONGRESS_MAX_UNIVERSE_SYMBOLS / ..._UNIVERSE_TTL_DAYS.
+    congress_max_universe_symbols: int = Field(default=40, ge=1, le=200)
+    congress_universe_ttl_days: int = Field(default=120, ge=1, le=1095)
+    # The Senate EFD provider is separately opt-in and OFF by default: its search UI is
+    # agreement-gated and its documents are far less machine-readable than the Clerk's, so a
+    # deployment that enables the House feed must not silently acquire a second, flakier
+    # scraper it never asked for. Env: COCKPIT_CONGRESS_SENATE_ENABLED.
+    congress_senate_enabled: bool = False
+
+    @field_validator("congress_follow", mode="before")
+    @classmethod
+    def _validate_congress_follow(cls, value):
+        return normalize_congress_follow(value)
+
+    @field_validator("congress_options_policy", mode="before")
+    @classmethod
+    def _validate_congress_options_policy(cls, value):
+        return normalize_congress_options_policy(value)
+
+    @model_validator(mode="after")
+    def _check_congress_notional_band(self):
+        """The one CROSS-FIELD copy constraint, checked at startup rather than at plan time.
+
+        ``CopyPolicy.__post_init__`` raises on ``min > max`` — but that runs when the first
+        disclosure is planned, which may be days after the edit. An inverted band is not a
+        subtle mistake and it disables the whole feature, so it fails here, loudly, next to
+        the file the operator just saved.
+        """
+        if self.congress_min_notional_per_trade > self.congress_max_notional_per_trade:
+            raise ValueError(
+                "congress_min_notional_per_trade "
+                f"({self.congress_min_notional_per_trade}) exceeds "
+                f"congress_max_notional_per_trade ({self.congress_max_notional_per_trade}): "
+                "every intent would be clamped below the floor and dropped"
+            )
+        return self
+    # ---- end RW-16 block ------------------------------------------------------------------
+
+    # ---- RW-17 zero-touch PAPER auto-execution (the operator's "no approvals" lane) --------
+    # RW-16 ends at an ``Order`` row a HUMAN adjudicates. The operator asked for the opposite:
+    # "i do not want to do any approvals when this tool is running, i want it to make trades
+    # for me. all i ask is for notifications." RW-17 is that lane — and it is PAPER ONLY, by
+    # construction, forever.
+    #
+    # THIS IS NOT AN AUTO RUNG. ``auto_veto``/``auto_full`` are LIVE modes here
+    # (``orchestrator.mode_ladder._LIVE_MODES``) whose gates protect real capital; none of them
+    # is weakened, armed, or routed around by anything below. Every setting here configures a
+    # lane that re-checks ``mode is Mode.paper`` at every resolve and reaches the broker only
+    # through the paper-scoped ``OrderGateway``. Turning these knobs can never make live capital
+    # reachable; if it ever could, that is the bug, not the feature.
+    #
+    # OFF BY DEFAULT, AND THE DEFAULT IS THE POINT. Enabling it replaces the operator's approval
+    # tap with an audited auto-adjudication, so it is an explicit act — never something a
+    # deployment acquires by upgrading. Env: COCKPIT_CONGRESS_AUTOEXEC.
+    congress_autoexec: bool = False
+    # How long a queued trade waits, notified, before it executes — the operator's ONLY lever is
+    # a cancel inside this window (they chose "notify + cancel window", explicitly not instant).
+    # The FLOOR IS THE RESOLVE CADENCE (``orchestrator.scheduler.AUTOEXEC_RESOLVE_SECONDS``, 60s):
+    # a window shorter than the tick that resolves it is not a shorter window, it is a window
+    # whose real length is decided by scheduler jitter — and a cancel window the operator cannot
+    # predict is not a cancel window. ``test_autoexec_wiring`` pins this bound to that constant so
+    # the two cannot drift. Env: COCKPIT_CONGRESS_AUTOEXEC_WINDOW_SECONDS.
+    congress_autoexec_window_seconds: int = Field(default=300, ge=60, le=86400)
+    # THE UPPER BOUND ON A TICKET'S LIFE. Most refusals on this lane are TRANSIENT by design
+    # (``copytrade.autoexec.TRANSIENT_REASONS``) — a HALT clears, a breaker is reset, tomorrow's
+    # budget is fresh — because a terminal refusal permanently strands the disclosure
+    # (``workflows.copytrade_orders._consuming`` never re-proposes a filing that already has an
+    # order row). Transient means the ticket stays live, which needs an upper bound or a ticket
+    # queued during a Monday HALT is still counting down a Monday-priced order on Friday, and
+    # still retrying its notification every minute. At this age the ticket is refused by name
+    # (``ticket_expired``), notified and counted. Six hours is comfortably one regular session,
+    # and nothing is lost by abandoning a 30-45 day-old signal that could not trade inside one.
+    # Env: COCKPIT_CONGRESS_AUTOEXEC_TICKET_MAX_AGE_SECONDS.
+    congress_autoexec_ticket_max_age_seconds: int = Field(default=21_600, ge=300, le=604_800)
+    # ---- the budget rails that REPLACE the human ------------------------------------------
+    # A human approving each trade was, incidentally, the thing bounding daily damage. These
+    # four rails are its replacement, so their defaults are deliberately SMALLER than what an
+    # attentive operator would have approved by hand: an unattended lane should feel tight, and
+    # widening it should be a decision someone made on purpose.
+    #
+    # Total dollars this lane may commit in one trading day. The default is exactly ONE
+    # ``congress_max_notional_per_trade`` (500): out of the box the lane may open one full-size
+    # position per day and then stops, counted and NOTIFIED — never silently.
+    # Env: COCKPIT_CONGRESS_AUTOEXEC_MAX_DAILY_NOTIONAL.
+    congress_autoexec_max_daily_notional: Decimal = Field(default=Decimal("500"), gt=0)
+    # A count rail as well as a dollar rail, because they fail differently: the dollar rail
+    # bounds exposure, this one bounds how many independent mistakes one day can make (each
+    # trade is its own commission, its own fill, its own position to unwind). ``ge=1`` — zero
+    # would be a feature the operator switched on that can never trade, which is precisely the
+    # silent-death shape this file refuses elsewhere. Env: ..._MAX_TRADES_PER_DAY.
+    congress_autoexec_max_trades_per_day: int = Field(default=3, ge=1, le=50)
+    # The standing bound, not the daily one: how many positions this lane may hold open at once.
+    # Without it a $500/day rail still accumulates an unbounded book over a quarter, and nobody
+    # tapped an approval on any of it. Env: ..._MAX_OPEN_POSITIONS.
+    congress_autoexec_max_open_positions: int = Field(default=10, ge=1, le=100)
+    # Per-symbol daily concentration. Half the daily budget by default, so a single name — a
+    # filer who discloses one ticker several times, or an amended filing that reads as new
+    # evidence — cannot consume the whole day's rail on its own. Env:
+    # ..._MAX_NOTIONAL_PER_SYMBOL_PER_DAY.
+    congress_autoexec_max_notional_per_symbol_per_day: Decimal = Field(
+        default=Decimal("250"), gt=0)
+
+    @model_validator(mode="after")
+    def _check_congress_autoexec_is_actually_reachable(self):
+        """LOUD STARTUP REFUSAL, never a quiet no-op — the operator believes it is trading.
+
+        This is the one validator in this file whose absence would be a SAFETY defect rather
+        than a config-hygiene one, and the direction is unusual: it refuses configurations that
+        would trade LESS than the operator thinks, not more. With ``congress_autoexec`` on, the
+        operator has stopped watching an approval queue on purpose. Every combination below
+        produces a lane that boots clean, logs nothing alarming, and copies nobody:
+
+          * ``congress_enabled`` false — no provider is built, no disclosure is ever stored, so
+            the cycle has nothing to plan and the executor never sees a ticket;
+          * an empty follow list — an empty allowlist follows NOBODY (never "everyone", by
+            design), so every disclosure is skipped before sizing;
+          * a daily rail below the minimum trade size — the first ticket's budget check can
+            never pass, so every trade is refused on a rail the operator did not know they had
+            set below the floor;
+          * a PER-SYMBOL rail below the minimum trade size — the same defect one rail over. The
+            per-symbol cap is checked against the SAME sizing floor, so if it sits under it, no
+            symbol can ever take its first trade and the lane refuses everything.
+
+        NOTE what is deliberately NOT refused here: a per-symbol rail below
+        ``congress_max_notional_per_trade`` (the DEFAULT configuration — a 250 cap under a 500
+        ceiling). That combination is reachable, not unreachable: trades sized under the cap go
+        through, and a max-sized one is refused by name, with the arithmetic, on the operator's
+        notification surface. A bounded lane that says why it stopped is the design, not a bug —
+        the only unacceptable case is the one that can never trade at all, which is what the
+        checks below catch.
+
+        Each of those is indistinguishable from "Congress filed nothing this month" if it is
+        allowed through, and the operator's ONLY interface is now notifications about trades
+        that are not happening. So it fails here, at boot, next to the file they just saved.
+        """
+        if not self.congress_autoexec:
+            return self
+        problems: list[str] = []
+        if not self.congress_enabled:
+            problems.append(
+                "COCKPIT_CONGRESS_ENABLED is false, so no disclosure is ever ingested and the "
+                "auto-execution lane would have nothing to trade"
+            )
+        if not self.congress_follow:
+            problems.append(
+                "COCKPIT_CONGRESS_FOLLOW is empty, and an empty follow list is an empty "
+                "allowlist (never 'everyone'), so every disclosure would be skipped"
+            )
+        if self.congress_autoexec_max_daily_notional < self.congress_min_notional_per_trade:
+            problems.append(
+                f"COCKPIT_CONGRESS_AUTOEXEC_MAX_DAILY_NOTIONAL "
+                f"({self.congress_autoexec_max_daily_notional}) is below "
+                f"COCKPIT_CONGRESS_MIN_NOTIONAL_PER_TRADE "
+                f"({self.congress_min_notional_per_trade}), so the budget rail would refuse "
+                "every trade the sizing engine is allowed to emit"
+            )
+        if (self.congress_autoexec_max_notional_per_symbol_per_day
+                < self.congress_min_notional_per_trade):
+            problems.append(
+                f"COCKPIT_CONGRESS_AUTOEXEC_MAX_NOTIONAL_PER_SYMBOL_PER_DAY "
+                f"({self.congress_autoexec_max_notional_per_symbol_per_day}) is below "
+                f"COCKPIT_CONGRESS_MIN_NOTIONAL_PER_TRADE "
+                f"({self.congress_min_notional_per_trade}), so no symbol could ever take its "
+                "first trade and every ticket would be refused on the per-symbol rail"
+            )
+        if self.congress_autoexec_ticket_max_age_seconds <= self.congress_autoexec_window_seconds:
+            problems.append(
+                f"COCKPIT_CONGRESS_AUTOEXEC_TICKET_MAX_AGE_SECONDS "
+                f"({self.congress_autoexec_ticket_max_age_seconds}) is not greater than "
+                f"COCKPIT_CONGRESS_AUTOEXEC_WINDOW_SECONDS "
+                f"({self.congress_autoexec_window_seconds}), so every ticket would expire "
+                "before its own cancel window closed and the lane could never trade"
+            )
+        if problems:
+            raise ValueError(
+                "COCKPIT_CONGRESS_AUTOEXEC is ON but the lane cannot trade: "
+                + "; ".join(problems)
+                + ". Fix the configuration or set COCKPIT_CONGRESS_AUTOEXEC=false — this "
+                "refuses at startup rather than running as a lane that notifies you about "
+                "nothing while you believe it is trading."
+            )
+        return self
+    # ---- end RW-17 block ------------------------------------------------------------------
 
     log_level: str = "INFO"
 
