@@ -8,6 +8,14 @@ related: [path-to-production, security-hardening-backlog, security-architecture,
 
 > **[REFERENCE]** The W-series definitions. The build session is over, but code comments cite W-IDs and this is where they resolve. NEW W-IDs are claimed in [[REGISTER]].
 
+> **2026-08-12 autonomy correction:** [[PLAN]] M5–M8 and
+> [[research/autonomy-blockers-and-unblockers-2026-08-12]] own current sequencing and moving
+> targets. The W17 text below predates the final MCP 2026-07-28 stateless protocol and empirical
+> Robinhood discovery requirements; its "HTTP-MCP session," two-week funding implication, and
+> combined discovery/first-live gate are not current contracts. Preserve W IDs for code-comment
+> resolution, but do not implement W17–W19 from this reference without the live plan's `RW-18`,
+> `W16`, decisions, and hold points.
+
 > **This is the production analog of [[build-scaffold-ultracode]].** Where the build scaffold defined WP0→WP9 (all shipped to `main`, green; WP9 = commit 9f6ff44; 586 passed / 3 skipped, ruff clean; gate table G0–G9 green in [[ultracode-build-playbook]]), this file defines W10→W19: the OPEN/PARTIAL hardening delta that stands between "the build is green" and "real capital may move."
 >
 > **The system is PAPER-FIRST. No real money has moved and none may until the pre-live gates pass.** A green suite proves the *shape* of the plan, not the *closure* of an adversarial property (path-to-production §1, lines 34–47).

@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-09
+last-verified: 2026-08-12
 ---
 
 # Docs index
@@ -11,7 +11,7 @@ last-verified: 2026-08-09
 
 | | |
 |---|---|
-| **[[PLAN]]** | What we are building, the MVP definition, the milestone order, and how new scope gets in. If another doc disagrees with it, that doc is stale. |
+| **[[PLAN]]** | What we are building, the MVP definition, milestone/development order, package delivery loop, and how new scope gets in. If another doc disagrees with it, that doc is stale. |
 | **[[REGISTER]]** | One ID space, one claim board. **Claim work here before writing code.** |
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
@@ -60,6 +60,7 @@ defects got fixed twice on two branches.
 | [[security-architecture]] | The security model |
 | [[prompt-injection-defense]] | The untrusted-content threat model — M2/M3 are cited throughout `ingest/` and `workflows/` |
 | [[research/llm-hybrid-trading]] | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
+| [[research/autonomy-blockers-and-unblockers-2026-08-12]] | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

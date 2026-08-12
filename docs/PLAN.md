@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-09
+last-verified: 2026-08-12
 ---
 
 # The plan
@@ -19,7 +19,8 @@ last-verified: 2026-08-09
 > say so in a PR rather than working around it.
 
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
-[[llm-hybrid-trading]] viability research.
+[[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
+2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]].
 
 ---
 
@@ -42,9 +43,26 @@ human approval → `OrderGateway` — and the operator can see, question and app
 thing from Discord without touching a terminal. Autonomous execution against a real account is
 a later phase and is gated on the paper engine having demonstrably worked first.
 
-**Done means:** a market day runs unattended from ingest to a delivered brief, a proposal it
-raises can be approved in Discord, the resulting paper order fills, and the audit chain
-verifies over the whole sequence.
+**Paper-reliability MVP done means:** a market day runs unattended from ingest to a delivered
+brief, a proposal it raises can be approved in Discord, the resulting paper order fills, and
+the audit chain verifies over the whole sequence.
+
+That is deliberately **not a claim of autonomy**. "Unattended" here means a scheduled process
+completed without babysitting. It does not mean the system noticed a material event between
+ticks, recovered a missing stream interval, reconciled a live broker outcome, or was allowed to
+move capital.
+
+### The autonomy ladder — keep these three claims separate
+
+| Level | What it proves | Milestones |
+|---|---|---|
+| **Paper reliability** | Scheduled ingest/triage, human approval, paper execution, reconciliation, and audit mechanics | M1–M4 |
+| **Dynamic paper autonomy** | Events wake a deterministic arbiter; gaps, duplicates, floods, stale data, and paper-order outcomes recover without babysitting; no capital | M5 / `RW-13` after M1–M4 |
+| **Live broker operation** | The controlled path reaches a real broker: human-gated `review_live` first; only `auto_veto` and `auto_full` are autonomous live execution | M6–M8 / `W17`–`W19` |
+
+Dynamic awareness does not grant execution authority, and execution autonomy does not grant a
+model judgment authority. Models remain schema-gated extractors/proposal drafters. They never
+receive broker credentials or bypass risk → mode → approval → `OrderGateway`.
 
 ### Bring-up universe vs edge universe — DO NOT CONFLATE THESE
 
@@ -145,7 +163,7 @@ jobs, two models — a sound split, not a redundancy.
 timestamp, in epoch nanoseconds. Choosing poll-based ingestion answers the contract question as
 a side effect.
 
-### Deferred, and named: fixed-cadence polling is a real obstacle to autonomy
+### Required before live autonomy: fixed-cadence polling is a real obstacle
 
 **This is a known limitation, recorded here so it is not rediscovered as a surprise.**
 
@@ -165,7 +183,10 @@ seams.** Whether a snapshot is produced by a poll or by the last frame off a soc
 property of the *fetcher*, never of the caller. Build the poll version so the stream version is
 a fetcher swap, not a refactor.
 
-Scheduled as `RW-13` in [[REGISTER]]. **Not in the MVP** — do not let it expand M1–M4.
+Scheduled as `RW-13` in [[REGISTER]]. It is **not part of the paper-reliability MVP**, because
+M1–M4 provide the stable inputs and order lifecycle needed to test it honestly. It is a **hard
+prerequisite of every live-autonomy rung**: completing M4 must never be reported as completing
+the cockpit's autonomy work.
 
 ---
 
@@ -191,15 +212,22 @@ state became permanent and we pay for both.
 
 ### M2 — Live market data on the ingestion trigger  (`RW-14`)
 
-- Add a daily-bars poller alongside the quote poller (same Alpaca credentials, free). Cache per
-  symbol, refresh daily. Yields **ADV and realized volatility**.
+- Add a daily-bars poller alongside the quote poller (same Alpaca credentials; entitlement and
+  feed coverage re-verified at build under `DEC-07`). Cache per symbol, refresh daily. Yields
+  **ADV and realized volatility**.
 - Synthesize `book_fn` from the L1 quote — one level per side, timestamped from the quote.
 - Stamp `last_quote_ts` per symbol as the poller observes quotes; the intraday tick samples
   `max_data_age_s` into `BreakerSignals` — the stale-data breaker's wire (`BUG-058` left it
   honestly UNSAMPLED until this package exists). Gate the sampling on market hours, and keep
   the 120s threshold coherent with the poll cadence.
-- **Gate:** `quant_book_seq` advances between observations on a live day, so the staleness
-  control in `risk/engine.py` can actually fire (it currently cannot — see `BUG-040`).
+- Close `BUG-097`: today an L6 breaker drops only to `review_live`, but Invariant 7 requires a
+  stale feed to disable the order path in `watch_only`. Route stale-data through the single L8
+  watch-only mechanism, keep ingest/awareness running, and carry an adversarial-review round
+  because this changes mode/order-path behavior.
+- **Gate:** `quant_book_seq` advances between observations on a live day; age is computed from
+  the latest exchange timestamp only during market hours; >120 seconds reaches L8 `watch_only`
+  and disables orders while ingest/awareness continues. This makes both `BUG-040` and
+  `BUG-097` testable through the composed path.
 
 ### M3 — Make the cost model match reality  (`W-21`)
 
@@ -254,7 +282,197 @@ stays broken — which is precisely how a gate gets gamed by accident. Scope, pe
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
-Post-MVP. See §3. Drive the intraday loop off the existing stream rather than the clock.
+**Dynamic paper autonomy.** Drive triage from durable event candidates while retaining cron as
+the correctness backstop. This is a separate deliverable after the scheduled paper MVP, not an
+optional enhancement and not an order-authority path.
+
+- Use the existing database/audit spine as a transactional trigger/outbox ledger and a bounded,
+  single-writer worker first. No external message broker without measurements that require one.
+- Consume an Alpaca market-data WebSocket on `v2/{feed}`; quote, trade, correction, and
+  trading-status channels multiplex there. News and account order updates use separate
+  endpoints and independent reconnect handling. Connection counts and entitlements are
+  verified under `DEC-07` rather than assumed.
+- A re-verified SEC Latest Filings Atom/RSS endpoint may provide a discovery hint that wakes
+  the in-process EDGAR fetch/extract path scheduled by M1. The documented submissions API is
+  the correctness/backfill surface. The current five-minute `sec:edgar` job reads a local brew
+  database; it is not a five-minute sec.gov network poll.
+- Only structured source metadata selects a trigger. Untrusted headline/filing text cannot
+  schedule work, spend a budget, trip a breaker, or reach the order path.
+- Stable source/id dedup, immutable corrections, gap detection, reconnect backfill, replay, and
+  bounded flood/coalescing behavior are in scope. Both stream and cron converge on the same
+  idempotent triage service.
+- **Prerequisites:** M1–M4, `RW-17`/`BUG-096`, `BUG-097`, and `RW-19`'s dated stream/load
+  evidence resolving `DEC-07`.
+- **Replay gate:** run the fast path and cron independently on separate clean stores and require
+  identical triage dispositions, budget spend, proposals, and orders; then run fast path followed
+  by cron on the same store and require zero duplicates. A pre-`RW-13` recorded day pins the
+  feature-off baseline.
+- **Recovery gate:** an injected 60-second loss produces zero permanent loss for channels with
+  REST/history backfill after WS/REST identity equivalence is proven. Halt/status gaps use a
+  designated secondary source or are surfaced explicitly as best-effort—never silently fresh.
+- **Eligibility gate:** structured predicates forward strictly fewer events than the raw stream,
+  retain 100% recall against cron, and cause at least one measured dispatch before cron would
+  have selected it. A forward-everything arbiter does not pass.
+- **Safety/performance gate:** market-hours age of the latest exchange-timestamped quote over
+  the existing 120-second threshold reaches the single L8 `watch_only` path (`BUG-097`). Proposed
+  frame-to-triage p50 ≤5 s / p95 ≤15 s / p99 ≤60 s is re-baselined under a minimum measured
+  event density. Under the flood vector, measured bounds for disarm, mode/watch-only transition,
+  and reconciliation delay are all met; the out-of-band HALT sentinel remains effective.
+- **Dynamic-paper soak (`W16`):** event path enabled for at least four consecutive market weeks,
+  plus engineered reconnect/backfill, same-symbol burst, correction, dropped order update, and
+  calendar-year-rollover cases. Record event/trigger density, latency distributions, every
+  failed dispatch, reconciliation result, and audit verification. A quiet or feature-off soak
+  cannot pass.
+
+### M6 — Robinhood discovery, then human-gated `review_live`  (`RW-18` → `W17`)
+
+Planning this rung is in scope; enabling capital is not. Robinhood Agentic officially permits
+orders without a separate per-order confirmation, so confirmation is not the blocking
+assumption. Its machine-auth/session behavior, broad read scope, tool schemas, rate/error
+behavior, status vocabulary, idempotency support, and exact order-type/TIF intersection are
+not published and must not be guessed.
+
+- **Before connecting, resolve `DEC-05`.** Authentication itself grants broad read authority;
+  "no capital" does not mean "no confidentiality risk." The discovery identity must hold no
+  other Robinhood assets/data unless the operator explicitly accepts the read-all scope.
+- Then run `RW-18`, a **no-capital authenticated capability spike**: record the version,
+  capabilities, and auth profile advertised by `server/discover`; enumerate exact tools and safe
+  read responses; measure expiry/reconnect/reauth and rate/error behavior; and record any
+  idempotency/status semantics. Place zero live orders.
+- The final MCP 2026-07-28 core is stateless. Its Client Credentials extension is optional;
+  do not assume Robinhood supports it. Pin the contract Robinhood actually advertises.
+- Keep a deterministic Robinhood client private behind `OrderGateway`. Never expose MCP or the
+  credential to a model or put either in `app/risk/`.
+- `RW-18` resolves `DEC-06` and `DEC-08`; it can run in parallel with paper work after `DEC-05`
+  because it neither implements an order path nor moves capital.
+- **`W17` blocked by:** M5 and the `W16` dynamic-paper/performance gates; `RW-18`; SEC-11 and
+  every applicable P0 pre-live gate; and the live-funding evidence window below.
+- **Discovery gate:** advertised protocol/auth/tool contracts are recorded with zero live orders.
+  An unknown, expired, or drifting contract produces `watch_only` plus an operator alert.
+- **First-live gate:** only after funding is separately authorized, `review_live` remains
+  human-approved; every supported order reaches a reconciled terminal state or an explicit
+  fail-closed ambiguity; kill/disconnect remains responsive; and the external audit witness
+  verifies the sequence. Unsupported/unknown operations are unavailable, not emulated.
+- **Funding evidence:** W16 owns the instruments. Its two-week paper/four-week auto-window and
+  30-proposal thresholds are minimum statistical inputs, not authorization to fund. Funding is
+  barred for at least six calendar months of realistic paper operation and extends toward 12
+  months until the scorecard, event-density, dynamic-path, reconciliation, and fault-injection
+  evidence is sufficient and operator-signed.
+
+### M7 — `auto_veto`  (`W18`)
+
+No per-order affirmative approval, but the operator retains a timed veto and kill path. Claim
+only after M6 produces reconciled human-gated live evidence, the external witness is operational,
+and the security backlog's W16/pre-live performance gates pass. Its separately recorded
+`auto_veto` soak must have responsive veto/kill distributions, zero unexplained reconciliation
+failures, and a green external audit witness. A faster event loop does not lower this bar.
+
+### M8 — `auto_full`  (`W19`)
+
+The final mechanical-execution rung, not autonomous judgment. Claim only after an additional
+adversarial review and a separately recorded `auto_veto` soak shows no unexplained
+live-versus-shadow divergence, reconciliation failures, audit gaps, or late kill/disarm. The
+mode ladder may still fall to `watch_only`; no implementation may weaken that fail-closed path.
+
+### Research hold points before an implementation package is claimed
+
+1. `RW-16` primary-source snapshot is current and its empirical unknowns are explicit.
+2. Resolve `DEC-05` before any Robinhood authentication; then `RW-18` no-capital discovery
+   resolves `DEC-06` and `DEC-08` before `W17`.
+3. `RW-19` records event capture/replay, stream-gap, load, WS/REST identity, and IEX/SIP
+   evidence and resolves `DEC-07` before `RW-13`.
+4. `RW-17` closes `BUG-096` so an unknown calendar year refuses auto-arm/orders while ingest
+   and awareness continue; `RW-14` closes `BUG-097` so stale data reaches the same L8
+   `watch_only` path. Both precede dynamic-paper soak.
+5. Every numeric latency/load target is labelled proposed until measured; vendor facts and
+   repository invariants are never presented as performance promises.
+
+Dependency order:
+
+`RW-16 → {DEC-05 → RW-18 discovery, RW-19 event evidence, RW-11/RW-12 → RW-14 + RW-17 → W-21 → RW-15 → W-22 → RW-13 → W16 dynamic-paper/performance evidence} → W17 → W18 → W19`.
+
+### Recommended development pipeline
+
+This is the default route from this plan to implementation. It does not authorize a blocked
+package or combine milestones into one branch. The cockpit is a solo-developer system assisted
+by review agents: keep **one production-code package active at a time**, while read-only/paper
+evidence collection and operator decisions may run alongside it.
+
+#### Entry runway — start here
+
+First finish operator review of `RW-16` and merge this documentation-only branch. Do not place
+the first implementation package on the planning branch; each package starts from the resulting
+green `main` so its diff and evidence are independently reviewable.
+
+| Lane | First package | Why first | Exit artifact |
+|---|---|---|---|
+| **Safety/code** | `RW-17` / `BUG-096` | Small, high pre-live, source-backed defect; removes a known fail-open calendar boundary before more scheduler behavior depends on it | current/next-year official-session fixtures, unknown-year auto-arm/order refusal, status coverage, full CI |
+| **Evidence** | `RW-19` | Sizes the event design before queues, coalescing, subscriptions, or latency thresholds become code | dated raw distributions/failure traces and a recorded-day fixture; resolves `DEC-07` |
+| **Extraction** | claim `RW-11` and schedule `RW-12` together | Reuses the substantial in-process filing stack already present and removes the sibling-database dependency after proof | cited live-day deltas + ≥95% labelled precision; only then a separate retirement change deletes the old path |
+| **Operator decision** | `DEC-05` | Authentication itself grants Robinhood read-all authority | signed choice: isolated empty Robinhood identity, explicit acceptance, or different broker; only then claim `RW-18` |
+
+Recommended first production branch: **`work/rw-17-calendar-fail-closed`**. `RW-19` capture can
+run during market hours without sharing that code branch. After `RW-17` merges, take `RW-11` as
+the next production package; do not wait for every `RW-19` observation to finish before wiring
+the extraction path.
+
+#### Delivery batches and barriers
+
+| Batch | Packages | May run together | Barrier before advancing |
+|---|---|---|---|
+| **A — Evidence and known fail-closed defects** | `RW-17`, `RW-19`, `DEC-05 → RW-18` | One code branch (`RW-17`) plus the two non-ordering evidence lanes | calendar gate green; event measurements are reproducible; Robinhood discovery, if authorized, placed zero orders |
+| **B — Reliable inputs** | `RW-11 → RW-12`, then `RW-14` / `BUG-040` / `BUG-097` | `RW-19` may continue while `RW-11` runs; `RW-14` waits for the relevant `DEC-07` feed evidence | in-process EDGAR live-day/precision gate; quote sequence and exchange age observed; stale feed reaches L8 `watch_only` through the composed system |
+| **C — Realistic mechanics** | `W-21`, then `RW-15`, then `W-22` | Cost-analysis fixtures may be prepared while the `RW-15` contract is reviewed, but merge order stays serial | cost curve/net-edge refusal; resting/partial/lost-response reconciliation; two audited unattended scheduled paper days |
+| **D — Dynamic paper autonomy** | `RW-13`, then `W16` | No live-broker implementation in this batch | separate-store parity, same-store idempotency, scoped gap recovery, nondegenerate recall, measured flood/latency bounds, then ≥4-week enabled dynamic soak |
+| **E — Human-gated live** | `W17` | None; all live prerequisites join here | ≥6-month funding bar, every P0/pre-live gate, external witness, verified Robinhood contract, operator authorization, reconciled `review_live` evidence |
+| **F — Autonomous live execution** | `W18`, then `W19` | Never parallelize ladder promotion | separate `auto_veto` soak before `auto_full`; fresh adversarial review at each rung; any unexplained divergence blocks promotion |
+
+The batch labels are coordination aids, not new IDs. A later batch may prepare fixtures or
+research, but it cannot merge production behavior until its barrier is green.
+
+#### One-package delivery loop
+
+Every production package follows this loop:
+
+1. **Claim:** change exactly one [[REGISTER]] row to `claimed`, name the branch
+   `work/<id>-<slug>`, and answer the seven intake questions in §5 before editing code. Paired
+   retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled together but retain separate
+   deletion gates.
+2. **Pin the baseline:** from a green `main`, clear ambient `COCKPIT_*`, use the short Windows
+   temp path, run targeted tests plus Ruff, and record any live/paper fixture the gate will
+   compare against.
+3. **Write the failure proof:** add a test that fails when the package is unwired or the defect
+   is restored. Include the real composition/scheduler path, not only a unit seam. For an
+   empirical package, predeclare sample, timestamps, environment, raw-output location, and the
+   decision it resolves.
+4. **Implement the smallest vertical slice:** schema/storage → service → composition/schedule →
+   operator surface. Reuse existing seams and parsers; do not leave a second unscheduled path.
+5. **Verify locally:** targeted tests first, then Ruff and the full suite from `app/`. Exercise
+   failure, restart/replay, idempotency, stale/unknown input, and cross-platform behavior in
+   proportion to the package.
+6. **Adversarial gate where authority changes:** any risk, mode, approval, breaker, arming,
+   broker, reconciliation, or `OrderGateway` change receives a fresh adversarial-review round
+   against the unmerged branch. Reproduce or refute every claim; one reproducible bypass or
+   fail-open result blocks the package.
+7. **Evidence gate:** run the milestone's paper/live-day/replay measurement. Tests prove shape;
+   the recorded evidence proves reachability and behavior. Never substitute a mocked green
+   result for a required market-day, broker, witness, latency, or accuracy observation.
+8. **PR barrier:** one package, its tests, register update, retirement, and evidence links in one
+   reviewable change. GitHub's Ubuntu/Windows/macOS × Python 3.11/3.12 matrix must be green.
+   Close the ID only after merge. Commit or push only when the operator asks.
+
+#### Stop rules
+
+- If a source contract, entitlement, auth profile, or identifier mapping is unknown, stop at an
+  `RW-18`/`RW-19` evidence artifact; do not encode the guess in a production adapter.
+- If an event channel cannot be backfilled, name it best-effort and surface the gap; do not let
+  it satisfy a zero-loss or fresh-data gate.
+- If a package needs more than roughly 1,000 production LOC, a second order path, or a new
+  external broker/message system, return to §5 and split/replan it before implementation.
+- If a breaker, calendar, witness, reconciliation, or credential check cannot be observed
+  through the composed system, the package is not done even if unit tests pass.
+- No batch completion changes modes automatically. Ladder promotion is a separate,
+  operator-signed action after its evidence window.
 
 ---
 
@@ -313,9 +531,11 @@ it goes into a branch.
 
 Named so that "we should also…" has somewhere to land.
 
-- **Live capital.** Paper-first overrides everything until the pre-live gates in
+- **Enabling live capital now.** Planning and empirically de-risking M6–M8 is in scope; moving
+  capital is not. Paper-first overrides everything until the pre-live gates in
   [[security-hardening-backlog]] pass. The research adds its own bar: 6–12 months of realistic
-  paper trading before committing money.
+  paper trading, including W16-recorded dynamic-paper operation, before committing money; M6
+  defines how the minimum and extension are evaluated.
 - **Managing anyone else's money, or selling signals.** Own capital needs no registration; the
   moment either of those changes, adviser/BD rules apply. An auto-trading signal product
   forfeits the publisher's exclusion outright.
