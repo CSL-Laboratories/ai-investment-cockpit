@@ -4,26 +4,23 @@
 and ``GitAuditLogAnchorStore`` that wraps one or more backends. This module supplies the two
 CONCRETE backends the docstring promised, replacing the deferred SKETCH:
 
-  * ``GitCommitWitness`` — writes ``(seq, head_hash)`` to a git-TRACKED head file and commits
-    it. The out-of-domain guarantee is the git HISTORY Lucas reviews via GitHub Desktop before
-    pushing: a later rewrite of a committed anchor shows in the diff, and once pushed it is
-    immutable on the remote. Its strength is PROCEDURAL (it holds insofar as the history is
-    reviewed/pushed) — strictly stronger than ``FileAnchorStore`` (a plain local JSONL has no
-    review surface and no remote), but on its own it is a reviewed-git checkpoint, not a
-    server-enforced one.
+  * ``GitCommitWitness`` — maintains a machine-local ``(seq, head_hash)`` mirror.
+    Production passes ``commit_fn=False`` so a running cockpit never stages or commits onto a
+    development branch; the file is ignored and untracked. The class retains an injectable
+    commit seam for explicit tooling/tests, but that same-domain history is never trusted by
+    the runtime gate.
   * ``DiscordAuditLogWitness`` — posts ``(seq, head_hash)`` to the private ``#audit-log``
     channel and reads the highest post back. The guarantee is TECHNICAL: the local writer
     cannot backdate a server-stamped message, and (with a channel ACL that denies the bot
     manage-messages) cannot delete history either. This is the strongest single witness.
 
-``GitAuditLogAnchorStore`` takes ``latest()`` as the MAX across backends, so to LOWER the
-witness a keyless writer must defeat BOTH the reviewed git history AND the server-held Discord
-history at once — which it cannot. Neither backend is ``FileAnchorStore`` (same-trust-domain
-theater; never a witness — SEC-11).
+``GitAuditLogAnchorStore.latest()`` considers only out-of-domain backends, so the local mirror
+can never unlock auto/live. Lowering the trusted witness requires defeating the server-held
+Discord history, which a keyless local writer cannot do (SEC-11).
 
-Both adapters are APPEND-ONLY + MONOTONIC: ``publish`` refuses a rewind (lower seq) or a fork
-(same seq, different hash) via ``bridge.anchor._guard_monotonic``, and re-publishing the same
-head is idempotent. All external I/O is INJECTABLE (``commit_fn`` / ``post_fn`` / ``fetch_fn``)
+The out-of-domain Discord adapter and explicit git-history mode are APPEND-ONLY + MONOTONIC.
+Production's untrusted file-only mirror may resynchronise across a branch/DB change and cannot
+veto Discord. All external I/O is INJECTABLE (``commit_fn`` / ``post_fn`` / ``fetch_fn``)
 so the adapters are fully testable without a live git repo or Discord bot; ``main.compose()``
 wires the production functions from config + keyring.
 """
@@ -41,25 +38,24 @@ def _dump(seq: int, head_hash: str) -> str:
                       sort_keys=True, separators=(",", ":"))
 
 
-# ---- git-tracked head file (reviewed-history MIRROR — NOT a runtime trust source) ------
+# ---- machine-local head file (MIRROR — NOT a runtime trust source) ---------------------
 class GitCommitWitness:
-    """Anchor ``(seq, head_hash)`` into git-tracked history. ``read_latest`` reads the head
-    file; ``publish`` writes it (monotonic) then commits it so the anchor lands in the history
-    Lucas reviews. ``commit_fn(head_file, seq, head_hash)`` is injectable (tests pass a fake);
-    the default stages + commits the head file via ``git`` (no push — Lucas pushes after
-    review, per the repo rule). ``commit_fn=False`` disables committing (file-only).
+    """Maintain a local ``(seq, head_hash)`` mirror. ``read_latest`` reads the head
+    file and ``publish`` updates it. ``commit_fn(head_file, seq, head_hash)`` remains injectable
+    for explicit tooling/tests; the class default stages + commits via git, while production
+    composition passes ``commit_fn=False`` and never mutates a development branch.
 
-    **``out_of_domain = False`` — this is a MIRROR + a REVIEWED-HISTORY DETECTION layer, NOT a
-    runtime trust source (SEC-11, corrected by the G10 red-team 2026-07-08).** ``read_latest``
+    **``out_of_domain = False`` — this is a same-domain MIRROR, NOT a runtime trust source
+    (SEC-11, corrected by the G10 red-team 2026-07-08).** Explicit commit mode can provide a
+    reviewed-history detection layer, but production file-only mode does not. ``read_latest``
     reads the WORKING-TREE head file, which lives in the local writer's OWN trust domain: a
     keyless writer who can ``DELETE`` the DB tail can equally overwrite ``data/audit-head.json``
     to a captured lower ``(N, H_N)``. The git-commit guarantee is PROCEDURAL (Lucas notices a
     rewrite of committed history in the diff before push) and OUT-OF-BAND — it is NOT enforced
     on the runtime read path. So ``GitAuditLogAnchorStore.latest()`` (the value the gate/mode/
     gateway/budget consult to fail closed) EXCLUDES this backend; only a genuinely out-of-domain
-    witness (``DiscordAuditLogWitness``) counts. This adapter is still published-to (local
-    cross-check + the reviewed-history detection layer), just never trusted for the auto/live
-    unlock decision."""
+    witness (``DiscordAuditLogWitness``) counts. Production still publishes to this adapter as
+    a file-only local cross-check, but never trusts it for the auto/live unlock decision."""
 
     out_of_domain = False
 
@@ -84,8 +80,12 @@ class GitCommitWitness:
         if not head_hash:
             raise AnchorError("cannot anchor an empty head hash")
         cur = self.read_latest()
-        _guard_monotonic(cur[0] if cur else None, cur[1] if cur else None, seq, head_hash)
-        if cur is not None and cur[0] == seq:
+        if self._commit_fn is not False:
+            # Explicit git-history mode retains the append-only contract. Production's
+            # file-only mirror is deliberately non-gating: a stale/ahead local file must not
+            # veto the out-of-domain Discord witness and is resynchronised to the current DB.
+            _guard_monotonic(cur[0] if cur else None, cur[1] if cur else None, seq, head_hash)
+        if cur == (seq, head_hash):
             return                                       # idempotent re-anchor of the same head
         self._file.parent.mkdir(parents=True, exist_ok=True)
         self._file.write_text(_dump(seq, head_hash) + "\n", encoding="utf-8")

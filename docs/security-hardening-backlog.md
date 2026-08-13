@@ -29,14 +29,19 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 > - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The non-monotonic,
 >   reusable per-entry sequence plus the absence of a durable out-of-domain
 >   witness allows a keyless delete-then-heal that `verify_chain()` re-greens.
->   Closure requires a `GitAuditLogAnchorStore` (Discord `#audit-log` + git
->   head-hash commit — the same-trust-domain `FileAnchorStore` does **not**
->   qualify), a monotonic non-reusable HMAC-covered `seq`, and binding
+>   Closure requires a `GitAuditLogAnchorStore` with the out-of-domain Discord
+>   `#audit-log` witness (same-domain file/git mirrors do **not** qualify), a
+>   monotonic non-reusable HMAC-covered `seq`, and binding
 >   security-relevant domain-row fields (`Order` open-state,
 >   `MarketEvent.event_type`) into the signed chain. Completing SEC-11 also
 >   auto-closes the SEC-07 / SEC-20 / SEC-21 audit-spine residuals, since
 >   `brokers/gateway.py::_pending_ok` and `workflows/budget.py` already consult
 >   `verify_against_anchor` once a witness is wired.
+>   **BUG-051 operational correction (2026-08-12):** the same-domain audit-head
+>   mirror is now git-ignored and file-only; the running cockpit never stages or
+>   commits it onto the active development branch. This removes branch collisions
+>   but changes no trust decision: `out_of_domain=False` remains excluded from
+>   `latest()`, Discord remains the only qualifying witness, and SEC-11 stays OPEN.
 > - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
 >   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
 >   (credential starvation — ACTIVATION pending the low-priv account + launcher;

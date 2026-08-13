@@ -20,8 +20,8 @@ HONESTY ABOUT THE GUARANTEE (do not overclaim):
     the DB tail can usually also truncate a local file — same trust domain. It is useful as a
     fast local cross-check and for staging, NOT as the real witness.
   * The REAL guarantee needs a witness in a DIFFERENT trust domain that the local writer cannot
-    forge: a git commit Lucas reviews (history he would notice being rewritten) AND/OR a
-    ``#audit-log`` Discord post (a server-side timestamp the local writer cannot backdate).
+    forge: the ``#audit-log`` Discord post (a server-side timestamp the local writer cannot
+    backdate). The ignored audit-head file is only a same-domain local mirror.
     ``GitAuditLogAnchorStore`` wraps those; the concrete adapters live in ``bridge/witness.py``
     (``GitCommitWitness`` + ``DiscordAuditLogWitness``) and are wired at ``main.compose()`` (W10).
 """
@@ -157,10 +157,9 @@ def post_head_anchor(st, *, record: bool = True, actor: str = "anchor") -> tuple
 # ---- the real out-of-domain witness: SKETCH -------------------------------------------
 @runtime_checkable
 class ExternalWitnessAdapter(Protocol):
-    """The seam a real witness implements: publish a head to a trust domain the LOCAL writer
-    cannot forge. Two concrete backends are intended (either or both):
-      * a git commit of the head file (Lucas reviews history; a rewrite is visible), and
-      * a ``#audit-log`` Discord post (a server-stamped time the local writer cannot backdate).
+    """The seam used by witness adapters. Only adapters marked ``out_of_domain=True``
+    contribute to the runtime trust read. Production supplies a machine-local audit-head
+    mirror (explicitly untrusted) and a server-stamped ``#audit-log`` Discord post.
     """
 
     def publish(self, seq: int, head_hash: str) -> None:
@@ -188,9 +187,9 @@ class GitAuditLogAnchorStore:
     With a real out-of-domain backend, LOWERING the witness requires forging the SERVER's held
     history, which a keyless local writer cannot do.
 
-    ``append`` publishes to ALL backends (the mirror is still written for the reviewed-history
-    detection layer + local cross-check) and refuses a rewind/fork (monotonic); each backend
-    additionally self-guards on ``publish``."""
+    ``append`` publishes to ALL backends, but only an out-of-domain backend may set the
+    monotonic floor. An untrusted local mirror must never veto publication to the trusted
+    Discord witness; each trusted backend additionally self-guards on ``publish``."""
 
     def __init__(self, *adapters: ExternalWitnessAdapter) -> None:
         if not adapters:
@@ -216,14 +215,21 @@ class GitAuditLogAnchorStore:
         return best
 
     def append(self, seq: int, head_hash: str) -> None:
-        # Guard against the highest recorded head ACROSS ALL backends (mirror included) so a
-        # publish never rewinds any backend; each adapter also self-guards on publish.
+        # Guard against the highest TRUSTED head. BUG-051: including an out_of_domain=False
+        # local mirror gave attacker-writable/stale data veto authority over the Discord post.
+        # Untrusted adapters may observe the publish, but may never block the trust boundary.
         highest: tuple[int, str] | None = None
         for a in self._adapters:
+            if not getattr(a, "out_of_domain", False):
+                continue
             got = a.read_latest()
             if got is not None and (highest is None or got[0] > highest[0]):
                 highest = (int(got[0]), str(got[1]))
         _guard_monotonic(highest[0] if highest else None, highest[1] if highest else None,
                          seq, head_hash)
-        for a in self._adapters:
+        trusted = [a for a in self._adapters if getattr(a, "out_of_domain", False)]
+        observers = [a for a in self._adapters if not getattr(a, "out_of_domain", False)]
+        # Publish trusted backends first. A same-domain observer is allowed to fail after the
+        # trust publication, but it can never prevent that publication from being attempted.
+        for a in [*trusted, *observers]:
             a.publish(int(seq), head_hash)

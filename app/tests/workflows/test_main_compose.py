@@ -124,6 +124,17 @@ def test_compose_wires_durable_git_witness_not_file_anchor(tmp_path, monkeypatch
     assert not isinstance(state.anchor_store, FileAnchorStore)
     assert state.anchor_store.has_out_of_domain_witness is False   # git-only: no genuine witness
     assert state.anchor_store.latest() is None                     # same-domain mirror is not trusted
+
+    # BUG-051: production keeps the monotonic local mirror but must never stage/commit it onto
+    # whichever development branch happens to be checked out. Any subprocess call here is a
+    # regression to the old auto-commit behavior.
+    def forbid_git(*args, **kwargs):
+        raise AssertionError(f"runtime attempted to mutate git: {args!r} {kwargs!r}")
+
+    monkeypatch.setattr("bridge.witness.subprocess.run", forbid_git)
+    state.anchor_store.append(1, "a" * 64)
+    assert (tmp_path / "audit-head.json").exists()
+    assert state.anchor_store.latest() is None                     # local mirror still untrusted
     res = compute_gate(state, Mode.auto_veto)
     assert not res.unlockable and res.metrics.get("anchor_ok") is False   # fail closed
 

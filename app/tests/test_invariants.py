@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]  # app/
@@ -276,3 +277,12 @@ def test_runtime_artifact_directories_are_ignored_at_any_depth():
     }
     assert "data/" in rules and "/data/" not in rules
     assert "replays/" in rules and "/replays/" not in rules
+
+
+def test_machine_written_audit_head_is_not_tracked():
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "--error-unmatch", "app/data/audit-head.json"],
+        check=False,
+        capture_output=True,
+    )
+    assert tracked.returncode != 0, "runtime audit head must not be tracked on a source branch"
