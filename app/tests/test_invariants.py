@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1]  # app/
+ROOT = APP.parent
 
 
 def _py_files(root: Path):
@@ -55,16 +56,17 @@ _SECRET_PATTERNS = [
 ]
 
 
-def test_invariant_4_no_plaintext_secrets_in_app():
+def test_invariant_4_no_plaintext_secrets_in_app_or_operator_tools():
     hits = []
-    for ext in ("*.py", "*.yaml", "*.yml", "*.toml", "*.json"):
-        for p in APP.rglob(ext):
-            if "tests" in p.relative_to(APP).parts:  # fixtures may carry sample tokens
-                continue
-            text = p.read_text(encoding="utf-8")
-            for pat in _SECRET_PATTERNS:
-                if pat.search(text):
-                    hits.append(f"{p.relative_to(APP)} :: /{pat.pattern[:28]}/")
+    for base in (APP, ROOT / "tools"):
+        for ext in ("*.py", "*.ps1", "*.js", "*.yaml", "*.yml", "*.toml", "*.json"):
+            for p in base.rglob(ext):
+                if base == APP and "tests" in p.relative_to(APP).parts:
+                    continue  # fixtures may carry sample tokens
+                text = p.read_text(encoding="utf-8")
+                for pat in _SECRET_PATTERNS:
+                    if pat.search(text):
+                        hits.append(f"{p.relative_to(ROOT)} :: /{pat.pattern[:28]}/")
     assert not hits, f"Invariant 4: possible plaintext secret(s): {hits}"
 
 
