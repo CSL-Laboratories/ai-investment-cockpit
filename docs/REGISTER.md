@@ -73,7 +73,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | blocked → `RW-14` | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
 | `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | open | `quant/guards.py:66`, `quant/execution/autoloop.py` |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | open | `quant/execution/autoloop.py` |
-| `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | open | `tests/test_invariants.py:133` |
+| `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | claimed | `fix/bug-049-transitive-risk-purity` |
 | `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | open | `.gitignore` |
 | `BUG-051` | `audit-head.json` is tracked, machine-written **and** auto-committed — two branches collide → `AnchorRewind` | med | open | `bridge/witness.py:94` |
 
