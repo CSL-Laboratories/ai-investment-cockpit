@@ -729,11 +729,14 @@ class EdgarBrewPoller:
         1970 and kills the feed silently. The clamp's calendar bound comes from the injected
         ``clock`` via ``_wall_clock_cursor``. See "THE CLOCK CONTRACT" in the module docstring.
         """
-        # From the CLOCK, never from `now`. The name says wall on purpose: `now_cursor` invited
-        # exactly the confusion that put a monotonic reading on this line.
-        wall_cursor = self._wall_clock_cursor()
+        # Validate the wall-clock seam BEFORE I/O so a wiring bug stays loud and side-effect
+        # free. Re-read its value AFTER fetch: RW-11's in-process fetch persists Delta rows
+        # during this call, so a pre-fetch bound would falsely label every newly-created row
+        # as future-dated by the few microseconds the extraction took.
+        self._wall_clock_cursor()
         drops_before = self._drop_total()
         batch = self._fetch(self._cursor, now)
+        wall_cursor = self._wall_clock_cursor()
         # A plain list cannot report fullness, so it reads as UNSATURATED. That is the SAFE
         # default: the jump below is the risky action (it skips rows), so "we were not told the
         # window was full" must never authorise it. Only make_brew_fetch, which knows the LIMIT

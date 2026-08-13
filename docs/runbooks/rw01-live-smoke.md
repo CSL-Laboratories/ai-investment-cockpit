@@ -108,10 +108,15 @@ $env:COCKPIT_BRIEF_CHANNEL_ID = "<your #morning-brew channel id>"
 $env:COCKPIT_OPERATOR_IDS     = "<your Discord user id>"
 $env:COCKPIT_HALT_PATH        = "C:\ProgramData\ai-investment-cockpit\HALT"
 
-# EDGAR feed — only if you run edgar-morning-brew on this box. Omit both and the feed is
-# simply ABSENT (see §6); it is never silently "quiet".
-$env:COCKPIT_BREW_DB_PATH  = "C:\path\to\edgar_morning_brew.db"
-$env:COCKPIT_BREW_RUNS_DIR = "C:\path\to\output\runs"
+# EDGAR in-process feed (preferred): SEC requires a descriptive, non-secret User-Agent;
+# the bounded static watchlist determines which registrants are polled.
+$env:COCKPIT_SEC_USER_AGENT = "Your Name your-email@example.com (personal research)"
+$env:COCKPIT_WATCHLIST      = "AAPL,MSFT,NVDA"
+
+# Legacy fallback only during RW-11 evidence collection. Used only when SEC_USER_AGENT is
+# absent or the in-process path has no watchlist scope; RW-12 removes this after its gate.
+# $env:COCKPIT_BREW_DB_PATH  = "C:\path\to\edgar_morning_brew.db"
+# $env:COCKPIT_BREW_RUNS_DIR = "C:\path\to\output\runs"
 
 # Optional: the SEC-11 out-of-domain audit witness (see §7).
 $env:COCKPIT_AUDIT_LOG_CHANNEL_ID = "<your #audit-log channel id>"
@@ -192,7 +197,8 @@ Read the log lines it prints. Every unprovisioned feed announces itself:
 
 ```
 NOT PROVISIONED: sec:edgar is OFF and will stay silent. Silence from it is NOT a
-quiet day. To enable: set COCKPIT_BREW_DB_PATH (+ COCKPIT_BREW_RUNS_DIR)
+quiet day. To enable: set COCKPIT_SEC_USER_AGENT + COCKPIT_WATCHLIST (or the
+temporary legacy COCKPIT_BREW_DB_PATH fallback)
 ```
 
 If a feed you *expect* is on that list, fix it now. A feed that is off produces zero

@@ -1020,6 +1020,27 @@ def test_clamped_cursor_is_distinguishable_from_a_quiet_day():
     assert clamped.strand_signal is not None               # NOT a quiet day, and it says so
 
 
+def test_in_process_fetch_uses_post_fetch_wall_bound_for_new_rows():
+    """RW-11: rows created during fetch are not future poison by construction."""
+    before = datetime(2026, 7, 15, 13, 0, tzinfo=timezone.utc)
+    after = before + timedelta(seconds=2)
+    current = {"value": before}
+
+    def clock():
+        return current["value"]
+
+    def fetch(_cursor, _now):
+        current["value"] = after
+        return [_row(created_at="2026-07-15 13:00:01.000000")]
+
+    poller = EdgarBrewPoller(fetch=fetch, clock=clock)
+    assert poller.poll(now=_MONO, on_event=lambda _event: None) == 1
+    assert poller.cursor == "2026-07-15 13:00:01.000000"
+    assert poller.counters["future_ts"] == 0
+    assert poller.counters["clamped_cursor"] == 0
+    assert poller.strand_signal is None
+
+
 def test_make_brew_fetch_accepts_an_isoformat_cursor_without_stranding(tmp_path):
     """DEFECT 4. A caller handing in an isoformat cursor (the natural thing to write) must not
     silently strand the feed — canonicalization happens in ONE place, inside the fetch."""

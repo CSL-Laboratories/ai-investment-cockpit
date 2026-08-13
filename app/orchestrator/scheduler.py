@@ -52,10 +52,10 @@ ANCHOR_MINUTES = "*/30"                   # SEC-11 external-witness head-anchor 
 #              poller carries its own TokenBucket, so a minute tick can never exceed the vendor
 #              cap; news breaks pre-market and after the close, so the window is not clamped to
 #              the session.
-#   sec:edgar  every 5 minutes, all week. This reads the edgar-morning-brew SQLite file (no
-#              network, no vendor quota — see ingest/edgar_brew.py "no TokenBucket"), and
-#              filings land on weekends too, so there is nothing to be polite about and no
-#              reason to skip Sat/Sun.
+#   sec:edgar  every 5 minutes, all week. RW-11 prefers the in-process SEC pipeline, whose
+#              SecFetcher enforces the declared UA, <10 req/s rate, retry and byte budgets;
+#              the legacy local-brew fallback keeps this same cadence until RW-12 retirement.
+#              Filings can land on weekends, so the schedule deliberately includes Sat/Sun.
 #   calendar   twice daily on weekdays. A calendar is a re-published forward window, so polling
 #              it often buys nothing; 06:00 ET seeds the premarket brew (which runs 08:30) and
 #              17:00 ET picks up intraday revisions.
@@ -221,5 +221,6 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
             lambda f=feed: run_ingest_poll(state, clock, feed=f, runner=ingest),
             CronTrigger(timezone=EASTERN, **cron),
             id=f"ingest_{feed}", name=f"ingest_{feed}", replace_existing=True,
+            max_instances=1, coalesce=True,
         )
     return sched

@@ -38,10 +38,10 @@ and the claim board, not the specification.
 | ID | What | Status | Owner | Gate |
 |---|---|---|---|---|
 | `RW-16` | Autonomy-readiness research and replan: distinguish scheduled paper reliability, dynamic paper autonomy, human-gated live operation, and autonomous live execution; verify Robinhood/MCP and event-source assumptions; define the development pipeline before implementation packages are committed | in review | `work/repo-audit-2026-08-12` | dated primary-source report + explicit hold points/decisions/development batches in [[PLAN]]; no production-code change |
-| `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | open | — | cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
-| `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | open | — | opened *with* RW-11, not after it |
+| `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | claimed | `work/rw-11-edgar-ingest-wire` | cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
+| `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | blocked → `RW-11` live-day gate | `work/rw-11-edgar-ingest-wire` | opened *with* RW-11, not after it |
 | `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn`; sample quote age; close `BUG-097` by routing stale data through the single L8 `watch_only` mechanism | open | — | `quant_book_seq` advances; >120 s market-hours quote age disables orders while awareness continues; adversarial review |
-| `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | in review | `work/rw-17-calendar-fail-closed` | unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
+| `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | closed | `work/rw-17-calendar-fail-closed` | unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
 | `RW-18` | Robinhood no-capital authenticated capability discovery after account-isolation decision; zero live orders | blocked → `DEC-05` | — | advertised 2026 MCP/auth/capabilities/tools/errors/expiry behavior recorded; resolves `DEC-06/08` |
 | `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | open | — | dated raw distributions and failure traces set queue/coalescing/latency/backfill bounds and resolve `DEC-07`; no trigger implementation |
 | `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] §4/M4 for the full §5 scope | open | — | a resting limit order reaches a terminal state on a live day with no operator action, **and** `reconcile_startup` heals (not merely alerts) a lost-response order |
@@ -61,7 +61,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 
 | ID | What | Sev | Status | Where |
 |---|---|---|---|---|
-| `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | in review → `RW-17` | `orchestrator/market_calendar.py` |
+| `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | closed | `orchestrator/market_calendar.py` |
 | `BUG-097` | `BRK_STALE_DATA` currently uses the generic L6 breaker drop to `review_live`, but Invariant 7 requires stale feed to disable the order path in `watch_only`; the defect becomes reachable when `RW-14` samples quote age | high pre-live | blocked → `RW-14`; adversarial review required | `orchestrator/breakers.py` |
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` is inert — `now_ns` has no caller | med | **blocked** → unblocked by `RW-14` | `quant/verify.py:200` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | open | `quant/runner.py:226` |

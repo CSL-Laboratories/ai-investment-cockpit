@@ -362,7 +362,10 @@ def build_earnings_calendar_fetch(api_key: str, *, clock, http_get=None,
 
 def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
                           finra_token_provider=None, finra_http_get=None,
-                          finra_row_mapper=None, clock=None):
+                          finra_row_mapper=None, clock=None, session_factory=None,
+                          audit_log=None, watchlist=(), cockpit_db_path=None,
+                          parquet_root="data/raw", edgar_clock=None,
+                          edgar_fetcher_factory=None):
     """W20 + RW-01 — build the production ingest fetch CLOSURES. All I/O lives in these
     factories, never in the pure ingest modules (which take an injected ``fetch``).
 
@@ -376,10 +379,10 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
 
     A None value means NOT PROVISIONED, and a caller MUST NOT read it as "no events" —
     ``build_ingest_runner`` registers no poller for it, so it is visibly absent rather than
-    silently quiet. For EDGAR specifically, consult ``fetch.brew_status(day)``
-    (``ingest/edgar_brew.py:make_brew_fetch``), whose NOT_PROVISIONED / NOT_RUN / DEGRADED
-    statuses are deliberately distinguishable from a legitimate quiet day; the runner wires that
-    reader into ``status()`` for exactly this reason.
+    silently quiet. For EDGAR specifically, consult ``fetch.brew_status(day)``. RW-11's
+    in-process adapter and the legacy brew reader expose the same duck-typed freshness seam,
+    so NOT_RUN / DEGRADED remain distinguishable from a legitimate quiet day during the RW-12
+    evidence window.
 
     Secrets are read with ``get_secret`` (never ``require_secret``): a box with no Alpaca key
     must still compose and run its other feeds. What must never happen is a HALF-BUILT feed, so
@@ -393,6 +396,7 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
     """
     from core.secrets import get_secret
     from ingest.edgar_brew import make_brew_fetch
+    from ingest.edgar_pipeline import build_in_process_edgar_fetch
     from ingest.finra_short_interest import make_finra_fetch
 
     fetchers = {"alpaca:benzinga": None, "finnhub": None, "sec:edgar": None,
@@ -431,11 +435,34 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
     else:
         _log_unprovisioned("finnhub + calendar", f"keyring set {_FINNHUB_KEY_NAME}")
 
-    if settings.brew_db_path:
+    sec_user_agent = (settings.sec_user_agent or "").strip()
+    if sec_user_agent and session_factory is not None and audit_log is not None \
+            and cockpit_db_path is not None and edgar_clock is not None:
+        from pathlib import Path
+
+        fetchers["sec:edgar"] = build_in_process_edgar_fetch(
+            session_factory=session_factory,
+            settings=settings,
+            tickers=watchlist,
+            db_path=cockpit_db_path,
+            raw_store_root=Path(parquet_root) / "sec",
+            audit_log=audit_log,
+            clock=edgar_clock,
+            fetcher_factory=edgar_fetcher_factory,
+        )
+    elif sec_user_agent:
+        _log_unprovisioned(
+            "sec:edgar",
+            "in-process EDGAR requires the composed DB, audit, clock, and watchlist context",
+        )
+    if fetchers["sec:edgar"] is None and settings.brew_db_path:
         fetchers["sec:edgar"] = make_brew_fetch(settings.brew_db_path,
                                                 runs_dir=settings.brew_runs_dir)
-    else:
-        _log_unprovisioned("sec:edgar", "set COCKPIT_BREW_DB_PATH (+ COCKPIT_BREW_RUNS_DIR)")
+    elif fetchers["sec:edgar"] is None:
+        _log_unprovisioned(
+            "sec:edgar",
+            "set COCKPIT_SEC_USER_AGENT + COCKPIT_WATCHLIST, or legacy COCKPIT_BREW_DB_PATH",
+        )
 
     if settings.finra_endpoint and settings.finra_user_agent and finra_token_provider \
             and finra_http_get:
@@ -649,10 +676,22 @@ def build_operator_bot(state):
     return _start
 
 
+def _sqlite_db_path(db_url: str):
+    """Return the local file behind a SQLite URL; the RW-11 reader needs that file."""
+    from pathlib import Path
+
+    from sqlalchemy.engine import make_url
+
+    url = make_url(db_url)
+    if url.drivername != "sqlite" or not url.database or url.database == ":memory:":
+        raise ValueError("in-process EDGAR requires a file-backed SQLite cockpit database")
+    return Path(url.database)
+
+
 def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/raw",
             clock=None, transport=None, deliver=None, ingest_fetchers=None,
             http_get=None, ws_connect=None, finra_token_provider=None, finra_http_get=None,
-            finra_row_mapper=None, paper_client=None):
+            finra_row_mapper=None, paper_client=None, edgar_fetcher_factory=None):
     """Build the full application graph: ``(state, app, services)``.
 
     RETURN SHAPE IS UNCHANGED (a 3-tuple) ON PURPOSE. The RW-01 ingest runner is reachable as
@@ -664,7 +703,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     with no live credential and no network: ``clock`` (a ``FrozenClock`` for a deterministic
     day), ``transport`` (scripted agent calls instead of ``claude -p`` subprocesses),
     ``deliver`` (the operator surface), ``ingest_fetchers`` (pre-built feed closures, bypassing
-    the keyring read entirely), ``http_get`` / ``ws_connect`` (the network), and the three FINRA
+    the keyring read entirely), ``http_get`` / ``ws_connect`` (the network),
+    ``edgar_fetcher_factory`` (recorded SEC replay instead of live HTTP), and the three FINRA
     parameters whose values are console-gated and cannot be invented here.
 
     That list is deliberately long. Before RW-01 the system test had to MIRROR ``compose`` with
@@ -719,10 +759,22 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     app = create_app(state, services=services, paper=paper, watchlist=configured_watchlist)
     # RW-01: ingest -> scheduler. Built AFTER the state so the pollers persist through the same
     # audited session factory, and hung off app.state so /status and run() can reach it.
+    edgar_db_path = None
+    if (settings.sec_user_agent or "").strip() and configured_watchlist:
+        try:
+            edgar_db_path = _sqlite_db_path(db_url)
+        except ValueError as exc:
+            # EDGAR's hardened read adapter requires a real SQLite file, but one
+            # unprovisionable feed must not prevent the rest of the cockpit from booting.
+            _log_unprovisioned("sec:edgar", str(exc))
     fetchers = ingest_fetchers if ingest_fetchers is not None else build_ingest_fetchers(
         settings, http_get=http_get, ws_connect=ws_connect,
         finra_token_provider=finra_token_provider, finra_http_get=finra_http_get,
         finra_row_mapper=finra_row_mapper, clock=state.clock.now,
+        session_factory=state.session_factory, audit_log=state.audit,
+        watchlist=configured_watchlist, cockpit_db_path=edgar_db_path,
+        parquet_root=parquet_root, edgar_clock=state.clock,
+        edgar_fetcher_factory=edgar_fetcher_factory,
     )
     app.state.ingest = build_ingest_runner(state, parquet_root=parquet_root, fetchers=fetchers,
                                            settings=settings, clock=clock)

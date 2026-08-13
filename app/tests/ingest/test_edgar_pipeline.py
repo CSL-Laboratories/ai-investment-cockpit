@@ -224,6 +224,66 @@ def test_a_fair_access_halt_STOPS_the_fan_out_rather_than_isolating_it(sf, store
     assert not any(AAPL in u for u in requested_ciks), "polled the second CIK after a halt"
 
 
+def test_fair_access_halt_skips_pending_extraction_and_companyfacts(sf, store, settings):
+    """A retry candidate must not reopen network fan-out after SEC told the run to stop."""
+    from sqlalchemy import select
+
+    from schemas.models.filing_extraction_state import FilingExtractionState
+
+    run(sf, store, settings)
+    with sf() as session, session.begin():
+        state = session.execute(select(FilingExtractionState).limit(1)).scalar_one()
+        state.status = "error"
+        state.last_error = "simulated retry"
+
+    transport = StatusTransport(403)
+    result = run(sf, store, settings, transport=transport)
+
+    assert result.ok is False and result.poll_errors
+    assert len(transport.requests) == 1, "companyfacts was requested after fair-access halt"
+
+
+def test_companyfacts_outage_holds_retryable_filing_until_complete_extraction(
+    sf, store, settings, monkeypatch
+):
+    """A partial event must not burn the identity needed by recovered numeric evidence."""
+    from sqlalchemy import select
+
+    import filings.edgar.companyfacts as companyfacts
+    from schemas.models.delta import Delta
+    from schemas.models.filing_extraction_state import FilingExtractionState
+
+    real_fetch = companyfacts.fetch_companyfacts
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("temporary companyfacts outage")
+
+    monkeypatch.setattr(companyfacts, "fetch_companyfacts", unavailable)
+    partial = run(sf, store, settings)
+    with sf() as session:
+        partial_deltas = session.execute(select(Delta)).scalars().all()
+        retryable = session.execute(
+            select(FilingExtractionState).where(FilingExtractionState.status == "error")
+        ).scalars().all()
+
+    assert partial.delta_errors and retryable, "numeric outage was marked complete"
+    retry_accessions = {row.accession_no for row in retryable}
+    assert not [
+        delta for delta in partial_deltas if delta.accession_no in retry_accessions
+    ], "a retryable accession was partially persisted and could burn event dedup"
+
+    monkeypatch.setattr(companyfacts, "fetch_companyfacts", real_fetch)
+    recovered = run(sf, store, settings)
+    with sf() as session:
+        still_retryable = session.execute(
+            select(FilingExtractionState).where(FilingExtractionState.status == "error")
+        ).scalars().all()
+
+    assert recovered.delta_errors == []
+    assert still_retryable == []
+    assert recovered.deltas_persisted > 0
+
+
 def test_the_new_filing_cap_is_a_per_cik_fault_that_does_not_abort_the_fan_out(sf, store):
     """The OTHER side of the fair-access coin: a per-issuer fault is isolated and counted.
 
