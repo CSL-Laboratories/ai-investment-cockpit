@@ -149,7 +149,7 @@ def run_sim(body: SimRequest) -> dict:
     runner = Runner(feed=validate_ordering(iter(feed)), strategies=[strategy], scale=scale,
                     timer_interval_ns=5_000_000, schedule=schedule)
     result = runner.run()
-    attribution = runner.pnl.snapshot()
+    attribution = runner.pnl_for(body.symbol).snapshot()
     book = runner.books.get(body.symbol)
 
     return {

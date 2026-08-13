@@ -74,6 +74,7 @@ class RunResult:
 
     blocked_reasons: dict[str, int] = field(default_factory=dict)
     final_positions: dict[str, int] = field(default_factory=dict)
+    attribution_by_symbol: dict[str, dict] = field(default_factory=dict)
 
     @property
     def our_trade_count(self) -> int:
@@ -184,12 +185,34 @@ class Runner:
     books: dict[str, LimitOrderBook] = field(default_factory=dict, init=False)
     oms: OMS = field(default_factory=OMS, init=False)
     result: RunResult = field(default_factory=RunResult, init=False)
-    pnl: PnLTracker | None = field(default=None, init=False)
+    pnl_by_symbol: dict[str, PnLTracker] = field(default_factory=dict, init=False)
     _next_timer: int = field(default=0, init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        if self.schedule is not None:
-            self.pnl = PnLTracker(scale=self.scale, schedule=self.schedule)
+    @property
+    def pnl(self) -> PnLTracker | None:
+        """The legacy single-symbol view; multi-symbol callers must select a symbol.
+
+        Returning an apparent aggregate would recreate BUG-041: inventory drift cannot be
+        combined by marking two instruments against whichever mid happened to update last.
+        """
+        if not self.pnl_by_symbol:
+            return None
+        if len(self.pnl_by_symbol) != 1:
+            raise ValueError(
+                "multi-symbol PnL has no single tracker; use pnl_by_symbol or "
+                "result.attribution_by_symbol"
+            )
+        return next(iter(self.pnl_by_symbol.values()))
+
+    def pnl_for(self, symbol: str) -> PnLTracker | None:
+        """Return the tracker for one symbol, creating its zero state when configured."""
+        if self.schedule is None:
+            return None
+        tracker = self.pnl_by_symbol.get(symbol)
+        if tracker is None:
+            tracker = PnLTracker(scale=self.scale, schedule=self.schedule)
+            self.pnl_by_symbol[symbol] = tracker
+        return tracker
 
     def book_for(self, symbol: str) -> LimitOrderBook:
         book = self.books.get(symbol)
@@ -223,8 +246,8 @@ class Runner:
             # crossing" — the exact diagnosis the attribution exists to make, arrived at
             # backwards. The adverse selection is real, but it belongs to inventory drift and
             # the next mark picks it up there.
-            if self.pnl is not None:
-                self.pnl.mark(book.mid_ticks, event.ingest_ts)
+            if tracker := self.pnl_for(event.symbol):
+                tracker.mark(book.mid_ticks, event.ingest_ts)
 
             try:
                 fills = apply_market_event(book, event)
@@ -250,6 +273,10 @@ class Runner:
             self._maybe_timer(event)
 
         self.result.final_positions = dict(self.oms.positions())
+        self.result.attribution_by_symbol = {
+            symbol: tracker.snapshot().as_dict()
+            for symbol, tracker in sorted(self.pnl_by_symbol.items())
+        }
         return self.result
 
     # ---- dispatch --------------------------------------------------------------------
@@ -310,6 +337,11 @@ class Runner:
 
     def _place(self, strategy: Strategy, intent: NewOrder, event: Event) -> None:
         book = self.book_for(intent.symbol)
+        # A pairs dispatch can place the OTHER leg while handling this event. Its tracker was
+        # not marked in run() above, so mark the target book before any fill is produced.
+        # Re-marking the triggering symbol at the same mid/time is an exact no-op.
+        if tracker := self.pnl_for(intent.symbol):
+            tracker.mark(book.mid_ticks, event.ingest_ts)
         self.oms.register(intent, strategy=strategy.name, ts=event.ingest_ts)
         result = match(
             book,
@@ -365,11 +397,11 @@ class Runner:
                 continue
             self.oms.on_fill(fill)
             self.result.fills.append(fill)
-            if self.pnl is not None:
+            if tracker := self.pnl_for(fill.symbol):
                 # No mid passed: the tracker already marked at this event's timestamp above,
                 # so its ``_last_mid`` is the mid the fill happened against. Passing one here
                 # would mark twice and double-count the interval's inventory drift.
-                self.pnl.on_fill(fill)
+                tracker.on_fill(fill)
             for strategy in self.strategies:
                 if strategy.name == order.strategy:
                     self._route(strategy, list(strategy.on_fill(fill, ctx)), fill)

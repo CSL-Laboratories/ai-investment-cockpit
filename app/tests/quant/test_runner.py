@@ -24,7 +24,8 @@ from decimal import Decimal
 import pytest
 
 from quant.book.lob import LimitOrderBook
-from quant.events import BookAction, BookUpdate, Liquidity, PriceScale, Side, Trade
+from quant.costs import ZERO_FEES
+from quant.events import BookAction, BookUpdate, Fill, Liquidity, PriceScale, Side, Trade
 from quant.feed import validate_ordering
 from quant.feed.synthetic import SyntheticFeed
 from quant.oms import CancelOrder, NewOrder
@@ -233,6 +234,57 @@ def test_guards_veto_an_intent_BEFORE_it_reaches_the_book():
     assert result.blocked_reasons == {"test_block": 1}
     assert "c1" not in runner.books["S"]
     assert runner.oms.get("c1") is None
+
+
+def test_multisymbol_pnl_is_attributed_to_each_fill_symbol():
+    """BUG-041: one leg's mid and inventory must never mark the other leg."""
+    runner = Runner(feed=[], strategies=[], scale=PENNY, schedule=ZERO_FEES)
+    for symbol, side, qty, price_ticks in (
+        ("X", Side.BUY, 10, 10_000),
+        ("Y", Side.SELL, 4, 20_000),
+    ):
+        tracker = runner.pnl_for(symbol)
+        tracker.mark(price_ticks, ts=1)
+        intent = NewOrder(
+            client_id=f"order-{symbol}", symbol=symbol, side=side, qty=qty,
+            price_ticks=price_ticks,
+        )
+        runner.oms.register(intent, strategy="pairs", ts=1)
+        runner.oms.on_acknowledged(intent.client_id, ts=1)
+        fill = Fill(
+            symbol=symbol, seq=1, exchange_ts=1, recv_ts=1, ingest_ts=1,
+            order_id=intent.client_id, side=side, price_ticks=price_ticks, qty=qty,
+            liquidity=Liquidity.TAKER,
+        )
+        runner._absorb_fills([fill], runner.context(1, primary=symbol))
+
+    assert runner.pnl_by_symbol["X"].snapshot().final_position == 10
+    assert runner.pnl_by_symbol["Y"].snapshot().final_position == -4
+    with pytest.raises(ValueError, match="multi-symbol PnL"):
+        _ = runner.pnl
+
+
+def test_cross_leg_fill_is_marked_from_its_own_book():
+    """A Y order dispatched by an X event must not inherit X's mid or an empty mark."""
+    runner = Runner(feed=[], strategies=[], scale=PENNY, schedule=ZERO_FEES)
+    y_book = runner.book_for("Y")
+    y_book.add(order_id="bid", side=Side.BUY, price_ticks=19_900, qty=100)
+    y_book.add(order_id="ask", side=Side.SELL, price_ticks=20_000, qty=100)
+    strategy = Scripted("pairs", [])
+    intent = NewOrder(
+        client_id="cross-y", symbol="Y", side=Side.BUY, qty=1, price_ticks=20_000
+    )
+    x_event = BookUpdate(
+        symbol="X", seq=1, exchange_ts=1, recv_ts=1, ingest_ts=1,
+        action=BookAction.ADD, side=Side.BUY, price_ticks=10_000, qty=100, order_ref=1,
+    )
+
+    runner._place(strategy, intent, x_event)
+
+    y = runner.pnl_for("Y").snapshot()
+    assert y.fills == 1
+    assert y.final_position == 1
+    assert y.spread_capture == Decimal("-0.50")
 
 
 # ---- the headline result --------------------------------------------------------------------------
