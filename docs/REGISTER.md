@@ -69,7 +69,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | claimed | `fix/bug-042-pairs-naked-leg` |
 | `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | open | `bridge/bot.py`, `orchestrator/quant_api.py` |
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | open | `quant/verify.py`, `workflows/proposals.py` |
-| `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | open | `main.py:668` |
+| `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | claimed | `fix/bug-045-guild-sync` |
 | `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | blocked → `RW-14` | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
 | `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | claimed | `fix/bug-047-loss-units` |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | claimed | `fix/bug-048-pending-new-ack` |
