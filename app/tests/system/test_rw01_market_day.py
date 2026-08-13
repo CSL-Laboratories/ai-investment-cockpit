@@ -257,14 +257,14 @@ def provisioned(tmp_path, monkeypatch):
     return brew_db
 
 
-def _compose(tmp_path, *, transport, deliver, http=None, sockets=None):
+def _compose(tmp_path, *, transport, deliver, http=None, sockets=None, clock=None):
     """``main.compose`` with ONLY the outside world injected."""
     http = http if http is not None else FakeHttp()
     frames = _alpaca_frames() if sockets is None else sockets
     state, app, services = main_mod.compose(
         db_url=f"sqlite:///{(tmp_path / 'rw01.db').as_posix()}",
         parquet_root=str(tmp_path / "raw"),
-        clock=FrozenClock(OPEN_UTC),
+        clock=clock or FrozenClock(OPEN_UTC),
         transport=transport,
         deliver=deliver,
         http_get=http,
@@ -703,6 +703,24 @@ def test_ingest_poll_forces_a_tick_and_persists(tmp_path, provisioned):
     assert body["polled"][FEED_CALENDAR]["status"] == "ok"
     assert len(_events(state)) >= 2, "forcing a poll did not persist anything"
     assert state.audit.verify_chain().ok
+
+
+def test_unknown_market_calendar_is_visible_while_composed_ingest_stays_usable(
+    tmp_path, provisioned
+):
+    unknown = FrozenClock(datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc))
+    state, app, _services, _http = _compose(
+        tmp_path, transport=FakeTransport([]), deliver=Capture(), clock=unknown
+    )
+    client, headers = _client(app)
+
+    status = client.get("/status", headers=headers).json()
+    assert status["market_calendar"]["covered"] is False
+    assert status["market_calendar"]["year"] == 2029
+
+    body = client.post(f"/ingest/poll?feed={FEED_CALENDAR}", headers=headers).json()
+    assert body["polled"][FEED_CALENDAR]["status"] == "ok"
+    assert _events(state), "unknown market-session coverage must not disable awareness ingest"
 
 
 def test_ingest_poll_is_idempotent(tmp_path, provisioned):

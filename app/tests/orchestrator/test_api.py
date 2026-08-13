@@ -138,8 +138,27 @@ def test_killswitch_disarms(client, state, tmp_path, monkeypatch):
 # ---- status + jobs + not-wired ---------------------------------------------------------
 def test_status_shape(client):
     body = client.get("/status", headers=AUTH).json()
-    assert set(body) >= {"mode", "usage", "watch_only", "breakers", "ingest"}
+    assert set(body) >= {
+        "mode", "usage", "watch_only", "breakers", "ingest", "market_calendar"
+    }
     assert body["mode"]["mode"] == "read_only"
+    assert body["market_calendar"]["covered"] is True
+    assert body["market_calendar"]["year"] == 2026
+
+
+def test_status_reports_unknown_market_calendar_without_breaking_awareness(client, state):
+    state.clock = FrozenClock(datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc))
+    body = client.get("/status", headers=AUTH).json()
+    assert body["market_calendar"] == {
+        "as_of": "2029-01-02",
+        "year": 2029,
+        "covered": False,
+        "covered_years": [2025, 2026, 2027, 2028],
+        "coverage_through": 2028,
+        "refresh_required": True,
+    }
+    assert body["mode"]["mode"] == "read_only"
+    assert "ingest" in body
 
 
 def test_job_enqueue_and_fetch(client):

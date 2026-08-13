@@ -52,6 +52,7 @@ from .limits import (
     funded_balance as _funded_balance,
     hard_bounds as _hard_bounds,
 )
+from .market_calendar import coverage_status as market_calendar_status
 from .mode_ladder import IllegalTransition, ModeLadder
 
 __all__ = ["create_app", "serve", "EVENT_LIMITS_CHANGE", "_current_limits"]
@@ -505,6 +506,7 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
         feeds = runner.status() if runner is not None else {"status": "not_wired"}
         return {
             "mode": _mode_view(ladder),
+            "market_calendar": market_calendar_status(state.clock.now()),
             "usage": usage,
             "watch_only": breaker_engine.is_watch_only(),
             "breakers": breakers,

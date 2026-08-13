@@ -39,6 +39,7 @@ from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition,
 
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.halt import default_halt_path, halt_is_set
+from orchestrator.market_calendar import CalendarCoverageError, require_calendar_coverage
 from orchestrator.mode_ladder import ExecutionRuntimeError
 from orchestrator.state import (
     BYPASS_EVENTS,
@@ -297,8 +298,9 @@ class OrderGateway:
             return self._ttl_override
         return getattr(st.settings, "approval_ttl_seconds", DEFAULT_APPROVAL_TTL_SECONDS)
 
-    def _record_refusal(self, st, order, *, event, reason, actor, extra=None):
+    def _record_refusal(self, st, order, *, event, stage, reason, actor, extra=None):
         payload = {
+            "stage": stage,
             "reason": reason,
             "order_id": getattr(order, "id", None),
             "proposal_id": getattr(order, "proposal_id", None),
@@ -393,6 +395,15 @@ class OrderGateway:
         # (a) HALT sentinel — an unreadable flag counts as SET (fail closed).
         if _halt_active(default_halt_path()):
             return ("halt", None, "HALT sentinel is set (SEC-04)")
+
+        # RW-17: absent exchange-calendar data is an unknown operational state, never an
+        # authorization to trade. This coverage-only check is shared by review and submit,
+        # and intentionally runs before any approval token can be consumed. It does not add
+        # a market-hours restriction to human-approved review_live orders.
+        try:
+            require_calendar_coverage(clock.now())
+        except CalendarCoverageError as exc:
+            return ("calendar", None, str(exc))
 
         # (b) mode / watch-only.
         if breaker_engine.is_watch_only():
@@ -626,13 +637,15 @@ class OrderGateway:
             if fail is not None:
                 stage, event, reason = fail
                 self._record_refusal(st, order, event=event or EVENT_ORDER_REFUSED,
-                                     reason=f"[review] {reason}", actor=producing_runtime)
+                                     stage=stage, reason=f"[review] {reason}",
+                                     actor=producing_runtime)
                 return GateOutcome(False, stage, reason, order_tuple_hash=resolved_hash)
             ok, total, cap = self._pending_ok(st, order)
             if not ok:
                 reason = f"pending exposure {total} + order would exceed cap {cap} (SEC-07)"
                 self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
-                                     reason=f"[review] {reason}", actor=producing_runtime)
+                                     stage="pending_exposure", reason=f"[review] {reason}",
+                                     actor=producing_runtime)
                 return GateOutcome(False, "pending_exposure", reason,
                                    order_tuple_hash=resolved_hash)
         return GateOutcome(True, "reviewed", order_tuple_hash=resolved_hash)
@@ -659,7 +672,7 @@ class OrderGateway:
             if fail is not None:
                 stage, event, reason = fail
                 self._record_refusal(st, order, event=event or EVENT_ORDER_REFUSED,
-                                     reason=reason, actor=producing_runtime)
+                                     stage=stage, reason=reason, actor=producing_runtime)
                 return GateOutcome(False, stage, reason, order_tuple_hash=resolved_hash)
 
             # Pre-broker state guard (SEC-07 duplicate-execution backstop): re-read the PERSISTED
@@ -673,7 +686,8 @@ class OrderGateway:
                 # The chain check makes the guard tamper-evident: a keyless rewind of the mutable
                 # order_row.state column cannot resurrect a submittable state (SEC-12).
                 reason = f"order state {getattr(db_order, 'state', None)!r} is not submittable"
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="order_state", reason=reason,
                                      actor=producing_runtime)
                 return GateOutcome(False, "order_state", reason, order_tuple_hash=resolved_hash)
 
@@ -685,7 +699,8 @@ class OrderGateway:
                 )
             except CapabilityError as exc:
                 self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
-                                     reason=f"capability token: {exc}", actor=producing_runtime)
+                                     stage="capability", reason=f"capability token: {exc}",
+                                     actor=producing_runtime)
                 return GateOutcome(False, "capability", str(exc),
                                    order_tuple_hash=resolved_hash)
 
@@ -693,7 +708,8 @@ class OrderGateway:
             ok, total, cap = self._pending_ok(st, order)
             if not ok:
                 reason = f"pending exposure {total} + order would exceed cap {cap} (SEC-07)"
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="pending_exposure", reason=reason,
                                      actor=producing_runtime)
                 return GateOutcome(False, "pending_exposure", reason,
                                    order_tuple_hash=resolved_hash)
@@ -709,8 +725,8 @@ class OrderGateway:
             # submit are unchanged.
             if _halt_active(default_halt_path()):
                 reason = "HALT sentinel set before broker submit (SEC-04)"
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
-                                     actor=producing_runtime)
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="halt", reason=reason, actor=producing_runtime)
                 return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
 
             # ALL gates passed -> two-phase submit (SEC-13). Intent BEFORE the broker call.
@@ -738,8 +754,8 @@ class OrderGateway:
                     refs={"order_id": order.id, "aborted": "halt"},
                     payload={"aborted": reason},
                 )
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
-                                     actor=producing_runtime)
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="halt", reason=reason, actor=producing_runtime)
                 return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
             # The private broker call (SEC-03: never a module global / string dispatch).
             # ``client_order_id`` is a broker-side idempotency backstop derived from the durable
@@ -779,7 +795,8 @@ class OrderGateway:
                     refs={"order_id": order.id, "aborted": "broker_error"},
                     payload={"aborted": reason[:500]},
                 )
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED, reason=reason,
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="broker_error", reason=reason,
                                      actor=producing_runtime)
                 if not isinstance(exc, Exception):
                     raise
