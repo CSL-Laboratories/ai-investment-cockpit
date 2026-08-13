@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 from typing import Any, Iterable
 
 from core.clock import Clock, default_clock
@@ -41,6 +43,35 @@ log = logging.getLogger(__name__)
 # periodic form; we count it and move on, because the first time a ticker is ever polled that
 # is the CORRECT and expected outcome for every periodic filing it has.
 _BASELINE = "baseline"
+
+
+class EdgarInProcessStatus(str, Enum):
+    """Operational states for the scheduled in-process EDGAR adapter."""
+
+    NOT_RUN = "not-run"
+    CURRENT = "current"
+    NOTHING_MATERIAL = "nothing-material"
+    DEGRADED = "degraded"
+
+
+@dataclass(frozen=True)
+class EdgarInProcessOutcome:
+    """Duck-typed by ``IngestRunner`` into the authenticated status response."""
+
+    status: EdgarInProcessStatus
+    reason: str
+    quiet_day: bool = False
+
+    @property
+    def trustworthy(self) -> bool:
+        return self.status in {
+            EdgarInProcessStatus.CURRENT,
+            EdgarInProcessStatus.NOTHING_MATERIAL,
+        }
+
+
+class EdgarPipelineRunError(RuntimeError):
+    """A scheduled in-process run could not establish trustworthy current evidence."""
 
 
 @dataclass
@@ -108,7 +139,200 @@ def build_raw_store(settings, *, root: Any = None):
 
     if root is None:
         root = Path(getattr(settings, "parquet_root", None) or "data") / "raw" / "sec"
-    return RawStore(Path(root))
+    return RawStore(
+        Path(root), min_free_bytes=getattr(settings, "raw_min_free_bytes", 256 * 1024 * 1024)
+    )
+
+
+def _sync_watchlist_companies(
+    session_factory, mapping: dict[str, str], *, clock, audit_log=None
+) -> None:
+    """Persist the exact ticker↔CIK attribution consumed by ``EdgarBrewPoller``.
+
+    The hardened event adapter joins every Delta through ``Company.cik``. Silently omitting
+    this mapping would turn valid filings into counted ``no_ticker`` drops; guessing through a
+    conflict would be worse because ``filing`` is a hard event. Conflicts therefore fail closed.
+    """
+    from sqlalchemy import or_, select
+
+    from core.ids import new_id
+    from schemas.models.company import Company
+
+    if not mapping:
+        raise ValueError("EDGAR watchlist resolved to no ticker/CIK mappings")
+    with session_factory() as session, session.begin():
+        rows = session.execute(
+            select(Company).where(
+                or_(Company.ticker.in_(mapping), Company.cik.in_(mapping.values()))
+            )
+        ).scalars().all()
+        by_ticker = {row.ticker: row for row in rows}
+        by_cik = {row.cik: row for row in rows}
+        for ticker, cik in sorted(mapping.items()):
+            ticker_row = by_ticker.get(ticker)
+            cik_row = by_cik.get(cik)
+            action = None
+            if ticker_row is not None and ticker_row.cik != cik:
+                raise ValueError(
+                    f"EDGAR attribution conflict: ticker {ticker!r} is already bound to "
+                    f"CIK {ticker_row.cik!r}, not {cik!r}"
+                )
+            if cik_row is not None and cik_row.ticker != ticker:
+                raise ValueError(
+                    f"EDGAR attribution conflict: CIK {cik!r} is already bound to "
+                    f"ticker {cik_row.ticker!r}, not {ticker!r}"
+                )
+            if ticker_row is None and cik_row is None:
+                row = Company(
+                    id=new_id("company"), ticker=ticker, cik=cik, name=None,
+                    active=True, created_at=clock.now(),
+                )
+                session.add(row)
+                by_ticker[ticker] = row
+                by_cik[cik] = row
+                action = "created"
+            else:
+                row = ticker_row or cik_row
+                if not row.active:
+                    row.active = True
+                    action = "reactivated"
+            if action is not None:
+                session.flush()
+                append_in = getattr(audit_log, "append_in", None)
+                if callable(append_in):
+                    append_in(
+                        session,
+                        "edgar-company-attribution",
+                        actor="edgar-pipeline",
+                        refs={"row_id": row.id, "cik": cik},
+                        payload={"action": action, "ticker": ticker, "cik": cik},
+                    )
+
+
+class InProcessEdgarFetch:
+    """Scheduled fetch adapter: SEC pipeline write, then hardened Delta-to-event read.
+
+    A fresh fetcher is built for every tick so its byte budget remains a *per-run* budget.
+    The downstream reader retains the existing cursor/dedup/escaping/citation behavior while
+    RW-11 gathers the live evidence required before RW-12 may delete that legacy adapter.
+    """
+
+    edgar_mode = "in_process"
+
+    def __init__(
+        self,
+        *,
+        session_factory,
+        settings,
+        tickers: Iterable[str],
+        db_path,
+        raw_store_root,
+        audit_log,
+        clock,
+        fetcher_factory,
+    ) -> None:
+        from ingest.edgar_brew import make_brew_fetch
+
+        self._session_factory = session_factory
+        self._settings = settings
+        self._tickers = tuple(sorted(set(tickers)))
+        self._raw_store_root = Path(raw_store_root)
+        self._audit_log = audit_log
+        self._clock = clock
+        self._fetcher_factory = fetcher_factory
+        # company_tickers.json is a full-market document. Resolve the static operator
+        # watchlist at most once per UTC/clock day instead of re-downloading it every
+        # five-minute scheduler tick. A failed lookup is deliberately not cached.
+        self._cik_mapping: dict[str, str] | None = None
+        self._cik_mapping_day = None
+        self.db_path = str(db_path)
+        self._reader = make_brew_fetch(db_path)
+        self._outcome = EdgarInProcessOutcome(
+            EdgarInProcessStatus.NOT_RUN,
+            "in-process EDGAR pipeline has not completed a scheduled poll",
+        )
+
+    def __call__(self, cursor, monotonic_now):
+        from filings.edgar.cik_map import fetch_cik_map
+
+        try:
+            fetcher = self._fetcher_factory()
+            if fetcher is None:
+                raise EdgarPipelineRunError("SEC fetcher factory returned no fetcher")
+            mapping_day = self._clock.now().date()
+            if self._cik_mapping is None or self._cik_mapping_day != mapping_day:
+                mapping = fetch_cik_map(fetcher, self._tickers, strict=True)
+                self._cik_mapping = dict(mapping)
+                self._cik_mapping_day = mapping_day
+            else:
+                mapping = self._cik_mapping
+            _sync_watchlist_companies(
+                self._session_factory, mapping, clock=self._clock,
+                audit_log=self._audit_log,
+            )
+            result = run_edgar_pipeline(
+                self._session_factory,
+                settings=self._settings,
+                ciks=sorted(set(mapping.values())),
+                fetcher=fetcher,
+                raw_store=build_raw_store(self._settings, root=self._raw_store_root),
+                audit_log=self._audit_log,
+                clock=self._clock,
+            )
+            batch = self._reader(cursor, monotonic_now)
+            complete = result.ok and result.ciks_polled == len(set(mapping.values()))
+            if not complete:
+                # Per-CIK isolation must extend through event delivery: a malformed issuer
+                # cannot suppress already-persisted evidence from every healthy issuer. The
+                # feed remains explicitly DEGRADED even while the hardened reader emits the
+                # partial trustworthy batch; the next successful tick re-reads any remainder.
+                self._outcome = EdgarInProcessOutcome(
+                    EdgarInProcessStatus.DEGRADED, result.summary()
+                )
+            elif result.quiet and not batch:
+                self._outcome = EdgarInProcessOutcome(
+                    EdgarInProcessStatus.NOTHING_MATERIAL,
+                    "SEC poll completed successfully and found no new material deltas",
+                    quiet_day=True,
+                )
+            else:
+                self._outcome = EdgarInProcessOutcome(
+                    EdgarInProcessStatus.CURRENT, result.summary()
+                )
+            return batch
+        except Exception as exc:
+            self._outcome = EdgarInProcessOutcome(
+                EdgarInProcessStatus.DEGRADED,
+                f"in-process EDGAR poll failed: {type(exc).__name__}: {exc}",
+            )
+            raise
+
+    def brew_status(self, _day) -> EdgarInProcessOutcome:
+        """Compatibility seam consumed by ``IngestRunner.status`` during RW-11."""
+        return self._outcome
+
+
+def build_in_process_edgar_fetch(
+    *, session_factory, settings, tickers, db_path, raw_store_root, audit_log, clock,
+    fetcher_factory=None,
+):
+    """Build the scheduled adapter, or ``None`` when it has no bounded watchlist scope."""
+    ticker_scope = tuple(sorted(set(tickers)))
+    if not ticker_scope:
+        return None
+    if fetcher_factory is None:
+        def fetcher_factory():
+            return build_sec_fetcher(settings)
+    return InProcessEdgarFetch(
+        session_factory=session_factory,
+        settings=settings,
+        tickers=ticker_scope,
+        db_path=db_path,
+        raw_store_root=raw_store_root,
+        audit_log=audit_log,
+        clock=clock,
+        fetcher_factory=fetcher_factory,
+    )
 
 
 def _prior_same_form(session_factory, filing) -> Any:
@@ -173,6 +397,93 @@ def _persist_deltas(session_factory, deltas) -> int:
             existing.add(d.delta_id)         # guard against duplicates WITHIN one batch too
             written += 1
     return written
+
+
+def _extraction_candidates(session_factory, ciks: Iterable[str]) -> list:
+    """Filings whose deterministic extraction has never completed or must be retried.
+
+    Existing filings with Delta rows predate this retry ledger and are already complete. A
+    filing with no Delta and no ledger row is intentionally retried once: it may be a historic
+    transient failure, a legitimate baseline, or a no-material-change success. The latter two
+    get a terminal ledger row so subsequent ticks stay cheap.
+    """
+    from sqlalchemy import and_, exists, or_, select
+
+    from schemas.models.delta import Delta
+    from schemas.models.filing import Filing
+    from schemas.models.filing_extraction_state import FilingExtractionState
+
+    scope = sorted(set(ciks))
+    if not scope:
+        return []
+    has_delta = exists(
+        select(Delta.delta_id).where(Delta.accession_no == Filing.accession_no)
+    )
+    with session_factory() as session:
+        rows = session.execute(
+            select(Filing)
+            .outerjoin(
+                FilingExtractionState,
+                FilingExtractionState.accession_no == Filing.accession_no,
+            )
+            .where(
+                Filing.cik.in_(scope),
+                or_(
+                    FilingExtractionState.status == "error",
+                    and_(FilingExtractionState.id.is_(None), ~has_delta),
+                ),
+            )
+            .order_by(Filing.filing_date, Filing.accession_no)
+        ).scalars().all()
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def _record_extraction_state(
+    session_factory, filing, *, status: str, error: str | None, clock, audit_log=None
+) -> None:
+    """Upsert one retry-ledger row and bind it into the audit chain when available."""
+    from sqlalchemy import select
+
+    from schemas.models.filing_extraction_state import FilingExtractionState
+
+    with session_factory() as session, session.begin():
+        row = session.execute(
+            select(FilingExtractionState).where(
+                FilingExtractionState.accession_no == filing.accession_no
+            )
+        ).scalar_one_or_none()
+        previous = row.status if row is not None else None
+        if row is None:
+            row = FilingExtractionState(
+                accession_no=filing.accession_no,
+                status=status,
+                attempts=1,
+                last_error=error,
+                updated_at=clock.now(),
+            )
+            session.add(row)
+        else:
+            row.status = status
+            row.attempts += 1
+            row.last_error = error
+            row.updated_at = clock.now()
+        session.flush()
+        append_in = getattr(audit_log, "append_in", None)
+        if callable(append_in):
+            append_in(
+                session,
+                "filing-extraction-state",
+                actor="edgar-pipeline",
+                refs={"row_id": row.id, "accession_no": filing.accession_no},
+                payload={
+                    "previous": previous,
+                    "status": status,
+                    "attempts": row.attempts,
+                    "error": error,
+                },
+            )
 
 
 def _as_date(value: Any):
@@ -242,26 +553,36 @@ def _to_xbrl_facts(records: Iterable[Any], cik: str) -> list:
     return rows
 
 
-def _facts_by_accession(fetcher, cik: str, accessions: set[str]) -> dict[str, list]:
+def _facts_by_accession(
+    fetcher, cik: str, accessions: set[str]
+) -> tuple[dict[str, list], str | None]:
     """XBRL facts for the accessions we care about, fetched ONCE per CIK.
 
     companyfacts is a single large document per issuer; fetching it per FILING would multiply
     SEC requests by the number of filings in a poll for no new information — the fair-access
-    budget is a shared resource, not a per-call allowance. A failure here is NOT fatal: the
-    numeric delta is an enrichment of the text delta, so we log and continue with empty facts
-    rather than losing the textual evidence too.
+    budget is a shared resource, not a per-call allowance. A transient failure is returned
+    alongside an empty mapping: paired filings are held atomically until retry so an early
+    text-only event cannot suppress the later numeric enrichment through accession dedup.
     """
     from filings.edgar.companyfacts import facts_for_accession, fetch_companyfacts
+    from filings.edgar.fetch import SecFairAccessHalt, SecResourceLimitHalt
 
     if not accessions:
-        return {}
+        return {}, None
     try:
         doc = fetch_companyfacts(fetcher, cik)
+    except (SecFairAccessHalt, SecResourceLimitHalt):
+        # A fair-access/resource halt is a STOP directive for the whole SEC run, never an
+        # enrichment miss to swallow and continue through the remaining watchlist.
+        raise
     except Exception as exc:                  # noqa: BLE001 - enrichment, never fatal
-        log.warning("companyfacts unavailable for CIK %s (%s); text deltas only",
+        log.warning("companyfacts unavailable for CIK %s (%s); paired filings held for retry",
                     cik, type(exc).__name__)
-        return {}
-    return {acc: _to_xbrl_facts(facts_for_accession(doc, acc), cik) for acc in accessions}
+        return {}, type(exc).__name__
+    return (
+        {acc: _to_xbrl_facts(facts_for_accession(doc, acc), cik) for acc in accessions},
+        None,
+    )
 
 
 def _poll_isolated(poller, cik_list: list[str], result: EdgarPipelineResult):
@@ -373,18 +694,45 @@ def run_edgar_pipeline(
         result.filings_ingested += poll.emitted
         for accession, reason in poll.errors:
             result.poll_errors.append((f"{cik}:{accession}", reason))
-        if not poll.filings:
-            continue
-        facts = _facts_by_accession(
-            fetcher, cik,
-            {f.accession_no for f in poll.filings} | {
-                p.accession_no for p in (
-                    _prior_same_form(session_factory, f) for f in poll.filings
-                ) if p is not None
-            },
-        )
-        for filing in poll.filings:
+
+    # Extraction is a durable second step after filing/raw persistence. Include prior error
+    # rows even when this SEC tick discovered no new filing: the submissions cursor will not
+    # re-download an already-ingested accession, so the retry ledger is its recovery path.
+    candidates = [] if halted else _extraction_candidates(session_factory, cik_list)
+    by_cik: dict[str, list] = {}
+    for filing in candidates:
+        by_cik.setdefault(filing.cik, []).append(filing)
+
+    for cik, filings in by_cik.items():
+        from filings.edgar.fetch import SecFairAccessHalt, SecResourceLimitHalt
+
+        try:
+            facts, facts_error = _facts_by_accession(
+                fetcher, cik,
+                {f.accession_no for f in filings} | {
+                    p.accession_no for p in (
+                        _prior_same_form(session_factory, f) for f in filings
+                    ) if p is not None
+                },
+            )
+        except (SecFairAccessHalt, SecResourceLimitHalt) as exc:
+            result.poll_errors.append((cik, type(exc).__name__))
+            log.warning("SEC halt during companyfacts enrichment; extraction fan-out stopped")
+            break
+        for filing in filings:
             prior = _prior_same_form(session_factory, filing)
+            if facts_error is not None and prior is not None:
+                # Accession-level event dedup means a text-only event emitted now would burn
+                # the identity needed to surface numeric deltas after recovery. Record the
+                # retry state BEFORE any partial Delta commit and publish this filing only
+                # once its complete deterministic extraction succeeds.
+                error = f"companyfacts:{facts_error}"
+                result.delta_errors.append((filing.accession_no, error))
+                _record_extraction_state(
+                    session_factory, filing, status="error", error=error,
+                    clock=clock, audit_log=audit_log,
+                )
+                continue
             try:
                 deltas = compute_deltas(
                     filing, prior, raw_store,
@@ -392,18 +740,32 @@ def run_edgar_pipeline(
                     facts.get(prior.accession_no, []) if prior is not None else [],
                     clock=clock,
                 )
+                written = _persist_deltas(session_factory, deltas)
             except UnpairedPeriodicFiling:
                 # EXPECTED, not an error: the first 10-K/10-Q ever seen for an issuer has
                 # nothing to diff against. It is stored as evidence and becomes the baseline
                 # the NEXT one is measured against.
                 result.baselines += 1
+                _record_extraction_state(
+                    session_factory, filing, status="baseline", error=None,
+                    clock=clock, audit_log=audit_log,
+                )
                 continue
             except Exception as exc:          # noqa: BLE001 - isolate one filing's failure
-                result.delta_errors.append((filing.accession_no, type(exc).__name__))
-                log.warning("delta computation failed for %s (%s); other filings unaffected",
-                            filing.accession_no, type(exc).__name__)
+                error = type(exc).__name__
+                result.delta_errors.append((filing.accession_no, error))
+                _record_extraction_state(
+                    session_factory, filing, status="error", error=error,
+                    clock=clock, audit_log=audit_log,
+                )
+                log.warning("delta extraction failed for %s (%s); other filings unaffected",
+                            filing.accession_no, error)
                 continue
-            result.deltas_persisted += _persist_deltas(session_factory, deltas)
+            result.deltas_persisted += written
+            _record_extraction_state(
+                session_factory, filing, status="complete", error=None,
+                clock=clock, audit_log=audit_log,
+            )
 
     log.info("%s", result.summary())
     return result

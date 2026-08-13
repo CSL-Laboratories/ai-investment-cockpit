@@ -1,8 +1,9 @@
 """WP3 — market ingestor: Alpaca news WS, Finnhub poller, calendars -> MarketEvent.
 
-W20 adds two READ-ONLY evidence feeds: the edgar-morning-brew Delta feed (``edgar_brew``) and
-FINRA short-interest/Reg SHO enrichment (``finra_short_interest``). Both follow the
-``finnhub_poll`` shape — a pure poller plus a ``make_*_fetch`` factory that owns all I/O.
+W20 added two evidence feeds: EDGAR Delta events through the hardened ``edgar_brew`` poller,
+and FINRA short-interest/Reg SHO enrichment. RW-11 runs the deterministic EDGAR extraction
+pipeline in-process before that poller reads the cockpit's own Delta rows; the foreign-brew
+reader remains only as a fallback until RW-12's live-day/precision retirement gate is met.
 """
 from ingest.alpaca_news import AlpacaNewsConsumer
 from ingest.calendars import pull_calendar
