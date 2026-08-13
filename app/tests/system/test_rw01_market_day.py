@@ -616,11 +616,16 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
 
     real_build_scheduler = sched_mod.build_scheduler
 
-    def fake_build_scheduler(state, clock=None, *, services=None, ingest=None):
+    def fake_build_scheduler(
+        state, clock=None, *, services=None, ingest=None, market_data=None
+    ):
         seen["services"] = services
         seen["ingest"] = ingest
+        seen["market_data"] = market_data
         # build the REAL scheduler too, so a broken cron spec still fails here
-        real_build_scheduler(state, clock, services=services, ingest=ingest)
+        real_build_scheduler(
+            state, clock, services=services, ingest=ingest, market_data=market_data
+        )
         return FakeScheduler()
 
     def fake_serve(app, settings=None):
@@ -656,6 +661,7 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
     assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}
     assert set(seen["services"]) == {"brew", "intraday", "eod"}
+    assert seen["market_data"] is graph[1].state.market_data
     assert started == [[FEED_ALPACA_NEWS]]
     assert seen["bound_host"] == "127.0.0.1", "the API must stay loopback-only"
 

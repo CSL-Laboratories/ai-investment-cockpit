@@ -48,13 +48,14 @@ class PaperExecutionService:
     """Read paper account state and execute only fully-approved stored orders."""
 
     def __init__(self, state, *, broker, gateway, token_registry, quote_fn,
-                 watchlist_fn=None) -> None:
+                 watchlist_fn=None, market_data=None) -> None:
         self.state = state
         self._broker = broker
         self._gateway = gateway
         self._token_registry = token_registry
         self._quote_fn = quote_fn
         self._watchlist_fn = watchlist_fn or (lambda: frozenset())
+        self.market_data = market_data
 
     def _watchlist(self) -> frozenset[str]:
         return frozenset(str(s).upper() for s in self._watchlist_fn())

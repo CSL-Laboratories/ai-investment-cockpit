@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .breakers import BreakerEngine, BreakerSignals, BreakerThresholds
 from .market_calendar import (
     EASTERN,
     CalendarCoverageError,
@@ -43,6 +44,8 @@ INTRADAY_MINUTES = "*/15"
 EOD_HOUR, EOD_MINUTE = 16, 15
 DISARM_HOUR, DISARM_MINUTE = 16, 0
 ANCHOR_MINUTES = "*/30"                   # SEC-11 external-witness head-anchor cadence
+MARKET_QUOTE_MINUTES = "*/1"              # a roughly two-minute gap reaches the 120 s threshold
+MARKET_BARS_HOUR, MARKET_BARS_MINUTE = 7, 30
 
 # ---- RW-01 ingest cadences ------------------------------------------------------------
 # Per-feed cron kwargs, keyed by the ``ingest_runner`` feed name. Each is sized to the feed's
@@ -163,7 +166,51 @@ def run_ingest_poll(state, clock=None, *, feed: str, runner=None):
     return runner.poll(feed)
 
 
-def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=None):
+def run_market_quote_poll(state, clock=None, *, market_data=None):
+    """RW-14 market-data tick: poll regardless of event volume; enforce only when open."""
+    clock = clock or state.clock
+    if market_data is None:
+        return {"skipped": "market_data_not_wired"}
+    result = market_data.poll_quotes()
+    now = clock.now()
+    try:
+        require_calendar_coverage(now)
+    except (CalendarCoverageError, TypeError, ValueError):
+        return {**result, "breaker": "calendar_unknown"}
+    if not is_market_open(now):
+        return {**result, "breaker": "market_closed"}
+
+    engine = BreakerEngine(state)
+    thresholds = BreakerThresholds(
+        data_staleness_s=getattr(
+            market_data, "max_age_s", BreakerThresholds().data_staleness_s
+        )
+    )
+    age = market_data.max_quote_age_s(now=now)
+    events = engine.evaluate_and_trip(
+        BreakerSignals(max_data_age_s=age), thresholds, clock=clock, actor="market_data"
+    )
+    recovered = False
+    if age <= thresholds.data_staleness_s and engine.is_watch_only("market_data"):
+        previous = ModeLadder(state).current()
+        engine.recover_from_watch_only(
+            "market_data", previous, clock=clock, actor="market_data"
+        )
+        recovered = True
+    return {**result, "max_data_age_s": age, "system_events": events,
+            "recovered": recovered}
+
+
+def run_market_bars_refresh(state, clock=None, *, market_data=None):
+    """RW-14 daily ADV/volatility refresh; never grants order authority."""
+    del state, clock
+    if market_data is None:
+        return {"skipped": "market_data_not_wired"}
+    return market_data.refresh_daily_bars()
+
+
+def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=None,
+                    market_data=None):
     """Register the cron jobs and return the (UN-started) scheduler. APScheduler is imported
     here so the job callables above stay usable without APScheduler installed.
 
@@ -221,6 +268,20 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
             lambda f=feed: run_ingest_poll(state, clock, feed=f, runner=ingest),
             CronTrigger(timezone=EASTERN, **cron),
             id=f"ingest_{feed}", name=f"ingest_{feed}", replace_existing=True,
+            max_instances=1, coalesce=True,
+        )
+    if market_data is not None:
+        sched.add_job(
+            lambda: run_market_quote_poll(state, clock, market_data=market_data),
+            CronTrigger(minute=MARKET_QUOTE_MINUTES, day_of_week="mon-fri", timezone=EASTERN),
+            id="market_quotes", name="market_quotes", replace_existing=True,
+            max_instances=1, coalesce=True,
+        )
+        sched.add_job(
+            lambda: run_market_bars_refresh(state, clock, market_data=market_data),
+            CronTrigger(hour=MARKET_BARS_HOUR, minute=MARKET_BARS_MINUTE,
+                        day_of_week="mon-fri", timezone=EASTERN),
+            id="market_daily_bars", name="market_daily_bars", replace_existing=True,
             max_instances=1, coalesce=True,
         )
     return sched

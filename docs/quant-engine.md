@@ -13,10 +13,12 @@ last-verified: 2026-08-13
 > **Current state.** QT's FIFO book, synthetic/replay feeds, three strategies, guards, cost
 > accounting, PnL attribution, `/quant/status`, and bounded `/quant/sim` are implemented. The
 > BUG-041–049 follow-up repairs are merged through PR #29. Tier C remains simulated-venue only.
-> Tiers A/B are composed but remain dormant without the production `book_fn`, daily bars, and
-> quote-age inputs scheduled in `RW-14`; `W-21` then replaces displayed-depth economics with
-> spread + ADV/volatility impact + borrow + a relative net-edge test. See [[PLAN]] rather than
-> this subsystem contract for development order.
+> The claimed `RW-14` branch now composes Tiers A/B against one cached Alpaca IEX L1 source,
+> advances the quant snapshot source, enforces the same 120-second freshness authority in the
+> verifier/scheduler/gateway, and computes daily ADV/volatility. Merge, cross-platform CI, and
+> live entitlement/progression/stale-transition evidence remain pending. `W-21` next replaces
+> displayed-depth economics with spread + ADV/volatility impact + borrow + a relative net-edge
+> test. See [[PLAN]] rather than this subsystem contract for development order.
 
 ## Why this exists
 
@@ -47,14 +49,13 @@ strategy framework, a replay harness, realistic costs, and PnL attribution.
 | **B** | `risk/engine.py` | a real pre-trade check | `execution_cost_sane` (HARD, blocks) + `execution_quality` (SOFT, → `needs_human`). |
 | **C** | `quant/execution/` | places its own orders | Autonomous HFT loop, **simulated venue only**. |
 
-Tiers A and B reach the live pipeline through `book_fn`, an injected seam on
+Tiers A and B reach the paper pipeline through `book_fn`, an injected seam on
 `draft_proposal` with exactly the shape of the existing `quote_fn`, threaded through
-`build_services`. **No book feed exists in the tree yet**, so with `book_fn` absent the
-verification tiers stay dormant and the risk gate behaves exactly as it did before QT — the
-checks are additive, not a new requirement. `require_quant_verdict` is off by default for the
-same reason: turning it on before a feed exists would send every proposal to human review
-with "no execution verdict attached", and a control that fires on everything is one nobody
-reads. Turn it on in the same change that wires a real `book_fn`.
+`build_services`. On the claimed `RW-14` branch, a composed Alpaca paper client supplies a
+synthesized one-level bid/ask `BookSnapshot`; unprovisioned compositions retain the honest
+`book_fn=None` posture. `require_quant_verdict` remains off by default: a missing/faulted book
+still fails conservatively through quote/risk freshness, while changing that policy belongs in
+a separately measured package rather than being smuggled into feed wiring.
 
 End-to-end coverage of that wiring is
 [`tests/workflows/test_execution_verification.py`](../app/tests/workflows/test_execution_verification.py),

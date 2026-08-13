@@ -39,7 +39,8 @@ from decimal import Decimal
 from config.settings import Mode
 from orchestrator.mode_ladder import ModeLadder
 from quant.book.lob import BookSnapshot, LevelSnapshot
-from tests.workflows.conftest import FakeTransport, envelope
+from quant.events import to_ns
+from tests.workflows.conftest import NOW, FakeTransport, envelope
 from tests.workflows.test_proposals import (
     HOLDINGS,
     WATCHLIST,
@@ -54,7 +55,8 @@ from workflows.packets import build_packet
 from workflows.proposals import draft_proposal
 
 
-def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None) -> BookSnapshot:
+def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None,
+          ts: int | None = None) -> BookSnapshot:
     """A book around $100.00 on a penny grid — matching ``_quote_fn``'s price of 100.
 
     ``ask_depth`` is the knob that matters here. Every proposal in this file is TEN SHARES,
@@ -67,7 +69,7 @@ def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None) -> BookSn
     if bids is None:
         bids = ((10_000, 800),)
     return BookSnapshot(
-        symbol="AAPL", seq=seq, ts=0,
+        symbol="AAPL", seq=seq, ts=to_ns(NOW) if ts is None else ts,
         bids=tuple(LevelSnapshot(price_ticks=p, qty=q, order_count=3) for p, q in bids),
         asks=tuple(LevelSnapshot(price_ticks=p, qty=q, order_count=1) for p, q in asks),
     )
@@ -111,6 +113,29 @@ def test_notional_quantity_is_resolved_once_from_quote_for_verdict_and_order(
     assert outcome.order is not None
     assert Decimal(str(outcome.order.qty)) == Decimal("9")
     assert outcome.risk_decision.execution_verdict["qty"] == 9
+
+
+def test_rw14_production_caller_passes_now_ns_and_rejects_a_stale_book(st, clock, tmp_path):
+    stale = _book(ts=to_ns(NOW) - 60_000_000_000)
+    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: stale)
+    assert outcome.risk_decision.decision == "needs_human"
+    assert outcome.risk_decision.execution_verdict["verdict"] == "insufficient_data"
+    assert any("stale" in reason for reason in outcome.risk_decision.execution_verdict["reasons"])
+    assert outcome.order is None
+
+
+def test_rw14_quote_cache_fault_degrades_to_risk_rejection_without_aborting(st, clock, tmp_path):
+    def unavailable(_symbol):
+        raise RuntimeError("cache not ready")
+
+    outcome = _draft(
+        st, clock, tmp_path, quantity=10, quote_fn=unavailable, book_fn=lambda _s: None
+    )
+
+    assert outcome.risk_decision.decision == "rejected"
+    assert not _check(outcome, "quote_sane")["passed"]
+    assert outcome.order is None
+    assert any("market quote unavailable" in reason for reason in outcome.reasons)
 
 
 def test_fractional_explicit_quantity_fails_to_human_without_an_order(st, clock, tmp_path):

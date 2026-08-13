@@ -578,7 +578,7 @@ def build_operator_deliver(settings):
     return discord_rest_deliver(channel_ids, token.reveal())
 
 
-def build_paper_execution(state, *, client=None, watchlist_fn=None):
+def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root="data/raw"):
     """Compose the real Alpaca PAPER seam behind the existing guarded ``OrderGateway``.
 
     Missing credentials leave the service absent and visible as ``501 not_wired``; they never
@@ -590,6 +590,9 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None):
     from brokers.gateway import OrderGateway
     from brokers.paper_execution import PaperExecutionService
     from core.secrets import get_secret
+    from ingest.market_data import MarketDataService
+    from orchestrator.quant_ws import SnapshotSource
+    from pathlib import Path
 
     if client is None:
         key = get_secret(_ALPACA_KEY_NAME)
@@ -614,14 +617,36 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None):
         approval_ttl_seconds=state.settings.approval_ttl_seconds,
         execution_scope="paper",
     )
+    symbols = frozenset(watchlist_fn()) if watchlist_fn is not None else frozenset()
+    def held_symbols():
+        rows = client.positions_info()
+        if not isinstance(rows, list):
+            raise RuntimeError("paper positions response was not a list")
+        return tuple(
+            str(row.get("symbol", "")).strip().upper()
+            for row in rows
+            if isinstance(row, dict) and row.get("symbol")
+        )
+
+    market_data = MarketDataService(
+        client,
+        symbols=symbols,
+        clock=state.clock,
+        raw_root=Path(parquet_root) / "market-data",
+        snapshot_source=SnapshotSource(),
+        additional_symbols_fn=held_symbols,
+        audit_log=state.audit,
+    )
+    state.market_data = market_data
     log.info("Alpaca PAPER execution transport wired behind OrderGateway")
     return PaperExecutionService(
         state,
         broker=broker,
         gateway=gateway,
         token_registry=registry,
-        quote_fn=client.latest_quote,
+        quote_fn=market_data.quote if market_data is not None else client.latest_quote,
         watchlist_fn=watchlist_fn,
+        market_data=market_data,
     )
 
 
@@ -754,13 +779,26 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     def watchlist_fn():
         return configured_watchlist
 
-    paper = build_paper_execution(state, client=paper_client, watchlist_fn=watchlist_fn)
+    paper = build_paper_execution(
+        state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root
+    )
+    market_data = paper.market_data if paper is not None else None
     services = build_services(state, transport=transport,
                               deliver=deliver, parquet_root=parquet_root,
                               quote_fn=paper.quote if paper is not None else None,
+                              book_fn=market_data.book if market_data is not None else None,
+                              verify_params=(market_data.verify_params
+                                             if market_data is not None else None),
                               holdings_fn=(paper.holdings_symbols if paper is not None else None),
                               watchlist_fn=watchlist_fn)
-    app = create_app(state, services=services, paper=paper, watchlist=configured_watchlist)
+    app = create_app(
+        state,
+        services=services,
+        paper=paper,
+        watchlist=configured_watchlist,
+        quant_snapshots=(market_data.snapshot_source if market_data is not None else None),
+    )
+    app.state.market_data = market_data
     # RW-01: ingest -> scheduler. Built AFTER the state so the pollers persist through the same
     # audited session factory, and hung off app.state so /status and run() can reach it.
     edgar_db_path = None
@@ -811,7 +849,9 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
 
     state, app, services = compose()
     ingest = app.state.ingest
-    build_scheduler(state, services=services, ingest=ingest).start()
+    build_scheduler(
+        state, services=services, ingest=ingest, market_data=app.state.market_data
+    ).start()
     ingest.start_streams()
 
     # QT-09: the Discord command surface. A DAEMON thread, for the same reason the stream

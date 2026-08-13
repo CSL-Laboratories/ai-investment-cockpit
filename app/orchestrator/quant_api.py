@@ -90,6 +90,8 @@ def quant_status(state) -> dict:
     from risk.engine import RiskContext
 
     defaults = RiskContext.__dataclass_fields__
+    market_data = getattr(state, "market_data", None)
+    market_status = market_data.status() if market_data is not None else None
     return {
         "engine": "available",
         "strategies": list(STRATEGIES),
@@ -98,13 +100,15 @@ def quant_status(state) -> dict:
             "default_events": DEFAULT_SIM_EVENTS,
             "max_concurrent": MAX_CONCURRENT_SIMS,
         },
-        # None today: no book feed exists in the tree, so Tiers A/B are dormant and every
-        # proposal is evaluated with no verdict. Stated plainly so nobody reads the presence
-        # of the checks as evidence that they are firing.
-        "book_feed": "not_wired",
+        "book_feed": "alpaca_iex_l1" if market_data is not None else "not_wired",
+        "market_data": market_status,
         "verification": {
             "tier_a": "available (advisory scoring)",
-            "tier_b": "wired, dormant until a book feed exists",
+            "tier_b": (
+                "wired to the cached L1 book"
+                if market_data is not None
+                else "wired, dormant until a book feed exists"
+            ),
             "require_quant_verdict": bool(defaults["require_quant_verdict"].default),
             "max_execution_cost_bps": str(defaults["max_execution_cost_bps"].default),
         },

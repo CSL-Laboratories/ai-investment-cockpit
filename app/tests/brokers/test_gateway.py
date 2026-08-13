@@ -80,6 +80,84 @@ def test_happy_path_submit_advances_and_audits(scenario):
     assert scenario.st.audit.unresolved_intents() == []
 
 
+def test_rw14_submit_rechecks_staleness_without_waiting_for_scheduler(scenario):
+    class StaleGuard:
+        def stale_reason(self, symbol, *, now, limit_s):
+            assert symbol == "AAPL" and now == scenario.clock.now() and limit_s == 120.0
+            return "market quote for AAPL is stale"
+
+    scenario.st.market_data = StaleGuard()
+    out = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+
+    assert not out.ok and out.stage == "market_data"
+    assert scenario.breaker.is_watch_only("market_data") is True
+    assert not scenario.gateway._broker._client.submitted  # noqa: SLF001
+
+
+def test_rw14_other_faulted_universe_symbol_synchronously_blocks_submit(
+    scenario, tmp_path
+):
+    from ingest.market_data import MarketDataService
+    from orchestrator.quant_ws import SnapshotSource
+
+    class MixedClient:
+        def latest_quote(self, symbol):
+            if symbol == "MSFT":
+                raise RuntimeError("unavailable")
+            return {
+                "price": "100", "spread_pct": "0.02",
+                "bid": "99.99", "ask": "100.01", "bid_size": 100, "ask_size": 100,
+                "ts": scenario.clock.now().isoformat(), "feed": "iex",
+            }
+
+    market = MarketDataService(
+        MixedClient(),
+        symbols=("AAPL", "MSFT"),
+        clock=scenario.clock,
+        raw_root=tmp_path / "raw",
+        snapshot_source=SnapshotSource(),
+    )
+    assert market.poll_quotes()["failed"] == ["MSFT"]
+    scenario.st.market_data = market
+
+    out = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+
+    assert not out.ok and out.stage == "market_data"
+    assert scenario.breaker.is_watch_only("market_data") is True
+    assert not scenario.gateway._broker._client.submitted  # noqa: SLF001
+
+
+def test_rw14_stale_off_hours_refuses_without_activating_watch_only(scenario):
+    class StaleGuard:
+        max_age_s = 120.0
+
+        def stale_reason(self, symbol, *, now, limit_s):
+            return "market quote is stale"
+
+    scenario.st.market_data = StaleGuard()
+    closed = FrozenClock(datetime(2026, 7, 11, 16, 0, tzinfo=timezone.utc))
+
+    out = scenario.gateway.submit(
+        scenario.order, **scenario.submit_kwargs(clock=closed)
+    )
+
+    assert not out.ok and out.stage == "market_data"
+    assert scenario.breaker.is_watch_only("market_data") is False
+    assert not scenario.gateway._broker._client.submitted  # noqa: SLF001
+
+
+def test_rw14_naive_clock_is_an_audited_calendar_refusal(scenario):
+    naive = FrozenClock(datetime(2026, 7, 7, 14, 0))
+
+    out = scenario.gateway.submit(
+        scenario.order, **scenario.submit_kwargs(clock=naive)
+    )
+
+    assert not out.ok and out.stage == "calendar"
+    assert not scenario.gateway._broker._client.submitted  # noqa: SLF001
+    assert _events(scenario.st, gateway_mod.EVENT_ORDER_REFUSED)
+
+
 def test_review_is_pure_dry_run_no_submit_no_consume(scenario):
     broker = RecordingBroker()
     sc = _fresh(scenario, broker)

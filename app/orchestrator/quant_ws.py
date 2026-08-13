@@ -93,7 +93,8 @@ class SnapshotSource:
 
     @property
     def version(self) -> int:
-        return self._version
+        with self._lock:
+            return self._version
 
 
 def _key_matches(supplied: str | None, expected: str | None) -> bool:

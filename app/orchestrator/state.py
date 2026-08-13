@@ -28,6 +28,7 @@ EVENT_MODE_CHANGE = "mode_change"          # EVERY ladder transition (arm/drop/d
 EVENT_BREAKER_TRIP = "breaker_trip"
 EVENT_BREAKER_CLEAR = "breaker_clear"
 EVENT_WATCH_ONLY = "watch_only"            # L8 usage-window degradation (NOT a mode change)
+EVENT_MARKET_DATA_RAW = "market_data_raw_snapshot"
 EVENT_KILLSWITCH = "killswitch"
 EVENT_DRAWDOWN_MARK = "drawdown_mark"      # EOD-recorded realized drawdown the gate reads
 EVENT_ADJUDICATION = "proposal_decision"   # one per approve/reject/modify/veto (WP6 writes)
@@ -100,6 +101,9 @@ class OrchestratorState:
     # SPIKE in the current session, and every increment already has its own audit record
     # (the order_submit result + refusal), so no separate durable counter is warranted.
     broker_errors_since_sample: int = field(default=0, compare=False)
+    # RW-14: optional composed market-data authority. Absent means the paper transport is not
+    # provisioned; when present the gateway synchronously refuses missing/stale observations.
+    market_data: object | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def build(

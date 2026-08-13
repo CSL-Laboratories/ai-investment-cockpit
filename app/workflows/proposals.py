@@ -33,7 +33,7 @@ from ingest.normalize import escape_untrusted
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
-from quant.events import PriceScale
+from quant.events import PriceScale, to_ns
 from quant.verify import VerifyParams, proposal_quantity, verify_proposal
 from risk.engine import RiskContext, evaluate, order_notional
 from schemas.models.market_event import MarketEvent
@@ -247,7 +247,14 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
 
     # ---- deterministic risk gate (Invariant 5: evaluate() only) --------------------------
     symbol = str(proposal.get("symbol", "")).upper()
-    quote = quote_fn(symbol) if quote_fn is not None else None
+    quote = None
+    if quote_fn is not None:
+        try:
+            quote = quote_fn(symbol)
+        except Exception as exc:  # noqa: BLE001 - absent data must reject, not abort awareness
+            log.warning("market quote unavailable for %s: %s: %s",
+                        symbol, type(exc).__name__, exc)
+            reasons.append("market quote unavailable; deterministic risk fails closed")
     raw_quote_price = _dec((quote or {}).get("price"))
     quote_price = raw_quote_price if raw_quote_price.is_finite() else Decimal("0")
     # BUG-044: resolve shares ONCE. Verification and the canonical order tuple must describe
@@ -267,8 +274,12 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         try:
             book = book_fn(symbol)
             if book is not None:
-                candidate = verify_proposal(verification_proposal, book,
-                                            verify_params or DEFAULT_VERIFY_PARAMS)
+                candidate = verify_proposal(
+                    verification_proposal,
+                    book,
+                    verify_params or DEFAULT_VERIFY_PARAMS,
+                    now_ns=to_ns(clock.now()),
+                )
                 # READ THE SEAM AGAIN, at gate time. ``_verdict_state`` calls a verdict stale
                 # when ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would
                 # trade against has moved past the one the verdict describes. Passing the

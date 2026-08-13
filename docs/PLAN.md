@@ -21,7 +21,7 @@ last-verified: 2026-08-13
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #29 on 2026-08-13.
+state/lifecycle reconciled through PR #30 on 2026-08-13.
 
 ---
 
@@ -29,20 +29,22 @@ state/lifecycle reconciled through PR #29 on 2026-08-13.
 
 `main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
 boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
-tooling (`RW-19` implementation), and BUG-041–045, BUG-047–051, BUG-098, and BUG-099. There are no open
-pull requests waiting to merge.
+tooling (`RW-19` implementation), and BUG-041–045, BUG-047–051, BUG-098, and BUG-099. The
+claimed `work/rw14-live-market-data` branch is the only current production-code merge candidate.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
 triage, briefs, interrogation, and proposal drafting; deterministic risk/mode/approval controls;
 human-approved Alpaca paper submission through `OrderGateway`; Discord/API status and kill
 surfaces; and contained synthetic/replay quant simulation.
 
-**What is not complete:** real broker-status polling and reconciliation (`RW-15`); ADV/volatility,
-live `book_fn`, and quote-age enforcement (`RW-14`); the realistic net-edge cost model (`W-21`);
+**What is not complete on `main`:** real broker-status polling and reconciliation (`RW-15`);
+the implemented-but-unmerged ADV/volatility, live `book_fn`, and quote-age enforcement
+(`RW-14`); the realistic net-edge cost model (`W-21`);
 the two-day unattended paper-MVP proof (`W-22`); event-driven paper autonomy (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** local Windows gates are 2,098 passed / 1 skipped with Ruff clean.
+**Verification posture:** the final RW-14 branch gates are 2,121 passed / 1 skipped on Windows
+with Ruff clean and an order-path adversarial review complete.
 GitHub's latest Ubuntu/Windows/macOS jobs did not start because the Actions overage budget was
 exhausted, so PRs #27–#29 have local regression evidence but await cross-platform attestation.
 Offline work may continue on isolated branches; no package becomes production-ready or a
@@ -241,11 +243,57 @@ pipeline faults as degraded rather than quiet success.
 
 ### M2 — Live market data on the ingestion trigger  (`RW-14`)
 
+**Package intake — claimed 2026-08-13 on `work/rw14-live-market-data`:**
+
+1. **Operator change:** the composed paper cockpit receives a production L1 book snapshot plus
+   daily ADV/realized-volatility inputs, exposes advancing quant snapshots, and disables orders
+   in `watch_only` when its latest exchange-timestamped quote is stale during market hours. Raw
+   ingest continues while triage/proposals are safely deferred until fail-closed recovery.
+2. **Extended path:** the existing Alpaca market-data fetchers, intraday scheduler,
+   `BreakerSignals`, quant verification, and `SnapshotSource`/`/ws/quant` surfaces. No second
+   broker or order path is introduced.
+3. **Retirement:** no adapter is replaced. The package retires the honestly-unsampled
+   `max_data_age_s` state and the blocked status of `BUG-040`, `BUG-046`, and `BUG-097`; any
+   temporary test leaf stays test-only.
+4. **Reachability proof:** composed-system tests must fail if quote timestamps stop reaching
+   breaker sampling, if stale data no longer selects L8 `watch_only`, or if `/ws/quant` is not
+   registered with an advancing production snapshot source.
+5. **Claimed IDs:** `RW-14` is the single package; it resolves `DEC-01` and closes/unblocks
+   `BUG-040`, `BUG-046`, and `BUG-097` without claiming later `W-21` cost-model work.
+6. **Platforms:** pure Python/httpx, injected clocks, `Path`-safe caches, and no subprocess,
+   credential-store, or platform-specific behavior. Ubuntu/Windows/macOS CI remains required.
+7. **Size:** one vertical slice, targeted below roughly 1,000 production LOC plus tests and
+   package documentation. A larger design returns here for splitting before implementation.
+
+**Offline implementation evidence — 2026-08-13:** the branch now composes a single cached
+Alpaca IEX L1 source for quotes, books, synchronous gateway freshness, quant snapshots, and
+daily ADV/volatility. The polled universe is the immutable operator watchlist plus current
+paper holdings, so removing a held name from the watchlist cannot make an exit permanently
+unobservable. Missing/malformed/future quotes, holdings-discovery failure, or any faulted
+universe member keep the global freshness signal failed closed; there is deliberately no
+silent per-symbol exclusion from order authority. The faulted set and universe-discovery
+state are visible in quant status. Raw quote/bar Parquet hashes are bound into the HMAC audit
+chain. Quote-cache failure rejects deterministic risk without aborting the awareness batch.
+The execution-verdict TTL is derived from the same 120-second authority limit as the scheduler
+and synchronous gateway check. Stale orders are refused at every hour; the system-wide L8
+transition and recovery are market-hours gated, and recovery never restores higher autonomy.
+
+The implementation received read-only DeepSeek v4 Pro/Flash architecture, test, and
+order-path adversarial passes (sessions `ses_005cb948dffep00GT3p9o4wDZO`,
+`ses_005cb948dffet6lNpL21BfkkHb`, `ses_005cb948affel97HEwFfJv1i6q`,
+`ses_005b314d6ffebMIQqTEdhH74zF`, and `ses_005b314deffelJJPoVNNHLTYxl`). Reproduced findings
+closed on the branch include graceful quote-cache degradation, holdings-only reachability,
+calendar/clock refusal, cadence/TTL alignment, composed allowlist coverage, and raw-hash
+binding. Cross-platform CI, real IEX entitlement/field coverage, live exchange-timestamp
+progression, and a real stale-to-L8 transition remain online evidence; none is inferred from
+fixtures. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff clean.
+
 - Add a daily-bars poller alongside the quote poller (same Alpaca credentials; entitlement and
   feed coverage re-verified at build under `DEC-07`). Cache per symbol, refresh daily. Yields
   **ADV and realized volatility**.
 - Synthesize `book_fn` from the L1 quote — one level per side, timestamped from the quote.
-- Stamp `last_quote_ts` per symbol as the poller observes quotes; the intraday tick samples
+- Stamp `last_quote_ts` per symbol as the poller observes quotes; the dedicated market-data
+  tick samples
   `max_data_age_s` into `BreakerSignals` — the stale-data breaker's wire (`BUG-058` left it
   honestly UNSAMPLED until this package exists). Gate the sampling on market hours, and keep
   the 120s threshold coherent with the poll cadence.
@@ -253,10 +301,11 @@ pipeline faults as degraded rather than quiet success.
   stale feed to disable the order path in `watch_only`. Route stale-data through the single L8
   watch-only mechanism, keep ingest/awareness running, and carry an adversarial-review round
   because this changes mode/order-path behavior.
-- **Gate:** `quant_book_seq` advances between observations on a live day; age is computed from
-  the latest exchange timestamp only during market hours; >120 seconds reaches L8 `watch_only`
-  and disables orders while ingest/awareness continues. This makes both `BUG-040` and
-  `BUG-097` testable through the composed path.
+- **Gate:** `quant_book_seq` advances between observations on a live day; authority age is
+  computed from the latest exchange timestamp. The synchronous gateway refuses stale data at
+  every hour, while market-hours breaker sampling routes >120 seconds to L8 `watch_only` and
+  disables orders while ingest/awareness continues. This makes both `BUG-040` and `BUG-097`
+  testable through the composed path.
 
 ### M3 — Make the cost model match reality  (`W-21`)
 
