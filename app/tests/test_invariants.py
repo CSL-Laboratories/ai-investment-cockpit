@@ -130,12 +130,78 @@ def test_the_quant_containment_gate_actually_detects_a_violation(tmp_path):
         assert "brokers" not in list(_imported_roots(ast.parse(source))), source
 
 
-# ---- QT-06: quant/verify.py is imported BY risk/, so it inherits Invariant 5's purity.
-_IMPURE_IN_VERIFY = re.compile(
-    r"^\s*(?:import|from)\s+(?:numpy|pandas|scipy|requests|httpx|urllib|socket|subprocess|"
-    r"pathlib|os|sqlalchemy|pyarrow|\S*claude|\S*codex)\b",
-    re.M,
-)
+# ---- QT-06: quant/verify.py feeds risk/, so its whole local import closure inherits Inv 5.
+_IMPURE_VERIFY_ROOTS = frozenset({
+    "agent_runner", "anthropic", "httpx", "langchain", "numpy", "openai", "os", "pandas",
+    "pathlib", "pyarrow", "requests", "scipy", "socket", "sqlalchemy", "subprocess", "urllib",
+})
+
+
+def _module_path(root: Path, parts: tuple[str, ...]) -> Path | None:
+    """Resolve a static module name inside ``root`` without importing it."""
+    if not parts:
+        return None
+    module = root.joinpath(*parts)
+    source = module.with_suffix(".py")
+    if source.is_file():
+        return source
+    package = module / "__init__.py"
+    return package if package.is_file() else None
+
+
+def _local_import_targets(path: Path, root: Path, tree: ast.AST) -> set[Path]:
+    """Return local modules that a file can reach through ordinary static imports."""
+    package = path.relative_to(root).with_suffix("").parts[:-1]
+    if path.name == "__init__.py":
+        package = path.relative_to(root).parent.parts
+
+    targets: set[Path] = set()
+    for node in ast.walk(tree):
+        names: list[tuple[str, ...]] = []
+        if isinstance(node, ast.Import):
+            names.extend(tuple(alias.name.split(".")) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                keep = len(package) - (node.level - 1)
+                if keep < 0:
+                    continue
+                base = package[:keep]
+            else:
+                base = ()
+            if node.module:
+                base += tuple(node.module.split("."))
+            names.append(base)
+            names.extend(base + tuple(alias.name.split(".")) for alias in node.names)
+
+        for parts in names:
+            target = _module_path(root, parts)
+            if target is not None:
+                targets.add(target)
+            # Importing ``quant.book.lob`` executes both package initializers first. They are
+            # part of the runtime closure even though the import statement names only ``lob``.
+            for end in range(1, len(parts)):
+                initializer = root.joinpath(*parts[:end], "__init__.py")
+                if initializer.is_file():
+                    targets.add(initializer)
+    return targets
+
+
+def _transitive_impure_imports(entry: Path, root: Path) -> list[str]:
+    """Walk local static imports and report every forbidden root with its importing file."""
+    offenders: list[str] = []
+    pending = [entry]
+    visited: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for imported in _imported_roots(tree):
+            if imported in _IMPURE_VERIFY_ROOTS or "claude" in imported or "codex" in imported:
+                offenders.append(f"{path.relative_to(root)} imports {imported}")
+        pending.extend(_local_import_targets(path, root, tree) - visited)
+    return sorted(offenders)
 
 
 def test_the_execution_verifier_stays_pure_because_risk_imports_it():
@@ -145,19 +211,56 @@ def test_the_execution_verifier_stays_pure_because_risk_imports_it():
     verify = APP / "quant" / "verify.py"
     if not verify.exists():
         return
-    text = verify.read_text(encoding="utf-8")
-    offenders = _IMPURE_IN_VERIFY.findall(text)
+    offenders = _transitive_impure_imports(verify, APP)
     assert not offenders, (
-        f"Invariant 5: quant/verify.py must stay import-clean (risk/ imports it): {offenders}"
+        "Invariant 5: quant/verify.py and its local import closure must stay pure because "
+        f"the verifier feeds risk decisions: {offenders}"
     )
+
+
+def test_the_execution_verifier_gate_detects_a_transitive_violation(tmp_path):
+    """BUG-049 control: an impure grandchild must fail even when the entry file is clean."""
+    package = tmp_path / "quant"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "verify.py").write_text("from quant.helper import VALUE\n", encoding="utf-8")
+    (package / "helper.py").write_text("from quant.deep import VALUE\n", encoding="utf-8")
+    (package / "deep.py").write_text("import httpx\nVALUE = 1\n", encoding="utf-8")
+
+    offenders = _transitive_impure_imports(package / "verify.py", tmp_path)
+    assert [offender.replace("\\", "/") for offender in offenders] == [
+        "quant/deep.py imports httpx"
+    ]
+
+
+def test_the_execution_verifier_gate_checks_imported_package_initializers(tmp_path):
+    """Python executes every parent ``__init__`` before a deeply imported module."""
+    package = tmp_path / "quant"
+    book = package / "book"
+    book.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "verify.py").write_text(
+        "from quant.book.lob import BookSnapshot\n", encoding="utf-8"
+    )
+    (book / "__init__.py").write_text("import anthropic\n", encoding="utf-8")
+    (book / "lob.py").write_text("class BookSnapshot: pass\n", encoding="utf-8")
+
+    offenders = _transitive_impure_imports(package / "verify.py", tmp_path)
+    assert [offender.replace("\\", "/") for offender in offenders] == [
+        "quant/book/__init__.py imports anthropic"
+    ]
 
 
 def test_the_risk_engine_itself_did_not_acquire_an_impure_import():
     """The other half of the same boundary: adding the QT-06 checks must not have pulled
     anything heavy into risk/ either."""
-    offenders = [
-        str(p.relative_to(APP))
-        for p in _py_files(APP / "risk")
-        if _IMPURE_IN_VERIFY.search(p.read_text(encoding="utf-8"))
-    ]
+    offenders = []
+    for path in _py_files(APP / "risk"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        roots = set(_imported_roots(tree))
+        if impure := sorted(
+            root for root in roots
+            if root in _IMPURE_VERIFY_ROOTS or "claude" in root or "codex" in root
+        ):
+            offenders.append(f"{path.relative_to(APP)} imports {', '.join(impure)}")
     assert not offenders, f"Invariant 5: impure import inside risk/: {offenders}"
