@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
                     timer_interval_ns=int(args.timer_ms * 1_000_000), schedule=schedule)
     result = runner.run()
     book = runner.books.get(args.symbol)
-    attribution = runner.pnl.snapshot()
+    attribution = runner.pnl_for(args.symbol).snapshot()
 
     provenance = getattr(feed, "provenance", None)
 

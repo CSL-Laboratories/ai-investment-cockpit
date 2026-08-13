@@ -65,7 +65,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | closed | `orchestrator/market_calendar.py` |
 | `BUG-097` | `BRK_STALE_DATA` currently uses the generic L6 breaker drop to `review_live`, but Invariant 7 requires stale feed to disable the order path in `watch_only`; the defect becomes reachable when `RW-14` samples quote age | high pre-live | blocked → `RW-14`; adversarial review required | `orchestrator/breakers.py` |
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` is inert — `now_ns` has no caller | med | **blocked** → unblocked by `RW-14` | `quant/verify.py:200` |
-| `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | open | `quant/runner.py:226` |
+| `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | claimed | `fix/bug-041-symbol-pnl` |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | open | `quant/strategies/pairs.py:147` |
 | `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | open | `bridge/bot.py`, `orchestrator/quant_api.py` |
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | open | `quant/verify.py`, `workflows/proposals.py` |
