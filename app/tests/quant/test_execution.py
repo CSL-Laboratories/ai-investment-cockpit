@@ -203,13 +203,14 @@ def test_the_kill_switch_LATCHES_and_does_not_re_arm():
                                  qty=1, price_ticks=1)).allowed
 
 
-def test_a_session_loss_beyond_the_stop_trips_the_kill_switch():
-    guards = Guards(limits=GuardLimits(max_loss=100.0))
+def test_a_dollar_session_loss_beyond_the_stop_trips_the_kill_switch():
+    """BUG-047: the public limit names the same dollar unit emitted by ``PnLTracker``."""
+    guards = Guards(limits=GuardLimits(max_loss_dollars=100.0))
     guards.observe_pnl(-50.0)
     assert not guards.tripped
     guards.observe_pnl(-150.0)
     assert guards.tripped
-    assert "max_loss" in guards.trip_reason
+    assert "max_loss_dollars $100.0" in guards.trip_reason
 
 
 def test_cancels_are_permitted_even_while_the_kill_switch_is_tripped():

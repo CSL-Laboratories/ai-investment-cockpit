@@ -63,10 +63,10 @@ class GuardLimits:
     all still pass, because each individual order is small and none of them rest. This is the
     only limit that catches that shape of failure."""
 
-    max_loss: float | None = None
-    """Session stop, in ticks*shares. None disables it. When breached the kill switch trips
-    and stays tripped — it does not re-arm on a recovery, because a strategy that lost its
-    limit and then recovered has still demonstrated it can lose its limit."""
+    max_loss_dollars: float | None = None
+    """Session stop in dollars. ``PnLTracker`` converts ticks through ``PriceScale`` before
+    this limit is observed. None disables it. When breached the kill switch trips and stays
+    tripped: recovery does not erase evidence that the strategy exceeded its loss bound."""
 
 
 @dataclass(slots=True)
@@ -254,10 +254,13 @@ class Guards:
 
     def observe_pnl(self, total: float) -> None:
         """Feed session PnL so the loss stop can latch. Called by the loop, not the strategy."""
-        if self.limits.max_loss is None:
+        if self.limits.max_loss_dollars is None:
             return
-        if total <= -abs(self.limits.max_loss):
-            self.trip(f"session loss {total} breached max_loss {self.limits.max_loss}")
+        if total <= -abs(self.limits.max_loss_dollars):
+            self.trip(
+                f"session loss ${total} breached max_loss_dollars "
+                f"${self.limits.max_loss_dollars}"
+            )
 
     def _blocked(self, reason: str) -> GuardVerdict:
         self.blocked += 1
