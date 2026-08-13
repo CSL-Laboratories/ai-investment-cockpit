@@ -665,7 +665,7 @@ def build_operator_bot(state):
             "(the allowlisted Discord user ids)")
         return None
 
-    guild_id = getattr(state.settings, "guild_id", None)
+    guild_id = state.settings.guild_id
     log.info("discord command bot wired for %d operator(s); guild=%s",
              len(operators), guild_id or "GLOBAL (sync may take up to 1h to propagate)")
 

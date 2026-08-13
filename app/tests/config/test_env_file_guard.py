@@ -275,6 +275,7 @@ def test_a_verbatim_copy_of_the_example_file_boots(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     s = Settings(_env_file=str(env))
     assert s.mode.value == "read_only"
+    assert s.guild_id is None
     assert s.brief_channel_id is None            # blank -> unset, feed logs NOT PROVISIONED
     assert s.audit_log_channel_id is None
     assert s.sec_user_agent is None
@@ -295,11 +296,18 @@ def test_blank_falls_back_to_a_non_none_default(tmp_path, monkeypatch):
     assert Settings(_env_file=str(env)).sec_rate_limit_per_sec == 2.0
 
 
+def test_discord_guild_id_loads_from_durable_config(tmp_path, monkeypatch):
+    env = write_env(tmp_path, "COCKPIT_GUILD_ID=123456789\n")
+    monkeypatch.delenv("COCKPIT_GUILD_ID", raising=False)
+    assert Settings(_env_file=str(env)).guild_id == 123456789
+
+
 @pytest.mark.parametrize("line,field", [
     ("COCKPIT_BRIEF_CHANNEL_ID=not-a-number", "brief_channel_id"),
     ("COCKPIT_MODE=auto_full_please", "mode"),
     ("COCKPIT_SEC_RATE_LIMIT_PER_SEC=10.0", "sec_rate_limit_per_sec"),
     ("COCKPIT_SEC_RATE_LIMIT_PER_SEC=-1", "sec_rate_limit_per_sec"),
+    ("COCKPIT_GUILD_ID=0", "guild_id"),
 ])
 def test_blank_handling_did_not_turn_a_BAD_value_into_a_good_one(tmp_path, monkeypatch, line, field):
     """NOT A WEAKENED VALIDATOR. Only whitespace-only strings are dropped; a present but

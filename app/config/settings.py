@@ -331,6 +331,12 @@ class Settings(BaseSettings):
     calendar_lookahead_days: int = Field(default=3, ge=0, le=90)
 
     # ---- RW-01 operator-surface channel map (docs/refactor-plan.md §5) ------------------
+    # Optional Discord guild for immediate slash-command sync during development/deployment.
+    # None deliberately keeps Discord's global sync behavior.  This is a public snowflake,
+    # not a credential; the bot token remains keyring-only (Inv 4).
+    # Env: COCKPIT_GUILD_ID.
+    guild_id: int | None = Field(default=None, gt=0)
+
     # Discord channel ids the LOGICAL pipeline channels are delivered to (bridge/deliver.py).
     # Non-secret (the bot TOKEN is keyring-only, Inv 4). Each is INDEPENDENTLY optional: an
     # unset channel fails closed with a warning and is reported as undelivered — never
