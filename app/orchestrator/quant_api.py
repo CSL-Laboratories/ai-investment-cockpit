@@ -32,6 +32,7 @@ server-side, because a Discord slash command's argument is operator input like a
 from __future__ import annotations
 
 from decimal import Decimal
+from threading import BoundedSemaphore
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -41,6 +42,12 @@ MAX_SIM_EVENTS = 50_000
 control plane responsive, which is what keeps /killswitch reachable."""
 
 DEFAULT_SIM_EVENTS = 5_000
+
+MAX_CONCURRENT_SIMS = 1
+"""Only one CPU-heavy simulation may run at once.  Admission is non-blocking so excess
+requests do not occupy the API worker pool that must remain available for /killswitch."""
+
+_SIM_SLOTS = BoundedSemaphore(MAX_CONCURRENT_SIMS)
 
 STRATEGIES = ("market_maker", "momentum")
 """Exposed to the operator surface. ``pairs`` is omitted deliberately: it needs two
@@ -86,7 +93,11 @@ def quant_status(state) -> dict:
     return {
         "engine": "available",
         "strategies": list(STRATEGIES),
-        "sim": {"max_events": MAX_SIM_EVENTS, "default_events": DEFAULT_SIM_EVENTS},
+        "sim": {
+            "max_events": MAX_SIM_EVENTS,
+            "default_events": DEFAULT_SIM_EVENTS,
+            "max_concurrent": MAX_CONCURRENT_SIMS,
+        },
         # None today: no book feed exists in the tree, so Tiers A/B are dormant and every
         # proposal is evaluated with no verdict. Stated plainly so nobody reads the presence
         # of the checks as evidence that they are firing.
@@ -112,14 +123,6 @@ def run_sim(body: SimRequest) -> dict:
     with the same body returns the same numbers, which is what makes a result an operator
     can paste into a channel worth anything.
     """
-    from quant.costs import ZERO_FEES, FeeSchedule
-    from quant.events import PriceScale
-    from quant.feed import validate_ordering
-    from quant.feed.synthetic import SyntheticFeed
-    from quant.runner import Runner
-    from quant.strategies.market_maker import MarketMaker, MarketMakerParams
-    from quant.strategies.momentum import Momentum, MomentumParams
-
     if body.strategy not in STRATEGIES:
         raise HTTPException(status_code=422,
                             detail=f"unknown strategy {body.strategy!r}; expected one of "
@@ -131,6 +134,30 @@ def run_sim(body: SimRequest) -> dict:
                             detail=f"events must be between 1 and {MAX_SIM_EVENTS} "
                                    f"(got {body.events}); the cap keeps the loopback control "
                                    "plane responsive so /killswitch stays reachable")
+
+    if not _SIM_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"quant simulation capacity reached ({MAX_CONCURRENT_SIMS} concurrent run); "
+                "retry shortly — the cap keeps /killswitch reachable"
+            ),
+        )
+    try:
+        return _execute_sim(body)
+    finally:
+        _SIM_SLOTS.release()
+
+
+def _execute_sim(body: SimRequest) -> dict:
+    """Execute an already validated and admitted simulation."""
+    from quant.costs import ZERO_FEES, FeeSchedule
+    from quant.events import PriceScale
+    from quant.feed import validate_ordering
+    from quant.feed.synthetic import SyntheticFeed
+    from quant.runner import Runner
+    from quant.strategies.market_maker import MarketMaker, MarketMakerParams
+    from quant.strategies.momentum import Momentum, MomentumParams
 
     scale = PriceScale(tick_size=Decimal("0.01"))
     schedule = ZERO_FEES if body.no_fees else FeeSchedule()

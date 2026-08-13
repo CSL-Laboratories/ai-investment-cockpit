@@ -1,6 +1,9 @@
 """WP6 — the discord.py adapter imports + guards without discord.py present."""
 from __future__ import annotations
 
+import ast
+import inspect
+
 from bridge import bot
 from bridge.approval import Rejection
 from brokers.capability import TokenRegistry
@@ -54,3 +57,19 @@ def test_build_bot_raises_when_discord_absent():
     import pytest
     with pytest.raises(RuntimeError):
         bot.build_bot(None, TokenRegistry())
+
+
+def test_quant_simulation_is_offloaded_from_the_discord_event_loop():
+    tree = ast.parse(inspect.getsource(bot.build_bot))
+    quant = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_quant"
+    )
+    calls = [node.func for node in ast.walk(quant) if isinstance(node, ast.Call)]
+    assert any(
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "asyncio"
+        and func.attr == "to_thread"
+        for func in calls
+    )
