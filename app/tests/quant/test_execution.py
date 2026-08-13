@@ -429,6 +429,39 @@ def test_a_self_trade_cancellation_is_reflected_in_the_oms():
     )
 
 
+def test_same_batch_fill_precedes_later_stp_cancellation_in_oms():
+    """BUG-099: V partially fills as a taker and rests; the next wire-order release
+    STP-cancels V's remainder. Venue outcomes are causal, but the old two-pass absorber
+    cancelled every STP victim before applying any fill, causing the impossible transition
+    CANCELLED -> PARTIALLY_FILLED and crashing the unattended loop."""
+    venue = SimVenue(symbol="S", latency=LatencyModel.instant())
+    venue.book.add(
+        order_id="market-ask", side=Side.SELL, price_ticks=100, qty=40, owner=None,
+    )
+    loop = AutoLoop(venue=venue, strategies=[], scale=PENNY)
+
+    victim = NewOrder(
+        client_id="victim", symbol="S", side=Side.BUY, qty=100, price_ticks=100,
+    )
+    crossing = NewOrder(
+        client_id="crossing", symbol="S", side=Side.SELL, qty=10, price_ticks=100,
+    )
+    for intent in (victim, crossing):
+        loop.oms.register(intent, strategy="mm", ts=0)
+        venue.accept_order(intent, owner="mm", ts=0)
+
+    outcomes = venue.advance(0)
+    loop._absorb_outcomes(outcomes)
+
+    managed = loop.oms.get("victim")
+    assert managed is not None
+    assert managed.filled_qty == 40
+    assert managed.state.value == "cancelled"
+    assert loop.oms.position("S") == 40
+    assert "victim" not in venue.book
+    assert "crossing" in venue.book
+
+
 # ---- guards apply to a replace, not only to a new order ------------------------------------
 
 

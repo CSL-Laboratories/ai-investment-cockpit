@@ -273,10 +273,12 @@ class AutoLoop:
                 if order is not None and order.is_live:
                     self.oms.on_cancelled(cancelled, ts=outcome.ts,
                                           reason="self_trade_prevention")
+            # BUG-099: preserve the venue's outcome order. A released order can partially
+            # fill, rest its remainder, and then be STP-cancelled by a later release in this
+            # same advance() batch. The old global cancellation pass cancelled that remainder
+            # before absorbing the earlier fill, producing CANCELLED -> PARTIALLY_FILLED.
+            self._absorb(outcome.fills)
 
-        self._absorb([fill for outcome in outcomes for fill in outcome.fills])
-
-        for outcome in outcomes:
             order = self.oms.get(outcome.client_id)
             if order is not None and order.is_live and not outcome.rested:
                 self.oms.on_cancelled(outcome.client_id, ts=outcome.ts,
