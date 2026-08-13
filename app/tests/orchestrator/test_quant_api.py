@@ -11,6 +11,7 @@ CANNOT do from there is more important than what it can.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from threading import BoundedSemaphore
 
 import pytest
 
@@ -24,6 +25,7 @@ from core.clock import FrozenClock  # noqa: E402
 from orchestrator.app import create_app  # noqa: E402
 from orchestrator.auth import API_KEY_HEADER, ApiKeyAuth  # noqa: E402
 from orchestrator.quant_api import MAX_SIM_EVENTS  # noqa: E402
+from orchestrator import quant_api  # noqa: E402
 from orchestrator.state import OrchestratorState  # noqa: E402
 from storage.engine import create_all, make_engine, make_session_factory  # noqa: E402
 
@@ -45,6 +47,14 @@ def state(tmp_path):
 @pytest.fixture
 def client(state):
     return TestClient(create_app(state, auth=ApiKeyAuth(key_provider=lambda: KEY)))
+
+
+@pytest.fixture(autouse=True)
+def fresh_simulation_capacity(monkeypatch):
+    """A failed concurrency test must never poison another app/test in this process."""
+    slots = BoundedSemaphore(quant_api.MAX_CONCURRENT_SIMS)
+    monkeypatch.setattr(quant_api, "_SIM_SLOTS", slots)
+    return slots
 
 
 # ---- mounted, and behind the key gate ------------------------------------------------------
@@ -96,6 +106,46 @@ def test_an_oversized_simulation_is_refused_at_the_http_boundary(client):
 def test_an_unknown_strategy_is_refused(client):
     response = client.post("/quant/sim", json={"strategy": "nope"}, headers=AUTH)
     assert response.status_code == 422
+
+
+def test_simulation_capacity_is_fail_fast_and_keeps_killswitch_headroom(
+    client, fresh_simulation_capacity,
+):
+    assert fresh_simulation_capacity.acquire(blocking=False)
+    try:
+        response = client.post("/quant/sim", json={"events": 10}, headers=AUTH)
+        assert response.status_code == 503
+        assert "capacity" in response.json()["detail"]
+        assert "killswitch" in response.json()["detail"]
+    finally:
+        fresh_simulation_capacity.release()
+
+
+def test_invalid_input_is_rejected_before_capacity_admission(
+    client, fresh_simulation_capacity,
+):
+    assert fresh_simulation_capacity.acquire(blocking=False)
+    try:
+        response = client.post(
+            "/quant/sim", json={"events": MAX_SIM_EVENTS + 1}, headers=AUTH,
+        )
+        assert response.status_code == 422
+    finally:
+        fresh_simulation_capacity.release()
+
+
+def test_simulation_capacity_is_released_after_compute_failure(
+    monkeypatch, fresh_simulation_capacity,
+):
+    def fail(_body):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(quant_api, "_execute_sim", fail)
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        quant_api.run_sim(quant_api.SimRequest(events=10))
+
+    assert fresh_simulation_capacity.acquire(blocking=False)
+    fresh_simulation_capacity.release()
 
 
 # ---- read-only ------------------------------------------------------------------------------------

@@ -13,6 +13,7 @@ is not installed; ``bot_available()`` lets callers check first.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable
 
 from bridge import approval as _approval
@@ -225,8 +226,14 @@ def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControl
         # respond" while the engine was working perfectly. The deferral must happen before
         # the work, not after it.
         await interaction.response.defer(ephemeral=True, thinking=True)
-        message = quant_core.handle(interaction, action=action, strategy=strategy,
-                                    events=events, seed=seed)
+        message = await asyncio.to_thread(
+            quant_core.handle,
+            interaction,
+            action=action,
+            strategy=strategy,
+            events=events,
+            seed=seed,
+        )
         await interaction.followup.send(message, ephemeral=True)
 
     tree.command(name="quant", description="Quant engine status / simulation (read-only)")(_quant)
