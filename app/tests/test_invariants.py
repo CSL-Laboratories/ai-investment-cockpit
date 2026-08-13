@@ -264,3 +264,15 @@ def test_the_risk_engine_itself_did_not_acquire_an_impure_import():
         ):
             offenders.append(f"{path.relative_to(APP)} imports {', '.join(impure)}")
     assert not offenders, f"Invariant 5: impure import inside risk/: {offenders}"
+
+
+def test_runtime_artifact_directories_are_ignored_at_any_depth():
+    """The process runs from ``app/``, so root-only patterns leave app/data trackable."""
+    gitignore = Path(__file__).resolve().parents[2] / ".gitignore"
+    rules = {
+        line.strip()
+        for line in gitignore.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "data/" in rules and "/data/" not in rules
+    assert "replays/" in rules and "/replays/" not in rules

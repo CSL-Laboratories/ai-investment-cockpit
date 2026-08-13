@@ -74,7 +74,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | claimed | `fix/bug-047-loss-units` |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | claimed | `fix/bug-048-pending-new-ack` |
 | `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | claimed | `fix/bug-049-transitive-risk-purity` |
-| `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | open | `.gitignore` |
+| `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | claimed | `fix/bug-050-artifact-ignore` |
 | `BUG-051` | `audit-head.json` is tracked, machine-written **and** auto-committed — two branches collide → `AnchorRewind` | med | open | `bridge/witness.py:94` |
 | `BUG-098` | `SimVenue.advance` snapshots ready orders before applying earlier due cancels, so a cancel can win by timestamp but the cancelled order is still released/rested | med | open | `quant/execution/sim_venue.py:216` |
 | `BUG-099` | `_absorb_outcomes` applies all STP cancellations before same-batch fills, allowing a partially filled victim to transition `cancelled → partially_filled` and crash | med | open | `quant/execution/autoloop.py:247` |
