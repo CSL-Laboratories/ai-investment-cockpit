@@ -54,7 +54,7 @@ from workflows.packets import build_packet
 from workflows.proposals import draft_proposal
 
 
-def _book(*, ask_depth: int = 800, seq: int = 7, asks=None) -> BookSnapshot:
+def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None) -> BookSnapshot:
     """A book around $100.00 on a penny grid — matching ``_quote_fn``'s price of 100.
 
     ``ask_depth`` is the knob that matters here. Every proposal in this file is TEN SHARES,
@@ -64,31 +64,61 @@ def _book(*, ask_depth: int = 800, seq: int = 7, asks=None) -> BookSnapshot:
     """
     if asks is None:
         asks = ((10_002, ask_depth),)
+    if bids is None:
+        bids = ((10_000, 800),)
     return BookSnapshot(
         symbol="AAPL", seq=seq, ts=0,
-        bids=(LevelSnapshot(price_ticks=10_000, qty=800, order_count=3),),
+        bids=tuple(LevelSnapshot(price_ticks=p, qty=q, order_count=3) for p, q in bids),
         asks=tuple(LevelSnapshot(price_ticks=p, qty=q, order_count=1) for p, q in asks),
     )
 
 
-def _draft(st, clock, tmp_path, *, quantity, book_fn=None):
+def _draft(st, clock, tmp_path, *, quantity, notional=None, book_fn=None,
+           quote_fn=_quote_fn):
     ModeLadder(st).set_mode(Mode.paper, actor="op")
     _seed_snapshot(st)
     row = _persist_event(st, clock, tmp_path)
     packet = build_packet([row])
     transport = FakeTransport([
-        envelope(_proposal_body(refs=[row.raw_ref], quantity=quantity)),
+        envelope(_proposal_body(refs=[row.raw_ref], quantity=quantity, notional=notional)),
         envelope(_grounding_body("prop-1", [row.raw_ref])),
     ])
     return draft_proposal(
         st, clock, event=row, packet=packet, transport=transport,
-        parquet_root=tmp_path / "raw", quote_fn=_quote_fn, book_fn=book_fn,
+        parquet_root=tmp_path / "raw", quote_fn=quote_fn, book_fn=book_fn,
         holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
     )
 
 
 def _check(outcome, name: str) -> dict:
     return next(c for c in outcome.risk_decision.checks if c["name"] == name)
+
+
+def test_notional_quantity_is_resolved_once_from_quote_for_verdict_and_order(
+    st, clock, tmp_path,
+):
+    """BUG-044: a $999 proposal became 10 shares in verification (book mid $99) but
+    9 shares in the canonical order (quote $100). The risk fact shown to the operator must
+    describe the exact tuple that could later be approved."""
+    shifted_book = lambda _s: _book(  # noqa: E731 - tiny injected seam
+        bids=((9_899, 800),), asks=((9_901, 800),),
+    )
+    outcome = _draft(
+        st, clock, tmp_path, quantity=None, notional=999, book_fn=shifted_book,
+    )
+
+    assert outcome.risk_decision.decision == "approved"
+    assert outcome.order is not None
+    assert Decimal(str(outcome.order.qty)) == Decimal("9")
+    assert outcome.risk_decision.execution_verdict["qty"] == 9
+
+
+def test_fractional_explicit_quantity_fails_to_human_without_an_order(st, clock, tmp_path):
+    outcome = _draft(st, clock, tmp_path, quantity=5.7, book_fn=None)
+
+    assert outcome.status == "needs_human"
+    assert outcome.order is None
+    assert any("quantity unresolvable" in reason for reason in outcome.reasons)
 
 
 # ---- the case the cockpit could not previously see -------------------------------------------

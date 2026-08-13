@@ -162,17 +162,24 @@ def proposal_quantity(proposal: dict, reference_price: Decimal) -> int | None:
     quantity = proposal.get("quantity")
     if quantity is not None:
         try:
-            shares = int(Decimal(str(quantity)))
+            explicit = Decimal(str(quantity))
         except (InvalidOperation, ValueError, TypeError):
             return None
-        return shares if shares > 0 else None
+        # An explicit fractional share count is a different instruction, not permission to
+        # silently resize it. Fractional brokerage orders are outside this whole-share/book
+        # path; notional sizing below is the supported dollar-based route.
+        if (not explicit.is_finite() or explicit <= 0
+                or explicit.as_integer_ratio()[1] != 1):
+            return None
+        return int(explicit)
 
     notional = proposal.get("notional")
-    if notional is None or reference_price <= 0:
+    if notional is None or not reference_price.is_finite() or reference_price <= 0:
         return None
     try:
-        shares = int(Decimal(str(notional)) / reference_price)
-    except (InvalidOperation, ValueError, TypeError, ZeroDivisionError):
+        quotient = Decimal(str(notional)) / reference_price
+        shares = int(quotient) if quotient.is_finite() else 0
+    except (InvalidOperation, ValueError, TypeError, ZeroDivisionError, OverflowError):
         return None
     return shares if shares > 0 else None
 
