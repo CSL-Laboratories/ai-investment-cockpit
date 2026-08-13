@@ -136,6 +136,7 @@ class Pairs(Strategy):
         if z is None:
             return []
 
+        position_x = ctx.position(self.leg_x)
         position_y = ctx.position(self.leg_y)
         p = self.params
 
@@ -143,6 +144,12 @@ class Pairs(Strategy):
         # one intended spread position into two, unhedged against each other in the interval.
         if ctx.orders_for(self.leg_x) or ctx.orders_for(self.leg_y):
             return []
+
+        # BUG-042: a one-leg position means entry execution was asymmetric. It is naked
+        # directional exposure, not a spread, so flatten it immediately regardless of the
+        # current z-score. Keying recovery only on leg_y left a filled x leg invisible.
+        if (position_x == 0) != (position_y == 0):
+            return self._flatten(ctx, position_y)
 
         if abs(z) >= p.stop_z and position_y != 0:
             return self._flatten(ctx, position_y)
