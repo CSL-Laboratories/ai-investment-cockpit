@@ -71,7 +71,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | open | `quant/verify.py`, `workflows/proposals.py` |
 | `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | open | `main.py:668` |
 | `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | blocked → `RW-14` | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
-| `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | open | `quant/guards.py:66`, `quant/execution/autoloop.py` |
+| `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | claimed | `fix/bug-047-loss-units` |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | open | `quant/execution/autoloop.py` |
 | `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | claimed | `fix/bug-049-transitive-risk-purity` |
 | `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | open | `.gitignore` |
