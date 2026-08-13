@@ -2,12 +2,21 @@
 title: QT — the quantitative engine
 type: implementation-plan
 status: live
+last-verified: 2026-08-13
 ---
 # QT — the quantitative engine
 
 > Work package **QT**. Code lives in `app/quant/`, tests in `app/tests/quant/`.
 > Read `app/quant/__init__.py` first — it carries the containment rule that governs
 > everything here.
+
+> **Current state.** QT's FIFO book, synthetic/replay feeds, three strategies, guards, cost
+> accounting, PnL attribution, `/quant/status`, and bounded `/quant/sim` are implemented. The
+> BUG-041–049 follow-up repairs are merged through PR #29. Tier C remains simulated-venue only.
+> Tiers A/B are composed but remain dormant without the production `book_fn`, daily bars, and
+> quote-age inputs scheduled in `RW-14`; `W-21` then replaces displayed-depth economics with
+> spread + ADV/volatility impact + borrow + a relative net-edge test. See [[PLAN]] rather than
+> this subsystem contract for development order.
 
 ## Why this exists
 

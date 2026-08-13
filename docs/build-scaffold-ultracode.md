@@ -2,13 +2,18 @@
 title: Build scaffold — work packages for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
 status: reference
-last-verified: 2026-08-09
+last-verified: 2026-08-13
 related: [README, cockpit-review-and-integrated-plan, draft-discord-control-plane, research-report, research-supplement]
 ---
 
 > **[REFERENCE]** STILL LOAD-BEARING despite reading like a build-session artifact: this is the WP-series contract register and **43 files in `app/` cite it**. Do not move or renumber it.
 
-> **BUILD COMPLETE — 2026-07-08.** WP0→WP9 all shipped to `main` and green, in the scaffold's build order (WP0 → WP1a → WP1b → WP2 → {WP3, WP4} → WP5 → {WP6, WP7} → WP8 → WP9). WP9 (system test harness) = commit 9f6ff44; test suite 586 passed / 3 skipped, ruff clean; the §3 gate table G0–G9 in [[ultracode-build-playbook]] is fully green. Every WP `Accept:` line and all 9 invariants below remain the settled spec and are preserved verbatim — this banner is additive, nothing below it is superseded. See [[path-to-production]].
+> **BUILD COMPLETE — 2026-07-08.** WP0→WP9 all shipped to `main` and green, in the scaffold's build order (WP0 → WP1a → WP1b → WP2 → {WP3, WP4} → WP5 → {WP6, WP7} → WP8 → WP9). WP9 (system test harness) = commit 9f6ff44; its historical baseline was 586 passed / 3 skipped with Ruff clean. Every WP `Accept:` line and all 9 invariants below remain the settled spec and are preserved verbatim. [[PLAN]] owns current lifecycle and status; [[REGISTER]] owns claims.
+>
+> **Current-state correction (2026-08-13):** later packages implemented the monotonic audit
+> sequence/domain binding and witness adapters, but SEC-11 remains open until the out-of-domain
+> Discord witness is activated and freshly red-teamed. Robinhood/live and auto deployment remain
+> unbuilt/blocked. Do not use the historical deferred/status prose below as the current schedule.
 >
 > **The system is PAPER-FIRST. No real money has moved and none may until the pre-live gates pass**, including the 2-week paper soak mandated in "Build order & session plan" below. The "Deferred (do not build yet)" section remains fully deferred: the Robinhood Agentic MCP live path (Phase 3 gate), `auto_full` unlock logic (Phase 3.5), the PWA dashboard, options support, and Codex research jobs are NOT built.
 >

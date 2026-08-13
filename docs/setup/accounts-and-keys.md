@@ -3,6 +3,7 @@ title: Accounts & keys — provisioning the cockpit's credentials
 type: setup-guide
 status: live
 last-verified: 2026-07-06
+repository-state-reviewed: 2026-08-13
 related: [security-architecture, security-hardening-backlog, research-report, research-supplement, build-scaffold-ultracode]
 ---
 
@@ -11,21 +12,27 @@ related: [security-architecture, security-hardening-backlog, research-report, re
 How to provision every account and credential the cockpit needs — and, crucially, how
 to store them so they never touch the repo, your shell history, a prompt, or a log.
 
-**Golden rule (Invariant 4):** secrets live in **Windows Credential Manager** (via
-`keyring`), never in `.env`, source, prompts, chat, or commits. This guide uses
+**Golden rule (Invariant 4):** secrets live in the **host OS credential store** via
+`keyring` (Windows Credential Manager, macOS Keychain, or Linux SecretService), never in
+`.env`, source, prompts, chat, or commits. This guide uses
 `keyring set …`, which **prompts for the value** (hidden) so it never lands in your
 shell history. See [[security-architecture]] §5 and [[security-hardening-backlog]]
 SEC-05/SEC-09.
 
+The current deployment profile is Windows. macOS uses Keychain automatically; a real headless
+Linux deployment must provision SecretService before cockpit secrets can be stored. The tests'
+in-memory keyring backend is not suitable for deployment.
+
 ## Provision only what the current phase needs
 
-Don't over-provision early. Nothing here requires a funded live account until Phase 3.
+Don't over-provision early. Nothing here requires a funded live account until the separately
+authorized full-scale deployment phase in [[PLAN]].
 
-| Phase | Needs | Cost |
+| Lifecycle stage | Needs | Cost |
 |---|---|---|
-| **1 — Morning brew (read-only)** | Claude (Max, already have) · Alpaca (news WS + data key) · Finnhub free key · private Discord guild + bot | **$0** marginal |
-| **2 — Triage + paper** | + Alpaca **paper** trading keys (same account) | $0 |
-| **3 — Gated live** | + Robinhood **Agentic** opt-in + a funded, loss-tolerable Agentic account | your chosen premium only |
+| **Offline development** | No vendor credential required for deterministic fixtures/tests | **$0** |
+| **Online testing → paper MVP/beta** | Claude decision runtime · SEC descriptive User-Agent (non-secret) · Alpaca data/paper keys · Finnhub key · private Discord guild + bot | plan/subscription usage only |
+| **Full-scale deployment** | Robinhood discovery identity only after `DEC-05`; funding only after `RW-18`, the paper evidence window, and all pre-live gates | separately authorized loss-tolerable capital only |
 
 ## 1. AI runtime — Claude (and optionally Codex)
 
@@ -38,7 +45,7 @@ Don't over-provision early. Nothing here requires a funded live account until Ph
   The cockpit invokes the official non-interactive `codex exec` CLI, not an OpenAI SDK or a
   copied bearer token. Authenticate the CLI once with `codex login` (or
   `codex login --device-auth` for a headless setup), then confirm `codex exec --help` works
-  in the same Windows account that runs the cockpit. No Codex API key is stored in this
+  in the same host account that runs the cockpit. No Codex API key is stored in this
   project's keyring. Codex remains **barred from the auto decision/order path**; the runner
   pins Codex jobs to `--sandbox read-only` and refuses a Codex decision-stage spec.
 - The decision-stage agents run with an **empty tool set** and never hold broker
@@ -49,7 +56,8 @@ Don't over-provision early. Nothing here requires a funded live account until Ph
 - **Alpaca** — create an account at alpaca.markets, generate an **API key + secret**.
   One key covers the Benzinga **news WebSocket**
   (`wss://stream.data.alpaca.markets/v1beta1/news`, wildcard `{"action":"subscribe","news":["*"]}`),
-  free market data (IEX), and the **paper** trading account (Phase 2 — same keys).
+  free market data (IEX), and the **paper** trading account used for online testing, MVP, and
+  beta (same keys).
 - **Finnhub** — create a free account at finnhub.io, copy the **API key** (free tier:
   60 calls/min, real-time US quotes).
 
@@ -70,19 +78,15 @@ Don't over-provision early. Nothing here requires a funded live account until Ph
 
 ## 4. Broker
 
-- **Phase 2 — Alpaca paper:** already covered by the Alpaca keys above (paper is
-  API-identical to live). This is where the copilot proves itself for ≥2 weeks.
-- **Phase 3 — Robinhood Agentic (live, last):** opt into Agentic Trading in the
-  Robinhood app, **fund the dedicated Agentic account with only a loss-tolerable
-  amount** (that balance *is* your entire trading downside — funds-level sandbox),
-  then connect via MCP:
-  `claude mcp add robinhood-trading --transport http https://agent.robinhood.com/mcp/trading`
-  (desktop OAuth). Note (re-verified 2026-07-06): equities + long options are live,
-  crypto is announced but not yet; **Robinhood publishes no session-lifetime or rate
-  limits**, so budget a re-auth path for 24/7 headless operation
-  ([[security-hardening-backlog]] OPS-05). Never wire an unofficial Robinhood API to a
-  regular account — that remains a ToS violation; opting into Agentic *is* the
-  authorization.
+- **Paper MVP/beta — Alpaca paper:** already covered by the Alpaca keys above. This is the
+  only broker authority currently supported for development and evidence.
+- **Full-scale deployment — Robinhood Agentic (live, last):** do **not authenticate yet**.
+  First resolve `DEC-05`'s read-all-account exposure. Then `RW-18` performs separately
+  authorized, no-capital discovery and places zero orders. Only after the ≥6-month paper bar,
+  SEC-11/all pre-live gates, and a separate funding authorization may `W17` provision a
+  loss-tolerable dedicated account and a deterministic client behind `OrderGateway`. Re-verify
+  the endpoint, OAuth flow, tools, session/rate behavior, and supported products at that time;
+  the 2026-07-06 snapshot is not permission to connect or fund.
 
 ## 5. Store the secrets (keyring — prompts, never shell history)
 
@@ -98,13 +102,13 @@ keyring set ai-investment-cockpit discord_bot_token
 keyring set ai-investment-cockpit cockpit_api_key
 ```
 
-| Secret name | Holds | Phase |
+| Secret name | Holds | Lifecycle use |
 |---|---|---|
-| `alpaca_key` / `alpaca_secret` | Alpaca API key id + secret (data/news + paper) | 1–2 |
-| `finnhub_key` | Finnhub free-tier key — serves BOTH the news poller and the earnings calendar | 1 |
-| `discord_bot_token` | Discord bot token | 1 |
-| `cockpit_api_key` | The `X-API-Key` guarding the loopback orchestrator API — **you invent it** (`python -c "import secrets;print(secrets.token_urlsafe(32))"`), it is not a vendor credential. Unset ⇒ **every** route 401s, including `/status` (fails closed, never open) | 0.5 |
-| *(Robinhood MCP)* | via `claude mcp add` OAuth — lives in the MCP session, not keyring | 3 |
+| `alpaca_key` / `alpaca_secret` | Alpaca API key id + secret (data/news + paper) | online testing through beta |
+| `finnhub_key` | Finnhub free-tier key — serves BOTH the news poller and the earnings calendar | online testing through beta |
+| `discord_bot_token` | Discord bot token | online testing onward |
+| `cockpit_api_key` | The `X-API-Key` guarding the loopback orchestrator API — **you invent it** (`python -c "import secrets;print(secrets.token_urlsafe(32))"`), it is not a vendor credential. Unset ⇒ **every** route 401s, including `/status` (fails closed, never open) | local composed testing onward |
+| *(Robinhood MCP)* | external MCP/CLI session store, not cockpit keyring | `RW-18` no-capital discovery/full-scale only |
 
 **Spelling is load-bearing.** These names are read verbatim by `core.secrets`; a
 hyphen-for-underscore slip leaves the feature silently dark rather than erroring
@@ -131,15 +135,15 @@ Verify a round-trip once the app exists:
 
 ## 6. Security do / don't
 
-- **Do** keep this repo **private**; run the box as a service; enable **BitLocker**;
-  run the agents under a **separate low-privilege Windows account** ([[security-hardening-backlog]]
-  SEC-05, OPS-06); keep **redaction default-on** for Discord.
+- **Do** keep this repo **private**; run the box as a service; enable host full-disk encryption
+  (BitLocker/FileVault/LUKS); run agents under a **separate low-privilege OS account**
+  ([[security-hardening-backlog]] SEC-05, OPS-06); keep **redaction default-on** for Discord.
 - **Don't** ever paste a secret into a prompt, chat, commit, or `export`; don't put the
   main portfolio on the Robinhood login the agent connects to (it reads **all** accounts
   — keep the main portfolio at a different broker); don't fund the live Agentic account
   before the paper soak passes the gate.
 
-## 7. Re-verify before Phase 3
+## 7. Re-verify before any Robinhood/live stage
 
 The externally-verified facts are moving targets. As of **2026-07-06** the two re-run
 targets are **unchanged** (Anthropic SDK credit still paused; Robinhood scope holds) —
@@ -156,5 +160,6 @@ and per-broker post-PDT house rules.
 - [ ] Private Discord guild + bot (Message Content intent) + bot invited
 - [ ] `keyring set` all five secrets under `ai-investment-cockpit`
 - [ ] Guild id + operator user id + `#morning-brew` channel id recorded (config)
-- [ ] Repo is private; BitLocker on
-- [ ] *(Phase 3 only)* Robinhood Agentic opt-in + funded, loss-tolerable account + MCP connected
+- [ ] Repo is private; host full-disk encryption enabled
+- [ ] *(RW-18 only, after DEC-05)* isolated/no-capital Robinhood discovery identity authorized
+- [ ] *(W17 only, after every pre-live gate)* funded, loss-tolerable account separately authorized

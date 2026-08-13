@@ -2,7 +2,7 @@
 title: Production work packages — the W-series (pre-live / go-live) for an Opus 4.8 xhigh ultracode session
 type: implementation-plan
 status: reference
-last-verified: 2026-08-09
+last-verified: 2026-08-13
 related: [path-to-production, security-hardening-backlog, security-architecture, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions]
 ---
 
@@ -15,6 +15,11 @@ related: [path-to-production, security-hardening-backlog, security-architecture,
 > combined discovery/first-live gate are not current contracts. Preserve W IDs for code-comment
 > resolution, but do not implement W17–W19 from this reference without the live plan's `RW-18`,
 > `W16`, decisions, and hold points.
+
+> **2026-08-13 lifecycle correction:** [[PLAN]] now owns the full route: offline development →
+> online testing/evidence → paper MVP → production beta → stabilization/bugfixing → staged
+> full-scale deployment. Current code sequence is `RW-14 → W-21 → RW-15 → W-22`; this reference
+> retains historical W contracts and line citations only.
 
 > **This is the production analog of [[build-scaffold-ultracode]].** Where the build scaffold defined WP0→WP9 (all shipped to `main`, green; WP9 = commit 9f6ff44; 586 passed / 3 skipped, ruff clean; gate table G0–G9 green in [[ultracode-build-playbook]]), this file defines W10→W19: the OPEN/PARTIAL hardening delta that stands between "the build is green" and "real capital may move."
 >

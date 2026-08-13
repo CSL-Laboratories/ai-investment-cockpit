@@ -6,7 +6,7 @@ last-verified: 2026-08-01
 related:
   - refactor-plan
   - setup/accounts-and-keys
-  - path-to-production
+  - PLAN
   - security-architecture
   - security-hardening-backlog
 ---
@@ -41,8 +41,9 @@ is used, and the mode ladder never leaves its floor. The reliable ROI being test
 ## 1. Provision the secrets (keyring)
 
 `keyring set` prompts for the value with input hidden, so nothing lands in shell history
-(Invariant 4 — secrets live only in Windows Credential Manager, never in `.env`, source,
-prompts, or commits).
+(Invariant 4 — secrets live only in the host OS credential store, never in `.env`, source,
+prompts, or commits). These commands are cross-platform; the examples below use PowerShell
+because the current deployment profile is Windows.
 
 ```powershell
 keyring set ai-investment-cockpit alpaca_key
@@ -161,7 +162,7 @@ python tools/verify_keys.py
 
 Five `OK` lines and exit 0. This is not the same as `keyring set` having succeeded:
 `keyring set` accepts ANY name, so a hyphen-for-underscore slip stores an entry that looks
-perfectly healthy in Credential Manager and is INVISIBLE to the cockpit. This tool imports
+perfectly healthy in the OS credential store and is INVISIBLE to the cockpit. This tool imports
 the names from the code, so it cannot disagree with what the app looks up.
 
 If it reports `WRONG ... stored as 'alpaca-key'`, run `--migrate` (or `--migrate --force`

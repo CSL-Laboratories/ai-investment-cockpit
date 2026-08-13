@@ -22,8 +22,9 @@ leads with "the AI will beat the market" is wrong; the corpus documents why.
 2. **Decision path pinned to Claude in auto modes** — Codex/other runtimes are
    barred from the decision/order path.
 3. **Schema-validate every model output** (repair-then-quarantine).
-4. **Secrets only in Windows Credential Manager** (`keyring`) — never in repo,
-   prompts, chat, or logs.
+4. **Secrets only in the OS credential store** (`keyring`) — Windows Credential
+   Manager, macOS Keychain, or Linux SecretService; never in repo, prompts, chat,
+   or logs.
 5. **`risk/` is pure deterministic functions** — NO LLM, NO I/O, NO subprocess.
    Enforced by the no-LLM-in-risk CI gate.
 6. **Human gate is client-side; hash-chained append-only audit** — every
@@ -36,19 +37,20 @@ leads with "the AI will beat the market" is wrong; the corpus documents why.
 **PAPER-FIRST** overrides all: no live capital until the P0 pre-live gates pass —
 chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 
-## New load-bearing rules (this refactor era — see `docs/refactor-plan.md`)
+## Current load-bearing rules
 - **New data feeds are UNTRUSTED input** — wrap in `<untrusted-content>`,
   canary-scan (SEC-02). Inv 3 validates model *output*; this governs tool/feed *input*.
-- **The operator surface is ABSTRACTED** — code against the `OperatorSurface`
-  interface, never hardwire Discord. Discord is one adapter among several.
-- **The universe is DYNAMIC** — discovery → promotion → on-demand deep fetch →
-  thesis → exit. Not a fixed watchlist.
+- **The current operator surface is Discord + loopback API.** A general
+  `OperatorSurface` abstraction is planned, not merged; do not create new order authority or
+  assume another adapter already exists.
+- **The current order universe is a static operator-approved allowlist.** Dynamic discovery is
+  future awareness scope only; no model or API may mutate execution eligibility at runtime.
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 
 ## Session workflow
-1. Read `docs/README.md` (corpus index) + the relevant plan doc
-   (`docs/refactor-plan.md`, `docs/capability-expansion-master-plan.md`,
-   `docs/path-to-production.md`).
+1. Read `docs/README.md`, then the canonical `docs/PLAN.md` and
+   `docs/REGISTER.md`. Subsystem/reference documents add detail but never define
+   current development order.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
    scope and its deterministic gate before writing code.
 3. Implement. Preserve the invariants. Add tests alongside.
@@ -70,7 +72,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Run the gates
 ```bash
 cd app
-python -m pip install pydantic pydantic-settings keyring pyyaml jsonschema pytest ruff
+python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler pytest ruff
 python -m pytest -q      # incl. Invariant-1 call-site / no-LLM-in-risk / secrets-grep gates
 ruff check .
 ```
@@ -80,5 +82,6 @@ ruff check .
   `app/brokers/` (gateway, state machine, capability), `app/orchestrator/`,
   `app/storage/audit.py`.
 - **Data feeds:** `app/ingest/`. **LLM pipelines:** `app/workflows/`.
-- **Operator surface:** `app/bridge/` → `app/surfaces/` after RW-02.
+- **Operator surfaces:** `app/bridge/` (Discord) and `app/orchestrator/app.py` (loopback API).
+  A general `app/surfaces/` abstraction is not merged.
 - **Design corpus:** `docs/` — index at `docs/README.md`.
