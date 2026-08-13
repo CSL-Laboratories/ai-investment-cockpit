@@ -21,8 +21,8 @@ venv/
 *.db-journal
 *.duckdb
 *.parquet
-/data/
-/replays/
+data/
+replays/
 
 # Secrets live in Windows Credential Manager (keyring), NEVER in the repo (Invariant 4)
 .env
