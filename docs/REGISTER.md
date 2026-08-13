@@ -76,7 +76,7 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | claimed | `fix/bug-049-transitive-risk-purity` |
 | `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | claimed | `fix/bug-050-artifact-ignore` |
 | `BUG-051` | `audit-head.json` is tracked, machine-written **and** auto-committed — two branches collide → `AnchorRewind` | med | claimed | `fix/bug-051-audit-head-witness` |
-| `BUG-098` | `SimVenue.advance` snapshots ready orders before applying earlier due cancels, so a cancel can win by timestamp but the cancelled order is still released/rested | med | open | `quant/execution/sim_venue.py:216` |
+| `BUG-098` | `SimVenue.advance` snapshots ready orders before applying earlier due cancels, so a cancel can win by timestamp but the cancelled order is still released/rested | med | claimed | `fix/bug-098-cancel-release-ordering` |
 | `BUG-099` | `_absorb_outcomes` applies all STP cancellations before same-batch fills, allowing a partially filled victim to transition `cancelled → partially_filled` and crash | med | open | `quant/execution/autoloop.py:247` |
 
 Found by the 2026-08-09 pre-plan sweep (nine-agent audit) and fixed on

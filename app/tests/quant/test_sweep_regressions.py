@@ -188,6 +188,28 @@ def test_cancel_that_arrives_too_late_is_a_counted_miss():
     assert venue.cancel_misses == 1
 
 
+def test_cancel_before_release_expires_order_in_same_advance_batch():
+    """BUG-098: advance snapshotted ready orders and removed them from ``_pending`` before
+    replaying an earlier due cancel. The cancel missed, then the stale snapshot resurrected
+    the order onto the book even though wire time says the cancel won."""
+    venue = SimVenue(
+        symbol="S",
+        latency=LatencyModel(order_entry_ns=1_000, market_data_ns=0, cancel_ns=100),
+    )
+    intent = NewOrder(client_id="x", symbol="S", side=Side.BUY, qty=100, price_ticks=100)
+    venue.accept_order(intent, owner="t", ts=0)      # release arrives at 1_000
+    venue.cancel_order("x", ts=100)                  # cancel arrives first, at 200
+
+    outcomes = venue.advance(1_000)                  # both actions are due in one call
+
+    assert outcomes == []
+    assert "x" not in venue.book
+    assert venue.in_flight == 0
+    assert venue.expired_in_flight == 1
+    assert venue.cancel_misses == 0
+    assert venue.accepted == 0
+
+
 # ---- BUG-079: the visible book is genuinely delayed ------------------------------------
 def test_visible_book_serves_delayed_content_not_current():
     venue = SimVenue(symbol="S", latency=LatencyModel(order_entry_ns=0,
