@@ -309,8 +309,9 @@ class Settings(BaseSettings):
     decision_agent_cwd: str | None = None
 
     # ---- SEC-11 external audit witness (W10) ------------------------------------------
-    # The git-TRACKED head file the GitCommitWitness anchors (reviewed history — bridge/
-    # witness.py). Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.
+    # The ignored, machine-local mirror written by GitCommitWitness. Production
+    # disables that class's optional git-commit callback; Discord is the only out-of-domain
+    # trust source. Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.
     audit_head_file: str = "data/audit-head.json"
     # The private #audit-log Discord channel id the DiscordAuditLogWitness posts to (server-
     # stamped, out-of-domain). None until provisioned; the bot TOKEN is keyring-only (Inv 4),

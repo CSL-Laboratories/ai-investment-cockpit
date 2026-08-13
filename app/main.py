@@ -78,8 +78,8 @@ def _build_anchor_store(settings):
     """SEC-11 (W10, hardened by the G10 red-team 2026-07-08): the durable audit witness. ALWAYS
     a non-None ``GitAuditLogAnchorStore`` — NEVER ``FileAnchorStore``. But the store's TRUST read
     (``latest()``, which the gate/mode/gateway/budget consult) counts ONLY genuinely OUT-OF-DOMAIN
-    backends: the ``GitCommitWitness`` (git head file) is a same-trust-domain MIRROR + reviewed-
-    history detection layer and does NOT satisfy the auto/live prerequisite on its own (its
+    backends: the ``GitCommitWitness`` head file is a same-trust-domain local MIRROR and does
+    NOT satisfy the auto/live prerequisite on its own (its
     runtime read is a local file a keyless writer can overwrite). The Discord ``#audit-log``
     witness (server-stamped, out-of-domain) is the trust source; it joins once the bot token is in
     keyring AND a channel is configured. Until then ``latest()`` is None and every consult FAILS
@@ -90,7 +90,11 @@ def _build_anchor_store(settings):
     from bridge.witness import GitCommitWitness, discord_rest_witness
     from core.secrets import get_secret
 
-    adapters = [GitCommitWitness(settings.audit_head_file)]   # mirror + reviewed-history detection
+    # BUG-051: runtime commits on whichever development branch happens to be checked out make
+    # the machine-written head collide across branches. The file remains a local
+    # cross-check, but it never mutates Git's index or current branch. This does not weaken the
+    # trust read: this adapter is out_of_domain=False and has always been excluded from latest().
+    adapters = [GitCommitWitness(settings.audit_head_file, commit_fn=False)]
     token = get_secret(_DISCORD_TOKEN_NAME)
     if token is not None and settings.audit_log_channel_id is not None:
         adapters.append(discord_rest_witness(settings.audit_log_channel_id, token.reveal()))

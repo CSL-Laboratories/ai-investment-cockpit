@@ -181,6 +181,22 @@ def test_rewriting_the_git_mirror_cannot_lower_the_witness(tmp_path):
     assert store.latest() == (4, "h4")        # ...but the out-of-domain witness is unmoved
 
 
+def test_ahead_file_only_mirror_cannot_veto_trusted_publish(tmp_path):
+    """BUG-051: a branch/fresh-DB mismatch left the local head ahead of the DB. Because the
+    mirror is attacker-writable and explicitly untrusted, it may resynchronise but must never
+    prevent the Discord witness from receiving the verified current head."""
+    mirror = GitCommitWitness(tmp_path / "head.json", commit_fn=False)
+    mirror.publish(3_532, "stale")
+    disc, posts = _discord()
+    store = GitAuditLogAnchorStore(mirror, disc)
+
+    store.append(1, "h1")
+
+    assert disc.read_latest() == (1, "h1")
+    assert len(posts) == 1
+    assert mirror.read_latest() == (1, "h1")
+
+
 # ---- BUG-056: the DEFAULT _commit path, which every other test injects away ------------
 def _real_repo(tmp_path):
     import subprocess
