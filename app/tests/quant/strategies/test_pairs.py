@@ -152,6 +152,21 @@ def test_a_decayed_spread_flattens_the_position():
     assert by_symbol["BBB"].side is Side.BUY and by_symbol["BBB"].qty == 100
 
 
+def test_a_half_filled_entry_flattens_the_naked_x_leg_immediately():
+    """BUG-042: recovery cannot be conditional on leg_y being the leg that filled."""
+    p = _pairs(entry_z=2.0, exit_z=0.5)
+    _warm(p)
+
+    intents = p.on_book_update(
+        _both(10_000, 20_000, ts=100, positions={"AAA": 200, "BBB": 0})
+    )
+
+    assert len(intents) == 1
+    assert intents[0].symbol == "AAA"
+    assert intents[0].side is Side.SELL
+    assert intents[0].qty == 200
+
+
 def test_a_spread_beyond_the_stop_flattens_rather_than_adding_to_the_position():
     """THE test that distinguishes this from a strategy defined by its one terminal event.
     Every further divergence looks like a better entry, which is exactly why it must not be."""
@@ -187,7 +202,9 @@ def test_it_respects_the_maximum_position():
     # position limit requires reaching the entry branch.
     p = _pairs(entry_z=1.5, stop_z=99.0, trade_size=100, max_position=100)
     _warm(p)
-    assert p.on_book_update(_both(10_000, 20_400, ts=100, positions={"BBB": -100})) == []
+    assert p.on_book_update(
+        _both(10_000, 20_400, ts=100, positions={"AAA": 200, "BBB": -100})
+    ) == []
 
 
 def test_describe_reports_beta_zscore_and_warmth():
