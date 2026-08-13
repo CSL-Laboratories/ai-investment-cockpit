@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import ROUND_FLOOR, Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
 
@@ -34,7 +34,7 @@ from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
 from quant.events import PriceScale
-from quant.verify import VerifyParams, verify_proposal
+from quant.verify import VerifyParams, proposal_quantity, verify_proposal
 from risk.engine import RiskContext, evaluate, order_notional
 from schemas.models.market_event import MarketEvent
 from schemas.models.order import Order
@@ -248,6 +248,13 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # ---- deterministic risk gate (Invariant 5: evaluate() only) --------------------------
     symbol = str(proposal.get("symbol", "")).upper()
     quote = quote_fn(symbol) if quote_fn is not None else None
+    raw_quote_price = _dec((quote or {}).get("price"))
+    quote_price = raw_quote_price if raw_quote_price.is_finite() else Decimal("0")
+    # BUG-044: resolve shares ONCE. Verification and the canonical order tuple must describe
+    # the same order. The original proposal remains untouched so risk can conservatively size
+    # on the larger of divergent quantity/notional fields.
+    resolved_qty = proposal_quantity(proposal, quote_price)
+    verification_proposal = {**proposal, "quantity": resolved_qty, "notional": None}
 
     # ---- QT-05: price the proposal against real depth BEFORE the risk gate ---------------
     # Pure and deterministic (quant/verify.py is import-clean so risk/ may consume it under
@@ -260,7 +267,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         try:
             book = book_fn(symbol)
             if book is not None:
-                candidate = verify_proposal(proposal, book,
+                candidate = verify_proposal(verification_proposal, book,
                                             verify_params or DEFAULT_VERIFY_PARAMS)
                 # READ THE SEAM AGAIN, at gate time. ``_verdict_state`` calls a verdict stale
                 # when ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would
@@ -319,6 +326,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
             reasons.append("HALT sentinel set (SEC-04); order not created")
         else:
             order_row, why = _resolve_order(state, clock, proposal=proposal, ctx=ctx,
+                                            resolved_qty=resolved_qty,
                                             rd_id=rd_row.id, account=account)
             if order_row is None:
                 status = "needs_human"
@@ -342,21 +350,18 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                            tuple(reasons))
 
 
-def _resolve_order(state, clock, *, proposal: dict, ctx: RiskContext, rd_id: str,
+def _resolve_order(state, clock, *, proposal: dict, ctx: RiskContext,
+                   resolved_qty: int | None, rd_id: str,
                    account: str) -> tuple[Order | None, str]:
-    """qty = proposal quantity, else floor(notional / quote price) (>= 1). Limit-family
-    orders take the quote as the deterministic limit price. Fail -> (None, reason)."""
-    qty: Decimal | None = None
-    if proposal.get("quantity") is not None:
-        q = _dec(proposal["quantity"])
-        if q.is_finite() and q > 0:
-            qty = q
-    elif proposal.get("notional") is not None and ctx.quote_price > 0:
-        q = (_dec(proposal["notional"]) / ctx.quote_price).to_integral_value(rounding=ROUND_FLOOR)
-        if q.is_finite() and q >= 1:
-            qty = q
-    if qty is None:
+    """Create the tuple from the quantity already priced by execution verification.
+
+    Limit-family orders take the quote as the deterministic limit price. Fail ->
+    ``(None, reason)``. Quantity is never re-derived here: two sizing authorities were
+    BUG-044, and could make the verified order smaller than the order actually created.
+    """
+    if resolved_qty is None:
         return None, "order quantity unresolvable (needs human)"
+    qty = Decimal(resolved_qty)
 
     order_type = str(proposal.get("order_type", ""))
     limit_price = None

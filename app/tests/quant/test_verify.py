@@ -166,6 +166,9 @@ def test_quantity_is_derived_from_notional_when_the_schema_sizes_that_way():
     """TradeProposal makes both nullable — sizing may legitimately be expressed either way."""
     assert proposal_quantity({"notional": 10_000}, Decimal("100.00")) == 100
     assert proposal_quantity({"quantity": 250}, Decimal("100.00")) == 250
+    assert proposal_quantity({"quantity": 5.7}, Decimal("100.00")) is None
+    huge_whole = 123_456_789_012_345_678_901_234_567_890
+    assert proposal_quantity({"quantity": huge_whole}, Decimal("100.00")) == huge_whole
     assert proposal_quantity({"quantity": None, "notional": None}, Decimal("100.00")) is None
     assert proposal_quantity({"quantity": 0}, Decimal("100.00")) is None
     assert proposal_quantity({"quantity": "garbage"}, Decimal("100.00")) is None
