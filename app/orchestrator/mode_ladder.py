@@ -31,7 +31,7 @@ from schemas.models.audit_entry import AuditEntry
 from schemas.models.mode_state import ModeState
 
 from .halt import default_halt_path, halt_is_set
-from .market_calendar import session_close
+from .market_calendar import CalendarCoverageError, session_close
 from .state import EVENT_MODE_CHANGE, OrchestratorState
 
 # ladder order (index == rung height)
@@ -307,7 +307,10 @@ class ModeLadder:
                 return ArmResult(armed=False, mode=src, reasons=reasons, row=None)
 
             armed_at = clock.now()
-            armed_until = session_close(armed_at)
+            try:
+                armed_until = session_close(armed_at)
+            except CalendarCoverageError as exc:
+                return ArmResult(armed=False, mode=src, reasons=[str(exc)], row=None)
             row = self._persist(
                 src, target, "arm", operator, f"armed {target.value}", clock,
                 armed_at=armed_at, armed_until=armed_until, armed_by=operator,

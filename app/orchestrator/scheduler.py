@@ -29,7 +29,12 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .market_calendar import EASTERN, is_market_open
+from .market_calendar import (
+    EASTERN,
+    CalendarCoverageError,
+    is_market_open,
+    require_calendar_coverage,
+)
 from .mode_ladder import ModeLadder
 
 # Cron schedule (US/Eastern). Intraday additionally self-guards on is_market_open.
@@ -89,6 +94,10 @@ def run_intraday_loop(state, clock=None, *, service: Callable | None = None):
     cron tick outside a trading session is a no-op regardless of the schedule granularity."""
     clock = clock or state.clock
     now = clock.now()
+    try:
+        require_calendar_coverage(now)
+    except CalendarCoverageError:
+        return {"skipped": "calendar_unknown", "at": now.isoformat()}
     if not is_market_open(now):
         return {"skipped": "market_closed", "at": now.isoformat()}
     svc = service or _not_implemented_service("intraday_loop")

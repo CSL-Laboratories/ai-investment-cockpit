@@ -3,7 +3,7 @@ paths + the load-bearing refusals hold. These are NOT the full G5 acceptance sui
 separate agent owns that); they are the builder's own smoke + invariant checks."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -57,6 +57,36 @@ def test_early_close_half_day():
     assert mc.is_market_open(datetime(2026, 12, 24, 17, 0, tzinfo=timezone.utc))       # 12:00 ET
     assert not mc.is_market_open(datetime(2026, 12, 24, 18, 30, tzinfo=timezone.utc))  # 13:30 ET
     assert mc.is_early_close(mc.to_eastern(datetime(2026, 12, 24, 17, 0, tzinfo=timezone.utc)).date())
+
+
+def test_2027_and_2028_match_the_official_dated_tables():
+    expected_holidays = {
+        date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15),
+        date(2027, 3, 26), date(2027, 5, 31), date(2027, 6, 18),
+        date(2027, 7, 5), date(2027, 9, 6), date(2027, 11, 25),
+        date(2027, 12, 24), date(2028, 1, 17), date(2028, 2, 21),
+        date(2028, 4, 14), date(2028, 5, 29), date(2028, 6, 19),
+        date(2028, 7, 4), date(2028, 9, 4), date(2028, 11, 23),
+        date(2028, 12, 25),
+    }
+    expected_early_closes = {
+        date(2027, 11, 26), date(2028, 7, 3), date(2028, 11, 24),
+    }
+    days = [date(2027, 1, 1) + timedelta(days=i) for i in range(365 + 366)]
+
+    assert {day for day in days if mc.is_holiday(day)} == expected_holidays
+    assert {day for day in days if mc.is_early_close(day)} == expected_early_closes
+    # The 2027 day after Thanksgiving closes at 13:00 ET (18:00 UTC in EST).
+    assert mc.is_market_open(datetime(2027, 11, 26, 17, 0, tzinfo=timezone.utc))
+    assert not mc.is_market_open(datetime(2027, 11, 26, 19, 0, tzinfo=timezone.utc))
+
+
+def test_unknown_calendar_year_fails_closed():
+    market_looking_weekday = datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc)
+    assert not mc.is_trading_day(mc.to_eastern(market_looking_weekday).date())
+    assert not mc.is_market_open(market_looking_weekday)
+    with pytest.raises(mc.CalendarCoverageError, match="2029"):
+        mc.session_close(market_looking_weekday)
 
 
 def test_session_close_disarm_target():
@@ -130,6 +160,24 @@ def test_arm_happy_path_sets_armed_window(st):
     row = lad.current_row()
     assert row.armed_by == "lucas" and row.armed_at is not None and row.armed_until is not None
     assert (row.armed_until.hour, row.armed_until.minute) == (16, 0)   # disarm at close
+
+
+def test_arm_refuses_unknown_calendar_year_without_persisting(st):
+    lad = ModeLadder(st)
+    lad.set_mode(Mode.paper, actor="op")
+    lad.set_mode(Mode.review_live, actor="op")
+    before = lad.current_row().id
+    unknown = FrozenClock(datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc))
+
+    res = lad.arm_auto_mode(
+        Mode.auto_veto, decision_stage_runtimes=["claude", "claude"],
+        gate_result=_good_gate("auto_veto"), operator="lucas", clock=unknown,
+    )
+
+    assert not res.armed and res.row is None
+    assert any("calendar" in reason.lower() and "2029" in reason for reason in res.reasons)
+    assert lad.current() is Mode.review_live
+    assert lad.current_row().id == before
 
 
 def test_arm_full_requires_being_in_auto_veto(st):

@@ -7,7 +7,7 @@ dispatch trick reaches a broker submit without a live single-use token.
 from __future__ import annotations
 
 import functools
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -23,6 +23,7 @@ from brokers.gateway import (
 )
 from brokers.robinhood_mcp import RobinhoodMCPBroker
 from config.settings import Mode
+from core.clock import FrozenClock
 from orchestrator.gate import GateResult
 from orchestrator.halt import default_halt_path, set_halt
 from schemas.models.approval_record import ApprovalRecord
@@ -150,6 +151,26 @@ def test_b_watch_only_refuses(scenario):
     sc.breaker.enter_watch_only("claude", "429 exhausted")
     out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
     assert not out.ok and out.stage == "mode" and broker.calls == 0
+
+
+def test_b_unknown_calendar_year_refuses_review_and_submit_before_token_or_broker(scenario):
+    broker = RecordingBroker()
+    sc = _fresh(scenario, broker)
+    unknown = FrozenClock(datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc))
+
+    reviewed = sc.gateway.review_equity_order(
+        sc.order, **sc.review_kwargs(clock=unknown)
+    )
+    submitted = sc.gateway.submit(sc.order, **sc.submit_kwargs(clock=unknown))
+
+    assert not reviewed.ok and reviewed.stage == "calendar"
+    assert not submitted.ok and submitted.stage == "calendar"
+    assert broker.calls == 0
+    assert sc.gateway.live_token_count() == 1
+    refusals = _events(sc.st, gateway_mod.EVENT_ORDER_REFUSED)
+    assert len(refusals) == 2
+    assert all("calendar" in row.payload["reason"].lower() for row in refusals)
+    assert all(row.payload["stage"] == "calendar" for row in refusals)
 
 
 # =======================================================================================

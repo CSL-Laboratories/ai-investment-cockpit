@@ -18,6 +18,7 @@ from storage.engine import create_all, make_engine, make_session_factory
 
 OPEN = FrozenClock(datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc))    # 10:00 ET, open
 CLOSED = FrozenClock(datetime(2026, 7, 7, 3, 0, tzinfo=timezone.utc))   # overnight, closed
+UNKNOWN_YEAR = FrozenClock(datetime(2029, 1, 2, 15, 0, tzinfo=timezone.utc))
 
 
 @pytest.fixture
@@ -35,6 +36,30 @@ def test_intraday_skips_when_market_closed(state):
 
 def test_intraday_dispatches_when_open(state):
     assert sch.run_intraday_loop(state, OPEN, service=lambda s, c: "ran") == "ran"
+
+
+def test_unknown_calendar_year_skips_intraday_but_awareness_ingest_runs(state, tmp_path):
+    calls = []
+    out = sch.run_intraday_loop(
+        state, UNKNOWN_YEAR, service=lambda s, c: calls.append("ran")
+    )
+    assert out["skipped"] == "calendar_unknown"
+    assert calls == []
+
+    from ingest.calendars import CalendarPoller
+    from orchestrator.ingest_runner import IngestRunner
+
+    runner = IngestRunner(
+        state, parquet_root=tmp_path / "raw", clock=UNKNOWN_YEAR, monotonic=lambda: 0.0
+    )
+    runner.add_poller(
+        "calendar",
+        CalendarPoller(lambda: [{"symbol": "AAPL", "date": "2029-01-03", "note": "Q1"}]),
+    )
+    ingested = sch.run_ingest_poll(
+        state, UNKNOWN_YEAR, feed="calendar", runner=runner
+    )
+    assert ingested["status"] == "ok" and ingested["emitted"] == 1
 
 
 def test_anchor_head_noop_without_store(state):
