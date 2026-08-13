@@ -231,7 +231,6 @@ class SimVenue:
         due_cancels = [c for c in self._pending_cancels if c[0] <= ts]
         if not ready and not due_cancels:
             return []
-        self._pending = [p for p in self._pending if p.arrive_ts > ts]
         self._pending_cancels = [c for c in self._pending_cancels if c[0] > ts]
         # One arrival stream: orders and cancels land in wire order (BUG-090), so a cancel
         # can arrive after the order it targets has already traded — and miss.
@@ -241,6 +240,13 @@ class SimVenue:
         outcomes: list[VenueOutcome] = []
         for arrive, _seq, payload in actions:
             if isinstance(payload, _Pending):
+                # BUG-098: do not remove every ready order before replaying this merged
+                # arrival stream. An earlier cancel must still be able to find and expire an
+                # order whose release is later in the same advance() batch. If it did, the
+                # snapshotted release action is now stale and must not resurrect the order.
+                if not any(p is payload for p in self._pending):
+                    continue
+                self._pending.remove(payload)
                 outcomes.append(self._apply(payload, ts))
             else:
                 if not self._cancel_now(payload):
