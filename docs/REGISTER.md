@@ -28,7 +28,8 @@ and the claim board, not the specification.
 | `open` | Nobody has claimed it. Take it. |
 | `claimed` | Someone is on it. Branch named. **Do not start a parallel fix.** |
 | `in review` | PR open. |
-| `closed` | Merged, with a test that fails without it. |
+| `evidence pending` | Implementation merged; a named empirical acceptance gate is still open. |
+| `closed` | Merged and its gate is satisfied; code changes have a regression test that fails without them. |
 | `blocked` | Cannot proceed until a named decision is made. The blocker is stated. |
 
 ---
@@ -37,13 +38,13 @@ and the claim board, not the specification.
 
 | ID | What | Status | Owner | Gate |
 |---|---|---|---|---|
-| `RW-16` | Autonomy-readiness research and replan: distinguish scheduled paper reliability, dynamic paper autonomy, human-gated live operation, and autonomous live execution; verify Robinhood/MCP and event-source assumptions; define the development pipeline before implementation packages are committed | in review | `work/repo-audit-2026-08-12` | dated primary-source report + explicit hold points/decisions/development batches in [[PLAN]]; no production-code change |
-| `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | in review | `work/rw-11-edgar-ingest-wire` | cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
-| `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | blocked → `RW-11` live-day gate | `work/rw-11-edgar-ingest-wire` | opened *with* RW-11, not after it |
+| `RW-16` | Autonomy-readiness research and replan: distinguish scheduled paper reliability, dynamic paper autonomy, human-gated live operation, and autonomous live execution; verify Robinhood/MCP and event-source assumptions; define the development pipeline before implementation packages are committed | closed | — | dated primary-source report + explicit hold points/decisions/development batches in [[PLAN]]; no production-code change |
+| `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | evidence pending | — | implementation merged in PR #15; still requires cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
+| `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | blocked → `RW-11` empirical gate | — | retire the fallback only after RW-11's live-day and precision evidence passes |
 | `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn`; sample quote age; close `BUG-097` by routing stale data through the single L8 `watch_only` mechanism | open | — | `quant_book_seq` advances; >120 s market-hours quote age disables orders while awareness continues; adversarial review |
 | `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | closed | `work/rw-17-calendar-fail-closed` | unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
 | `RW-18` | Robinhood no-capital authenticated capability discovery after account-isolation decision; zero live orders | blocked → `DEC-05` | — | advertised 2026 MCP/auth/capabilities/tools/errors/expiry behavior recorded; resolves `DEC-06/08` |
-| `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | in review | `work/rw-19-event-source-characterization` | dated raw distributions and failure traces set queue/coalescing/latency/backfill bounds and resolve `DEC-07`; no trigger implementation |
+| `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | evidence pending | — | tooling merged in PR #16; dated operator-universe distributions and failure traces must still set queue/coalescing/latency/backfill bounds and resolve `DEC-07` |
 | `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] §4/M4 for the full §5 scope | open | — | a resting limit order reaches a terminal state on a live day with no operator action, **and** `reconcile_startup` heals (not merely alerts) a lost-response order |
 | `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | open | — | cost-sensitivity curve; the dollar threshold where a trade goes cash-flow negative |
 | `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask; wire the loss signals into `BreakerSignals` (daily loss from snapshots, consecutive losses from round trips) | open | — | two unattended market days a week apart, `verify_chain().ok` throughout |
@@ -66,14 +67,14 @@ Found by the 2026-08-09 audit. Each needs a test that fails before the fix.
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` is inert — `now_ns` has no caller | med | **blocked** → unblocked by `RW-14` | `quant/verify.py:200` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | open | `quant/runner.py:226` |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | open | `quant/strategies/pairs.py:147` |
-| `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | open | `bridge/bot.py`, `quant_api.py` |
+| `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | open | `bridge/bot.py`, `orchestrator/quant_api.py` |
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | open | `quant/verify.py`, `workflows/proposals.py` |
-| `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | open | `main.py:641` |
-| `BUG-046` | `/ws/quant` is never registered by `main.compose` — 170 + 214 lines of dead socket | low | open | `orchestrator/quant_ws.py` |
-| `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | open | `quant/execution/autoloop.py:134` |
+| `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | open | `main.py:668` |
+| `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | blocked → `RW-14` | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
+| `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | open | `quant/guards.py:66`, `quant/execution/autoloop.py` |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | open | `quant/execution/autoloop.py` |
-| `BUG-049` | Purity gate regexes only `verify.py`'s own imports, not transitive ones | low | open | `tests/risk/test_execution_gate.py` |
-| `BUG-050` | `.gitignore:18 /data/` is root-anchored; the app writes to `app/data/` | low | open | `.gitignore` |
+| `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | open | `tests/test_invariants.py:133` |
+| `BUG-050` | `.gitignore:24 /data/` is root-anchored; the app writes to `app/data/` | low | open | `.gitignore` |
 | `BUG-051` | `audit-head.json` is tracked, machine-written **and** auto-committed — two branches collide → `AnchorRewind` | med | open | `bridge/witness.py:94` |
 
 Found by the 2026-08-09 pre-plan sweep (nine-agent audit) and fixed on
