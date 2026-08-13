@@ -236,6 +236,27 @@ def test_gross_exposure_counts_orders_still_in_flight():
     assert not guards.check(second, oms=oms).allowed
 
 
+def test_autoloop_keeps_an_order_pending_until_the_venue_releases_it():
+    """BUG-048: sending is not an ACK; the latency interval must remain observable."""
+    venue = SimVenue(
+        symbol="S",
+        latency=LatencyModel(order_entry_ns=100, market_data_ns=0, cancel_ns=0),
+    )
+    loop = AutoLoop(venue=venue, strategies=[], scale=PENNY)
+    strategy = Spammer()
+    intent = NewOrder(
+        client_id="in-flight", symbol="S", side=Side.BUY, qty=10, price_ticks=9_900
+    )
+
+    loop._route(strategy, [intent], ts=10)
+    assert loop.oms.get("in-flight").state.value == "pending_new"
+    assert venue.advance(109) == []
+    assert loop.oms.get("in-flight").state.value == "pending_new"
+
+    loop._absorb_outcomes(venue.advance(110))
+    assert loop.oms.get("in-flight").state.value == "working"
+
+
 # ---- the latency model ------------------------------------------------------------------------------
 
 

@@ -216,7 +216,6 @@ class AutoLoop:
             if isinstance(intent, NewOrder):
                 self.oms.register(intent, strategy=strategy.name, ts=ts)
                 self.venue.accept_order(intent, owner=strategy.name, ts=ts)
-                self.oms.on_acknowledged(intent.client_id, ts=ts)
             elif isinstance(intent, CancelOrder):
                 order = self.oms.get(intent.client_id)
                 if order is not None and order.is_live:
@@ -263,6 +262,12 @@ class AutoLoop:
              nobody watching, that silence is the whole failure.
         """
         for outcome in outcomes:
+            # BUG-048: acceptance only puts an order on the simulated wire. The venue ACK is
+            # the released outcome, so PENDING_NEW must survive until this point. Ack before
+            # fills/cancellation so every later transition describes a venue-known order.
+            order = self.oms.get(outcome.client_id)
+            if order is not None and order.is_live:
+                self.oms.on_acknowledged(outcome.client_id, ts=outcome.ts)
             for cancelled in outcome.result.stp_cancelled:
                 order = self.oms.get(cancelled)
                 if order is not None and order.is_live:
