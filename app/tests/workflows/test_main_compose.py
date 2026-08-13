@@ -16,6 +16,7 @@ pytest.importorskip("fastapi")
 
 from fastapi import FastAPI  # noqa: E402
 
+from core.clock import FrozenClock  # noqa: E402
 from core.secrets import get_secret  # noqa: E402
 from main import compose  # noqa: E402
 from schemas.models.proposal_record import ProposalRecord  # noqa: E402
@@ -60,7 +61,11 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
 
     class PaperClient(FakeAlpaca):
         def latest_quote(self, _symbol):
-            return {"price": "150", "age_s": 0, "spread_pct": "0.1"}
+            return {
+                "price": "150", "age_s": 0, "spread_pct": "0.1",
+                "bid": "149.99", "ask": "150.01", "bid_size": 100, "ask_size": 120,
+                "ts": NOW.isoformat(), "feed": "iex",
+            }
 
     captured = {}
 
@@ -74,12 +79,22 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
         db_url=f"sqlite:///{(tmp_path / 'paper.db').as_posix()}",
         parquet_root=str(tmp_path / "raw-paper"),
         paper_client=PaperClient(),
+        clock=FrozenClock(NOW),
     )
     assert app.state.paper is not None
     assert app.state.paper.account()["account"] == "alpaca-paper"
     expected = frozenset({"INTC", "AAPL", "SPCX", "GOOGL", "WDC"})
     assert app.state.paper._watchlist() == expected  # noqa: SLF001 - composition contract
     assert app.state.watchlist == expected
+    assert app.state.market_data.poll_quotes()["failed"] == []
+    assert app.state.quant_snapshots is app.state.market_data.snapshot_source
+    assert any(getattr(route, "path", None) == "/ws/quant" for route in app.routes)
+    from orchestrator.quant_api import quant_status
+
+    status = quant_status(state)
+    assert status["book_feed"] == "alpaca_iex_l1"
+    assert status["market_data"]["faulted"] == []
+    assert app.state.market_data.verify_params.max_staleness_ns == 120_000_000_000
 
     # Reassigning the legacy-mutable Settings object cannot widen the frozen production set.
     state.settings.watchlist = "NVDA"
@@ -98,10 +113,18 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
         }
 
     inside, _ = app.state.paper._fresh_risk(proposal("INTC"), "INTC")  # noqa: SLF001
-    outside, _ = app.state.paper._fresh_risk(proposal("NVDA"), "NVDA")  # noqa: SLF001
     inside_checks = {row["name"]: row["passed"] for row in inside["checks"]}
-    outside_checks = {row["name"]: row["passed"] for row in outside["checks"]}
     assert inside_checks["symbol_allowlist"] is True
+    from risk.engine import evaluate
+    from workflows.proposals import build_risk_context
+
+    outside = evaluate(
+        proposal("NVDA"),
+        build_risk_context(
+            state, quote=app.state.market_data.quote("INTC"), watchlist=expected
+        ),
+    )
+    outside_checks = {row["name"]: row["passed"] for row in outside["checks"]}
     assert outside_checks["symbol_allowlist"] is False
     assert state.audit.verify_chain().ok
 

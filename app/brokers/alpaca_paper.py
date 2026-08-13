@@ -21,6 +21,8 @@ import httpx
 
 from core.clock import default_clock
 from core.ids import new_id
+from ingest.market_data import MarketDataError, parse_exchange_time
+from quant.events import to_ns
 from schemas.models.portfolio_snapshot import PortfolioSnapshot
 
 EVENT_PORTFOLIO_SNAPSHOT = "portfolio_snapshot"
@@ -176,17 +178,58 @@ class AlpacaPaperHTTPClient:
         spread_pct = Decimal("0")
         if bid > 0 and ask > 0 and ask >= bid:
             spread_pct = ((ask - bid) / price) * Decimal("100")
+        bid_size = Decimal(str(quote.get("bs") or "0"))
+        ask_size = Decimal(str(quote.get("as") or "0"))
         ts = quote.get("t")
         age_s = float("inf")
+        ts_ns = None
         if ts:
             try:
-                parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                age_s = max(0.0, (self._clock() - parsed).total_seconds())
-            except (TypeError, ValueError):
+                parsed = parse_exchange_time(ts)
+                now = self._clock()
+                if now.tzinfo is None or now.utcoffset() is None or parsed > now:
+                    raise MarketDataError("quote timestamp is not current")
+                age_s = (now.astimezone(timezone.utc) - parsed).total_seconds()
+                ts_ns = to_ns(parsed)
+            except (MarketDataError, TypeError, ValueError):
                 pass
-        return {"price": price, "age_s": age_s, "spread_pct": spread_pct, "ts": ts}
+        return {
+            "price": price,
+            "age_s": age_s,
+            "spread_pct": spread_pct,
+            "ts": ts,
+            "ts_ns": ts_ns,
+            "bid": bid,
+            "ask": ask,
+            "bid_size": bid_size,
+            "ask_size": ask_size,
+            "feed": "iex",
+        }
+
+    def daily_bars(self, symbol: str, *, limit: int = 60) -> list[dict]:
+        """Fetch recent IEX daily bars. Entitlement/coverage remains RW-14's online gate."""
+        clean = str(symbol).strip().upper()
+        if not clean or not clean.replace(".", "").replace("-", "").isalnum():
+            raise AlpacaPaperError("invalid equity symbol for bars request")
+        if not 3 <= int(limit) <= 1000:
+            raise AlpacaPaperError("daily bar limit must be between 3 and 1000")
+        body = self._request(
+            "GET",
+            DATA_BASE_URL,
+            "/v2/stocks/bars",
+            params={
+                "symbols": clean,
+                "timeframe": "1Day",
+                "feed": "iex",
+                "limit": int(limit),
+                "sort": "desc",
+            },
+        )
+        bars = body.get("bars") if isinstance(body, dict) else None
+        rows = bars.get(clean) if isinstance(bars, dict) else None
+        if not isinstance(rows, list):
+            raise AlpacaPaperError("Alpaca daily-bars response omitted the symbol list")
+        return rows
 
 
 class FakeAlpaca:

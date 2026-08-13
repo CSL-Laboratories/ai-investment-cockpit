@@ -116,6 +116,77 @@ def test_build_scheduler_registers_the_base_jobs(state):
     assert not scheduler.running        # returned un-started
 
 
+class _MarketData:
+    def __init__(self, age=1.0):
+        self.age = age
+        self.polls = 0
+        self.bars = 0
+
+    def poll_quotes(self):
+        self.polls += 1
+        return {"updated": ["AAPL"], "failed": []}
+
+    def max_quote_age_s(self, *, now):
+        assert now.tzinfo is not None
+        return self.age
+
+    def refresh_daily_bars(self):
+        self.bars += 1
+        return {"updated": ["AAPL"], "failed": []}
+
+
+def test_rw14_market_poll_routes_stale_to_watch_only_even_without_news(state):
+    market = _MarketData(age=121.0)
+    out = sch.run_market_quote_poll(state, OPEN, market_data=market)
+    assert market.polls == 1 and out["max_data_age_s"] == 121.0
+    from orchestrator.breakers import BreakerEngine
+    assert BreakerEngine(state).is_watch_only("market_data") is True
+
+
+def test_rw14_fresh_poll_recovers_fail_closed_and_ingest_still_runs(state, tmp_path):
+    from ingest.calendars import CalendarPoller
+    from orchestrator.breakers import BreakerEngine
+    from orchestrator.ingest_runner import IngestRunner
+
+    market = _MarketData(age=121.0)
+    sch.run_market_quote_poll(state, OPEN, market_data=market)
+    assert BreakerEngine(state).is_watch_only("market_data") is True
+
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=OPEN,
+                          monotonic=lambda: 0.0)
+    runner.add_poller(
+        "calendar", CalendarPoller(lambda: [
+            {"symbol": "AAPL", "date": "2026-07-08", "note": "earnings"}
+        ]),
+    )
+    ingested = sch.run_ingest_poll(state, OPEN, feed="calendar", runner=runner)
+    assert ingested["status"] == "ok" and ingested["emitted"] == 1
+
+    market.age = 1.0
+    recovered = sch.run_market_quote_poll(state, OPEN, market_data=market)
+    assert recovered["recovered"] is True
+    assert BreakerEngine(state).is_watch_only("market_data") is False
+    assert ModeLadder(state).current() is Mode.read_only
+
+
+def test_rw14_market_poll_runs_off_hours_without_tripping(state):
+    market = _MarketData(age=1000.0)
+    out = sch.run_market_quote_poll(state, CLOSED, market_data=market)
+    assert market.polls == 1 and out["breaker"] == "market_closed"
+    from orchestrator.breakers import BreakerEngine
+    assert BreakerEngine(state).is_watch_only("market_data") is False
+
+
+def test_rw14_scheduler_registers_quote_and_daily_bar_jobs(state):
+    pytest.importorskip("apscheduler")
+    market = _MarketData()
+    jobs = {job.id: job for job in sch.build_scheduler(
+        state, OPEN, market_data=market
+    ).get_jobs()}
+    assert "market_quotes" in jobs and "market_daily_bars" in jobs
+    assert "minute='*/1'" in str(jobs["market_quotes"].trigger)
+
+
 def test_scheduler_jobs_have_operational_names(state, tmp_path):
     """Logs must identify the real job instead of seven indistinguishable lambdas."""
     pytest.importorskip("apscheduler")

@@ -32,11 +32,12 @@ and the claim board, not the specification.
 | Stabilization / bugfixing | **not started** | beta defect burn-down, platform/restart/fault regression, zero unexplained reconciliation gaps |
 | Full-scale deployment | **blocked** | all pre-live gates, ≥6-month paper evidence, then `W17 → W18 → W19` separately |
 
-`main` includes PR #29 and there are no open PRs awaiting merge. Local Windows gates are
-2,098 passed / 1 skipped with Ruff clean. The latest GitHub matrix jobs did not start because
-the Actions overage budget was exhausted, so PRs #27–#29 are merged with cross-platform
-attestation still pending. See [[PLAN]] for what may continue offline and what cannot be called
-complete without online evidence.
+`main` includes PR #30. The claimed `work/rw14-live-market-data` branch is the only current
+production-code merge candidate; its local Windows gates are 2,121 passed / 1 skipped with
+Ruff clean. The latest GitHub matrix jobs did not start because the Actions overage budget was
+exhausted, so the affected merged packages and RW-14 still lack cross-platform attestation.
+See [[PLAN]] for what may continue offline and what cannot be called complete without online
+evidence.
 
 ## Status vocabulary
 
@@ -58,7 +59,7 @@ complete without online evidence.
 | `RW-16` | Autonomy-readiness research and replan: distinguish scheduled paper reliability, dynamic paper autonomy, human-gated live operation, and autonomous live execution; verify Robinhood/MCP and event-source assumptions; define the development pipeline before implementation packages are committed | closed | — | dated primary-source report + explicit hold points/decisions/development batches in [[PLAN]]; no production-code change |
 | `RW-11` | Wire `app/filings/` into `build_ingest_fetchers` as `sec:edgar` | evidence pending | — | implementation merged in PR #15; still requires cited deltas on a live day **+** ≥95% field-level extraction precision on a post-cutoff hand-labelled sample |
 | `RW-12` | Delete `edgar_brew.py` + tests once RW-11 has run a live day | blocked → `RW-11` empirical gate | — | retire the fallback only after RW-11's live-day and precision evidence passes |
-| `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn`; sample quote age; close `BUG-097` by routing stale data through the single L8 `watch_only` mechanism | open | — | `quant_book_seq` advances; >120 s market-hours quote age disables orders while awareness continues; adversarial review |
+| `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn`; sample quote age; close `BUG-097` by routing stale data through the single L8 `watch_only` mechanism | claimed | Codex — `work/rw14-live-market-data` | offline implementation complete: 2,121 passed / 1 skipped, Ruff clean, DeepSeek adversarial review; still requires cross-platform CI, live `quant_book_seq` progression, IEX entitlement/coverage, and a real >120 s stale-to-L8 transition while awareness continues |
 | `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | closed | — | PR #14; unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
 | `RW-18` | Robinhood no-capital authenticated capability discovery after account-isolation decision; zero live orders | blocked → `DEC-05` | — | advertised 2026 MCP/auth/capabilities/tools/errors/expiry behavior recorded; resolves `DEC-06/08` |
 | `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | evidence pending | — | tooling merged in PR #16; dated operator-universe distributions and failure traces must still set queue/coalescing/latency/backfill bounds and resolve `DEC-07` |
@@ -81,14 +82,14 @@ rows retain their named prerequisite.
 | ID | What | Sev | Status | Where |
 |---|---|---|---|---|
 | `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | closed | `orchestrator/market_calendar.py` |
-| `BUG-097` | `BRK_STALE_DATA` currently uses the generic L6 breaker drop to `review_live`, but Invariant 7 requires stale feed to disable the order path in `watch_only`; the defect becomes reachable when `RW-14` samples quote age | high pre-live | blocked → `RW-14`; adversarial review required | `orchestrator/breakers.py` |
-| `BUG-040` | `verify_proposal`'s `max_staleness_ns` is inert — `now_ns` has no caller | med | **blocked** → unblocked by `RW-14` | `quant/verify.py:200` |
+| `BUG-097` | `BRK_STALE_DATA` currently uses the generic L6 breaker drop to `review_live`, but Invariant 7 requires stale feed to disable the order path in `watch_only`; the defect becomes reachable when `RW-14` samples quote age | high pre-live | fixed on claimed `RW-14` branch; merge + online evidence pending | `orchestrator/breakers.py` |
+| `BUG-040` | `verify_proposal`'s `max_staleness_ns` is inert — `now_ns` has no caller | med | fixed on claimed `RW-14` branch; merge pending | `quant/verify.py`, `workflows/proposals.py` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | closed | PR #21 |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | closed | PR #22 |
 | `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | closed | PR #24 |
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | closed | PR #29; cross-platform CI rerun pending |
 | `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | closed | PR #23 |
-| `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | blocked → `RW-14` | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
+| `BUG-046` | `/ws/quant` is never registered by `main.compose`; no production snapshot producer exists to wire honestly | low | fixed on claimed `RW-14` branch; merge + live progression evidence pending | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
 | `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | closed | PR #19 |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | closed | PR #20 |
 | `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | closed | PR #18 |

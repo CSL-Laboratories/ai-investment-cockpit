@@ -38,8 +38,13 @@ from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
 from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
 
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
+from orchestrator.breakers import BreakerThresholds
 from orchestrator.halt import default_halt_path, halt_is_set
-from orchestrator.market_calendar import CalendarCoverageError, require_calendar_coverage
+from orchestrator.market_calendar import (
+    CalendarCoverageError,
+    is_market_open,
+    require_calendar_coverage,
+)
 from orchestrator.mode_ladder import ExecutionRuntimeError
 from orchestrator.state import (
     BYPASS_EVENTS,
@@ -402,12 +407,40 @@ class OrderGateway:
         # a market-hours restriction to human-approved review_live orders.
         try:
             require_calendar_coverage(clock.now())
-        except CalendarCoverageError as exc:
+        except (CalendarCoverageError, TypeError, ValueError) as exc:
             return ("calendar", None, str(exc))
+
+        # RW-14: the scheduled breaker is not a submit-time authority. Re-check the same
+        # cached observation synchronously so a scheduler delay/restart cannot create a stale
+        # window between approval and broker submit. A composed service starts faulted until
+        # its first valid poll, which also makes restart fail closed.
+        market_data = getattr(st, "market_data", None)
+        if market_data is not None:
+            now = clock.now()
+            try:
+                reason = market_data.stale_reason(
+                    order.symbol,
+                    now=now,
+                    limit_s=getattr(
+                        market_data, "max_age_s", BreakerThresholds().data_staleness_s
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - a broken guard cannot grant order authority
+                reason = "market-data freshness guard unavailable"
+            if reason is not None:
+                try:
+                    market_open = is_market_open(now)
+                except Exception:  # noqa: BLE001 - broken calendar/clock must refuse cleanly
+                    return ("market_data", None, "market-hours freshness guard unavailable")
+                if market_open and not breaker_engine.is_watch_only("market_data"):
+                    breaker_engine.enter_watch_only(
+                        "market_data", reason, clock=clock, actor="order_gateway"
+                    )
+                return ("market_data", None, reason)
 
         # (b) mode / watch-only.
         if breaker_engine.is_watch_only():
-            return ("mode", None, "vendor usage window is watch-only; order path disabled")
+            return ("mode", None, "watch-only condition is active; order path disabled")
         mode = ladder.current()
         mode_v = mode.value if hasattr(mode, "value") else str(mode)
         if mode_v not in self._allowed_modes:

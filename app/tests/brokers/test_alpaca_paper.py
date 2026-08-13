@@ -134,8 +134,13 @@ def test_http_client_account_positions_and_quote_are_sanitized():
             }])
         if request.url.path == "/v2/stocks/AAPL/quotes/latest":
             return httpx.Response(200, json={
-                "quote": {"bp": "199", "ap": "201", "t": now.isoformat()}
+                "quote": {"bp": "199", "ap": "201", "bs": 10, "as": 12,
+                          "t": now.isoformat()}
             })
+        if request.url.path == "/v2/stocks/bars":
+            return httpx.Response(200, json={"bars": {"AAPL": [
+                {"t": "2026-07-01T04:00:00Z", "c": 100, "v": 1000},
+            ]}})
         return httpx.Response(404)
 
     key_id, secret_key = _credentials()
@@ -155,6 +160,27 @@ def test_http_client_account_positions_and_quote_are_sanitized():
     assert quote["price"] == Decimal("200")
     assert quote["spread_pct"] == Decimal("1")
     assert quote["age_s"] == 0
+    assert quote["ts_ns"] is not None and quote["bid_size"] == 10
+    assert client.daily_bars("AAPL") == [
+        {"t": "2026-07-01T04:00:00Z", "c": 100, "v": 1000}
+    ]
+
+
+def test_http_client_future_or_naive_quote_timestamp_never_reads_fresh():
+    stamps = iter(["2026-07-07T14:05:00Z", "2026-07-07T14:00:00"])
+
+    def handler(_request):
+        return httpx.Response(200, json={"quote": {
+            "bp": "99", "ap": "101", "bs": 10, "as": 10, "t": next(stamps),
+        }})
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    for _ in range(2):
+        quote = client.latest_quote("AAPL")
+        assert quote["age_s"] == float("inf") and quote["ts_ns"] is None
 
 
 def test_http_client_rejects_without_leaking_response_body():

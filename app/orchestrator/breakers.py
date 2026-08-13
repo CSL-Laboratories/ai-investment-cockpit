@@ -4,16 +4,16 @@ L6/L8; Inv 5/7; SEC-01/SEC-23).
 Two distinct degradation families, deliberately kept apart:
 
 **Circuit breakers (L6)** — pure predicates over typed signals: daily realized-loss limit,
-N consecutive losing trades, schema-validation failure-rate spike, stale market data, and a
-broker-error spike. Any trip writes a ``BreakerState`` row + ``AuditEntry`` (via
+N consecutive losing trades, schema-validation failure-rate spike, and a broker-error spike.
+Any trip writes a ``BreakerState`` row + ``AuditEntry`` (via
 record_state_change, Inv 6) and drops the ladder to ``review_live`` — never increasing
 autonomy. ``trip`` returns a ``SystemEvent`` (the bridge renders it; the core never imports
 discord). SEC-01 adds a **synchronous** injection/anomaly breaker (``check_order_path``)
 that fires INSIDE the order path — before any veto window elapses — and force-disarms.
 
-**Usage-window exhaustion (L8)** — a SEPARATE path. It degrades to WATCH-ONLY (order path
-disabled, events queued+expired, never dropped) and does NOT drop to ``review_live``; it
-bumps the monotonic ``UsageTracker`` generation so any analysis minted before exhaustion is
+**Watch-only conditions (L8)** — usage-window exhaustion and stale market data degrade to
+WATCH-ONLY (order path disabled, events queued+expired, never dropped) and do not merely drop
+to ``review_live``; they bump the monotonic ``UsageTracker`` generation so any analysis is
 refused (``assert_fresh_analysis``, SEC-23). Recovery from watch-only is fail-closed to
 ``review_live`` via ``ModeLadder.recover`` (never a silent re-arm).
 """
@@ -219,11 +219,17 @@ class BreakerEngine:
 
     def evaluate_and_trip(self, signals: BreakerSignals, th: BreakerThresholds | None = None,
                           *, clock=None, actor="system") -> list[SystemEvent]:
-        """Evaluate all L6 breakers and trip each that fires. One drop to review_live per
-        trip (idempotent past the first — already at review_live is a no-op)."""
+        """Route stale data to L8 watch-only; trip every other threshold through L6."""
         events = []
         for name in evaluate(signals, th):
-            events.append(self.trip(name, "threshold breached", clock=clock, actor=actor))
+            if name == BRK_STALE_DATA:
+                if not self.is_watch_only("market_data"):
+                    events.append(self.enter_watch_only(
+                        "market_data", "stale market-data threshold breached",
+                        clock=clock, actor=actor,
+                    ))
+            else:
+                events.append(self.trip(name, "threshold breached", clock=clock, actor=actor))
         return events
 
     # ---- SEC-01 synchronous injection/anomaly breaker in the order path ----------------

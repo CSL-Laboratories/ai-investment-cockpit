@@ -384,7 +384,6 @@ _BREAKER_CASES = [
     (bk.BRK_DAILY_LOSS, bk.BreakerSignals(realized_loss_today=Decimal("600"))),
     (bk.BRK_CONSECUTIVE_LOSSES, bk.BreakerSignals(consecutive_losses=3)),
     (bk.BRK_SCHEMA_FAILURES, bk.BreakerSignals(schema_failures=5, schema_validations=10)),
-    (bk.BRK_STALE_DATA, bk.BreakerSignals(max_data_age_s=121.0)),
     (bk.BRK_BROKER_ERRORS, bk.BreakerSignals(broker_errors=5)),
 ]
 
@@ -424,6 +423,19 @@ def test_g5_4_injection_breaker_synchronous_drop(st):
     ev = eng.check_order_path(predicate=lambda c: True)               # anomaly detected
     assert ev is not None and ev.breaker == bk.BRK_INJECTION
     assert lad.current() is Mode.review_live
+    assert st.audit.verify_chain().ok
+
+
+def test_g5_4_stale_market_data_goes_watch_only_not_review_live(st):
+    lad = _arm_veto(st)
+    eng = bk.BreakerEngine(st)
+
+    events = eng.evaluate_and_trip(bk.BreakerSignals(max_data_age_s=121.0))
+
+    assert len(events) == 1 and events[0].kind == "watch_only"
+    assert eng.is_watch_only("market_data") is True
+    assert lad.current() is Mode.auto_veto
+    assert not [r for r in _breaker_rows(st) if r.breaker_name == bk.BRK_STALE_DATA]
     assert st.audit.verify_chain().ok
 
 
