@@ -3,10 +3,16 @@ title: Low-privilege decision-agent account (SEC-05 / OPS-06)
 type: setup
 status: live
 last-verified: 2026-07-09
+repository-state-reviewed: 2026-08-13
 related: [accounts-and-keys, security-hardening-backlog, security-architecture, production-work-packages]
 ---
 
 # Low-privilege decision-agent account
+
+> **Platform scope.** This is the Windows host-provisioning profile (local account, NTFS ACLs,
+> DPAPI-backed Credential Manager, and the planned service launcher). Ubuntu/macOS deployments
+> require an equivalent separate OS identity, credential-store isolation, filesystem ACLs, and
+> supervised launcher; passing CI does not provision those host controls.
 
 > **Why.** Decision-stage agents (`triage` / `deep`) run as `claude -p` or hardened `codex exec`
 > subprocesses. If they run
@@ -93,4 +99,5 @@ With the account + ACLs provisioned and `COCKPIT_DECISION_AGENT_ACCOUNT` set, `m
 startup check returns `enforced=True`. If any store is still readable by `cockpit-agent`, compose
 **fails closed** with a `CredentialGuardError` naming the store — re-apply the deny ACE for that
 path. Until the account is configured the control is reported **inactive** (`enforced=False`); it
-is a **pre-live blocker**, not satisfied by a green build (path-to-production §2, SEC-05 row).
+is a **pre-live blocker**, not satisfied by a green build ([[PLAN]] full-scale deployment gate,
+SEC-05 row).

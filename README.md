@@ -4,18 +4,26 @@ A solo-developer, subscription-powered, **human-gated** AI investing copilot: a
 morning-brew daily briefing plus human-approved short/long-term trade decisions, run
 from one always-on Windows workstation and operated from anywhere over Discord.
 
-> **Status: WP0–WP9 complete; QT (quant engine) complete — paper-first, no live trading.**
-> The phased ultracode build (WP0 → WP9) shipped green, and the **QT work package**
-> (2026-08-09) has since added the microstructure half the cockpit never had. The suite is
-> **1,834 passing / 5 skipped** with `ruff` clean, and every deterministic gate (G0…G9,
-> Invariant-1 call-site, no-LLM-in-`risk/`, secrets-grep, and the new quant→brokers import
-> gate) is green.
+> **Status (2026-08-13): foundation and quant engine built; paper-reliability MVP not yet
+> complete; no live trading.** The current Windows baseline is **2,098 passing / 1 skipped**
+> with `ruff` clean, including the order-path, no-LLM-in-`risk/`, secrets, and
+> quant→brokers containment gates. GitHub's latest Ubuntu/Windows/macOS matrix jobs did not
+> start because the account's Actions overage budget was exhausted, so cross-platform
+> attestation for PRs #27–#29 remains pending rather than failed code evidence.
 >
 > The system remains **paper-first**: no real capital has moved and none may until the
 > explicit pre-live gates pass — chief among them the **OPEN P0 audit-spine blocker (SEC-11
 > delete-then-heal)** in [`docs/security-hardening-backlog.md`](docs/security-hardening-backlog.md).
 > A dollar only moves after a multi-week paper soak and the performance/security gates.
 > Graduated from the `csl-general` brainstorming vault on 2026-07-06.
+
+The cockpit currently supports scheduled awareness, cited/schema-gated briefing and proposal
+workflows, human-approved Alpaca paper submission through `OrderGateway`, and contained offline
+quant simulation. It does **not** yet provide broker-status polling/reconciliation, dynamic
+event-driven paper autonomy, Robinhood connectivity, or autonomous live execution. The current
+development sequence is `RW-14 → W-21 → RW-15 → W-22`; see
+[`docs/PLAN.md`](docs/PLAN.md) for the offline-to-deployment lifecycle and
+[`docs/REGISTER.md`](docs/REGISTER.md) for claim state.
 
 ## Layout
 
@@ -25,7 +33,7 @@ from one always-on Windows workstation and operated from anywhere over Discord.
 | `app/` | The code, per the WP0–WP9 scaffold ([`docs/build-scaffold-ultracode.md`](docs/build-scaffold-ultracode.md)). |
 | `app/quant/` | The QT quant engine — real FIFO order book, strategies, replay, costs, PnL. **Read [`docs/quant-engine.md`](docs/quant-engine.md) before changing anything here**; it carries the containment argument. |
 | `.github/workflows/ci.yml` | The merge-gates (Invariant-1 call-site, no-LLM-in-`risk/`, secrets-grep) — live on every push from WP0. |
-| `docs/setup/accounts-and-keys.md` | How to provision accounts/keys into Windows Credential Manager. |
+| `docs/setup/accounts-and-keys.md` | How to provision accounts/keys into the host OS credential store through `keyring`. |
 
 ## The load-bearing rules (never weaken silently)
 
@@ -82,11 +90,11 @@ python -m pip install pydantic pydantic-settings keyring pyyaml jsonschema pyarr
 ```
 
 ```bash
-python -m pytest -q      # 1,834 pass / 5 skipped as of 2026-08-09; incl. Invariant-1 call-site, no-LLM-in-risk, secrets-grep, quant→brokers import gates
+python -m pytest -q      # 2,098 pass / 1 skipped locally as of 2026-08-13; includes invariant gates
 ```
 
 ```bash
-ruff check .             # G-gate lint, clean as of 2026-08-09
+ruff check .             # clean locally as of 2026-08-13
 ```
 
 Prove the quant containment is real rather than claimed — the gate should go **red** if you
@@ -128,7 +136,7 @@ toggle. See [`AGENTS.md`](AGENTS.md) and
 
 ## Before you build
 
-- Provision accounts + keys into Windows Credential Manager — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
-- Re-verify the moving targets before Phase 3 (live) — [`docs/setup/moving-targets-refresh-2026-07-06.md`](docs/setup/moving-targets-refresh-2026-07-06.md).
+- Provision accounts + keys into the host OS credential store — [`docs/setup/accounts-and-keys.md`](docs/setup/accounts-and-keys.md).
+- Re-verify the moving targets before the full-scale/live stage — [`docs/setup/moving-targets-refresh-2026-07-06.md`](docs/setup/moving-targets-refresh-2026-07-06.md).
 - **Keep this repository private.** Secrets live in keyring, never in the repo (Invariant 4).
 - Not financial advice; personal-use experiment with capped, loss-tolerable downside.

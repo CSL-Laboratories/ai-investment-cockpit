@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-12
+last-verified: 2026-08-13
 ---
 
 # Docs index
@@ -16,6 +16,33 @@ last-verified: 2026-08-12
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
+
+## Current repository snapshot — 2026-08-13
+
+- `main` includes PR #29. There are no open pull requests or contributor branches awaiting
+  merge; the old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local
+  `rw01-operationalize` branches are stale history, not merge candidates.
+- Local Windows gates are 2,098 passed / 1 skipped with Ruff clean. The latest GitHub
+  cross-platform jobs did not start because the account's Actions overage budget was exhausted;
+  that is missing attestation, not a test failure.
+- `RW-17` and BUG-041–045, BUG-047–051, BUG-098, and BUG-099 are merged. `RW-11` and
+  `RW-19` have merged tooling but still need empirical evidence. The next production sequence is
+  `RW-14 → W-21 → RW-15 → W-22`.
+- The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
+  paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
+
+## Contributor handoff
+
+1. Fetch `origin/main`; do not continue one of the stale branches named above.
+2. Read [[PLAN]] for phase/dependency context and [[REGISTER]] for the exact open row.
+3. Claim one row and one fresh branch. Keep one production-code package active at a time.
+4. Add a reachability/regression test, run targeted tests, the full local suite, and Ruff using
+   the platform instructions in `AGENTS.md`; order-path changes also require adversarial review.
+5. Record whether evidence is local, cross-platform CI, live-market, paper-broker, or deployment
+   evidence. Those are not interchangeable.
+6. During an Actions-budget pause, local work and ordinary branch pushes may continue, but do
+   not mark the package production-ready or merge it as a dependency until its required CI and
+   online gates run.
 
 ---
 
@@ -43,7 +70,6 @@ defects got fixed twice on two branches.
 |---|---|
 | [[PLAN]] | MVP, milestones, intake gate, scope boundaries |
 | [[REGISTER]] | Every open ID and who has it |
-| [[refactor-plan]] | The **RW-series**. RW-11/RW-12 wire and then retire the EDGAR path |
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
@@ -56,6 +82,7 @@ defects got fixed twice on two branches.
 |---|---|
 | [[build-scaffold-ultracode]] | The **WP-series contract register**. Reads like a disposable build artifact; **43 files in `app/` cite it**. Do not move or renumber |
 | [[production-work-packages]] | The **W-series** definitions — where `W10`/`W11`/`W12`/`W20` in code comments resolve |
+| [[refactor-plan]] | Historical RW-series rationale and detailed subsystem context. Current scheduling and status moved to [[PLAN]]/[[REGISTER]] |
 | [[ultracode-build-playbook]] | The adversarial-review pattern, still the house rule for any order-path change |
 | [[security-architecture]] | The security model |
 | [[prompt-injection-defense]] | The untrusted-content threat model — M2/M3 are cited throughout `ingest/` and `workflows/` |

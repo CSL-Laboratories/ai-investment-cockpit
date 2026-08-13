@@ -1,12 +1,12 @@
 ---
 title: Refactor plan — from fixture-driven build to a running dual-surface cockpit
 type: roadmap
-status: live
-last-verified: 2026-08-09
+status: reference
+last-verified: 2026-08-13
 related:
   - README
-  - capability-expansion-master-plan
-  - path-to-production
+  - PLAN
+  - REGISTER
   - production-work-packages
   - draft-discord-control-plane
   - enhancements-and-additions
@@ -14,7 +14,9 @@ related:
   - security-hardening-backlog
 ---
 
-> **[LIVE]** STILL LIVE — owns the RW-series. RW-11/RW-12 (wiring, then retiring, the EDGAR path) are scheduled in [[REGISTER]] and detailed here.
+> **[REFERENCE — scheduling moved].** This document preserves the RW-series architecture and
+> design rationale. [[PLAN]] owns development order and lifecycle; [[REGISTER]] owns current
+> status and claims. Do not start work from the sequence in this document.
 
 # Refactor plan
 
@@ -29,9 +31,10 @@ related:
 
 ## 1. What drives this refactor
 
-1. **It doesn't run yet end-to-end.** `ingest/` is not wired to the scheduler
-   (`main.build_ingest_fetchers` is called by nothing); `main.run()` is untested;
-   both brokers are in-process stubs. The system executes only against fixtures.
+1. **Operationalization has landed, but empirical proof is incomplete.** `main.run()`, the
+   scheduler, ingest runner, Discord surface, Alpaca paper adapter, and in-process EDGAR path
+   are composed and deterministically tested. `RW-11` still needs live-day/precision evidence,
+   and `RW-15`/`W-22` still own broker reconciliation and the unattended paper-MVP proof.
 2. **The universe is closed.** The triage pre-filter drops out-of-universe names,
    so the system can't *discover* a new company — the "next Palantir" blind spot.
 3. **The data spine is thin.** News / quotes / EDGAR / calendars / FINRA, with no
@@ -51,7 +54,7 @@ related:
 - `brokers/gateway.py`, `order_state_machine.py`, `capability.py` — the single
   order path and its TOCTOU-hardened submit. Touch only with an adversarial round.
 - `storage/audit.py` — the HMAC hash-chained spine. The performance gate reads it.
-- The paper-first / ladder-gated go-live discipline in [[path-to-production]] and
+- The paper-first / ladder-gated go-live discipline in [[PLAN]] and
   [[production-work-packages]]. Autonomy is still earned through the gates.
 
 ## 3. The three big architectural decisions
@@ -334,17 +337,13 @@ against a future upstream diff.
 
 ## 6. Sequencing
 
-```text
-RW-01 Operationalize ──┬─► RW-02 Surface abstraction ──► RW-03 Notifications
-                       └─► RW-04 Data spine ──┬─► RW-05 Dynamic universe ──┐
-                                              └─► RW-06 AI upgrades ───────┼─► RW-07 Human surface
-                                                                          └─► RW-08 Web dashboard
-                                              RW-09 Optimization (as rungs approach)
-     ── in parallel / as the gate on autonomy ──► W-series safety go-live
-```
+The original RW-01→RW-09 sequence has substantially landed or been superseded by measured
+production blockers. It is retained in git history, not as a second active plan.
 
-Highest-leverage first: **RW-01 (make it run) → RW-03 + RW-04 (notifications + data
-= the babysitting-reduction payoff, all pre-live-safe) → RW-05/06/07** outward.
+Current dependency order is maintained only in [[PLAN]] and [[REGISTER]]. As of 2026-08-13 the
+next implementation chain is `RW-14 → W-21 → RW-15 → W-22`, followed by `RW-13 → W16` after
+the required online evidence. The lifecycle is offline development → online testing/evidence →
+paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
 ## 7. Honesty ledger — what this refactor does NOT do
 

@@ -2,7 +2,7 @@
 title: Security architecture — Local AI Investment Cockpit
 type: security-architecture
 status: reference
-last-verified: 2026-08-09
+last-verified: 2026-08-13
 related: [research-report, research-supplement, cockpit-review-and-integrated-plan, draft-discord-control-plane, build-scaffold-ultracode, prompt-injection-defense, security-hardening-backlog, upside-and-roi, enhancements-and-additions]
 ---
 
@@ -71,7 +71,7 @@ Ranked by blast radius. This is the target list; sections 3–12 defend it.
 |---|---|---|---|
 | **Live-order authority** (Robinhood Agentic MCP session) | Move real capital in the funded account | Outbound MCP connection held by the bridge/broker connector | Bounded by the funded Agentic balance — the verified **funds-level sandbox** caps it; agent cannot move money in/out ([[research-report]] §1) |
 | **Funded Agentic-account balance** | Direct theft via bad trades / wash into illiquid names | Robinhood, reachable only via the gated order path | = O1 max downside; that funding *is* the priced option premium ([[upside-and-roi]] §3) |
-| **Broker/API keys + Discord bot token** | Bypass the app entirely; connect a rogue client | Windows Credential Manager (DPAPI) | Full broker/bot impersonation until rotated → **kill switch + rotate** (§10) |
+| **Broker/API keys + Discord bot token** | Bypass the app entirely; connect a rogue client | OS credential store via `keyring` | Full broker/bot impersonation until rotated → **kill switch + rotate** (§10) |
 | **Portfolio data + PII** | Financial surveillance, targeting, deanonymization | Robinhood (MCP grants **read access to ALL accounts**), SQLite, Parquet | **Verified privacy exposure**: all-account read + that data flows to the AI provider running the agent ([[research-report]] §1). Mitigation is architectural, not a patch — keep the main portfolio at a *different* broker so the agent sees only the Agentic account |
 | **Audit-log integrity** | Hide a manipulation after the fact; forge a "clean" replay | SQLite `AuditEntry` (hash-chained) | Undetected tamper would poison the performance gate that unlocks auto modes — hence Inv 6 |
 | **AI subscription session/tokens** | Ride the paid plan; exfiltrate context | `claude`/`codex` CLI auth stores on the workstation | Plan abuse + context leak; note the subsidy landscape is volatile (SDK credit **paused 2026-06-15**, [[research-report]] §3) so usage anomalies also have a cost signal |
@@ -108,7 +108,7 @@ Ranked by blast radius. This is the target list; sections 3–12 defend it.
   ┌────────────────────────────────▼──────────────────────────────┐
   │  TRUSTED (the decision root — deterministic, no LLM inside)    │
   │  • deterministic risk engine (risk/, pure functions)          │
-  │  • keyring / Windows Credential Manager                       │
+  │  • keyring / host OS credential store                         │
   │  • hash-chained audit log                                     │
   │  • operator user-ID allowlist                                 │
   └───────────────────────────────────────────────────────────────┘
@@ -152,10 +152,13 @@ trade.
 
 ## 5. Secrets management
 
-**Store.** All secrets live in **Windows Credential Manager via `keyring`** (DPAPI
-at rest, tied to the Windows user). Scope: Alpaca key/secret, Robinhood Agentic
-MCP auth material, Finnhub key, Discord bot token. Never in env files, `.env`,
-source, `models.yaml`, prompts, logs, or Discord (Inv 4).
+**Store.** Cockpit-managed secrets live in the **host OS credential store via `keyring`**:
+Windows Credential Manager, macOS Keychain, or Linux SecretService. Scope: Alpaca key/secret,
+Finnhub key, Discord bot token, cockpit API key, and the audit HMAC key. Robinhood Agentic MCP
+auth material belongs to the separately controlled MCP/CLI session store and is never copied
+into cockpit config. Never put secret material in env files, `.env`, source, `models.yaml`,
+prompts, logs, or Discord (Inv 4). A real headless Linux deployment must provision a
+SecretService backend; the test suite's in-memory backend is not a deployment control.
 
 **Distribution — least privilege by process.**
 

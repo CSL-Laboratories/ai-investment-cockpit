@@ -2,11 +2,19 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: live
-last-verified: 2026-08-09
+last-verified: 2026-08-13
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
 > **[LIVE]** STILL LIVE — the SEC-* findings register. Claims go in [[REGISTER]]; the write-ups stay here.
+
+> **Current deployment posture (2026-08-13):** the deterministic security mechanisms and
+> regression suite are locally green, but the cockpit remains paper-first and not production
+> live. SEC-11 witness activation remains the chief P0 pre-live blocker; loss/staleness inputs,
+> real reconciliation, dynamic-paper evidence, low-privilege host provisioning, and all
+> broker/live gates remain open as recorded below. The latest GitHub matrix jobs did not start
+> because the Actions overage budget was exhausted, so cross-platform attestation for PRs
+> #27–#29 is pending.
 
 # Security hardening backlog
 
@@ -26,17 +34,13 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   the delete-then-heal residual is folded into SEC-11), SEC-09 (dashed-account# /
 >   lowercase-foreign redaction residual), SEC-21 (domain-row corroboration binding
 >   + single-scheduler `try_consume` lock).
-> - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The non-monotonic,
->   reusable per-entry sequence plus the absence of a durable out-of-domain
->   witness allows a keyless delete-then-heal that `verify_chain()` re-greens.
->   Closure requires a `GitAuditLogAnchorStore` with the out-of-domain Discord
->   `#audit-log` witness (same-domain file/git mirrors do **not** qualify), a
->   monotonic non-reusable HMAC-covered `seq`, and binding
->   security-relevant domain-row fields (`Order` open-state,
->   `MarketEvent.event_type`) into the signed chain. Completing SEC-11 also
->   auto-closes the SEC-07 / SEC-20 / SEC-21 audit-spine residuals, since
->   `brokers/gateway.py::_pending_ok` and `workflows/budget.py` already consult
->   `verify_against_anchor` once a witness is wired.
+> - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The monotonic non-reusable
+>   HMAC-covered sequence, domain-row binding, witness adapters, and consuming-path checks are
+>   implemented. Closure still requires activation of the durable out-of-domain Discord
+>   `#audit-log` witness plus a fresh delete-then-heal red team against that deployment;
+>   same-domain file/git mirrors do **not** qualify. Closing SEC-11 then closes the remaining
+>   SEC-07 / SEC-20 / SEC-21 audit-spine residuals because the gateway/budget consumers already
+>   consult `verify_against_anchor` when a qualifying witness is wired.
 >   **BUG-051 operational correction (2026-08-12):** the same-domain audit-head
 >   mirror is now git-ignored and file-only; the running cockpit never stages or
 >   commits it onto the active development branch. This removes branch collisions
