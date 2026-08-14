@@ -21,7 +21,7 @@ last-verified: 2026-08-13
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #31 on 2026-08-13.
+state/lifecycle reconciled through PR #33 on 2026-08-13.
 
 ---
 
@@ -29,7 +29,8 @@ state/lifecycle reconciled through PR #31 on 2026-08-13.
 
 `main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
 boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
-tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), and
+tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
+fail-closed transaction-cost/net-edge gate (`W-21`), and
 BUG-040–051, BUG-097–099. There are no open pull requests awaiting merge.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
@@ -38,20 +39,23 @@ human-approved Alpaca paper submission through `OrderGateway`; Discord/API statu
 surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/daily-bar
 inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
-**What is not complete:** real broker-status polling and reconciliation (`RW-15`); the
-realistic net-edge cost model (`W-21`);
-the two-day unattended paper-MVP proof (`W-22`); event-driven paper autonomy (`RW-13`); the
+**What is not complete:** real broker-status polling and reconciliation (`RW-15`, implemented
+offline on its package branch but awaiting merge/online evidence); the two-day unattended
+paper-MVP proof (`W-22`); event-driven paper autonomy (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** RW-14 merged in PR #31 with 2,121 passed / 1 skipped on Windows,
-Ruff clean, and an order-path adversarial review complete. All six PR #31 matrix jobs stopped
+**Verification posture:** RW-14 merged in PR #31 and W-21 merged in PR #33. RW-15's current
+offline checkpoint is 2,165 passed / 1 skipped on Windows with Ruff clean after a fresh
+attack→fix→regression review. The requested OpenCode DeepSeek Pro/Flash external audit could
+not attest: the Pro workspace reported insufficient balance and the alternate reviewer calls
+timed out without output or repository changes. All six PR #31 matrix jobs stopped
 before executing a step because GitHub reported failed recent account payments or a spending
 limit that needs to be increased. Cross-platform CI and RW-14's named live-data evidence remain
 pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** `W-21 → RW-15 → W-22`. `RW-11`, `RW-19`, and `RW-14` evidence collection
+**Immediate sequence:** finish `RW-15`, then `W-22`. `RW-11`, `RW-19`, and `RW-14` evidence collection
 runs alongside that code lane. `DEC-05` must be resolved before any `RW-18` authentication.
 
 ---
@@ -408,6 +412,15 @@ stays broken — which is precisely how a gate gets gamed by accident. Scope, pe
    remaining-notional refinement waits on `DEC-04` (see [[REGISTER]]).
 6. **Platforms:** pure httpx polling, no subprocess/paths — CI-neutral.
 7. **Size:** one package (~300–400 LOC + tests). Order path → adversarial-review round.
+
+**Implementation checkpoint (2026-08-13, offline):** the fixed Alpaca paper host now exposes
+identity-bound GET-only lookups by signed broker id and the gateway's deterministic client id;
+the bounded poll reuses the gateway ACK parser/status mapping, consumes a recovered submit's
+exact signed approval, advances only through audited FSM primitives, records cumulative partial
+progress, and refuses chain/row/identity disagreement in the exposure-preserving direction.
+Startup and the one-minute scheduler both reach the same service, and `_no_broker_history` is
+retired. Windows: 2,165 passed / 1 skipped; Ruff clean. The real resting/partial/terminal and
+lost-response Alpaca paper gate remains online evidence, as does the cross-platform matrix.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 

@@ -36,6 +36,7 @@ EVENT_ADJUDICATION = "proposal_decision"   # one per approve/reject/modify/veto 
 EVENT_ORDER_INTENT = "order_intent"        # BEFORE the broker submit (paired with a result)
 EVENT_ORDER_RESULT = "order_result"        # AFTER the submit (ack/fill/reject), same txn
 EVENT_ORDER_TRANSITION = "order_transition"  # order-state-machine step (proposed->approved->...)
+EVENT_ORDER_FILL_PROGRESS = "order_fill_progress"  # cumulative partial-fill update, state stable
 # SEC-11 external witness: a head anchor posted to the out-of-DB witness (git / #audit-log).
 EVENT_ANCHOR = "anchor"
 

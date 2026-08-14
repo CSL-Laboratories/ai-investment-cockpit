@@ -183,7 +183,7 @@ def _order_landed(history, order_id) -> bool:
 def reconcile_startup(
     st,
     *,
-    broker_history_fn: Callable[[str], object],
+    broker_history_fn: Callable[[str], object] | None,
     alerter: Callable[[str], None] | None = None,
     models=_DEFAULT_MODELS,
 ) -> ReconcileReport:
@@ -218,7 +218,7 @@ def reconcile_startup(
     for seq in audit.unresolved_intents():
         order_id, op = intents_meta.get(seq, (None, "order_submit"))
         landed = False
-        if order_id is not None:
+        if order_id is not None and broker_history_fn is not None:
             try:
                 landed = _order_landed(broker_history_fn(order_id), order_id)
             except Exception as exc:   # a broker-history read failure is fail-closed => not landed

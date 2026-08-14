@@ -166,6 +166,68 @@ def test_http_client_account_positions_and_quote_are_sanitized():
     ]
 
 
+def test_http_client_order_lookup_is_read_only_and_identity_bound():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path == "/v2/orders/paper-order-1":
+            return httpx.Response(200, json={
+                "id": "paper-order-1", "client_order_id": "cockpit-ord-1",
+                "status": "partially_filled", "filled_qty": "0.5",
+                "filled_avg_price": "149.25",
+            })
+        if request.url.path == "/v2/orders:by_client_order_id":
+            return httpx.Response(200, json={
+                "id": "paper-order-1", "client_order_id": "cockpit-ord-1",
+                "status": "filled", "filled_qty": "1", "filled_avg_price": "149.50",
+            })
+        return httpx.Response(404)
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    by_broker = client.order_info(broker_order_id="paper-order-1")
+    by_client = client.order_info(client_order_id="cockpit-ord-1")
+
+    assert by_broker["status"] == "partially_filled"
+    assert by_broker["filled_qty"] == Decimal("0.5")
+    assert by_client["status"] == "filled"
+    assert all(request.method == "GET" for request in seen)
+    assert seen[1].url.params["client_order_id"] == "cockpit-ord-1"
+
+
+def test_http_client_order_lookup_rejects_identity_mismatch():
+    def handler(_request):
+        return httpx.Response(200, json={
+            "id": "different-order", "status": "filled", "filled_qty": "1",
+            "filled_avg_price": "10",
+        })
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    with pytest.raises(AlpacaPaperError, match="did not match broker id"):
+        client.order_info(broker_order_id="paper-order-1")
+
+
+def test_http_client_order_lookup_rejects_negative_fill_data():
+    def handler(_request):
+        return httpx.Response(200, json={
+            "id": "paper-order-1", "status": "canceled", "filled_qty": "-1",
+            "filled_avg_price": None,
+        })
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id, secret_key, http_client=_http_client(handler), clock=CLK.now
+    )
+    with pytest.raises(AlpacaPaperError, match="invalid fill data"):
+        client.order_info(broker_order_id="paper-order-1")
+
+
 def test_http_client_future_or_naive_quote_timestamp_never_reads_fresh():
     stamps = iter(["2026-07-07T14:05:00Z", "2026-07-07T14:00:00"])
 

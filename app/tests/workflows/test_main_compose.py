@@ -107,6 +107,21 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     assert status["verification"]["max_adv_participation"] == "0.10"
     assert status["verification"]["net_cost_multiple"] == "2.0"
     assert app.state.market_data.verify_params.max_staleness_ns == 120_000_000_000
+    from orchestrator.scheduler import build_scheduler
+
+    jobs = {
+        job.id: job
+        for job in build_scheduler(
+            state,
+            state.clock,
+            services=services,
+            ingest=app.state.ingest,
+            market_data=app.state.market_data,
+            paper=app.state.paper,
+        ).get_jobs()
+    }
+    assert "paper_order_reconcile" in jobs
+    assert jobs["paper_order_reconcile"].func().ok
 
     # Reassigning the legacy-mutable Settings object cannot widen the frozen production set.
     state.settings.watchlist = "NVDA"

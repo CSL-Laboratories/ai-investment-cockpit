@@ -49,7 +49,7 @@ class PaperExecutionService:
     """Read paper account state and execute only fully-approved stored orders."""
 
     def __init__(self, state, *, broker, gateway, token_registry, quote_fn,
-                 watchlist_fn=None, market_data=None) -> None:
+                 watchlist_fn=None, market_data=None, order_reconciler=None) -> None:
         self.state = state
         self._broker = broker
         self._gateway = gateway
@@ -57,6 +57,19 @@ class PaperExecutionService:
         self._quote_fn = quote_fn
         self._watchlist_fn = watchlist_fn or (lambda: frozenset())
         self.market_data = market_data
+        self.order_reconciler = order_reconciler
+
+    def order_history(self, order_id: str) -> list[dict]:
+        if self.order_reconciler is None:
+            return []
+        return self.order_reconciler.order_history(order_id)
+
+    def reconcile_orders(self):
+        if self.order_reconciler is None:
+            raise PaperExecutionError(
+                "reconciliation_not_wired", "paper order reconciliation is not wired", 503
+            )
+        return self.order_reconciler.poll()
 
     def _watchlist(self) -> frozenset[str]:
         return frozenset(str(s).upper() for s in self._watchlist_fn())

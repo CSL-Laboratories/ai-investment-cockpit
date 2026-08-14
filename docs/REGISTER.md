@@ -25,14 +25,14 @@ and the claim board, not the specification.
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
-| Offline development | **active** | `W-21 → RW-15 → W-22`, one package/branch at a time |
+| Offline development | **active** | finish `RW-15`, then `W-22`, one package/branch at a time |
 | Online testing and evidence | **partially active** | rerun cross-platform CI; finish `RW-11` live-day/precision and `RW-19`/`DEC-07` measurements |
-| Paper MVP | **not reached** | RW-14 online evidence, `W-21`, `RW-15`, then two audited unattended `W-22` market days |
+| Paper MVP | **not reached** | RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
 | Production beta | **blocked by MVP** | `RW-13` dynamic path plus `W16` four-week paper soak |
 | Stabilization / bugfixing | **not started** | beta defect burn-down, platform/restart/fault regression, zero unexplained reconciliation gaps |
 | Full-scale deployment | **blocked** | all pre-live gates, ≥6-month paper evidence, then `W17 → W18 → W19` separately |
 
-`main` includes PR #31 and there are no open pull requests awaiting merge. RW-14's local
+`main` includes PR #33. RW-14's local
 Windows gates are 2,121 passed / 1 skipped with Ruff clean. All six PR #31 matrix jobs stopped
 before executing a step because GitHub reported failed recent account payments or a spending
 limit that needs to be increased. Cross-platform attestation and RW-14's live-data gate remain
@@ -63,8 +63,8 @@ online evidence.
 | `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | closed | — | PR #14; unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
 | `RW-18` | Robinhood no-capital authenticated capability discovery after account-isolation decision; zero live orders | blocked → `DEC-05` | — | advertised 2026 MCP/auth/capabilities/tools/errors/expiry behavior recorded; resolves `DEC-06/08` |
 | `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | evidence pending | — | tooling merged in PR #16; dated operator-universe distributions and failure traces must still set queue/coalescing/latency/backfill bounds and resolve `DEC-07` |
-| `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] M4 and its delivery loop | open | — | a resting limit order reaches a terminal state on a live day with no operator action, **and** `reconcile_startup` heals (not merely alerts) a lost-response order |
-| `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | claimed | Codex — `work/w21-transaction-cost-model` | implementation uncommitted; Windows 2,155 passed / 1 skipped + Ruff clean; fresh DeepSeek Pro/Flash adversarial round found no P0/P1 bypass and concrete approval-path findings were fixed with regressions; expected edge remains explicitly unavailable/fail-closed; cross-platform CI and RW-14 live input evidence still pending |
+| `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] M4 and its delivery loop | implementation complete — evidence pending | Codex — `work/rw15-broker-reconciliation` | Windows 2,165 passed / 1 skipped + Ruff clean after fresh attack→fix→regression review; fixed-host GET-only broker/client-id lookup, bounded scheduled poll, signed approval recovery, audited partial progress, composed reachability, and stub retirement complete; DeepSeek Pro was balance-blocked and alternate calls timed out without output; real resting/partial/terminal and lost-response Alpaca paper evidence + cross-platform CI remain required |
+| `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | merged — evidence pending | — | merged in PR #33 with Windows 2,155 passed / 1 skipped and Ruff clean; fresh DeepSeek Pro/Flash adversarial round found no P0/P1 bypass and concrete approval-path findings were fixed with regressions; expected edge remains explicitly unavailable/fail-closed; cross-platform CI and RW-14 live input evidence still pending |
 | `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask; wire the loss signals into `BreakerSignals` (daily loss from snapshots, consecutive losses from round trips) | open | — | two unattended market days a week apart, `verify_chain().ok` throughout |
 | `RW-13` | Dynamic paper autonomy: durable event/outbox trigger, deterministic arbiter, scoped gap backfill, replay, dedup, bounded flood handling, cron backstop | blocked → `RW-19` + `DEC-07` + M1–M4 + `RW-17`/`BUG-097` | — | separate-store parity + same-store idempotency; scoped loss recovery; nondegenerate recall; measured latency/flood gates in [[PLAN]] M5 |
 | `W16` | Paper-soak/performance instruments and recorded evidence; dynamic event path must be enabled for its autonomy window | open | — | after M5: ≥4 consecutive market weeks dynamic-paper soak with required density/fault injections; existing statistical gates remain minimum inputs, not funding authority |
