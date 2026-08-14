@@ -74,6 +74,9 @@ $commit = (git -C $repo rev-parse HEAD).Trim()
 git -C $repo worktree add --detach $soak $commit
 if (git -C $soak status --porcelain) { throw "soak worktree is dirty" }
 
+# The source worktree has no operator-local .env by design. Point it at the guarded,
+# git-ignored non-secret configuration beside the existing runtime database.
+$env:COCKPIT_ENV_FILE = "$repo\app\.env"
 $process = Start-Process `
   -FilePath "$repo\.venv\Scripts\python.exe" `
   -ArgumentList "$soak\app\main.py" `
