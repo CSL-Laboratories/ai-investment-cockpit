@@ -31,15 +31,38 @@ def test_all_models_migrate():
     assert not missing, f"missing tables: {missing}; got {sorted(tables)}"
 
 
-def test_w22_adds_equity_to_an_existing_portfolio_snapshot_table(tmp_path):
+def test_w22_additive_migrations_preserve_legacy_rows_and_are_idempotent(tmp_path):
     eng = make_engine(f"sqlite:///{(tmp_path / 'legacy.db').as_posix()}")
     with eng.begin() as connection:
         connection.execute(text(
             "CREATE TABLE portfolio_snapshot (id VARCHAR PRIMARY KEY, account VARCHAR)"
         ))
+        connection.execute(text(
+            "CREATE TABLE risk_decision (id VARCHAR PRIMARY KEY, proposal_id VARCHAR)"
+        ))
+        connection.execute(text(
+            "INSERT INTO portfolio_snapshot (id, account) "
+            "VALUES ('snapshot-legacy', 'paper')"
+        ))
+        connection.execute(text(
+            "INSERT INTO risk_decision (id, proposal_id) "
+            "VALUES ('risk-legacy', 'proposal-legacy')"
+        ))
 
     create_all(eng)
-    columns = {column["name"] for column in inspect(eng).get_columns("portfolio_snapshot")}
-    assert "equity" in columns
-    # Idempotent on the next production restart.
     create_all(eng)
+
+    inspector = inspect(eng)
+    assert "equity" in {
+        column["name"] for column in inspector.get_columns("portfolio_snapshot")
+    }
+    assert "execution_verdict" in {
+        column["name"] for column in inspector.get_columns("risk_decision")
+    }
+    with eng.connect() as connection:
+        assert connection.execute(text(
+            "SELECT id FROM portfolio_snapshot"
+        )).scalar_one() == "snapshot-legacy"
+        assert connection.execute(text(
+            "SELECT id FROM risk_decision"
+        )).scalar_one() == "risk-legacy"
