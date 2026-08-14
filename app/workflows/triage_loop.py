@@ -423,9 +423,19 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     with state.lock:
         broker_errors = state.broker_errors_since_sample
         state.broker_errors_since_sample = 0
-    signals = BreakerSignals(schema_failures=jobs_failed_schema,
-                             schema_validations=jobs_total,
-                             broker_errors=broker_errors)
+    performance = getattr(state, "paper_performance", None)
+    performance_ok = performance is not None and getattr(performance, "ok", False)
+    signals = BreakerSignals(
+        equity_drawdown_today=(
+            getattr(performance, "equity_drawdown_today", None) if performance_ok else None
+        ),
+        consecutive_losses=(
+            getattr(performance, "consecutive_losses", None) if performance_ok else None
+        ),
+        schema_failures=jobs_failed_schema,
+        schema_validations=jobs_total,
+        broker_errors=broker_errors,
+    )
     system_events.extend(engine.evaluate_and_trip(signals))
 
     _audit_batch(state, batch_id=batch_id, window_start=window_start,

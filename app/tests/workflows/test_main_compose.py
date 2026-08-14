@@ -28,7 +28,7 @@ def test_compose_builds_state_app_and_services(tmp_path):
     state, app, services = compose(db_url=f"sqlite:///{(tmp_path / 'c.db').as_posix()}",
                                    parquet_root=str(tmp_path / "raw"))
     assert isinstance(app, FastAPI)
-    assert set(services) == {"brew", "intraday", "eod"}
+    assert set(services) == {"brew", "intraday", "eod", "ask"}
     assert state.audit.verify_chain().ok
     assert app.state.services is services
     # RW-01: the ingest runner is composed too, and hangs off app.state beside the others (the
@@ -121,7 +121,9 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
         ).get_jobs()
     }
     assert "paper_order_reconcile" in jobs
+    assert "paper_performance" in jobs
     assert jobs["paper_order_reconcile"].func().ok
+    assert jobs["paper_performance"].func()["ok"]
 
     # Reassigning the legacy-mutable Settings object cannot widen the frozen production set.
     state.settings.watchlist = "NVDA"

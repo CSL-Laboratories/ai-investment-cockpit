@@ -139,7 +139,9 @@ def test_killswitch_disarms(client, state, tmp_path, monkeypatch):
 def test_status_shape(client):
     body = client.get("/status", headers=AUTH).json()
     assert set(body) >= {
-        "mode", "usage", "watch_only", "breakers", "ingest", "market_calendar"
+        "mode", "usage", "watch_only", "breakers", "ingest", "market_calendar",
+        "paper_performance",
+        "audit_chain", "paper_fill_notifications",
     }
     assert body["mode"]["mode"] == "read_only"
     assert body["market_calendar"]["covered"] is True

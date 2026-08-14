@@ -231,7 +231,7 @@ def test_breaker_trip_drops_to_review_live(st):
     lad.arm_auto_mode(Mode.auto_veto, decision_stage_runtimes=["claude", "claude"],
                       gate_result=_good_gate("auto_veto"), operator="op")
     eng = bk.BreakerEngine(st)
-    sig = bk.BreakerSignals(realized_loss_today=Decimal("999"))
+    sig = bk.BreakerSignals(equity_drawdown_today=Decimal("999"))
     events = eng.evaluate_and_trip(sig)
     assert any(e.kind == "breaker_trip" for e in events)
     assert lad.current() is Mode.review_live

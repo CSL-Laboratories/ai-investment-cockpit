@@ -64,6 +64,10 @@ def test_a_wired_command_did_not_also_get_a_stub(tree):
         "the registered /quant is the acknowledge-only stub, not the real body"
     )
     assert _WIRED_COMMANDS <= set(SLASH_COMMANDS)
+    paper = next(c for c in tree.get_commands() if c.name == "paper")
+    assert {p.name for p in paper.parameters} == {"action", "order_id", "confirm_symbol"}
+    ask = next(c for c in tree.get_commands() if c.name == "ask")
+    assert {p.name for p in ask.parameters} == {"proposal_id", "question"}
 
 
 def test_the_quant_parameters_are_optional_so_a_bare_invocation_works(tree):

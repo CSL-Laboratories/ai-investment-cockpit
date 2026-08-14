@@ -15,10 +15,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from bridge.approval import Rejection, record_decision, token_nonce_for_approval
+from bridge.operators import is_authorized
 from brokers.order_tuple import canonical_order_tuple
+from brokers.order_state_machine import transition
+from brokers.paper_performance import EASTERN, reconstruct_paper_performance
 from config.models import configured_decision_runtime
-from orchestrator.breakers import BreakerEngine
+from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThresholds
+from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
+from orchestrator.state import EVENT_PAPER_NOTIFICATION
 from risk.engine import evaluate
 from schemas.models.agent_job import AgentJob
 from schemas.models.order import Order
@@ -27,7 +32,7 @@ from schemas.models.risk_decision import RiskDecision
 from workflows.proposals import build_execution_verdict, build_risk_context
 
 
-@dataclass(frozen=True)
+@dataclass
 class PaperExecutionError(RuntimeError):
     code: str
     message: str
@@ -49,7 +54,8 @@ class PaperExecutionService:
     """Read paper account state and execute only fully-approved stored orders."""
 
     def __init__(self, state, *, broker, gateway, token_registry, quote_fn,
-                 watchlist_fn=None, market_data=None, order_reconciler=None) -> None:
+                 watchlist_fn=None, market_data=None, order_reconciler=None,
+                 deliver=None, require_performance: bool = False) -> None:
         self.state = state
         self._broker = broker
         self._gateway = gateway
@@ -58,6 +64,9 @@ class PaperExecutionService:
         self._watchlist_fn = watchlist_fn or (lambda: frozenset())
         self.market_data = market_data
         self.order_reconciler = order_reconciler
+        self._deliver = deliver
+        if require_performance:
+            self.state.paper_performance_required = True
 
     def order_history(self, order_id: str) -> list[dict]:
         if self.order_reconciler is None:
@@ -71,6 +80,83 @@ class PaperExecutionService:
             )
         return self.order_reconciler.poll()
 
+    def _notify(self, channel: str, payload: dict) -> bool:
+        if self._deliver is None:
+            return False
+        try:
+            return bool(self._deliver(channel, payload))
+        except Exception:  # noqa: BLE001 - notification failure never rewinds broker state
+            return False
+
+    def _notify_fill(self, payload: dict) -> bool:
+        delivered = self._notify("#proposals", payload)
+        self.state.audit.append(
+            EVENT_PAPER_NOTIFICATION,
+            actor="paper_execution",
+            refs={"order_id": payload.get("order_id")},
+            payload={**payload, "channel": "#proposals", "delivered": delivered},
+        )
+        return delivered
+
+    def sample_performance(self) -> dict:
+        """Persist equity, reconstruct signed P&L signals, and evaluate breakers."""
+        engine = BreakerEngine(self.state)
+        try:
+            self._broker.get_positions(st=self.state, clock=self.state.clock)
+            performance = reconstruct_paper_performance(self.state)
+        except Exception as exc:  # noqa: BLE001 - missing broker evidence disables orders
+            from brokers.paper_performance import PaperPerformance
+
+            performance = PaperPerformance(
+                False,
+                self.state.clock.now().astimezone(EASTERN).date().isoformat(),
+                reason=f"paper performance unavailable: {type(exc).__name__}",
+            )
+        self.state.paper_performance = performance
+        events = []
+        if not performance.ok:
+            if not engine.is_watch_only("paper_performance"):
+                events.append(engine.enter_watch_only(
+                    "paper_performance",
+                    performance.reason or "paper performance unavailable",
+                    actor="paper_performance",
+                ))
+        else:
+            if engine.is_watch_only("paper_performance"):
+                event, _mode = engine.recover_from_watch_only(
+                    "paper_performance",
+                    ModeLadder(self.state).current(),
+                    actor="paper_performance",
+                )
+                events.append(event)
+            thresholds = BreakerThresholds(
+                daily_equity_drawdown_limit=Decimal(str(
+                    current_limits(self.state)["daily_loss_limit"]
+                ))
+            )
+            events.extend(engine.evaluate_and_trip(
+                BreakerSignals(
+                    equity_drawdown_today=performance.equity_drawdown_today,
+                    consecutive_losses=performance.consecutive_losses,
+                ),
+                thresholds,
+                actor="paper_performance",
+            ))
+        delivered = [
+            self._notify(event.channel, {
+                "kind": event.kind,
+                "breaker": event.breaker,
+                "reason": event.reason,
+                "mode_after": event.mode_after,
+                "at": event.at.isoformat(),
+            })
+            for event in events
+        ]
+        result = performance.as_dict()
+        result["system_events"] = len(events)
+        result["events_delivered"] = delivered
+        return result
+
     def _watchlist(self) -> frozenset[str]:
         return frozenset(str(s).upper() for s in self._watchlist_fn())
 
@@ -79,6 +165,7 @@ class PaperExecutionService:
         return {
             "account": "alpaca-paper",
             "cash": str(snap.cash),
+            "equity": None if snap.equity is None else str(snap.equity),
             "buying_power": str(snap.buying_power),
             "exposure": None if snap.exposure is None else str(snap.exposure),
             "holdings": list(snap.holdings or []),
@@ -192,14 +279,38 @@ class PaperExecutionService:
             }, None
 
     def decide(self, order_id: str, *, actor: str, decision: str, confirm_symbol: str | None,
-               request_id: str) -> dict:
+               request_id: str, surface: str = "local_api") -> dict:
         bundle = self._load_bundle(order_id)
         order, proposal, risk_decision, agent_job = (
             bundle.order, bundle.proposal, bundle.risk_decision, bundle.agent_job
         )
         choice = str(decision).strip().lower()
-        if choice not in {"approve", "reject"}:
-            raise PaperExecutionError("bad_decision", "decision must be approve or reject", 422)
+        if choice not in {"approve", "reject", "veto"}:
+            raise PaperExecutionError(
+                "bad_decision", "decision must be approve, reject, or veto", 422
+            )
+        if surface not in {"local_api", "discord"}:
+            raise PaperExecutionError("bad_surface", "unrecognized operator surface", 422)
+        # Refuse foreign actors before quote/account I/O; record_decision repeats this check at
+        # the capability-mint boundary and writes the canonical unauthorized audit event.
+        if not is_authorized(actor, self.state.settings):
+            adjudication = record_decision(
+                self.state,
+                proposal_id=proposal.id,
+                risk_decision=risk_decision,
+                resolved_order=self._resolved(order),
+                actor_user_id=actor,
+                user_decision=choice,
+                surface=surface,
+                interaction_id=request_id,
+                device="loopback" if surface == "local_api" else "discord",
+                notional=order.notional,
+                token_registry=self._token_registry,
+                mode=ModeLadder(self.state).current(),
+            )
+            if isinstance(adjudication, Rejection):
+                raise PaperExecutionError(adjudication.code, adjudication.reason, 403)
+            raise PaperExecutionError("unauthorized", "actor is not authorized", 403)
         if proposal.flagged or proposal.status != "draft":
             raise PaperExecutionError(
                 "proposal_not_executable",
@@ -253,18 +364,38 @@ class PaperExecutionService:
             resolved_order=resolved,
             actor_user_id=actor,
             user_decision=choice,
-            surface="local_api",
+            surface=surface,
             interaction_id=request_id,
-            device="loopback",
+            device="loopback" if surface == "local_api" else "discord",
             notional=order.notional,
             token_registry=self._token_registry,
             mode=ModeLadder(self.state).current(),
         )
         if isinstance(adjudication, Rejection):
             raise PaperExecutionError(adjudication.code, adjudication.reason, 403)
-        if choice == "reject":
+        if (
+            adjudication.proposal_id != proposal.id
+            or adjudication.risk_decision_id != risk_decision.id
+            or adjudication.order_tuple_hash != order.order_tuple_hash
+            or adjudication.user_decision != choice
+        ):
+            raise PaperExecutionError(
+                "interaction_conflict",
+                "interaction id is already bound to a different adjudication",
+                409,
+            )
+        if choice in {"reject", "veto"}:
+            order.approval_id = adjudication.id
+            transition(
+                self.state,
+                order,
+                "rejected",
+                actor=f"{surface}:{actor}",
+                reason=f"operator {choice}",
+                clock=self.state.clock,
+            )
             return {
-                "status": "rejected",
+                "status": "vetoed" if choice == "veto" else "rejected",
                 "order_id": order.id,
                 "approval_id": adjudication.id,
             }
@@ -295,10 +426,21 @@ class PaperExecutionService:
             raise PaperExecutionError(
                 f"gateway_{outcome.stage}", outcome.reason or "paper gateway refused the order"
             )
-        return {
+        result = {
             "status": "submitted",
             "order_id": order.id,
             "approval_id": adjudication.id,
             "broker_order_id": outcome.broker_order_id,
             "broker_status": outcome.broker_status,
         }
+        if outcome.broker_status == "filled":
+            result["fill_notification_delivered"] = self._notify_fill({
+                "kind": "paper_fill_confirmation",
+                "order_id": order.id,
+                "symbol": order.symbol,
+                "side": order.side,
+                "qty": str(order.qty),
+                "broker_order_id": outcome.broker_order_id,
+                "broker_status": outcome.broker_status,
+            })
+        return result

@@ -1,8 +1,8 @@
 """WP1a — PortfolioSnapshot stored model.
 
-A point-in-time capture of broker/account state: cash, buying power, exposure,
+A point-in-time capture of broker/account state: equity, cash, buying power, exposure,
 holdings, and open orders. Sourced from the broker connector (draft 1 §4:
-`PortfolioSnapshot`: timestamp, account, holdings, cash, buying_power, exposure,
+`PortfolioSnapshot`: timestamp, account, holdings, equity, cash, buying_power, exposure,
 open_orders). Raw broker state is stored here as JSON so downstream risk checks
 and the audit trail can trace exposure/concentration back to a concrete snapshot.
 """
@@ -21,6 +21,9 @@ class PortfolioSnapshot(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     account: Mapped[str] = mapped_column(String, index=True)
+    # W-22: broker-reported account equity. Nullable only for legacy rows created before the
+    # additive migration; a missing value can never be treated as a zero-loss observation.
+    equity: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)
     cash: Mapped[float] = mapped_column(Numeric(18, 2))
     buying_power: Mapped[float] = mapped_column(Numeric(18, 2))
     exposure: Mapped[float | None] = mapped_column(Numeric(18, 2), nullable=True)

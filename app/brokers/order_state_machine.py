@@ -146,6 +146,9 @@ def create_order(
         # symbol so pending exposure is derivable from the ledger, not mutable columns.
         "notional": _payload_notional(order),
         "symbol": symbol,
+        "side": side,
+        "filled_qty": "0",
+        "avg_fill_price": None,
     }
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)
     return order
@@ -202,7 +205,12 @@ def transition(
         # symbol so pending exposure is derivable from the ledger, not mutable columns.
         "notional": _payload_notional(order),
         "symbol": order.symbol,
+        "side": order.side,
         "broker_order_id": order.broker_order_id,
+        "filled_qty": str(_dec(order.filled_qty)),
+        "avg_fill_price": (
+            None if order.avg_fill_price is None else str(_dec(order.avg_fill_price))
+        ),
     }
     # record_state_change UPDATEs the existing row AND appends its audit entry in ONE txn.
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)
@@ -258,6 +266,7 @@ def record_fill_progress(
         "approval_id": order.approval_id,
         "notional": _payload_notional(order),
         "symbol": order.symbol,
+        "side": order.side,
         "broker_order_id": order.broker_order_id,
         "filled_qty": str(new_qty),
         "avg_fill_price": None if price is None else str(price),

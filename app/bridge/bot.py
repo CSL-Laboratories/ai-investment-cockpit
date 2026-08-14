@@ -3,7 +3,7 @@
 All the load-bearing logic lives in the core modules (``operators`` / ``approval`` / ``veto`` /
 ``embeds`` / ``fallback`` / ``anchor``). This file ONLY adapts Discord surfaces onto them:
 Approve/Reject/Modify/Interrogate buttons, the slash commands (``/mode``, ``/killswitch``,
-``/brief``, ``/status``, ``/limits``, ``/triage``, ``/ask``, ``/automation``), and thread
+``/brief``, ``/status``, ``/limits``, ``/triage``, ``/ask``, ``/paper``, ``/automation``), and thread
 replies. Every entry point re-verifies the operator id via ``bridge.operators.is_authorized``
 before it touches the core, and forwards to the loopback orchestrator API / core functions.
 
@@ -14,6 +14,7 @@ is not installed; ``bot_available()`` lets callers check first.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Callable
 
 from bridge import approval as _approval
@@ -152,13 +153,81 @@ class QuantCommands:
             return f"⚠ /quant {action} failed: {type(exc).__name__}: {exc}"
 
 
+class QuestionCommands:
+    """Authenticated Discord adapter for SEC-18 fresh-context interrogation."""
+
+    def __init__(self, st, ask=None) -> None:
+        self.st = st
+        self.ask = ask
+
+    def handle(self, interaction: Any, *, question: str, proposal_id: str) -> str:
+        if not is_authorized(_extract_user_id(interaction), self.st.settings):
+            return "Not authorized."
+        if self.ask is None:
+            return "Fresh interrogation is not wired."
+        try:
+            result = self.ask(
+                self.st,
+                question=str(question),
+                proposal_id=str(proposal_id),
+            )
+            return "```json\n" + json.dumps(result, default=str, indent=2)[:1800] + "\n```"
+        except Exception as exc:  # noqa: BLE001 - visible failure, sanitized for Discord
+            return f"Fresh interrogation failed: {type(exc).__name__}"
+
+
+class PaperCommands:
+    """Discord-free core for the W-22 human-gated paper decision loop.
+
+    This calls the same ``PaperExecutionService`` as the loopback API; broker access therefore
+    remains exclusively behind ``OrderGateway``.
+    """
+
+    UNAUTHORIZED = "Not authorized."
+
+    def __init__(self, st, paper=None) -> None:
+        self.st = st
+        self.paper = paper
+
+    def handle(self, interaction: Any, *, action: str, order_id: str,
+               confirm_symbol: str = "") -> str:
+        if not is_authorized(_extract_user_id(interaction), self.st.settings):
+            return self.UNAUTHORIZED
+        if self.paper is None:
+            return "Paper execution is not wired. Check Alpaca paper credentials."
+        request_id = _extract_interaction_id(interaction)
+        if not request_id:
+            return "Paper decision refused: Discord interaction id is unavailable."
+        choice = str(action).strip().lower()
+        try:
+            if choice == "preview":
+                result = self.paper.preview(order_id)
+            elif choice in {"approve", "reject", "veto"}:
+                result = self.paper.decide(
+                    order_id,
+                    actor=str(_extract_user_id(interaction)),
+                    decision=choice,
+                    confirm_symbol=confirm_symbol or None,
+                    request_id=request_id,
+                    surface="discord",
+                )
+            else:
+                return "Unknown /paper action. Expected preview, approve, reject, or veto."
+            return "```json\n" + json.dumps(result, default=str, indent=2)[:1800] + "\n```"
+        except Exception as exc:  # noqa: BLE001 - an interaction must return a visible refusal
+            code = getattr(exc, "code", type(exc).__name__)
+            detail = str(exc) if hasattr(exc, "code") else type(exc).__name__
+            return f"Paper decision refused ({code}): {detail}"
+
+
 # Slash-command names the bot registers (draft-discord-control-plane). The adapter validates the
 # operator on each; the actual command bodies forward to the orchestrator loopback API.
 SLASH_COMMANDS = (
-    "mode", "killswitch", "brief", "status", "limits", "triage", "ask", "automation", "quant",
+    "mode", "killswitch", "brief", "status", "limits", "triage", "ask", "automation",
+    "quant", "paper",
 )
 
-_WIRED_COMMANDS = frozenset({"quant"})
+_WIRED_COMMANDS = frozenset({"quant", "ask", "paper"})
 """Commands with a REAL body below, excluded from the acknowledge-only registration loop.
 
 The rest are still WP6 stubs that reply "acknowledged". Listing the wired ones explicitly
@@ -168,7 +237,7 @@ order."""
 
 
 def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControls | None = None,
-              quant: "QuantCommands | None" = None, intents: Any = None):
+              quant: "QuantCommands | None" = None, paper=None, ask=None, intents: Any = None):
     """Construct the discord.py client + command tree wired to the core. Raises ``RuntimeError``
     if discord.py is not installed (the core paths do not need it). The command bodies stay thin:
     verify the operator, forward to the loopback orchestrator API / core."""
@@ -237,6 +306,44 @@ def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControl
         await interaction.followup.send(message, ephemeral=True)
 
     tree.command(name="quant", description="Quant engine status / simulation (read-only)")(_quant)
+
+    # ---- /ask (W-22 / SEC-18): fresh context, never resume the proposal session --------
+    question_core = QuestionCommands(st, ask=ask)
+
+    async def _ask(interaction, proposal_id: str, question: str):  # noqa: ANN001
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        message = await asyncio.to_thread(
+            question_core.handle,
+            interaction,
+            proposal_id=proposal_id,
+            question=question,
+        )
+        await interaction.followup.send(message, ephemeral=True)
+
+    tree.command(
+        name="ask",
+        description="Freshly interrogate a stored proposal before approval",
+    )(_ask)
+
+    # ---- /paper (W-22): preview + explicit human approval/veto -------------------------
+    paper_core = PaperCommands(st, paper=paper)
+
+    async def _paper(interaction, action: str = "preview", order_id: str = "",
+                     confirm_symbol: str = ""):  # noqa: ANN001
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        message = await asyncio.to_thread(
+            paper_core.handle,
+            interaction,
+            action=action,
+            order_id=order_id,
+            confirm_symbol=confirm_symbol,
+        )
+        await interaction.followup.send(message, ephemeral=True)
+
+    tree.command(
+        name="paper",
+        description="Preview, approve, reject, or veto a stored Alpaca paper order",
+    )(_paper)
 
     return client, tree
 

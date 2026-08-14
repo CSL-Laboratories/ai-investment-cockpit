@@ -22,8 +22,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import select
+
 from config.settings import Mode
 from core.ids import new_id
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.breaker_state import BreakerState
 
 from .mode_ladder import ModeLadder
@@ -36,7 +39,7 @@ from .state import (
 )
 
 # breaker names (stable identifiers used in BreakerState.breaker_name + audit payloads)
-BRK_DAILY_LOSS = "daily_realized_loss"
+BRK_DAILY_DRAWDOWN = "daily_equity_drawdown"
 BRK_CONSECUTIVE_LOSSES = "consecutive_losses"
 BRK_SCHEMA_FAILURES = "schema_failure_rate"
 BRK_STALE_DATA = "stale_market_data"
@@ -57,7 +60,7 @@ def _dec(x) -> Decimal:
 
 @dataclass(frozen=True)
 class BreakerThresholds:
-    daily_loss_limit: Decimal = Decimal("500")     # trip if realized LOSS magnitude exceeds
+    daily_equity_drawdown_limit: Decimal = Decimal("500")
     max_consecutive_losses: int = 3
     schema_failure_rate: float = 0.25
     schema_min_sample: int = 8
@@ -78,11 +81,11 @@ class BreakerSignals:
     must now be passed explicitly.
 
     Sampling status: ``schema_*`` and ``broker_errors`` are wired (triage tick / gateway).
-    ``realized_loss_today``/``consecutive_losses`` arrive with the paper P&L loop (W-22)
+    ``equity_drawdown_today``/``consecutive_losses`` arrive with the paper P&L loop (W-22)
     and ``max_data_age_s`` with the RW-14 quote poller — until then they are honestly
     unsampled, never silently fine."""
 
-    realized_loss_today: Decimal | None = None     # positive == a loss
+    equity_drawdown_today: Decimal | None = None   # positive decline from day-open equity
     consecutive_losses: int | None = None
     schema_failures: int | None = None
     schema_validations: int | None = None
@@ -91,8 +94,8 @@ class BreakerSignals:
 
 
 # ---- pure predicates (deterministic; no I/O) ------------------------------------------
-def breach_daily_loss(realized_loss, limit) -> bool:
-    return _dec(realized_loss) > _dec(limit)
+def breach_daily_equity_drawdown(drawdown, limit) -> bool:
+    return _dec(drawdown) > _dec(limit)
 
 
 def breach_consecutive_losses(n: int, limit: int) -> bool:
@@ -117,9 +120,9 @@ def evaluate(signals: BreakerSignals, th: BreakerThresholds | None = None) -> li
     reported by :func:`unsampled`."""
     th = th or BreakerThresholds()
     tripped: list[str] = []
-    if signals.realized_loss_today is not None and breach_daily_loss(
-            signals.realized_loss_today, th.daily_loss_limit):
-        tripped.append(BRK_DAILY_LOSS)
+    if signals.equity_drawdown_today is not None and breach_daily_equity_drawdown(
+            signals.equity_drawdown_today, th.daily_equity_drawdown_limit):
+        tripped.append(BRK_DAILY_DRAWDOWN)
     if signals.consecutive_losses is not None and breach_consecutive_losses(
             signals.consecutive_losses, th.max_consecutive_losses):
         tripped.append(BRK_CONSECUTIVE_LOSSES)
@@ -141,8 +144,8 @@ def unsampled(signals: BreakerSignals) -> list[str]:
     Surfaced (audited batch payload / status) so a dead wire reads as ABSENT, not healthy —
     the '/quant/status advertising a check that could never fire' rule."""
     out: list[str] = []
-    if signals.realized_loss_today is None:
-        out.append(BRK_DAILY_LOSS)
+    if signals.equity_drawdown_today is None:
+        out.append(BRK_DAILY_DRAWDOWN)
     if signals.consecutive_losses is None:
         out.append(BRK_CONSECUTIVE_LOSSES)
     if signals.schema_failures is None or signals.schema_validations is None:
@@ -184,6 +187,23 @@ class BreakerEngine:
 
     def _mode_str(self) -> str:
         return self._ladder.current().value
+
+    def active_trips(self) -> frozenset[str]:
+        """Return active breakers from the verified signed ledger, never mutable rows."""
+        if not self.st.audit.verify_chain().ok:
+            raise RuntimeError("audit chain verification failed while reading breakers")
+        with self.st.session_factory() as session:
+            rows = session.execute(
+                select(AuditEntry).where(AuditEntry.event_type.in_([
+                    EVENT_BREAKER_TRIP, EVENT_BREAKER_CLEAR,
+                ])).order_by(AuditEntry.seq)
+            ).scalars().all()
+        latest: dict[str, bool] = {}
+        for row in rows:
+            name = str((row.payload or {}).get("breaker") or "")
+            if name:
+                latest[name] = row.event_type == EVENT_BREAKER_TRIP
+        return frozenset(name for name, tripped in latest.items() if tripped)
 
     # ---- trip / clear ------------------------------------------------------------------
     def trip(self, name: str, reason: str, *, clock=None, actor="system") -> SystemEvent:
@@ -229,7 +249,8 @@ class BreakerEngine:
                         clock=clock, actor=actor,
                     ))
             else:
-                events.append(self.trip(name, "threshold breached", clock=clock, actor=actor))
+                if name not in self.active_trips():
+                    events.append(self.trip(name, "threshold breached", clock=clock, actor=actor))
         return events
 
     # ---- SEC-01 synchronous injection/anomaly breaker in the order path ----------------

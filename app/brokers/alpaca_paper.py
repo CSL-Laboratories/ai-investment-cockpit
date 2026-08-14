@@ -42,6 +42,22 @@ class AlpacaPaperError(RuntimeError):
         self.request_id = request_id
 
 
+def paper_fill_price(side: str, quote: dict) -> Decimal:
+    """Conservative deterministic fill for hermetic paper/replay tests.
+
+    Real Alpaca paper orders consume Alpaca's reported fills. Synthetic fills cross the
+    spread: buys pay ask and sells receive bid. Midpoint is never a fill authority.
+    """
+    clean_side = str(side).strip().lower()
+    field = "ask" if clean_side == "buy" else "bid" if clean_side == "sell" else None
+    if field is None:
+        raise AlpacaPaperError("paper fill side must be buy or sell")
+    price = Decimal(str((quote or {}).get(field) or "0"))
+    if not price.is_finite() or price <= 0:
+        raise AlpacaPaperError(f"paper fill requires a positive {field}")
+    return price
+
+
 def _decimal_text(value: Any) -> str:
     """JSON-safe decimal text without float conversion."""
     try:
@@ -204,6 +220,7 @@ class AlpacaPaperHTTPClient:
         return {
             # Do not persist/log Alpaca's account number or account UUID.
             "account": "alpaca-paper",
+            "equity": body.get("equity"),
             "cash": body.get("cash", "0"),
             "buying_power": body.get("buying_power", "0"),
             "exposure": body.get("long_market_value", "0"),
@@ -307,10 +324,11 @@ class FakeAlpaca:
     fixed, seedable snapshot."""
 
     def __init__(self, account: str = "paper", cash="100000.00", buying_power="200000.00",
-                 holdings=None, positions=None) -> None:
+                 equity=None, holdings=None, positions=None) -> None:
         self.account = account
         self.cash = cash
         self.buying_power = buying_power
+        self.equity = cash if equity is None else equity
         self.holdings = holdings if holdings is not None else []
         self.positions = positions if positions is not None else []
         self.submitted: list[dict] = []
@@ -361,8 +379,19 @@ class FakeAlpaca:
             ),
         )
 
+    def fill_order_at_quote(self, broker_order_id: str, quote: dict, *, filled_qty=None) -> None:
+        """Hermetic fill seam using bid/ask, never midpoint."""
+        record = self._orders_by_broker[str(broker_order_id)]
+        qty = record.get("qty") if filled_qty is None else filled_qty
+        price = paper_fill_price(str(record.get("side")), quote)
+        status = "filled" if Decimal(str(qty)) == Decimal(str(record.get("qty"))) \
+            else "partially_filled"
+        self.set_order_status(
+            broker_order_id, status=status, filled_qty=qty, avg_fill_price=price
+        )
+
     def account_info(self) -> dict:
-        return {"account": self.account, "cash": self.cash,
+        return {"account": self.account, "equity": self.equity, "cash": self.cash,
                 "buying_power": self.buying_power, "holdings": list(self.holdings)}
 
     def positions_info(self) -> list:
@@ -401,6 +430,7 @@ class AlpacaPaperBroker:
         return PortfolioSnapshot(
             id=new_id("snap"),
             account=info.get("account", "paper"),
+            equity=info.get("equity"),
             cash=info.get("cash", "0"),
             buying_power=info.get("buying_power", "0"),
             exposure=info.get("exposure"),
@@ -415,8 +445,11 @@ class AlpacaPaperBroker:
         state-change path (Inv 6); otherwise return an unpersisted row."""
         snap = self._snapshot(clock=clock)
         if st is not None:
-            st.audit.record_state_change(snap, EVENT_PORTFOLIO_SNAPSHOT, actor="alpaca_paper",
-                                         payload={"account": snap.account})
+            st.audit.record_state_change(
+                snap, EVENT_PORTFOLIO_SNAPSHOT, actor="alpaca_paper",
+                payload={"account": snap.account,
+                         "equity": None if snap.equity is None else str(snap.equity)},
+            )
         return snap
 
     def get_positions(self, *, st=None, clock=None) -> PortfolioSnapshot:
@@ -425,6 +458,9 @@ class AlpacaPaperBroker:
         snap = self._snapshot(clock=clock)
         snap.holdings = self._client.positions_info()
         if st is not None:
-            st.audit.record_state_change(snap, EVENT_PORTFOLIO_SNAPSHOT, actor="alpaca_paper",
-                                         payload={"account": snap.account, "kind": "positions"})
+            st.audit.record_state_change(
+                snap, EVENT_PORTFOLIO_SNAPSHOT, actor="alpaca_paper",
+                payload={"account": snap.account, "kind": "positions",
+                         "equity": None if snap.equity is None else str(snap.equity)},
+            )
         return snap

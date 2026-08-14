@@ -23,7 +23,11 @@ from brokers.order_state_machine import (
     record_fill_progress,
     transition,
 )
-from orchestrator.state import EVENT_ADJUDICATION, EVENT_ORDER_TRANSITION
+from orchestrator.state import (
+    EVENT_ADJUDICATION,
+    EVENT_ORDER_TRANSITION,
+    EVENT_PAPER_NOTIFICATION,
+)
 from schemas.models.approval_record import ApprovalRecord
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
@@ -42,6 +46,8 @@ class OrderPollReport:
     unchanged: tuple[str, ...] = ()
     not_found: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    notified: tuple[str, ...] = ()
+    undelivered: tuple[str, ...] = ()
     deferred: int = 0
     chain_verified: bool = True
 
@@ -139,11 +145,40 @@ def _verified_evidence(st) -> _Evidence:
 class PaperOrderReconciler:
     """Poll existing paper orders and consume broker ACKs through the one local FSM."""
 
-    def __init__(self, state, *, broker, max_orders_per_poll: int = MAX_ORDERS_PER_POLL) -> None:
+    def __init__(self, state, *, broker, max_orders_per_poll: int = MAX_ORDERS_PER_POLL,
+                 deliver=None) -> None:
         self.state = state
         self._broker = broker
         self._limit = max(1, min(int(max_orders_per_poll), MAX_ORDERS_PER_POLL))
         self._cursor: str | None = None
+        self._deliver = deliver
+
+    def _notify_fill(self, order_id: str, record: dict) -> bool:
+        payload = {
+            "kind": "paper_fill_confirmation",
+            "order_id": order_id,
+            "broker_order_id": record.get("broker_order_id"),
+            "broker_status": record.get("status"),
+            "filled_qty": str(record.get("filled_qty")),
+            "avg_fill_price": (
+                None
+                if record.get("avg_fill_price") is None
+                else str(record.get("avg_fill_price"))
+            ),
+        }
+        delivered = False
+        if self._deliver is not None:
+            try:
+                delivered = bool(self._deliver("#proposals", payload))
+            except Exception:  # noqa: BLE001 - broker state is committed; never rewind it
+                delivered = False
+        self.state.audit.append(
+            EVENT_PAPER_NOTIFICATION,
+            actor="alpaca_paper_reconcile",
+            refs={"order_id": order_id},
+            payload={**payload, "channel": "#proposals", "delivered": delivered},
+        )
+        return delivered
 
     def _candidate_ids(self, evidence: _Evidence) -> tuple[tuple[str, ...], int]:
         with self.state.session_factory() as session:
@@ -371,6 +406,8 @@ class PaperOrderReconciler:
         unchanged: list[str] = []
         not_found: list[str] = []
         errors: list[str] = []
+        notified: list[str] = []
+        undelivered: list[str] = []
         for order_id in candidates:
             try:
                 history = self.order_history(order_id)
@@ -384,6 +421,12 @@ class PaperOrderReconciler:
                     progressed.append(order_id)
                 if not moved and not advanced:
                     unchanged.append(order_id)
+                status = str(history[-1].get("status") or "").lower()
+                if (moved or advanced) and status in {"partially_filled", "filled"}:
+                    if self._notify_fill(order_id, history[-1]):
+                        notified.append(order_id)
+                    else:
+                        undelivered.append(order_id)
             except Exception as exc:  # noqa: BLE001 - one bad broker row cannot hide siblings
                 errors.append(order_id)
                 with self.state.lock:
@@ -396,5 +439,7 @@ class PaperOrderReconciler:
             unchanged=tuple(unchanged),
             not_found=tuple(not_found),
             errors=tuple(errors),
+            notified=tuple(notified),
+            undelivered=tuple(undelivered),
             deferred=deferred,
         )

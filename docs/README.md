@@ -30,10 +30,10 @@ canonical invariant list, and nothing else restates it.
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
   entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
   expected edge remains intentionally unavailable and fail-closed until a deterministic strategy
-  source is separately selected and reviewed. RW-15 is active on
-  `work/rw15-broker-reconciliation`, with a 2,165 passed / 1 skipped Windows checkpoint and Ruff
-  clean; real Alpaca paper reconciliation remains an online gate. The remaining production
-  sequence is `RW-15 → W-22`.
+  source is separately selected and reviewed. RW-15 is locally committed at `943d2a1`; W-22 is
+  implemented on `work/w22-paper-mvp` with a 2,180 passed / 1 skipped Windows checkpoint and
+  Ruff clean. Cross-platform CI, real Alpaca reconciliation, and the two market-day W-22 proof
+  remain evidence gates; [[runbooks/w22-paper-mvp]] is the operator handoff.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
@@ -79,6 +79,7 @@ defects got fixed twice on two branches.
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
+| [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 

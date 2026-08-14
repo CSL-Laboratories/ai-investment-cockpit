@@ -144,7 +144,11 @@ def test_g5_8_limits_loosen_requires_confirmation(client):
 # ---- status ----------------------------------------------------------------------------
 def test_g5_8_status_returns_mode_breakers_usage(client):
     body = client.get("/status", headers=AUTH).json()
-    assert {"mode", "usage", "breakers", "watch_only"} <= set(body)
+    assert {
+        "mode", "usage", "breakers", "watch_only", "paper_performance",
+        "audit_chain", "paper_fill_notifications",
+    } <= set(body)
+    assert body["audit_chain"]["ok"] is True
     assert body["mode"]["mode"] == "read_only"
     assert isinstance(body["breakers"], dict) and isinstance(body["usage"], dict)
 
@@ -152,7 +156,7 @@ def test_g5_8_status_returns_mode_breakers_usage(client):
 def test_g5_8_status_reflects_a_breaker_trip(client, state):
     from orchestrator import breakers as bk
     _arm_veto_via_ladder(state)
-    bk.BreakerEngine(state).trip(bk.BRK_DAILY_LOSS, "loss limit breached")
+    bk.BreakerEngine(state).trip(bk.BRK_DAILY_DRAWDOWN, "loss limit breached")
     body = client.get("/status", headers=AUTH).json()
     assert body["mode"]["mode"] == "review_live"
-    assert body["breakers"][bk.BRK_DAILY_LOSS]["tripped"] is True
+    assert body["breakers"][bk.BRK_DAILY_DRAWDOWN]["tripped"] is True

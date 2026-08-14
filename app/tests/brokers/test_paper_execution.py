@@ -12,7 +12,10 @@ from core.ids import new_id
 from quant.book.lob import BookSnapshot, LevelSnapshot
 from quant.events import PriceScale, to_ns
 from quant.verify import VerifyParams
+from sqlalchemy import select
+from schemas.models.approval_record import ApprovalRecord
 from schemas.models.agent_job import AgentJob
+from schemas.models.order import Order
 from schemas.models.proposal_record import ProposalRecord
 from tests.brokers.conftest import build_scenario
 
@@ -199,6 +202,98 @@ def test_persisted_w21_evidence_keeps_fresh_risk_armed_if_service_loses_market_d
         assert exc.code == "fresh_risk_failed"
     else:  # pragma: no cover - explicit order-path safety assertion
         raise AssertionError("a composed order must not fall back to legacy additive risk")
+    assert client.submitted == []
+
+
+def test_discord_veto_terminally_rejects_the_order(st):
+    service, scenario, client = _service(st)
+
+    out = service.decide(
+        scenario.order.id,
+        actor=OPERATOR_ID,
+        decision="veto",
+        confirm_symbol=None,
+        request_id="discord-veto-1",
+        surface="discord",
+    )
+
+    assert out["status"] == "vetoed"
+    with st.session_factory() as session:
+        order = session.get(Order, scenario.order.id)
+        approval = session.execute(
+            select(ApprovalRecord).where(ApprovalRecord.id == out["approval_id"])
+        ).scalar_one()
+        assert order.state == "rejected"
+        assert approval.surface == "discord" and approval.user_decision == "veto"
+    assert client.submitted == []
+    assert st.audit.verify_chain().ok
+
+
+def test_reused_interaction_id_cannot_terminalize_a_different_order(st):
+    service, scenario, client = _service(st)
+    conflicting = ApprovalRecord(
+        id=new_id("appr"), proposal_id="different-proposal",
+        risk_decision_id=scenario.risk_decision.id, actor_user_id=OPERATOR_ID,
+        user_decision="veto", surface="discord", interaction_id="reused-interaction",
+        message_id=None, device="discord", order_tuple_hash=scenario.tuple_hash,
+        single_use_consumed=False, notes=None, decided_at=st.clock.now(),
+        created_at=st.clock.now(),
+    )
+    st.audit.record_state_change(
+        conflicting, "proposal_decision", actor=OPERATOR_ID,
+        payload={
+            "decision": "veto", "proposal_id": "different-proposal",
+            "risk_decision_id": scenario.risk_decision.id,
+            "order_tuple_hash": scenario.tuple_hash,
+        },
+    )
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="veto", confirm_symbol=None,
+            request_id="reused-interaction", surface="discord",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "interaction_conflict"
+    else:  # pragma: no cover - explicit terminalization safety assertion
+        raise AssertionError("a reused interaction id must not bind another order")
+    with st.session_factory() as session:
+        assert session.get(Order, scenario.order.id).state == "proposed"
+    assert client.submitted == []
+
+
+def test_equity_drawdown_trip_blocks_the_gateway_before_broker_submit(st):
+    service, scenario, client = _service(st)
+    assert service.sample_performance()["ok"]
+    client.equity = "99400"
+
+    sampled = service.sample_performance()
+    assert Decimal(sampled["equity_drawdown_today"]) == Decimal("600")
+
+    try:
+        service.decide(
+            scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-drawdown-blocked",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "fresh_risk_failed"
+    else:  # pragma: no cover - explicit safety assertion
+        raise AssertionError("fresh risk must consume the equity drawdown")
+
+    # Independent backstop: even a caller supplying an approved risk recheck cannot bypass
+    # the active signed breaker at OrderGateway.
+    scenario.gateway.mint_submit_token(
+        nonce=scenario.nonce,
+        proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id,
+        order_tuple_hash=scenario.tuple_hash,
+    )
+    blocked = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert not blocked.ok and blocked.stage == "breaker"
+    assert "daily_equity_drawdown" in blocked.reason
     assert client.submitted == []
 
 

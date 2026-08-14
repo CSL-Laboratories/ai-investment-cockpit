@@ -451,6 +451,16 @@ class OrderGateway:
                 None,
                 f"mode {mode_v!r} cannot use {self._execution_scope!r} broker transport",
             )
+        try:
+            active_breakers = breaker_engine.active_trips()
+        except Exception:  # noqa: BLE001 - unreadable breaker authority must refuse
+            return ("breaker", None, "active-breaker state is unavailable")
+        if active_breakers:
+            return (
+                "breaker",
+                None,
+                "active safety breaker(s): " + ", ".join(sorted(active_breakers)),
+            )
 
         # (c) SEC-01 synchronous injection/anomaly breaker.
         if breaker_engine.check_order_path(context=order) is not None:
@@ -772,7 +782,9 @@ class OrderGateway:
                       "order_tuple_hash": resolved_hash},
                 payload={"symbol": order.symbol, "side": order.side,
                          "qty": str(order.qty), "order_type": order.order_type,
-                         "mode": ladder.current().value, "producing_runtime": producing_runtime},
+                         "mode": ladder.current().value,
+                         "execution_scope": self._execution_scope,
+                         "producing_runtime": producing_runtime},
             )
             # SEC-04 (R3-S1) FINAL fail-closed HALT re-check — AFTER the intent is written and
             # IMMEDIATELY before the broker call. The pre-broker re-check above runs BEFORE the

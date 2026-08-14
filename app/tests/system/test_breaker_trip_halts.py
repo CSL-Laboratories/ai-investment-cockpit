@@ -27,7 +27,7 @@ from bridge.veto import AutoVetoCoordinator
 from brokers.gateway import EVENT_ORDER_REFUSED
 from brokers.order_tuple import canonical_order_tuple
 from config.settings import Mode
-from orchestrator.breakers import BRK_DAILY_LOSS, BreakerSignals
+from orchestrator.breakers import BRK_DAILY_DRAWDOWN, BreakerSignals
 from orchestrator.gate import GateResult
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.killswitch import killswitch
@@ -119,7 +119,7 @@ def test_g9_breaker_trip_halts_next_order(system):
     assert system.token_registry.live_count() == live_before + 1
     assert len(broker.submits) == 1, "resolve() must never call the broker"
 
-    # negative: same clean window, but a deliberate BRK_DAILY_LOSS trip drops auto_veto ->
+    # negative: same clean window, but a deliberate BRK_DAILY_DRAWDOWN trip drops auto_veto ->
     # review_live between confirm and fire, so resolve refuses ('mode_changed'), mints NO token.
     coord.schedule(proposal_id="pi-trip", risk_decision=sc_auto.risk_decision,
                    resolved_order=_RESOLVED)
@@ -129,10 +129,10 @@ def test_g9_breaker_trip_halts_next_order(system):
 
     floor_i = system.st.audit.head()[0]
     events = system.breaker.evaluate_and_trip(
-        BreakerSignals(realized_loss_today=Decimal("600")))   # 600 > 500 default limit
-    assert any(ev.breaker == BRK_DAILY_LOSS for ev in events), "daily-loss breaker must trip"
+        BreakerSignals(equity_drawdown_today=Decimal("600")))  # 600 > 500 default limit
+    assert any(ev.breaker == BRK_DAILY_DRAWDOWN for ev in events), "drawdown breaker must trip"
     trips_i = _verified_after(system.st, EVENT_BREAKER_TRIP, floor_i)
-    assert any((e.payload or {}).get("breaker") == BRK_DAILY_LOSS for e in trips_i), \
+    assert any((e.payload or {}).get("breaker") == BRK_DAILY_DRAWDOWN for e in trips_i), \
         "an HMAC-verified EVENT_BREAKER_TRIP for the daily-loss breaker must be recorded"
     assert system.ladder.current() is Mode.review_live, "the L6 trip must drop autonomy"
 
@@ -143,6 +143,11 @@ def test_g9_breaker_trip_halts_next_order(system):
     assert res_trip.token is None
     assert system.token_registry.live_count() == tokens_before, "no token may be minted post-trip"
     assert len(broker.submits) == 1, "no order may reach the broker after the L6 trip"
+
+    # Active breakers remain an order-path backstop until explicitly cleared. Isolate the
+    # independent SEC-01 injection subcase with the operator acknowledgement the real system
+    # requires; a restart or mere mode change is not a clear.
+    system.breaker.clear(BRK_DAILY_DRAWDOWN, "test isolates injection breaker", actor="op")
 
     # ---- (iii) SEC-01 synchronous injection breaker: gate (c) trips inside the order path,
     # so the gateway refuses at stage 'breaker' before ever touching the broker. ---------
@@ -218,7 +223,7 @@ def test_g9_l6_trip_in_auto_veto_blocks_autoexec(system):
     coord.schedule(proposal_id="trip", risk_decision=sc.risk_decision, resolved_order=_RESOLVED)
     coord.confirm_delivery("trip")
     mono[0] = 504
-    system.breaker.trip(BRK_DAILY_LOSS, "deliberate daily-loss trip")
+    system.breaker.trip(BRK_DAILY_DRAWDOWN, "deliberate daily-loss trip")
     assert system.ladder.current() is Mode.review_live
     tokens = system.token_registry.live_count()
     blocked = coord.resolve("trip")

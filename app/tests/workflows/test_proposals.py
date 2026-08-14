@@ -114,6 +114,7 @@ def test_approved_draft_resolves_canonical_order(st, clock, tmp_path):
     # SEC-17: the embed risk section comes ONLY from the deterministic RiskDecision
     assert outcome.embed["risk"]["decision"] == "approved"
     assert outcome.embed["proposal_id"] == "prop-1"
+    assert outcome.embed["order_id"] == order.id
     assert _payloads(st, EVENT_PROPOSAL)[-1]["status"] == "draft"
     assert _payloads(st, "risk_decision")[-1]["decision"] == "approved"
     assert st.audit.verify_chain().ok
