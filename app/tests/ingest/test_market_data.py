@@ -123,6 +123,54 @@ def test_future_or_failed_poll_never_reads_fresh(tmp_path):
     assert service.stale_reason("AAPL", now=clock.now(), limit_s=120) is not None
 
 
+def test_quote_timestamp_is_compared_with_time_observed_after_remote_call(tmp_path):
+    class AdvancingClock(FrozenClock):
+        def advance(self, delta):
+            self._at += delta
+
+    clock = AdvancingClock(NOW)
+    client = Client(clock)
+    original = client.latest_quote
+
+    def delayed_quote(symbol):
+        clock.advance(timedelta(seconds=1))
+        return original(symbol)
+
+    client.latest_quote = delayed_quote
+    service = MarketDataService(
+        client,
+        symbols=("AAPL", "MSFT"),
+        clock=clock,
+        raw_root=tmp_path / "raw",
+        snapshot_source=SnapshotSource(),
+    )
+
+    result = service.poll_quotes()
+
+    assert result == {
+        "updated": ["AAPL", "MSFT"],
+        "failed": [],
+        "at": NOW.isoformat(),
+    }
+    assert service.quote("AAPL")["age_s"] == pytest.approx(2.0)
+    assert service.quote("MSFT")["age_s"] == pytest.approx(1.0)
+
+
+def test_quote_still_fails_closed_when_future_after_remote_call(tmp_path):
+    service, client, _, _ = _service(tmp_path)
+    original = client.latest_quote
+
+    def slightly_future_quote(symbol):
+        quote = original(symbol)
+        quote["ts"] = (NOW + timedelta(microseconds=1)).isoformat()
+        return quote
+
+    client.latest_quote = slightly_future_quote
+
+    assert service.poll_quotes()["failed"] == ["AAPL"]
+    assert service.book("AAPL") is None
+
+
 def test_daily_bar_cache_survives_a_second_service_without_refetch(tmp_path):
     service, client, clock, source = _service(tmp_path)
     assert service.refresh_daily_bars()["updated"] == ["AAPL"]

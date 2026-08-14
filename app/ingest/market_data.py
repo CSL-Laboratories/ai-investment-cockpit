@@ -283,15 +283,16 @@ class MarketDataService:
 
     def poll_quotes(self) -> dict:
         """Poll every symbol once. Faults are retained as fail-closed freshness state."""
-        now = self._now()
+        poll_started_at = self._now()
         symbols = self._refresh_symbols()
         updated: list[str] = []
         failed: list[str] = []
         for symbol in symbols:
             try:
                 quote = dict(self._client.latest_quote(symbol))
+                observed_at = self._now()
                 stamp = parse_exchange_time(quote.get("ts"))
-                if stamp > now:
+                if stamp > observed_at:
                     raise MarketDataError("quote timestamp is in the future")
                 with self._lock:
                     seq = self._seq[symbol] + 1
@@ -300,7 +301,7 @@ class MarketDataService:
                 normalized.update({
                     "symbol": symbol,
                     "ts_ns": book.ts,
-                    "age_s": (now - stamp).total_seconds(),
+                    "age_s": (observed_at - stamp).total_seconds(),
                 })
                 slot = _QuoteSlot(normalized, stamp, book)
                 with self._lock:
@@ -318,7 +319,7 @@ class MarketDataService:
                 with self._lock:
                     self._faults[symbol] = "quote_unavailable"
                 failed.append(symbol)
-        return {"updated": updated, "failed": failed, "at": now.isoformat()}
+        return {"updated": updated, "failed": failed, "at": poll_started_at.isoformat()}
 
     def quote(self, symbol: str) -> dict:
         clean = str(symbol).strip().upper()
