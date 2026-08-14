@@ -19,17 +19,17 @@ canonical invariant list, and nothing else restates it.
 
 ## Current repository snapshot — 2026-08-13
 
-- `main` includes PR #30. `RW-14` is implemented on the claimed
-  `work/rw14-live-market-data` branch and is the only current production-code merge candidate;
-  the old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
+- `main` includes PR #31 and there are no open pull requests awaiting merge. The old
+  `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
-- The final RW-14 local Windows gate is 2,121 passed / 1 skipped with Ruff clean. The latest GitHub
-  cross-platform jobs did not start because the account's Actions overage budget was exhausted;
-  that is missing attestation, not a test failure.
+- RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
+  matrix jobs stopped before running a step because GitHub reported failed recent account
+  payments or a spending limit that needs to be increased. That is missing attestation, not a
+  repository test failure.
 - `RW-17` and BUG-041–045, BUG-047–051, BUG-098, and BUG-099 are merged. `RW-11` and
-  `RW-19` have merged tooling but still need empirical evidence. RW-14's offline implementation
-  closes BUG-040/046/097 on its branch, but merge and online evidence remain pending. The next
-  production sequence is `RW-14 → W-21 → RW-15 → W-22`.
+  `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
+  entitlement/progression/stale-transition evidence remains pending. The next production
+  sequence is `W-21 → RW-15 → W-22`.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
