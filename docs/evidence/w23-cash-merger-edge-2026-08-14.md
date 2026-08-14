@@ -14,6 +14,7 @@ related:
 ## Claim boundary
 
 Branch: `work/w23-cash-merger-edge`.
+Implementation commit: `641c698`.
 
 This record proves local implementation and Windows regression only. It does **not** prove
 strategy profitability, empirical calibration quality, an eligible current deal, cross-platform
@@ -94,4 +95,3 @@ evidence.
    and operator validation of `/quant/status`.
 6. Separate deliberate audited `paper` activation and manual approval; then W-22's two qualifying
    market days at least a week apart.
-
