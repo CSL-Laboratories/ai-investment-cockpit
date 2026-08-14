@@ -41,11 +41,18 @@ from orchestrator.quant_api import (
 
 VERDICT = {
     "symbol": "AAPL", "side": "buy", "qty": 10, "verdict": "uneconomic",
-    "expected_slippage_bps": "2.00", "expected_fee_bps": "0.32",
-    "expected_cost_bps": "2.32", "participation_rate": "3.3333",
-    "fillable_now": 3, "queue_ahead_shares": 800, "touch_ticks": 10002,
-    "reasons": ["order is 3.3333x ALL displayed depth on the side it must consume"],
-    "book_seq": 7, "computed_at_ns": 0,
+    "position_effect": "open_long",
+    "expected_spread_bps": "2.00", "expected_impact_bps": "20.00",
+    "expected_fee_bps": "0.32", "expected_borrow_bps": "0.00",
+    "expected_cost_bps": "22.32", "adv_participation_rate": "0.120001",
+    "borrow_state": "not_applicable", "borrow_source_id": None,
+    "net_edge_state": "unavailable", "edge_source_id": None,
+    "edge_evidence_ref": None, "expected_gross_return_bps": None,
+    "expected_net_return_bps": None, "net_cost_multiple": None,
+    "min_net_cost_multiple": "2.0", "first_negative_qty": None,
+    "first_negative_notional": None, "cost_curve": [], "max_model_qty": 9,
+    "reasons": ["ADV participation 0.120001 exceeds the hard model-validity limit 0.10"],
+    "book_seq": 7, "computed_at_ns": 0, "metrics_as_of": "2026-07-08",
 }
 
 
@@ -72,15 +79,17 @@ def test_the_execution_section_renders_from_the_risk_decision():
     section = render_execution_section(_risk())
     assert section["evaluated"] is True
     assert section["verdict"] == "uneconomic"
-    assert section["expected_cost_bps"] == "2.32"
-    assert section["fully_fillable"] is False
-    assert section["queue_ahead_shares"] == 800
+    assert section["expected_cost_bps"] == "22.32"
+    assert section["expected_impact_bps"] == "20.00"
+    assert section["adv_participation_rate"] == "0.120001"
+    assert section["net_edge_state"] == "unavailable"
+    assert "fully_fillable" not in section
 
 
 def test_a_verdict_PLANTED_ON_THE_PROPOSAL_IS_IGNORED():
     """THE adversarial test. A hijacked model emits a TradeProposal; if the embed would read
-    an execution verdict off that object, the model could write "cost 0.01bps, fully
-    fillable" over an order that is neither, and the operator would approve on it.
+    an execution verdict off that object, the model could write "cost 0.01bps, enormous
+    capacity" over an order that has neither, and the operator would approve on it.
 
     The proposal here carries a flattering verdict. The RiskDecision carries the real one.
     The operator must see the real one.
@@ -92,14 +101,14 @@ def test_a_verdict_PLANTED_ON_THE_PROPOSAL_IS_IGNORED():
     embed = render_proposal_embed(hostile, _risk())
 
     assert embed["execution"]["verdict"] == "uneconomic"
-    assert embed["execution"]["expected_cost_bps"] == "2.32"
-    assert embed["execution"]["fully_fillable"] is False
+    assert embed["execution"]["expected_cost_bps"] == "22.32"
+    assert embed["execution"]["adv_participation_rate"] == "0.120001"
+    assert "fully_fillable" not in embed["execution"]
     assert "totally fine, ship it" not in str(embed["execution"])
 
 
 def test_an_unevaluated_decision_says_so_rather_than_implying_it_is_fine():
-    """Null is the normal state today — no book feed exists. It must read as 'we did not
-    look', never as 'we looked and it was fine'."""
+    """Legacy/uncomposed rows may be null; they must say we did not evaluate them."""
     section = render_execution_section(_risk(verdict=None))
     assert section["evaluated"] is False
     assert "not evaluated" in section["summary"]
@@ -131,14 +140,19 @@ def test_the_embed_still_carries_its_existing_sections():
 def test_the_execution_line_leads_with_the_verdict():
     line = render_execution_line(render_execution_section(_risk()))
     assert "UNECONOMIC" in line
-    assert "2.32bps" in line
-    assert "only 3 shares" in line
+    assert "22.32bps" in line
+    assert "ADV participation 0.120001" in line
+    assert "edge unavailable" in line
 
 
 def test_a_healthy_execution_line_does_not_cry_wolf():
     """CONTROL: a renderer that warned on everything would pass the test above and be useless."""
-    healthy = dict(VERDICT, verdict="ok", fillable_now=10, participation_rate="0.0125",
-                   expected_cost_bps="1.32", reasons=[])
+    healthy = dict(
+        VERDICT, verdict="ok", adv_participation_rate="0.001000",
+        expected_impact_bps="2.68", expected_cost_bps="5.00",
+        net_edge_state="sufficient", expected_gross_return_bps="100.00",
+        expected_net_return_bps="95.00", net_cost_multiple="19.00", reasons=[],
+    )
     line = render_execution_line(render_execution_section(_risk(verdict=healthy)))
     assert "OK" in line
     assert "⚠" not in line
@@ -150,12 +164,21 @@ def test_an_unevaluated_execution_line_is_neutral_not_green():
     assert "🟢" not in line
 
 
-def test_the_execution_line_never_implies_a_fill_probability():
-    """The engine produces no fill probability for a resting order, and the operator surface
-    must not invent language that implies one."""
+def test_an_unpriceable_execution_line_never_displays_zero_as_if_it_were_cost():
+    unavailable = dict(
+        VERDICT, verdict="insufficient_data", expected_cost_bps="0",
+        net_edge_state="unavailable",
+    )
+    line = render_execution_line(render_execution_section(_risk(verdict=unavailable)))
+    assert "NOT PRICEABLE" in line
+    assert "cost 0" not in line
+
+
+def test_the_execution_line_never_reintroduces_depth_or_fill_probability():
     line = render_execution_line(render_execution_section(_risk()))
-    assert "shares ahead" in line
-    for banned in ("probability", "chance", "% fill", "likely to fill"):
+    for banned in (
+        "probability", "chance", "% fill", "likely to fill", "shares ahead", "displayed",
+    ):
         assert banned not in line.lower()
 
 
@@ -211,6 +234,9 @@ def test_status_reports_the_containment_posture_from_the_running_process():
     assert "SimVenue" in status["containment"]["tier_c_venue"]
     assert status["book_feed"] == "not_wired"
     assert status["verification"]["require_quant_verdict"] is False
+    assert status["verification"]["require_net_edge"] is False
+    assert status["verification"]["expected_edge_source"].startswith("unavailable")
+    assert status["verification"]["impact_coefficient_y"] is None
 
 
 def test_a_simulation_returns_a_tearsheet_and_is_deterministic():
@@ -279,6 +305,8 @@ def test_an_authorized_operator_gets_the_status(st, monkeypatch):
     out = QuantCommands(st).handle(_Interaction(), action="status")
     assert "Quant engine" in out
     assert "Containment" in out
+    assert "edge source: unavailable" in out
+    assert "net edge required: `False`" in out
     assert len(out) <= DISCORD_MESSAGE_LIMIT
 
 

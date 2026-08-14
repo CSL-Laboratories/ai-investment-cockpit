@@ -67,6 +67,14 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
                 "ts": NOW.isoformat(), "feed": "iex",
             }
 
+        def daily_bars(self, _symbol, *, limit=60):
+            assert limit == 60
+            return [
+                {"t": "2026-07-02T20:00:00Z", "c": "148", "v": 1_000_000},
+                {"t": "2026-07-03T20:00:00Z", "c": "149", "v": 1_100_000},
+                {"t": "2026-07-06T20:00:00Z", "c": "150", "v": 1_200_000},
+            ]
+
     captured = {}
 
     def capture_triage(_state, _clock, **kwargs):
@@ -87,6 +95,7 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     assert app.state.paper._watchlist() == expected  # noqa: SLF001 - composition contract
     assert app.state.watchlist == expected
     assert app.state.market_data.poll_quotes()["failed"] == []
+    assert app.state.market_data.refresh_daily_bars()["failed"] == []
     assert app.state.quant_snapshots is app.state.market_data.snapshot_source
     assert any(getattr(route, "path", None) == "/ws/quant" for route in app.routes)
     from orchestrator.quant_api import quant_status
@@ -94,6 +103,9 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     status = quant_status(state)
     assert status["book_feed"] == "alpaca_iex_l1"
     assert status["market_data"]["faulted"] == []
+    assert status["verification"]["impact_coefficient_y"] == "1.0"
+    assert status["verification"]["max_adv_participation"] == "0.10"
+    assert status["verification"]["net_cost_multiple"] == "2.0"
     assert app.state.market_data.verify_params.max_staleness_ns == 120_000_000_000
 
     # Reassigning the legacy-mutable Settings object cannot widen the frozen production set.
@@ -109,12 +121,20 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
         return {
             "proposal_id": f"p-{symbol}", "symbol": symbol, "side": "buy",
             "asset_type": "equity", "quantity": "1", "notional": "150",
-            "order_type": "limit", "sizing_basis": "capped",
+            "order_type": "limit", "time_horizon": "short", "sizing_basis": "capped",
         }
 
+    from config.settings import Mode
+    from orchestrator.mode_ladder import ModeLadder
+
+    ModeLadder(state).set_mode(Mode.paper, actor="op")
     inside, _ = app.state.paper._fresh_risk(proposal("INTC"), "INTC")  # noqa: SLF001
     inside_checks = {row["name"]: row["passed"] for row in inside["checks"]}
     assert inside_checks["symbol_allowlist"] is True
+    # W-21: approval-time risk must re-run the same ADV cost path. Production has no
+    # deterministic edge source yet, so the fresh check is explicitly fail-closed.
+    assert inside["decision"] == "needs_human"
+    assert inside_checks["net_edge_available"] is False
     from risk.engine import evaluate
     from workflows.proposals import build_risk_context
 

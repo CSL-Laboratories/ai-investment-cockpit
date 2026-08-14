@@ -15,10 +15,13 @@ last-verified: 2026-08-13
 > BUG-041–049 follow-up repairs are merged through PR #29. Tier C remains simulated-venue only.
 > Merged PR #31 (`RW-14`) composes Tiers A/B against one cached Alpaca IEX L1 source,
 > advances the quant snapshot source, enforces the same 120-second freshness authority in the
-> verifier/scheduler/gateway, and computes daily ADV/volatility. Cross-platform CI and live
-> entitlement/progression/stale-transition evidence remain pending. `W-21` next replaces
-> displayed-depth economics with spread + ADV/volatility impact + borrow + a relative net-edge
-> test. See [[PLAN]] rather than this subsystem contract for development order.
+> verifier/scheduler/gateway, and computes daily ADV/volatility. On branch
+> `work/w21-transaction-cost-model`, `W-21` replaces displayed-depth economics with spread +
+> ADV/volatility impact + fees + borrow applicability + a relative net-edge rule. Expected
+> edge remains deliberately unavailable in production, so a composed opening proposal stops
+> at `needs_human` and no `Order` row is created. Cross-platform CI and RW-14's live
+> entitlement/progression/stale-transition evidence remain pending. See [[PLAN]] rather than
+> this subsystem contract for development order.
 
 ## Why this exists
 
@@ -32,11 +35,10 @@ And the gap that leaves is sharper than "the cockpit would allow a huge order" �
 not; `max_notional` defaults to $1,000 and catches size in dollars perfectly well.
 
 The gap is that **every pre-existing check is denominated in dollars, and none can see
-liquidity.** `max_notional`, `buying_power`, `concentration`, `pending_exposure` all price
-the order; not one asks whether the market can absorb it. A $1,000 order in a name showing
-three shares at the touch passes every single one, because $1,000 is a reasonable amount of
-money and nothing in the tree knew what three shares meant. That failure is small,
-well-funded, well-diversified, and undeployable — and it was invisible.
+liquidity or edge after cost.** `max_notional`, `buying_power`, `concentration`, and
+`pending_exposure` price the order but cannot determine whether its ADV participation is
+credible, what square-root impact implies, or whether a trusted expected return clears the
+cost. Displayed IEX size is not a substitute: a synthesized L1 level is not market capacity.
 
 QT is that missing half: a real FIFO limit order book with per-order queue position, a
 strategy framework, a replay harness, realistic costs, and PnL attribution.
@@ -45,23 +47,31 @@ strategy framework, a replay harness, realistic costs, and PnL attribution.
 
 | Tier | Where | Authority | What it does |
 |---|---|---|---|
-| **A** | `quant/verify.py` | none | Scores a proposal: slippage, participation, fees, total bps. Advisory evidence. |
-| **B** | `risk/engine.py` | a real pre-trade check | `execution_cost_sane` (HARD, blocks) + `execution_quality` (SOFT, → `needs_human`). |
+| **A** | `quant/verify.py` | none | Purely prices spread, square-root impact, fees, borrow, ADV participation, net edge, and deterministic size sensitivity. |
+| **B** | `risk/engine.py` | a real pre-trade check | Absolute cost/ADV validity and present-but-insufficient edge are HARD; missing cost/edge evidence is SOFT and forces `needs_human` with no Order. |
 | **C** | `quant/execution/` | places its own orders | Autonomous HFT loop, **simulated venue only**. |
 
-Tiers A and B reach the paper pipeline through `book_fn`, an injected seam on
-`draft_proposal` with exactly the shape of the existing `quote_fn`, threaded through
-`build_services`. Since merged PR #31, a composed Alpaca paper client supplies a
-synthesized one-level bid/ask `BookSnapshot`; unprovisioned compositions retain the honest
-`book_fn=None` posture. `require_quant_verdict` remains off by default: a missing/faulted book
-still fails conservatively through quote/risk freshness, while changing that policy belongs in
-a separately measured package rather than being smuggled into feed wiring.
+Tiers A and B reach the paper pipeline through injected `book_fn` and `metrics_fn` seams on
+`draft_proposal`, threaded through `build_services`. The composed Alpaca paper client supplies
+a synthesized one-level bid/ask `BookSnapshot` and RW-14 `MarketMetrics`. That composition
+arms both `require_quant_verdict` and `require_net_edge`; missing/faulted L1, ADV/volatility,
+or expected edge therefore cannot mint an order. The risk engine's defaults remain additive
+for deliberately uncomposed unit callers, but production does not use that posture.
+
+`PaperExecutionService._fresh_risk` calls the same shared verdict builder immediately before
+approval, prices the fixed persisted Order quantity, and keeps W-21 armed when a persisted
+verdict proves the order came through the composed path. Production passes no `EdgeEstimate`:
+model-authored `TradeProposal` fields are ignored and the schema rejects expected-return
+additions. A future deterministic strategy source must arrive as a separately reviewed,
+verified `edge_estimate.v1` input with source/evidence identifiers, gross holding-period return
+in basis points of position notional, matching horizon, and a fresh timestamp. Borrow input is
+likewise version-pinned to `borrow_quote.v1`; no provider is wired by this package.
 
 End-to-end coverage of that wiring is
 [`tests/workflows/test_execution_verification.py`](../app/tests/workflows/test_execution_verification.py),
-whose central pair is a ten-share proposal — exactly the $1,000 `max_notional` allows —
-rejected against a three-share book and approved with no book attached. Same proposal, same
-limits; only the depth changed.
+which proves that displayed sizes do not change the authority-bearing cost, ADV participation
+above 10% hard-blocks, RW-14 metrics reach the composed leaf, missing expected edge creates no
+Order, and approval-time risk consumes the same inputs.
 
 ### Tier C and Invariant 1 — the part to read carefully
 
@@ -107,8 +117,9 @@ loosening anything in `quant/`.
 **On every proposal**, an `execution` block in the embed:
 
 ```
-🔴 execution: UNECONOMIC — blocked · cost 1.32bps · (slip 1.00 + fee 0.32)
-   · participation 3.3333 · ⚠ book shows only 3 shares · 800 shares ahead if rested
+🔴 execution: UNECONOMIC — blocked · cost 22.32bps
+   · (spread 2.00 + impact 20.00 + fee 0.32 + borrow 0.00)
+   · ADV participation 0.120001 · edge unavailable
 ```
 
 **`/quant status`** — the engine's posture and containment state, read from the running
@@ -125,8 +136,9 @@ persisted on the **`RiskDecision` row** (`execution_verdict`, nullable JSON) and
 `proposal["execution_verdict"]` cannot be written. `test_a_verdict_PLANTED_ON_THE_PROPOSAL_IS_IGNORED`
 plants a flattering verdict on a hostile proposal and asserts the real one is shown.
 
-Null renders as **"not evaluated"**, never as "evaluated and fine" — and null is the normal
-state today, since no book feed is wired.
+Null renders as **"not evaluated"**, never as "evaluated and fine". In the composed process,
+an unavailable input also forces human review and cannot create an Order. `edge unavailable`
+is the intentional normal state until a deterministic strategy source is separately selected.
 
 ### The command surface is read-only by construction
 
@@ -164,6 +176,27 @@ Approve/Reject **buttons remain unwired** — that means wiring the token-mint p
 order-path change and deliberately not bundled into a quant work package.
 
 ## The decisions that were expensive to reverse
+
+**W-21 cost units and bounds.** L1 contributes the quoted spread, while RW-14 contributes
+median daily dollar volume (`dollars/day`) and annualized realized volatility (decimal
+fraction). The gate converts volatility with `σ_daily = σ_annual / sqrt(252)` and computes
+one-way impact as `Y × σ_daily × sqrt(order_notional / ADV)` with dimensionless `Y = 1.0`.
+The reported sensitivity band is `Y = 0.5–1.0`; only `1.0` carries authority. Participation
+above 10% ADV is outside the model-valid range and hard-blocks.
+
+**Holding periods and legs.** `intraday`, `short`, and `long` map to 1, 7, and 30 calendar
+days in one pure lookup used for borrow accrual. Opening trades are priced round trip;
+position-closing trades are one way. An opening short would require a fresh, verified borrow
+quote whose annual rate is a decimal fraction and whose locate fee is dollars for the order.
+W-21 adds no short authority: production sells still close reconciled longs, and the existing
+`sell_backed` gate still rejects naked shorts.
+
+**Relative edge.** The chosen lower bound of the requested 2–3× range is applied to *net*
+return: `gross_return - all_in_cost >= 2 × all_in_cost`, equivalently gross return must be at
+least 3× modeled cost. A present estimate below that boundary is a hard rejection. Missing,
+stale, malformed, unverified, or mismatched-horizon edge is explicitly unavailable and forces
+human review with no Order. Curves use exact whole-share evaluations through 10% ADV and
+report the first quantity/notional at which gross return minus all-in cost becomes negative.
 
 **Three timestamps on every event**, all `int` nanoseconds: `exchange_ts` (venue stamp),
 `recv_ts` (wire arrival), `ingest_ts` (our decode). A single "timestamp" cannot distinguish a
@@ -222,9 +255,10 @@ Pinned as `test_requoting_on_every_move_destroys_queue_priority` in
 
 ## What the engine deliberately will not do
 
-- **No fill probability for a resting order.** That is the `exp(-k·δ)` shortcut; inside a
-  risk check it would carry more authority than in a backtest. `queue_ahead_shares` is
-  reported instead — a measurement, not a model.
+- **No displayed-depth capacity or fill probability in the live cost gate.** IEX L1 size does
+  not establish executable capacity. Queue and depth remain measurements inside the contained
+  FIFO simulator; proposal risk uses ADV participation and never reports them as live
+  economics.
 - **No zero-latency default.** `LatencyModel.instant()` exists for unit tests. A zero-latency
   venue is the most flattering assumption available to a fast strategy.
 - **No zero-fee default.** `ZERO_FEES` exists to measure the cost of costs. Exchange fees are
@@ -282,9 +316,10 @@ export COCKPIT_OPERATOR_IDS="<your-discord-user-id>"
 
 ## Also changed outside `quant/`
 
-- [`risk/engine.py`](../app/risk/engine.py) — two checks, four `RiskContext` fields appended
-  after `mode` (every preceding field is non-defaulted). Backward compatible: with no verdict
-  attached the engine behaves exactly as before.
+- [`risk/engine.py`](../app/risk/engine.py) — absolute cost/ADV validity, execution-quality,
+  relative-edge sufficiency, and edge-availability checks. `require_quant_verdict` and
+  `require_net_edge` are armed by production composition; deliberately uncomposed callers
+  retain backward-compatible defaults.
 - [`orchestrator/quant_ws.py`](../app/orchestrator/quant_ws.py) — read-only 10Hz snapshot
   socket at `/ws/quant`, registered only when an engine is attached. API key checked on the
   handshake explicitly; never reads a frame from the client. No UI this pass (RW-08 defers the

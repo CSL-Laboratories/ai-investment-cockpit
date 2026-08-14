@@ -1,12 +1,17 @@
 """Real-paper composition seam: only stored, approved, human-confirmed orders may submit."""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from brokers.alpaca_paper import AlpacaPaperBroker, FakeAlpaca
 from brokers.capability import TokenRegistry
 from brokers.gateway import OrderGateway
 from brokers.paper_execution import PaperExecutionError, PaperExecutionService
 from config.settings import DecisionRuntime, Mode
 from core.ids import new_id
+from quant.book.lob import BookSnapshot, LevelSnapshot
+from quant.events import PriceScale, to_ns
+from quant.verify import VerifyParams
 from schemas.models.agent_job import AgentJob
 from schemas.models.proposal_record import ProposalRecord
 from tests.brokers.conftest import build_scenario
@@ -14,7 +19,28 @@ from tests.brokers.conftest import build_scenario
 OPERATOR_ID = "123456789012345678"
 
 
-def _service(st, *, runtime="claude", selected_runtime="claude"):
+class _MarketData:
+    def __init__(self, st, *, metric):
+        self._st = st
+        self._metric = metric
+        self.verify_params = VerifyParams(
+            scale=PriceScale(tick_size=Decimal("0.01")),
+            max_staleness_ns=120_000_000_000,
+        )
+
+    def book(self, _symbol):
+        return BookSnapshot(
+            symbol="AAPL", seq=7, ts=to_ns(self._st.clock.now()),
+            bids=(LevelSnapshot(price_ticks=14_999, qty=1, order_count=1),),
+            asks=(LevelSnapshot(price_ticks=15_001, qty=1, order_count=1),),
+        )
+
+    def metrics(self, _symbol):
+        return self._metric
+
+
+def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
+             execution_verdict=None):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -32,7 +58,8 @@ def _service(st, *, runtime="claude", selected_runtime="claude"):
     )
     scenario = build_scenario(
         st, mode=Mode.paper, broker=broker, gateway=gateway, qty="1",
-        limit_price="150", notional="150", mint=False,
+        limit_price="150", notional="150", execution_verdict=execution_verdict,
+        mint=False,
     )
     job = AgentJob(
         id=new_id("job"), runtime=runtime, model="deep", model_pinned="pinned",
@@ -58,7 +85,7 @@ def _service(st, *, runtime="claude", selected_runtime="claude"):
     service = PaperExecutionService(
         st, broker=broker, gateway=gateway, token_registry=registry,
         quote_fn=lambda _symbol: {"price": "150", "age_s": 0, "spread_pct": "0.1"},
-        watchlist_fn=lambda: {"AAPL"},
+        watchlist_fn=lambda: {"AAPL"}, market_data=market_data,
     )
     return service, scenario, client
 
@@ -132,3 +159,66 @@ def test_runtime_mismatch_cannot_enter_paper_order_path(st, monkeypatch):
     else:  # pragma: no cover - explicit safety assertion
         raise AssertionError("a proposal from the non-selected runtime must not reach paper broker")
     assert client.submitted == []
+
+
+def test_composed_decide_fails_closed_when_rw14_metrics_are_unavailable(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, market_data=_MarketData(st, metric=None),
+    )
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-w21-missing-metrics",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "fresh_risk_failed"
+    else:  # pragma: no cover - explicit order-path safety assertion
+        raise AssertionError("missing W-21 metrics must fail at the decide surface")
+    assert client.submitted == []
+
+
+def test_persisted_w21_evidence_keeps_fresh_risk_armed_if_service_loses_market_data(
+    st, monkeypatch,
+):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st,
+        execution_verdict={
+            "verdict": "ok", "net_edge_state": "sufficient", "qty": 1,
+        },
+    )
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-w21-detached-market-data",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "fresh_risk_failed"
+    else:  # pragma: no cover - explicit order-path safety assertion
+        raise AssertionError("a composed order must not fall back to legacy additive risk")
+    assert client.submitted == []
+
+
+def test_approval_prices_the_persisted_order_quantity_not_a_new_notional_size(
+    st, monkeypatch,
+):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, _client = _service(st)
+    seen = []
+
+    def recording_builder(*args, quantity_override=None, **kwargs):
+        seen.append(quantity_override)
+        return None, None, int(Decimal(str(quantity_override))), ()
+
+    monkeypatch.setattr("brokers.paper_execution.build_execution_verdict", recording_builder)
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-w21-fixed-qty",
+    )
+
+    assert out["status"] == "submitted"
+    assert len(seen) >= 2
+    assert all(Decimal(str(qty)) == Decimal("1") for qty in seen)

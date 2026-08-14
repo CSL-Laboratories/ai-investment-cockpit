@@ -48,6 +48,28 @@ from decimal import Decimal
 
 from quant.events import Fill, Liquidity, PriceScale, Side
 
+
+SECONDS_PER_DAY = 24 * 60 * 60
+HOLDING_SECONDS = {
+    "intraday": 1 * SECONDS_PER_DAY,
+    "short": 7 * SECONDS_PER_DAY,
+    "long": 30 * SECONDS_PER_DAY,
+}
+"""W-21 borrow horizon contract, in calendar seconds.
+
+Borrow accrues over nights and weekends, not trading-session seconds.  ``intraday`` still
+reserves a full borrow day because a broker may charge a daily minimum.  This mapping is the
+single home for the proposal schema's deliberately coarse horizon enum.
+"""
+
+
+def holding_seconds(time_horizon: str) -> int:
+    """Return the pinned calendar holding duration; reject unknown horizons explicitly."""
+    try:
+        return HOLDING_SECONDS[str(time_horizon)]
+    except KeyError as exc:
+        raise ValueError(f"unknown time_horizon {time_horizon!r}") from exc
+
 # US equity regulatory fees. Sell-side only, both of them.
 DEFAULT_SEC_FEE_RATE = Decimal("0.0000278")
 """SEC Section 31, per dollar of SELL proceeds. Reset periodically by the Commission."""

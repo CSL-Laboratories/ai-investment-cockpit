@@ -81,7 +81,7 @@ _VERDICT_LABEL = {
     "ok": "OK",
     "marginal": "MARGINAL — human review",
     "uneconomic": "UNECONOMIC — blocked",
-    "insufficient_data": "NOT PRICEABLE — no usable book",
+    "insufficient_data": "NOT PRICEABLE — missing L1/ADV/volatility/borrow input",
 }
 
 
@@ -110,24 +110,27 @@ def render_execution_section(risk_decision) -> dict:
         }
 
     name = str(verdict.get("verdict", ""))
-    fillable = verdict.get("fillable_now")
-    qty = verdict.get("qty")
     return {
         "evaluated": True,
         "verdict": name,
         "label": _VERDICT_LABEL.get(name, name or "unknown"),
         "expected_cost_bps": verdict.get("expected_cost_bps"),
-        "expected_slippage_bps": verdict.get("expected_slippage_bps"),
+        "expected_spread_bps": verdict.get("expected_spread_bps"),
+        "expected_impact_bps": verdict.get("expected_impact_bps"),
         "expected_fee_bps": verdict.get("expected_fee_bps"),
-        "participation_rate": verdict.get("participation_rate"),
-        "fillable_now": fillable,
-        # The operator's most actionable single fact: can the visible market absorb this at
-        # all? Stated as a boolean rather than left implicit in two numbers they must compare.
-        "fully_fillable": (isinstance(fillable, int) and isinstance(qty, int) and fillable >= qty),
-        # A MEASUREMENT, not a fill probability — see quant/verify.py for why no probability
-        # is produced for a resting order anywhere in this system.
-        "queue_ahead_shares": verdict.get("queue_ahead_shares"),
+        "expected_borrow_bps": verdict.get("expected_borrow_bps"),
+        "borrow_state": verdict.get("borrow_state"),
+        "adv_participation_rate": verdict.get("adv_participation_rate"),
+        "net_edge_state": verdict.get("net_edge_state"),
+        "expected_gross_return_bps": verdict.get("expected_gross_return_bps"),
+        "expected_net_return_bps": verdict.get("expected_net_return_bps"),
+        "net_cost_multiple": verdict.get("net_cost_multiple"),
+        "min_net_cost_multiple": verdict.get("min_net_cost_multiple"),
+        "first_negative_qty": verdict.get("first_negative_qty"),
+        "first_negative_notional": verdict.get("first_negative_notional"),
+        "cost_curve": list(verdict.get("cost_curve") or []),
         "book_seq": verdict.get("book_seq"),
+        "metrics_as_of": verdict.get("metrics_as_of"),
         "reasons": list(verdict.get("reasons") or []),
     }
 

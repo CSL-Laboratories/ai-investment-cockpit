@@ -34,7 +34,16 @@ from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
 from quant.events import PriceScale, to_ns
-from quant.verify import VerifyParams, proposal_quantity, verify_proposal
+from quant.verify import (
+    BorrowQuote,
+    EdgeEstimate,
+    MarketImpactInputs,
+    PositionEffect,
+    QuantVerdict,
+    VerifyParams,
+    proposal_quantity,
+    verify_proposal,
+)
 from risk.engine import RiskContext, evaluate, order_notional
 from schemas.models.market_event import MarketEvent
 from schemas.models.order import Order
@@ -88,7 +97,9 @@ on a finer grid and a verdict computed on the wrong scale misreads every price."
 
 
 def build_risk_context(state, *, quote, watchlist: frozenset[str],
-                       quant_verdict=None, quant_book_seq=None) -> RiskContext:
+                       quant_verdict=None, quant_book_seq=None,
+                       require_quant_verdict: bool = False,
+                       require_net_edge: bool = False) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
     (absent -> zeros -> risk fails conservatively) + the injected quote (None ->
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
@@ -123,13 +134,102 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
         quote_age_s=quote_age_s,
         quote_spread_pct=quote_spread if quote_spread.is_finite() else Decimal("0"),
         mode=ModeLadder(state).current().value,
-        # QT-06. ``require_quant_verdict`` stays at its default False: no book feed exists in
-        # the tree yet, and flipping it on before one does would send EVERY proposal to human
-        # review with "no execution verdict attached" — a control that fires on everything is
-        # a control nobody reads. Turn it on in the same change that wires a real book_fn.
+        # Deliberately uncomposed callers retain additive defaults. Production passes the
+        # market-data seams and arms both W-21 requirements at the call site below.
         quant_verdict=quant_verdict,
         quant_book_seq=quant_book_seq,
+        require_quant_verdict=require_quant_verdict,
+        require_net_edge=require_net_edge,
     )
+
+
+def _market_impact_inputs(metric, *, symbol: str, now) -> MarketImpactInputs | None:
+    """Convert the I/O-owning RW-14 record to quant's immutable pure boundary type."""
+    if metric is None:
+        return None
+    as_of = getattr(metric, "as_of", None)
+    age_days = (now.date() - as_of).days if as_of is not None else -1
+    return MarketImpactInputs(
+        symbol=str(getattr(metric, "symbol", symbol)).upper(),
+        as_of=as_of,
+        median_daily_dollar_volume=_dec(
+            getattr(metric, "median_daily_dollar_volume", None)
+        ),
+        annualized_realized_volatility=_dec(
+            getattr(metric, "realized_volatility", None)
+        ),
+        observations=int(getattr(metric, "observations", 0)),
+        age_days=age_days,
+    )
+
+
+def build_execution_verdict(
+    proposal: dict,
+    *,
+    quote_price: Decimal,
+    clock,
+    book_fn=None,
+    metrics_fn=None,
+    verify_params: VerifyParams | None = None,
+    expected_edge: EdgeEstimate | None = None,
+    borrow_quote: BorrowQuote | None = None,
+    position_effect: PositionEffect | None = None,
+    quantity_override=None,
+) -> tuple[QuantVerdict | None, int | None, int | None, tuple[str, ...]]:
+    """Build the W-21 verdict from injected leaves for draft and approval-time risk.
+
+    The shared helper is deliberate: ``PaperExecutionService._fresh_risk`` must re-derive the
+    same authority-bearing facts immediately before approval instead of evaluating a context
+    with no verdict and accidentally treating the missing cost model as free.
+    """
+    # Drafting resolves a notional instruction once. Approval-time risk passes the already
+    # persisted Order quantity so the fresh cost fact describes the exact tuple awaiting
+    # authorization even if the quote moved after drafting (BUG-044/W-21).
+    resolved_qty = (
+        proposal_quantity(proposal, quote_price)
+        if quantity_override is None
+        else proposal_quantity({"quantity": quantity_override}, quote_price)
+    )
+    verification_proposal = {**proposal, "quantity": resolved_qty, "notional": None}
+    if book_fn is None:
+        return None, None, resolved_qty, ()
+
+    symbol = str(proposal.get("symbol", "")).upper()
+    try:
+        book = book_fn(symbol)
+        if book is None:
+            return None, None, resolved_qty, ()
+        now = clock.now()
+        metric = metrics_fn(symbol) if metrics_fn is not None else None
+        inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
+        effect = position_effect
+        if effect is None:
+            effect = (
+                PositionEffect.OPEN_LONG
+                if proposal.get("side") == "buy"
+                else PositionEffect.CLOSE_LONG
+            )
+        candidate = verify_proposal(
+            verification_proposal,
+            book,
+            verify_params or DEFAULT_VERIFY_PARAMS,
+            metrics=inputs,
+            position_effect=effect,
+            expected_edge=expected_edge,
+            borrow_quote=borrow_quote,
+            now_ns=to_ns(now),
+        )
+        # The second observation makes book-sequence movement reachable at the risk gate.
+        current = book_fn(symbol)
+        book_seq = current.seq if current is not None else book.seq
+        reasons = tuple(f"execution: {reason}" for reason in candidate.reasons)
+        return candidate, book_seq, resolved_qty, reasons
+    except Exception as exc:  # noqa: BLE001 - unavailable authority must fail closed upstream
+        log.warning(
+            "execution verification unavailable for %s: %s: %s",
+            symbol, type(exc).__name__, exc,
+        )
+        return None, None, resolved_qty, ()
 
 
 def _resolve_proposal_id(state, proposal: dict) -> str:
@@ -174,7 +274,10 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
 
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None, book_fn=None,
+                   metrics_fn=None,
                    verify_params: VerifyParams | None = None,
+                   expected_edge: EdgeEstimate | None = None,
+                   borrow_quote: BorrowQuote | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
                    account: str = "paper") -> ProposalOutcome:
@@ -183,11 +286,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
     seam (no fetcher exists in the tree); None fails the risk gate conservatively.
 
-    ``book_fn(symbol) -> BookSnapshot | None`` is the QT-05 execution-verification seam, and
-    is deliberately the SAME SHAPE as ``quote_fn``: injected, never fetched here, and None
-    when no book is available. With it, the proposal is priced against real depth before the
-    risk gate runs — which is the only thing in the system able to notice that an order is
-    being drafted for three times the liquidity the market is showing.
+    ``book_fn`` supplies L1 prices and ``metrics_fn`` supplies RW-14 ADV/volatility. Both are
+    injected and never fetched here. ``expected_edge`` is intentionally None in production
+    until a deterministic strategy source exists; no model-authored proposal field is read.
     Returns everything; the caller (services/bridge) owns delivery + veto scheduling."""
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
@@ -257,54 +358,26 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
             reasons.append("market quote unavailable; deterministic risk fails closed")
     raw_quote_price = _dec((quote or {}).get("price"))
     quote_price = raw_quote_price if raw_quote_price.is_finite() else Decimal("0")
-    # BUG-044: resolve shares ONCE. Verification and the canonical order tuple must describe
-    # the same order. The original proposal remains untouched so risk can conservatively size
-    # on the larger of divergent quantity/notional fields.
-    resolved_qty = proposal_quantity(proposal, quote_price)
-    verification_proposal = {**proposal, "quantity": resolved_qty, "notional": None}
+    # BUG-044 + W-21: one shared builder resolves quantity once and supplies the identical
+    # verdict path to proposal drafting and approval-time fresh risk.
+    verdict, book_seq, resolved_qty, verification_reasons = build_execution_verdict(
+        proposal,
+        quote_price=quote_price,
+        clock=clock,
+        book_fn=book_fn,
+        metrics_fn=metrics_fn,
+        verify_params=verify_params,
+        expected_edge=expected_edge,
+        borrow_quote=borrow_quote,
+    )
+    reasons.extend(verification_reasons)
 
-    # ---- QT-05: price the proposal against real depth BEFORE the risk gate ---------------
-    # Pure and deterministic (quant/verify.py is import-clean so risk/ may consume it under
-    # Invariant 5). A failure here degrades to "no verdict", which the risk gate treats as
-    # the absent case — it must never take down the proposal pipeline, because an advisory
-    # measurement that can halt the thing it advises on is a liability rather than a control.
-    verdict = None
-    book_seq = None
-    if book_fn is not None:
-        try:
-            book = book_fn(symbol)
-            if book is not None:
-                candidate = verify_proposal(
-                    verification_proposal,
-                    book,
-                    verify_params or DEFAULT_VERIFY_PARAMS,
-                    now_ns=to_ns(clock.now()),
-                )
-                # READ THE SEAM AGAIN, at gate time. ``_verdict_state`` calls a verdict stale
-                # when ``ctx.quant_book_seq > verdict.book_seq`` — the book the order would
-                # trade against has moved past the one the verdict describes. Passing the
-                # SAME snapshot's seq to both sides made that condition ``seq > seq``, which
-                # is never true however far the book moved, so the Invariant 6 staleness
-                # control was wired shut while /quant/status reported it as live. Two
-                # observations are the only arrangement in which the seqs can differ.
-                current = book_fn(symbol)
-                verdict = candidate
-                book_seq = current.seq if current is not None else book.seq
-                if verdict.reasons:
-                    reasons.extend(f"execution: {r}" for r in verdict.reasons)
-        except Exception as exc:
-            # The comment above promises this, and there was no try/except behind it. A real
-            # book feed does I/O and raises for ordinary reasons; unguarded, every one of
-            # them killed the draft. Degrade to the absent-verdict case the risk gate already
-            # handles, and say so — silently losing a control is how the two dead checks
-            # above went unnoticed.
-            log.warning("execution verification unavailable for %s: %s: %s",
-                        symbol, type(exc).__name__, exc)
-            verdict = None
-            book_seq = None
-
-    ctx = build_risk_context(state, quote=quote, watchlist=watchlist,
-                             quant_verdict=verdict, quant_book_seq=book_seq)
+    ctx = build_risk_context(
+        state, quote=quote, watchlist=watchlist,
+        quant_verdict=verdict, quant_book_seq=book_seq,
+        require_quant_verdict=(book_fn is not None or metrics_fn is not None),
+        require_net_edge=metrics_fn is not None,
+    )
     rd = evaluate(proposal, ctx)
     now = clock.now()
     rd_row = RiskDecision(

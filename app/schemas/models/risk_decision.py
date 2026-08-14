@@ -49,9 +49,9 @@ class RiskDecision(Base):
     # anywhere else and the embed would have to accept it from a caller who might have taken
     # it off the model-authored proposal.
     #
-    # NULLABLE, and null is the normal state today: no book feed exists in the tree, so most
-    # decisions are evaluated with no verdict. Readers must treat null as "not evaluated",
-    # never as "evaluated and fine".
+    # NULLABLE for uncomposed/test callers. Production paper composition persists W-21's
+    # L1/ADV/volatility verdict; its edge state remains explicitly "unavailable" until a
+    # deterministic strategy source is separately selected. Null is never "evaluated and fine".
     execution_verdict: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
     # timestamps -> DateTime(timezone=True)

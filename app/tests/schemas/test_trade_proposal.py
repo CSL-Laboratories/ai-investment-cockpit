@@ -65,6 +65,13 @@ def test_trade_proposal_rejects_injection_command_fields(field):
         jsonschema.validate({**VALID, field: True}, SCHEMA)
 
 
+@pytest.mark.parametrize("field", ["expected_return", "expected_return_bps", "expected_edge_bps"])
+def test_trade_proposal_rejects_model_authored_edge_fields(field):
+    """W-21: a model cannot inflate the numerator of its own deterministic risk check."""
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**VALID, field: 999_999}, SCHEMA)
+
+
 @pytest.mark.parametrize(
     "missing",
     [

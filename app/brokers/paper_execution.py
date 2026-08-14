@@ -12,6 +12,7 @@ checks before the fixed Alpaca PAPER transport is reached.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from bridge.approval import Rejection, record_decision, token_nonce_for_approval
 from brokers.order_tuple import canonical_order_tuple
@@ -23,7 +24,7 @@ from schemas.models.agent_job import AgentJob
 from schemas.models.order import Order
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
-from workflows.proposals import build_risk_context
+from workflows.proposals import build_execution_verdict, build_risk_context
 
 
 @dataclass(frozen=True)
@@ -142,12 +143,33 @@ class PaperExecutionService:
             "mode": ModeLadder(self.state).current().value,
         }
 
-    def _fresh_risk(self, proposal_payload: dict, symbol: str):
+    def _fresh_risk(self, proposal_payload: dict, symbol: str, *, order_qty=None,
+                    require_w21: bool = False):
         try:
             snapshot = self._broker.get_positions(st=self.state, clock=self.state.clock)
             quote = self._quote_fn(symbol)
+            market_data = self.market_data
+            verdict, book_seq, _resolved_qty, _reasons = build_execution_verdict(
+                proposal_payload,
+                quote_price=Decimal(str((quote or {}).get("price", 0))),
+                clock=self.state.clock,
+                book_fn=(market_data.book if market_data is not None else None),
+                metrics_fn=(market_data.metrics if market_data is not None else None),
+                verify_params=(market_data.verify_params if market_data is not None else None),
+                # Deliberately no edge/borrow provider in W-21. The package that selects a
+                # deterministic strategy or opens short authority must add its provider to
+                # BOTH drafting and this fresh gate under a new adversarial review.
+                quantity_override=order_qty,
+            )
+            # A persisted W-21 verdict proves this order was drafted on the composed cost
+            # path. Losing the service's market-data attachment later must not silently turn
+            # approval-time risk back into the legacy additive posture.
+            require_composed = market_data is not None or require_w21
             ctx = build_risk_context(
-                self.state, quote=quote, watchlist=self._watchlist()
+                self.state, quote=quote, watchlist=self._watchlist(),
+                quant_verdict=verdict, quant_book_seq=book_seq,
+                require_quant_verdict=require_composed,
+                require_net_edge=require_composed,
             )
             return evaluate(proposal_payload, ctx), snapshot
         except Exception:  # noqa: BLE001 - any vendor/data fault means no order authority
@@ -199,7 +221,12 @@ class PaperExecutionService:
                     f"type the exact symbol {order.symbol.upper()} to approve this paper order",
                     422,
                 )
-            fresh, _snapshot = self._fresh_risk(proposal.payload, order.symbol)
+            fresh, _snapshot = self._fresh_risk(
+                proposal.payload,
+                order.symbol,
+                order_qty=order.qty,
+                require_w21=risk_decision.execution_verdict is not None,
+            )
             if fresh.get("decision") != "approved":
                 raise PaperExecutionError(
                     "fresh_risk_failed",
@@ -230,7 +257,12 @@ class PaperExecutionService:
             }
 
         def risk_recheck(_positions):
-            result, _snap = self._fresh_risk(proposal.payload, order.symbol)
+            result, _snap = self._fresh_risk(
+                proposal.payload,
+                order.symbol,
+                order_qty=order.qty,
+                require_w21=risk_decision.execution_verdict is not None,
+            )
             return result
 
         latest = self._broker.get_positions(st=self.state, clock=self.state.clock)

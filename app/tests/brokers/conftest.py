@@ -85,6 +85,7 @@ class Scenario:
 def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
                    qty="10", order_type="limit", limit_price="150", notional="1500",
                    consumed=False, risk_decision_state="approved",
+                   execution_verdict=None,
                    mint=True) -> Scenario:
     """Assemble a fully-valid submit scenario. Individual tests mutate ONE field to prove each
     gate independently."""
@@ -100,10 +101,13 @@ def build_scenario(st, *, mode=Mode.review_live, broker=None, gateway=None,
     rd = RiskDecision(
         id=new_id("rd"), proposal_id="p1", decision=risk_decision_state, checks={},
         failed_checks=[], warnings=[], max_allowed_notional=Decimal("5000"),
-        human_required=False, evaluated_at=clk.now(), created_at=clk.now(),
+        human_required=False, execution_verdict=execution_verdict,
+        evaluated_at=clk.now(), created_at=clk.now(),
     )
-    st.audit.record_state_change(rd, "risk_decision", actor="risk",
-                                 payload={"decision": risk_decision_state})
+    risk_payload = {"decision": risk_decision_state}
+    if execution_verdict is not None:
+        risk_payload["execution_verdict"] = execution_verdict
+    st.audit.record_state_change(rd, "risk_decision", actor="risk", payload=risk_payload)
 
     canon = canonical_order_tuple(symbol="AAPL", side="buy", qty=qty, order_type=order_type,
                                   limit_price=limit_price, tif="day")

@@ -787,6 +787,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
                               deliver=deliver, parquet_root=parquet_root,
                               quote_fn=paper.quote if paper is not None else None,
                               book_fn=market_data.book if market_data is not None else None,
+                              metrics_fn=(market_data.metrics
+                                          if market_data is not None else None),
                               verify_params=(market_data.verify_params
                                              if market_data is not None else None),
                               holdings_fn=(paper.holdings_symbols if paper is not None else None),
