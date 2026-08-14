@@ -21,7 +21,7 @@ last-verified: 2026-08-13
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #30 on 2026-08-13.
+state/lifecycle reconciled through PR #31 on 2026-08-13.
 
 ---
 
@@ -29,28 +29,29 @@ state/lifecycle reconciled through PR #30 on 2026-08-13.
 
 `main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
 boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
-tooling (`RW-19` implementation), and BUG-041–045, BUG-047–051, BUG-098, and BUG-099. The
-claimed `work/rw14-live-market-data` branch is the only current production-code merge candidate.
+tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), and
+BUG-040–051, BUG-097–099. There are no open pull requests awaiting merge.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
 triage, briefs, interrogation, and proposal drafting; deterministic risk/mode/approval controls;
 human-approved Alpaca paper submission through `OrderGateway`; Discord/API status and kill
-surfaces; and contained synthetic/replay quant simulation.
+surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/daily-bar
+inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
-**What is not complete on `main`:** real broker-status polling and reconciliation (`RW-15`);
-the implemented-but-unmerged ADV/volatility, live `book_fn`, and quote-age enforcement
-(`RW-14`); the realistic net-edge cost model (`W-21`);
+**What is not complete:** real broker-status polling and reconciliation (`RW-15`); the
+realistic net-edge cost model (`W-21`);
 the two-day unattended paper-MVP proof (`W-22`); event-driven paper autonomy (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** the final RW-14 branch gates are 2,121 passed / 1 skipped on Windows
-with Ruff clean and an order-path adversarial review complete.
-GitHub's latest Ubuntu/Windows/macOS jobs did not start because the Actions overage budget was
-exhausted, so PRs #27–#29 have local regression evidence but await cross-platform attestation.
+**Verification posture:** RW-14 merged in PR #31 with 2,121 passed / 1 skipped on Windows,
+Ruff clean, and an order-path adversarial review complete. All six PR #31 matrix jobs stopped
+before executing a step because GitHub reported failed recent account payments or a spending
+limit that needs to be increased. Cross-platform CI and RW-14's named live-data evidence remain
+pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** `RW-14 → W-21 → RW-15 → W-22`. `RW-11` and `RW-19` evidence collection
+**Immediate sequence:** `W-21 → RW-15 → W-22`. `RW-11`, `RW-19`, and `RW-14` evidence collection
 runs alongside that code lane. `DEC-05` must be resolved before any `RW-18` authentication.
 
 ---
@@ -243,7 +244,7 @@ pipeline faults as degraded rather than quiet success.
 
 ### M2 — Live market data on the ingestion trigger  (`RW-14`)
 
-**Package intake — claimed 2026-08-13 on `work/rw14-live-market-data`:**
+**Package status — merged 2026-08-13 in PR #31; online evidence pending:**
 
 1. **Operator change:** the composed paper cockpit receives a production L1 book snapshot plus
    daily ADV/realized-volatility inputs, exposes advancing quant snapshots, and disables orders
@@ -258,14 +259,14 @@ pipeline faults as degraded rather than quiet success.
 4. **Reachability proof:** composed-system tests must fail if quote timestamps stop reaching
    breaker sampling, if stale data no longer selects L8 `watch_only`, or if `/ws/quant` is not
    registered with an advancing production snapshot source.
-5. **Claimed IDs:** `RW-14` is the single package; it resolves `DEC-01` and closes/unblocks
+5. **Package IDs:** `RW-14` is the single package; it resolves `DEC-01` and closes/unblocks
    `BUG-040`, `BUG-046`, and `BUG-097` without claiming later `W-21` cost-model work.
 6. **Platforms:** pure Python/httpx, injected clocks, `Path`-safe caches, and no subprocess,
    credential-store, or platform-specific behavior. Ubuntu/Windows/macOS CI remains required.
 7. **Size:** one vertical slice, targeted below roughly 1,000 production LOC plus tests and
    package documentation. A larger design returns here for splitting before implementation.
 
-**Offline implementation evidence — 2026-08-13:** the branch now composes a single cached
+**Offline implementation evidence — 2026-08-13:** `main` now composes a single cached
 Alpaca IEX L1 source for quotes, books, synchronous gateway freshness, quant snapshots, and
 daily ADV/volatility. The polled universe is the immutable operator watchlist plus current
 paper holdings, so removing a held name from the watchlist cannot make an exit permanently
@@ -282,7 +283,7 @@ The implementation received read-only DeepSeek v4 Pro/Flash architecture, test, 
 order-path adversarial passes (sessions `ses_005cb948dffep00GT3p9o4wDZO`,
 `ses_005cb948dffet6lNpL21BfkkHb`, `ses_005cb948affel97HEwFfJv1i6q`,
 `ses_005b314d6ffebMIQqTEdhH74zF`, and `ses_005b314deffelJJPoVNNHLTYxl`). Reproduced findings
-closed on the branch include graceful quote-cache degradation, holdings-only reachability,
+closed in PR #31 include graceful quote-cache degradation, holdings-only reachability,
 calendar/clock refusal, cadence/TTL alignment, composed allowlist coverage, and raw-hash
 binding. Cross-platform CI, real IEX entitlement/field coverage, live exchange-timestamp
 progression, and a real stale-to-L8 transition remain online evidence; none is inferred from
@@ -297,10 +298,9 @@ fixtures. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff cl
   `max_data_age_s` into `BreakerSignals` — the stale-data breaker's wire (`BUG-058` left it
   honestly UNSAMPLED until this package exists). Gate the sampling on market hours, and keep
   the 120s threshold coherent with the poll cadence.
-- Close `BUG-097`: today an L6 breaker drops only to `review_live`, but Invariant 7 requires a
-  stale feed to disable the order path in `watch_only`. Route stale-data through the single L8
-  watch-only mechanism, keep ingest/awareness running, and carry an adversarial-review round
-  because this changes mode/order-path behavior.
+- PR #31 closes `BUG-097` in code: stale data routes through the single L8 watch-only
+  mechanism, ingest/awareness keeps running, and the order-path change received adversarial
+  review. Its real stale-feed transition remains an online evidence gate.
 - **Gate:** `quant_book_seq` advances between observations on a live day; authority age is
   computed from the latest exchange timestamp. The synchronous gateway refuses stale data at
   every hour, while market-hours breaker sampling routes >120 seconds to L8 `watch_only` and
@@ -461,17 +461,17 @@ mode ladder may still fall to `watch_only`; no implementation may weaken that fa
 3. `RW-19` records event capture/replay, stream-gap, load, WS/REST identity, and IEX/SIP
    evidence and resolves `DEC-07` before `RW-13`.
 4. `RW-17`/`BUG-096` is closed: an unknown calendar year refuses auto-arm/orders while ingest
-   and awareness continue. `RW-14` must still close `BUG-097` so stale data reaches the same L8
-   `watch_only` path before dynamic-paper soak.
+   and awareness continue. `RW-14`/`BUG-097` is merged; its real stale-feed-to-L8 transition
+   must still be evidenced before dynamic-paper soak.
 5. Every numeric latency/load target is labelled proposed until measured; vendor facts and
    repository invariants are never presented as performance promises.
 
 Dependency order:
 
 `{RW-11 evidence → RW-12, RW-19 evidence → DEC-07, DEC-05 → RW-18}` run as bounded evidence
-lanes around the serial code spine `RW-14 → W-21 → RW-15 → W-22 → RW-13 → W16 → beta
-stabilization → W17 → W18 → W19`. `RW-14` may be built offline while `DEC-07` evidence is
-collected, but its online acceptance cannot close on an assumed entitlement/feed.
+lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → RW-13 → W16 → beta
+stabilization → W17 → W18 → W19`. RW-14's online acceptance remains a parallel evidence lane
+and cannot close on an assumed entitlement/feed.
 
 ### Recommended development pipeline
 
@@ -482,7 +482,7 @@ may run alongside it.
 
 | Phase | Purpose | Primary packages/evidence | Exit condition |
 |---|---|---|---|
-| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `RW-14 → W-21 → RW-15 → W-22` code; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
+| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22` code; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
 | **2. Online testing and evidence** | Prove platforms, credentials, vendor contracts, live data, and broker outcomes | cross-platform CI; `RW-11`, `RW-19`/`DEC-07`, `RW-14`, `RW-15`; `DEC-05 → RW-18`; SEC-11 witness activation | every required CI/live-day/precision/reconciliation/source-contract gate recorded; no mocked result substitutes for an online gate |
 | **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` on the M1–M4 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
 | **4. Production beta** | Exercise dynamic paper autonomy under real operating conditions without capital | `RW-13 → W16` | replay parity/idempotency, bounded gap/flood behavior, and ≥4 consecutive market weeks of enabled dynamic-paper soak with fault injection |
@@ -496,7 +496,7 @@ be developed, locally committed, and pushed for backup without opening a PR; the
 workflow runs on pull requests and pushes to `main`, not ordinary branch pushes. This is a cost
 control, not a gate waiver.
 
-The implementation order is `RW-14 → W-21 → RW-15 → W-22`. When a later package genuinely needs
+The remaining implementation order is `W-21 → RW-15 → W-22`. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;
 then rebase/update it onto `main`. A stacked branch is not evidence that its predecessor is
