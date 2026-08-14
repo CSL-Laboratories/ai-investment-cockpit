@@ -178,6 +178,8 @@ def build_execution_verdict(
     quote_price: Decimal,
     clock,
     book_fn=None,
+    market_observation=None,
+    observation_fn=None,
     metrics_fn=None,
     verify_params: VerifyParams | None = None,
     expected_edge: EdgeEstimate | None = None,
@@ -202,12 +204,22 @@ def build_execution_verdict(
         else proposal_quantity({"quantity": quantity_override}, quote_price)
     )
     verification_proposal = {**proposal, "quantity": resolved_qty, "notional": None}
-    if book_fn is None:
+    if book_fn is None and market_observation is None:
         return None, None, resolved_qty, ()
 
     symbol = str(proposal.get("symbol", "")).upper()
     try:
-        book = book_fn(symbol)
+        if edge_provider is not None and market_observation is None:
+            raise ValueError("the edge provider requires one atomic market observation")
+        if market_observation is not None:
+            if str(market_observation.symbol).upper() != symbol:
+                raise ValueError("market observation symbol mismatch")
+            book = market_observation.book
+            quote = dict(market_observation.quote)
+            if _dec(quote.get("price")) != quote_price:
+                raise ValueError("quote price diverges from the atomic market observation")
+        else:
+            book = book_fn(symbol)
         if book is None:
             return None, None, resolved_qty, ()
         now = clock.now()
@@ -218,7 +230,9 @@ def build_execution_verdict(
         # explicit unit-test seam; production composition never supplies it.
         verified_edge = expected_edge
         if verified_edge is None and edge_provider is not None and quote is not None:
-            verified_edge = edge_provider.estimate(verification_proposal, quote=quote)
+            verified_edge = edge_provider.estimate(
+                verification_proposal, quote=quote, market_metric=metric
+            )
         effect = position_effect
         if effect is None:
             effect = (
@@ -237,8 +251,14 @@ def build_execution_verdict(
             now_ns=to_ns(now),
         )
         # The second observation makes book-sequence movement reachable at the risk gate.
-        current = book_fn(symbol)
-        book_seq = current.seq if current is not None else book.seq
+        if observation_fn is not None:
+            current_observation = observation_fn(symbol)
+            book_seq = current_observation.book.seq
+            if current_observation.identity != market_observation.identity and book_seq <= book.seq:
+                book_seq = book.seq + 1
+        else:
+            current = book_fn(symbol) if book_fn is not None else book
+            book_seq = current.seq if current is not None else book.seq
         reasons = tuple(f"execution: {reason}" for reason in candidate.reasons)
         return candidate, book_seq, resolved_qty, reasons
     except Exception as exc:  # noqa: BLE001 - unavailable authority must fail closed upstream
@@ -291,7 +311,7 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
 
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None, book_fn=None,
-                   metrics_fn=None,
+                   observation_fn=None, metrics_fn=None,
                    verify_params: VerifyParams | None = None,
                    expected_edge: EdgeEstimate | None = None,
                    edge_provider=None,
@@ -368,7 +388,16 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # ---- deterministic risk gate (Invariant 5: evaluate() only) --------------------------
     symbol = str(proposal.get("symbol", "")).upper()
     quote = None
-    if quote_fn is not None:
+    market_observation = None
+    if observation_fn is not None:
+        try:
+            market_observation = observation_fn(symbol)
+            quote = dict(market_observation.quote)
+        except Exception as exc:  # noqa: BLE001 - absent data must reject, not abort awareness
+            log.warning("atomic market observation unavailable for %s: %s: %s",
+                        symbol, type(exc).__name__, exc)
+            reasons.append("market observation unavailable; deterministic risk fails closed")
+    elif quote_fn is not None:
         try:
             quote = quote_fn(symbol)
         except Exception as exc:  # noqa: BLE001 - absent data must reject, not abort awareness
@@ -384,6 +413,8 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         quote_price=quote_price,
         clock=clock,
         book_fn=book_fn,
+        market_observation=market_observation,
+        observation_fn=observation_fn,
         metrics_fn=metrics_fn,
         verify_params=verify_params,
         expected_edge=expected_edge,
@@ -396,7 +427,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     ctx = build_risk_context(
         state, quote=quote, watchlist=watchlist,
         quant_verdict=verdict, quant_book_seq=book_seq,
-        require_quant_verdict=(book_fn is not None or metrics_fn is not None),
+        require_quant_verdict=(
+            book_fn is not None or observation_fn is not None or metrics_fn is not None
+        ),
         require_net_edge=metrics_fn is not None,
     )
     rd = evaluate(proposal, ctx)

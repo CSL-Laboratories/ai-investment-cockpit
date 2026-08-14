@@ -16,13 +16,17 @@ from ingest.market_data import MarketDataService, MarketMetrics
 from orchestrator.state import EVENT_FILING_INGESTED, OrchestratorState
 from orchestrator.quant_ws import SnapshotSource
 from schemas.models.company import Company
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.filing import Filing, FormType
 from schemas.models.merger_edge import MergerDealEvidence, MergerEdgeEvidence
 from strategies.merger_edge import (
     CALIBRATION_SCHEMA,
     DEAL_SCHEMA,
+    EVENT_DEAL,
     SOURCE_ID,
     CashMergerEdgeProvider,
+    MergerEvidenceError,
+    _canonical_hash,
     calibration_statistics,
     record_calibration_evidence,
     record_deal_evidence,
@@ -30,6 +34,7 @@ from strategies.merger_edge import (
 )
 from storage.engine import create_all, make_engine, make_session_factory
 from tests.workflows.conftest import NOW
+from workflows.proposals import build_execution_verdict
 
 SYMBOL = "AAPL"
 CIK = "0000320193"
@@ -163,7 +168,9 @@ def _cohort_rows():
             "schema_version": "merger_calibration_cohort_row.v1",
             "deal_id": f"deal-{index}",
             "selected_at": "2025-01-01",
-            "outcome_as_of": (NOW.date() - timedelta(days=1)).isoformat(),
+            "outcome_as_of": (
+                date(2025, 1, 31) if outcome == "open" else date(2025, 1, 15)
+            ).isoformat(),
             "outcome": outcome,
             "entry_ask": "100",
             "outcome_price": prices[outcome],
@@ -182,16 +189,38 @@ def merger(st, clock, tmp_path):
     raw_store = RawStore(root / "sec", min_free_bytes=0)
     raw_ref = raw_store.write(ACCESSION, b"signed definitive merger filing")
     with st.session_factory() as session, session.begin():
-        session.add(Company(
+        company = Company(
             id="company-aapl", ticker=SYMBOL, cik=CIK, name="Apple", active=True,
             created_at=NOW,
-        ))
-        session.add(Filing(
+        )
+        filing = Filing(
             id="filing-merger", cik=CIK, accession_no=ACCESSION,
             form_type=FormType.FORM_8K, filing_date=NOW.date() - timedelta(days=10),
             detection_ts=NOW - timedelta(days=10), raw_ref=ACCESSION,
             primary_doc="merger.htm",
-        ))
+        )
+        session.add_all([company, filing])
+        session.flush()
+        st.audit.append_in(
+            session,
+            "edgar-company-attribution",
+            actor="edgar-pipeline",
+            refs={"row_id": company.id, "cik": CIK},
+            payload={"action": "created", "ticker": SYMBOL, "cik": CIK},
+        )
+        st.audit.append_in(
+            session,
+            EVENT_FILING_INGESTED,
+            actor="edgar",
+            refs={"model": "filing", "row_id": filing.id, "raw_ref": ACCESSION},
+            payload={
+                "cik": CIK,
+                "accession_no": ACCESSION,
+                "form_type": "8-K",
+                "detection_ts": filing.detection_ts.isoformat(),
+                "raw_content_hash": raw_ref.sha256,
+            },
+        )
     cohort_ref, cohort_hash = write_calibration_cohort(
         root, (NOW.date() - timedelta(days=1)).isoformat(), "cash-merger-cohort-v1",
         _cohort_rows(),
@@ -268,6 +297,27 @@ def test_general_watchlist_cannot_expand_strategy_authority(merger):
     assert "strategy watchlist is empty" in provider.status_text()
 
 
+def test_unsigned_source_filing_cannot_bootstrap_deal_authority(st, tmp_path):
+    root = tmp_path / "unsigned-raw"
+    raw_ref = RawStore(root / "sec", min_free_bytes=0).write(
+        ACCESSION, b"attacker-preseeded filing"
+    )
+    with st.session_factory() as session, session.begin():
+        session.add(Company(
+            id="unsigned-company", ticker=SYMBOL, cik=CIK, name=None, active=True,
+            created_at=NOW,
+        ))
+        session.add(Filing(
+            id="unsigned-filing", cik=CIK, accession_no=ACCESSION,
+            form_type=FormType.FORM_8K, filing_date=NOW.date() - timedelta(days=10),
+            detection_ts=NOW - timedelta(days=10), raw_ref=ACCESSION,
+            primary_doc="attacker.htm",
+        ))
+
+    with pytest.raises(MergerEvidenceError, match="signed|provenance"):
+        record_deal_evidence(st, _deal(raw_ref.sha256), raw_root=root)
+
+
 def test_signed_deal_row_tamper_and_calibration_raw_tamper_fail_closed(merger):
     st, root, _client, market_data, provider, _raw_hash = merger
     with st.session_factory() as session, session.begin():
@@ -315,7 +365,7 @@ def test_unreviewed_new_filing_and_quote_raw_substitution_fail_closed(merger):
     assert "quote symbol mismatch" in provider.status_text()
     forged = {**quote, "ask": Decimal(str(quote["ask"])) + Decimal("0.01")}
     assert provider.estimate(_proposal(), quote=forged) is None
-    assert "signed raw snapshot" in provider.status_text()
+    assert "derived fields diverge" in provider.status_text()
 
     extra = "0000320193-26-000002"
     extra_ref = RawStore(root / "sec", min_free_bytes=0).write(extra, b"later amendment")
@@ -364,6 +414,149 @@ def test_cached_metric_substitution_cannot_replace_signed_daily_bars(merger):
     )
     assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
     assert "diverge" in provider.status_text()
+
+
+def test_cached_volatility_substitution_cannot_replace_signed_daily_bars(merger):
+    _st, _root, _client, market_data, provider, _raw_hash = merger
+    original = market_data.metrics(SYMBOL)
+    market_data._metrics[SYMBOL] = MarketMetrics(  # noqa: SLF001 - adversarial substitution
+        symbol=SYMBOL,
+        as_of=original.as_of,
+        median_daily_dollar_volume=original.median_daily_dollar_volume,
+        realized_volatility=0.000001,
+        observations=original.observations,
+    )
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert "diverge" in provider.status_text()
+
+
+@pytest.mark.parametrize("horizon_days", [0, 1, 31])
+def test_open_calibration_rows_require_the_exact_30_day_horizon(horizon_days):
+    rows = _cohort_rows()
+    selected = date(2025, 1, 1)
+    for row in rows:
+        if row["outcome"] == "open":
+            row["selected_at"] = selected.isoformat()
+            row["outcome_as_of"] = (selected + timedelta(days=horizon_days)).isoformat()
+
+    with pytest.raises(MergerEvidenceError, match="30-day|strictly after"):
+        calibration_statistics(rows)
+
+
+def test_split_quote_and_book_seams_cannot_invoke_the_edge_provider(merger):
+    st, _root, client, market_data, provider, _raw_hash = merger
+    old_quote = market_data.quote(SYMBOL)
+    client.ask = Decimal("139.99")
+    client.quote_age = Decimal("0.5")
+    assert market_data.poll_quotes()["failed"] == []
+
+    verdict, _seq, _qty, _reasons = build_execution_verdict(
+        _proposal(),
+        quote_price=Decimal(str(old_quote["price"])),
+        clock=st.clock,
+        book_fn=market_data.book,
+        metrics_fn=market_data.metrics,
+        verify_params=market_data.verify_params,
+        edge_provider=provider,
+        quote=old_quote,
+    )
+
+    assert verdict is None
+
+
+def test_atomic_market_observation_reaches_w21_with_the_verified_metric(merger):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+    observation = market_data.observation(SYMBOL)
+
+    verdict, seq, qty, reasons = build_execution_verdict(
+        _proposal(),
+        quote_price=Decimal(str(observation.quote["price"])),
+        clock=st.clock,
+        market_observation=observation,
+        observation_fn=market_data.observation,
+        metrics_fn=market_data.metrics,
+        verify_params=market_data.verify_params,
+        edge_provider=provider,
+    )
+
+    assert verdict is not None and verdict.net_edge_state == "sufficient"
+    assert (seq, qty, reasons) == (observation.book.seq, 10, ())
+
+
+def test_verified_snapshot_blocks_transient_audit_event_repoint(merger, monkeypatch):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+    quote = market_data.quote(SYMBOL)
+    baseline = provider.estimate(_proposal(), quote=quote)
+    assert baseline is not None
+
+    with st.session_factory() as session, session.begin():
+        original = session.execute(select(MergerDealEvidence)).scalars().first()
+        forged_document = {**original.document, "cash_offer": "999"}
+        forged_hash = _canonical_hash(forged_document)
+        forged = MergerDealEvidence(
+            id=f"mdeal_{forged_hash}", symbol=SYMBOL, target_cik=CIK,
+            document=forged_document, content_hash=forged_hash,
+            observed_at=original.observed_at, created_at=original.created_at,
+        )
+        session.add(forged)
+        event = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == EVENT_DEAL)
+        ).scalars().first()
+        original_refs = dict(event.refs)
+        original_payload = dict(event.payload)
+
+    verify_chain = st.audit.verify_chain
+    calls = 0
+
+    def interleaved_verify():
+        nonlocal calls
+        if calls == 0:
+            result = verify_chain()
+            assert result.ok
+            with st.session_factory() as session, session.begin():
+                event = session.execute(
+                    select(AuditEntry).where(AuditEntry.event_type == EVENT_DEAL)
+                ).scalars().first()
+                event.refs = {**original_refs, "row_id": forged.id}
+                event.payload = {**original_payload, "content_hash": forged_hash}
+            calls += 1
+            return result
+        if calls == 1:
+            with st.session_factory() as session, session.begin():
+                event = session.execute(
+                    select(AuditEntry).where(AuditEntry.event_type == EVENT_DEAL)
+                ).scalars().first()
+                event.refs = original_refs
+                event.payload = original_payload
+            calls += 1
+        return verify_chain()
+
+    monkeypatch.setattr(st.audit, "verify_chain", interleaved_verify)
+    attacked = provider.estimate(_proposal(), quote=quote)
+
+    assert attacked is not None
+    assert attacked.expected_gross_return_bps == baseline.expected_gross_return_bps
+    assert calls == 0
+
+
+def test_deal_superseded_during_estimate_cannot_persist_or_return_edge(merger, monkeypatch):
+    st, root, _client, market_data, provider, raw_hash = merger
+    verify_quote = provider._verify_quote  # noqa: SLF001 - deterministic interleaving attack
+
+    def supersede_before_quote(symbol, quote, now):
+        record_deal_evidence(
+            st,
+            _deal(raw_hash, lifecycle_status="terminated", observed_at=NOW.isoformat()),
+            raw_root=root,
+        )
+        return verify_quote(symbol, quote, now)
+
+    monkeypatch.setattr(provider, "_verify_quote", supersede_before_quote)
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    with st.session_factory() as session:
+        assert session.execute(select(MergerEdgeEvidence)).scalars().all() == []
 
 
 def test_calibration_rejects_weak_precision_and_non_empirical_probabilities(merger):

@@ -18,6 +18,7 @@ from ingest.market_data import (
 from orchestrator.state import EVENT_MARKET_DATA_RAW
 from orchestrator.quant_ws import SnapshotSource
 from quant.events import to_ns
+from storage.parquet_store import write_snapshot
 
 NOW = datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)
 
@@ -185,6 +186,45 @@ def test_daily_bar_cache_survives_a_second_service_without_refetch(tmp_path):
     assert restarted.refresh_daily_bars()["cached"] == ["AAPL"]
     assert restarted.metrics("AAPL") == metrics
     assert client.bar_calls == 1
+
+
+def test_unbound_preseeded_daily_bar_cache_is_never_self_signed(tmp_path):
+    class Audit:
+        def __init__(self):
+            self.entries = []
+
+        def append(self, event_type, **kwargs):
+            self.entries.append((event_type, kwargs))
+
+    clock = FrozenClock(NOW)
+    client = Client(clock)
+    audit = Audit()
+    raw_root = tmp_path / "raw"
+    forged = [
+        {
+            "t": (NOW - timedelta(days=25 - offset)).isoformat(),
+            "c": str(Decimal("100") + Decimal(offset) / Decimal("1000000")),
+            "v": "1000000000000",
+        }
+        for offset in range(25)
+    ]
+    write_snapshot(raw_root / "daily-bars", NOW.date().isoformat(), "AAPL", forged)
+    service = MarketDataService(
+        client,
+        symbols={"AAPL"},
+        clock=clock,
+        raw_root=raw_root,
+        snapshot_source=SnapshotSource(),
+        audit_log=audit,
+    )
+
+    result = service.refresh_daily_bars()
+
+    assert result["failed"] == ["AAPL"]
+    assert result["cached"] == []
+    assert service.metrics("AAPL") is None
+    assert client.bar_calls == 0
+    assert audit.entries == []
 
 
 def test_current_session_daily_bar_never_enters_authority_bearing_metrics(tmp_path):

@@ -35,6 +35,16 @@ mode or trading authority changed.
   price ratios;
 - SEC raw filing hashes, quote Parquet, and daily-bar-derived metrics rebound to signed raw
   evidence on every estimate/status check;
+- source filings and symbol/CIK attribution required to resolve to their original signed ingest
+  events; an unsigned pre-seeded row/raw tuple cannot be promoted by an operator deal record;
+- pre-existing market-data files accepted only with an earlier verified audit binding, with
+  atomic create-if-absent publication across the supported operating systems;
+- audit verification, signed-event selection, and covered domain-row reads pinned to one
+  database snapshot;
+- exact 30-day open calibration labels and resolved-within-30-day outcomes, preventing
+  same-day/arbitrary-horizon leakage;
+- quote, book, and quote-raw identity published and consumed as one observation, and the exact
+  ADV/observation/realized-volatility object rebound to signed bars before W-21 consumes it;
 - one provider instance shared by proposal draft and both approval-time fresh-risk passes, using
   the resolved persisted quantity and current quote;
 - production EDGAR adapter atomically signs every newly ingested `Filing` row/raw hash through
@@ -63,16 +73,31 @@ ordinary-watchlist expansion, signed-row/raw/cohort/metric tamper, quote substit
 termination, unreviewed new filings, signed filing deletion, weak precision, calibration mismatch,
 and restart/idempotency.
 
-This was an author-run fresh attack/fix round. A fresh independent reviewer/model round remains a
-required acceptance gate; this evidence does not relabel self-review as independent review.
+## Independent PR #36 adversarial review and remediation
+
+A fresh reviewer with no implementation role reviewed the complete PR diff against `main` and
+verified all nine invariants. The review found six reproducible defects and recommended against
+merge: pre-seeded market files could be self-signed, unsigned filing rows/raw blobs could be
+promoted into deal authority, calibration accepted wrong-horizon open labels, cached volatility
+was not rebound to raw bars, audit verification and covered-row reads had a snapshot race, and
+the order path could combine quote and book observations from different polls.
+
+This remediation adds a failing regression for every exploit before the fix and closes each
+boundary as described above. The independent review is now a completed discovery gate; these
+post-review changes still require the updated cross-platform CI matrix and should receive normal
+PR review before merge.
 
 ## Local gates
 
 Run from `app/` on Windows with `TMP=TEMP=C:\t` and `COCKPIT_ENV_FILE` pointed at a nonexistent
 test path so the operator's ignored `app/.env` could not affect defaults:
 
-- focused filing/provenance/strategy regression after the final adapter change: 71 passed;
-- final full suite: **2,203 passed, 1 skipped**, 5 third-party deprecation warnings;
+- focused remediation regression across market data, merger evidence, audit, workflow, and paper
+  execution: 87 passed;
+- expanded ingest/workflow/broker/strategy/storage regression before the final supersession
+  hardening: 898 passed; that hardening is covered by the final full suite;
+- final full suite after the independent-review remediation: **2,213 passed, 1 skipped**,
+  5 third-party deprecation warnings;
 - `ruff check .`: clean;
 - `ruff check ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean.
@@ -87,11 +112,10 @@ evidence.
 
 ## Remaining gates
 
-1. Fresh independent adversarial review with zero reproducible authority/evidence bypasses.
-2. Required Windows/Ubuntu/macOS CI matrix.
-3. Real, reviewed, survivorship-safe point-in-time cohort meeting the schema/precision gates.
-4. A current eligible definitive cash deal whose SEC records and listing identity verify.
-5. Separate configuration of the target in both watchlists, a fresh post-review quote/bar poll,
+1. Required Windows/Ubuntu/macOS CI matrix on the remediation commit.
+2. Real, reviewed, survivorship-safe point-in-time cohort meeting the schema/precision gates.
+3. A current eligible definitive cash deal whose SEC records and listing identity verify.
+4. Separate configuration of the target in both watchlists, a fresh post-review quote/bar poll,
    and operator validation of `/quant/status`.
-6. Separate deliberate audited `paper` activation and manual approval; then W-22's two qualifying
+5. Separate deliberate audited `paper` activation and manual approval; then W-22's two qualifying
    market days at least a week apart.

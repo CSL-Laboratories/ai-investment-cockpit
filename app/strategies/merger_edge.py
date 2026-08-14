@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 import threading
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -40,6 +41,7 @@ TIME_HORIZON = "long"
 EVENT_DEAL = "merger_deal_evidence"
 EVENT_CALIBRATION = "merger_calibration_evidence"
 EVENT_EDGE = "merger_edge_computed"
+EVENT_COMPANY_ATTRIBUTION = "edgar-company-attribution"
 
 MAX_RESOLUTION_DAYS = 30
 MAX_DEAL_OBSERVATION_AGE = timedelta(hours=24)
@@ -309,12 +311,17 @@ def _cohort_statistics(records: list[dict]) -> dict:
         seen_ids.add(deal_id)
         selected = _date(record["selected_at"], field="selected_at")
         outcome_as_of = _date(record["outcome_as_of"], field="outcome_as_of")
-        if selected > outcome_as_of:
-            raise MergerEvidenceError("calibration cohort chronology is inconsistent")
+        if selected >= outcome_as_of:
+            raise MergerEvidenceError("calibration outcomes must be strictly after selection")
         as_of = outcome_as_of if as_of is None else max(as_of, outcome_as_of)
         outcome = str(record["outcome"])
         if outcome not in outcomes:
             raise MergerEvidenceError("calibration cohort outcome is invalid")
+        horizon = (outcome_as_of - selected).days
+        if outcome == "open" and horizon != MAX_RESOLUTION_DAYS:
+            raise MergerEvidenceError("open calibration outcomes require the exact 30-day horizon")
+        if outcome != "open" and horizon > MAX_RESOLUTION_DAYS:
+            raise MergerEvidenceError("resolved calibration outcomes exceed the 30-day horizon")
         if type(record["heldout_fields"]) is not int or type(record["heldout_correct_fields"]) is not int:
             raise MergerEvidenceError("held-out field counts must be integers")
         row_heldout = record["heldout_fields"]
@@ -388,49 +395,176 @@ def _verify_calibration_statistics(raw_root: Path, document: dict) -> None:
         raise MergerEvidenceError("calibration statistics do not match the raw cohort")
 
 
-def _verified_chain(state) -> bool:
+@contextmanager
+def _authority_session(state):
+    """Yield one DB snapshot containing both a verified ledger and its covered rows."""
     anchor = getattr(state, "anchor_store", None)
-    if anchor is not None:
-        latest = anchor.latest()
-        if latest is not None:
-            return state.audit.verify_against_anchor(*latest).ok
-    return state.audit.verify_chain().ok
+    latest = anchor.latest() if anchor is not None else None
+    with state.session_factory() as session, session.begin():
+        result = (
+            state.audit.verify_session_against_anchor(session, *latest)
+            if latest is not None
+            else state.audit.verify_session(session)
+        )
+        if not result.ok:
+            raise MergerEvidenceError(f"audit chain is invalid: {result.error}")
+        yield session
 
 
-def _latest_event(state, event_type: str, field: str, value: str) -> AuditEntry | None:
-    if not _verified_chain(state):
-        return None
-    with state.session_factory() as session:
-        rows = session.execute(
-            select(AuditEntry)
-            .where(AuditEntry.event_type == event_type)
-            .order_by(AuditEntry.seq.desc())
-        ).scalars().all()
-        row = next((item for item in rows if (item.payload or {}).get(field) == value), None)
-        if row is not None:
-            session.expunge(row)
+def _latest_event_in(session, event_type: str, field: str, value: str) -> AuditEntry | None:
+    rows = session.execute(
+        select(AuditEntry)
+        .where(AuditEntry.event_type == event_type)
+        .order_by(AuditEntry.seq.desc())
+    ).scalars().all()
+    return next((item for item in rows if (item.payload or {}).get(field) == value), None)
+
+
+def _load_signed_in(session, model, event_type: str, field: str, value: str):
+    event = _latest_event_in(session, event_type, field, value)
+    if event is None:
+        raise MergerEvidenceError(f"signed {event_type} is missing")
+    row = session.get(model, (event.refs or {}).get("row_id"))
+    if row is None:
+        raise MergerEvidenceError(f"signed {event_type} row is missing")
+    digest = _canonical_hash(row.document)
+    if (
+        digest != row.content_hash
+        or (event.payload or {}).get("content_hash") != digest
+        or (event.refs or {}).get("model") != row.__tablename__
+    ):
+        raise MergerEvidenceError(f"{event_type} hash binding failed")
     return row
+
+
+def _verify_company_attribution(session, *, symbol: str, cik: str) -> Company:
+    company = session.execute(select(Company).where(
+        Company.ticker == symbol,
+        Company.cik == cik,
+        Company.active.is_(True),
+    )).scalar_one_or_none()
+    if company is None:
+        raise MergerEvidenceError("signed target symbol/CIK provenance is incomplete")
+    events = session.execute(select(AuditEntry).where(
+        AuditEntry.event_type == EVENT_COMPANY_ATTRIBUTION
+    )).scalars().all()
+    matches = [event for event in events if (
+        (event.refs or {}).get("row_id") == company.id
+        and (event.refs or {}).get("cik") == cik
+        and (event.payload or {}).get("ticker") == symbol
+        and (event.payload or {}).get("cik") == cik
+        and (event.payload or {}).get("action") in {"created", "reactivated"}
+    )]
+    if not matches:
+        raise MergerEvidenceError("signed target symbol/CIK attribution is missing")
+    return company
+
+
+def _filing_event_map(session, *, cik: str, raw_store: RawStore) -> dict[str, Filing]:
+    events = session.execute(select(AuditEntry).where(
+        AuditEntry.event_type == EVENT_FILING_INGESTED
+    ).order_by(AuditEntry.seq)).scalars().all()
+    signed: dict[str, Filing] = {}
+    for event in events:
+        payload = event.payload or {}
+        if payload.get("cik") != cik:
+            continue
+        refs = event.refs or {}
+        filing = session.get(Filing, refs.get("row_id"))
+        accession = str(payload.get("accession_no") or "")
+        if (
+            filing is None
+            or refs.get("model") != Filing.__tablename__
+            or filing.cik != cik
+            or filing.accession_no != accession
+            or filing.raw_ref != refs.get("raw_ref")
+            or filing.raw_ref != accession
+            or filing.form_type.value != payload.get("form_type")
+            or _utc(filing.detection_ts, field="detection_ts", allow_naive=True)
+            != _utc(payload.get("detection_ts"), field="detection_ts")
+            or not raw_store.verify(accession)
+            or raw_store.stored_hash(accession) != payload.get("raw_content_hash")
+        ):
+            raise MergerEvidenceError("signed target filing row/raw binding failed")
+        prior = signed.get(accession)
+        if prior is not None and prior.id != filing.id:
+            raise MergerEvidenceError("target filing has conflicting signed bindings")
+        signed[accession] = filing
+    return signed
+
+
+def _verify_deal_provenance_in(
+    session, *, document: dict, raw_store: RawStore, require_new_review: bool
+) -> None:
+    symbol = document["symbol"]
+    cik = document["target_cik"]
+    observed = _utc(document["observed_at"], field="observed_at")
+    _verify_company_attribution(session, symbol=symbol, cik=cik)
+    filings = session.execute(select(Filing).where(
+        Filing.cik == cik
+    ).order_by(Filing.detection_ts.desc())).scalars().all()
+    signed = _filing_event_map(session, cik=cik, raw_store=raw_store)
+    reviewed = set(document["source_accessions"])
+    for accession in reviewed:
+        filing = signed.get(accession)
+        if (
+            filing is None
+            or _utc(filing.detection_ts, field="detection_ts", allow_naive=True) > observed
+            or raw_store.stored_hash(accession) != document["filing_hashes"][accession]
+        ):
+            raise MergerEvidenceError("deal filing provenance lacks an exact signed binding")
+    if require_new_review and any(
+        filing.accession_no not in reviewed
+        and _utc(filing.detection_ts, field="detection_ts", allow_naive=True) > observed
+        for filing in filings
+    ):
+        raise MergerEvidenceError("new target filing requires deal review")
 
 
 def _record_immutable(state, row, event_type: str, *, actor: str, payload: dict):
     model = type(row)
-    with state.session_factory() as session:
+    with _authority_session(state) as session:
+        if event_type == EVENT_EDGE:
+            document = row.document
+            deal = _load_signed_in(
+                session, MergerDealEvidence, EVENT_DEAL, "symbol", row.symbol
+            )
+            calibration = _load_signed_in(
+                session, MergerCalibrationEvidence, EVENT_CALIBRATION, "version", SOURCE_ID
+            )
+            if (
+                document.get("deal_evidence_id") != deal.id
+                or document.get("deal_content_hash") != deal.content_hash
+                or document.get("calibration_evidence_id") != calibration.id
+                or document.get("calibration_content_hash") != calibration.content_hash
+            ):
+                raise MergerEvidenceError(
+                    "edge authority inputs were superseded before persistence"
+                )
         existing = session.get(model, row.id)
         if existing is not None:
+            if existing.content_hash != row.content_hash:
+                raise MergerEvidenceError("immutable evidence id collision")
+            event = _latest_event_in(
+                session,
+                event_type,
+                "symbol" if event_type != EVENT_CALIBRATION else "version",
+                row.symbol if event_type != EVENT_CALIBRATION else row.version,
+            )
+            if event is None or (event.refs or {}).get("row_id") != row.id:
+                raise MergerEvidenceError("existing evidence row is not the latest signed record")
             session.expunge(existing)
-    if existing is not None:
-        if existing.content_hash != row.content_hash:
-            raise MergerEvidenceError("immutable evidence id collision")
-        event = _latest_event(
-            state,
+            return existing
+        session.add(row)
+        session.flush()
+        state.audit.append_in(
+            session,
             event_type,
-            "symbol" if event_type != EVENT_CALIBRATION else "version",
-            row.symbol if event_type != EVENT_CALIBRATION else row.version,
+            actor=actor,
+            refs={"model": row.__tablename__, "row_id": row.id},
+            payload=payload,
         )
-        if event is None or (event.refs or {}).get("row_id") != row.id:
-            raise MergerEvidenceError("existing evidence row is not the latest signed record")
-        return existing
-    state.audit.record_state_change(row, event_type, actor=actor, payload=payload)
+        session.expunge(row)
     return row
 
 
@@ -442,30 +576,10 @@ def record_deal_evidence(state, document: dict, *, raw_root, actor: str = "opera
     if observed > now or now - observed > MAX_DEAL_OBSERVATION_AGE:
         raise MergerEvidenceError("deal review timestamp is future or stale")
     raw_store = RawStore(Path(raw_root) / "sec", min_free_bytes=0)
-    with state.session_factory() as session:
-        company = session.execute(
-            select(Company).where(
-                Company.ticker == normalized["symbol"],
-                Company.cik == normalized["target_cik"],
-                Company.active.is_(True),
-            )
-        ).scalar_one_or_none()
-        filings = session.execute(
-            select(Filing).where(Filing.accession_no.in_(normalized["source_accessions"]))
-        ).scalars().all()
-    if company is None or len(filings) != len(normalized["source_accessions"]):
-        raise MergerEvidenceError("deal symbol/CIK/filing provenance is incomplete")
-    by_accession = {row.accession_no: row for row in filings}
-    for accession in normalized["source_accessions"]:
-        filing = by_accession[accession]
-        if (
-            filing.cik != normalized["target_cik"]
-            or filing.raw_ref != accession
-            or _utc(filing.detection_ts, field="detection_ts", allow_naive=True) > observed
-            or not raw_store.verify(accession)
-            or raw_store.stored_hash(accession) != normalized["filing_hashes"][accession]
-        ):
-            raise MergerEvidenceError("deal filing provenance failed integrity verification")
+    with _authority_session(state) as session:
+        _verify_deal_provenance_in(
+            session, document=normalized, raw_store=raw_store, require_new_review=False
+        )
     digest = _canonical_hash(normalized)
     row = MergerDealEvidence(
         id=f"mdeal_{digest}", symbol=normalized["symbol"], target_cik=normalized["target_cik"],
@@ -541,107 +655,48 @@ class CashMergerEdgeProvider:
         )
 
     def _load_signed(self, model, event_type: str, field: str, value: str):
-        event = _latest_event(self.state, event_type, field, value)
-        if event is None:
-            raise MergerEvidenceError(f"signed {event_type} is missing or audit chain is invalid")
-        row_id = (event.refs or {}).get("row_id")
-        with self.state.session_factory() as session:
-            row = session.get(model, row_id)
-            if row is not None:
-                session.expunge(row)
-        if row is None:
-            raise MergerEvidenceError(f"signed {event_type} row is missing")
-        digest = _canonical_hash(row.document)
-        if (
-            digest != row.content_hash
-            or (event.payload or {}).get("content_hash") != digest
-            or (event.refs or {}).get("model") != row.__tablename__
-        ):
-            raise MergerEvidenceError(f"{event_type} hash binding failed")
-        return row
+        with _authority_session(self.state) as session:
+            row = _load_signed_in(session, model, event_type, field, value)
+            session.expunge(row)
+            return row
 
     def _verify_deal(self, symbol: str, now: datetime) -> MergerDealEvidence:
-        row = self._load_signed(MergerDealEvidence, EVENT_DEAL, "symbol", symbol)
-        document = _normalized_deal(row.document)
-        if row.symbol != symbol or row.target_cik != document["target_cik"]:
-            raise MergerEvidenceError("deal row identity does not match signed evidence")
-        observed = _utc(document["observed_at"], field="observed_at")
-        if observed > now or now - observed > MAX_DEAL_OBSERVATION_AGE:
-            raise MergerEvidenceError("deal review is stale")
-        if document["lifecycle_status"] != "active":
-            raise MergerEvidenceError("deal is terminated")
-        if any(document[name] for name in (
-            "has_cvr", "has_earnout", "has_stock", "uses_options_or_leverage",
-            "is_rumor_or_competing_bid",
-        )):
-            raise MergerEvidenceError("deal consideration/scope is ineligible")
-        if (
-            document["current_accession"] != document["announcement_accession"]
-            and not document["amendment_reviewed"]
-        ):
-            raise MergerEvidenceError("deal amendment has not been reviewed")
-        resolution = _date(document["expected_resolution_date"], field="expected_resolution_date")
-        if resolution < now.date() or resolution > now.date() + timedelta(days=MAX_RESOLUTION_DAYS):
-            raise MergerEvidenceError("deal is outside the 30-day strategy horizon")
-
         raw_store = RawStore(self.raw_root / "sec", min_free_bytes=0)
-        with self.state.session_factory() as session:
-            company = session.execute(select(Company).where(
-                Company.ticker == symbol,
-                Company.cik == document["target_cik"],
-                Company.active.is_(True),
-            )).scalar_one_or_none()
-            filings = session.execute(select(Filing).where(
-                Filing.cik == document["target_cik"]
-            ).order_by(Filing.detection_ts.desc())).scalars().all()
-        if company is None:
-            raise MergerEvidenceError("target symbol/CIK mapping changed")
-        by_accession = {filing.accession_no: filing for filing in filings}
-        for accession in document["source_accessions"]:
-            filing = by_accession.get(accession)
+        with _authority_session(self.state) as session:
+            row = _load_signed_in(
+                session, MergerDealEvidence, EVENT_DEAL, "symbol", symbol
+            )
+            document = _normalized_deal(row.document)
+            if row.symbol != symbol or row.target_cik != document["target_cik"]:
+                raise MergerEvidenceError("deal row identity does not match signed evidence")
+            observed = _utc(document["observed_at"], field="observed_at")
+            if observed > now or now - observed > MAX_DEAL_OBSERVATION_AGE:
+                raise MergerEvidenceError("deal review is stale")
+            if document["lifecycle_status"] != "active":
+                raise MergerEvidenceError("deal is terminated")
+            if any(document[name] for name in (
+                "has_cvr", "has_earnout", "has_stock", "uses_options_or_leverage",
+                "is_rumor_or_competing_bid",
+            )):
+                raise MergerEvidenceError("deal consideration/scope is ineligible")
             if (
-                filing is None
-                or filing.raw_ref != accession
-                or not raw_store.verify(accession)
-                or raw_store.stored_hash(accession) != document["filing_hashes"][accession]
+                document["current_accession"] != document["announcement_accession"]
+                and not document["amendment_reviewed"]
             ):
-                raise MergerEvidenceError("deal filing is missing or corrupt")
-        reviewed_accessions = set(document["source_accessions"])
-        if any(
-            filing.accession_no not in reviewed_accessions
-            and _utc(filing.detection_ts, field="detection_ts", allow_naive=True) > observed
-            for filing in filings
-        ):
-            raise MergerEvidenceError("new target filing requires deal review")
-        # Filing rows ingested after W-23 are signed atomically. Never fall back when one of
-        # those rows is deleted or altered: the immutable event remains and must still resolve
-        # to the exact DB/raw tuple it covered.
-        with self.state.session_factory() as session:
-            events = session.execute(select(AuditEntry).where(
-                AuditEntry.event_type == EVENT_FILING_INGESTED
-            ).order_by(AuditEntry.seq)).scalars().all()
-            for event in events:
-                payload = event.payload or {}
-                if payload.get("cik") != document["target_cik"]:
-                    continue
-                detected = _utc(payload.get("detection_ts"), field="detection_ts")
-                if detected <= observed:
-                    continue
-                signed_filing = session.get(Filing, (event.refs or {}).get("row_id"))
-                accession = str(payload.get("accession_no") or "")
-                if (
-                    signed_filing is None
-                    or signed_filing.cik != payload.get("cik")
-                    or signed_filing.accession_no != accession
-                    or signed_filing.raw_ref != (event.refs or {}).get("raw_ref")
-                    or signed_filing.raw_ref != accession
-                    or raw_store.stored_hash(accession) != payload.get("raw_content_hash")
-                    or not raw_store.verify(accession)
-                ):
-                    raise MergerEvidenceError("signed target filing row/raw binding failed")
-                if accession not in reviewed_accessions:
-                    raise MergerEvidenceError("new signed target filing requires deal review")
-        return row
+                raise MergerEvidenceError("deal amendment has not been reviewed")
+            resolution = _date(
+                document["expected_resolution_date"], field="expected_resolution_date"
+            )
+            if (
+                resolution < now.date()
+                or resolution > now.date() + timedelta(days=MAX_RESOLUTION_DAYS)
+            ):
+                raise MergerEvidenceError("deal is outside the 30-day strategy horizon")
+            _verify_deal_provenance_in(
+                session, document=document, raw_store=raw_store, require_new_review=True
+            )
+            session.expunge(row)
+            return row
 
     def _verify_calibration(self, now: datetime) -> MergerCalibrationEvidence:
         row = self._load_signed(
@@ -663,6 +718,12 @@ class CashMergerEdgeProvider:
         ask = _decimal(quote.get("ask"), field="ask", positive=True)
         if ask < bid or ask < MIN_PRICE:
             raise MergerEvidenceError("quote is crossed or below the price floor")
+        price = _decimal(quote.get("price"), field="price", positive=True)
+        spread_pct = _decimal(quote.get("spread_pct"), field="spread_pct")
+        expected_price = (bid + ask) / Decimal("2")
+        expected_spread_pct = Decimal("100") * (ask - bid) / expected_price
+        if price != expected_price or spread_pct != expected_spread_pct:
+            raise MergerEvidenceError("quote derived fields diverge from bid/ask")
         spread_bps = Decimal("10000") * (ask - bid) / ask
         if spread_bps > MAX_SPREAD_BPS:
             raise MergerEvidenceError("quote spread is too wide")
@@ -676,10 +737,17 @@ class CashMergerEdgeProvider:
         max_age = float(getattr(market_data, "max_age_s", 120.0))
         if age < 0 or age > max_age:
             raise MergerEvidenceError("quote is stale")
-        day = stamp.date().isoformat()
-        key = f"{symbol}-quote-{ts_ns}"
-        raw_ref = f"market-data://{day}/{key}"
-        with self.state.session_factory() as session:
+        raw_ref = str(quote.get("raw_ref") or "")
+        prefix = "market-data://"
+        if not raw_ref.startswith(prefix):
+            raise MergerEvidenceError("quote raw snapshot identity is missing")
+        try:
+            day, key = raw_ref[len(prefix):].split("/", 1)
+        except ValueError as exc:
+            raise MergerEvidenceError("quote raw snapshot identity is malformed") from exc
+        if day != stamp.date().isoformat() or not key.startswith(f"{symbol}-quote-{ts_ns}-"):
+            raise MergerEvidenceError("quote raw snapshot identity does not match the quote")
+        with _authority_session(self.state) as session:
             events = session.execute(select(AuditEntry).where(
                 AuditEntry.event_type == "market_data_raw_snapshot"
             ).order_by(AuditEntry.seq.desc())).scalars().all()
@@ -690,6 +758,8 @@ class CashMergerEdgeProvider:
         if len(hashes) != 1 or None in hashes:
             raise MergerEvidenceError("quote raw snapshot has conflicting hash bindings")
         digest = next(iter(hashes))
+        if quote.get("content_hash") != digest:
+            raise MergerEvidenceError("quote raw hash identity does not match its signed binding")
         quote_root = self.raw_root / "market-data" / "quotes"
         if not verify_snapshot(quote_root, day, key, digest):
             raise MergerEvidenceError("quote raw snapshot is missing or corrupt")
@@ -700,6 +770,8 @@ class CashMergerEdgeProvider:
         if (
             str(raw.get("symbol", "")).upper() != symbol
             or int(raw.get("exchange_ts_ns", -1)) != ts_ns
+            or _decimal(raw.get("price"), field="raw price", positive=True) != price
+            or _decimal(raw.get("spread_pct"), field="raw spread_pct") != spread_pct
             or _decimal(raw.get("bid"), field="raw bid", positive=True) != bid
             or _decimal(raw.get("ask"), field="raw ask", positive=True) != ask
             or str(raw.get("feed", "")).lower() != feed
@@ -707,14 +779,13 @@ class CashMergerEdgeProvider:
             raise MergerEvidenceError("quote does not match its signed raw snapshot")
         return ask, raw_ref, digest
 
-    def _verify_metrics(self, symbol: str, now: datetime) -> dict:
+    def _verify_metrics(self, symbol: str, now: datetime, metric=None) -> dict:
         market_data = getattr(self.state, "market_data", None)
-        metric = market_data.metrics(symbol) if market_data is not None else None
+        if metric is None:
+            metric = market_data.metrics(symbol) if market_data is not None else None
         if metric is None or str(metric.symbol).upper() != symbol:
             raise MergerEvidenceError("market metrics are unavailable")
-        if not _verified_chain(self.state):
-            raise MergerEvidenceError("audit chain is invalid")
-        with self.state.session_factory() as session:
+        with _authority_session(self.state) as session:
             events = session.execute(select(AuditEntry).where(
                 AuditEntry.event_type == "market_data_raw_snapshot"
             ).order_by(AuditEntry.seq.desc())).scalars().all()
@@ -741,9 +812,17 @@ class CashMergerEdgeProvider:
             raise MergerEvidenceError("daily-bar snapshot is missing or corrupt")
         derived = calculate_daily_metrics(symbol, read_snapshot(bars_root, day, symbol))
         adv = _decimal(derived.median_daily_dollar_volume, field="ADV", positive=True)
+        volatility = _decimal(
+            derived.realized_volatility, field="realized volatility", positive=True
+        )
         if (
             metric.as_of != derived.as_of
             or _decimal(metric.median_daily_dollar_volume, field="cached ADV", positive=True) != adv
+            or _decimal(
+                metric.realized_volatility,
+                field="cached realized volatility",
+                positive=True,
+            ) != volatility
             or int(metric.observations) != int(derived.observations)
         ):
             raise MergerEvidenceError("cached market metrics diverge from signed raw bars")
@@ -756,12 +835,13 @@ class CashMergerEdgeProvider:
         return {
             "as_of": metric.as_of.isoformat(),
             "median_daily_dollar_volume": str(adv),
+            "realized_volatility": str(volatility),
             "observations": int(metric.observations),
             "raw_ref": (latest.refs or {}).get("raw_ref"),
             "content_hash": digest,
         }
 
-    def _estimate(self, proposal: dict, quote: dict) -> EdgeEstimate:
+    def _estimate(self, proposal: dict, quote: dict, market_metric=None) -> EdgeEstimate:
         now = _utc(self.state.clock.now(), field="clock")
         symbol = str(proposal.get("symbol", "")).strip().upper()
         if symbol not in self.strategy_watchlist:
@@ -785,7 +865,7 @@ class CashMergerEdgeProvider:
         deal = self._verify_deal(symbol, now)
         calibration = self._verify_calibration(now)
         ask, quote_ref, quote_hash = self._verify_quote(symbol, quote, now)
-        metrics = self._verify_metrics(symbol, now)
+        metrics = self._verify_metrics(symbol, now, market_metric)
         deal_doc = deal.document
         cal_doc = calibration.document
         if _utc(deal_doc["observed_at"], field="observed_at") > datetime.fromtimestamp(
@@ -856,9 +936,9 @@ class CashMergerEdgeProvider:
             verified=True,
         )
 
-    def estimate(self, proposal: dict, *, quote: dict) -> EdgeEstimate | None:
+    def estimate(self, proposal: dict, *, quote: dict, market_metric=None) -> EdgeEstimate | None:
         try:
-            estimate = self._estimate(dict(proposal), dict(quote))
+            estimate = self._estimate(dict(proposal), dict(quote), market_metric)
         except Exception as exc:  # noqa: BLE001 - any evidence/data fault means no edge authority
             self._fail(f"{type(exc).__name__}: {exc}")
             return None

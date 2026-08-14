@@ -47,6 +47,11 @@ worst observed failure/open price ratios. Those three probabilities sum exactly 
 then independently requires the resulting gross edge to cover at least three times modeled
 execution cost.
 
+Every outcome must be observed strictly after selection. An `open` row is valid only at exactly
+30 calendar days after `selected_at`; a `closed` or `failed` row must resolve within that same
+30-day window. Same-day labels, arbitrary early open marks, and outcomes beyond day 30 are
+rejected as horizon/calibration leakage.
+
 ## Raw cohort shape
 
 The cohort JSON is an array with this exact row schema; unknown fields fail closed:
@@ -68,9 +73,9 @@ The cohort JSON is an array with this exact row schema; unknown fields fail clos
 ```
 
 `entry_ask` is the point-in-time eligible entry observation. `outcome_price` is cash proceeds
-for `closed`, the observed failure/break price for `failed`, or the 30-day horizon price for
-`open`. `selected_at` must predate `outcome_as_of`. A current-survivor scrape is not a valid
-cohort.
+for `closed`, the observed failure/break price for `failed`, or the price exactly 30 days after
+selection for `open`. `selected_at` must strictly predate `outcome_as_of`; resolved outcomes
+must occur by day 30. A current-survivor scrape is not a valid cohort.
 
 The calibration metadata file supplies only operator assertions and the frozen timestamp; the
 provisioning tool overwrites every derived statistic and raw reference:
@@ -91,7 +96,11 @@ provisioning tool overwrites every derived statistic and raw reference:
 
 The operator-reviewed deal JSON uses this exact contract. The CLI derives `filing_hashes` from
 the already-ingested, write-once SEC raw store; the source accessions must exist as `Filing`
-rows for the same symbol/CIK.
+rows for the same symbol/CIK. Each source row/raw tuple must also have its original atomic
+`filing_ingested` audit event, and the symbol/CIK mapping must have its signed
+`edgar-company-attribution` event. A matching unsigned row or pre-seeded raw blob is not
+provenance and is rejected. Legacy records without those events must be re-fetched through the
+normal EDGAR pipeline; do not back-sign them in place.
 
 ```json
 {
@@ -161,6 +170,13 @@ Wait for a fresh quote/daily-bar poll after the reviewed deal timestamp. Require
 `/quant/status.verification.expected_edge_source` to name `cash_merger_30d.v1`; unavailable is
 a refusal, not a warning to bypass. Re-provision a current deal review at least daily and after
 every target filing, offer change, amendment, or termination.
+
+Production accepts a pre-existing quote or daily-bar cache only when the exact path, kind, date,
+key, record count, and content hash were already bound by a verified audit event. First startup
+will not sign a file merely because it occupies the expected cache path. Proposal and
+approval-time verification consume one atomically published quote/book/raw-evidence tuple, and
+the exact daily metric object whose ADV, observation count, and realized volatility are all
+recomputed from the signed bars.
 
 ## Paper activation remains a separate operator action
 

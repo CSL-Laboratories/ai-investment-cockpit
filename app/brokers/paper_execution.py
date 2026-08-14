@@ -248,13 +248,16 @@ class PaperExecutionService:
                     require_w21: bool = False):
         try:
             snapshot = self._broker.get_positions(st=self.state, clock=self.state.clock)
-            quote = self._quote_fn(symbol)
             market_data = self.market_data
+            observation = market_data.observation(symbol) if market_data is not None else None
+            quote = dict(observation.quote) if observation is not None else self._quote_fn(symbol)
             verdict, book_seq, _resolved_qty, _reasons = build_execution_verdict(
                 proposal_payload,
                 quote_price=Decimal(str((quote or {}).get("price", 0))),
                 clock=self.state.clock,
                 book_fn=(market_data.book if market_data is not None else None),
+                market_observation=observation,
+                observation_fn=(market_data.observation if market_data is not None else None),
                 metrics_fn=(market_data.metrics if market_data is not None else None),
                 verify_params=(market_data.verify_params if market_data is not None else None),
                 edge_provider=self._edge_provider,

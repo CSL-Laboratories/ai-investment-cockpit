@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
+import tempfile
 from pathlib import Path
 
 import pyarrow as pa
@@ -28,17 +30,33 @@ def snapshot_path(root, date: str, symbol: str) -> Path:
 
 def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[Path, str]:
     p = snapshot_path(root, date, symbol)
-    if p.exists():
-        raise FileExistsError(f"snapshot already exists (write-once): {p}")
     p.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(records), p)
+    fd, staged_name = tempfile.mkstemp(prefix=f".{p.stem}-", suffix=".parquet", dir=p.parent)
+    os.close(fd)
+    staged = Path(staged_name)
+    try:
+        pq.write_table(pa.Table.from_pylist(records), staged)
+        staged_digest = content_hash(pq.read_table(staged).to_pylist())
+        # A same-filesystem hard link is an atomic create-if-absent on Ubuntu, Windows,
+        # and macOS.  Unlike an exists-check followed by pq.write_table, it can never
+        # overwrite or bless a file raced into the authority-bearing cache path.
+        try:
+            os.link(staged, p)
+        except FileExistsError as exc:
+            raise FileExistsError(f"snapshot already exists (write-once): {p}") from exc
+        if not hmac.compare_digest(
+            content_hash(pq.read_table(p).to_pylist()), staged_digest
+        ):
+            raise RuntimeError(f"snapshot changed during publication: {p}")
+    finally:
+        staged.unlink(missing_ok=True)
     # BUG-094: hash what was PERSISTED, not the pre-persist Python objects. Pyarrow infers
     # one column type, so a mixed int/float column round-trips int 5 as float 5.0 — hashing
     # the inputs made a legitimately-written snapshot fail verify_snapshot later (a false
     # alarm), while a value whose ``default=str`` rendering coincides (Decimal('1.5') vs
     # float 1.5) hashed identically across a substitution. Write-hash and verify-hash now
     # both derive from the same read-back representation of the same file.
-    return p, content_hash(read_snapshot(root, date, symbol))
+    return p, staged_digest
 
 
 def read_snapshot(root, date: str, symbol: str) -> list[dict]:

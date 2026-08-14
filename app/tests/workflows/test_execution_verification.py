@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from config.settings import Mode
-from ingest.market_data import MarketMetrics
+from ingest.market_data import MarketMetrics, MarketObservation
 from orchestrator.mode_ladder import ModeLadder
 from quant.book.lob import BookSnapshot, LevelSnapshot
 from quant.events import to_ns
@@ -302,12 +302,17 @@ def test_w23_builder_invokes_provider_with_resolved_quantity_and_exact_quote(st,
     seen = {}
 
     class Provider:
-        def estimate(self, proposal, *, quote):
+        def estimate(self, proposal, *, quote, market_metric):
             seen["proposal"] = proposal
             seen["quote"] = quote
+            seen["metric"] = market_metric
             return _edge()
 
     quote = {"symbol": "AAPL", "price": "100", "ask": "100.02", "bid": "100"}
+    metric = _metric()
+    observation = MarketObservation(
+        "AAPL", quote, _book(ask_depth=800), "market-data://day/key", "c" * 64
+    )
     proposal = {
         "proposal_id": "p-w23", "symbol": "AAPL", "side": "buy",
         "quantity": None, "notional": "999", "time_horizon": "short",
@@ -315,15 +320,15 @@ def test_w23_builder_invokes_provider_with_resolved_quantity_and_exact_quote(st,
     verdict, _seq, qty, _reasons = build_execution_verdict(
         proposal,
         quote_price=Decimal("100"),
-        quote=quote,
         clock=clock,
-        book_fn=lambda _s: _book(ask_depth=800),
-        metrics_fn=lambda _s: _metric(),
+        market_observation=observation,
+        observation_fn=lambda _s: observation,
+        metrics_fn=lambda _s: metric,
         edge_provider=Provider(),
     )
     assert qty == 9 and seen["proposal"]["quantity"] == 9
     assert seen["proposal"]["notional"] is None
-    assert seen["quote"] is quote
+    assert seen["quote"] == quote and seen["metric"] is metric
     assert verdict is not None and verdict.net_edge_state == "sufficient"
 
 
