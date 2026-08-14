@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+import re
 from typing import Any
 
 import httpx
@@ -28,6 +29,7 @@ from schemas.models.portfolio_snapshot import PortfolioSnapshot
 EVENT_PORTFOLIO_SNAPSHOT = "portfolio_snapshot"
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 DATA_BASE_URL = "https://data.alpaca.markets"
+_ORDER_LOOKUP_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class AlpacaPaperError(RuntimeError):
@@ -46,6 +48,53 @@ def _decimal_text(value: Any) -> str:
         return str(value if isinstance(value, Decimal) else Decimal(str(value)))
     except (InvalidOperation, ValueError, TypeError) as exc:
         raise AlpacaPaperError("invalid numeric value in paper order") from exc
+
+
+def _clean_order_lookup_id(value: Any, *, field: str) -> str:
+    """Allow only the identifier alphabet emitted by Alpaca and this cockpit.
+
+    Broker ids enter a URL path and client ids enter a query parameter.  Keeping both to the
+    same deliberately small alphabet prevents path/query confusion and makes the response
+    identity checks below exact rather than best-effort.
+    """
+    clean = str(value or "").strip()
+    if _ORDER_LOOKUP_ID.fullmatch(clean) is None:
+        raise AlpacaPaperError(f"invalid {field} for paper-order lookup")
+    return clean
+
+
+def _normalize_order_body(body: Any) -> dict:
+    """Reduce an untrusted Alpaca order object to the gateway's single ACK contract."""
+    if not isinstance(body, dict):
+        raise AlpacaPaperError("Alpaca paper order response was not an object")
+    broker_order_id = body.get("id")
+    status = body.get("status")
+    if not broker_order_id or not status:
+        raise AlpacaPaperError("Alpaca paper order response omitted id or status")
+    clean_broker_order_id = _clean_order_lookup_id(
+        broker_order_id, field="broker_order_id"
+    )
+    try:
+        filled_qty = Decimal(str(body.get("filled_qty") or "0"))
+        avg_fill_price = (
+            None
+            if body.get("filled_avg_price") is None
+            else Decimal(str(body["filled_avg_price"]))
+        )
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise AlpacaPaperError("Alpaca paper order response had invalid fill data") from exc
+    if not filled_qty.is_finite() or filled_qty < 0 or (
+        avg_fill_price is not None and not avg_fill_price.is_finite()
+    ):
+        raise AlpacaPaperError("Alpaca paper order response had invalid fill data")
+    if avg_fill_price is not None and avg_fill_price <= 0:
+        raise AlpacaPaperError("Alpaca paper order response had non-positive fill price")
+    return {
+        "broker_order_id": clean_broker_order_id,
+        "status": str(status),
+        "filled_qty": filled_qty,
+        "avg_fill_price": avg_fill_price,
+    }
 
 
 class AlpacaPaperHTTPClient:
@@ -120,18 +169,35 @@ class AlpacaPaperHTTPClient:
         if canonical.get("client_order_id"):
             payload["client_order_id"] = str(canonical["client_order_id"])[:128]
         body = self._request("POST", PAPER_BASE_URL, "/v2/orders", json=payload)
-        broker_order_id = body.get("id")
-        if not broker_order_id:
-            raise AlpacaPaperError("Alpaca paper order response omitted its order id")
-        return {
-            "broker_order_id": str(broker_order_id),
-            "status": str(body.get("status") or "accepted"),
-            "filled_qty": Decimal(str(body.get("filled_qty") or "0")),
-            "avg_fill_price": (
-                None if body.get("filled_avg_price") is None
-                else Decimal(str(body["filled_avg_price"]))
-            ),
-        }
+        return _normalize_order_body(body)
+
+    def order_info(self, *, broker_order_id: str | None = None,
+                   client_order_id: str | None = None) -> dict:
+        """Read one paper order, identity-bound to exactly one lookup key.
+
+        The broker-id path is used for ordinary submitted/resting orders.  The client-id path
+        is the lost-response seam: ``OrderGateway`` deterministically sends
+        ``cockpit-{local_order_id}``, so a timeout after Alpaca accepted an order remains
+        discoverable without submitting it again.
+        """
+        if (broker_order_id is None) == (client_order_id is None):
+            raise AlpacaPaperError("exactly one paper-order lookup id is required")
+        if broker_order_id is not None:
+            lookup = _clean_order_lookup_id(broker_order_id, field="broker_order_id")
+            body = self._request("GET", PAPER_BASE_URL, f"/v2/orders/{lookup}")
+            if not isinstance(body, dict) or str(body.get("id") or "") != lookup:
+                raise AlpacaPaperError("Alpaca paper order response did not match broker id")
+        else:
+            lookup = _clean_order_lookup_id(client_order_id, field="client_order_id")
+            body = self._request(
+                "GET",
+                PAPER_BASE_URL,
+                "/v2/orders:by_client_order_id",
+                params={"client_order_id": lookup},
+            )
+            if not isinstance(body, dict) or str(body.get("client_order_id") or "") != lookup:
+                raise AlpacaPaperError("Alpaca paper order response did not match client id")
+        return _normalize_order_body(body)
 
     def account_info(self) -> dict:
         body = self._request("GET", PAPER_BASE_URL, "/v2/account")
@@ -248,16 +314,52 @@ class FakeAlpaca:
         self.holdings = holdings if holdings is not None else []
         self.positions = positions if positions is not None else []
         self.submitted: list[dict] = []
+        self._orders_by_broker: dict[str, dict] = {}
+        self._orders_by_client: dict[str, dict] = {}
 
     def submit_order(self, canonical: dict) -> dict:
         oid = new_id("alp")
-        self.submitted.append({"broker_order_id": oid, **canonical})
-        return {
+        response = {
             "broker_order_id": oid,
             "status": "accepted",
             "filled_qty": Decimal("0"),
             "avg_fill_price": None,
         }
+        record = {**response, **canonical}
+        self.submitted.append(record)
+        self._orders_by_broker[oid] = record
+        client_order_id = canonical.get("client_order_id")
+        if client_order_id:
+            self._orders_by_client[str(client_order_id)] = record
+        return dict(response)
+
+    def order_info(self, *, broker_order_id: str | None = None,
+                   client_order_id: str | None = None) -> dict:
+        if (broker_order_id is None) == (client_order_id is None):
+            raise AlpacaPaperError("exactly one paper-order lookup id is required")
+        record = (
+            self._orders_by_broker.get(str(broker_order_id))
+            if broker_order_id is not None
+            else self._orders_by_client.get(str(client_order_id))
+        )
+        if record is None:
+            raise AlpacaPaperError("paper order was not found", status_code=404)
+        return {
+            key: record.get(key)
+            for key in ("broker_order_id", "status", "filled_qty", "avg_fill_price")
+        }
+
+    def set_order_status(self, broker_order_id: str, *, status: str, filled_qty="0",
+                         avg_fill_price=None) -> None:
+        """Deterministic test seam; it performs no clock or hidden fill simulation."""
+        record = self._orders_by_broker[str(broker_order_id)]
+        record.update(
+            status=str(status),
+            filled_qty=Decimal(str(filled_qty)),
+            avg_fill_price=(
+                None if avg_fill_price is None else Decimal(str(avg_fill_price))
+            ),
+        )
 
     def account_info(self) -> dict:
         return {"account": self.account, "cash": self.cash,
@@ -276,6 +378,22 @@ class AlpacaPaperBroker:
         """Submit the canonical resolved-order tuple. Returns
         ``{broker_order_id, status, filled_qty, avg_fill_price}``."""
         return self._client.submit_order(canonical_tuple)
+
+    def find_order(self, *, broker_order_id: str | None,
+                   client_order_id: str) -> dict | None:
+        """Read by durable broker id, falling back to the gateway's deterministic client id."""
+        if broker_order_id:
+            try:
+                return self._client.order_info(broker_order_id=broker_order_id)
+            except AlpacaPaperError as exc:
+                if exc.status_code != 404:
+                    raise
+        try:
+            return self._client.order_info(client_order_id=client_order_id)
+        except AlpacaPaperError as exc:
+            if exc.status_code == 404:
+                return None
+            raise
 
     def _snapshot(self, *, clock) -> PortfolioSnapshot:
         info = self._client.account_info()

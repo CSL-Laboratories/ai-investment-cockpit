@@ -36,7 +36,11 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 
 from core.ids import new_id
-from orchestrator.state import EVENT_ORDER_TRANSITION, OrchestratorState
+from orchestrator.state import (
+    EVENT_ORDER_FILL_PROGRESS,
+    EVENT_ORDER_TRANSITION,
+    OrchestratorState,
+)
 from schemas.models.order import Order
 
 # ---- pinned legal adjacency (fail closed on anything else) ----------------------------
@@ -193,11 +197,72 @@ def transition(
         "order_tuple_hash": (
             order_tuple_hash if order_tuple_hash is not None else order.order_tuple_hash
         ),
+        "approval_id": order.approval_id,
         # WP8 SEC-07 "Sharpened" closure: every SIGNED transition payload carries notional +
         # symbol so pending exposure is derivable from the ledger, not mutable columns.
         "notional": _payload_notional(order),
         "symbol": order.symbol,
+        "broker_order_id": order.broker_order_id,
     }
     # record_state_change UPDATEs the existing row AND appends its audit entry in ONE txn.
     st.audit.record_state_change(order, EVENT_ORDER_TRANSITION, actor=actor, payload=payload)
+    return order
+
+
+def record_fill_progress(
+    st: OrchestratorState,
+    order: Order,
+    *,
+    filled_qty,
+    avg_fill_price=None,
+    actor: str | None = None,
+    reason: str | None = None,
+    clock=None,
+) -> Order:
+    """Persist increasing cumulative fill data while the FSM stays ``partially_filled``.
+
+    A broker can report several partial fills before the terminal fill.  Treating those as an
+    illegal state self-transition either loses real fill progress or tempts callers to update
+    the row directly.  This primitive keeps the state fixed, requires strictly increasing sane
+    cumulative quantity, and writes the row plus its dedicated audit entry atomically.
+    """
+    if order.state != "partially_filled":
+        raise IllegalOrderTransition(
+            f"fill progress requires 'partially_filled' state (order {order.id})"
+        )
+    new_qty = _dec(filled_qty)
+    old_qty = _dec(order.filled_qty)
+    total_qty = _dec(order.qty)
+    if not all(value.is_finite() for value in (new_qty, old_qty, total_qty)):
+        raise ValueError("fill progress quantities must be finite")
+    if not old_qty < new_qty < total_qty:
+        raise ValueError("fill progress must strictly increase below total order quantity")
+    price = None if avg_fill_price is None else _dec(avg_fill_price)
+    if price is not None and (not price.is_finite() or price <= 0):
+        raise ValueError("average fill price must be positive and finite")
+
+    clock = clock or st.clock
+    order.filled_qty = new_qty
+    if price is not None:
+        order.avg_fill_price = price
+    order.updated_at = clock.now()
+    if reason is not None:
+        order.reason = reason
+    payload = {
+        "from": "partially_filled",
+        "to": "partially_filled",
+        "reason": reason,
+        "proposal_id": order.proposal_id,
+        "risk_decision_id": order.risk_decision_id,
+        "order_tuple_hash": order.order_tuple_hash,
+        "approval_id": order.approval_id,
+        "notional": _payload_notional(order),
+        "symbol": order.symbol,
+        "broker_order_id": order.broker_order_id,
+        "filled_qty": str(new_qty),
+        "avg_fill_price": None if price is None else str(price),
+    }
+    st.audit.record_state_change(
+        order, EVENT_ORDER_FILL_PROGRESS, actor=actor, payload=payload
+    )
     return order

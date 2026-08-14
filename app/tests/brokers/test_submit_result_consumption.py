@@ -7,7 +7,7 @@ the SEC-07 pending-exposure ledger never drained — the cap became a one-time b
 permanently self-blocked the only wired order path.
 
 BUG-062: a broker exception between the two-phase intent and its covering result left the
-intent dangling forever (the production reconciler is wired with ``_no_broker_history`` and
+intent dangling forever (before RW-15 the production reconciler had no broker-history reader and
 can only ALERT a not-landed intent, never heal it) and propagated raw out of the locked
 submit.
 """

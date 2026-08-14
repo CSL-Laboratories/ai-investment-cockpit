@@ -89,8 +89,10 @@ def _sanitize_broker_response(result) -> dict:
     return {
         "broker_order_id": None if boid is None else str(boid)[:128],
         "status": None if result.get("status") is None else str(result.get("status"))[:64],
-        "filled_qty": fq if (fq is None or fq.is_finite()) else None,
-        "avg_fill_price": afp if (afp is None or afp.is_finite()) else None,
+        "filled_qty": fq if (fq is None or (fq.is_finite() and fq >= 0)) else None,
+        "avg_fill_price": (
+            afp if (afp is None or (afp.is_finite() and afp > 0)) else None
+        ),
     }
 
 
@@ -766,7 +768,8 @@ class OrderGateway:
             intent = st.audit.intent(
                 "order_submit",
                 refs={"order_id": order.id, "proposal_id": order.proposal_id,
-                      "risk_decision_id": risk_decision.id, "order_tuple_hash": resolved_hash},
+                      "risk_decision_id": risk_decision.id, "approval_id": approval.id,
+                      "order_tuple_hash": resolved_hash},
                 payload={"symbol": order.symbol, "side": order.side,
                          "qty": str(order.qty), "order_type": order.order_type,
                          "mode": ladder.current().value, "producing_runtime": producing_runtime},
@@ -803,9 +806,7 @@ class OrderGateway:
                 result = _sanitize_broker_response(self._broker.submit_order(broker_request))
             except BaseException as exc:                                 # noqa: BLE001
                 # BUG-062: a broker failure between the intent and its result used to leave
-                # the SEC-13 intent dangling FOREVER — the production reconciler is wired
-                # with _no_broker_history and can only alert a not-landed intent, never heal
-                # it — while the raw exception escaped the locked submit. Complete the
+                # the SEC-13 intent dangling FOREVER. Complete the
                 # two-phase pair (same shape as the halt-abort above), record the refusal,
                 # and fail closed. The capability token was consumed at gate (g) and stays
                 # consumed: a failed submit needs a fresh human approval, not a free retry.
@@ -856,6 +857,7 @@ class OrderGateway:
             )
 
             # Advance the order proposed/approved -> submitted (audited; via the FSM).
+            order.approval_id = approval.id
             if order.state == "proposed":
                 transition(st, order, "approved", actor=producing_runtime,
                            reason="approval consumed", clock=clock)

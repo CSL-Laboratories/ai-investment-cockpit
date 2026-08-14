@@ -19,7 +19,7 @@ canonical invariant list, and nothing else restates it.
 
 ## Current repository snapshot — 2026-08-13
 
-- `main` includes PR #31 and there are no open pull requests awaiting merge. The old
+- `main` includes PR #33. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
@@ -28,12 +28,12 @@ canonical invariant list, and nothing else restates it.
   repository test failure.
 - `RW-17` and BUG-041–045, BUG-047–051, BUG-098, and BUG-099 are merged. `RW-11` and
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
-  entitlement/progression/stale-transition evidence remains pending. `W-21` is active on
-  `work/w21-transaction-cost-model`: expected edge is intentionally unavailable and
-  fail-closed until a deterministic strategy source is separately selected and reviewed. Its
-  uncommitted Windows checkpoint is 2,155 passed / 1 skipped with Ruff clean after the fresh
-  DeepSeek adversarial round; this is offline evidence only. The remaining production sequence
-  is `W-21 → RW-15 → W-22`.
+  entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
+  expected edge remains intentionally unavailable and fail-closed until a deterministic strategy
+  source is separately selected and reviewed. RW-15 is active on
+  `work/rw15-broker-reconciliation`, with a 2,165 passed / 1 skipped Windows checkpoint and Ruff
+  clean; real Alpaca paper reconciliation remains an online gate. The remaining production
+  sequence is `RW-15 → W-22`.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 

@@ -139,15 +139,7 @@ def build_decision_transport(settings):
     return LowPrivSubprocessTransport(account) if account else SubprocessTransport()
 
 
-def _no_broker_history(order_id: str) -> list:
-    """SEC-13 default broker-history reader for startup reconciliation. NO live broker read
-    exists until W17 wires the MCP order-history seam, so this returns ``[]`` (no history) —
-    a FRESH empty DB has no unresolved intents, so reconciliation is clean (``ok=True``). Once
-    W17 lands, this is replaced by the live read so a crashed-mid-submit intent can be healed."""
-    return []
-
-
-def _startup_reconcile(state) -> None:
+def _startup_reconcile(state, *, paper=None) -> None:
     """SEC-13 — reconcile the two-phase ledger against the broker + domain tables at startup.
     On a NOT-``ok`` verdict we LOG the alert (already emitted by the injected alerter) and keep
     serving: reconciliation SURFACES a completeness defect, it does not gate boot. A fresh empty
@@ -157,8 +149,23 @@ def _startup_reconcile(state) -> None:
     from orchestrator.reconcile import reconcile_startup
 
     log = logging.getLogger("cockpit.reconcile")
-    report = reconcile_startup(state, broker_history_fn=_no_broker_history,
-                               alerter=log.warning)
+    if paper is not None:
+        poll = paper.reconcile_orders()
+        if not poll.ok:
+            log.warning(
+                "RW-15 startup order poll is NOT ok: errors=%s chain_verified=%s deferred=%s",
+                poll.errors,
+                poll.chain_verified,
+                poll.deferred,
+            )
+        history_fn = paper.order_history
+    else:
+        history_fn = None
+    report = reconcile_startup(
+        state,
+        broker_history_fn=history_fn,
+        alerter=log.warning,
+    )
     if not report.ok:
         log.warning(
             "SEC-13 startup reconciliation is NOT ok: healed=%s alerted=%s orphan_results=%s "
@@ -589,6 +596,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
     from brokers.capability import TokenRegistry
     from brokers.gateway import OrderGateway
     from brokers.paper_execution import PaperExecutionService
+    from brokers.paper_reconciliation import PaperOrderReconciler
     from core.secrets import get_secret
     from ingest.market_data import MarketDataService
     from orchestrator.quant_ws import SnapshotSource
@@ -638,6 +646,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         audit_log=state.audit,
     )
     state.market_data = market_data
+    order_reconciler = PaperOrderReconciler(state, broker=broker)
     log.info("Alpaca PAPER execution transport wired behind OrderGateway")
     return PaperExecutionService(
         state,
@@ -647,6 +656,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         quote_fn=market_data.quote if market_data is not None else client.latest_quote,
         watchlist_fn=watchlist_fn,
         market_data=market_data,
+        order_reconciler=order_reconciler,
     )
 
 
@@ -763,7 +773,6 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     state = OrchestratorState.build(session_factory, hmac_key=_hmac_key(), settings=settings,
                                     clock=clock,
                                     anchor_store=_build_anchor_store(settings))
-    _startup_reconcile(state)   # SEC-13: heal/alert the two-phase ledger before wiring services
     # RW-01: the operator surface. Without this the brew was computed, stored, audited — and
     # then delivered nowhere, because compose passed no `deliver` at all.
     deliver = deliver if deliver is not None else build_operator_deliver(settings)
@@ -782,6 +791,9 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     paper = build_paper_execution(
         state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root
     )
+    # RW-15: settle broker-visible orders before the completeness report. No provisioned paper
+    # transport means unresolved submits remain visible; production never substitutes fake history.
+    _startup_reconcile(state, paper=paper)
     market_data = paper.market_data if paper is not None else None
     services = build_services(state, transport=transport,
                               deliver=deliver, parquet_root=parquet_root,
@@ -852,7 +864,11 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     state, app, services = compose()
     ingest = app.state.ingest
     build_scheduler(
-        state, services=services, ingest=ingest, market_data=app.state.market_data
+        state,
+        services=services,
+        ingest=ingest,
+        market_data=app.state.market_data,
+        paper=app.state.paper,
     ).start()
     ingest.start_streams()
 

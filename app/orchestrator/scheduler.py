@@ -46,6 +46,7 @@ DISARM_HOUR, DISARM_MINUTE = 16, 0
 ANCHOR_MINUTES = "*/30"                   # SEC-11 external-witness head-anchor cadence
 MARKET_QUOTE_MINUTES = "*/1"              # a roughly two-minute gap reaches the 120 s threshold
 MARKET_BARS_HOUR, MARKET_BARS_MINUTE = 7, 30
+PAPER_ORDER_POLL_MINUTES = "*/1"
 
 # ---- RW-01 ingest cadences ------------------------------------------------------------
 # Per-feed cron kwargs, keyed by the ``ingest_runner`` feed name. Each is sized to the feed's
@@ -209,8 +210,16 @@ def run_market_bars_refresh(state, clock=None, *, market_data=None):
     return market_data.refresh_daily_bars()
 
 
+def run_paper_order_reconcile(state, clock=None, *, paper=None):
+    """RW-15 paper-order tick: read broker state and consume it through the audited FSM."""
+    del state, clock
+    if paper is None:
+        return {"skipped": "paper_not_wired"}
+    return paper.reconcile_orders()
+
+
 def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=None,
-                    market_data=None):
+                    market_data=None, paper=None):
     """Register the cron jobs and return the (UN-started) scheduler. APScheduler is imported
     here so the job callables above stay usable without APScheduler installed.
 
@@ -283,5 +292,19 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
                         day_of_week="mon-fri", timezone=EASTERN),
             id="market_daily_bars", name="market_daily_bars", replace_existing=True,
             max_instances=1, coalesce=True,
+        )
+    if paper is not None:
+        sched.add_job(
+            lambda: run_paper_order_reconcile(state, clock, paper=paper),
+            CronTrigger(
+                minute=PAPER_ORDER_POLL_MINUTES,
+                day_of_week="mon-fri",
+                timezone=EASTERN,
+            ),
+            id="paper_order_reconcile",
+            name="paper_order_reconcile",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
         )
     return sched

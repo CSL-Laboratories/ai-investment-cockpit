@@ -187,6 +187,25 @@ def test_rw14_scheduler_registers_quote_and_daily_bar_jobs(state):
     assert "minute='*/1'" in str(jobs["market_quotes"].trigger)
 
 
+def test_rw15_scheduler_reaches_composed_paper_reconciler(state):
+    pytest.importorskip("apscheduler")
+
+    class Paper:
+        def __init__(self):
+            self.calls = 0
+
+        def reconcile_orders(self):
+            self.calls += 1
+            return {"status": "ok"}
+
+    paper = Paper()
+    jobs = {job.id: job for job in sch.build_scheduler(state, OPEN, paper=paper).get_jobs()}
+    assert "paper_order_reconcile" in jobs
+    assert "minute='*/1'" in str(jobs["paper_order_reconcile"].trigger)
+    assert jobs["paper_order_reconcile"].func() == {"status": "ok"}
+    assert paper.calls == 1
+
+
 def test_scheduler_jobs_have_operational_names(state, tmp_path):
     """Logs must identify the real job instead of seven indistinguishable lambdas."""
     pytest.importorskip("apscheduler")
