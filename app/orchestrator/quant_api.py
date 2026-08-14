@@ -92,6 +92,7 @@ def quant_status(state) -> dict:
     defaults = RiskContext.__dataclass_fields__
     market_data = getattr(state, "market_data", None)
     market_status = market_data.status() if market_data is not None else None
+    verify_params = market_data.verify_params if market_data is not None else None
     return {
         "engine": "available",
         "strategies": list(STRATEGIES),
@@ -103,13 +104,24 @@ def quant_status(state) -> dict:
         "book_feed": "alpaca_iex_l1" if market_data is not None else "not_wired",
         "market_data": market_status,
         "verification": {
-            "tier_a": "available (advisory scoring)",
+            "tier_a": "spread + ADV/volatility impact + fees + borrow contract",
             "tier_b": (
                 "wired to the cached L1 book"
                 if market_data is not None
                 else "wired, dormant until a book feed exists"
             ),
-            "require_quant_verdict": bool(defaults["require_quant_verdict"].default),
+            "require_quant_verdict": market_data is not None,
+            "require_net_edge": market_data is not None,
+            "expected_edge_source": "unavailable — deterministic strategy source not selected",
+            "impact_coefficient_y": (
+                None if verify_params is None else str(verify_params.impact_coefficient_y)
+            ),
+            "max_adv_participation": (
+                None if verify_params is None else str(verify_params.max_adv_participation)
+            ),
+            "net_cost_multiple": (
+                None if verify_params is None else str(verify_params.min_net_cost_multiple)
+            ),
             "max_execution_cost_bps": str(defaults["max_execution_cost_bps"].default),
         },
         "containment": {

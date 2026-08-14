@@ -75,8 +75,8 @@ class RiskContext:
 
     require_quant_verdict: bool = False
     """When True, a missing or stale verdict forces human review instead of being ignored.
-    Off by default so the engine still works with no book wired; ON is the fail-closed
-    posture and is what the cockpit should run once a quote/book feed exists."""
+    Off by default for deliberately uncomposed callers; production composition arms the
+    fail-closed posture with its market-data service."""
 
     max_execution_cost_bps: Decimal = Decimal("100")
     """HARD ceiling on modelled execution cost. Above this the order cannot pay for itself
@@ -86,6 +86,11 @@ class RiskContext:
     quant_book_seq: int | None = None
     """The book sequence the caller is about to trade against. When it has moved past the
     verdict's ``book_seq``, the verdict describes a book that no longer exists."""
+
+    require_net_edge: bool = False
+    """W-21 production posture.  When armed, an unavailable trusted edge forces human review
+    (and therefore no Order row), while a present estimate below the relative threshold is a
+    distinct HARD failure.  Off keeps legacy/uncomposed callers additive."""
 
 
 def _verdict_state(ctx: RiskContext) -> tuple[str, str]:
@@ -128,6 +133,17 @@ def _verdict_cost_bps(ctx: RiskContext) -> Decimal:
     if verdict is None:
         return Decimal("NaN")
     return _d(getattr(verdict, "expected_cost_bps", None))
+
+
+def _verdict_edge_state(ctx: RiskContext) -> str:
+    """Return the independently-computed W-21 edge state; never inspect the proposal."""
+    verdict = ctx.quant_verdict
+    if verdict is None:
+        return "unavailable"
+    state = str(getattr(verdict, "net_edge_state", "unavailable"))
+    if state in {"unavailable", "insufficient", "sufficient", "not_applicable"}:
+        return state
+    return "unavailable"
 
 
 def order_notional(proposal: dict, ctx: RiskContext) -> Decimal:
@@ -213,6 +229,22 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
         quality_unclear = True
     execution_quality_ok = not quality_unclear
 
+    # W-21's relative rule is separate from the absolute execution-cost ceiling.  A trusted
+    # estimate that is PRESENT and below the threshold is a hard economic refusal.  Missing
+    # instrumentation is different: it takes the fail-closed human/no-Order lane, matching
+    # the existing treatment of an unavailable execution verdict.
+    edge_state = _verdict_edge_state(ctx)
+    edge_authoritative = verdict_state not in {"absent", "stale", "insufficient_data"}
+    net_edge_sane = (
+        not ctx.require_net_edge
+        or not edge_authoritative
+        or edge_state != "insufficient"
+    )
+    net_edge_available = (
+        not ctx.require_net_edge
+        or (edge_authoritative and edge_state in {"sufficient", "not_applicable"})
+    )
+
     checks = [
         CheckResult("notional_positive", size_finite and notional > 0, True,
                     "order size must be a finite, positive amount"),
@@ -248,7 +280,10 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
                     "orders are disabled in read_only mode"),
         CheckResult("execution_cost_sane", execution_cost_sane, True,
                     f"modelled execution cost {cost_bps} <= {ctx.max_execution_cost_bps}bps "
-                    f"and the book can absorb the order (QT-06; verdict={verdict_state})"),
+                    f"and ADV validity holds (W-21; verdict={verdict_state})"),
+        CheckResult("net_edge_sane", net_edge_sane, True,
+                    f"trusted net-edge state is {edge_state}; a present estimate must meet "
+                    "the independently-modelled relative cost threshold (W-21)"),
         # SOFT -> human review
         CheckResult("sizing_not_max",
                     str(proposal.get("sizing_basis", "")).lower() not in ("max", "maximum", "all"),
@@ -258,6 +293,9 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
         CheckResult("execution_quality", execution_quality_ok, False,
                     f"execution verdict is {verdict_state}"
                     f"{': ' + verdict_detail if verdict_detail else ''} -> human review (QT-06)"),
+        CheckResult("net_edge_available", net_edge_available, False,
+                    f"trusted net-edge state is {edge_state}; unavailable edge cannot mint "
+                    "an order until a deterministic strategy source exists (W-21)"),
     ]
 
     failed_hard = [c.name for c in checks if c.hard and not c.passed]

@@ -36,6 +36,7 @@ class FakeVerdict:
     verdict: str
     expected_cost_bps: Decimal = Decimal("2")
     book_seq: int = 100
+    net_edge_state: str = "sufficient"
 
 
 def _ctx(**kwargs) -> RiskContext:
@@ -162,6 +163,66 @@ def test_a_current_verdict_is_not_treated_as_stale():
              require_quant_verdict=True),
     )
     assert result["decision"] == "approved"
+
+
+# ---- W-21 relative edge is a separate authority ------------------------------------------
+
+
+def test_unavailable_required_edge_fails_closed_to_no_approval():
+    result = evaluate(
+        _proposal(),
+        _ctx(
+            quant_verdict=FakeVerdict("ok", net_edge_state="unavailable"),
+            require_quant_verdict=True,
+            require_net_edge=True,
+        ),
+    )
+    assert result["decision"] == "needs_human"
+    assert "net_edge_available" in result["warnings"]
+    assert _check(result, "net_edge_sane")["passed"]
+
+
+def test_present_edge_below_relative_threshold_is_a_distinct_hard_failure():
+    result = evaluate(
+        _proposal(),
+        _ctx(
+            quant_verdict=FakeVerdict("ok", net_edge_state="insufficient"),
+            require_quant_verdict=True,
+            require_net_edge=True,
+        ),
+    )
+    assert result["decision"] == "rejected"
+    assert "net_edge_sane" in result["failed_checks"]
+    assert "execution_cost_sane" not in result["failed_checks"]
+
+
+def test_closing_trade_marks_relative_edge_not_applicable_without_weakening_other_checks():
+    result = evaluate(
+        _proposal(side="sell", quantity=10),
+        _ctx(
+            holdings={"AAPL": {"market_value": Decimal("5000")}},
+            quant_verdict=FakeVerdict("ok", net_edge_state="not_applicable"),
+            require_quant_verdict=True,
+            require_net_edge=True,
+        ),
+    )
+    assert result["decision"] == "approved"
+    assert _check(result, "net_edge_available")["passed"]
+
+
+def test_stale_insufficient_edge_cannot_use_stale_data_as_a_hard_fact_or_approve():
+    result = evaluate(
+        _proposal(),
+        _ctx(
+            quant_verdict=FakeVerdict("ok", book_seq=1, net_edge_state="insufficient"),
+            quant_book_seq=2,
+            require_quant_verdict=True,
+            require_net_edge=True,
+        ),
+    )
+    assert result["decision"] == "needs_human"
+    assert _check(result, "net_edge_sane")["passed"]
+    assert "net_edge_available" in result["warnings"]
 
 
 def test_a_stale_UNECONOMIC_verdict_still_does_not_approve():

@@ -66,6 +66,9 @@ def render_status(status: dict) -> str:
     """The engine's posture, as an operator reads it before trusting anything else."""
     verification = status.get("verification") or {}
     containment = status.get("containment") or {}
+    impact_y = verification.get("impact_coefficient_y")
+    adv_cap = verification.get("max_adv_participation")
+    net_multiple = verification.get("net_cost_multiple")
     lines = [
         "**Quant engine**",
         f"engine: `{status.get('engine', 'unknown')}`",
@@ -76,6 +79,11 @@ def render_status(status: dict) -> str:
         f"Tier A: {verification.get('tier_a', '?')}",
         f"Tier B: {verification.get('tier_b', '?')}",
         f"verdict required: `{verification.get('require_quant_verdict')}`",
+        f"net edge required: `{verification.get('require_net_edge')}`",
+        f"edge source: {verification.get('expected_edge_source', '?')}",
+        f"impact Y / ADV cap: "
+        f"{'dormant' if impact_y is None else f'{impact_y} / {adv_cap}'}",
+        f"minimum net/cost: {'dormant' if net_multiple is None else f'{net_multiple}x'}",
         f"cost ceiling: {verification.get('max_execution_cost_bps')}bps",
         "",
         "**Containment**",
@@ -131,6 +139,11 @@ def render_execution_line(execution: dict | None) -> str:
     if not execution or not execution.get("evaluated"):
         summary = (execution or {}).get("summary", "not evaluated")
         return f"⚪ execution: {summary}"
+    if execution.get("verdict") == "insufficient_data":
+        return clamp(
+            f"⚪ execution: **{execution.get('label')}** · "
+            f"edge {execution.get('net_edge_state', 'unavailable')}"
+        )
 
     icon = {"ok": "🟢", "marginal": "🟡", "uneconomic": "🔴"}.get(
         str(execution.get("verdict")), "⚪"
@@ -138,16 +151,14 @@ def render_execution_line(execution: dict | None) -> str:
     parts = [
         f"{icon} execution: **{execution.get('label')}**",
         f"cost {execution.get('expected_cost_bps')}bps",
-        f"(slip {execution.get('expected_slippage_bps')} + fee {execution.get('expected_fee_bps')})",
-        f"participation {execution.get('participation_rate')}",
+        f"(spread {execution.get('expected_spread_bps')} + "
+        f"impact {execution.get('expected_impact_bps')} + "
+        f"fee {execution.get('expected_fee_bps')} + "
+        f"borrow {execution.get('expected_borrow_bps')})",
+        f"ADV participation {execution.get('adv_participation_rate')}",
+        f"edge {execution.get('net_edge_state', 'unavailable')}",
     ]
-    if not execution.get("fully_fillable"):
-        parts.append(
-            f"⚠ book shows only {execution.get('fillable_now')} shares"
-        )
-    queue = execution.get("queue_ahead_shares")
-    if queue is not None:
-        # Labelled as a queue MEASUREMENT, never as a probability of filling — the engine
-        # produces no such probability and the operator surface must not imply one.
-        parts.append(f"{queue:,} shares ahead if rested")
+    first_negative = execution.get("first_negative_notional")
+    if first_negative is not None:
+        parts.append(f"net turns negative at ${first_negative}")
     return clamp(" · ".join(parts))

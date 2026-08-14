@@ -311,6 +311,57 @@ fixtures. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff cl
 
 The change M2 makes possible, and the one the research says decides viability.
 
+**Package intake — claimed on `work/w21-transaction-cost-model`:**
+
+1. **Operator change:** execution evidence reports round-trip spread, conservative
+   square-root impact, fees, borrow applicability, ADV participation, and deterministic
+   size/cost sensitivity. A proposal cannot become an order while its trusted expected edge
+   is unavailable. That is the intentional production posture until a deterministic strategy
+   source is separately selected and reviewed; the model-authored `TradeProposal` does not
+   gain an expected-return field.
+2. **Extended path:** `quant/verify.py`, `risk/engine.py`, `workflows/proposals.py`, the
+   `build_services`/`main.compose` seams, `PaperExecutionService._fresh_risk`, the persisted
+   `RiskDecision.execution_verdict`, and the existing operator execution block. RW-14
+   `MarketMetrics` remains the only ADV/volatility input.
+3. **Retirement:** this same package deletes the production verifier's displayed-depth walk,
+   fillability, queue-ahead, and displayed-depth participation semantics. The FIFO book and
+   depth measurements remain valid inside the contained simulator; no second live cost path
+   remains.
+4. **Reachability proof:** composed workflow tests must fail if RW-14 metrics stop reaching the
+   proposal verdict, if unavailable edge can produce an `Order`, or if the approval-time
+   `_fresh_risk` recheck omits the same cost/edge inputs. Pure tests pin the cost curve and its
+   first negative whole-share boundary.
+5. **Package IDs:** `W-21` only. A future deterministic edge producer or short-opening path is
+   a separately claimed package and adversarial review, not latent authority hidden here.
+6. **Platforms:** pure stdlib/`Decimal` calculations with injected clocks and data; no new
+   subprocess, path, credential, temp-file, network, or platform-specific behavior. The normal
+   Ubuntu/Windows/macOS matrix remains required.
+7. **Size:** one vertical slice, targeted below roughly 1,000 production LOC plus replacement
+   tests and live-doc reconciliation. Crossing that line returns here for a split.
+
+**Pinned contracts:** expected return means verified **gross holding-period return in basis
+points of position notional**. Production supplies no estimate yet; missing/non-finite/unverified
+edge is explicit and fail-closed, while a present estimate fails the new hard rule unless
+`gross - all_in_cost >= 2 * all_in_cost` (equivalently gross is at least 3× cost). The mapping
+`intraday / short / long = 1 / 7 / 30 calendar days` has one home and applies to borrow carry.
+An injected borrow quote is an annual decimal fraction with provenance/freshness; it is required
+only for an explicitly identified short leg. Current sells close reconciled longs and never
+become shorts. The gate uses dimensionless `Y = 1.0`, converts RW-14 annualized volatility to
+daily volatility with `sqrt(252)`, and hard-stops above 10% of median daily dollar volume;
+0.5–1.0 is reported as the sensitivity band, not a knob that can weaken the gate. Curves use
+whole shares and exact deterministic cost evaluations inside the model-valid ADV range.
+
+**Implementation checkpoint (2026-08-13, uncommitted):** the vertical slice is implemented on
+the claimed branch. Local Windows gates are 2,155 passed / 1 skipped with Ruff clean. Fresh
+read-only DeepSeek v4 Pro architecture/adversarial review and v4 Flash caller/test review found
+no P0/P1 order-authority bypass. Their concrete findings were closed with regressions: the
+approval surface now prices the fixed persisted Order quantity; persisted W-21 evidence keeps
+fresh risk armed if the market-data attachment disappears; `decide()` refuses missing RW-14
+metrics; status reads the active `VerifyParams`; and versioned edge/borrow plus invalid-input
+boundaries are pinned. A separately reviewed deterministic edge producer remains intentionally
+out of scope and unavailable. Cross-platform CI and all named RW-14 live evidence remain
+pending; this checkpoint is not live authorization.
+
 - Replace `verify.py`'s displayed-depth walk with **spread (L1) + square-root impact (ADV, σ) +
   borrow on any short leg**.
 - `max_participation` becomes a fraction of **ADV**, which is the measure the 10–15% rule is

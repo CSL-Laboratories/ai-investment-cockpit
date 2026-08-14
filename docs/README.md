@@ -28,8 +28,12 @@ canonical invariant list, and nothing else restates it.
   repository test failure.
 - `RW-17` and BUG-041–045, BUG-047–051, BUG-098, and BUG-099 are merged. `RW-11` and
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
-  entitlement/progression/stale-transition evidence remains pending. The next production
-  sequence is `W-21 → RW-15 → W-22`.
+  entitlement/progression/stale-transition evidence remains pending. `W-21` is active on
+  `work/w21-transaction-cost-model`: expected edge is intentionally unavailable and
+  fail-closed until a deterministic strategy source is separately selected and reviewed. Its
+  uncommitted Windows checkpoint is 2,155 passed / 1 skipped with Ruff clean after the fresh
+  DeepSeek adversarial round; this is offline evidence only. The remaining production sequence
+  is `W-21 → RW-15 → W-22`.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 

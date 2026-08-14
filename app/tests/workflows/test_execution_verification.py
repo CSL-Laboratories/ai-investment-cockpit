@@ -1,45 +1,21 @@
-"""QT-05/QT-06 — execution verification wired into the REAL proposal pipeline.
+"""W-21 execution-cost verification wired into the real proposal pipeline.
 
-The tier tests elsewhere prove the verifier computes correctly (``tests/quant/test_verify``)
-and that the risk engine acts on a verdict (``tests/risk/test_execution_gate``). This file
-proves the two are actually CONNECTED — that ``draft_proposal`` builds a verdict from the
-injected book seam, hands it to ``evaluate``, and audits it as evidence. A correct verifier
-with no caller changes nothing.
-
-THE GAP THIS CLOSES, STATED PRECISELY
---------------------------------------
-It is NOT "the cockpit would allow a huge order" — it would not. ``max_notional`` defaults to
-$1,000 and catches size in dollars perfectly well.
-
-The gap is that EVERY pre-existing check is denominated in DOLLARS, and none of them can see
-LIQUIDITY. ``max_notional``, ``buying_power``, ``concentration``, ``pending_exposure`` — all
-of them price the order and none of them ask whether the market can absorb it. So a $1,000
-order in a name showing three shares at the touch passes every single check, because $1,000
-is a perfectly reasonable amount of money and nothing in the tree knows what three shares
-means.
-
-That is the case exercised below, and it is a more interesting failure than a large order:
-it is small, well-funded, well-diversified, and undeployable.
-
-The properties pinned:
-
-  * WITH A BOOK, a fully-funded proposal that exceeds displayed depth is REJECTED.
-  * WITHOUT A BOOK, the identical proposal is APPROVED — which is exactly the pre-QT
-    behaviour. The tree has no book feed, and an additive check that changed existing
-    outcomes would be a regression wearing a feature's name.
-  * THE VERDICT IS AUDITED as evidence on the risk decision, so a later reader can
-    reconstruct why a decision went the way it did.
-  * ``book_fn`` IS AN INJECTED SEAM, exactly like ``quote_fn``. Nothing in the workflow
-    fetches a book.
+These tests prove that proposal drafting consumes injected L1 prices plus RW-14 ADV and
+realized volatility, hands the deterministic verdict to risk, and audits the verdict as
+evidence. Displayed depth is deliberately non-authoritative: liquidity participation is
+measured against median daily dollar volume. Production supplies no expected-edge source,
+so a fully composed opening proposal fails closed before an Order row can exist.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 
 from config.settings import Mode
+from ingest.market_data import MarketMetrics
 from orchestrator.mode_ladder import ModeLadder
 from quant.book.lob import BookSnapshot, LevelSnapshot
 from quant.events import to_ns
+from quant.verify import EdgeEstimate
 from tests.workflows.conftest import NOW, FakeTransport, envelope
 from tests.workflows.test_proposals import (
     HOLDINGS,
@@ -57,13 +33,7 @@ from workflows.proposals import draft_proposal
 
 def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None,
           ts: int | None = None) -> BookSnapshot:
-    """A book around $100.00 on a penny grid — matching ``_quote_fn``'s price of 100.
-
-    ``ask_depth`` is the knob that matters here. Every proposal in this file is TEN SHARES,
-    i.e. exactly the $1,000 that ``max_notional`` permits; what changes between tests is how
-    much liquidity exists to fill it. That isolates the new check from every pre-existing
-    dollar-denominated one.
-    """
+    """A book around $100.00 on a penny grid, with non-authoritative depth."""
     if asks is None:
         asks = ((10_002, ask_depth),)
     if bids is None:
@@ -75,8 +45,32 @@ def _book(*, ask_depth: int = 800, seq: int = 7, bids=None, asks=None,
     )
 
 
+_AUTO = object()
+
+
+def _metric(*, adv: str = "100000000", volatility: float = 0.20) -> MarketMetrics:
+    return MarketMetrics(
+        symbol="AAPL", as_of=NOW.date(),
+        median_daily_dollar_volume=Decimal(adv),
+        realized_volatility=volatility, observations=60,
+    )
+
+
+def _edge(*, gross_bps: str = "1000") -> EdgeEstimate:
+    return EdgeEstimate(
+        expected_gross_return_bps=Decimal(gross_bps),
+        time_horizon="short", source_id="test-strategy-v1",
+        evidence_ref="strategy:test:1", computed_at_ns=to_ns(NOW) - 1_000_000_000,
+        verified=True,
+    )
+
+
 def _draft(st, clock, tmp_path, *, quantity, notional=None, book_fn=None,
-           quote_fn=_quote_fn):
+           quote_fn=_quote_fn, metrics_fn=_AUTO, expected_edge=_AUTO):
+    if metrics_fn is _AUTO:
+        metrics_fn = (lambda _s: _metric()) if book_fn is not None else None
+    if expected_edge is _AUTO:
+        expected_edge = _edge() if book_fn is not None else None
     ModeLadder(st).set_mode(Mode.paper, actor="op")
     _seed_snapshot(st)
     row = _persist_event(st, clock, tmp_path)
@@ -88,6 +82,7 @@ def _draft(st, clock, tmp_path, *, quantity, notional=None, book_fn=None,
     return draft_proposal(
         st, clock, event=row, packet=packet, transport=transport,
         parquet_root=tmp_path / "raw", quote_fn=quote_fn, book_fn=book_fn,
+        metrics_fn=metrics_fn, expected_edge=expected_edge,
         holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
     )
 
@@ -146,36 +141,24 @@ def test_fractional_explicit_quantity_fails_to_human_without_an_order(st, clock,
     assert any("quantity unresolvable" in reason for reason in outcome.reasons)
 
 
-# ---- the case the cockpit could not previously see -------------------------------------------
+# ---- ADV replaces displayed-depth participation -----------------------------------------------
 
 
-def test_a_fully_funded_proposal_is_REJECTED_when_the_book_cannot_absorb_it(st, clock, tmp_path):
-    """Ten shares — exactly the $1,000 ``max_notional`` allows — into a book showing THREE.
-
-    Every dollar-denominated check passes: the notional is at the limit, buying power is
-    $200k, concentration is fine. Only the depth check can see that this order is three times
-    the entire displayed offer.
-    """
+def test_displayed_depth_does_not_change_the_authority_bearing_cost(st, clock, tmp_path):
+    """Three displayed shares cannot block a ten-share order with valid ADV capacity."""
     outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=3))
 
-    assert outcome.risk_decision.decision == "rejected"
-    assert "execution_cost_sane" in outcome.risk_decision.failed_checks
-    assert outcome.order is None, "a rejected proposal must never resolve an order tuple"
-    assert any("displayed depth" in r for r in outcome.reasons)
-    # And prove it was DEPTH that rejected it, not a dollar limit that happened to fire.
-    assert "max_notional" not in outcome.risk_decision.failed_checks
-    assert "buying_power" not in outcome.risk_decision.failed_checks
+    verdict = outcome.risk_decision.execution_verdict
+    assert outcome.risk_decision.decision == "approved"
+    assert verdict["adv_participation_rate"] == "0.000010"
+    assert "fillable_now" not in verdict
+    assert "participation_rate" not in verdict
 
 
-def test_the_IDENTICAL_proposal_is_APPROVED_when_no_book_is_attached(st, clock, tmp_path):
-    """THE control, and the most important test in this file.
-
-    Same ten shares, same everything, no ``book_fn``. Approved — which is exactly the pre-QT
-    behaviour, and proves the rejection above is caused by the book rather than by the order
-    tripping some pre-existing limit. It is also the gap, stated as an experiment: without
-    depth, an order for three times the available liquidity is indistinguishable from a good
-    one.
-    """
+def test_the_identical_legacy_proposal_is_approved_when_no_quant_seam_is_attached(
+    st, clock, tmp_path,
+):
+    """Uncomposed unit callers retain the additive pre-W-21 behavior."""
     outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=None)
 
     assert outcome.risk_decision.decision == "approved"
@@ -183,21 +166,24 @@ def test_the_IDENTICAL_proposal_is_APPROVED_when_no_book_is_attached(st, clock, 
     assert _check(outcome, "execution_quality")["passed"]
 
 
-def test_the_same_proposal_passes_when_the_book_is_deep_enough(st, clock, tmp_path):
-    """CONTROL for the rejection: a verifier that rejected everything would pass that test.
-    Only ``ask_depth`` changed."""
-    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=800))
+def test_adv_participation_above_ten_percent_is_hard_blocked(st, clock, tmp_path):
+    outcome = _draft(
+        st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=800),
+        metrics_fn=lambda _s: _metric(adv="5000"),
+    )
 
-    assert outcome.risk_decision.decision == "approved"
-    assert outcome.order is not None
-    assert _check(outcome, "execution_cost_sane")["passed"]
+    assert outcome.risk_decision.decision == "rejected"
+    assert outcome.order is None
+    assert "execution_cost_sane" in outcome.risk_decision.failed_checks
+    assert any("ADV participation" in reason for reason in outcome.reasons)
 
 
 def test_a_marginal_proposal_goes_to_a_human_rather_than_through_or_away(st, clock, tmp_path):
-    """Ten shares into a book of thirty: 33% participation. Inside the displayed depth, so
-    not fatal — but above the 25% ceiling at which walk-the-book slippage stops being a
-    reliable estimate. Not fatal, not fine, so: a human."""
-    outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=30))
+    """A cost above the marginal threshold is routed to human review, not hard-blocked."""
+    outcome = _draft(
+        st, clock, tmp_path, quantity=10, book_fn=lambda _s: _book(ask_depth=30),
+        metrics_fn=lambda _s: _metric(adv="1000000", volatility=0.40),
+    )
 
     assert outcome.risk_decision.decision == "needs_human"
     assert "execution_quality" in outcome.risk_decision.warnings
@@ -205,14 +191,15 @@ def test_a_marginal_proposal_goes_to_a_human_rather_than_through_or_away(st, clo
     assert _check(outcome, "execution_cost_sane")["passed"], "marginal must not hard-block"
 
 
-# ---- additive, not a new requirement --------------------------------------------------------------
+# ---- fail-closed data availability -------------------------------------------------------------
 
 
-def test_a_book_fn_returning_None_behaves_exactly_like_no_book_fn(st, clock, tmp_path):
-    """A symbol with no book must not be penalised. ``require_quant_verdict`` is off by
-    default precisely so a partial feed does not send every uncovered name to review."""
+def test_a_composed_book_fn_returning_none_fails_closed(st, clock, tmp_path):
     with_none = _draft(st, clock, tmp_path, quantity=10, book_fn=lambda _s: None)
-    assert with_none.risk_decision.decision == "approved"
+    assert with_none.risk_decision.decision == "needs_human"
+    assert with_none.order is None
+    assert "execution_quality" in with_none.risk_decision.warnings
+    assert "net_edge_available" in with_none.risk_decision.warnings
 
 
 def test_a_one_sided_book_degrades_to_human_review_not_to_approval(st, clock, tmp_path):
@@ -237,9 +224,12 @@ def test_the_verdict_is_audited_as_evidence_on_the_risk_decision(st, clock, tmp_
     verdicts = [p["execution_verdict"] for p in payloads if "execution_verdict" in p]
     assert verdicts, "the execution verdict must ride in the audit payload"
     recorded = verdicts[-1]
-    assert recorded["verdict"] == "uneconomic"
+    assert recorded["verdict"] == "ok"
     assert recorded["book_seq"] == 7
     assert recorded["qty"] == 10
+    assert recorded["adv_participation_rate"] == "0.000010"
+    assert recorded["net_edge_state"] == "sufficient"
+    assert recorded["expected_impact_bps"] is not None
 
 
 def test_the_audit_chain_still_verifies_with_a_verdict_in_the_payload(st, clock, tmp_path):
@@ -293,6 +283,49 @@ def test_build_services_threads_the_book_seam_through_to_draft_proposal():
     assert "book_fn" in inspect.signature(build_services).parameters
     source = inspect.getsource(build_services)
     assert "book_fn=book_fn" in source
+
+
+def test_w21_build_services_threads_rw14_metrics_to_the_proposal_path():
+    """A pure ADV model with no production caller would leave displayed depth in authority."""
+    import inspect
+
+    from workflows.services import build_services
+
+    assert "metrics_fn" in inspect.signature(build_services).parameters
+    source = inspect.getsource(build_services)
+    assert "metrics_fn=metrics_fn" in source
+
+
+def test_w21_rw14_metrics_are_consumed_and_unavailable_edge_creates_no_order(
+    st, clock, tmp_path,
+):
+    """The composed leaf supplies real ADV/volatility, but edge intentionally has no source."""
+    ModeLadder(st).set_mode(Mode.paper, actor="op")
+    _seed_snapshot(st)
+    row = _persist_event(st, clock, tmp_path)
+    packet = build_packet([row])
+    transport = FakeTransport([
+        envelope(_proposal_body(refs=[row.raw_ref], quantity=10, notional=None)),
+        envelope(_grounding_body("prop-1", [row.raw_ref])),
+    ])
+    metric = MarketMetrics(
+        symbol="AAPL", as_of=NOW.date(),
+        median_daily_dollar_volume=Decimal("100000000"),
+        realized_volatility=0.20, observations=60,
+    )
+
+    outcome = draft_proposal(
+        st, clock, event=row, packet=packet, transport=transport,
+        parquet_root=tmp_path / "raw", quote_fn=_quote_fn,
+        book_fn=lambda _s: _book(ask_depth=1), metrics_fn=lambda _s: metric,
+        holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
+    )
+
+    assert outcome.risk_decision.execution_verdict["adv_participation_rate"] == "0.000010"
+    assert outcome.risk_decision.execution_verdict["net_edge_state"] == "unavailable"
+    assert outcome.risk_decision.decision == "needs_human"
+    assert "net_edge_available" in outcome.risk_decision.warnings
+    assert outcome.order is None
 
 
 def test_the_default_verify_params_use_a_penny_grid(st, clock, tmp_path):
@@ -349,5 +382,6 @@ def test_a_raising_book_fn_degrades_to_no_verdict_instead_of_killing_the_proposa
         raise RuntimeError("book feed went away mid-draft")
 
     outcome = _draft(st, clock, tmp_path, quantity=10, book_fn=exploding_book)
-    # Degrades to exactly the no-book case, which this file already pins as APPROVED.
-    assert outcome.risk_decision.decision == "approved", outcome.risk_decision
+    assert outcome.risk_decision.decision == "needs_human", outcome.risk_decision
+    assert outcome.order is None
+    assert "execution_quality" in outcome.risk_decision.warnings
