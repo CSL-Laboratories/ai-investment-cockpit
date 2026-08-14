@@ -1,7 +1,7 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-08-13
+last-verified: 2026-08-14
 ---
 
 # The register
@@ -21,23 +21,23 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## Current delivery position — 2026-08-13
+## Current delivery position — 2026-08-14
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
-| Offline development | **complete locally** | review/push `RW-15`, then `W-22`; no gate credit until CI/online evidence |
-| Online testing and evidence | **partially active** | rerun cross-platform CI; finish `RW-11` live-day/precision and `RW-19`/`DEC-07` measurements |
-| Paper MVP | **not reached** | RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
+| Offline development | **complete locally** | review/commit/push `fix/w22-paper-bringup-bugs`; no gate credit until CI/online evidence |
+| Online testing and evidence | **active** | [[evidence/w22-paper-mvp-2026-08-14]] recorded healthy quote/feed progression; rerun cross-platform CI and finish the named empirical drills |
+| Paper MVP | **not reached** | `DEC-03` selection + `W-23`, RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
 | Production beta | **blocked by MVP** | `RW-13` dynamic path plus `W16` four-week paper soak |
 | Stabilization / bugfixing | **not started** | beta defect burn-down, platform/restart/fault regression, zero unexplained reconciliation gaps |
 | Full-scale deployment | **blocked** | all pre-live gates, ≥6-month paper evidence, then `W17 → W18 → W19` separately |
 
-`main` includes PR #33. RW-14's local
-Windows gates are 2,121 passed / 1 skipped with Ruff clean. All six PR #31 matrix jobs stopped
-before executing a step because GitHub reported failed recent account payments or a spending
-limit that needs to be increased. Cross-platform attestation and RW-14's live-data gate remain
-pending; see [[PLAN]] for what may continue offline and what cannot be called complete without
-online evidence.
+`origin/main` includes RW-15 (PR #34) and W-22 (PR #35). The local
+`fix/w22-paper-bringup-bugs` tree passes 2,185 tests / 1 skipped with Ruff clean and has live
+11-symbol quote+metric verification. GitHub's account spending/billing gate still prevents the
+Windows/Ubuntu/macOS matrix from executing a step. Cross-platform attestation and the named
+empirical gates remain pending; see [[PLAN]] and
+[[evidence/w22-paper-mvp-2026-08-14]].
 
 ## Status vocabulary
 
@@ -62,11 +62,12 @@ online evidence.
 | `RW-14` | Daily-bars poller (ADV + σ); synthesize `book_fn`; sample quote age; close `BUG-097` by routing stale data through the single L8 `watch_only` mechanism | evidence pending | — | implementation merged in PR #31 with 2,121 passed / 1 skipped, Ruff clean, and DeepSeek adversarial review; still requires cross-platform CI, live `quant_book_seq` progression, IEX entitlement/coverage, and a real >120 s stale-to-L8 transition while awareness continues |
 | `RW-17` | Replace the dated-calendar fail-open fallback and close `BUG-096`; verify current/next-year NYSE sessions and expose drift/coverage in status | closed | — | PR #14; unknown/out-of-range year refuses auto-arm/orders while ingest/awareness continues; official holiday/early-close fixtures |
 | `RW-18` | Robinhood no-capital authenticated capability discovery after account-isolation decision; zero live orders | blocked → `DEC-05` | — | advertised 2026 MCP/auth/capabilities/tools/errors/expiry behavior recorded; resolves `DEC-06/08` |
-| `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | evidence pending | — | tooling merged in PR #16; dated operator-universe distributions and failure traces must still set queue/coalescing/latency/backfill bounds and resolve `DEC-07` |
+| `RW-19` | Read-only/paper event-source characterization: news/market/status/order streams, SEC discovery, IEX/SIP comparison, WS/REST identity, reconnect gaps, event density, and SQLite/triage load | evidence pending | — | first 11-symbol IEX/SIP completed-session and 60-second live IEX stream captures recorded 2026-08-14; repeat sessions plus reconnect/REST-backfill and measured-burst SQLite/triage replay still required to resolve `DEC-07` |
 | `RW-15` | Order-status poll + real broker reconciliation: settle resting/partial orders and `ambiguous_aborts` via the gateway's existing ACK machinery; retire `main._no_broker_history` in the same PR. Prerequisite of `W-22` — see [[PLAN]] M4 and its delivery loop | committed — evidence pending | Codex — `work/rw15-broker-reconciliation` @ `943d2a1` | Windows 2,165 passed / 1 skipped + Ruff clean after fresh attack→fix→regression review; fixed-host GET-only broker/client-id lookup, bounded scheduled poll, signed approval recovery, audited partial progress, composed reachability, and stub retirement complete; DeepSeek Pro was balance-blocked and alternate calls timed out without output; real resting/partial/terminal and lost-response Alpaca paper evidence + cross-platform CI remain required |
 | `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | merged — evidence pending | — | merged in PR #33 with Windows 2,155 passed / 1 skipped and Ruff clean; fresh DeepSeek Pro/Flash adversarial round found no P0/P1 bypass and concrete approval-path findings were fixed with regressions; expected edge remains explicitly unavailable/fail-closed; cross-platform CI and RW-14 live input evidence still pending |
 | `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask; wire the loss signals into `BreakerSignals` (daily loss from snapshots, consecutive losses from round trips) | committed — evidence pending | Codex — `work/w22-paper-mvp` | Windows 2,180 passed / 1 skipped + Ruff clean after a fresh attack→fix→regression review; Discord fresh question/approve/veto, post-commit fill confirmation, signed equity drawdown, audit-derived closed round trips, active-breaker gateway backstop, status/reachability, and additive SQLite migration are implemented. DeepSeek Pro remained balance-blocked and alternate read-only reviewers timed out without output or writes. Cross-platform CI, RW-14/RW-15 live evidence, deterministic expected-edge source, and two unattended market days a week apart remain required; see [[runbooks/w22-paper-mvp]] |
-| `RW-13` | Dynamic paper autonomy: durable event/outbox trigger, deterministic arbiter, scoped gap backfill, replay, dedup, bounded flood handling, cron backstop | blocked → `RW-19` + `DEC-07` + M1–M4 + `RW-17`/`BUG-097` | — | separate-store parity + same-store idempotency; scoped loss recovery; nondegenerate recall; measured latency/flood gates in [[PLAN]] M5 |
+| `W-23` | Deterministic paper expected-edge source selected by `DEC-03`; immutable point-in-time evidence, draft-time and approval-time recomputation, fail-closed status, and no model-authored return | blocked → `DEC-03` operator selection | — | scoped 2026-08-14; [[research/dec03-strategy-selection-2026-08-14]] recommends a narrow cash-only, long-target merger-arbitrage research slice. Claim on a fresh branch only after the operator selects the strategy; order-path change requires tests, fresh adversarial review, cross-platform CI, and empirical calibration evidence |
+| `RW-13` | Dynamic paper autonomy: durable event/outbox trigger, deterministic arbiter, scoped gap backfill, replay, dedup, bounded flood handling, cron backstop | blocked → `RW-19` + `DEC-07` + M1–M4.5 + `RW-17`/`BUG-097` | — | separate-store parity + same-store idempotency; scoped loss recovery; nondegenerate recall; measured latency/flood gates in [[PLAN]] M5 |
 | `W16` | Paper-soak/performance instruments and recorded evidence; dynamic event path must be enabled for its autonomy window | open | — | after M5: ≥4 consecutive market weeks dynamic-paper soak with required density/fault injections; existing statistical gates remain minimum inputs, not funding authority |
 | `W17` | Human-gated Robinhood `review_live`: verified deterministic MCP client behind `OrderGateway`; no model access | blocked → `RW-18` + M5/W16 evidence + all pre-live gates + ≥6-month funding bar | — | discovery places zero orders; separately authorized first-live orders reconcile or fail explicitly; external witness green; see [[PLAN]] M6 |
 | `W18` | Enable autonomous `auto_veto` only after reconciled `review_live` evidence and external witness/performance gates | blocked → `W17` + W16/SEC P0 gates | — | separately recorded auto-veto soak with responsive veto/kill, zero unexplained reconciliation failures, and green external witness |
@@ -83,6 +84,11 @@ rows retain their named prerequisite.
 |---|---|---|---|---|
 | `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | closed | `orchestrator/market_calendar.py` |
 | `BUG-097` | Stale-data breaker used the generic L6 drop to `review_live`; PR #31 routes sampled quote staleness through the required L8 `watch_only` path | high pre-live | evidence pending — merged; real stale transition required | `orchestrator/breakers.py`, `orchestrator/scheduler.py` |
+| `BUG-100` | Existing SQLite databases predate `risk_decision.execution_verdict`; `create_all` does not add columns, so startup crashes on the first ORM read | high paper | closed locally — `dab983b`; cross-platform CI pending | `storage/engine.py`, `tests/schemas/test_migration.py` |
+| `BUG-101` | Quote polling compared every sequential response with one pre-request clock sample, falsely rejecting later exchange timestamps as future data and forcing `watch_only` | high paper | closed locally — `18e3cd9`; two live cycles and attack regression green; cross-platform CI pending | `ingest/market_data.py`, `tests/ingest/test_market_data.py` |
+| `BUG-102` | Daily bars run only at 07:30 ET, but the runbook permits an 08:30 start; a late start/restart leaves ADV/volatility empty all day | high paper | closed locally; 11-symbol late-start live check green; cross-platform CI pending | `main.py`, `tests/system/test_rw01_market_day.py` |
+| `BUG-103` | Alpaca historical-bars requests omitted `start`; the API defaults to the current day, so `limit=60` returned one bar and every ADV/volatility calculation failed | high paper | closed locally; official contract checked and 11-symbol live hydration green; cross-platform CI pending | `brokers/alpaca_paper.py`, `tests/brokers/test_alpaca_paper.py` |
+| `BUG-104` | SQLite legacy transaction control let audit verification read ledger rows and the signed high-water from different WAL snapshots during a concurrent ingest commit, producing a false one-tick truncation failure and paper-performance `watch_only` alert | high paper | closed locally; deterministic concurrent-append attack regression, genuine tamper/truncation regressions, 2,186-test full suite, and read-only restart green; cross-platform CI pending | `storage/audit.py`, `brokers/paper_performance.py`, `tests/storage/test_audit.py`, `tests/brokers/test_paper_performance.py` |
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` was inert because `now_ns` had no caller | med | closed — PR #31 | `quant/verify.py`, `workflows/proposals.py` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | closed | PR #21 |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | closed | PR #22 |
@@ -160,7 +166,7 @@ Not bugs. Work that cannot start until someone chooses.
 |---|---|---|
 | `DEC-01` | Is `BookSnapshot.ts` epoch or feed-relative? *(Answered by `RW-14`: polled quotes make it epoch.)* | `BUG-040` |
 | `DEC-02` | Ubuntu keyring backend: require `gnome-keyring`+dbus, accept `keyrings.alt`, or declare Ubuntu dev-only? Tests use an in-memory backend, so even a green Linux CI job would not prove that a real headless Ubuntu deploy can store a secret. | any Linux deployment |
-| `DEC-03` | Niche selection — CEF discounts / small merger-arb / stay strategy-agnostic | post-MVP; see [[PLAN]] §1 |
+| `DEC-03` | **Active operator decision (moved into paper-MVP scope 2026-08-14):** select CEF discounts, a narrow cash-only/long-target merger-arbitrage research slice, or remain strategy-agnostic. The current recommendation is merger arbitrage, subject to the point-in-time calibration and safety contract in [[research/dec03-strategy-selection-2026-08-14]]. | `W-23`; opening paper Orders remain fail-closed until selection + implementation + review |
 | `DEC-04` | Partial-fill notional: `_pending_ok` takes the MAX signed notional across an order's history precisely to defeat laundering, so counting only the REMAINING notional after a partial needs a **new** signed payload field (`remaining_notional`), never a semantics change to `notional`. Decide the field contract before RW-15 implements the refinement. | the partial-fill cap refinement inside `RW-15` |
 | `DEC-05` | Robinhood Agentic can write only to its dedicated account but its credential can read every Robinhood account, including account numbers, balances, positions, and order history. Before any connection: accept that authority, use an identity with no other assets/data, or select a broker with narrower scope. Redaction after retrieval does not reduce token authority. | `RW-18`, `W17` |
 | `DEC-06` | Robinhood MCP version/authentication profile: use `RW-18` to discover whether the server supports the 2026-07-28 stateless core and optional OAuth Client Credentials extension or requires delegated interactive OAuth/reauthentication. Do not assume unattended machine auth. | resolved by `RW-18`; blocks `W17` |

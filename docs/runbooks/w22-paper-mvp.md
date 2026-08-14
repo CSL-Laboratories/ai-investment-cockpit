@@ -2,7 +2,7 @@
 title: W-22 paper MVP bring-up and evidence runbook
 type: runbook
 status: live
-last-verified: 2026-08-13
+last-verified: 2026-08-14
 related:
   - PLAN
   - REGISTER
@@ -15,12 +15,19 @@ related:
 This runbook brings the composed background service up for Alpaca paper testing. It does not
 authorize live capital or any autonomous mode.
 
+The first dated bring-up record is [[../evidence/w22-paper-mvp-2026-08-14]]. It demonstrates
+healthy read-only quote/feed/audit operation and records the still-open evidence gates.
+
 ## Hard hold: what cannot pass tomorrow
 
 Expected edge is intentionally unavailable until a deterministic strategy source is selected
 and adversarially reviewed. Consequently, a newly drafted opening proposal fails the W-21
 `net_edge_available` check and does not mint an executable `Order`. Do not seed the production
 database, edit a risk row, or bypass `OrderGateway` to manufacture an end-to-end trade.
+The operator moved `DEC-03` into active paper-MVP scope on 2026-08-14. That changes the plan,
+not the running authority: [[../research/dec03-strategy-selection-2026-08-14]] must first record
+the operator's strategy selection, and proposed `W-23` must then implement and adversarially
+review the deterministic edge provider. Until both happen, this hard hold remains unchanged.
 
 W-22 also requires two unattended market days at least a week apart. One market day tomorrow
 can collect the first evidence set; it cannot close the MVP gate by itself. The safe launch
@@ -47,8 +54,41 @@ opening execution still fail-closed.
 4. Run the offline gates from `app/` with `TMP` and `TEMP` on a short Windows path. Confirm
    `ruff check .` and the full suite are green, then run `tools/verify_keys.py` and
    `tools/probe_credentials.py --post` as described in the RW-01 runbook.
-5. Start the service before 08:30 ET and leave it running. The first one-minute performance job
-   captures a signed Alpaca equity baseline; each cadence reconciles orders and then resamples.
+5. Start the service before 08:30 ET and leave it running. Startup hydrates completed daily bars
+   before serving, and the 07:30 ET cron refreshes them on an uninterrupted process. The first
+   one-minute performance job captures a signed Alpaca equity baseline; each cadence reconciles
+   orders and then resamples. Require `/quant/status` to list every configured symbol under both
+   `market_data.quoted` and `market_data.metrics`; an empty metrics set is not paper-ready.
+
+### Keep the soak revision isolated from development
+
+A qualifying soak is pinned to a clean commit. Continuing development in the same worktree
+would make that evidence ambiguous, so run the service from a detached clean worktree while
+keeping the runtime working directory at the operational `app/` directory that owns
+`cockpit.db` and `data/raw`:
+
+```powershell
+$repo = (git rev-parse --show-toplevel).Trim()
+$soak = "${repo}-soak"
+$commit = (git -C $repo rev-parse HEAD).Trim()
+git -C $repo worktree add --detach $soak $commit
+if (git -C $soak status --porcelain) { throw "soak worktree is dirty" }
+
+$process = Start-Process `
+  -FilePath "$repo\.venv\Scripts\python.exe" `
+  -ArgumentList "$soak\app\main.py" `
+  -WorkingDirectory "$repo\app" `
+  -WindowStyle Hidden `
+  -PassThru
+$process.Id
+```
+
+Record `$commit`, the process ID, both paths, and the start time in the dated evidence. The
+detached worktree supplies immutable source while the operational working directory preserves
+the existing SQLite/audit and raw-evidence history. Only one cockpit process may use that
+runtime directory and API port. Re-deploy a new commit by stopping the recorded process,
+updating or recreating the detached worktree, re-running the gates, and starting it again; do
+not mutate the soak worktree in place.
 
 ## First live checks
 

@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-13
+last-verified: 2026-08-14
 ---
 
 # Docs index
@@ -17,9 +17,25 @@ last-verified: 2026-08-13
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-13
+## Current repository snapshot — 2026-08-14
 
-- `main` includes PR #33. The old
+- The first dated W-22 bring-up record is
+  [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
+  sequences advancing, valid audit/performance state, zero feed errors, and the exact empirical
+  gates that remain open. It is evidence, not a paper-MVP completion claim.
+- `fix/w22-paper-bringup-bugs` contains `dab983b` (legacy risk-verdict migration) and `18e3cd9`
+  (post-response quote-time validation). `BUG-102`/`BUG-103` now hydrate daily bars at startup
+  and send Alpaca the bounded historical interval its API requires. `BUG-104` pins audit rows
+  and their signed high-water to one SQLite read snapshot so a concurrent ingest commit cannot
+  create a false audit-failure alert. A late-start live check populated quotes and metrics for
+  all 11 symbols; the complete local suite is now 2,186 passed / 1 skipped with Ruff clean, and
+  cross-platform CI remains pending.
+- The operator moved `DEC-03` into active paper-MVP scope on 2026-08-14. The candidate analysis
+  and proposed `W-23` deterministic-edge contract are in
+  [[research/dec03-strategy-selection-2026-08-14]]. No strategy has been selected yet, and the
+  order path remains fail-closed.
+
+- `origin/main` includes PR #35. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
@@ -30,10 +46,10 @@ canonical invariant list, and nothing else restates it.
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
   entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
   expected edge remains intentionally unavailable and fail-closed until a deterministic strategy
-  source is separately selected and reviewed. RW-15 is locally committed at `943d2a1`; W-22 is
-  implemented on `work/w22-paper-mvp` with a 2,180 passed / 1 skipped Windows checkpoint and
-  Ruff clean. Cross-platform CI, real Alpaca reconciliation, and the two market-day W-22 proof
-  remain evidence gates; [[runbooks/w22-paper-mvp]] is the operator handoff.
+  source is separately selected and reviewed. RW-15 and W-22 are merged in PRs #34/#35. The
+  current bring-up tree passes 2,185 tests / 1 skipped with Ruff clean. Cross-platform CI, real
+  Alpaca reconciliation, and the two market-day W-22 proof remain evidence gates;
+  [[runbooks/w22-paper-mvp]] is the operator handoff.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
@@ -80,6 +96,7 @@ defects got fixed twice on two branches.
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
+| [[evidence/w22-paper-mvp-2026-08-14]] | Dated first-day status, live-feed observations, and unclosed evidence gates |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 
@@ -96,6 +113,7 @@ defects got fixed twice on two branches.
 | [[research/llm-hybrid-trading]] | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
 | [[research/autonomy-blockers-and-unblockers-2026-08-12]] | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
 | [[research/rw19-event-source-characterization-2026-08-12]] | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
+| [[research/dec03-strategy-selection-2026-08-14]] | Active DEC-03 candidate comparison, recommendation, and the fail-closed W-23 edge-source contract |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

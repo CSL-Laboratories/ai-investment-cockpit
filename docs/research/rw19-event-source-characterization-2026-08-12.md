@@ -2,7 +2,7 @@
 title: RW-19 event-source characterization — measurement ledger
 type: research
 status: live
-last-verified: 2026-08-12
+last-verified: 2026-08-14
 ---
 
 # RW-19 event-source characterization
@@ -143,19 +143,66 @@ Additional bounded commands use the same evidence contract:
 
 | Spike | State | Evidence required before closure |
 |---|---|---|
-| Operator-universe IEX/SIP | blocked — watchlist empty | Repeat completed-session captures across the explicit bring-up universe until each candidate threshold has a nondegenerate distribution; price SIP against measured false negatives |
-| Market WS | pending market hours | Quote/trade/status burst and inter-arrival distributions, corrections, reconnect trace, REST identity/backfill limits, IEX connection-limit behavior |
+| Operator-universe IEX/SIP | first explicit-universe session captured | Repeat completed-session captures until each candidate threshold has a stable distribution; price SIP against measured false negatives |
+| Market WS | first 60-second live sample captured | Repeat across regimes; add corrections, reconnect trace, REST identity/backfill limits, and IEX connection-limit behavior |
 | News WS ↔ REST | pending | Article/update identity equivalence, correction behavior, reconnect gaps, burst distribution, history coverage |
-| SEC discovery | blocked — no declared UA | Re-verify official Latest Filings Atom/RSS, measure latency/cadence under the declared UA, and retain submissions as correctness/backfill |
+| SEC discovery | declared UA configured; submissions polling healthy | Re-verify official Latest Filings Atom/RSS, measure latency/cadence under the declared UA, and retain submissions as correctness/backfill |
 | Paper order events ↔ REST | pending safe paper activity | Fill/partial/cancel/reject ordering and latency, accessible REST history, injected event loss and terminal convergence; no live order |
 | SQLite / triage load | pending recorded stream | Replay recorded distributions through one writer; measure contention/tick duration before setting queue/coalescing bounds |
 | Calendar drift | partially closed by RW-17 | Current/next-year official comparison exists; retain rollover capture in the RW-13 fault suite |
 
+## Operator-universe update — 2026-08-14
+
+The two environment blockers recorded on 2026-08-12 changed: the explicit paper bring-up
+universe is now `AAPL, AVGO, INTC, META, MRVL, MSFT, MU, NVDA, SNDK, SPCX, TSLA`, and a declared
+SEC User-Agent is configured. The contact address is operator configuration and is deliberately
+not duplicated in this evidence ledger. A live `read_only` process completed 16 EDGAR polls with
+zero errors and a trustworthy quiet-day result; because no material delta appeared, the RW-11
+precision/citation gate remains open.
+
+### Completed-session IEX/SIP capture — session 2026-08-13
+
+The hash-verified schema-v2 manifest is
+`data/evidence/rw19/2026-08-13/20260814T182858Z/manifest.json` (ignored raw evidence, retained
+locally). It contains 4,255 IEX and 9,623 SIP full-UTC-day minute bars across the 11-symbol
+operator universe. Regular-session aggregate results:
+
+| Measure | Result |
+|---|---:|
+| IEX / SIP reported volume | 3.742% |
+| Same-minute close error p50 / p95 / p99 / max | 0.898 / 7.891 / 17.834 / 57.516 bps |
+| SIP 10 bps triggers; IEX recall | 1,209; 907/1,209 = 75.02% |
+| SIP 25 bps triggers; IEX recall | 329; 241/329 = 73.25% |
+| SIP 50 bps triggers; IEX recall | 76; 54/76 = 71.05% |
+| SIP 100 bps triggers; IEX recall | 3; 2/3, too small for a conclusion |
+
+At 10 bps, 302 SIP triggers were false negatives for IEX. Only 20 involved a missing IEX
+minute; 282 had an IEX minute whose move stayed below the SIP-defined threshold. This is a
+feed-coverage difference, not primarily a timestamp-gap artifact. Symbol results varied widely:
+10 bps recall ranged from 46.96% for MRVL to 91.01% for SPCX. One completed session is enough
+to reject IEX/SIP equivalence, but not enough to price a SIP subscription or select a production
+trigger threshold.
+
+### Live IEX WebSocket capture — 2026-08-14 18:29–18:30 UTC
+
+The hash-verified schema-v2 manifest is
+`data/evidence/rw19/market/2026-08-14/20260814T182923Z/manifest.json`. Over the bounded 60-second
+window it captured 8,762 unique data frames: 8,439 quotes, 312 trades, and 11 bars. There were
+zero invalid records, duplicate frames, or corrected identities. The maximum one-second burst
+was 509 frames; inter-arrival p50/p95/p99 was 0.000/0.043/0.105 seconds. Source-to-receive
+p50/p95/p99 over all recorded message types was 0.101/0.106/0.114 seconds. The 60.294-second
+maximum belongs to the mixed-type initial sample and is not interpreted as quote latency without
+type-separated analysis.
+
+This is a real operator-universe density/latency sample. Reconnect/gap injection, REST backfill
+identity, multi-session distributions, and SQLite/triage replay under the measured 509-frame
+one-second burst remain open.
+
 ## DEC-07 status
 
-**Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. Preliminary
-regular-session data shows material IEX false negatives at small one-minute movement thresholds,
-but the operator universe is unspecified and the sample is only one day. No production adapter
-may encode either “IEX is sufficient” or “SIP is required” from this sample. The next operator
-input is an explicit paper bring-up watchlist; the next market-hours action is a bounded IEX
-stream capture plus delayed SIP/REST comparison over the same symbols and interval.
+**Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. The first
+explicit operator-universe session shows material IEX false negatives at small one-minute
+movement thresholds, but the sample is only one day and reconnect/backfill behavior is still
+unmeasured. No production adapter may encode either “IEX is sufficient” or “SIP is required”
+from this sample. The next evidence is repeated completed sessions plus a deliberate
+reconnect/REST-backfill comparison over this same universe.
