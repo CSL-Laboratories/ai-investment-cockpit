@@ -5,7 +5,7 @@ WAL journal mode gives concurrent readers while a single writer holds the write 
 """
 from __future__ import annotations
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from schemas.models import Base, load_all
@@ -32,3 +32,23 @@ def make_session_factory(engine):
 def create_all(engine) -> None:
     load_all()                       # register every model on Base.metadata
     Base.metadata.create_all(engine)
+    _apply_additive_migrations(engine)
+
+
+def _apply_additive_migrations(engine) -> None:
+    """Apply the deliberately small set of backwards-compatible SQLite migrations.
+
+    The project predates a migration framework and production uses a persistent SQLite DB;
+    ``create_all`` does not add columns to an existing table. W-22 therefore owns this explicit,
+    idempotent migration rather than requiring an operator to delete broker/audit history.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    columns = {
+        column["name"] for column in inspect(engine).get_columns("portfolio_snapshot")
+    }
+    if "equity" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE portfolio_snapshot ADD COLUMN equity NUMERIC(18, 2)"
+            ))

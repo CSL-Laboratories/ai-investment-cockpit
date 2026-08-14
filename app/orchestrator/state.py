@@ -37,6 +37,7 @@ EVENT_ORDER_INTENT = "order_intent"        # BEFORE the broker submit (paired wi
 EVENT_ORDER_RESULT = "order_result"        # AFTER the submit (ack/fill/reject), same txn
 EVENT_ORDER_TRANSITION = "order_transition"  # order-state-machine step (proposed->approved->...)
 EVENT_ORDER_FILL_PROGRESS = "order_fill_progress"  # cumulative partial-fill update, state stable
+EVENT_PAPER_NOTIFICATION = "paper_fill_notification"  # post-commit Discord delivery result
 # SEC-11 external witness: a head anchor posted to the out-of-DB witness (git / #audit-log).
 EVENT_ANCHOR = "anchor"
 
@@ -105,6 +106,10 @@ class OrchestratorState:
     # RW-14: optional composed market-data authority. Absent means the paper transport is not
     # provisioned; when present the gateway synchronously refuses missing/stale observations.
     market_data: object | None = field(default=None, repr=False, compare=False)
+    # W-22: last verified paper-performance observation. Production composition requires it;
+    # uncomposed tests keep the legacy additive posture until a paper service is attached.
+    paper_performance: object | None = field(default=None, repr=False, compare=False)
+    paper_performance_required: bool = field(default=False, repr=False, compare=False)
 
     @classmethod
     def build(

@@ -381,7 +381,7 @@ def test_g5_3_codex_configuration_cannot_enter_review_live(st):
 # CRITERION 4 — every breaker trip -> review_live; usage exhaustion -> watch-only
 # =======================================================================================
 _BREAKER_CASES = [
-    (bk.BRK_DAILY_LOSS, bk.BreakerSignals(realized_loss_today=Decimal("600"))),
+    (bk.BRK_DAILY_DRAWDOWN, bk.BreakerSignals(equity_drawdown_today=Decimal("600"))),
     (bk.BRK_CONSECUTIVE_LOSSES, bk.BreakerSignals(consecutive_losses=3)),
     (bk.BRK_SCHEMA_FAILURES, bk.BreakerSignals(schema_failures=5, schema_validations=10)),
     (bk.BRK_BROKER_ERRORS, bk.BreakerSignals(broker_errors=5)),
@@ -491,7 +491,7 @@ def test_g5_5_recovery_requires_explicit_rearm(st):
     """After a breaker drop, getting back to an auto mode requires an explicit gated
     arm — a bare set_mode into auto is refused (no silent re-arm)."""
     lad = _arm_veto(st)
-    bk.BreakerEngine(st).trip(bk.BRK_DAILY_LOSS, "loss limit")
+    bk.BreakerEngine(st).trip(bk.BRK_DAILY_DRAWDOWN, "loss limit")
     assert lad.current() is Mode.review_live
     with pytest.raises(IllegalTransition):
         lad.set_mode(Mode.auto_veto, actor="op")       # cannot silently re-arm

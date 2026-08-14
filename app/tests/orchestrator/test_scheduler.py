@@ -193,17 +193,26 @@ def test_rw15_scheduler_reaches_composed_paper_reconciler(state):
     class Paper:
         def __init__(self):
             self.calls = 0
+            self.performance_calls = 0
 
         def reconcile_orders(self):
             self.calls += 1
             return {"status": "ok"}
 
+        def sample_performance(self):
+            self.performance_calls += 1
+            return {"ok": True}
+
     paper = Paper()
     jobs = {job.id: job for job in sch.build_scheduler(state, OPEN, paper=paper).get_jobs()}
     assert "paper_order_reconcile" in jobs
+    assert "paper_performance" in jobs
     assert "minute='*/1'" in str(jobs["paper_order_reconcile"].trigger)
+    assert "minute='*/1'" in str(jobs["paper_performance"].trigger)
     assert jobs["paper_order_reconcile"].func() == {"status": "ok"}
+    assert jobs["paper_performance"].func() == {"ok": True}
     assert paper.calls == 1
+    assert paper.performance_calls == 1
 
 
 def test_scheduler_jobs_have_operational_names(state, tmp_path):

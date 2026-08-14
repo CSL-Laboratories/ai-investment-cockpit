@@ -229,6 +229,9 @@ def test_one_market_day_dryrun_reaches_no_broker(tmp_path):
     # head). This proves broker.submits == [] above is causal — the broker is live and
     # reachable; the workflows simply never invoke the order path.
     assert st.audit.verify_chain().ok
+    system.breaker.clear(
+        "injection_anomaly", "test isolates broker reachability control", actor="op"
+    )
     scenario = build_order_scenario(system, mode=Mode.review_live, symbol="AAPL", qty="10",
                                     limit_price="150", notional="1500", proposal_id="ctl-p1",
                                     nonce="ctl-n1")

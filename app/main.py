@@ -585,7 +585,8 @@ def build_operator_deliver(settings):
     return discord_rest_deliver(channel_ids, token.reveal())
 
 
-def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root="data/raw"):
+def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root="data/raw",
+                          deliver=None):
     """Compose the real Alpaca PAPER seam behind the existing guarded ``OrderGateway``.
 
     Missing credentials leave the service absent and visible as ``501 not_wired``; they never
@@ -646,7 +647,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         audit_log=state.audit,
     )
     state.market_data = market_data
-    order_reconciler = PaperOrderReconciler(state, broker=broker)
+    order_reconciler = PaperOrderReconciler(state, broker=broker, deliver=deliver)
     log.info("Alpaca PAPER execution transport wired behind OrderGateway")
     return PaperExecutionService(
         state,
@@ -657,10 +658,12 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         watchlist_fn=watchlist_fn,
         market_data=market_data,
         order_reconciler=order_reconciler,
+        deliver=deliver,
+        require_performance=True,
     )
 
 
-def build_operator_bot(state):
+def build_operator_bot(state, *, paper=None, ask=None):
     """QT-09 — the Discord COMMAND surface, or ``None`` when unprovisioned.
 
     Until now Discord was PUSH-ONLY. ``compose`` wired ``deliver`` (REST posts to the operator
@@ -682,10 +685,9 @@ def build_operator_bot(state):
     it did before: ingest, scheduler, loopback API, and REST delivery outward. An operator
     without a token loses the command channel, not the system.
 
-    WHAT THIS DOES NOT WIRE: the per-proposal Approve/Reject buttons. ``build_bot`` accepts a
-    ``controls`` argument it has never used, and wiring the approval surface means wiring the
-    token-mint path — a change to the order path itself, which is deliberately not bundled
-    into a quant work package. Approvals stay where they are today.
+    W-22 wires the authenticated ``/paper`` command to ``PaperExecutionService``. That service
+    is shared with the loopback API and still reaches Alpaca only through ``OrderGateway``;
+    Discord adds an operator surface, not a second order path.
     """
     from bridge.bot import bot_available, build_bot, run_bot
     from bridge.operators import authorized_operator_ids
@@ -709,7 +711,7 @@ def build_operator_bot(state):
              len(operators), guild_id or "GLOBAL (sync may take up to 1h to propagate)")
 
     def _start() -> None:
-        client, tree = build_bot(state, token_registry=None)
+        client, tree = build_bot(state, token_registry=None, paper=paper, ask=ask)
         run_bot(client, tree, token.reveal(), guild_id=guild_id)
 
     return _start
@@ -789,7 +791,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
         return configured_watchlist
 
     paper = build_paper_execution(
-        state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root
+        state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root,
+        deliver=deliver,
     )
     # RW-15: settle broker-visible orders before the completeness report. No provisioned paper
     # transport means unresolved submits remain visible; production never substitutes fake history.
@@ -877,7 +880,9 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     # second would never start — and a daemon dies with the process, so Ctrl-C tears the
     # gateway down instead of hanging on a socket. Absent a token or an operator allowlist
     # this is None and the cockpit runs exactly as it did before.
-    start_bot = build_operator_bot(state)
+    start_bot = build_operator_bot(
+        state, paper=app.state.paper, ask=services.get("ask")
+    )
     if start_bot is not None:
         threading.Thread(target=start_bot, name="discord-bot", daemon=True).start()
 

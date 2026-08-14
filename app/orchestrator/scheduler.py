@@ -218,6 +218,14 @@ def run_paper_order_reconcile(state, clock=None, *, paper=None):
     return paper.reconcile_orders()
 
 
+def run_paper_performance(state, clock=None, *, paper=None):
+    """W-22 equity/round-trip sampling; unavailable evidence fails closed in the service."""
+    del state, clock
+    if paper is None:
+        return {"skipped": "paper_not_wired"}
+    return paper.sample_performance()
+
+
 def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=None,
                     market_data=None, paper=None):
     """Register the cron jobs and return the (UN-started) scheduler. APScheduler is imported
@@ -303,6 +311,19 @@ def build_scheduler(state, clock=None, *, services: dict | None = None, ingest=N
             ),
             id="paper_order_reconcile",
             name="paper_order_reconcile",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        sched.add_job(
+            lambda: run_paper_performance(state, clock, paper=paper),
+            CronTrigger(
+                minute=PAPER_ORDER_POLL_MINUTES,
+                day_of_week="mon-fri",
+                timezone=EASTERN,
+            ),
+            id="paper_performance",
+            name="paper_performance",
             replace_existing=True,
             max_instances=1,
             coalesce=True,

@@ -3,7 +3,7 @@
 Enforces the WP8 'services.py' contract of docs/build-scaffold-ultracode.md WP8 and SEC-20
 (EVENT_DRAWDOWN_MARK feeds the performance gate): build_services returns injected
 ``(state, clock) -> dict`` callables for the WP5 scheduler seams ({"brew","intraday",
-"eod"}), the scheduler stubs stay NotImplementedError (scheduler.py untouched), and
+"eod"}) plus the fresh ``ask`` seam, the scheduler stubs stay NotImplementedError, and
 eod_review records the drawdown deterministically (no LLM). Hermetic: FrozenClock, tmp
 SQLite; the service closures run against empty windows so no transport is needed.
 """
@@ -25,10 +25,26 @@ def _payloads(st, event_type):
     return [dict(e.payload or {}) for e in entries if st.audit.verify_entry(e)]
 
 
-def test_build_services_returns_the_three_scheduler_seams(st):
+def test_build_services_returns_scheduler_and_fresh_question_seams(st):
     services = build_services(st)
-    assert set(services) == {"brew", "intraday", "eod"}
+    assert set(services) == {"brew", "intraday", "eod", "ask"}
     assert all(callable(fn) for fn in services.values())
+
+
+def test_question_service_reaches_fresh_interrogation(st, monkeypatch):
+    seen = {}
+
+    def fake_fresh(state, **kwargs):
+        seen.update(kwargs)
+        return {"pattern": "fresh", "answer": "checked"}
+
+    monkeypatch.setattr("workflows.services.fresh_interrogate", fake_fresh)
+    answer = build_services(st, transport="transport", parquet_root="raw")["ask"](
+        st, question="Why?", proposal_id="prop-1"
+    )
+    assert answer["pattern"] == "fresh"
+    assert seen["question"] == "Why?" and seen["proposal_id"] == "prop-1"
+    assert seen["transport"] == "transport" and seen["parquet_root"] == "raw"
 
 
 def test_services_run_via_the_scheduler_hooks(st, clock):

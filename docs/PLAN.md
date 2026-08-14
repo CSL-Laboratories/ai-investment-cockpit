@@ -39,24 +39,27 @@ human-approved Alpaca paper submission through `OrderGateway`; Discord/API statu
 surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/daily-bar
 inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
-**What is not complete:** real broker-status polling and reconciliation (`RW-15`, implemented
-offline on its package branch but awaiting merge/online evidence); the two-day unattended
-paper-MVP proof (`W-22`); event-driven paper autonomy (`RW-13`); the
+**What is not complete:** RW-15's real broker-status evidence; cross-platform CI; W-22's two-day
+unattended paper proof; a deterministic expected-edge source; event-driven paper autonomy
+(`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** RW-14 merged in PR #31 and W-21 merged in PR #33. RW-15's current
-offline checkpoint is 2,165 passed / 1 skipped on Windows with Ruff clean after a fresh
-attack→fix→regression review. The requested OpenCode DeepSeek Pro/Flash external audit could
-not attest: the Pro workspace reported insufficient balance and the alternate reviewer calls
-timed out without output or repository changes. All six PR #31 matrix jobs stopped
+**Verification posture:** RW-14 merged in PR #31 and W-21 merged in PR #33. RW-15 is locally
+committed at `943d2a1`; W-22 is implemented on its stacked package branch with 2,180 passed /
+1 skipped on Windows and Ruff clean after fresh attack→fix→regression review. The requested
+OpenCode DeepSeek Pro/Flash external audit could not attest: the Pro workspace reported
+insufficient balance and alternate read-only reviewer calls timed out without output or
+repository changes. All six PR #31 matrix jobs stopped
 before executing a step because GitHub reported failed recent account payments or a spending
 limit that needs to be increased. Cross-platform CI and RW-14's named live-data evidence remain
 pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** finish `RW-15`, then `W-22`. `RW-11`, `RW-19`, and `RW-14` evidence collection
-runs alongside that code lane. `DEC-05` must be resolved before any `RW-18` authentication.
+**Immediate sequence:** review/push RW-15, then W-22; restore cross-platform CI and collect the
+named RW-11/RW-14/RW-15/RW-19 evidence. Run W-22's first and second market days only on those
+verified inputs. `DEC-05` must be resolved before any `RW-18` authentication, and RW-13 remains
+blocked until the M1–M4 gates actually pass.
 
 ---
 
@@ -390,6 +393,18 @@ audited.
   input exists before it.
 - **Gate:** an unattended market day, end to end, with `verify_chain().ok` over the whole
   sequence — and a second one, a week later, with no human intervention in between.
+
+**Implementation checkpoint (2026-08-13, offline):** the composed service now samples signed
+Alpaca equity and reconstructs closed round trips from cumulative audit fills on the one-minute
+reconciliation cadence. Daily loss is explicitly `daily_equity_drawdown` (first signed New York
+day observation versus current equity), and an active signed breaker is a synchronous gateway
+backstop. Synthetic tests fill buys at ask and sells at bid; real Alpaca fills remain
+broker-reported. Discord `/ask` reaches SEC-18 fresh interrogation, while `/paper` preview,
+approve, reject, and veto share the loopback execution service and `OrderGateway`; fill delivery
+is post-transition and its success/failure is audited. Status exposes performance, audit-chain,
+and fill-notification health. Windows: 2,180 passed / 1 skipped; Ruff clean. The expected-edge
+source remains deliberately unavailable, so new opening orders continue to fail closed. The
+online/cross-platform/two-day gates above remain open; see [[runbooks/w22-paper-mvp]].
 
 **`RW-15` — order-status poll + real broker reconciliation. A named prerequisite of this
 gate, scheduled NOW so the temporary state cannot become permanent (the RW-10 lesson).**

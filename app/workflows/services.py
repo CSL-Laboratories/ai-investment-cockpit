@@ -11,6 +11,7 @@ wall-clock, Discord, or brokers execution (Invariant 1).
 from __future__ import annotations
 
 from orchestrator.state import EVENT_DRAWDOWN_MARK
+from workflows.interrogation import fresh_interrogate
 from workflows.morning_brew import morning_brew
 from workflows.proposals import draft_proposal
 from workflows.triage_loop import triage_loop
@@ -19,8 +20,11 @@ from workflows.triage_loop import triage_loop
 def build_services(state, *, transport=None, deliver=None, parquet_root=None,
                    quote_fn=None, book_fn=None, metrics_fn=None, verify_params=None,
                    holdings_fn=None, watchlist_fn=None) -> dict:
-    """Build the injected scheduler services: ``{"brew", "intraday", "eod"}``, each a
-    plain ``(state, clock) -> dict`` closing over the seams. ``holdings_fn`` /
+    """Build scheduler services plus W-22's fresh Discord interrogation seam.
+
+    The scheduled ``brew``/``intraday``/``eod`` callables retain their ``(state, clock)``
+    shape. ``ask`` takes an explicit question and proposal/job id and always invokes the
+    existing SEC-18 fresh-context workflow. ``holdings_fn`` /
     ``watchlist_fn`` are re-evaluated per tick (the reconciled sets move intraday).
 
     ``book_fn`` supplies L1 prices and ``metrics_fn`` supplies RW-14 ADV/volatility. They are
@@ -55,7 +59,19 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
     def eod(st, clock) -> dict:
         return eod_review(st, clock)
 
-    return {"brew": brew, "intraday": intraday, "eod": eod}
+    def ask(st, *, question: str, proposal_id: str | None = None,
+            job_id: str | None = None) -> dict:
+        return fresh_interrogate(
+            st,
+            question=question,
+            proposal_id=proposal_id,
+            job_id=job_id,
+            transport=transport,
+            parquet_root=parquet_root,
+            clock=st.clock,
+        )
+
+    return {"brew": brew, "intraday": intraday, "eod": eod, "ask": ask}
 
 
 def eod_review(state, clock=None, *, drawdown_fn=None) -> dict:

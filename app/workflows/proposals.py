@@ -115,6 +115,13 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
     quote_price = _dec(q.get("price")) if q.get("price") is not None else Decimal("0")
     quote_age_s = float(q["age_s"]) if q.get("age_s") is not None else float("inf")
     quote_spread = _dec(q.get("spread_pct", 0)) if q else Decimal("0")
+    performance = getattr(state, "paper_performance", None)
+    if performance is not None and getattr(performance, "ok", False):
+        equity_drawdown = _dec(getattr(performance, "equity_drawdown_today", None))
+    elif getattr(state, "paper_performance_required", False):
+        equity_drawdown = Decimal("NaN")
+    else:
+        equity_drawdown = Decimal("0")
     return RiskContext(
         max_notional=_dec(limits["max_notional"]),
         max_positions=int(limits["max_positions"]),
@@ -127,7 +134,9 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
         buying_power=buying_power,
         holdings=holdings,
         open_positions=len(holdings),
-        realized_loss_today=Decimal("0"),
+        # RiskContext retains its historical field name; W-22 supplies the one canonical
+        # daily-loss measure (intraday equity drawdown), not a second P&L calculation.
+        realized_loss_today=equity_drawdown,
         pending_notional=Decimal("0"),
         watchlist=set(watchlist),
         quote_price=quote_price if quote_price.is_finite() else Decimal("0"),
@@ -430,6 +439,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         return escape_untrusted(str(item.get("headline", "")))[:200]
 
     embed = render_proposal_embed(record.payload, rd_row, raw_excerpt_fn=_excerpt)
+    # Server-derived id consumed by the authenticated Discord /paper surface. The model
+    # cannot select, omit, or rewrite this binding.
+    embed["order_id"] = order_row.id if order_row is not None else None
     return ProposalOutcome(status, record.payload, record, rd_row, order_row, embed,
                            tuple(reasons))
 

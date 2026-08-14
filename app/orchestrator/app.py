@@ -8,7 +8,7 @@ deterministic core already in the tree: ``/mode`` (ladder + arm guard), ``/limit
 (SEC-15 privileged loosening), ``/killswitch``, and ``/status``.
 
 WP8 wiring (docs/build-scaffold-ultracode.md WP8): ``create_app`` gains an optional
-``services`` registry ({"brew", "intraday", "eod"} callables, built by
+``services`` registry ({"brew", "intraday", "eod", "ask"} callables, built by
 ``workflows.services.build_services``). ``GET /brief/today`` / ``POST /brief/run`` read /
 invoke through it and stay ``501 not_wired`` when it is absent (existing WP5 tests keep
 passing); ``GET /proposals`` reads persisted ``ProposalRecord`` rows. The audited-limits
@@ -33,6 +33,7 @@ from config.models import load_model_map, runtime_for
 from config.settings import Mode, get_settings
 from core.ids import new_id
 from schemas.models.agent_job import AgentJob
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.automation_rule import AutomationRule
 from schemas.models.breaker_state import BreakerState
 from schemas.models.brief_record import BriefRecord
@@ -54,6 +55,7 @@ from .limits import (
 )
 from .market_calendar import coverage_status as market_calendar_status
 from .mode_ladder import IllegalTransition, ModeLadder
+from .state import EVENT_PAPER_NOTIFICATION
 
 __all__ = ["create_app", "serve", "EVENT_LIMITS_CHANGE", "_current_limits"]
 
@@ -490,6 +492,11 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                 select(MarketEvent).order_by(MarketEvent.ingested_at.desc()).limit(1)
             ).scalar_one_or_none()
             event_count = len(s.execute(select(MarketEvent.id)).all())
+            notification_rows = s.execute(
+                select(AuditEntry).where(
+                    AuditEntry.event_type == EVENT_PAPER_NOTIFICATION
+                ).order_by(AuditEntry.seq)
+            ).scalars().all()
         breakers: dict = {}
         for r in brk_rows:                       # last row per name wins (created_at asc)
             breakers[r.breaker_name] = {
@@ -504,12 +511,47 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
         # reported alongside. Absent runner => "not_wired", never an empty-and-therefore-fine.
         runner = getattr(app.state, "ingest", None)
         feeds = runner.status() if runner is not None else {"status": "not_wired"}
+        performance = getattr(state, "paper_performance", None)
+        performance_status = (
+            performance.as_dict()
+            if performance is not None and hasattr(performance, "as_dict")
+            else {
+                "ok": False,
+                "reason": (
+                    "not_sampled"
+                    if getattr(state, "paper_performance_required", False)
+                    else "paper_not_wired"
+                ),
+            }
+        )
+        chain = state.audit.verify_chain()
+        verified_notifications = (
+            [row for row in notification_rows if state.audit.verify_entry(row)]
+            if chain.ok else []
+        )
+        latest_notification = (
+            verified_notifications[-1].payload if verified_notifications else None
+        )
         return {
             "mode": _mode_view(ladder),
             "market_calendar": market_calendar_status(state.clock.now()),
             "usage": usage,
             "watch_only": breaker_engine.is_watch_only(),
             "breakers": breakers,
+            "paper_performance": performance_status,
+            "audit_chain": {
+                "ok": chain.ok,
+                "head_seq": chain.head_seq,
+                "error": chain.error,
+            },
+            "paper_fill_notifications": {
+                "total": len(verified_notifications) if chain.ok else None,
+                "undelivered": sum(
+                    1 for row in verified_notifications
+                    if not bool((row.payload or {}).get("delivered"))
+                ) if chain.ok else None,
+                "latest": latest_notification,
+            },
             "ingest": {
                 "market_events": event_count,
                 "latest_event_ts": market_events.ingested_at.isoformat() if market_events else None,

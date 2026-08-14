@@ -14,6 +14,7 @@ from brokers.alpaca_paper import (
     AlpacaPaperError,
     AlpacaPaperHTTPClient,
     FakeAlpaca,
+    paper_fill_price,
 )
 from brokers.order_tuple import canonical_order_tuple
 from config.settings import Settings
@@ -49,6 +50,21 @@ def test_client_is_injectable():
     broker.submit_order(canonical_order_tuple(symbol="MSFT", side="buy", qty="1",
                                               order_type="market", tif="day"))
     assert len(fake.submitted) == 1 and fake.submitted[0]["symbol"] == "MSFT"
+
+
+def test_synthetic_paper_fills_cross_the_spread_never_midpoint():
+    quote = {"bid": "99.90", "ask": "100.10"}
+    assert paper_fill_price("buy", quote) == Decimal("100.10")
+    assert paper_fill_price("sell", quote) == Decimal("99.90")
+
+    fake = FakeAlpaca()
+    buy = fake.submit_order(canonical_order_tuple(
+        symbol="AAPL", side="buy", qty="2", order_type="market", tif="day"
+    ))
+    fake.fill_order_at_quote(buy["broker_order_id"], quote)
+    filled = fake.order_info(broker_order_id=buy["broker_order_id"])
+    assert filled["status"] == "filled"
+    assert filled["avg_fill_price"] == Decimal("100.10")
 
 
 def test_get_account_persists_snapshot_when_st_given(st):
@@ -125,7 +141,8 @@ def test_http_client_account_positions_and_quote_are_sanitized():
         if request.url.path == "/v2/account":
             return httpx.Response(200, json={
                 "id": "private-account-id", "account_number": "private-number",
-                "cash": "100000", "buying_power": "200000", "long_market_value": "500",
+                "equity": "100500", "cash": "100000", "buying_power": "200000",
+                "long_market_value": "500",
             })
         if request.url.path == "/v2/positions":
             return httpx.Response(200, json=[{
@@ -152,6 +169,7 @@ def test_http_client_account_positions_and_quote_are_sanitized():
     quote = client.latest_quote("aapl")
 
     assert account["account"] == "alpaca-paper"
+    assert account["equity"] == "100500"
     assert "private-account-id" not in str(account) and "private-number" not in str(account)
     assert positions == [{
         "symbol": "AAPL", "qty": "2", "market_value": "500",
