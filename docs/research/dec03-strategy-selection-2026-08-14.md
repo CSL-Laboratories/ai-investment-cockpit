@@ -9,13 +9,16 @@ last-verified: 2026-08-14
 
 ## Status
 
-The operator moved `DEC-03` from post-MVP deferral into active paper-MVP scope on 2026-08-14.
-The decision is **active, not closed**. Moving it changes the development plan; it does not
-authorize paper mode, create an expected edge, or enable live/autonomous trading.
+The operator moved `DEC-03` from post-MVP deferral into active paper-MVP scope and explicitly
+selected the constrained cash-only, long-target merger-arbitrage research slice on 2026-08-14.
+The decision is **closed**. The selection permits `W-23` implementation under this document's
+contract; it does not authorize paper mode, create an expected edge, or enable live/autonomous
+trading.
 
-`DEC-03` is the first missing strategy input for new opening paper Orders. W-21 intentionally
-requires a verified expected gross holding-period return and production currently supplies
-none, so risk returns `needs_human` but mints no `Order`. Other readiness gates remain open
+`DEC-03` was the first missing strategy input for new opening paper Orders. W-23 now implements
+the selected provider on its dedicated branch, but production has no empirical calibration or
+eligible reviewed target, so risk still returns `needs_human` and mints no `Order`. Other
+readiness gates remain open
 (cross-platform CI, RW-14/RW-15 evidence, and two W-22 market days), but none can substitute for
 the absent deterministic edge source.
 
@@ -46,9 +49,9 @@ severe market declines, even after considering transaction costs
 ([paper record](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=268144)). That is why raw
 deal spread cannot be treated as trusted edge.
 
-## Proposed selection: constrained cash merger arbitrage
+## Selected strategy: constrained cash merger arbitrage
 
-If the operator accepts the recommendation, the first strategy version is deliberately narrow:
+The accepted first strategy version is deliberately narrow:
 
 - US-listed common-equity targets after a signed public definitive agreement or commenced
   tender offer;
@@ -64,10 +67,14 @@ If the operator accepts the recommendation, the first strategy version is delibe
 This is a paper research strategy, not a profitability claim. If no deal clears every gate, the
 correct output is no proposal and no order.
 
+W-23's initial implementation is narrower than this decision ceiling: it admits signed
+definitive agreements on Nasdaq/NYSE/NYSE American common equity. Tender offers remain
+shadow-only until Schedule TO/14D-9 ingestion is separately implemented and reviewed.
+
 ## `W-23` implementation contract
 
-`W-23` is blocked until the operator makes the `DEC-03` selection. Once selected, it is a fresh,
-separately reviewed order-path package with these stages.
+`W-23` was claimed after the operator made the `DEC-03` selection. It is a fresh, separately
+reviewed order-path package with these stages.
 
 ### 1. Point-in-time evidence before authority
 
@@ -91,7 +98,9 @@ p_open * (horizon_price / current_ask - 1)]`
 
 The mutually exclusive 30-day probabilities (`p_close + p_fail + p_open = 1`), failure price,
 and still-open horizon price must come from a frozen point-in-time calibration cohort and pinned
-method, never from proposal text or a model forecast. The still-open state is explicit because a
+method, never from proposal text or a model forecast. W-23 pins that method to the 95% Wilson
+lower completion probability, empirical allocation of the remaining failure/open probability,
+and the worst observed failure/open price ratios. The still-open state is explicit because a
 tender expiry or expected closing date can be extended; silently treating every surviving deal
 as completed would overstate edge. Use conservative out-of-sample estimates (lower confidence
 for completion and adverse failure/open-price treatment), then store the complete input record
@@ -126,8 +135,9 @@ and manually approve each proposed trade. Risk → mode → approval → `OrderG
 only path. `review_live`, `auto_veto`, `auto_full`, broker credentials in a model runtime, and
 model-authored returns remain out of scope.
 
-## Operator decision needed
+## Operator decision record
 
-Choose one: accept the constrained cash-merger recommendation, choose CEF discounts (which first
-requires a daily NAV data-source decision), or remain strategy-agnostic. Only that explicit
-choice closes `DEC-03` and allows `W-23` to be claimed.
+On 2026-08-14 the operator explicitly accepted the constrained cash-merger recommendation.
+`DEC-03` is closed and `W-23` is claimed on `work/w23-cash-merger-edge`. This decision does not
+claim calibration evidence, activate paper mode, or relax any risk/mode/approval/gateway gate.
+The provisioning and activation contract is [[../runbooks/w23-cash-merger-edge]].

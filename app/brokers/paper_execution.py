@@ -55,7 +55,7 @@ class PaperExecutionService:
 
     def __init__(self, state, *, broker, gateway, token_registry, quote_fn,
                  watchlist_fn=None, market_data=None, order_reconciler=None,
-                 deliver=None, require_performance: bool = False) -> None:
+                 deliver=None, edge_provider=None, require_performance: bool = False) -> None:
         self.state = state
         self._broker = broker
         self._gateway = gateway
@@ -65,6 +65,7 @@ class PaperExecutionService:
         self.market_data = market_data
         self.order_reconciler = order_reconciler
         self._deliver = deliver
+        self._edge_provider = edge_provider
         if require_performance:
             self.state.paper_performance_required = True
 
@@ -256,9 +257,8 @@ class PaperExecutionService:
                 book_fn=(market_data.book if market_data is not None else None),
                 metrics_fn=(market_data.metrics if market_data is not None else None),
                 verify_params=(market_data.verify_params if market_data is not None else None),
-                # Deliberately no edge/borrow provider in W-21. The package that selects a
-                # deterministic strategy or opens short authority must add its provider to
-                # BOTH drafting and this fresh gate under a new adversarial review.
+                edge_provider=self._edge_provider,
+                quote=quote,
                 quantity_override=order_qty,
             )
             # A persisted W-21 verdict proves this order was drafted on the composed cost

@@ -30,10 +30,12 @@ canonical invariant list, and nothing else restates it.
   create a false audit-failure alert. A late-start live check populated quotes and metrics for
   all 11 symbols; the complete local suite is now 2,186 passed / 1 skipped with Ruff clean, and
   cross-platform CI remains pending.
-- The operator moved `DEC-03` into active paper-MVP scope on 2026-08-14. The candidate analysis
-  and proposed `W-23` deterministic-edge contract are in
-  [[research/dec03-strategy-selection-2026-08-14]]. No strategy has been selected yet, and the
-  order path remains fail-closed.
+- The operator selected constrained cash-only, long-target merger arbitrage for `DEC-03` on
+  2026-08-14. `W-23` is locally implemented on `work/w23-cash-merger-edge`; its immutable evidence,
+  conservative calibration, and activation workflow are in [[runbooks/w23-cash-merger-edge]].
+  Local Windows gates are 2,203 passed / 1 skipped with Ruff clean; fresh independent review,
+  cross-platform CI, and empirical cohort/eligible-target evidence remain pending, so the order
+  path remains fail-closed. See [[evidence/w23-cash-merger-edge-2026-08-14]].
 
 - `origin/main` includes PR #35. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
@@ -96,7 +98,9 @@ defects got fixed twice on two branches.
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
+| [[runbooks/w23-cash-merger-edge]] | Deterministic cash-merger evidence schemas, conservative calibration, and separate paper-activation gate |
 | [[evidence/w22-paper-mvp-2026-08-14]] | Dated first-day status, live-feed observations, and unclosed evidence gates |
+| [[evidence/w23-cash-merger-edge-2026-08-14]] | W-23 local implementation, attack→fix findings, tests, and unclosed activation gates |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 
@@ -113,7 +117,7 @@ defects got fixed twice on two branches.
 | [[research/llm-hybrid-trading]] | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
 | [[research/autonomy-blockers-and-unblockers-2026-08-12]] | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
 | [[research/rw19-event-source-characterization-2026-08-12]] | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
-| [[research/dec03-strategy-selection-2026-08-14]] | Active DEC-03 candidate comparison, recommendation, and the fail-closed W-23 edge-source contract |
+| [[research/dec03-strategy-selection-2026-08-14]] | Closed DEC-03 comparison, selection, and the fail-closed W-23 edge-source contract |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

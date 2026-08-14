@@ -43,7 +43,7 @@ class _MarketData:
 
 
 def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
-             execution_verdict=None):
+             execution_verdict=None, edge_provider=None):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -89,6 +89,7 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
         st, broker=broker, gateway=gateway, token_registry=registry,
         quote_fn=lambda _symbol: {"price": "150", "age_s": 0, "spread_pct": "0.1"},
         watchlist_fn=lambda: {"AAPL"}, market_data=market_data,
+        edge_provider=edge_provider,
     )
     return service, scenario, client
 
@@ -317,3 +318,23 @@ def test_approval_prices_the_persisted_order_quantity_not_a_new_notional_size(
     assert out["status"] == "submitted"
     assert len(seen) >= 2
     assert all(Decimal(str(qty)) == Decimal("1") for qty in seen)
+
+
+def test_approval_reuses_the_composed_edge_provider_on_every_fresh_gate(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    provider = object()
+    service, scenario, _client = _service(st, edge_provider=provider)
+    seen = []
+
+    def recording_builder(*args, quantity_override=None, **kwargs):
+        seen.append((kwargs.get("edge_provider"), kwargs.get("quote"), quantity_override))
+        return None, None, int(Decimal(str(quantity_override))), ()
+
+    monkeypatch.setattr("brokers.paper_execution.build_execution_verdict", recording_builder)
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-w23-provider",
+    )
+    assert out["status"] == "submitted" and len(seen) >= 2
+    assert all(item[0] is provider and item[1]["price"] == "150" for item in seen)
+    assert all(Decimal(str(item[2])) == Decimal("1") for item in seen)

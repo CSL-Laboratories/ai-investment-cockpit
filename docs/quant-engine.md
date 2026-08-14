@@ -138,7 +138,8 @@ plants a flattering verdict on a hostile proposal and asserts the real one is sh
 
 Null renders as **"not evaluated"**, never as "evaluated and fine". In the composed process,
 an unavailable input also forces human review and cannot create an Order. `edge unavailable`
-is the intentional normal state until a deterministic strategy source is separately selected.
+is the intentional normal state until the selected deterministic strategy's immutable evidence
+is separately provisioned and verified.
 
 ### The command surface is read-only by construction
 

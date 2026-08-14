@@ -359,6 +359,36 @@ def _audit_log(sf):
     return AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=CLOCK)
 
 
+def test_adapter_filing_hook_atomically_binds_row_and_raw_hash(sf, store):
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from ingest.edgar_pipeline import _filing_audit_hook
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.filing import Filing, FormType
+
+    accession = "0001045810-26-123456"
+    raw = store.write(accession, b"operator-reviewed merger filing")
+    audit = _audit_log(sf)
+    filing = Filing(
+        id="filing-audited-adapter", cik=NVDA, accession_no=accession,
+        form_type=FormType.FORM_8K, filing_date=date(2026, 7, 8),
+        detection_ts=CLOCK.now(), raw_ref=accession, primary_doc="merger.htm",
+    )
+    with sf() as session, session.begin():
+        session.add(filing)
+        session.flush()
+        _filing_audit_hook(audit, store)(session, filing)
+    with sf() as session:
+        event = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "filing_ingested")
+        ).scalar_one()
+    assert event.refs == {"model": "filing", "row_id": filing.id, "raw_ref": accession}
+    assert event.payload["raw_content_hash"] == raw.sha256
+    assert audit.verify_chain().ok
+
+
 def test_first_contact_with_an_established_cik_baselines_instead_of_faulting(sf, store):
     """BUG-053: the recorded NVDA window holds 26 in-scope filings — one more than the
     production cap of 25. Before the fix, the first audited poll of any established issuer

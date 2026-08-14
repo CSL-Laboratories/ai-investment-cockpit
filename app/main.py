@@ -618,7 +618,7 @@ def build_operator_deliver(settings):
 
 
 def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root="data/raw",
-                          deliver=None):
+                          deliver=None, edge_provider=None):
     """Compose the real Alpaca PAPER seam behind the existing guarded ``OrderGateway``.
 
     Missing credentials leave the service absent and visible as ``501 not_wired``; they never
@@ -691,6 +691,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         market_data=market_data,
         order_reconciler=order_reconciler,
         deliver=deliver,
+        edge_provider=edge_provider,
         require_performance=True,
     )
 
@@ -792,6 +793,7 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     from orchestrator.halt import default_halt_path, ensure_halt_dir
     from orchestrator.state import OrchestratorState
     from storage.engine import create_all, make_engine, make_session_factory
+    from strategies.merger_edge import CashMergerEdgeProvider
     from workflows.services import build_services
 
     settings = get_settings()
@@ -822,9 +824,19 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     def watchlist_fn():
         return configured_watchlist
 
+    # DEC-03/W-23 selects a deterministic source without granting it order authority. The
+    # same instance is injected into draft and approval-time verification; an empty strategy
+    # watchlist or absent evidence leaves it visibly unavailable.
+    edge_provider = CashMergerEdgeProvider(
+        state,
+        raw_root=parquet_root,
+        strategy_watchlist=settings.merger_watchlist_symbols,
+    )
+    state.edge_provider = edge_provider
+
     paper = build_paper_execution(
         state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root,
-        deliver=deliver,
+        deliver=deliver, edge_provider=edge_provider,
     )
     # RW-15: settle broker-visible orders before the completeness report. No provisioned paper
     # transport means unresolved submits remain visible; production never substitutes fake history.
@@ -839,7 +851,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
                               verify_params=(market_data.verify_params
                                              if market_data is not None else None),
                               holdings_fn=(paper.holdings_symbols if paper is not None else None),
-                              watchlist_fn=watchlist_fn)
+                              watchlist_fn=watchlist_fn,
+                              edge_provider=edge_provider)
     app = create_app(
         state,
         services=services,

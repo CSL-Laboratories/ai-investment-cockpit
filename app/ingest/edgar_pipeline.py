@@ -367,6 +367,36 @@ def _prior_same_form(session_factory, filing) -> Any:
         ).scalars().first()
 
 
+def _filing_audit_hook(audit_log, raw_store):
+    """Return the adapter-owned atomic W-23 filing/raw binding hook.
+
+    ``filings/`` is pinned vendored source. Its ``on_filing`` seam is the supported extension
+    point, so cockpit-specific audit policy belongs here rather than in the vendored poller.
+    """
+    from orchestrator.state import EVENT_FILING_INGESTED
+
+    def _audit_filing(session, filing):
+        audit_log.append_in(
+            session,
+            EVENT_FILING_INGESTED,
+            actor="edgar",
+            refs={
+                "model": filing.__tablename__,
+                "row_id": filing.id,
+                "raw_ref": filing.raw_ref,
+            },
+            payload={
+                "cik": filing.cik,
+                "accession_no": filing.accession_no,
+                "form_type": filing.form_type.value,
+                "detection_ts": filing.detection_ts.isoformat(),
+                "raw_content_hash": raw_store.stored_hash(filing.raw_ref),
+            },
+        )
+
+    return _audit_filing
+
+
 def _persist_deltas(session_factory, deltas) -> int:
     """Persist Delta rows, skipping any ``delta_id`` already stored.
 
@@ -659,6 +689,7 @@ def run_edgar_pipeline(
         fetcher, raw_store, session_factory, clock=clock, audit_log=audit_log,
         baseline_on_first_poll=audit_log is not None,
         max_new_filings_per_poll=getattr(settings, "sec_max_new_filings_per_poll", 25),
+        on_filing=_filing_audit_hook(audit_log, raw_store) if audit_log is not None else None,
     )
     # BUG-053: first contact with a CIK records the current feed position (an AUDITED
     # PollBaseline) instead of treating the issuer's whole recent window as new work —

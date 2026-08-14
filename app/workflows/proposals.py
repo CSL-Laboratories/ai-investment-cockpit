@@ -181,6 +181,8 @@ def build_execution_verdict(
     metrics_fn=None,
     verify_params: VerifyParams | None = None,
     expected_edge: EdgeEstimate | None = None,
+    edge_provider=None,
+    quote: dict | None = None,
     borrow_quote: BorrowQuote | None = None,
     position_effect: PositionEffect | None = None,
     quantity_override=None,
@@ -211,6 +213,12 @@ def build_execution_verdict(
         now = clock.now()
         metric = metrics_fn(symbol) if metrics_fn is not None else None
         inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
+        # W-23: invoke the one production edge provider only after the exact symbol, side,
+        # horizon, resolved quantity, and quote are known. ``expected_edge`` remains an
+        # explicit unit-test seam; production composition never supplies it.
+        verified_edge = expected_edge
+        if verified_edge is None and edge_provider is not None and quote is not None:
+            verified_edge = edge_provider.estimate(verification_proposal, quote=quote)
         effect = position_effect
         if effect is None:
             effect = (
@@ -224,7 +232,7 @@ def build_execution_verdict(
             verify_params or DEFAULT_VERIFY_PARAMS,
             metrics=inputs,
             position_effect=effect,
-            expected_edge=expected_edge,
+            expected_edge=verified_edge,
             borrow_quote=borrow_quote,
             now_ns=to_ns(now),
         )
@@ -286,6 +294,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    metrics_fn=None,
                    verify_params: VerifyParams | None = None,
                    expected_edge: EdgeEstimate | None = None,
+                   edge_provider=None,
                    borrow_quote: BorrowQuote | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
@@ -296,8 +305,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     seam (no fetcher exists in the tree); None fails the risk gate conservatively.
 
     ``book_fn`` supplies L1 prices and ``metrics_fn`` supplies RW-14 ADV/volatility. Both are
-    injected and never fetched here. ``expected_edge`` is intentionally None in production
-    until a deterministic strategy source exists; no model-authored proposal field is read.
+    injected and never fetched here. ``expected_edge`` is a test seam; production uses W-23's
+    injected deterministic provider, which returns None unless immutable evidence verifies.
+    No model-authored proposal return field is read.
     Returns everything; the caller (services/bridge) owns delivery + veto scheduling."""
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
@@ -377,6 +387,8 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         metrics_fn=metrics_fn,
         verify_params=verify_params,
         expected_edge=expected_edge,
+        edge_provider=edge_provider,
+        quote=quote,
         borrow_quote=borrow_quote,
     )
     reasons.extend(verification_reasons)

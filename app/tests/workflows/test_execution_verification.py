@@ -3,8 +3,8 @@
 These tests prove that proposal drafting consumes injected L1 prices plus RW-14 ADV and
 realized volatility, hands the deterministic verdict to risk, and audits the verdict as
 evidence. Displayed depth is deliberately non-authoritative: liquidity participation is
-measured against median daily dollar volume. Production supplies no expected-edge source,
-so a fully composed opening proposal fails closed before an Order row can exist.
+measured against median daily dollar volume. Production has a W-23 expected-edge provider,
+but absent immutable strategy evidence it fails closed before an Order row can exist.
 """
 from __future__ import annotations
 
@@ -294,6 +294,37 @@ def test_w21_build_services_threads_rw14_metrics_to_the_proposal_path():
     assert "metrics_fn" in inspect.signature(build_services).parameters
     source = inspect.getsource(build_services)
     assert "metrics_fn=metrics_fn" in source
+
+
+def test_w23_builder_invokes_provider_with_resolved_quantity_and_exact_quote(st, clock):
+    from workflows.proposals import build_execution_verdict
+
+    seen = {}
+
+    class Provider:
+        def estimate(self, proposal, *, quote):
+            seen["proposal"] = proposal
+            seen["quote"] = quote
+            return _edge()
+
+    quote = {"symbol": "AAPL", "price": "100", "ask": "100.02", "bid": "100"}
+    proposal = {
+        "proposal_id": "p-w23", "symbol": "AAPL", "side": "buy",
+        "quantity": None, "notional": "999", "time_horizon": "short",
+    }
+    verdict, _seq, qty, _reasons = build_execution_verdict(
+        proposal,
+        quote_price=Decimal("100"),
+        quote=quote,
+        clock=clock,
+        book_fn=lambda _s: _book(ask_depth=800),
+        metrics_fn=lambda _s: _metric(),
+        edge_provider=Provider(),
+    )
+    assert qty == 9 and seen["proposal"]["quantity"] == 9
+    assert seen["proposal"]["notional"] is None
+    assert seen["quote"] is quote
+    assert verdict is not None and verdict.net_edge_state == "sufficient"
 
 
 def test_w21_rw14_metrics_are_consumed_and_unavailable_edge_creates_no_order(

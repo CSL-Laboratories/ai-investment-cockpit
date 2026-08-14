@@ -19,7 +19,7 @@ from workflows.triage_loop import triage_loop
 
 def build_services(state, *, transport=None, deliver=None, parquet_root=None,
                    quote_fn=None, book_fn=None, metrics_fn=None, verify_params=None,
-                   holdings_fn=None, watchlist_fn=None) -> dict:
+                   holdings_fn=None, watchlist_fn=None, edge_provider=None) -> dict:
     """Build scheduler services plus W-22's fresh Discord interrogation seam.
 
     The scheduled ``brew``/``intraday``/``eod`` callables retain their ``(state, clock)``
@@ -40,7 +40,8 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
     def _propose(st, clock, **kw):
         # draft_proposal with the composed quote + book seams (proposals never fetch either)
         return draft_proposal(st, clock, quote_fn=quote_fn, book_fn=book_fn,
-                              metrics_fn=metrics_fn, verify_params=verify_params, **kw)
+                              metrics_fn=metrics_fn, verify_params=verify_params,
+                              edge_provider=edge_provider, **kw)
 
     def brew(st, clock) -> dict:
         # The watchlist is what keeps the brew's calendar pre-filter from being holdings-only.

@@ -29,6 +29,7 @@ EVENT_BREAKER_TRIP = "breaker_trip"
 EVENT_BREAKER_CLEAR = "breaker_clear"
 EVENT_WATCH_ONLY = "watch_only"            # L8 usage-window degradation (NOT a mode change)
 EVENT_MARKET_DATA_RAW = "market_data_raw_snapshot"
+EVENT_FILING_INGESTED = "filing_ingested"  # SEC metadata + raw hash, atomic with Filing row
 EVENT_KILLSWITCH = "killswitch"
 EVENT_DRAWDOWN_MARK = "drawdown_mark"      # EOD-recorded realized drawdown the gate reads
 EVENT_ADJUDICATION = "proposal_decision"   # one per approve/reject/modify/veto (WP6 writes)
@@ -106,6 +107,9 @@ class OrchestratorState:
     # RW-14: optional composed market-data authority. Absent means the paper transport is not
     # provisioned; when present the gateway synchronously refuses missing/stale observations.
     market_data: object | None = field(default=None, repr=False, compare=False)
+    # W-23: one broker-free deterministic edge provider shared by draft and approval-time
+    # verification. It returns evidence or None; it has no order/broker capability.
+    edge_provider: object | None = field(default=None, repr=False, compare=False)
     # W-22: last verified paper-performance observation. Production composition requires it;
     # uncomposed tests keep the legacy additive posture until a paper service is attached.
     paper_performance: object | None = field(default=None, repr=False, compare=False)

@@ -31,6 +31,13 @@ def test_build_services_returns_scheduler_and_fresh_question_seams(st):
     assert all(callable(fn) for fn in services.values())
 
 
+def test_w23_service_registry_threads_the_edge_provider_to_drafting():
+    import inspect
+
+    source = inspect.getsource(build_services)
+    assert "edge_provider=edge_provider" in source
+
+
 def test_question_service_reaches_fresh_interrogation(st, monkeypatch):
     seen = {}
 

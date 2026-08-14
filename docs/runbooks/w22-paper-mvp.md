@@ -20,14 +20,14 @@ healthy read-only quote/feed/audit operation and records the still-open evidence
 
 ## Hard hold: what cannot pass tomorrow
 
-Expected edge is intentionally unavailable until a deterministic strategy source is selected
-and adversarially reviewed. Consequently, a newly drafted opening proposal fails the W-21
-`net_edge_available` check and does not mint an executable `Order`. Do not seed the production
-database, edit a risk row, or bypass `OrderGateway` to manufacture an end-to-end trade.
-The operator moved `DEC-03` into active paper-MVP scope on 2026-08-14. That changes the plan,
-not the running authority: [[../research/dec03-strategy-selection-2026-08-14]] must first record
-the operator's strategy selection, and proposed `W-23` must then implement and adversarially
-review the deterministic edge provider. Until both happen, this hard hold remains unchanged.
+The operator selected the constrained cash-merger strategy for `DEC-03`, and `W-23` is being
+implemented on its dedicated branch. Running authority has not changed: no empirical cohort or
+eligible target is provisioned, the separate strategy watchlist remains empty, and the package
+still needs adversarial review plus cross-platform CI. Consequently, a newly drafted opening
+proposal fails the W-21 `net_edge_available` check and does not mint an executable `Order`. Do
+not seed the production database, edit a risk row, or bypass `OrderGateway` to manufacture an
+end-to-end trade. Follow [[w23-cash-merger-edge]]; until every evidence and activation gate
+there passes, this hard hold remains unchanged.
 
 W-22 also requires two unattended market days at least a week apart. One market day tomorrow
 can collect the first evidence set; it cannot close the MVP gate by itself. The safe launch
@@ -131,8 +131,9 @@ the same `PaperExecutionService` and `OrderGateway` as the loopback API. A fill 
 notification is posted only after the audited order transition commits, and its delivery result
 is itself recorded as `paper_fill_notification`.
 
-Until the deterministic expected-edge source exists, `/paper approve` should have no eligible
-new opening order. That refusal is the expected W-21 safety result, not a launch failure.
+Until the deterministic source has verified empirical/deal evidence and separate strategy
+allowlisting, `/paper approve` should have no eligible new opening order. That refusal is the
+expected W-21/W-23 safety result, not a launch failure.
 
 ## Evidence to record
 
