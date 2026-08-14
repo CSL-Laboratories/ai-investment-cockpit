@@ -174,6 +174,38 @@ def _startup_reconcile(state, *, paper=None) -> None:
         )
 
 
+def _startup_market_data(*, market_data=None) -> dict:
+    """Hydrate completed daily bars before proposal services become reachable.
+
+    The scheduled refresh is 07:30 ET, while an operator may legitimately start or restart the
+    process later. Cron does not replay a job registered after its trigger, so relying on that
+    single tick leaves ADV/volatility absent until the following day. The market-data service
+    owns caching and per-symbol fail-closed faults; startup merely invokes the same idempotent
+    refresh used by the scheduler and reports its result.
+    """
+    if market_data is None:
+        return {"skipped": "market_data_not_wired"}
+    try:
+        result = market_data.refresh_daily_bars()
+    except Exception as exc:  # noqa: BLE001 - awareness still boots; missing metrics deny orders
+        log.warning(
+            "RW-14 startup daily-bar hydration unavailable: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return {"failed": ["startup_hydration"], "error": type(exc).__name__}
+    failed = list(result.get("failed", []))
+    if failed:
+        log.warning("RW-14 startup daily-bar hydration failed for symbols: %s", failed)
+    else:
+        log.info(
+            "RW-14 startup daily-bar hydration ready: updated=%s cached=%s",
+            len(result.get("updated", [])),
+            len(result.get("cached", [])),
+        )
+    return result
+
+
 def _urllib_json_get(url: str, *, headers=None, params=None, timeout: float = 20.0):
     """Stdlib JSON GET. Injected everywhere as ``http_get`` so no ingest module imports a client.
 
@@ -866,6 +898,7 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
 
     state, app, services = compose()
     ingest = app.state.ingest
+    _startup_market_data(market_data=app.state.market_data)
     build_scheduler(
         state,
         services=services,

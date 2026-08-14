@@ -127,7 +127,12 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
     trading_day = now.astimezone(EASTERN).date().isoformat()
     verified = state.audit.verify_chain()
     if not verified.ok:
-        return PaperPerformance(False, trading_day, reason="audit chain verification failed")
+        detail = verified.error or "unknown integrity error"
+        return PaperPerformance(
+            False,
+            trading_day,
+            reason=f"audit chain verification failed: {detail}",
+        )
 
     with state.session_factory() as session:
         rows = session.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()

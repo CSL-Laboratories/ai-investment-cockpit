@@ -187,6 +187,22 @@ def test_daily_bar_cache_survives_a_second_service_without_refetch(tmp_path):
     assert client.bar_calls == 1
 
 
+def test_current_session_daily_bar_never_enters_authority_bearing_metrics(tmp_path):
+    service, client, _, _ = _service(tmp_path)
+    client.daily_bars = lambda _symbol, *, limit: [
+        *_bars(),
+        {"t": NOW.isoformat(), "c": "10000", "v": "999999999"},
+    ]
+
+    assert service.refresh_daily_bars()["failed"] == []
+    metric = service.metrics("AAPL")
+
+    assert metric is not None
+    assert metric.as_of.isoformat() == "2026-07-03"
+    assert metric.observations == 3
+    assert metric.median_daily_dollar_volume == Decimal("204000")
+
+
 def test_holdings_only_symbols_join_the_polled_universe(tmp_path):
     clock = FrozenClock(NOW)
     client = Client(clock)

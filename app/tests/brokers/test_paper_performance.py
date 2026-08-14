@@ -99,7 +99,8 @@ def test_missing_fill_price_and_a_tampered_chain_fail_closed(st):
         row = session.get(type(intent), intent.id)
         row.payload = {**row.payload, "qty": "999"}
     tampered = reconstruct_paper_performance(st)
-    assert not tampered.ok and "audit chain" in str(tampered.reason)
+    assert not tampered.ok and "audit chain verification failed" in str(tampered.reason)
+    assert "hash mismatch" in str(tampered.reason)
 
 
 def test_fill_larger_than_the_signed_paper_order_fails_closed(st):

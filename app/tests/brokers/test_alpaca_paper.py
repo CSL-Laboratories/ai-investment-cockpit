@@ -155,6 +155,7 @@ def test_http_client_account_positions_and_quote_are_sanitized():
                           "t": now.isoformat()}
             })
         if request.url.path == "/v2/stocks/bars":
+            assert request.url.params["start"] == "2026-03-09"
             return httpx.Response(200, json={"bars": {"AAPL": [
                 {"t": "2026-07-01T04:00:00Z", "c": 100, "v": 1000},
             ]}})
@@ -182,6 +183,27 @@ def test_http_client_account_positions_and_quote_are_sanitized():
     assert client.daily_bars("AAPL") == [
         {"t": "2026-07-01T04:00:00Z", "c": 100, "v": 1000}
     ]
+
+
+def test_daily_bars_refuse_a_naive_clock_before_any_http_request():
+    called = False
+
+    def handler(_request):
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"bars": {"AAPL": []}})
+
+    key_id, secret_key = _credentials()
+    client = AlpacaPaperHTTPClient(
+        key_id,
+        secret_key,
+        http_client=_http_client(handler),
+        clock=lambda: datetime(2026, 7, 7, 14, 0),
+    )
+
+    with pytest.raises(AlpacaPaperError, match="timezone-naive"):
+        client.daily_bars("AAPL")
+    assert called is False
 
 
 def test_http_client_order_lookup_is_read_only_and_identity_bound():
