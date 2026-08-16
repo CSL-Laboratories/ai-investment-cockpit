@@ -13,6 +13,8 @@ The properties pinned:
 """
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from quant.events import Fill, Liquidity, Side
@@ -198,3 +200,94 @@ def test_client_ids_are_deterministic_so_two_runs_of_one_replay_are_diffable():
     first = OrderIdSequence(prefix="mm")
     second = OrderIdSequence(prefix="mm")
     assert [first.next() for _ in range(3)] == [second.next() for _ in range(3)]
+
+
+# ---- QT-11: the live-order index -------------------------------------------------------------
+
+
+def test_live_orders_no_longer_scans_every_order_ever_created():
+    """The optimization's premise. ``live_orders`` used to filter all orders including
+    terminal ones, so cost grew with the run — 12.8M is_live checks for a 20k-event
+    simulation, ~85% of total runtime."""
+    oms = OMS()
+    for i in range(50):
+        intent = NewOrder(client_id=f"c{i}", symbol="S", side=Side.BUY, qty=100, price_ticks=100)
+        oms.register(intent, strategy="s")
+        oms.on_cancelled(f"c{i}", reason="done")
+
+    live = NewOrder(client_id="live", symbol="S", side=Side.BUY, qty=100, price_ticks=100)
+    oms.register(live, strategy="s")
+
+    assert [o.client_id for o in oms.live_orders()] == ["live"]
+    assert len(oms._live) == 1, "50 terminal orders must not remain in the index"
+
+
+def test_the_live_index_survives_a_randomized_transition_sweep():
+    """DIFFERENTIAL. The index is a cache of a derivable fact, so it is checked against the
+    full scan it replaced, over a randomized lifecycle. Drift would mean a strategy silently
+    stops seeing one of its own working orders — which presents as the strategy quoting a
+    duplicate, not as a bookkeeping error."""
+    for seed in range(6):
+        rng = random.Random(seed)
+        oms = OMS()
+        for i in range(120):
+            cid = f"c{i}"
+            oms.register(
+                NewOrder(client_id=cid, symbol=rng.choice(("A", "B")), side=Side.BUY,
+                         qty=100, price_ticks=100),
+                strategy=rng.choice(("one", "two")),
+            )
+            roll = rng.random()
+            if roll < 0.25:
+                oms.on_acknowledged(cid)
+            elif roll < 0.45:
+                oms.on_cancelled(cid, reason="r")
+            elif roll < 0.60:
+                oms.on_rejected(cid, reason="r")
+            elif roll < 0.75:
+                oms.on_acknowledged(cid)
+                oms.on_fill(Fill(symbol=oms.get(cid).symbol, seq=i, exchange_ts=i, recv_ts=i,
+                                 ingest_ts=i, order_id=cid, side=Side.BUY, price_ticks=100,
+                                 qty=100, liquidity=Liquidity.MAKER))
+            oms.check_integrity()
+
+        scanned = sorted(o.client_id for o in oms._orders.values() if o.is_live)
+        assert sorted(o.client_id for o in oms.live_orders()) == scanned
+
+
+def test_live_order_iteration_is_deterministic_not_set_ordered():
+    """A ``set[str]`` iterates in an order that depends on string hash randomization, so it
+    differs BETWEEN PROCESSES unless PYTHONHASHSEED is pinned. Strategies read this list, so
+    a set would make 'same seed, same output' true only within one process — the hardest
+    kind of reproducibility failure to notice."""
+    def build() -> list[str]:
+        oms = OMS()
+        for i in range(30):
+            oms.register(NewOrder(client_id=f"order-{i}", symbol="S", side=Side.BUY,
+                                  qty=100, price_ticks=100), strategy="s")
+        return [o.client_id for o in oms.live_orders()]
+
+    assert build() == build()
+    assert build() == [f"order-{i}" for i in range(30)], "registration order must be preserved"
+
+
+def test_filtering_by_strategy_is_also_deterministic_and_correct():
+    oms = OMS()
+    for i in range(20):
+        oms.register(NewOrder(client_id=f"c{i}", symbol="S", side=Side.BUY, qty=100,
+                              price_ticks=100),
+                     strategy="one" if i % 2 == 0 else "two")
+    ones = [o.client_id for o in oms.live_orders(strategy="one")]
+    assert ones == [f"c{i}" for i in range(0, 20, 2)]
+    assert oms.live_orders(strategy="nobody") == []
+
+
+def test_check_integrity_actually_detects_drift():
+    """CONTROL. A consistency check that cannot fail proves nothing about the cache."""
+    oms = OMS()
+    oms.register(NewOrder(client_id="c1", symbol="S", side=Side.BUY, qty=100, price_ticks=100),
+                 strategy="s")
+    oms.check_integrity()
+    oms._live.pop("c1")                      # simulate a transition path that forgot the index
+    with pytest.raises(AssertionError, match="drifted"):
+        oms.check_integrity()

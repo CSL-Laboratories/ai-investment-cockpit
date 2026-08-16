@@ -186,6 +186,10 @@ class Runner:
     result: RunResult = field(default_factory=RunResult, init=False)
     pnl: PnLTracker | None = field(default=None, init=False)
     _next_timer: int = field(default=0, init=False, repr=False)
+    _ctx_dirty: bool = field(default=False, init=False, repr=False)
+    """Set by the two things that change what a strategy would see: absorbing a fill, and
+    routing an intent that reaches the book. Read in the dispatch loops to decide whether the
+    shared StrategyContext must be rebuilt."""
 
     equity_sample_ns: int = 0
     """Event-time grid for the PnL equity curve, fed to ``quant.stats``. 0 disables it."""
@@ -243,11 +247,24 @@ class Runner:
             if isinstance(event, Trade):
                 self.result.market_trades += 1
 
+            # The context is rebuilt only when the world has actually CHANGED, tracked by
+            # ``_ctx_dirty``. Building it walks the book and the live-order set, and the
+            # previous code rebuilt it once per strategy per event unconditionally.
+            #
+            # Sharing it unconditionally would be wrong, and wrong in a way that is easy to
+            # miss: absorbing a fill moves the position, and routing one strategy's intents
+            # changes the live-order set the next strategy must see. A stale context makes a
+            # strategy quote against a position it no longer holds — which looks like a
+            # strategy bug, not a caching one. So the flag is set by exactly the two things
+            # that mutate state, and the rebuild is skipped only when nothing happened.
             ctx = self.context(event.ingest_ts, primary=event.symbol)
+            self._ctx_dirty = False
             self._absorb_fills(fills, ctx)
 
             for strategy in self._for_symbol(event.symbol):
-                ctx = self.context(event.ingest_ts, primary=event.symbol)
+                if self._ctx_dirty:
+                    ctx = self.context(event.ingest_ts, primary=event.symbol)
+                    self._ctx_dirty = False
                 intents = self._dispatch(strategy, event, ctx)
                 self._route(strategy, intents, event)
 
@@ -281,8 +298,12 @@ class Runner:
         while event.ingest_ts >= self._next_timer:
             fire_at = self._next_timer
             self._next_timer += self.timer_interval_ns
+            ctx = self.context(fire_at)
+            self._ctx_dirty = False
             for strategy in self.strategies:
-                ctx = self.context(fire_at)
+                if self._ctx_dirty:                    # a previous strategy placed an order
+                    ctx = self.context(fire_at)
+                    self._ctx_dirty = False
                 self._route(strategy, list(strategy.on_timer(fire_at, ctx)), event)
 
     # ---- routing ---------------------------------------------------------------------
@@ -292,6 +313,7 @@ class Runner:
             if not self._permitted(strategy, intent, event):
                 continue
             self.result.intents_submitted += 1
+            self._ctx_dirty = True          # the live-order set the next strategy sees moved
             if isinstance(intent, NewOrder):
                 self._place(strategy, intent, event)
             elif isinstance(intent, CancelOrder):
@@ -364,6 +386,7 @@ class Runner:
                 continue
             self.oms.on_fill(fill)
             self.result.fills.append(fill)
+            self._ctx_dirty = True          # position moved; a stale context would hide it
             if self.pnl is not None:
                 # No mid passed: the tracker already marked at this event's timestamp above,
                 # so its ``_last_mid`` is the mid the fill happened against. Passing one here

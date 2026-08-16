@@ -165,12 +165,32 @@ class OMS:
     what keeps the OMS usable identically for replay, sim execution and post-hoc analysis.
     """
 
-    __slots__ = ("_orders", "_positions", "_by_strategy")
+    __slots__ = ("_orders", "_positions", "_by_strategy", "_live")
 
     def __init__(self) -> None:
         self._orders: dict[str, ManagedOrder] = {}
         self._positions: dict[str, int] = {}
-        self._by_strategy: dict[str, set[str]] = {}
+        # dict-as-ordered-set, NOT set. Iteration order over a set[str] depends on string
+        # hash randomization, so it differs between processes unless PYTHONHASHSEED is
+        # pinned. These collections are iterated to build the order list a strategy sees, so
+        # a set would make the engine's headline property — two runs of the same seed
+        # produce byte-identical output — quietly false, and false only across processes,
+        # which is the hardest way to notice.
+        self._by_strategy: dict[str, dict[str, None]] = {}
+        self._live: dict[str, None] = {}
+        """Client ids currently live, maintained incrementally.
+
+        WHY AN INDEX AND NOT A SCAN: ``live_orders`` used to filter every order ever
+        created. Terminal orders are never forgotten, so the scan grows with the run and the
+        total cost is quadratic in order count — 12.8M ``is_live`` checks for a 20,000-event
+        simulation, ~85% of total runtime. The index makes the read O(live) instead of
+        O(ever).
+
+        The index is only safe because there are exactly TWO writers: ``register`` (which
+        creates orders live) and ``_transition`` (the only assignment to ``order.state``
+        anywhere). ``check_integrity`` proves it has not drifted, and a randomized
+        differential test asserts it against a full scan.
+        """
 
     # ---- intake ----------------------------------------------------------------------
 
@@ -193,7 +213,8 @@ class OMS:
             created_ts=ts, updated_ts=ts,
         )
         self._orders[intent.client_id] = order
-        self._by_strategy.setdefault(strategy, set()).add(intent.client_id)
+        self._by_strategy.setdefault(strategy, {})[intent.client_id] = None
+        self._live[intent.client_id] = None
         return order
 
     def _transition(self, order: ManagedOrder, dst: OrderState, *, ts: int, reason: str | None = None) -> None:
@@ -206,6 +227,11 @@ class OMS:
         order.updated_ts = ts
         if reason is not None:
             order.reason = reason
+        # THE ONLY place an order leaves the live index, because this is the only place a
+        # state is assigned. Keeping the two together is what makes the index trustworthy;
+        # any future transition path that bypasses this function would silently leak.
+        if dst in TERMINAL_STATES:
+            self._live.pop(order.client_id, None)
 
     # ---- venue callbacks ---------------------------------------------------------------
 
@@ -265,11 +291,47 @@ class OMS:
         return {s: q for s, q in self._positions.items() if q}
 
     def live_orders(self, *, symbol: str | None = None, strategy: str | None = None) -> list[ManagedOrder]:
-        ids = self._by_strategy.get(strategy, set()) if strategy is not None else self._orders.keys()
-        return [
-            o for cid in ids
-            if (o := self._orders[cid]).is_live and (symbol is None or o.symbol == symbol)
-        ]
+        """Orders the venue could still fill. O(live), not O(every order ever created).
+
+        Iterates the live INDEX rather than filtering all orders — see ``_live``. Ordering is
+        registration order and is deterministic, which strategies depend on: two runs of the
+        same seed must produce the same order list, or the engine's reproducibility claim is
+        only true within a single process.
+        """
+        owned: dict[str, None] | None = None
+        if strategy is not None:
+            owned = self._by_strategy.get(strategy)
+            if not owned:
+                return []
+
+        orders = self._orders
+        out: list[ManagedOrder] = []
+        for cid in self._live:
+            # Walk the live set and test membership, so cost tracks LIVE orders rather than
+            # everything the strategy has ever sent.
+            if owned is not None and cid not in owned:
+                continue
+            order = orders[cid]
+            if symbol is None or order.symbol == symbol:
+                out.append(order)
+        return out
+
+    def check_integrity(self) -> None:
+        """Assert the live index agrees with a full scan. Raises on drift.
+
+        The index is a cache of a derivable fact, and a stale cache here would mean a
+        strategy silently stops seeing one of its own working orders — which presents as the
+        strategy quoting a duplicate, not as a bookkeeping error. Cheap enough to call in
+        tests and after a run; deliberately not called per event, which would reintroduce
+        the O(n) scan it exists to remove.
+        """
+        scanned = {cid for cid, o in self._orders.items() if o.is_live}
+        indexed = set(self._live)
+        if scanned != indexed:
+            raise AssertionError(
+                f"OMS live index drifted: missing {sorted(scanned - indexed)}, "
+                f"stale {sorted(indexed - scanned)}"
+            )
 
     def exposure_ticks(self, symbol: str | None = None) -> int:
         """Absolute working notional in ticks*shares, including in-flight orders.
