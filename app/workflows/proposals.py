@@ -47,6 +47,8 @@ from workflows.grounding import evaluate_grounding
 from workflows.packets import Packet
 from workflows.prompts import load_prompt
 from workflows.scrubber import scrub_output_fields
+from workflows.theses import open_thesis, open_theses, thesis_context_block
+from workflows.theses import views as thesis_views
 
 
 @dataclass(frozen=True)
@@ -172,9 +174,21 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
 
+    # ---- MEM-01: what do we already believe about this name? ----------------------------
+    # Prepended to the packet block as PROMPT TEXT ONLY. Thesis material is never added to
+    # Packet.items, so it never enters dispatched_refs and can never corroborate — see
+    # workflows/theses.py for the self-grounding attack that would otherwise open.
+    #
+    # Empty string when nothing is open, so a first-time symbol produces byte-identical
+    # prompt text to the pre-MEM-01 behaviour.
+    standing = open_theses(state, symbol=event.symbol)
+    thesis_block = thesis_context_block(standing)
+    packet_block = f"{thesis_block}\n\n{packet.prompt_block()}" if thesis_block \
+        else packet.prompt_block()
+
     # ---- ONE deep call (trade_proposal.v1, schema TradeProposal) ------------------------
     tmpl = load_prompt("trade_proposal")
-    prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
+    prompt = tmpl.render(symbol=event.symbol, packet_block=packet_block)
     result, job = call_agent(
         state, alias="deep", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TradeProposal",
@@ -292,12 +306,23 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         order_id=order_row.id if order_row is not None else None,
     )
 
+    # ---- MEM-01: a DRAFTED, UNFLAGGED proposal opens a standing thesis -------------------
+    # Gated on both conditions. A flagged (grounding-failed) or needs_human proposal is
+    # review-only, and recording its thesis as something the system believes would launder a
+    # rejected draft into durable state that later drafts then read back as context.
+    if status == "drafted" and not flagged:
+        open_thesis(state, clock, proposal=record.payload, proposal_id=record.id)
+
     # ---- SEC-17 embed: risk facts from the RiskDecision; excerpts via resolve_raw only ---
     def _excerpt(ref) -> str:
         item = resolve_raw(parquet_root, str(ref), state=state)
         return escape_untrusted(str(item.get("headline", "")))[:200]
 
     embed = render_proposal_embed(record.payload, rd_row, raw_excerpt_fn=_excerpt)
+    # MEM-01: the claims already standing on this name, as they were BEFORE this draft. The
+    # operator is approving into an existing book of reasoning, and "we already said the
+    # opposite on Monday" is the single most useful thing to see at that moment.
+    embed["standing_theses"] = [v.as_dict() for v in thesis_views(standing)]
     return ProposalOutcome(status, record.payload, record, rd_row, order_row, embed,
                            tuple(reasons))
 

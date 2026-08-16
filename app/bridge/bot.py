@@ -151,13 +151,75 @@ class QuantCommands:
             return f"⚠ /quant {action} failed: {type(exc).__name__}: {exc}"
 
 
+class ThesisCommands:
+    """Discord-free core for ``/thesis`` (MEM-01). Same shape as ``ProposalControls``.
+
+    THE OPERATOR IS THE ONLY THING THAT CAN CLOSE A THESIS, and this is how they do it. An
+    invalidation condition written in natural language ("a close below support") needs
+    judgement to evaluate, and this system does not put a model on judgement that carries
+    authority — the same principle that keeps ``risk/`` pure and the order path human-gated.
+
+    So there is deliberately no scheduled job and no model path into ``close_thesis``. The
+    acting operator's id is recorded on the row.
+    """
+
+    UNAUTHORIZED = "Not authorized."
+
+    def __init__(self, st) -> None:
+        self.st = st
+
+    def handle(self, interaction: Any, *, action: str = "list", thesis_id: str = "",
+               reason: str = "", symbol: str = "") -> str:
+        """Route one ``/thesis`` invocation to a rendered message. Never raises — a handler
+        that raises surfaces to the operator as silence, which during an incident is
+        indistinguishable from a wedged system."""
+        from bridge.thesis_view import render_open_theses
+        from workflows.theses import ThesisError, close_thesis, invalidated_count, open_theses
+        from workflows.theses import views as thesis_views
+
+        actor = _extract_user_id(interaction)
+        if not is_authorized(actor, self.st.settings):
+            return self.UNAUTHORIZED
+
+        try:
+            if action == "list":
+                standing = open_theses(self.st, symbol=symbol or None)
+                return render_open_theses(thesis_views(standing),
+                                          invalidated=invalidated_count(self.st))
+            if action in ("invalidate", "close", "supersede"):
+                if not thesis_id:
+                    return f"⚠ /thesis {action} needs `id:` — run `/thesis action:list` first."
+                if not reason:
+                    return ("⚠ /thesis needs `reason:` — a thesis closed without a stated "
+                            "reason leaves no record of WHY, which is the only part worth "
+                            "keeping.")
+                # EXPLICIT mapping, not string munging. The operator-facing verbs are
+                # imperative ("close") and the stored statuses are past-tense ("closed"), so
+                # passing the action through unchanged produced an invalid status for two of
+                # the three verbs — `close` and `supersede` both failed while `invalidate`
+                # happened to work, which is exactly the shape of bug a partial test misses.
+                status = {"invalidate": "invalidated", "close": "closed",
+                          "supersede": "superseded"}[action]
+                row = close_thesis(self.st, self.st.clock, thesis_id=thesis_id,
+                                   status=status, reason=reason, operator_id=str(actor))
+                return (f"{'🔴' if status == 'invalidated' else '⚪'} "
+                        f"**{row.side.upper()} {row.symbol}** thesis `{row.id}` → "
+                        f"**{status}**\nreason: {reason}\nrecorded against operator {actor}.")
+            return f"Unknown /thesis action {action!r}. Expected list | invalidate | close | supersede."
+        except ThesisError as exc:
+            return f"⚠ {exc}"
+        except Exception as exc:                       # noqa: BLE001 - a handler must not die
+            return f"⚠ /thesis {action} failed: {type(exc).__name__}: {exc}"
+
+
 # Slash-command names the bot registers (draft-discord-control-plane). The adapter validates the
 # operator on each; the actual command bodies forward to the orchestrator loopback API.
 SLASH_COMMANDS = (
     "mode", "killswitch", "brief", "status", "limits", "triage", "ask", "automation", "quant",
+    "thesis",
 )
 
-_WIRED_COMMANDS = frozenset({"quant"})
+_WIRED_COMMANDS = frozenset({"quant", "thesis"})
 """Commands with a REAL body below, excluded from the acknowledge-only registration loop.
 
 The rest are still WP6 stubs that reply "acknowledged". Listing the wired ones explicitly
@@ -167,7 +229,8 @@ order."""
 
 
 def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControls | None = None,
-              quant: "QuantCommands | None" = None, intents: Any = None):
+              quant: "QuantCommands | None" = None,
+              thesis: "ThesisCommands | None" = None, intents: Any = None):
     """Construct the discord.py client + command tree wired to the core. Raises ``RuntimeError``
     if discord.py is not installed (the core paths do not need it). The command bodies stay thin:
     verify the operator, forward to the loopback orchestrator API / core."""
@@ -230,6 +293,19 @@ def build_bot(st, token_registry, *, coordinator=None, controls: ProposalControl
         await interaction.followup.send(message, ephemeral=True)
 
     tree.command(name="quant", description="Quant engine status / simulation (read-only)")(_quant)
+
+    # ---- /thesis (MEM-01): the standing book of claims, and the only way to retire one ----
+    thesis_core = thesis if thesis is not None else ThesisCommands(st)
+
+    async def _thesis(interaction, action: str = "list", id: str = "",  # noqa: A002, ANN001
+                      reason: str = "", symbol: str = ""):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        message = thesis_core.handle(interaction, action=action, thesis_id=id,
+                                     reason=reason, symbol=symbol)
+        await interaction.followup.send(message, ephemeral=True)
+
+    tree.command(name="thesis",
+                 description="Standing theses; invalidate/close one (operator only)")(_thesis)
 
     return client, tree
 
