@@ -187,9 +187,13 @@ class Runner:
     pnl: PnLTracker | None = field(default=None, init=False)
     _next_timer: int = field(default=0, init=False, repr=False)
 
+    equity_sample_ns: int = 0
+    """Event-time grid for the PnL equity curve, fed to ``quant.stats``. 0 disables it."""
+
     def __post_init__(self) -> None:
         if self.schedule is not None:
-            self.pnl = PnLTracker(scale=self.scale, schedule=self.schedule)
+            self.pnl = PnLTracker(scale=self.scale, schedule=self.schedule,
+                                  equity_sample_ns=self.equity_sample_ns)
 
     def book_for(self, symbol: str) -> LimitOrderBook:
         book = self.books.get(symbol)

@@ -205,6 +205,59 @@ assumption.
 Pinned as `test_requoting_on_every_move_destroys_queue_priority` in
 [`tests/quant/test_runner.py`](../app/tests/quant/test_runner.py).
 
+## QT-10 — is the result real? (`quant/stats.py`)
+
+The rest of the engine can run a strategy and attribute its PnL exactly. None of it could say
+whether the number meant anything. `stats.py` is that half.
+
+The problem is not noise — it is that **search is free and evaluation is not**. Try two
+hundred variants, report the best, and the Sharpe you print is an order statistic being
+presented as an estimate. Four tools, stdlib only (`statistics.NormalDist` supplies the
+normal CDF, so the zero-dependency property survives):
+
+| Function | Answers |
+|---|---|
+| `sharpe_with_se` | The Sharpe **and its confidence interval**, corrected for autocorrelation (Lo 2002) and non-normality (Mertens/Opdyke) |
+| `deflated_sharpe` | P(true Sharpe > 0) *given how many variants you tried* (Bailey & López de Prado 2014) |
+| `min_track_record_length` | How long a record must be before this Sharpe could be believed |
+| `purged_kfold` / `probability_of_backtest_overfitting` | Validation that doesn't leak across time; how overfit the *selection procedure* is |
+
+Two design points worth stating:
+
+**`trial_sharpes` is required and has no default.** A caller who cannot say how many variants
+they tried cannot deflate, and defaulting to one trial would assert exactly the thing the
+method exists to check. The CLI likewise refuses to print a deflated Sharpe without `--trials`.
+
+**The autocorrelation correction only fires when the autocorrelation is real.** Lo's `eta(q)`
+is exact in *population* autocorrelations; substituting sample estimates and summing all
+`q−1` of them is noise-dominated — on genuinely IID daily returns it produced a 7.6%
+"correction" for an effect that did not exist. Lags are truncated at `T^(1/3)` and each is
+tested against the Bartlett band (`±2/√T`); lags inside it are treated as zero. Measured
+across 12 seeds: **0.994 mean penalty on IID noise, 0.582 on a real AR(1)**. The estimator
+declines to correct when unsure rather than inventing a correction.
+
+### What it says about this engine's own headline
+
+Running the market maker and asking for statistics is sobering, and that is the value:
+
+```
+sharpe/sample   -0.092  (95% CI -0.159 to -0.024)  [505 samples, NOT annualized]
+t-statistic     -2.65   BELOW the Harvey t>3 hurdle
+skew / kurtosis -5.54 / 54.11
+```
+
+**The A/B result above is a fill-count comparison, and that part is robust** — 101 vs 26
+maker fills is a large, mechanical difference in queue behaviour. The *PnL* of these runs is
+not evidence of anything: the sample is a few seconds of synthetic event time with a payoff
+skewed −5.5 and kurtosis 54. The CLI reports the Sharpe unannualized on purpose; multiplying
+a five-second run by `√252` would manufacture an impressive number from made-up data.
+
+This also caught a live bug: the equity curve is *cumulative PnL*, which starts at zero and
+goes negative, so `returns_from_equity` silently discarded every sample taken while the
+strategy was underwater — a survivorship filter on your own equity curve, reducing a
+505-sample run to 16. `pnl_increments` is the correct tool for a series with no capital base,
+and the regression is pinned.
+
 ## What the engine deliberately will not do
 
 - **No fill probability for a resting order.** That is the `exp(-k·δ)` shortcut; inside a

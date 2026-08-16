@@ -128,6 +128,17 @@ class PnLTracker:
     fills: int = field(default=0, init=False)
     maker_fills: int = field(default=0, init=False)
     taker_fills: int = field(default=0, init=False)
+    equity_sample_ns: int = 0
+    """When > 0, record the running net PnL on this event-time grid into ``equity_curve``.
+
+    A GRID, not a point per event. Sampling per event makes the return series a function of
+    MESSAGE RATE rather than of time — the same defect that collapsed the market maker's
+    volatility estimate (see MarketMakerParams.vol_sample_ns) — and every Sharpe computed
+    from it would be an artefact of how chatty the feed was.
+    """
+
+    equity_curve: list[float] = field(default_factory=list, init=False)
+    _next_equity_sample: int = field(default=0, init=False, repr=False)
     _last_mid: Decimal | None = field(default=None, init=False, repr=False)
     _last_ts: int | None = field(default=None, init=False, repr=False)
     _cash: Decimal = field(default=Decimal("0"), init=False, repr=False)
@@ -157,6 +168,20 @@ class PnLTracker:
                 )
         self._last_mid = mid
         self._last_ts = ts
+        self._sample_equity(ts)
+
+    def _sample_equity(self, ts: int | None) -> None:
+        """Append the running net PnL on the configured event-time grid."""
+        if self.equity_sample_ns <= 0 or ts is None:
+            return
+        if self._next_equity_sample == 0:
+            self._next_equity_sample = ts + self.equity_sample_ns
+            return
+        if ts < self._next_equity_sample:
+            return
+        while self._next_equity_sample <= ts:
+            self._next_equity_sample += self.equity_sample_ns
+        self.equity_curve.append(float(self.snapshot().total))
 
     def on_fill(self, fill: Fill, mid_ticks: float | None = None) -> None:
         """Fold in one of our executions.

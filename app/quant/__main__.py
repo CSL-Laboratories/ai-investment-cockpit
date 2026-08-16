@@ -50,6 +50,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--requote-threshold", type=int, default=2,
                         help="ticks the target must move before repricing; 0 destroys queue priority")
     parser.add_argument("--timer-ms", type=float, default=5.0)
+    parser.add_argument("--equity-sample-ms", type=float, default=10.0,
+                        help="event-time grid for the equity curve the statistics are computed on")
+    parser.add_argument("--trials", type=int, default=1,
+                        help="how many variants you tried before reporting this one. Used to "
+                             "deflate the Sharpe; 1 means 'this is the only thing I ran', "
+                             "which is almost never true and is not assumed on your behalf")
     parser.add_argument("--no-fees", action="store_true",
                         help="frictionless venue — for measuring how much of a result is a fee assumption")
     return parser
@@ -76,6 +82,56 @@ def build_strategy(args):
     )
 
 
+def _print_statistics(equity: list[float], *, trials: int) -> None:
+    """QT-10 — report the Sharpe WITH its uncertainty, or say why there isn't one.
+
+    Printed after the attribution rather than beside it, because it qualifies every number
+    above: an attribution that reconciles exactly is still an attribution of noise if the
+    sample cannot support a conclusion.
+    """
+    from quant.stats import MIN_OBSERVATIONS, min_track_record_length, pnl_increments, sharpe_with_se
+
+    returns = pnl_increments(equity)
+    if len(returns) < MIN_OBSERVATIONS:
+        print(f"\n  statistics      NOT COMPUTED — {len(returns)} usable equity samples, "
+              f"need {MIN_OBSERVATIONS}. A Sharpe from fewer is noise with a decimal point.")
+        return
+
+    # periods_per_year=1 — DELIBERATELY UNANNUALIZED.
+    #
+    # A synthetic run spans a few seconds of event time. Multiplying its Sharpe by sqrt(252)
+    # would assert that the sampling grid maps onto trading days, which is a fiction, and
+    # would produce a large impressive number out of a few seconds of made-up data. The
+    # t-statistic is invariant to that scaling anyway, so nothing diagnostic is lost.
+    estimate = sharpe_with_se(returns, periods_per_year=1)
+    if estimate is None:
+        print("\n  statistics      NOT COMPUTED — degenerate return series (no variance).")
+        return
+
+    low, high = estimate.confidence_interval()
+    print()
+    print(f"  sharpe/sample   {estimate.sharpe:.3f}  (95% CI {low:.3f} to {high:.3f})"
+          f"  [{len(returns)} samples, NOT annualized]")
+    print(f"  t-statistic     {estimate.t_statistic:.2f}   "
+          f"{'clears' if estimate.is_significant_at_harvey_hurdle else 'BELOW'} the "
+          f"Harvey t>3 hurdle")
+    print(f"  skew / kurtosis {estimate.skewness:.2f} / {estimate.kurtosis:.2f}")
+    if estimate.autocorrelation_penalty < 0.95:
+        print(f"  autocorrelation annualization penalised to "
+              f"{estimate.autocorrelation_penalty:.2f}x — returns are serially correlated, "
+              "so the naive sqrt(252) Sharpe is overstated")
+
+    needed = min_track_record_length(returns)
+    if needed is not None and needed > len(returns):
+        print(f"  track record    {len(returns)} samples; ~{needed:.0f} needed for this "
+              "Sharpe to be significant at 95%")
+
+    if trials <= 1:
+        print("  deflated sharpe NOT COMPUTED — pass --trials with the number of variants you "
+              "actually tried.\n                  Reporting the best of N as if N=1 is the "
+              "most common way a backtest lies.")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     scale = PriceScale(tick_size=Decimal(args.tick_size))
@@ -84,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     feed = build_feed(args)
     strategy = build_strategy(args)
     runner = Runner(feed=validate_ordering(iter(feed)), strategies=[strategy], scale=scale,
-                    timer_interval_ns=int(args.timer_ms * 1_000_000), schedule=schedule)
+                    timer_interval_ns=int(args.timer_ms * 1_000_000), schedule=schedule,
+                    equity_sample_ns=int(args.equity_sample_ms * 1_000_000))
     result = runner.run()
     book = runner.books.get(args.symbol)
     attribution = runner.pnl.snapshot()
@@ -109,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  fees            {attribution.fees}  ({attribution.fee_bps}bps)")
     print("  ---------------")
     print(f"  net             {attribution.total}")
+    _print_statistics(runner.pnl.equity_curve, trials=args.trials)
     if book is not None:
         print(f"\n  book            bid {book.best_bid()} / ask {book.best_ask()}  "
               f"({len(book)} orders, crossed={book.is_crossed})")
