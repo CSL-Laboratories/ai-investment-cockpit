@@ -12,7 +12,7 @@ instead of a parallel universe that still needs an adapter written for it.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -32,6 +32,17 @@ UA = "Lucas Guerra lucas@example.com (personal research)"
 NVDA = "0001045810"
 AAPL = "0000320193"
 CLOCK = FrozenClock(datetime(2026, 7, 8, 9, 30, tzinfo=UTC))
+
+
+class AdvancingClock:
+    def __init__(self, at, step=timedelta(milliseconds=1)):
+        self.at = at
+        self.step = step
+
+    def now(self):
+        current = self.at
+        self.at += self.step
+        return current
 
 
 @pytest.fixture(autouse=True)
@@ -358,6 +369,260 @@ def _audit_log(sf):
     from storage.audit import AuditLog
 
     return AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=CLOCK)
+
+
+def test_verified_baseline_uses_signed_timestamps_when_the_clock_advances(sf):
+    """BUG-106: a real clock advances between the domain write and audit append.
+
+    FrozenClock previously made both independent samples identical, hiding that every
+    production baseline diverged from its signed history by a few milliseconds.
+    """
+    from sqlalchemy import select
+
+    from ingest.edgar_pipeline import _VerifiedPollBaselineStore
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now())
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+    store = _VerifiedPollBaselineStore(sf, audit)
+
+    assert store.establish(NVDA, "cutoff-1", clock.now()) is True
+    assert store.load(NVDA).cutoff_accession_no == "cutoff-1"
+    store.advance(NVDA, "cutoff-2", clock.now())
+    assert store.load(NVDA).cutoff_accession_no == "cutoff-2"
+    store.touch(NVDA, clock.now())
+    assert store.load(NVDA).cutoff_accession_no == "cutoff-2"
+
+    with sf() as session:
+        baseline = session.execute(select(PollBaseline)).scalar_one()
+        events = session.execute(
+            select(AuditEntry).order_by(AuditEntry.seq)
+        ).scalars().all()
+    assert baseline.established_at == events[0].created_at
+    assert baseline.updated_at == events[-1].created_at
+    assert audit.verify_chain().ok
+
+
+def test_verified_baseline_reconciles_narrow_legacy_clock_skew_once(sf):
+    """Existing BUG-106 rows recover from signed authority without a DB reset."""
+    from sqlalchemy import func, select, update
+
+    from filings.edgar.submissions_poll import PollBaselineStore
+    from ingest.edgar_pipeline import EdgarPipelineRunError, _VerifiedPollBaselineStore
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now())
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+    legacy = PollBaselineStore(sf, audit)
+    assert legacy.establish(NVDA, "cutoff-1", clock.now()) is True
+
+    verified = _VerifiedPollBaselineStore(sf, audit)
+    assert verified.load(NVDA).cutoff_accession_no == "cutoff-1"
+    assert verified.load(NVDA).cutoff_accession_no == "cutoff-1"
+
+    with sf() as session:
+        baseline = session.execute(select(PollBaseline)).scalar_one()
+        events = session.execute(
+            select(AuditEntry).order_by(AuditEntry.seq)
+        ).scalars().all()
+    assert [event.event_type for event in events] == [
+        "poll-baseline-established",
+        "poll-baseline-touched",
+    ]
+    assert events[-1].actor == "edgar-baseline-repair"
+    assert events[-1].payload["timestamp_reconciliation"] == "BUG-106"
+    assert baseline.established_at == events[0].created_at
+    assert baseline.updated_at == events[-1].created_at
+
+    with sf() as attacker, attacker.begin():
+        attacker.execute(
+            update(PollBaseline).values(
+                updated_at=events[-1].created_at - timedelta(milliseconds=1)
+            )
+        )
+    with pytest.raises(EdgarPipelineRunError, match="diverges from signed history"):
+        verified.load(NVDA)
+    with sf() as session:
+        repairs = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.actor == "edgar-baseline-repair"
+            )
+        ).scalar_one()
+    assert repairs == 1
+    assert audit.verify_chain().ok
+
+
+def test_concurrent_loads_share_one_signed_legacy_repair(sf):
+    """One composed store serializes concurrent callers and repairs exactly once."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import func, select
+
+    from filings.edgar.submissions_poll import PollBaselineStore
+    from ingest.edgar_pipeline import _VerifiedPollBaselineStore
+    from schemas.models.audit_entry import AuditEntry
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now())
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+    assert PollBaselineStore(sf, audit).establish(
+        NVDA, "cutoff-1", clock.now()
+    ) is True
+    verified = _VerifiedPollBaselineStore(sf, audit)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        loaded = list(pool.map(verified.load, (NVDA, NVDA)))
+
+    assert [row.cutoff_accession_no for row in loaded] == ["cutoff-1", "cutoff-1"]
+    with sf() as session:
+        repairs = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.actor == "edgar-baseline-repair"
+            )
+        ).scalar_one()
+    assert repairs == 1
+    assert audit.verify_chain().ok
+
+
+@pytest.mark.parametrize(
+    ("step", "repairable"),
+    [
+        (timedelta(seconds=1), True),
+        (timedelta(seconds=1, microseconds=1), False),
+        (timedelta(milliseconds=-1), False),
+    ],
+)
+def test_verified_baseline_legacy_skew_boundary_is_fail_closed(sf, step, repairable):
+    """Only a bounded, forward double sample is eligible for reconciliation."""
+    from filings.edgar.submissions_poll import PollBaselineStore
+    from ingest.edgar_pipeline import EdgarPipelineRunError, _VerifiedPollBaselineStore
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now(), step=step)
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+    legacy = PollBaselineStore(sf, audit)
+    assert legacy.establish(NVDA, "cutoff-1", clock.now()) is True
+
+    if repairable:
+        assert _VerifiedPollBaselineStore(sf, audit).load(NVDA) is not None
+    else:
+        with pytest.raises(EdgarPipelineRunError, match="diverges from signed history"):
+            _VerifiedPollBaselineStore(sf, audit).load(NVDA)
+    assert audit.verify_chain().ok
+
+
+def test_verified_baseline_timestamp_mutations_roll_back_when_audit_append_fails(sf):
+    """Every BUG-106 row mutation remains atomic with its covering audit event."""
+    from sqlalchemy import func, select
+
+    from filings.edgar.submissions_poll import PollBaselineStore
+    from ingest.edgar_pipeline import _VerifiedPollBaselineStore
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now())
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+
+    class FailingAppendAudit:
+        def verify_session(self, session):
+            return audit.verify_session(session)
+
+        def append_in(self, *_args, **_kwargs):
+            raise RuntimeError("audit unavailable")
+
+    failing = FailingAppendAudit()
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        _VerifiedPollBaselineStore(sf, failing).establish(
+            AAPL, "never-committed", clock.now()
+        )
+    with sf() as session:
+        assert session.execute(
+            select(func.count()).select_from(PollBaseline)
+        ).scalar_one() == 0
+
+    verified = _VerifiedPollBaselineStore(sf, audit)
+    assert verified.establish(NVDA, "cutoff-1", clock.now()) is True
+    failing_store = _VerifiedPollBaselineStore(sf, failing)
+    before = failing_store.load(NVDA)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        failing_store.touch(NVDA, clock.now() + timedelta(minutes=5))
+    with sf() as session:
+        after = session.execute(
+            select(PollBaseline).where(PollBaseline.cik == NVDA)
+        ).scalar_one()
+        event_count = session.execute(
+            select(func.count()).select_from(AuditEntry)
+        ).scalar_one()
+    assert after.updated_at == before.updated_at
+    assert event_count == 1
+
+    legacy = PollBaselineStore(sf, audit)
+    assert legacy.establish(AAPL, "legacy-cutoff", clock.now()) is True
+    with sf() as session:
+        legacy_before = session.execute(
+            select(PollBaseline).where(PollBaseline.cik == AAPL)
+        ).scalar_one()
+        legacy_updated_at = legacy_before.updated_at
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        _VerifiedPollBaselineStore(sf, failing).load(AAPL)
+    with sf() as session:
+        legacy_after = session.execute(
+            select(PollBaseline).where(PollBaseline.cik == AAPL)
+        ).scalar_one()
+        event_count = session.execute(
+            select(func.count()).select_from(AuditEntry)
+        ).scalar_one()
+    assert legacy_after.updated_at == legacy_updated_at
+    assert event_count == 2
+    assert audit.verify_chain().ok
+
+
+def test_advancing_clock_pipeline_keeps_baseline_history_current(sf, store, settings):
+    """The composed EDGAR run reaches BUG-106's fixed establish/load/touch path."""
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+    from storage.audit import AuditLog
+
+    clock = AdvancingClock(CLOCK.now())
+    audit = AuditLog(sf, hmac_key=b"edgar-pipeline-key", clock=clock)
+    configured = settings.model_copy(update={"sec_max_new_filings_per_poll": 25})
+
+    first = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=clock,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="advancing-clock-process",
+    )
+    second = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=clock,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="advancing-clock-process",
+    )
+
+    assert first.ok and first.poll_errors == []
+    assert second.ok and second.poll_errors == []
+    with sf() as session:
+        baseline = session.execute(select(PollBaseline)).scalar_one()
+        events = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type.in_([
+                "poll-baseline-established",
+                "poll-baseline-advanced",
+                "poll-baseline-touched",
+            ]))
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+    assert events[0].event_type == "poll-baseline-established"
+    assert events[-1].event_type == "poll-baseline-touched"
+    assert baseline.established_at == events[0].created_at
+    assert baseline.updated_at == events[-1].created_at
+    assert audit.verify_chain().ok
 
 
 def test_adapter_filing_hook_atomically_binds_row_and_raw_hash(sf, store):
