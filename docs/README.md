@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-16
+last-verified: 2026-08-17
 ---
 
 # Docs index
@@ -17,7 +17,7 @@ last-verified: 2026-08-16
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-16
+## Current repository snapshot — 2026-08-17
 
 - The first dated W-22 bring-up record is
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
@@ -31,7 +31,7 @@ canonical invariant list, and nothing else restates it.
   all 11 symbols; the complete local suite is now 2,186 passed / 1 skipped with Ruff clean, and
   cross-platform CI remains pending.
 - The operator selected constrained cash-only, long-target merger arbitrage for `DEC-03` on
-  2026-08-14. `W-23` is locally implemented on `work/w23-cash-merger-edge`; its immutable evidence,
+  2026-08-14. `W-23` is merged through PR #36; its immutable evidence,
   conservative calibration, and activation workflow are in [[runbooks/w23-cash-merger-edge]].
   Three independent review passes found additional merge blockers; local remediation now closes
   cache/provenance, audit/database and raw-filesystem snapshots, EDGAR baseline/completeness and
@@ -43,8 +43,15 @@ canonical invariant list, and nothing else restates it.
   3.11/3.12 matrix. Real empirical evidence remains pending, so W-23 stays fail-closed. See
   [[evidence/w23-cash-merger-edge-2026-08-14]].
 
-- `origin/main` includes PR #35. The old
-  `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
+- PR #36 is merged on `origin/main`. `BUG-106` is committed locally on
+  `work/bug106-edgar-baseline-timestamp`: production EDGAR baseline timestamps now take their
+  authority from the signed audit event, and narrowly bounded legacy rows reconcile once through
+  a signed repair. A real `read_only` composed run repaired all 11 legacy rows, ingested one
+  filing with four deltas, then completed a clean 11/11 retry with the audit chain valid and zero
+  proposals, approvals, or orders. Cross-platform CI and branch publication remain pending; see
+  [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
+
+- The old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
   matrix jobs stopped before running a step because GitHub reported failed recent account

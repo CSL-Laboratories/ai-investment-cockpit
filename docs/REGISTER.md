@@ -21,23 +21,24 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## Current delivery position — 2026-08-14
+## Current delivery position — 2026-08-17
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
-| Offline development | **complete locally** | review/commit/push `fix/w22-paper-bringup-bugs`; no gate credit until CI/online evidence |
+| Offline development | **active** | publish/review `work/bug106-edgar-baseline-timestamp`; independently scope and review W-23's semantic verifier after BUG-106 merges |
 | Online testing and evidence | **active** | [[evidence/w22-paper-mvp-2026-08-14]] recorded healthy quote/feed progression; rerun cross-platform CI and finish the named empirical drills |
-| Paper MVP | **not reached** | `DEC-03` selection + `W-23`, RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
+| Paper MVP | **not reached** | W-23 independent semantic verification + real calibration/deal evidence, RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
 | Production beta | **blocked by MVP** | `RW-13` dynamic path plus `W16` four-week paper soak |
 | Stabilization / bugfixing | **not started** | beta defect burn-down, platform/restart/fault regression, zero unexplained reconciliation gaps |
 | Full-scale deployment | **blocked** | all pre-live gates, ≥6-month paper evidence, then `W17 → W18 → W19` separately |
 
-`origin/main` includes RW-15 (PR #34) and W-22 (PR #35). The local
-`fix/w22-paper-bringup-bugs` tree passes 2,185 tests / 1 skipped with Ruff clean and has live
-11-symbol quote+metric verification. GitHub's account spending/billing gate still prevents the
-Windows/Ubuntu/macOS matrix from executing a step. Cross-platform attestation and the named
-empirical gates remain pending; see [[PLAN]] and
-[[evidence/w22-paper-mvp-2026-08-14]].
+`origin/main` includes PR #36 and its replacement six-job matrix was green. `BUG-106` is committed
+locally on `work/bug106-edgar-baseline-timestamp` at `5dea321`: Windows passes 2,248 tests / 1
+skipped with Ruff clean, and a real composed `read_only` run repaired all 11 legacy EDGAR
+baselines exactly once before a clean 11/11 scheduled retry. Publication and fresh cross-platform
+CI remain pending while GitHub is degraded; see [[PLAN]],
+[[evidence/w22-paper-mvp-2026-08-14]], and
+[[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
 
 ## Status vocabulary
 
@@ -89,6 +90,7 @@ rows retain their named prerequisite.
 | `BUG-102` | Daily bars run only at 07:30 ET, but the runbook permits an 08:30 start; a late start/restart leaves ADV/volatility empty all day | high paper | closed locally; 11-symbol late-start live check green; cross-platform CI pending | `main.py`, `tests/system/test_rw01_market_day.py` |
 | `BUG-103` | Alpaca historical-bars requests omitted `start`; the API defaults to the current day, so `limit=60` returned one bar and every ADV/volatility calculation failed | high paper | closed locally; official contract checked and 11-symbol live hydration green; cross-platform CI pending | `brokers/alpaca_paper.py`, `tests/brokers/test_alpaca_paper.py` |
 | `BUG-104` | SQLite legacy transaction control let audit verification read ledger rows and the signed high-water from different WAL snapshots during a concurrent ingest commit, producing a false one-tick truncation failure and paper-performance `watch_only` alert | high paper | closed locally; deterministic concurrent-append attack regression, genuine tamper/truncation regressions, 2,186-test full suite, and read-only restart green; cross-platform CI pending | `storage/audit.py`, `brokers/paper_performance.py`, `tests/storage/test_audit.py`, `tests/brokers/test_paper_performance.py` |
+| `BUG-106` | EDGAR baseline rows timestamp from the poller's clock sample while their signed audit transitions independently sample the audit clock milliseconds later; exact history verification therefore rejects every real-clock baseline and forces `sec:edgar` to `watch_only` | high paper | committed locally — live confirmation green; publication/CI pending | `work/bug106-edgar-baseline-timestamp` @ `5dea321`; signed timestamp authority plus bounded one-time legacy reconciliation; a real composed `read_only` run repaired 11/11 rows once, ingested one filing/four deltas, then completed a clean 11/11 scheduled retry with the chain green and zero orders; advancing-clock, rollback, skew-boundary, concurrency, and composed-run regressions; Windows 2,248 passed / 1 skipped and Ruff clean; DeepSeek Flash found no P0/P1, Pro produced no attestation before timeout; [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]] |
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` was inert because `now_ns` had no caller | med | closed — PR #31 | `quant/verify.py`, `workflows/proposals.py` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | closed | PR #21 |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | closed | PR #22 |
