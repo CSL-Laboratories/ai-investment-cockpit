@@ -331,3 +331,62 @@ def test_a_breach_is_audited_with_its_reason():
     loop.run(_feed(20))
     breaches = [p for t, p in written if t == "quant_sim_breach"]
     assert breaches and breaches[0]["reason"] == "HALT is set"
+
+
+# ---- adversarial round: findings from probing the guards ------------------------------------
+
+
+def test_a_REPLACE_cannot_bypass_the_size_limits():
+    """THE bypass. ``check`` used to return ok() for every ReplaceOrder, so a two-step
+    sequence defeated every size limit in the class: send 1 share (passes), then replace it
+    to 1,000,000 (unchecked). max_order_qty, max_position and the exposure cap all fell —
+    in the one tier that has no human in the loop.
+
+    Found by probing the guard with a replace, not by reading it.
+    """
+    from quant.oms import OMS, ReplaceOrder
+
+    oms = OMS()
+    guards = Guards(limits=GuardLimits(max_order_qty=100, max_position=100))
+
+    small = NewOrder(client_id="c1", symbol="S", side=Side.BUY, qty=1, price_ticks=100)
+    assert guards.check(small, oms=oms).allowed
+    oms.register(small, strategy="s")
+
+    huge = ReplaceOrder(client_id="c1", new_price_ticks=100, new_qty=1_000_000)
+    verdict = guards.check(huge, oms=oms)
+    assert not verdict.allowed, "a replace must be size-checked like a new order"
+    assert "max_order_qty" in verdict.reason
+
+
+def test_a_same_size_reprice_is_still_permitted():
+    """CONTROL: the fix must not block ordinary repricing. The order being replaced is
+    already counted in exposure, so its remaining size is netted out."""
+    from quant.oms import OMS, ReplaceOrder
+
+    oms = OMS()
+    guards = Guards(limits=GuardLimits(max_order_qty=1_000, max_position=1_000,
+                                       max_gross_exposure_ticks=200_000))
+    intent = NewOrder(client_id="c1", symbol="S", side=Side.BUY, qty=1_000, price_ticks=100)
+    oms.register(intent, strategy="s")
+
+    reprice = ReplaceOrder(client_id="c1", new_price_ticks=101, new_qty=1_000)
+    assert guards.check(reprice, oms=oms).allowed
+
+
+def test_a_replace_naming_an_unknown_order_is_refused():
+    from quant.oms import OMS, ReplaceOrder
+
+    verdict = Guards().check(ReplaceOrder(client_id="ghost", new_price_ticks=1, new_qty=1),
+                             oms=OMS())
+    assert not verdict.allowed
+    assert "unknown order" in verdict.reason
+
+
+def test_a_replace_without_an_oms_is_refused_rather_than_waved_through():
+    """An unverifiable size change is exactly what the bypass looked like."""
+    from quant.oms import ReplaceOrder
+
+    verdict = Guards().check(ReplaceOrder(client_id="c1", new_price_ticks=1, new_qty=10**9))
+    assert not verdict.allowed
+    assert "without an OMS" in verdict.reason

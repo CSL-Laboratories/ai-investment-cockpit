@@ -122,27 +122,60 @@ class Guards:
         if self.watch_only_fn is not None and self.watch_only_fn():
             return self._blocked("system is watch_only")
 
+        # A REPLACE IS A NEW ORDER FOR LIMIT PURPOSES, AND MUST BE CHECKED LIKE ONE.
+        #
+        # This previously returned ok() unconditionally, which was a total bypass of every
+        # size limit in this class: send a 1-share order (passes), then replace it to
+        # 1,000,000 shares (unchecked). max_order_qty, max_position and the exposure cap all
+        # fell to a two-step sequence, in the ONE tier that has no human in the loop.
+        #
+        # The replace carries no symbol or side of its own, so the resting order is looked up
+        # to recover them. Without an OMS to look it up in, the replace is REFUSED rather than
+        # waved through — an unverifiable size change is exactly what the bypass looked like.
         if isinstance(intent, ReplaceOrder):
-            return GuardVerdict.ok()
+            if oms is None:
+                return self._blocked(
+                    "cannot size-check a replace without an OMS to resolve the resting order"
+                )
+            existing = oms.get(intent.client_id)
+            if existing is None:
+                return self._blocked(f"replace names unknown order {intent.client_id!r}")
+            return self._check_size(
+                symbol=existing.symbol, side=existing.side, qty=intent.new_qty,
+                price_ticks=intent.new_price_ticks, oms=oms, ts=ts,
+                # The order being replaced is still live and already counted in exposure; its
+                # remaining size is released by the replace, so netting it out avoids blocking
+                # a same-size reprice for exposure the strategy is not actually adding.
+                releasing=existing,
+            )
 
         if not isinstance(intent, NewOrder):
             return self._blocked(f"unknown intent type {type(intent).__name__}")
 
+        return self._check_size(symbol=intent.symbol, side=intent.side, qty=intent.qty,
+                                price_ticks=intent.price_ticks, oms=oms, ts=ts)
+
+    def _check_size(self, *, symbol, side, qty: int, price_ticks: int | None,
+                    oms, ts: int, releasing=None) -> GuardVerdict:
+        """The size limits, shared by NewOrder and ReplaceOrder so they cannot drift apart."""
         limits = self.limits
-        if intent.qty > limits.max_order_qty:
+        if qty > limits.max_order_qty:
             return self._blocked(
-                f"order qty {intent.qty} exceeds max_order_qty {limits.max_order_qty}"
+                f"order qty {qty} exceeds max_order_qty {limits.max_order_qty}"
             )
 
         if oms is not None:
-            position = oms.position(intent.symbol)
-            projected = position + intent.side.sign * intent.qty
+            position = oms.position(symbol)
+            projected = position + side.sign * qty
             if abs(projected) > limits.max_position:
                 return self._blocked(
                     f"projected position {projected} exceeds max_position {limits.max_position}"
                 )
 
-            exposure = oms.exposure_ticks() + abs((intent.price_ticks or 0) * intent.qty)
+            released = 0
+            if releasing is not None:
+                released = abs((releasing.price_ticks or 0) * releasing.remaining_qty)
+            exposure = oms.exposure_ticks() - released + abs((price_ticks or 0) * qty)
             if exposure > limits.max_gross_exposure_ticks:
                 return self._blocked(
                     f"gross exposure {exposure} exceeds "

@@ -38,7 +38,20 @@ from workflows.theses import (
     views,
 )
 
-OPERATOR = "operator-1"
+OPERATOR = "424242424242424242"          # Discord ids are numeric snowflakes; Settings validates the format
+
+
+@pytest.fixture(autouse=True)
+def _allowlist_operator(monkeypatch):
+    """Put OPERATOR on the allowlist for the "an operator does X" tests.
+
+    ``close_thesis`` verifies the id against ``COCKPIT_OPERATOR_IDS`` (added in the
+    adversarial round — it previously accepted any non-empty string). Without this fixture
+    every such test would silently be exercising the REFUSAL path and asserting nothing about
+    the behaviour it names. Mirrors ``tests/system/test_paper_replay.py``, which does the same
+    for the real approval path; monkeypatch auto-reverts, so the suite stays hermetic.
+    """
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR)
 
 
 def _proposal(**kw) -> dict:
@@ -326,3 +339,32 @@ def test_a_FLAGGED_proposal_opens_no_thesis(st, clock, tmp_path):
     )
     assert outcome.status == "flagged"
     assert open_theses(st) == [], "a flagged proposal must leave no standing claim"
+
+
+def test_a_NON_ALLOWLISTED_id_cannot_close_a_thesis(st, clock):
+    """ADVERSARIAL. ``close_thesis`` used to accept any non-empty string, so the "only an
+    operator can close a thesis" property lived entirely in the Discord adapter — one caller.
+    Any other path could pass "system" and retire a standing claim, which is exactly the
+    capability the design withholds from anything that is not a person."""
+    record = _open(st, clock)
+
+    for impostor in ("system", "model", "scheduler", "999999"):
+        with pytest.raises(ThesisError, match="not an allowlisted operator"):
+            close_thesis(st, clock, thesis_id=record.id, status=STATUS_INVALIDATED,
+                         reason="r", operator_id=impostor)
+
+    assert open_theses(st), "the thesis must survive every impostor"
+
+
+def test_an_allowlisted_operator_still_can(st, clock):
+    """CONTROL: a check that refused everyone would pass the test above and break the loop.
+
+    Uses the id the autouse fixture allowlisted. Setting a DIFFERENT id here would not work:
+    ``Settings`` reads the environment at construction, and the ``st`` fixture builds it
+    before a per-test monkeypatch runs — so the new value would never be seen.
+    """
+    record = _open(st, clock)
+    closed = close_thesis(st, clock, thesis_id=record.id, status=STATUS_INVALIDATED,
+                          reason="fired", operator_id=OPERATOR)
+    assert closed.status == STATUS_INVALIDATED
+    assert closed.closed_by == OPERATOR

@@ -94,6 +94,31 @@ def _imported_roots(tree: ast.AST):
                 yield node.module.split(".")[0]
 
 
+_DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__", "load_module", "exec_module"})
+
+
+def _dynamic_import_calls(tree: ast.AST):
+    """Every call to a dynamic-import mechanism, by bare or attribute name.
+
+    The static-import scan below CANNOT see these. ``importlib.import_module("brokers")`` is
+    an ``ast.Call``, not an ``ast.Import``, so a gate that only walks import nodes misses it
+    entirely — and the module name is an expression that may be computed at runtime
+    (``"brok" + "ers"``, a config lookup, a reversed string), so no amount of cleverness makes
+    the ARGUMENT statically decidable.
+
+    The only sound control is therefore to ban the MECHANISM inside this package rather than
+    try to evaluate its argument. Nothing under ``quant/`` has any legitimate need for a
+    dynamic import; the cost of the ban is zero and it closes the hole completely.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "attr", None) or getattr(func, "id", None)
+        if name in _DYNAMIC_IMPORTERS:
+            yield name
+
+
 def test_quant_engine_never_imports_the_broker_package():
     quant = APP / "quant"
     if not quant.exists():
@@ -109,6 +134,46 @@ def test_quant_engine_never_imports_the_broker_package():
         "loop is unapproved and ungated; it is contained by being unable to reach a broker "
         f"at all. Offenders: {offenders}"
     )
+
+
+def test_quant_engine_uses_no_dynamic_import_mechanism_at_all():
+    """The hole the static gate above cannot see, closed by banning the mechanism.
+
+    Found by adversarially probing the gate rather than by reading it: every dynamic form —
+    ``importlib.import_module("brokers")``, ``__import__("brokers")``, string-concatenated
+    names — sailed straight through, while the documentation claimed otherwise. A security
+    control described as stronger than it is, is worse than one described accurately.
+    """
+    quant = APP / "quant"
+    if not quant.exists():
+        return
+    offenders = []
+    for path in _py_files(quant):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for name in _dynamic_import_calls(tree):
+            offenders.append(f"{path.relative_to(APP)} calls {name}()")
+    assert not offenders, (
+        "QT-07 containment: quant/ may not use a dynamic import mechanism. The module name "
+        "would be a runtime expression, so the static brokers/ gate cannot see through it. "
+        f"Offenders: {offenders}"
+    )
+
+
+def test_the_dynamic_import_gate_detects_every_form_that_defeated_the_static_one():
+    """CONTROL, written from the actual probe output. Each of these was MISSED by the
+    static import scan; all must be caught here."""
+    for source in (
+        'importlib.import_module("brokers")',
+        'importlib.import_module("brok" + "ers")',
+        '__import__("brokers")',
+        'getattr(__import__("importlib"), "import_module")("brokers")',
+        'spec.loader.exec_module(mod)',
+    ):
+        assert list(_dynamic_import_calls(ast.parse(source))), f"gate MISSES: {source}"
+
+    # ...and does not fire on ordinary code that merely mentions a module.
+    for source in ("import quant.book", "from quant.oms import OMS", "x = module_name"):
+        assert not list(_dynamic_import_calls(ast.parse(source))), source
 
 
 def test_the_quant_containment_gate_actually_detects_a_violation(tmp_path):

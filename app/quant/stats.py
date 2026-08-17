@@ -64,6 +64,10 @@ from typing import Iterable, Sequence
 EULER_MASCHERONI = 0.5772156649015329
 _NORMAL = NormalDist()
 
+MAX_CSCV_PARTITIONS = 20
+"""Ceiling on CSCV partitions. C(n, n/2) explodes: 16 -> 12,870, 30 -> 155 million,
+40 -> 137 billion. Past this the function does not fail on a bad argument, it never returns."""
+
 MIN_OBSERVATIONS = 20
 """Below this, every statistic here returns None.
 
@@ -419,6 +423,16 @@ def probability_of_backtest_overfitting(performance: Sequence[Sequence[float]], 
     """
     if n_partitions % 2 != 0 or n_partitions < 2:
         raise ValueError(f"n_partitions must be a positive even number, got {n_partitions}")
+    if n_partitions > MAX_CSCV_PARTITIONS:
+        # C(n, n/2) grows explosively: 16 -> 12,870 combinations, 30 -> 155 million,
+        # 40 -> 137 BILLION. Without a ceiling this function does not fail on a bad argument,
+        # it simply never returns — and a diagnostic that hangs is worse than one that
+        # refuses, because the caller cannot tell it from a slow dataset.
+        raise ValueError(
+            f"n_partitions {n_partitions} exceeds {MAX_CSCV_PARTITIONS}: that is "
+            f"{math.comb(n_partitions, n_partitions // 2):,} combinations and would not "
+            "terminate in useful time. The paper uses 16."
+        )
     rows = len(performance)
     if rows < n_partitions:
         return None

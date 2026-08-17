@@ -21,8 +21,16 @@ from workflows.theses import open_theses, open_thesis
 from workflows.theses import views as thesis_views
 
 
+OPERATOR = "424242424242424242"
+STRANGER = "919191919191919191"
+"""Real Discord SNOWFLAKE shapes. ``normalize_operator_ids`` rejects anything else (17-19
+digits), and ``is_authorized`` denies everyone on malformed input — so a short fake id like
+"1" does not merely fail to authorize, it silently makes every test exercise the refusal
+path. The allowlist also holds AT MOST ONE id by design (_OPERATOR_IDS_MAX_ENTRIES)."""
+
+
 class _Interaction:
-    def __init__(self, uid="1"):
+    def __init__(self, uid=OPERATOR):
         self.user = SimpleNamespace(id=uid)
         self.id = "i1"
 
@@ -35,9 +43,24 @@ def _open(st, clock, **kw):
     return open_thesis(st, clock, proposal=p, proposal_id=p["proposal_id"])
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def authed(monkeypatch):
-    monkeypatch.setattr("bridge.bot.is_authorized", lambda uid, settings: True)
+    """Allowlist the operator for REAL, via the env the allowlist actually reads.
+
+    Two details, both learned the hard way:
+
+    * It deliberately does NOT monkeypatch ``is_authorized``. Doing so patched only
+      ``bridge.bot``'s import of it and left ``workflows.theses``' own import untouched — so
+      these tests exercised the adapter's gate while the core's gate (added in the adversarial
+      round) silently refused. Setting the allowlist for real exercises BOTH.
+    * AUTOUSE, so it runs before the ``st`` fixture constructs ``Settings``. That ordering is
+      load-bearing: ``authorized_operator_ids`` treats the PRESENCE of a settings snapshot as
+      authoritative even when empty, precisely so "a startup deny-all snapshot never becomes
+      permissive because somebody mutates os.environ later in the process". Setting the env
+      after Settings is built is therefore a no-op by design. Mirrors
+      ``tests/system/test_paper_replay.py``.
+    """
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR)
 
 
 # ---- authorization -----------------------------------------------------------------------
@@ -45,8 +68,8 @@ def authed(monkeypatch):
 
 def test_an_unauthorized_user_cannot_list_or_close(st):
     cmd = ThesisCommands(st)
-    assert cmd.handle(_Interaction("999"), action="list") == ThesisCommands.UNAUTHORIZED
-    assert cmd.handle(_Interaction("999"), action="invalidate",
+    assert cmd.handle(_Interaction(STRANGER), action="list") == ThesisCommands.UNAUTHORIZED
+    assert cmd.handle(_Interaction(STRANGER), action="invalidate",
                       thesis_id="x", reason="y") == ThesisCommands.UNAUTHORIZED
 
 
@@ -54,15 +77,15 @@ def test_closing_records_the_ACTING_operator_not_a_generic_actor(st, clock, auth
     """'system' or 'model' would make the invalidation condition advisory. A specific human
     is on the record for the judgement call."""
     record = _open(st, clock)
-    out = ThesisCommands(st).handle(_Interaction("4242"), action="invalidate",
+    out = ThesisCommands(st).handle(_Interaction(OPERATOR), action="invalidate",
                                     thesis_id=record.id, reason="closed below support")
     assert "invalidated" in out
-    assert "4242" in out
+    assert OPERATOR in out
 
     with st.session_factory() as s:
         from schemas.models.thesis_record import ThesisRecord
         row = s.get(ThesisRecord, record.id)
-        assert row.closed_by == "4242"
+        assert row.closed_by == OPERATOR
         assert row.closed_reason == "closed below support"
 
 

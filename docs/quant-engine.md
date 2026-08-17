@@ -69,8 +69,21 @@ Four independent containments, each tested:
 
 1. **The import gate** — `test_quant_engine_never_imports_the_broker_package` in
    [`tests/test_invariants.py`](../app/tests/test_invariants.py). AST-based, so it is not
-   fooled by a comment or by `importlib.import_module("brok" + "ers")`. It has its own
-   control test proving it fires on every import form.
+   fooled by a comment or by a name split across a string concatenation in an import
+   statement. It has its own control test proving it fires on every static import form.
+
+   **It does NOT see dynamic imports, and an earlier version of this document wrongly claimed
+   it did.** `importlib.import_module("brokers")` is an `ast.Call`, not an `ast.Import`, so a
+   gate that walks import nodes misses it entirely — and the module name is a runtime
+   expression, so no amount of cleverness makes the argument statically decidable. This was
+   found by adversarially probing the gate rather than by reading it; every dynamic form
+   sailed straight through.
+
+   Closed by a **second gate** that bans the *mechanism* rather than trying to evaluate its
+   argument: `test_quant_engine_uses_no_dynamic_import_mechanism_at_all` refuses
+   `import_module`, `__import__`, `load_module` and `exec_module` anywhere under `quant/`.
+   Nothing there has any legitimate need for one, so the cost is zero. A security control
+   described as stronger than it is, is worse than one described accurately.
 2. **The type assertion** — `AutoLoop` refuses any venue that is not a `SimVenue`.
    `isinstance`, not duck typing: duck typing is precisely how a broker-shaped object would
    get in. There is a test that hands it a broker-shaped duck type and asserts refusal.

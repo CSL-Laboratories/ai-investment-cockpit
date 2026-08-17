@@ -380,3 +380,22 @@ def test_a_sharpe_on_pnl_increments_is_well_defined():
     estimate = sharpe_with_se(pnl_increments(equity), periods_per_year=1)
     assert estimate is not None
     assert estimate.sharpe > 0
+
+
+def test_an_explosive_partition_count_is_REFUSED_rather_than_hanging():
+    """C(n, n/2) explodes: 16 -> 12,870 combinations, 30 -> 155 million, 40 -> 137 billion.
+    Without a ceiling this does not fail on a bad argument, it never returns — and a
+    diagnostic that hangs is worse than one that refuses, because the caller cannot tell it
+    from a slow dataset."""
+    from quant.stats import MAX_CSCV_PARTITIONS
+
+    matrix = [[0.01, 0.02] for _ in range(200)]
+    with pytest.raises(ValueError, match="would not"):
+        probability_of_backtest_overfitting(matrix, n_partitions=MAX_CSCV_PARTITIONS + 2)
+
+
+def test_the_papers_partition_count_is_still_allowed():
+    """CONTROL: the ceiling must not exclude the value the paper actually uses (16)."""
+    rng = random.Random(5)
+    matrix = [[rng.gauss(0, 0.01) for _ in range(4)] for _ in range(320)]
+    assert probability_of_backtest_overfitting(matrix, n_partitions=16) is not None

@@ -48,6 +48,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
+from bridge.operators import is_authorized
 from core.ids import new_id
 from ingest.normalize import escape_untrusted
 from schemas.models.thesis_record import (
@@ -202,8 +203,23 @@ def close_thesis(state, clock, *, thesis_id: str, status: str, reason: str,
             f"{status!r} is not a terminal thesis status; expected one of "
             f"{sorted(TERMINAL_STATUSES)}"
         )
+    # ALLOWLIST-CHECKED HERE, not only in the Discord adapter.
+    #
+    # This previously accepted any non-empty string, so the "only an operator can close a
+    # thesis" property lived entirely in ``bridge.bot.ThesisCommands`` — one caller. Any other
+    # path (a future scheduled job, a bridge for a second surface, a helper written in a
+    # hurry) could pass "system" and retire a standing claim, which is precisely the
+    # capability this design exists to withhold from anything that is not a person.
+    #
+    # The allowlist is read from ``COCKPIT_OPERATOR_IDS`` and is not LLM-reachable
+    # (bridge/operators.py), so this is a real check rather than a self-assertion.
     if not operator_id:
         raise ThesisError("closing a thesis requires an operator id; it is never automatic")
+    if not is_authorized(operator_id, state.settings):
+        raise ThesisError(
+            f"{operator_id!r} is not an allowlisted operator; a thesis is retired by a person "
+            "or not at all"
+        )
 
     with state.session_factory() as s:
         row = s.get(ThesisRecord, thesis_id)

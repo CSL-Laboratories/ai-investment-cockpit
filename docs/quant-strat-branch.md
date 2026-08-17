@@ -365,6 +365,86 @@ docs were corrected to the ten-share/three-share case.
 
 ---
 
+## Part 7b — Adversarial review round
+
+Per CLAUDE.md, order-path changes get an attack→fix→regression round. I probed my **own**
+work rather than re-reading it. **Four attacks landed.** All four are now closed, with a
+regression test each and a re-probe confirming.
+
+### 🔴 The containment gate missed every dynamic import — and the docs claimed otherwise
+
+`docs/quant-engine.md` stated the AST gate "is not fooled by
+`importlib.import_module("brok" + "ers")`." **False.** `importlib.import_module(...)` is an
+`ast.Call`, not an `ast.Import`, so the gate that walks import nodes never saw it. Probe
+output:
+
+```
+CAUGHT   import brokers
+CAUGHT   from brokers.gateway import OrderGateway
+MISSED!  importlib.import_module("brokers")
+MISSED!  importlib.import_module("brok" + "ers")
+MISSED!  __import__("brokers")
+MISSED!  getattr(__import__("importlib"), "import_module")("brokers")
+```
+
+The worst class of finding: a security control **documented as stronger than it is**. Closed
+by a second gate banning the *mechanism* (`import_module`, `__import__`, `load_module`,
+`exec_module`) anywhere under `quant/` — the argument is a runtime expression and cannot be
+decided statically, so banning the mechanism is the only sound control. The doc is corrected.
+
+### 🔴 `ReplaceOrder` bypassed every guard limit
+
+`Guards.check` returned `ok()` unconditionally for a replace. A two-step sequence therefore
+defeated **`max_order_qty`, `max_position` and the exposure cap together**: send 1 share
+(passes), then replace it to 1,000,000 (unchecked) — in Tier C, the one tier with no human in
+the loop.
+
+```
+NewOrder qty=1,000,000         -> BLOCKED
+ReplaceOrder new_qty=1,000,000 -> ALLOWED !!
+```
+
+Closed by routing both through a shared `_check_size`, resolving the resting order for its
+symbol/side and netting out the exposure being released so ordinary repricing still passes. A
+replace with no OMS to verify against is **refused**, not waved through.
+
+### 🟡 `close_thesis` accepted any non-empty string as an operator
+
+The "only an operator closes a thesis" property lived entirely in the Discord adapter — one
+caller. Any other path could pass `"system"`. Now allowlist-checked in the core too.
+
+### 🟡 PBO had no ceiling on `n_partitions`
+
+`C(n, n/2)` explodes: 16 → 12,870 combinations, 30 → 155 million, **40 → 137 billion**. It
+would not fail on a bad argument, it would never return — and a diagnostic that hangs is worse
+than one that refuses. Capped at 20.
+
+### What the round also exposed in my tests
+
+Fixing #3 broke 15 tests, and the reasons were instructive:
+
+- **Discord ids are validated snowflakes.** `normalize_operator_ids` requires 17–19 digits;
+  `"1"` and `"operator-1"` are rejected, and `is_authorized` **denies everyone on malformed
+  input**. My tests used fake ids that a real deployment would reject.
+- **The allowlist holds at most ONE id** (`_OPERATOR_IDS_MAX_ENTRIES = 1`) — a solo-operator
+  system by design.
+- **Order matters, deliberately.** `authorized_operator_ids` treats the *presence* of a
+  settings snapshot as authoritative **even when empty**, so "a startup deny-all snapshot
+  never becomes permissive because somebody mutates os.environ later in the process." Setting
+  the env after `Settings` is built is a no-op *by design*. The fixture had to become autouse.
+- **The bridge tests were monkeypatching `bridge.bot.is_authorized`**, which left
+  `workflows.theses`' own import untouched — so they exercised the adapter's gate while the
+  core's silently refused. They now set the real allowlist and exercise **both**.
+
+### One thing I could not reproduce
+
+A single full-suite run showed `test_resolve_raw_tamper_fails_closed` failing — a
+**pre-existing** test (`test_events.py`, untouched by this branch) whose failure means tamper
+detection did not fire. It did not reproduce in 12 subsequent runs of `tests/workflows`, nor
+in 3 further full-suite runs, nor in isolation. **Recorded here rather than dismissed**: I
+have not explained it, and a flaky security control is worth a look. Most likely a Windows
+filesystem timing artifact around the `unlink` → `write_table` sequence, but that is a guess.
+
 ## Part 8 — Honest limitations
 
 - **The replay counterfactual is bounded, not solved.** Our orders consume liquidity the
