@@ -91,12 +91,28 @@ composition tests, then **2,274 passed / 1 skipped** in the full sanitized Windo
 Ruff clean. Production code merged automatically; only `docs/README.md` and `docs/REGISTER.md`
 required manual reconciliation.
 
+All six PR #38 Ubuntu/Windows/macOS × Python 3.11/3.12 jobs then stopped in 3–4 seconds before
+running a step. GitHub annotated them with failed recent account payments or a spending limit
+that must be increased. This is missing cross-platform attestation, not a code-test failure.
+
 The warning set is unchanged third-party FastAPI/Starlette, AnyIO/Starlette, and Python `audioop`
 deprecation output; no test warning indicates a W-24 control failure.
 
+## Stopped-system readiness check
+
+After the test run, a presence-only preflight against the stopped operational environment found
+the audit chain valid at sequence 10,040, mode `read_only`, a free loopback port, no HALT
+sentinel, and zero proposal/risk/approval/order rows. The 11-symbol awareness watchlist and the
+feed/operator credentials and delivery channels required for background bring-up were present.
+The merger strategy watchlist was empty and `COCKPIT_AUDIT_LOG_CHANNEL_ID` was absent. Those are
+fail-closed states: no edge can be produced and neither the local audit mirror nor the configured
+Discord bot token alone can satisfy the external-witness gate. No secret value was printed, and
+the service was not left running.
+
 ## Remaining gates
 
-1. Reviewed PR and green Ubuntu/Windows/macOS × Python 3.11/3.12 matrix.
+1. Runnable green Ubuntu/Windows/macOS × Python 3.11/3.12 matrix; PR #38 is merged, but its
+   billing-blocked no-step jobs do not provide cross-platform attestation.
 2. Configure the private audit channel and prove exact-message Discord publish/read retention.
 3. Prospectively commit a real complete ≥30-deal cohort and wait for all outcome horizons and
    strict post-horizon EDGAR coverage; retrospective W-23 fixtures cannot satisfy this gate.

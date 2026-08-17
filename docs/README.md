@@ -41,22 +41,37 @@ canonical invariant list, and nothing else restates it.
   cohort. The first PR #36 matrix passed five of six
   jobs; Windows 3.11 exposed `BUG-105`, a transient Parquet staging-handle cleanup failure. Its
   byte-image read/retry repair passed the full replacement Ubuntu/Windows/macOS × Python
-  3.11/3.12 matrix. `W-24` is implemented on `work/w24-merger-semantic-verifier`: the production
+  3.11/3.12 matrix. `W-24` merged in PR #38: the production
   graph now composes a model-free verifier, exact-message Discord witness, prospective manifest,
   source-derived labels/outcomes/deal terms, complete-filing-set checks, and a final transactional
-  recheck. Real prospective evidence, external-witness configuration, cross-platform CI, and PR
-  review remain pending, so W-23 still returns no edge. The local W-24 gate is 2,266 passed / 1
-  skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
+  recheck. Real prospective evidence, external-witness configuration, and cross-platform CI
+  remain pending, so W-23 still returns no edge. All six PR #38 matrix jobs stopped before a
+  step with GitHub's payment/spending-limit annotation; that is missing attestation, not a code
+  failure. The combined BUG-106/W-24 Windows integration
+  gate is 2,274 passed / 1 skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
-
-- `origin/main` includes BUG-106 in PR #37 at merge `6e07ac3`, on top of PR #36 at `2cbb6d5`.
-  Production EDGAR baseline timestamps now take their
-  authority from the signed audit event, and narrowly bounded legacy rows reconcile once through
-  a signed repair. A real `read_only` composed run repaired all 11 legacy rows, ingested one
-  filing with four deltas, then completed a clean 11/11 retry with the audit chain valid and zero
-  proposals, approvals, or orders. The PR #37 six-job matrix was running at merge time; see
+- `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
+  with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
+  ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped
+  with a valid audit chain at sequence 10,040 and zero proposals/orders. Windows: 2,248 passed /
+  1 skipped; Ruff clean. The PR #37 six-job matrix was running at merge time. See
   [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
+- The `RW-19` evidence update merged in PR #39 and now covers two completed 11-symbol IEX/SIP
+  sessions and three live IEX stream samples. Combined IEX recall is about 75% at the 10/25/50 bps measurement
+  thresholds and the maximum observed one-second burst is 1,114 frames. This confirms feed
+  non-equivalence but does not resolve `DEC-07`; reconnect/backfill, broader regimes, news
+  identity, and measured-burst persistence/triage remain open.
+- The stopped-system preflight is green for controlled background `read_only` bring-up: loopback
+  port free, HALT absent, audit chain valid, zero proposal/risk/approval/order rows, 11 awareness
+  symbols, required feed/operator credentials present, and operational Discord delivery channels
+  configured. The merger watchlist remains empty and the private Discord audit-witness channel id
+  is absent, so expected edge, SEC-11, and paper opening orders correctly remain unavailable.
+- GitHub's 2026-08-17 incident interrupted publication. BUG-106, W-24, and the RW-19 evidence
+  subsequently merged in PRs #37–#39; this final documentation reconciliation preserves the
+  stopped-system preflight and recovery record in
+  [[evidence/github-outage-session-handoff-2026-08-17]]. Do not start `RW-13` or a new production
+  package while the named evidence gates remain open.
 - The old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
@@ -119,8 +134,12 @@ defects got fixed twice on two branches.
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
 | [[runbooks/w23-cash-merger-edge]] | Deterministic cash-merger evidence schemas, conservative calibration, and separate paper-activation gate |
+| [[runbooks/w24-merger-semantic-verifier]] | Prospective semantic-authority contract, external witness, cohort workflow, and fail-closed activation boundary |
 | [[evidence/w22-paper-mvp-2026-08-14]] | Dated first-day status, live-feed observations, and unclosed evidence gates |
 | [[evidence/w23-cash-merger-edge-2026-08-14]] | W-23 local implementation, attack→fix findings, tests, and unclosed activation gates |
+| [[evidence/w24-merger-semantic-verifier-2026-08-17]] | W-24 implementation, adversarial findings, local gates, and remaining prospective evidence |
+| [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]] | BUG-106 deterministic repair contract and bounded composed live confirmation |
+| [[evidence/github-outage-session-handoff-2026-08-17]] | Exact local branch/commit inventory, stopped-system preflight, merge order, and paste-ready next-session prompt |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 

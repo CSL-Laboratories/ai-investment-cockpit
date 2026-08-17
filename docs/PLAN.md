@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-16
+last-verified: 2026-08-17
 ---
 
 # The plan
@@ -21,11 +21,11 @@ last-verified: 2026-08-16
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #36 and the 2026-08-14 bring-up evidence.
+state/lifecycle reconciled through PR #39 and the 2026-08-17 implementation/evidence handoff.
 
 ---
 
-## 0. Current state — 2026-08-16
+## 0. Current state — 2026-08-17
 
 The first live W-22 bring-up snapshot is recorded in
 [[evidence/w22-paper-mvp-2026-08-14]]. At 11:17 PT the `read_only` process had a valid audit
@@ -44,12 +44,25 @@ from one SQLite snapshot, preventing a legitimate concurrent ingest commit from 
 false one-minute truncation result and paper-performance `watch_only` alert. Genuine hash,
 sequence, watermark, truncation, and erasure failures remain fail-closed.
 
-`origin/main` at `2cbb6d5` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
-boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
+`BUG-106` merged in PR #37. EDGAR baseline
+timestamps now derive from their signed audit transition, and a bounded one-time path repairs
+legacy rows without creating a general override. A committed `read_only` live run repaired all
+11 legacy baselines once, ingested one filing/four deltas, completed the following 11/11 poll
+with no current error, and stopped with a valid audit chain at sequence 10,040 and zero orders.
+Its older named cross-platform attestation remains pending.
+
+The merged line through PR #39 contains the WP0–WP9 foundation, the contained QT engine, the
+fail-closed calendar boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation),
+event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
 fail-closed transaction-cost/net-edge gate (`W-21`), RW-15 paper reconciliation, W-22's audited
-paper loop, W-23's production-closed deterministic cash-merger edge machinery, and
-BUG-040–051/097–105.
+paper loop, W-23's production-closed deterministic cash-merger edge machinery, W-24's semantic
+verifier, BUG-106, and the repeated RW-19 measurements.
+
+The outage recovery queue is recorded in
+[[evidence/github-outage-session-handoff-2026-08-17]]. BUG-106, W-24's verifier and adversarial
+hardening, and the repeated RW-19 measurements subsequently merged in PRs #37–#39. This final
+documentation reconciliation preserves the stopped-system preflight and historical handoff.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
 triage, briefs, interrogation, and proposal drafting; deterministic risk/mode/approval controls;
@@ -62,6 +75,13 @@ cross-platform attestations; W-22's two-day unattended paper proof; W-24's real 
 cohort/current-target evidence and external witness needed to activate W-23; event-driven paper autonomy
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
+
+RW-19 now has two completed 11-symbol IEX/SIP sessions and three bounded live IEX captures.
+Combined recall at 10/25/50 bps is approximately 75%, and the largest observed one-second burst
+is 1,114 frames. That confirms IEX/SIP non-equivalence but does not resolve `DEC-07`: broader
+regimes, deliberate reconnect/REST backfill, news identity, and measured-burst SQLite/triage
+behavior remain open. Building a synthetic event/outbox path before those measurements would be
+premature `RW-13`, so no such path was added.
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
 PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
@@ -77,8 +97,18 @@ pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** finish review/CI for the implemented `W-24` verifier and begin its real
-prospective cohort capture while collecting the named RW-11/RW-14/RW-15/RW-19 evidence. A real
+W-24 merged in PR #38 after a direct adversarial pass closed five concrete findings and
+additionally strengthened final EDGAR CIK binding. Its combined BUG-106 integration gate passes
+2,274 tests / 1 skipped with Ruff clean. BUG-106 merged in PR #37 with live recovery evidence,
+and the 13/13 hash-verified RW-19 manifests merged in PR #39. The preferred
+DeepSeek Pro/Flash W-24 retries timed out without findings or edits and remain missing external
+attestation, not approval. All six PR #38 matrix jobs stopped in 3–4 seconds before running a
+step with GitHub's payment/spending-limit annotation; that is missing CI attestation, not a code
+failure.
+
+**Immediate sequence:** configure the private Discord audit channel and begin W-24's real
+prospective cohort capture while collecting the named
+RW-11/RW-14/RW-15/RW-19 evidence. A real
 evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
@@ -495,7 +525,7 @@ local gate was 2,240 passed / 1 skipped with Ruff clean; the replacement six-job
 matrix is green. Production still returns no edge because operator-authored terms and historical
 labels are not independent semantic authority.
 
-**`W-24` intake — claimed on `work/w24-merger-semantic-verifier`:**
+**`W-24` intake — delivered in PR #38; evidence gates remain open:**
 
 1. **Operator change:** W-23 may report a verified edge only when a deterministic verifier binds
    every authority-bearing deal term and cohort label to immutable raw sources, proves the
@@ -529,7 +559,7 @@ commitment must be witnessed outside the mutable cockpit store before any outcom
 timestamp. Historical rows created after their outcomes can test mechanics but can never satisfy
 production authority.
 
-**W-24 implementation checkpoint (2026-08-17):** the branch composes a production
+**W-24 implementation checkpoint (2026-08-17):** PR #38 composes a production
 `CashMergerSemanticVerifier` with no configuration switch to a permissive implementation. A
 selection commitment contains no outcomes and must have at least 30 unique evaluation identities,
 bind signed selection filings/entry quotes plus fresh
@@ -541,9 +571,12 @@ poll, and re-runs inside edge persistence. The parser is intentionally narrow; l
 classify returns unavailable. No model, broker, subprocess, platform branch, or `app/risk/` I/O
 was added. This closes the code gap only: the real prospective cohort, current eligible target,
 Discord audit-channel configuration, CI, and online evidence remain gates.
-The final local Windows gate is 2,260 passed / 1 skipped with Ruff clean; see
+The final BUG-106-integrated Windows gate is 2,274 passed / 1 skipped with Ruff clean. A fresh
+direct attack pass additionally pinned expanded agreement negation, target-specific cash
+consideration, unconditional outcomes, five-minute pre-commit quote freshness, configured
+Discord channel identity, and final EDGAR CIK binding; see
 [[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
-review attempts timed out without a verdict, so PR review remains an explicit missing attestation.
+review attempts timed out without a verdict, so that external attestation remains missing.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
@@ -683,8 +716,8 @@ be developed, locally committed, and pushed for backup without opening a PR; the
 workflow runs on pull requests and pushes to `main`, not ordinary branch pushes. This is a cost
 control, not a gate waiver.
 
-The completed implementation spine is `W-21 → RW-15 → W-22 → DEC-03 → W-23`; `W-24` is
-implemented locally and remains evidence/CI pending because W-23 correctly keeps any absent,
+The completed implementation spine is `W-21 → RW-15 → W-22 → DEC-03 → W-23 → W-24`;
+`W-24` remains evidence/CI pending because W-23 correctly keeps any absent,
 retrospective, or unverifiable semantic claim non-executable. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;

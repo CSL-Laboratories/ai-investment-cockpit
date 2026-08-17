@@ -25,21 +25,24 @@ and the claim board, not the specification.
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
-| Offline development | **active** | BUG-106 merged in PR #37; finish W-24 PR review/CI while W-23 remains unavailable pending real prospective evidence |
-| Online testing and evidence | **active** | [[evidence/w22-paper-mvp-2026-08-14]] recorded healthy quote/feed progression; rerun cross-platform CI and finish the named empirical drills |
+| Offline development | **current package queue reconciled** | BUG-106, W-24, and the RW-19 evidence update merged in PRs #37–#39; this final handoff is documentation-only; do not start another production package |
+| Online testing and evidence | **active** | [[evidence/w22-paper-mvp-2026-08-14]] recorded healthy quote/feed progression; restore the named cross-platform attestations, configure the SEC-11 witness, and finish the RW-11/RW-14/RW-15/RW-19/W-24 empirical drills |
 | Paper MVP | **not reached** | real W-24/W-23 prospective cohort + target evidence, RW-14/RW-15 online evidence, then two audited unattended `W-22` market days |
 | Production beta | **blocked by MVP** | `RW-13` dynamic path plus `W16` four-week paper soak |
 | Stabilization / bugfixing | **not started** | beta defect burn-down, platform/restart/fault regression, zero unexplained reconciliation gaps |
 | Full-scale deployment | **blocked** | all pre-live gates, ≥6-month paper evidence, then `W17 → W18 → W19` separately |
 
-`origin/main` includes RW-15 (PR #34), W-22 (PR #35), the bring-up repairs plus W-23
-(PR #36, merge `2cbb6d5`), and BUG-106 (PR #37, merge `6e07ac3`). The PR #36 replacement six-job
-matrix was green. BUG-106 passes 2,248 tests / 1 skipped locally with Ruff clean, and a real
-composed `read_only` run repaired all 11 legacy EDGAR baselines exactly once before a clean 11/11
-scheduled retry; PR #37's six-job matrix was running at merge time. W-24 is published with a
-2,266-test / 1-skipped Windows gate and Ruff clean. Older package attestations and the named
-empirical gates remain pending; see [[PLAN]], [[evidence/w22-paper-mvp-2026-08-14]], and
+The merged line includes RW-15 (PR #34), W-22 (PR #35), the bring-up repairs plus W-23
+(PR #36), BUG-106 (PR #37), W-24 (PR #38), and the repeated RW-19 measurements (PR #39).
+The combined BUG-106/W-24 Windows integration gate passed 2,274 tests / 1 skipped with Ruff
+clean. Older package attestations and the named empirical gates remain pending; see [[PLAN]],
+[[evidence/w22-paper-mvp-2026-08-14]], and
 [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
+
+GitHub's 2026-08-17 incident originally left four clean branches pending publication. The
+recovery sequence completed through PR #39; this documentation-only branch retains the final
+stopped-system preflight and historical handoff in
+[[evidence/github-outage-session-handoff-2026-08-17]].
 
 ## Status vocabulary
 
@@ -69,7 +72,7 @@ empirical gates remain pending; see [[PLAN]], [[evidence/w22-paper-mvp-2026-08-1
 | `W-21` | Cost model: spread + square-root impact on ADV + borrow; relative net-edge test | merged — evidence pending | — | merged in PR #33 with Windows 2,155 passed / 1 skipped and Ruff clean; fresh DeepSeek Pro/Flash adversarial round found no P0/P1 bypass and concrete approval-path findings were fixed with regressions; expected edge remains explicitly unavailable/fail-closed; cross-platform CI and RW-14 live input evidence still pending |
 | `W-22` | The paper loop end to end, Discord-driven, fills at bid/ask; wire the loss signals into `BreakerSignals` (daily loss from snapshots, consecutive losses from round trips) | evidence pending — merged PR #35 | — | Windows 2,180 passed / 1 skipped + Ruff clean after a fresh attack→fix→regression review; Discord fresh question/approve/veto, post-commit fill confirmation, signed equity drawdown, audit-derived closed round trips, active-breaker gateway backstop, status/reachability, and additive SQLite migration are implemented. RW-14/RW-15 live evidence, verified deterministic edge authority, and two unattended market days a week apart remain required; see [[runbooks/w22-paper-mvp]] |
 | `W-23` | Deterministic paper expected-edge source selected by `DEC-03`; immutable point-in-time evidence, draft-time and approval-time recomputation, fail-closed status, and no model-authored return | evidence pending — merged PR #36; production evidence gate closed | — | Merge `2cbb6d5`; three independent review passes found and closed order/evidence blockers. The final 2,240-test local suite, Ruff, 2,000-write Windows 3.11 stress case, and replacement six-job matrix are green. W-24 code can now verify semantics, but absent/retrospective/operator-only evidence remains non-executable; real prospective cohort/current-target evidence and paper activation remain blocked; [[evidence/w23-cash-merger-edge-2026-08-14]] |
-| `W-24` | Independent deterministic merger semantic verifier: complete declared universe, externally witnessed pre-outcome commitments, source-derived outcome labels, and cited deal terms; replace W-23's hard refusal only when all authority verifies | implemented — local gate green; evidence/CI pending | Codex — `work/w24-merger-semantic-verifier` | Production composition, schema-v2 commitment binding, exact-message Discord witness, strict source parser, complete signed filing universe, post-horizon poll, final transaction recheck, and composed paper reachability are implemented. Local attack rounds closed ineligible-cohort, duplicate-collapse, unsigned-row, conflicting-outcome, backdating, expanded negation/conditional language, unrelated cash-per-share text, written-fraction stock consideration, stale intraday entry quotes, foreign witness channels, stale-source, and caller-poll paths. The Windows gate is 2,266 passed / 1 skipped with Ruff clean. DeepSeek Pro/Flash read-only audits timed out after reading and produced no attestation or edits. Six-job CI, PR review, a real ≥30-deal prospective cohort, current eligible target, and configured external witness remain mandatory; [[evidence/w24-merger-semantic-verifier-2026-08-17]]; [[runbooks/w24-merger-semantic-verifier]] |
+| `W-24` | Independent deterministic merger semantic verifier: complete declared universe, externally witnessed pre-outcome commitments, source-derived outcome labels, and cited deal terms; replace W-23's hard refusal only when all authority verifies | evidence pending — merged PR #38 | — | Production composition, schema-v2 commitment binding, exact-message Discord witness, strict source parser, complete signed filing universe, post-horizon poll, final transaction recheck, and composed paper reachability are implemented. Local attack rounds closed ineligible-cohort, duplicate-collapse, unsigned-row, conflicting-outcome, backdating, expanded negation/conditional language, unrelated cash-per-share text, written-fraction stock consideration, stale intraday entry quotes, foreign witness channels, stale-source, and caller-poll paths. The combined BUG-106/W-24 Windows gate is 2,274 passed / 1 skipped with Ruff clean. DeepSeek Pro/Flash read-only audits timed out after reading and produced no attestation or edits. All six PR #38 CI jobs stopped before any step with GitHub's payment/spending-limit annotation, so runnable six-job CI, a real ≥30-deal prospective cohort, current eligible target, and configured external witness remain mandatory; [[evidence/w24-merger-semantic-verifier-2026-08-17]]; [[runbooks/w24-merger-semantic-verifier]] |
 | `RW-13` | Dynamic paper autonomy: durable event/outbox trigger, deterministic arbiter, scoped gap backfill, replay, dedup, bounded flood handling, cron backstop | blocked → `RW-19` + `DEC-07` + M1–M4.5 + `RW-17`/`BUG-097` | — | separate-store parity + same-store idempotency; scoped loss recovery; nondegenerate recall; measured latency/flood gates in [[PLAN]] M5 |
 | `W16` | Paper-soak/performance instruments and recorded evidence; dynamic event path must be enabled for its autonomy window | open | — | after M5: ≥4 consecutive market weeks dynamic-paper soak with required density/fault injections; existing statistical gates remain minimum inputs, not funding authority |
 | `W17` | Human-gated Robinhood `review_live`: verified deterministic MCP client behind `OrderGateway`; no model access | blocked → `RW-18` + M5/W16 evidence + all pre-live gates + ≥6-month funding bar | — | discovery places zero orders; separately authorized first-live orders reconcile or fail explicitly; external witness green; see [[PLAN]] M6 |
