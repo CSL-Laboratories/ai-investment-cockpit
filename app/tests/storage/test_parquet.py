@@ -9,6 +9,7 @@ import pytest
 from storage.parquet_store import (
     content_hash,
     read_snapshot,
+    read_verified_snapshot,
     snapshot_path,
     verify_snapshot,
     write_snapshot,
@@ -44,6 +45,26 @@ def test_post_ingest_edit_detected(tmp_path):
     pq.write_table(pa.Table.from_pylist([{"symbol": "AAPL", "price": 999.0, "ts": "x"}]),
                    snapshot_path(tmp_path, "2026-07-06", "AAPL"))
     assert verify_snapshot(tmp_path, "2026-07-06", "AAPL", h) is False   # bound hash no longer matches
+
+
+def test_verified_read_consumes_the_same_opened_bytes_it_hashes(tmp_path, monkeypatch):
+    path, digest = write_snapshot(tmp_path, "2026-07-06", "AAPL", RECORDS)
+    replacement = tmp_path / "replacement.parquet"
+    pq.write_table(pa.Table.from_pylist([{"symbol": "AAPL", "price": 999.0, "ts": "x"}]),
+                   replacement)
+    original = pq.read_table
+    swapped = False
+
+    def swap_after_open(source, *args, **kwargs):
+        nonlocal swapped
+        if isinstance(source, pa.BufferReader) and not swapped:
+            swapped = True
+            replacement.replace(path)
+        return original(source, *args, **kwargs)
+
+    monkeypatch.setattr(pq, "read_table", swap_after_open)
+    assert read_verified_snapshot(tmp_path, "2026-07-06", "AAPL", digest) == RECORDS
+    assert read_snapshot(tmp_path, "2026-07-06", "AAPL") != RECORDS
 
 
 # ---- BUG-094: one serialization, both sides --------------------------------------------

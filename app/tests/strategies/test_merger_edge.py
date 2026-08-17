@@ -9,16 +9,28 @@ import pyarrow.parquet as pq
 import pytest
 from sqlalchemy import select
 
+from brokers.alpaca_paper import AlpacaPaperBroker, FakeAlpaca
+from brokers.capability import TokenRegistry
+from brokers.gateway import OrderGateway
+from brokers.paper_execution import PaperExecutionError, PaperExecutionService
 from filings.raw_store import RawStore
-from config.settings import Settings
+from config.settings import DecisionRuntime, Mode, Settings
 from core.clock import FrozenClock
+from core.ids import new_id
 from ingest.market_data import MarketDataService, MarketMetrics
-from orchestrator.state import EVENT_FILING_INGESTED, OrchestratorState
+from orchestrator.breakers import BreakerEngine
+from orchestrator.state import (
+    EVENT_EDGAR_POLL_COMPLETED,
+    EVENT_FILING_INGESTED,
+    OrchestratorState,
+)
 from orchestrator.quant_ws import SnapshotSource
 from schemas.models.company import Company
 from schemas.models.audit_entry import AuditEntry
+from schemas.models.agent_job import AgentJob
 from schemas.models.filing import Filing, FormType
 from schemas.models.merger_edge import MergerDealEvidence, MergerEdgeEvidence
+from schemas.models.proposal_record import ProposalRecord
 from strategies.merger_edge import (
     CALIBRATION_SCHEMA,
     DEAL_SCHEMA,
@@ -33,6 +45,8 @@ from strategies.merger_edge import (
     write_calibration_cohort,
 )
 from storage.engine import create_all, make_engine, make_session_factory
+from storage.parquet_store import write_snapshot
+from tests.brokers.conftest import build_scenario
 from tests.workflows.conftest import NOW
 from workflows.proposals import build_execution_verdict
 
@@ -125,17 +139,18 @@ def _calibration(ref, digest, **updates):
     document = {
         "schema_version": CALIBRATION_SCHEMA,
         "version": SOURCE_ID,
-        "method": "wilson95_worst_case_prices_v1",
+        "method": "wilson95_heldout_worst_case_prices_v2",
         "frozen": True,
-        "frozen_at": (NOW - timedelta(days=1)).isoformat(),
+        "frozen_at": NOW.isoformat(),
         "cohort_ref": ref,
         "cohort_content_hash": digest,
         "cohort_as_of": statistics["cohort_as_of"],
         "cohort_size": statistics["cohort_size"],
+        "training_cutoff": statistics["training_cutoff"],
+        "training_cohort_size": statistics["training_cohort_size"],
+        "evaluation_cohort_size": statistics["evaluation_cohort_size"],
         "heldout_field_count": statistics["heldout_field_count"],
         "heldout_correct_fields": statistics["heldout_correct_fields"],
-        "survivorship_safe": True,
-        "includes_failed_delisted": True,
         "p_close": statistics["p_close"],
         "p_fail": statistics["p_fail"],
         "p_open": statistics["p_open"],
@@ -160,27 +175,257 @@ def _proposal(**updates):
     return payload
 
 
-def _cohort_rows():
-    outcomes = ["closed"] * 80 + ["failed"] * 10 + ["open"] * 10
+class _ResearchOnlyEdgeProvider(CashMergerEdgeProvider):
+    """Test-only subclass for exercising controls below the closed production gate."""
+
+    def _verify_semantic_authority(self, *, deal_document, calibration_document):
+        assert deal_document["schema_version"] == DEAL_SCHEMA
+        assert calibration_document["schema_version"] == CALIBRATION_SCHEMA
+
+
+def _eligibility(**updates):
+    values = {
+        "cash_offer": "110",
+        "security_type": "common_equity",
+        "listing_country": "US",
+        "listing_exchange": "nasdaq",
+        "agreement_status": "definitive",
+        "lifecycle_status": "active",
+        "has_cvr": False,
+        "has_earnout": False,
+        "has_stock": False,
+        "uses_options_or_leverage": False,
+        "is_rumor_or_competing_bid": False,
+        "amendment_reviewed": False,
+    }
+    values.update(updates)
+    return values
+
+
+def _cohort_rows(identity_offset=0):
+    outcomes = ["closed"] * 38 + ["failed", "open"]
     prices = {"closed": "110", "failed": "50", "open": "98"}
-    return [
-        {
-            "schema_version": "merger_calibration_cohort_row.v1",
-            "deal_id": f"deal-{index}",
-            "selected_at": "2025-01-01",
+    rows = []
+    for index, outcome in enumerate(outcomes):
+        identity = index + identity_offset
+        selected = date(2024, 1, 1) if index < 10 else date(2025, 1, 1)
+        cik = f"{1000000000 + identity:010d}"
+        symbol = f"T{identity:03d}"
+        placeholder = lambda offset: {  # noqa: E731 - compact deterministic fixture identity
+            "event_seq": 10_000 + identity * 4 + offset,
+            "raw_ref": f"placeholder-{identity}-{offset}",
+            "content_hash": "a" * 64,
+        }
+        rows.append({
+            "schema_version": "merger_calibration_cohort_row.v2",
+            "deal_id": f"deal-{identity}",
+            "symbol": symbol,
+            "target_cik": cik,
+            "source_accession": f"{cik}-25-{identity:06d}",
+            "split": "training" if index < 10 else "evaluation",
+            "selected_at": selected.isoformat(),
             "outcome_as_of": (
-                date(2025, 1, 31) if outcome == "open" else date(2025, 1, 15)
+                selected + timedelta(days=30 if outcome == "open" else 14)
             ).isoformat(),
             "outcome": outcome,
             "entry_ask": "100",
             "outcome_price": prices[outcome],
-            "heldout_fields": 1,
-            "heldout_correct_fields": 1 if index < 97 else 0,
-            "included_point_in_time": True,
-            "failure_or_delisting_captured": outcome == "failed",
+            "eligibility_prediction": _eligibility(),
+            "eligibility_label": _eligibility(),
+            "eligibility_source": placeholder(0),
+            "entry_price_source": placeholder(1),
+            "outcome_source": placeholder(2),
+            "outcome_price_source": placeholder(3),
+        })
+    return rows
+
+
+def _seed_cohort_sources(st, root, rows):
+    raw_store = RawStore(root / "sec", min_free_bytes=0)
+    staged = []
+    for index, row in enumerate(rows):
+        accession = row["source_accession"]
+        filing_ref = raw_store.write(accession, f"source filing {index}".encode())
+        outcome_accession = f"{accession}-outcome"
+        outcome_filing_ref = raw_store.write(
+            outcome_accession, f"outcome filing {index}".encode()
+        )
+        selected = date.fromisoformat(row["selected_at"])
+        outcome_as_of = date.fromisoformat(row["outcome_as_of"])
+        entry_key = f"{row['symbol']}-cal-entry-{index}"
+        outcome_key = f"{row['symbol']}-cal-outcome-{index}"
+        entry_record = {
+            "symbol": row["symbol"],
+            "exchange_ts": f"{selected.isoformat()}T14:00:00+00:00",
+            "price": row["entry_ask"],
+            "ask": row["entry_ask"],
         }
-        for index, outcome in enumerate(outcomes)
-    ]
+        outcome_record = {
+            "symbol": row["symbol"],
+            "exchange_ts": f"{outcome_as_of.isoformat()}T20:00:00+00:00",
+            "price": row["outcome_price"],
+            "ask": row["outcome_price"],
+        }
+        _, entry_hash = write_snapshot(
+            root / "market-data" / "quotes", selected.isoformat(), entry_key,
+            [entry_record],
+        )
+        _, outcome_hash = write_snapshot(
+            root / "market-data" / "quotes", outcome_as_of.isoformat(), outcome_key,
+            [outcome_record],
+        )
+        staged.append((
+            row, filing_ref.sha256, outcome_accession, outcome_filing_ref.sha256,
+            entry_key, entry_hash, outcome_key, outcome_hash,
+        ))
+    with st.session_factory() as session, session.begin():
+        for index, (
+            row, filing_hash, outcome_accession, outcome_filing_hash,
+            entry_key, entry_hash, outcome_key, outcome_hash,
+        ) in enumerate(staged):
+            # Historical imports retain honest local detection time. Calibration chronology
+            # is derived from the SEC filing date signed into the event, not this timestamp.
+            detection = NOW
+            filing = Filing(
+                id=f"cal-filing-{row['deal_id']}", cik=row["target_cik"],
+                accession_no=row["source_accession"], form_type=FormType.FORM_8K,
+                filing_date=date.fromisoformat(row["selected_at"]), detection_ts=detection,
+                raw_ref=row["source_accession"], primary_doc=f"cal-{index}.htm",
+            )
+            session.add(filing)
+            session.flush()
+            filing_event = st.audit.append_in(
+                session, EVENT_FILING_INGESTED, actor="edgar",
+                refs={"model": "filing", "row_id": filing.id, "raw_ref": filing.raw_ref},
+                payload={
+                    "cik": filing.cik, "accession_no": filing.accession_no,
+                    "form_type": "8-K", "filing_date": filing.filing_date.isoformat(),
+                    "detection_ts": detection.isoformat(),
+                    "raw_content_hash": filing_hash,
+                },
+            )
+            outcome_detection = NOW
+            outcome_filing = Filing(
+                id=f"cal-outcome-filing-{row['deal_id']}", cik=row["target_cik"],
+                accession_no=outcome_accession, form_type=FormType.FORM_8K,
+                filing_date=date.fromisoformat(row["outcome_as_of"]),
+                detection_ts=outcome_detection, raw_ref=outcome_accession,
+                primary_doc=f"cal-outcome-{index}.htm",
+            )
+            session.add(outcome_filing)
+            session.flush()
+            outcome_filing_event = st.audit.append_in(
+                session, EVENT_FILING_INGESTED, actor="edgar",
+                refs={
+                    "model": "filing", "row_id": outcome_filing.id,
+                    "raw_ref": outcome_filing.raw_ref,
+                },
+                payload={
+                    "cik": outcome_filing.cik,
+                    "accession_no": outcome_filing.accession_no,
+                    "form_type": "8-K",
+                    "filing_date": outcome_filing.filing_date.isoformat(),
+                    "detection_ts": outcome_detection.isoformat(),
+                    "raw_content_hash": outcome_filing_hash,
+                },
+            )
+            entry_day = row["selected_at"]
+            entry_event = st.audit.append_in(
+                session, "market_data_raw_snapshot", actor="market_data",
+                refs={"raw_ref": f"market-data://{entry_day}/{entry_key}"},
+                payload={
+                    "kind": "quote", "date": entry_day, "raw_key": entry_key,
+                    "content_hash": entry_hash, "count": 1,
+                },
+            )
+            outcome_day = row["outcome_as_of"]
+            outcome_event = st.audit.append_in(
+                session, "market_data_raw_snapshot", actor="market_data",
+                refs={"raw_ref": f"market-data://{outcome_day}/{outcome_key}"},
+                payload={
+                    "kind": "quote", "date": outcome_day, "raw_key": outcome_key,
+                    "content_hash": outcome_hash, "count": 1,
+                },
+            )
+            row["eligibility_source"] = {
+                "event_seq": filing_event.seq, "raw_ref": filing.raw_ref,
+                "content_hash": filing_hash,
+            }
+            row["entry_price_source"] = {
+                "event_seq": entry_event.seq,
+                "raw_ref": f"market-data://{entry_day}/{entry_key}",
+                "content_hash": entry_hash,
+            }
+            row["outcome_source"] = {
+                "event_seq": outcome_filing_event.seq,
+                "raw_ref": outcome_filing.raw_ref,
+                "content_hash": outcome_filing_hash,
+            }
+            row["outcome_price_source"] = {
+                "event_seq": outcome_event.seq,
+                "raw_ref": f"market-data://{outcome_day}/{outcome_key}",
+                "content_hash": outcome_hash,
+            }
+
+
+def _composed_paper_service(merger):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+    operator = "123456789012345678"
+    st.settings = Settings(
+        decision_runtime=DecisionRuntime.claude,
+        operator_ids_config=operator,
+        _env_file=None,
+    )
+    observation = market_data.observation(SYMBOL)
+    verdict, _seq, _qty, _reasons = build_execution_verdict(
+        _proposal(quantity=1), quote_price=Decimal(str(observation.quote["price"])),
+        clock=st.clock, market_observation=observation,
+        observation_fn=market_data.observation, metrics_fn=market_data.metrics,
+        verify_params=market_data.verify_params, edge_provider=provider,
+    )
+    assert verdict is not None and verdict.net_edge_state == "sufficient"
+    client = FakeAlpaca(cash="100000", buying_power="200000")
+    broker = AlpacaPaperBroker(client=client)
+    registry = TokenRegistry()
+    gateway = OrderGateway(
+        broker, st=st, token_registry=registry, execution_scope="paper"
+    )
+    ask = Decimal(str(observation.quote["ask"]))
+    scenario = build_scenario(
+        st, mode=Mode.paper, broker=broker, gateway=gateway, qty="1",
+        limit_price=str(ask), notional=str(ask),
+        execution_verdict=verdict.as_dict(), mint=False,
+    )
+    job = AgentJob(
+        id=new_id("job"), runtime="claude", model="deep", model_pinned="pinned",
+        prompt_template="trade_proposal.v1", prompt_hash="h" * 16,
+        input_refs={}, schema_id="TradeProposal", status="done", created_at=st.clock.now(),
+    )
+    st.audit.record_state_change(
+        job, "agent_job", actor="agent_calls", payload={"status": "done", "runtime": "claude"}
+    )
+    payload = {
+        **_proposal(quantity=1), "order_type": "limit", "sizing_basis": "capped",
+        "notional": str(ask),
+    }
+    proposal = ProposalRecord(
+        id="p1", symbol=SYMBOL, side="buy", status="draft", flagged=False,
+        payload=payload, job_id=job.id, risk_decision_id=scenario.risk_decision.id,
+        order_id=scenario.order.id, created_at=st.clock.now(), updated_at=st.clock.now(),
+    )
+    st.audit.record_state_change(
+        proposal, "proposal", actor="proposals", payload={"status": "draft", "symbol": SYMBOL}
+    )
+    service = PaperExecutionService(
+        st, broker=broker, gateway=gateway, token_registry=registry,
+        quote_fn=market_data.quote, watchlist_fn=lambda: {SYMBOL},
+        market_data=market_data, edge_provider=provider,
+    )
+    fresh, _snapshot = service._fresh_risk(  # noqa: SLF001 - composed test precondition
+        payload, SYMBOL, order_qty=scenario.order.qty, require_w21=True
+    )
+    assert fresh.get("decision") == "approved", fresh
+    return service, scenario, client, provider, operator
 
 
 @pytest.fixture
@@ -208,7 +453,7 @@ def merger(st, clock, tmp_path):
             refs={"row_id": company.id, "cik": CIK},
             payload={"action": "created", "ticker": SYMBOL, "cik": CIK},
         )
-        st.audit.append_in(
+        filing_event = st.audit.append_in(
             session,
             EVENT_FILING_INGESTED,
             actor="edgar",
@@ -217,13 +462,30 @@ def merger(st, clock, tmp_path):
                 "cik": CIK,
                 "accession_no": ACCESSION,
                 "form_type": "8-K",
+                "filing_date": filing.filing_date.isoformat(),
                 "detection_ts": filing.detection_ts.isoformat(),
                 "raw_content_hash": raw_ref.sha256,
             },
         )
+        st.audit.append_in(
+            session,
+            EVENT_EDGAR_POLL_COMPLETED,
+            actor="edgar-pipeline",
+            refs={"cik": CIK},
+            payload={
+                "cik": CIK,
+                "process_epoch": st.process_epoch,
+                "completed_at": (NOW - timedelta(seconds=1)).isoformat(),
+                "baseline_accession": ACCESSION,
+                "cursor_accession": ACCESSION,
+                "filing_event_seq": filing_event.seq,
+            },
+        )
+    cohort_rows = _cohort_rows()
+    _seed_cohort_sources(st, root, cohort_rows)
     cohort_ref, cohort_hash = write_calibration_cohort(
         root, (NOW.date() - timedelta(days=1)).isoformat(), "cash-merger-cohort-v1",
-        _cohort_rows(),
+        cohort_rows,
     )
     record_calibration_evidence(st, _calibration(cohort_ref, cohort_hash), raw_root=root)
     record_deal_evidence(st, _deal(raw_ref.sha256), raw_root=root)
@@ -240,7 +502,9 @@ def merger(st, clock, tmp_path):
     st.market_data = market_data
     assert market_data.poll_quotes()["failed"] == []
     assert market_data.refresh_daily_bars()["failed"] == []
-    provider = CashMergerEdgeProvider(st, raw_root=root, strategy_watchlist={SYMBOL})
+    provider = _ResearchOnlyEdgeProvider(
+        st, raw_root=root, strategy_watchlist={SYMBOL}
+    )
     return st, root, client, market_data, provider, raw_ref.sha256
 
 
@@ -270,10 +534,32 @@ def test_verified_edge_uses_frozen_inputs_and_persists_immutable_evidence(merger
 
     # A reconstructed provider after a process restart reuses the same signed input record;
     # it does not mint a conflicting edge or fall back to mutable "latest row" state.
-    restarted = CashMergerEdgeProvider(st, raw_root=_root, strategy_watchlist={SYMBOL})
+    restarted = _ResearchOnlyEdgeProvider(
+        st, raw_root=_root, strategy_watchlist={SYMBOL}
+    )
     assert restarted.estimate(_proposal(), quote=quote) == first
     with st.session_factory() as session:
         assert len(session.execute(select(MergerEdgeEvidence)).scalars().all()) == 1
+
+
+def test_production_semantic_gate_keeps_operator_authored_claims_unavailable(merger):
+    st, root, _client, market_data, _provider, _raw_hash = merger
+    production = CashMergerEdgeProvider(
+        st, raw_root=root, strategy_watchlist={SYMBOL}
+    )
+
+    assert production.estimate(
+        _proposal(), quote=market_data.quote(SYMBOL)
+    ) is None
+    assert "semantic verifier is not provisioned" in production.status_text()
+
+
+def test_pre_restart_edgar_watermark_cannot_authorize_current_process(merger):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+    st.process_epoch = "new-process-without-a-poll"
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert "this process" in provider.status_text()
 
 
 @pytest.mark.parametrize(("change", "reason"), [
@@ -386,6 +672,7 @@ def test_unreviewed_new_filing_and_quote_raw_substitution_fail_closed(merger):
                 "cik": CIK,
                 "accession_no": extra,
                 "form_type": "8-K",
+                "filing_date": filing.filing_date.isoformat(),
                 "detection_ts": filing.detection_ts.isoformat(),
                 "raw_content_hash": extra_ref.sha256,
             },
@@ -433,7 +720,7 @@ def test_cached_volatility_substitution_cannot_replace_signed_daily_bars(merger)
 
 @pytest.mark.parametrize("horizon_days", [0, 1, 31])
 def test_open_calibration_rows_require_the_exact_30_day_horizon(horizon_days):
-    rows = _cohort_rows()
+    rows = _cohort_rows(identity_offset=100)
     selected = date(2025, 1, 1)
     for row in rows:
         if row["outcome"] == "open":
@@ -482,6 +769,98 @@ def test_atomic_market_observation_reaches_w21_with_the_verified_metric(merger):
 
     assert verdict is not None and verdict.net_edge_state == "sufficient"
     assert (seq, qty, reasons) == (observation.book.seq, 10, ())
+
+
+def test_composed_paper_path_recomputes_real_signed_merger_evidence_twice(
+    merger, monkeypatch,
+):
+    service, scenario, client, provider, operator = _composed_paper_service(merger)
+    estimate = provider.estimate
+    calls = 0
+
+    def recording_estimate(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return estimate(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "estimate", recording_estimate)
+    outcome = service.decide(
+        scenario.order.id, actor=operator, decision="approve", confirm_symbol=SYMBOL,
+        request_id="composed-w23-approved",
+    )
+
+    assert outcome["status"] == "submitted"
+    assert calls >= 2, "approval and gateway must independently recompute the real provider"
+    assert len(client.submitted) == 1
+
+
+def test_late_filing_between_approval_and_gateway_recheck_makes_zero_broker_calls(
+    merger, monkeypatch,
+):
+    service, scenario, client, provider, operator = _composed_paper_service(merger)
+    st, root, _client, _market_data, _provider, _raw_hash = merger
+    estimate = provider.estimate
+    calls = 0
+
+    def insert_before_gateway_recheck(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            accession = "0000320193-26-008888"
+            raw = RawStore(root / "sec", min_free_bytes=0).write(
+                accession, b"termination filed between approval and gateway"
+            )
+            with st.session_factory() as session, session.begin():
+                filing = Filing(
+                    id="gateway-race-filing", cik=CIK, accession_no=accession,
+                    form_type=FormType.FORM_8K, filing_date=NOW.date(),
+                    detection_ts=NOW, raw_ref=accession, primary_doc="termination.htm",
+                )
+                session.add(filing)
+                session.flush()
+                st.audit.append_in(
+                    session, EVENT_FILING_INGESTED, actor="edgar",
+                    refs={"model": "filing", "row_id": filing.id, "raw_ref": accession},
+                    payload={
+                        "cik": CIK, "accession_no": accession, "form_type": "8-K",
+                        "filing_date": filing.filing_date.isoformat(),
+                        "detection_ts": NOW.isoformat(), "raw_content_hash": raw.sha256,
+                    },
+                )
+        return estimate(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "estimate", insert_before_gateway_recheck)
+    with pytest.raises(PaperExecutionError):
+        service.decide(
+            scenario.order.id, actor=operator, decision="approve", confirm_symbol=SYMBOL,
+            request_id="composed-w23-late-filing",
+        )
+
+    assert calls == 2
+    assert client.submitted == []
+
+
+@pytest.mark.parametrize("reason", [
+    "unsupported post-boundary SEC filing 8-K/A blocks freshness",
+    "malformed post-boundary SEC submissions row blocks freshness",
+    "SEC submissions response CIK mismatches its request",
+])
+def test_composed_order_path_refuses_unclassified_sec_poll_fault(
+    merger, reason,
+):
+    service, scenario, client, _provider, operator = _composed_paper_service(merger)
+    st, _root, _client, _market_data, _provider, _raw_hash = merger
+    BreakerEngine(st).enter_watch_only(
+        "sec:edgar", reason, clock=st.clock, actor="edgar-pipeline"
+    )
+
+    with pytest.raises(PaperExecutionError):
+        service.decide(
+            scenario.order.id, actor=operator, decision="approve", confirm_symbol=SYMBOL,
+            request_id=f"composed-w23-{reason[:9]}",
+        )
+
+    assert client.submitted == []
 
 
 def test_verified_snapshot_blocks_transient_audit_event_repoint(merger, monkeypatch):
@@ -557,6 +936,119 @@ def test_deal_superseded_during_estimate_cannot_persist_or_return_edge(merger, m
     assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
     with st.session_factory() as session:
         assert session.execute(select(MergerEdgeEvidence)).scalars().all() == []
+
+
+def test_signed_filing_arriving_after_deal_verification_blocks_final_edge_persistence(
+    merger, monkeypatch,
+):
+    st, root, _client, market_data, provider, _raw_hash = merger
+    verify_calibration = provider._verify_calibration  # noqa: SLF001 - interleaving attack
+    inserted = False
+
+    def insert_filing_before_calibration(now):
+        nonlocal inserted
+        if not inserted:
+            inserted = True
+            accession = "0000320193-26-009999"
+            raw = RawStore(root / "sec", min_free_bytes=0).write(
+                accession, b"late signed merger amendment"
+            )
+            with st.session_factory() as session, session.begin():
+                filing = Filing(
+                    id="late-race-filing", cik=CIK, accession_no=accession,
+                    form_type=FormType.FORM_8K, filing_date=NOW.date(),
+                    detection_ts=NOW, raw_ref=accession, primary_doc="late.htm",
+                )
+                session.add(filing)
+                session.flush()
+                st.audit.append_in(
+                    session, EVENT_FILING_INGESTED, actor="edgar",
+                    refs={"model": "filing", "row_id": filing.id, "raw_ref": accession},
+                    payload={
+                        "cik": CIK, "accession_no": accession, "form_type": "8-K",
+                        "filing_date": filing.filing_date.isoformat(),
+                        "detection_ts": NOW.isoformat(), "raw_content_hash": raw.sha256,
+                    },
+                )
+        return verify_calibration(now)
+
+    monkeypatch.setattr(provider, "_verify_calibration", insert_filing_before_calibration)
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert "not covered" in provider.status_text() or "filing" in provider.status_text()
+    with st.session_factory() as session:
+        assert session.execute(select(MergerEdgeEvidence)).scalars().all() == []
+
+
+def test_stale_edgar_watermark_enters_audited_watch_only(merger):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+    st.clock._at = NOW + timedelta(minutes=11)  # noqa: SLF001 - deterministic stale-feed attack
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert BreakerEngine(st).is_watch_only("sec:edgar")
+    with st.session_factory() as session:
+        events = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "watch_only")
+        ).scalars().all()
+    assert any((event.payload or {}).get("vendor") == "sec:edgar" for event in events)
+
+
+def test_advancing_clock_does_not_make_a_fresh_edge_future_dated(merger):
+    st, _root, _client, market_data, provider, _raw_hash = merger
+
+    class AdvancingClock:
+        def __init__(self):
+            self.at = NOW
+
+        def now(self):
+            self.at += timedelta(microseconds=1)
+            return self.at
+
+    st.clock = AdvancingClock()
+    observation = market_data.observation(SYMBOL)
+    verdict, _seq, _qty, _reasons = build_execution_verdict(
+        _proposal(), quote_price=Decimal(str(observation.quote["price"])),
+        clock=st.clock, market_observation=observation,
+        observation_fn=market_data.observation, metrics_fn=market_data.metrics,
+        verify_params=market_data.verify_params, edge_provider=provider,
+    )
+
+    assert verdict is not None and verdict.net_edge_state == "sufficient"
+
+
+def test_calibration_precision_is_derived_from_labels_and_split_is_temporal():
+    rows = _cohort_rows()
+    evaluation = [row for row in rows if row["split"] == "evaluation"]
+    for row in evaluation[:2]:
+        row["eligibility_prediction"] = _eligibility(
+            cash_offer="999", security_type="preferred", listing_country="CA",
+            listing_exchange="otc", agreement_status="rumor", lifecycle_status="terminated",
+            has_cvr=True, has_earnout=True, has_stock=True, uses_options_or_leverage=True,
+            is_rumor_or_competing_bid=True, amendment_reviewed=True,
+        )
+    with pytest.raises(MergerEvidenceError, match="precision"):
+        calibration_statistics(rows)
+
+    rows = _cohort_rows()
+    first_evaluation = next(row for row in rows if row["split"] == "evaluation")
+    first_evaluation["selected_at"] = "2024-01-01"
+    first_evaluation["outcome_as_of"] = "2024-01-15"
+    with pytest.raises(MergerEvidenceError, match="training cutoff"):
+        calibration_statistics(rows)
+
+
+def test_calibration_rejects_reused_or_substituted_signed_source_events(merger):
+    st, root, _client, _market_data, _provider, _raw_hash = merger
+    rows = _cohort_rows(identity_offset=100)
+    _seed_cohort_sources(st, root, rows)
+    rows[1]["entry_price_source"] = dict(rows[0]["entry_price_source"])
+    ref, digest = write_calibration_cohort(
+        root, "2026-07-05", "source-substitution", rows
+    )
+    with pytest.raises(MergerEvidenceError, match="unique per observation"):
+        record_calibration_evidence(
+            st, _calibration(ref, digest), raw_root=root
+        )
 
 
 def test_calibration_rejects_weak_precision_and_non_empirical_probabilities(merger):

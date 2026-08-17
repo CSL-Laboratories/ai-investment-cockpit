@@ -408,6 +408,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
                           finra_row_mapper=None, clock=None, session_factory=None,
                           audit_log=None, watchlist=(), cockpit_db_path=None,
                           parquet_root="data/raw", edgar_clock=None,
+                          edgar_process_epoch="",
+                          merger_watchlist=(),
                           edgar_fetcher_factory=None):
     """W20 + RW-01 — build the production ingest fetch CLOSURES. All I/O lives in these
     factories, never in the pure ingest modules (which take an injected ``fetch``).
@@ -491,6 +493,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
             raw_store_root=Path(parquet_root) / "sec",
             audit_log=audit_log,
             clock=edgar_clock,
+            process_epoch=edgar_process_epoch,
+            strict_tickers=merger_watchlist,
             fetcher_factory=edgar_fetcher_factory,
         )
     elif sec_user_agent:
@@ -880,6 +884,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
         session_factory=state.session_factory, audit_log=state.audit,
         watchlist=configured_watchlist, cockpit_db_path=edgar_db_path,
         parquet_root=parquet_root, edgar_clock=state.clock,
+        edgar_process_epoch=state.process_epoch,
+        merger_watchlist=settings.merger_watchlist_symbols,
         edgar_fetcher_factory=edgar_fetcher_factory,
     )
     app.state.ingest = build_ingest_runner(state, parquet_root=parquet_root, fetchers=fetchers,

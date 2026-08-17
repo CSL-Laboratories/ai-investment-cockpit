@@ -21,6 +21,7 @@ from typing import Callable, Protocol, runtime_checkable
 from agent_runner.usage import UsageTracker
 from config.settings import Settings, get_settings
 from core.clock import Clock, default_clock
+from core.ids import new_id
 from storage.audit import AuditLog
 
 # ---- audit event types (single source of truth; Inv 6) --------------------------------
@@ -30,6 +31,7 @@ EVENT_BREAKER_CLEAR = "breaker_clear"
 EVENT_WATCH_ONLY = "watch_only"            # L8 usage-window degradation (NOT a mode change)
 EVENT_MARKET_DATA_RAW = "market_data_raw_snapshot"
 EVENT_FILING_INGESTED = "filing_ingested"  # SEC metadata + raw hash, atomic with Filing row
+EVENT_EDGAR_POLL_COMPLETED = "edgar_poll_completed"  # per-CIK trustworthy SEC poll watermark
 EVENT_KILLSWITCH = "killswitch"
 EVENT_DRAWDOWN_MARK = "drawdown_mark"      # EOD-recorded realized drawdown the gate reads
 EVENT_ADJUDICATION = "proposal_decision"   # one per approve/reject/modify/veto (WP6 writes)
@@ -90,6 +92,9 @@ class OrchestratorState:
     usage: UsageTracker
     settings: Settings
     clock: Clock = default_clock
+    # Per-process freshness epoch. Durable feed watermarks from an earlier process cannot
+    # authorize orders after a restart that failed to compose the feed.
+    process_epoch: str = field(default_factory=lambda: new_id("process"), compare=False)
     # Serializes the mode ladder's read-modify-write against a concurrent killswitch/arm so
     # the (read current -> check gate/HALT -> persist) sequence is atomic (SEC-04 race fix).
     # Reentrant: killswitch/daily_disarm hold it while calling drop_to_review_live.

@@ -218,11 +218,29 @@ class IngestRunner:
             feed.last_error = repr(exc)
             log.warning("ingest feed %s FAILED (consecutive=%d): %r",
                         name, feed.consecutive_errors, exc)
+            if name == FEED_EDGAR:
+                self._sync_edgar_watch_only(False, f"EDGAR poll failed: {exc!r}")
             return {"feed": name, "status": "error", "error": repr(exc),
                     "consecutive_errors": feed.consecutive_errors}
         feed.consecutive_errors = 0
         feed.emitted += emitted
-        return {"feed": name, "status": "ok", "emitted": emitted, **self._signals(feed)}
+        result = {"feed": name, "status": "ok", "emitted": emitted, **self._signals(feed)}
+        if name == FEED_EDGAR:
+            feed_status = (
+                self._read_status(feed, self._today())
+                if feed.status_fn is not None
+                else {
+                    "status": "unreadable",
+                    "trustworthy": False,
+                    "reason": "EDGAR has no freshness reader",
+                }
+            )
+            result["feed_status"] = feed_status
+            self._sync_edgar_watch_only(
+                bool(feed_status.get("trustworthy")),
+                str(feed_status.get("reason") or "EDGAR freshness is unavailable"),
+            )
+        return result
 
     def poll_all(self, *, now=None) -> dict:
         """One tick of EVERY registered poll feed (the dry-run / manual-catch-up drive)."""
@@ -351,6 +369,26 @@ class IngestRunner:
             "quiet_day": bool(getattr(outcome, "quiet_day", False)),
             "reason": getattr(outcome, "reason", None),
         }
+
+    def _sync_edgar_watch_only(self, trustworthy: bool, reason: str) -> None:
+        """Make EDGAR degradation an audited order-path condition, not just status text."""
+        from orchestrator.breakers import BreakerEngine
+        from orchestrator.mode_ladder import ModeLadder
+
+        engine = BreakerEngine(self._state)
+        if not trustworthy:
+            if not engine.is_watch_only(FEED_EDGAR):
+                engine.enter_watch_only(
+                    FEED_EDGAR, reason, clock=self._clock, actor="edgar-pipeline"
+                )
+            return
+        if engine.is_watch_only(FEED_EDGAR):
+            engine.recover_from_watch_only(
+                FEED_EDGAR,
+                ModeLadder(self._state).current(),
+                clock=self._clock,
+                actor="edgar-pipeline",
+            )
 
     def _today(self) -> str:
         clock = self._clock if self._clock is not None else getattr(self._state, "clock", None)

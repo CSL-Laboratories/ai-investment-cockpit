@@ -21,6 +21,7 @@ from core.clock import FrozenClock
 from filings.raw_store import RawStore
 from ingest.edgar_pipeline import (
     EdgarPipelineResult,
+    backfill_filing_accession,
     build_sec_fetcher,
     run_edgar_pipeline,
 )
@@ -385,6 +386,7 @@ def test_adapter_filing_hook_atomically_binds_row_and_raw_hash(sf, store):
             select(AuditEntry).where(AuditEntry.event_type == "filing_ingested")
         ).scalar_one()
     assert event.refs == {"model": "filing", "row_id": filing.id, "raw_ref": accession}
+    assert event.payload["filing_date"] == "2026-07-08"
     assert event.payload["raw_content_hash"] == raw.sha256
     assert audit.verify_chain().ok
 
@@ -401,17 +403,421 @@ def test_first_contact_with_an_established_cik_baselines_instead_of_faulting(sf,
     result = run_edgar_pipeline(
         sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
         fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+        process_epoch="test-process",
     )
     assert result.poll_errors == [], "first contact must baseline, not trip the cap"
     assert result.ok is True
     assert result.filings_ingested == 0, "first contact records position; it never backfills"
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+
+    with sf() as session:
+        completion = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "edgar_poll_completed")
+        ).scalar_one()
+    assert completion.payload["cik"] == NVDA
+    assert completion.payload["process_epoch"] == "test-process"
+    assert completion.payload["filing_event_seq"] == 0
 
     result2 = run_edgar_pipeline(
         sf, settings=prod_cap, ciks=[NVDA], raw_store=store, clock=CLOCK,
         fetcher=make_fetcher(FixtureTransport()), audit_log=_audit_log(sf),
+        process_epoch="test-process",
     )
     assert result2.poll_errors == [] and result2.filings_ingested == 0
     assert result2.ok is True
+
+
+class _MutatedSubmissionsFetcher:
+    def __init__(
+        self, delegate, *, form="8-K/A", filing_date="2026-07-09", body_cik=None
+    ):
+        self._delegate = delegate
+        self._form = form
+        self._filing_date = filing_date
+        self._body_cik = body_cik
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def get_bytes(self, url):
+        return self._delegate.get_bytes(url)
+
+    def get_json(self, url):
+        import copy
+
+        document = copy.deepcopy(self._delegate.get_json(url))
+        if self._body_cik is not None and isinstance(document, dict):
+            document["cik"] = self._body_cik
+        recent = (document.get("filings") or {}).get("recent")
+        if isinstance(recent, dict):
+            overrides = {
+                "accessionNumber": "0001045810-26-999999",
+                "form": self._form,
+                "filingDate": self._filing_date,
+                "reportDate": "2026-07-09",
+                "acceptanceDateTime": "2026-07-09T12:00:00.000Z",
+                "primaryDocument": "merger-amendment.htm",
+            }
+            for name, values in recent.items():
+                if isinstance(values, list):
+                    value = overrides.get(name, values[0] if values else "")
+                    values.insert(0, value)
+        return document
+
+
+class _InterleavingSubmissionsFetcher:
+    def __init__(self, delegate, mutate_baseline):
+        self._delegate = delegate
+        self._mutate_baseline = mutate_baseline
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def get_bytes(self, url):
+        return self._delegate.get_bytes(url)
+
+    def get_json(self, url):
+        document = self._delegate.get_json(url)
+        recent = (document.get("filings") or {}).get("recent")
+        if not isinstance(recent, dict):
+            return document
+        callback = self._mutate_baseline
+
+        class RacingAccessions(list):
+            fired = False
+
+            def __iter__(self):
+                if not self.fired:
+                    self.fired = True
+                    callback()
+                return super().__iter__()
+
+        recent["accessionNumber"] = RacingAccessions(recent["accessionNumber"])
+        return document
+
+
+class _DuplicateBoundaryFetcher(_MutatedSubmissionsFetcher):
+    def __init__(self, delegate, cutoff):
+        super().__init__(delegate)
+        self._cutoff = cutoff
+
+    def get_json(self, url):
+        document = super().get_json(url)
+        recent = (document.get("filings") or {}).get("recent")
+        if not isinstance(recent, dict):
+            return document
+        boundary = recent["accessionNumber"].index(self._cutoff)
+        for values in recent.values():
+            if isinstance(values, list):
+                values.insert(0, values[boundary])
+        recent["filingDate"][1] = recent["filingDate"][0]
+        recent["acceptanceDateTime"][1] = recent["acceptanceDateTime"][0]
+        return document
+
+
+@pytest.mark.parametrize(
+    ("form", "filing_date"),
+    [("8-K/A", "2026-07-09"), ("8-K", "not-a-date")],
+)
+def test_post_boundary_unsupported_or_malformed_rows_deny_poll_completion(
+    sf, store, form, filing_date,
+):
+    from sqlalchemy import func, select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    first = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    )
+    assert first.ok
+    with sf() as session:
+        cutoff = session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one()
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=_MutatedSubmissionsFetcher(
+            make_fetcher(FixtureTransport()), form=form, filing_date=filing_date
+        ),
+        audit_log=audit, process_epoch="test-process",
+        strict_completeness_ciks={NVDA},
+    )
+
+    assert attacked.poll_errors and not attacked.ok
+    with sf() as session:
+        assert session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one() == cutoff
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 1
+
+
+def test_empty_first_contact_boundary_cannot_skip_first_unsupported_filing(sf, store):
+    from sqlalchemy import func, select
+
+    from filings.edgar.submissions_poll import PollBaselineStore
+    from schemas.models.audit_entry import AuditEntry
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    assert PollBaselineStore(sf, audit).establish(NVDA, None, CLOCK.now())
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=_MutatedSubmissionsFetcher(make_fetcher(FixtureTransport())),
+        audit_log=audit, process_epoch="test-process",
+        strict_completeness_ciks={NVDA},
+    )
+
+    assert attacked.poll_errors and not attacked.ok
+    with sf() as session:
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 0
+
+
+def test_submissions_body_cik_cannot_escape_requested_cik_strict_scope(sf, store):
+    from sqlalchemy import func, select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    assert run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    ).ok
+    with sf() as session:
+        cutoff = session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one()
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=_MutatedSubmissionsFetcher(
+            make_fetcher(FixtureTransport()), body_cik=AAPL
+        ),
+        audit_log=audit, process_epoch="test-process",
+        strict_completeness_ciks={NVDA},
+    )
+
+    assert attacked.poll_errors and not attacked.ok
+    with sf() as session:
+        assert session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one() == cutoff
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 1
+
+
+def test_duplicate_saved_cutoff_cannot_hide_unsupported_newer_row(sf, store):
+    from sqlalchemy import func, select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    assert run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    ).ok
+    with sf() as session:
+        cutoff = session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one()
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=_DuplicateBoundaryFetcher(make_fetcher(FixtureTransport()), cutoff),
+        audit_log=audit, process_epoch="test-process",
+        strict_completeness_ciks={NVDA},
+    )
+
+    assert attacked.poll_errors and not attacked.ok
+    with sf() as session:
+        assert session.execute(select(PollBaseline.cutoff_accession_no)).scalar_one() == cutoff
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 1
+
+
+def test_keyless_baseline_edit_cannot_be_laundered_by_a_later_poll(sf, store):
+    from sqlalchemy import func, select, update
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    first = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    )
+    assert first.ok
+    with sf() as attacker, attacker.begin():
+        attacker.execute(
+            update(PollBaseline).values(cutoff_accession_no="0001045810-26-999999")
+        )
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    )
+
+    assert attacked.poll_errors and not attacked.ok
+    assert any("baseline" in reason.lower() for _cik, reason in attacked.poll_errors)
+    with sf() as session:
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 1 and audit.verify_chain().ok
+
+
+def test_wal_baseline_substitution_during_poll_denies_completion(sf, store):
+    from sqlalchemy import func, select, update
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    configured = Settings(
+        sec_user_agent=UA, sec_rate_limit_per_sec=2.0,
+        sec_max_new_filings_per_poll=25,
+    )
+    audit = _audit_log(sf)
+    assert run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=make_fetcher(FixtureTransport()), audit_log=audit,
+        process_epoch="test-process",
+    ).ok
+    interleaved = {"fired": False}
+
+    def attacker_commit():
+        with sf() as attacker, attacker.begin():
+            attacker.execute(
+                update(PollBaseline).values(cutoff_accession_no="0001045810-26-999999")
+            )
+        interleaved["fired"] = True
+
+    attacked = run_edgar_pipeline(
+        sf, settings=configured, ciks=[NVDA], raw_store=store, clock=CLOCK,
+        fetcher=_InterleavingSubmissionsFetcher(
+            make_fetcher(FixtureTransport()), attacker_commit
+        ),
+        audit_log=audit, process_epoch="test-process",
+        strict_completeness_ciks={NVDA},
+    )
+
+    assert interleaved["fired"] and attacked.poll_errors and not attacked.ok
+    with sf() as session:
+        completions = session.execute(
+            select(func.count()).select_from(AuditEntry).where(
+                AuditEntry.event_type == "edgar_poll_completed"
+            )
+        ).scalar_one()
+    assert completions == 1 and audit.verify_chain().ok
+
+
+def test_exact_historical_accession_backfill_bypasses_baseline_without_bypassing_audit(
+    sf, store,
+):
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.filing import Filing
+
+    audit = _audit_log(sf)
+    accession = "0001045810-26-000060"
+    row = backfill_filing_accession(
+        sf, cik=NVDA, accession=accession,
+        fetcher=make_fetcher(FixtureTransport()), raw_store=store,
+        audit_log=audit, clock=CLOCK,
+    )
+    again = backfill_filing_accession(
+        sf, cik=NVDA, accession=accession,
+        fetcher=make_fetcher(FixtureTransport()), raw_store=store,
+        audit_log=audit, clock=CLOCK,
+    )
+
+    assert again.id == row.id and store.verify(accession)
+    with sf() as session:
+        assert session.execute(
+            select(Filing).where(Filing.accession_no == accession)
+        ).scalar_one().primary_doc == "nvda-20260628.htm"
+        events = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "filing_ingested")
+        ).scalars().all()
+    assert len(events) == 1
+    assert events[0].payload["raw_content_hash"] == store.stored_hash(accession)
+    assert events[0].payload["filing_date"] == row.filing_date.isoformat()
+    assert events[0].payload["detection_ts"] == CLOCK.now().isoformat()
+    assert audit.verify_chain().ok
+
+
+def test_legacy_unsigned_filing_is_refetched_before_it_receives_a_signed_binding(sf, store):
+    from datetime import date
+
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.filing import Filing, FormType
+
+    accession = "0001045810-26-000056"
+    with sf() as session, session.begin():
+        session.add(Filing(
+            id="legacy-unsigned", cik=NVDA, accession_no=accession,
+            form_type=FormType.FORM_8K, filing_date=date(2026, 6, 30),
+            detection_ts=CLOCK.now(), raw_ref=accession,
+            primary_doc="nvda-20260624.htm",
+        ))
+    audit = _audit_log(sf)
+    row = backfill_filing_accession(
+        sf, cik=NVDA, accession=accession,
+        fetcher=make_fetcher(FixtureTransport()), raw_store=store,
+        audit_log=audit, clock=CLOCK,
+    )
+
+    assert row.id == "legacy-unsigned" and store.verify(accession)
+    with sf() as session:
+        event = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "filing_ingested")
+        ).scalar_one()
+    assert event.refs["row_id"] == "legacy-unsigned"
+    assert event.payload["raw_content_hash"] == store.stored_hash(accession)
 
 
 def test_unaudited_runs_keep_the_visible_cap_fault(sf, store):

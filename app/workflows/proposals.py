@@ -222,6 +222,10 @@ def build_execution_verdict(
             book = book_fn(symbol)
         if book is None:
             return None, None, resolved_qty, ()
+        # A preliminary timestamp is enough to normalize the cached metric.  The authority
+        # timestamp passed to ``verify_proposal`` is sampled only after the edge provider
+        # returns; otherwise a real advancing clock makes the provider's freshly-computed edge
+        # appear microseconds in the future (frozen-clock tests cannot expose that ordering).
         now = clock.now()
         metric = metrics_fn(symbol) if metrics_fn is not None else None
         inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
@@ -233,6 +237,8 @@ def build_execution_verdict(
             verified_edge = edge_provider.estimate(
                 verification_proposal, quote=quote, market_metric=metric
             )
+        now = clock.now()
+        inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
         effect = position_effect
         if effect is None:
             effect = (

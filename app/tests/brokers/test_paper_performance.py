@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import threading
+
+from sqlalchemy import select
 
 from brokers.alpaca_paper import AlpacaPaperBroker, FakeAlpaca
 from brokers.paper_performance import reconstruct_paper_performance
+from schemas.models.audit_entry import AuditEntry
 
 
 def _filled(st, order_id: str, *, symbol: str, side: str, qty: str, price: str):
@@ -119,3 +123,49 @@ def test_fill_larger_than_the_signed_paper_order_fails_closed(st):
 
     result = reconstruct_paper_performance(st)
     assert not result.ok and "signed order size" in str(result.reason)
+
+
+def test_verification_and_performance_read_share_one_sqlite_snapshot(st, monkeypatch):
+    client = FakeAlpaca(equity="100")
+    broker = AlpacaPaperBroker(client=client)
+    broker.get_positions(st=st, clock=st.clock)
+    client.equity = "50"
+    broker.get_positions(st=st, clock=st.clock)
+    with st.session_factory() as session:
+        snapshots = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == "portfolio_snapshot")
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+        target_id = snapshots[-1].id
+        original_payload = dict(snapshots[-1].payload)
+
+    original_verify = st.audit.verify_session
+    writer_done = threading.Event()
+
+    def verify_then_substitute(session):
+        result = original_verify(session)
+
+        def writer():
+            with st.session_factory() as other, other.begin():
+                row = other.get(AuditEntry, target_id)
+                row.payload = {**row.payload, "equity": "100"}
+            writer_done.set()
+
+        thread = threading.Thread(target=writer)
+        thread.start()
+        assert writer_done.wait(5), "WAL writer did not commit during the reader snapshot"
+        thread.join()
+        return result
+
+    monkeypatch.setattr(st.audit, "verify_session", verify_then_substitute)
+    result = reconstruct_paper_performance(st)
+
+    # The committed substitution happened after verification, but the authority read remains
+    # pinned to the verified snapshot and therefore sees the original signed equity of 50.
+    assert result.ok and result.current_equity == Decimal("50")
+    assert result.equity_drawdown_today == Decimal("50")
+    with st.session_factory() as session, session.begin():
+        session.get(AuditEntry, target_id).payload = original_payload
+    monkeypatch.setattr(st.audit, "verify_session", original_verify)
+    assert st.audit.verify_chain().ok

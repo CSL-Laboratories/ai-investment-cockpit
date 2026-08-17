@@ -67,6 +67,8 @@ def _fetchers(settings, db, state, tmp_path, **overrides):
         cockpit_db_path=db,
         parquet_root=tmp_path / "raw",
         edgar_clock=state.clock,
+        edgar_process_epoch=state.process_epoch,
+        merger_watchlist=settings.merger_watchlist_symbols,
         edgar_fetcher_factory=_fetcher_factory(),
         **overrides,
     )
@@ -187,6 +189,8 @@ def test_in_process_edgar_caches_full_market_cik_map_for_one_day(tmp_path):
 
 
 def test_composed_runner_polls_pipeline_and_emits_cited_attributed_event(tmp_path):
+    from schemas.models.audit_entry import AuditEntry
+
     settings = Settings(
         sec_user_agent=UA,
         sec_max_new_filings_per_poll=250,
@@ -212,10 +216,16 @@ def test_composed_runner_polls_pipeline_and_emits_cited_attributed_event(tmp_pat
         company = session.execute(select(Company)).scalar_one()
         deltas = session.execute(select(Delta)).scalars().all()
         events = session.execute(select(MarketEvent)).scalars().all()
+        completion = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == "edgar_poll_completed")
+            .order_by(AuditEntry.seq.desc())
+        ).scalars().first()
     assert (company.ticker, company.cik) == ("NVDA", NVDA)
     assert deltas and events
     assert {event.source for event in events} == {FEED_EDGAR}
     assert {event.symbol for event in events} == {"NVDA"}
+    assert completion.payload["process_epoch"] == state.process_epoch
     store = RawStore(tmp_path / "raw" / "sec", min_free_bytes=0)
     assert all(store.resolve(delta.raw_ref) for delta in deltas)
     status = runner.status()["feeds"][FEED_EDGAR]["feed_status"]

@@ -125,16 +125,25 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
     """Reconstruct breaker inputs exclusively from signed, verified observations."""
     now = now or state.clock.now()
     trading_day = now.astimezone(EASTERN).date().isoformat()
-    verified = state.audit.verify_chain()
-    if not verified.ok:
-        detail = verified.error or "unknown integrity error"
-        return PaperPerformance(
-            False,
-            trading_day,
-            reason=f"audit chain verification failed: {detail}",
+    # Verification and consumption must share one read snapshot.  A separate
+    # ``verify_chain()`` followed by a new session creates a check/use window in which a
+    # keyless writer can transiently substitute a signed payload, let us cache the forged
+    # performance result, and restore the row before the next verifier runs.
+    anchor = getattr(state, "anchor_store", None)
+    latest = anchor.latest() if anchor is not None else None
+    with state.session_factory() as session, session.begin():
+        verified = (
+            state.audit.verify_session_against_anchor(session, *latest)
+            if latest is not None
+            else state.audit.verify_session(session)
         )
-
-    with state.session_factory() as session:
+        if not verified.ok:
+            detail = verified.error or "unknown integrity error"
+            return PaperPerformance(
+                False,
+                trading_day,
+                reason=f"audit chain verification failed: {detail}",
+            )
         rows = session.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
 
     snapshots: list[tuple[datetime, Decimal]] = []

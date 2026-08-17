@@ -33,10 +33,12 @@ canonical invariant list, and nothing else restates it.
 - The operator selected constrained cash-only, long-target merger arbitrage for `DEC-03` on
   2026-08-14. `W-23` is locally implemented on `work/w23-cash-merger-edge`; its immutable evidence,
   conservative calibration, and activation workflow are in [[runbooks/w23-cash-merger-edge]].
-  The fresh independent PR #36 review found six merge blockers; local regressions and remediation
-  now close the cache/provenance, calibration/metric, snapshot, and quote/book seams. The updated
-  Windows suite is 2,213 passed / 1 skipped with Ruff clean; cross-platform CI plus empirical
-  cohort/eligible-target evidence remain pending, so the order path remains fail-closed. See
+  Three independent review passes found additional merge blockers; local remediation now closes
+  cache/provenance, audit/database and raw-filesystem snapshots, EDGAR baseline/completeness and
+  restart freshness, calibration chronology, and composed order races. Operator-authored cohort
+  labels and deal terms remain deliberately non-executable until a separate independent semantic
+  verifier is implemented and adversarially reviewed. Cross-platform CI and real empirical
+  evidence remain pending, so W-23 stays fail-closed. See
   [[evidence/w23-cash-merger-edge-2026-08-14]].
 
 - `origin/main` includes PR #35. The old

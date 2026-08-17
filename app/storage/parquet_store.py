@@ -63,7 +63,33 @@ def read_snapshot(root, date: str, symbol: str) -> list[dict]:
     return pq.read_table(snapshot_path(root, date, symbol)).to_pylist()
 
 
+class SnapshotIntegrityError(RuntimeError):
+    """The exact snapshot bytes read did not match their authority-bound logical hash."""
+
+
+def read_verified_snapshot(
+    root, date: str, symbol: str, expected_hash: str
+) -> list[dict]:
+    """Read one pathname once and verify the exact records returned to the caller.
+
+    A verify-then-read sequence reopens the pathname and permits an atomic rename between
+    the two opens.  Reading the bytes once pins one opened file object; parsing and hashing
+    that in-memory image makes a later pathname substitution irrelevant.
+    """
+    raw = snapshot_path(root, date, symbol).read_bytes()
+    records = pq.read_table(pa.BufferReader(raw)).to_pylist()
+    if not hmac.compare_digest(content_hash(records), expected_hash):
+        raise SnapshotIntegrityError(
+            f"snapshot {date}/{symbol} does not match its authority-bound hash"
+        )
+    return records
+
+
 def verify_snapshot(root, date: str, symbol: str, expected_hash: str) -> bool:
     """Re-read the persisted file and confirm its content still hashes to ``expected_hash``
     (the value bound into the audit chain at ingest). Detects any post-ingest edit."""
-    return hmac.compare_digest(content_hash(read_snapshot(root, date, symbol)), expected_hash)
+    try:
+        read_verified_snapshot(root, date, symbol, expected_hash)
+    except SnapshotIntegrityError:
+        return False
+    return True

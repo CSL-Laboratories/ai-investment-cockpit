@@ -9,6 +9,9 @@ Examples (run from the repository root):
   python tools/provision_merger_edge.py --db-url sqlite:///app/cockpit.db \
       --raw-root app/data/raw deal --document deal.json
 
+  python tools/provision_merger_edge.py --db-url sqlite:///app/cockpit.db \
+      --raw-root app/data/raw filing --cik 0000000000 --accession 0000000000-26-000001
+
 The JSON files are operator-reviewed local evidence. This tool never calls a model or broker,
 never changes mode, and refuses to write unless the audited mode is ``read_only``.
 """
@@ -26,6 +29,10 @@ from filings.raw_store import RawStore                                  # noqa: 
 from config.settings import get_settings                               # noqa: E402
 from core.clock import default_clock                                    # noqa: E402
 from main import _build_anchor_store, _hmac_key, run_startup_security_checks  # noqa: E402
+from ingest.edgar_pipeline import (                                         # noqa: E402
+    backfill_filing_accession,
+    build_sec_fetcher,
+)
 from orchestrator.halt import default_halt_path, ensure_halt_dir        # noqa: E402
 from orchestrator.mode_ladder import ModeLadder                         # noqa: E402
 from orchestrator.state import OrchestratorState                        # noqa: E402
@@ -40,6 +47,17 @@ from strategies.merger_edge import (                                    # noqa: 
 
 def _json(path: str):
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _reported_content_hash(row, *, raw_store=None) -> str:
+    """Return the immutable artifact hash for either evidence rows or a Filing row."""
+    digest = getattr(row, "content_hash", None)
+    if digest is not None:
+        return str(digest)
+    raw_ref = getattr(row, "raw_ref", None)
+    if raw_store is None or not raw_ref:
+        raise RuntimeError("recorded artifact has no reportable content hash")
+    return raw_store.stored_hash(str(raw_ref))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -58,6 +76,11 @@ def _parser() -> argparse.ArgumentParser:
 
     deal = sub.add_parser("deal", help="sign an operator-reviewed SEC deal record")
     deal.add_argument("--document", required=True, help="deal JSON object")
+    filing = sub.add_parser(
+        "filing", help="re-fetch and sign one exact historical SEC accession"
+    )
+    filing.add_argument("--cik", required=True, help="target SEC CIK")
+    filing.add_argument("--accession", required=True, help="exact SEC accession number")
     return parser
 
 
@@ -90,7 +113,7 @@ def main(argv=None) -> int:
         row = record_calibration_evidence(
             state, document, raw_root=raw_root, actor="operator_cli"
         )
-    else:
+    elif args.action == "deal":
         document = _json(args.document)
         accessions = document.get("source_accessions", [])
         raw_store = RawStore(raw_root / "sec", min_free_bytes=0)
@@ -99,11 +122,30 @@ def main(argv=None) -> int:
             for accession in accessions
         }
         row = record_deal_evidence(state, document, raw_root=raw_root, actor="operator_cli")
+    else:
+        fetcher = build_sec_fetcher(settings)
+        if fetcher is None:
+            raise RuntimeError("historical filing import requires COCKPIT_SEC_USER_AGENT")
+        filing_raw_store = RawStore(raw_root / "sec", min_free_bytes=0)
+        row = backfill_filing_accession(
+            state.session_factory,
+            cik=args.cik,
+            accession=args.accession,
+            fetcher=fetcher,
+            raw_store=filing_raw_store,
+            audit_log=state.audit,
+            clock=state.clock,
+            anchor_store=state.anchor_store,
+        )
 
     verified = state.audit.verify_chain()
     if not verified.ok:
         raise RuntimeError("audit chain did not verify after evidence provisioning")
-    print(f"recorded {row.id}; content_hash={row.content_hash}; audit_head={verified.head_seq}")
+    digest = _reported_content_hash(
+        row,
+        raw_store=filing_raw_store if args.action == "filing" else None,
+    )
+    print(f"recorded {row.id}; content_hash={digest}; audit_head={verified.head_seq}")
     return 0
 
 
