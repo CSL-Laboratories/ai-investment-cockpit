@@ -37,6 +37,21 @@ KEY = b"sec11-anchor-key"
 OPEN_UTC = datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)
 
 
+class _MemoryWorm:
+    """Store-level stand-in; S3 version/retention attacks live in the adapter suite."""
+
+    out_of_domain = True
+
+    def __init__(self):
+        self.current = None
+
+    def read_latest(self):
+        return self.current
+
+    def publish(self, seq, head_hash):
+        self.current = (int(seq), str(head_hash))
+
+
 @pytest.fixture
 def st(tmp_path):
     """A state WITH an external anchor store wired (a properly-configured auto deployment)."""
@@ -180,19 +195,20 @@ def test_gate_refuses_auto_when_anchor_store_empty(st):
 
 # =======================================================================================
 # W10: the SAME replay-rollback, now caught against the DURABLE out-of-domain witness
-# (GitAuditLogAnchorStore over the concrete git + #audit-log adapters) — not just the
+# (GitAuditLogAnchorStore over mirrors plus WORM authority) — not just the
 # InMemory stand-in. This is the store main.compose() wires in production.
 # =======================================================================================
 def _durable_store(tmp_path):
-    """A production-shaped ``GitAuditLogAnchorStore`` over the two concrete adapters, with git
-    commit + Discord I/O faked (the adapters' contract is monotonic append/read, tested in
-    tests/bridge/test_witness_adapters.py). NEVER a FileAnchorStore (same trust domain)."""
+    """Production-shaped store with git/Discord mirrors plus retained authority.
+
+    The concrete S3 version/retention contract is covered in test_witness_adapters.py.
+    """
     git = GitCommitWitness(tmp_path / "audit-head.json", commit_fn=lambda *a: None)
     posts: list = []
     disc = DiscordAuditLogWitness(
         post_fn=lambda t: posts.append(("2026-07-07T14:00:00+00:00", t)),
         fetch_fn=lambda: list(posts), channel_id=1)
-    return GitAuditLogAnchorStore(git, disc)
+    return GitAuditLogAnchorStore(git, disc, _MemoryWorm())
 
 
 @pytest.fixture
@@ -225,7 +241,7 @@ def test_replay_rollback_closed_by_durable_witness(st_durable):
     _restart_cockpit(st)                                          # restart-spanning replay:
     assert st.audit.verify_chain().ok                             # in-DB defeated (the deferred hole)
 
-    # the DURABLE out-of-domain witness (git + #audit-log) closes it: gate + oracle fail CLOSED
+    # the durable out-of-domain WORM witness closes it: gate + oracle fail CLOSED
     assert lad.current() is Mode.read_only
     gate = compute_gate(st, Mode.auto_veto)
     assert not gate.unlockable and gate.metrics.get("anchor_ok") is False
@@ -258,9 +274,9 @@ def test_git_only_store_fails_closed_at_gate_and_oracle(tmp_path):
 
 
 def test_git_head_file_rewrite_cannot_unlock_with_durable_witness(st_durable, tmp_path):
-    """With a genuine out-of-domain witness (Discord) present, the keyless-writer move of
+    """With a genuine WORM witness present, the keyless-writer move of
     rewriting the same-domain git head file to a rolled-back head does NOT move the trust read —
-    the Discord anchor still sits above the rolled-back head, so gate + oracle fail closed."""
+    the retained anchor still sits above the rolled-back head, so gate + oracle fail closed."""
     st = st_durable
     lad = _arm_auto_veto(st)
     post_head_anchor(st, record=False)
@@ -268,7 +284,7 @@ def test_git_head_file_rewrite_cannot_unlock_with_durable_witness(st_durable, tm
     arm_seq = _latest_mode_change_seq(st)
     captured = _capture_watermark(st)
     killswitch(st, actor="op", reason="loss breaker")
-    post_head_anchor(st, record=False)                            # Discord anchored past the killswitch
+    post_head_anchor(st, record=False)                            # WORM anchored past the killswitch
     _replay_rollback(st, arm_seq, captured)                       # roll the DB back to the arm head
     # the keyless writer ALSO rewrites the same-domain git head file to the captured lower head
     (tmp_path / "audit-head.json").write_text(

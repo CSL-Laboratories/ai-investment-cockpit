@@ -87,6 +87,8 @@ def _semantic_witness(clock):
             "id": str(900_000 + len(messages)),
             "channel_id": "42",
             "timestamp": (clock.now() + timedelta(seconds=1)).isoformat(),
+            "edited_timestamp": None,
+            "author": {"id": "987654321", "bot": True},
             "content": content,
         }
         messages[message["id"]] = message
@@ -95,6 +97,7 @@ def _semantic_witness(clock):
     witness = DiscordSemanticWitness(
         post_fn=post,
         fetch_fn=lambda message_id: dict(messages[message_id]),
+        identity_fn=lambda: {"id": "987654321", "bot": True},
         channel_id=42,
     )
     return witness, messages

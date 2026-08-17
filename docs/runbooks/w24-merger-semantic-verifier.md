@@ -30,8 +30,8 @@ The production verifier accepts only a cohort that satisfies all of these condit
    no more than five minutes old; a favorable earlier same-day quote is not admissible.
 3. The manifest's canonical SHA-256 receives an exact-message Discord server timestamp within five
    minutes of creation in the configured private audit channel. Later verification fetches that
-   exact message id and rechecks its channel id; missing, edited, deleted, foreign, or unreachable
-   evidence fails closed.
+   exact message id and rechecks its channel, authenticated bot author, unedited state, and absence
+   of webhook authorship; missing, edited, deleted, foreign, or unreachable evidence fails closed.
 4. Outcomes are recorded only after the witness. Every label is re-derived from hash-verified SEC
    bytes by the pinned parser. Source-derived but ineligible mixed/stock/CVR/earnout/rumor/
    terminated rows are excluded by refusal, not silently filtered.
@@ -48,14 +48,16 @@ The production verifier accepts only a cohort that satisfies all of these condit
 
 The parser lives outside `app/risk/`, makes no model or broker call, and receives no order
 capability. Discord is the only new external read/write and reuses the existing keyring-held bot
-token plus `COCKPIT_AUDIT_LOG_CHANNEL_ID`; there is no new secret.
+token plus `COCKPIT_AUDIT_LOG_CHANNEL_ID`; there is no new W-24 secret. This exact-message
+chronology control is separate from SEC-11: with Administrator retained, Discord rolling history
+is a mutable mirror and never audit-anchor authority.
 
 ## Current safe state
 
-As of 2026-08-17, the operator environment has no `COCKPIT_AUDIT_LOG_CHANNEL_ID`, an empty merger
-strategy watchlist, and no real prospective selection commitment. Composition still installs
-`CashMergerSemanticVerifier`, but its witness and eligible execution universe are absent and
-status remains unavailable. This is correct. Do not switch to a fake/local witness, reuse W-23
+As of 2026-08-17, the private Discord channel and exact-message bot-author/edit checks are
+configured, but the merger strategy watchlist remains empty and there is no real prospective
+selection commitment. Composition installs `CashMergerSemanticVerifier`, but its eligible
+execution universe is absent and status remains unavailable. This is correct. Do not reuse W-23
 retrospective fixtures, copy the broader awareness watchlist into strategy authority, or add an
 override.
 
@@ -70,8 +72,9 @@ paper Orders cannot use this edge until the prospective horizon and all other MV
 
 ## Start a prospective cohort
 
-Stay in audited `read_only`. Provision the private Discord audit channel with append/send/read
-history permissions for the bot and deny message-management where possible. Keep research cohort
+Stay in audited `read_only`. Provision the private Discord audit channel for the Administrator bot
+and verify send/read-history plus exact-message fetch. Do not claim its channel permissions make
+messages immutable; edits are rejected and deletion/unavailability blocks the cohort. Keep research cohort
 membership separate from the capped execution watchlists: W-24 must not widen order authority to
 collect calibration evidence. Do not include a candidate unless its selection filing and entry
 quote have already been stored and signed. The `selection` command runs one strict EDGAR evidence

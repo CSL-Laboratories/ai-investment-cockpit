@@ -1,8 +1,8 @@
-"""W10 — concrete external-witness adapters for the SEC-11 audit anchor.
+"""W10/W-25 — concrete external-witness adapters for the SEC-11 audit anchor.
 
 ``bridge/anchor.py`` defines the ``ExternalWitnessAdapter`` seam (``publish`` + ``read_latest``)
-and ``GitAuditLogAnchorStore`` that wraps one or more backends. This module supplies the two
-CONCRETE backends the docstring promised, replacing the deferred SKETCH:
+and ``GitAuditLogAnchorStore`` that wraps one or more backends. This module supplies three
+concrete backends:
 
   * ``GitCommitWitness`` — maintains a machine-local ``(seq, head_hash)`` mirror.
     Production passes ``commit_fn=False`` so a running cockpit never stages or commits onto a
@@ -10,27 +10,30 @@ CONCRETE backends the docstring promised, replacing the deferred SKETCH:
     commit seam for explicit tooling/tests, but that same-domain history is never trusted by
     the runtime gate.
   * ``DiscordAuditLogWitness`` — posts ``(seq, head_hash)`` to the private ``#audit-log``
-    channel and reads the highest post back. The guarantee is TECHNICAL: the local writer
-    cannot backdate a server-stamped message, and (with a channel ACL that denies the bot
-    manage-messages) cannot delete history either. This is the strongest single witness.
+    channel as an operator-visible mirror. It is not trusted because an Administrator bot can
+    edit or delete its own history regardless of channel overwrites.
+  * ``S3ObjectLockWitness`` — publishes canonical anchor objects to a dedicated, versioned S3
+    bucket and trusts only versions with active Compliance-mode retention. It enumerates every
+    version and delete marker so a current shadow object cannot hide an older retained head.
 
-``GitAuditLogAnchorStore.latest()`` considers only out-of-domain backends, so the local mirror
-can never unlock auto/live. Lowering the trusted witness requires defeating the server-held
-Discord history, which a keyless local writer cannot do (SEC-11).
+``GitAuditLogAnchorStore.latest()`` considers only out-of-domain backends, so neither local git
+nor Discord can unlock auto/live. Missing or unverifiable Object Lock evidence returns no
+trusted anchor and every dependent gate fails closed.
 
-The out-of-domain Discord adapter and explicit git-history mode are APPEND-ONLY + MONOTONIC.
-Production's untrusted file-only mirror may resynchronise across a branch/DB change and cannot
-veto Discord. All external I/O is INJECTABLE (``commit_fn`` / ``post_fn`` / ``fetch_fn``)
-so the adapters are fully testable without a live git repo or Discord bot; ``main.compose()``
-wires the production functions from config + keyring.
+The S3 adapter and explicit git-history mode are APPEND-ONLY + MONOTONIC. Production's
+untrusted mirrors may resynchronise across a branch/DB change and cannot veto the WORM backend.
+All external I/O is injectable so the adapters are testable without live services;
+``main.compose()`` wires production clients from non-secret config plus keyring.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bridge.anchor import AnchorError, _guard_monotonic
@@ -57,7 +60,7 @@ class GitCommitWitness:
     rewrite of committed history in the diff before push) and OUT-OF-BAND — it is NOT enforced
     on the runtime read path. So ``GitAuditLogAnchorStore.latest()`` (the value the gate/mode/
     gateway/budget consult to fail closed) EXCLUDES this backend; only a genuinely out-of-domain
-    witness (``DiscordAuditLogWitness``) counts. Production still publishes to this adapter as
+    witness (``S3ObjectLockWitness``) counts. Production still publishes to this adapter as
     a file-only local cross-check, but never trusts it for the auto/live unlock decision."""
 
     out_of_domain = False
@@ -86,7 +89,7 @@ class GitCommitWitness:
         if self._commit_fn is not False:
             # Explicit git-history mode retains the append-only contract. Production's
             # file-only mirror is deliberately non-gating: a stale/ahead local file must not
-            # veto the out-of-domain Discord witness and is resynchronised to the current DB.
+            # veto the out-of-domain WORM witness and is resynchronised to the current DB.
             _guard_monotonic(cur[0] if cur else None, cur[1] if cur else None, seq, head_hash)
         if cur == (seq, head_hash):
             return                                       # idempotent re-anchor of the same head
@@ -121,7 +124,7 @@ class GitCommitWitness:
             raise AnchorError(f"git commit of the audit head failed: {exc}") from exc
 
 
-# ---- #audit-log Discord post (server-stamped — the genuine runtime out-of-domain witness) --
+# ---- #audit-log Discord post (operator-visible MIRROR, never authority) ----------------
 class DiscordAuditLogWitness:
     """Anchor ``(seq, head_hash)`` by posting to the private ``#audit-log`` channel and read
     the highest server-recorded post back. ``post_fn(text)`` posts one message; ``fetch_fn()``
@@ -130,14 +133,12 @@ class DiscordAuditLogWitness:
     witness). Both are injectable; ``discord_rest_witness`` wires the production Discord REST
     calls.
 
-    **``out_of_domain = True`` — this is THE runtime trust source (SEC-11).** A keyless local
-    writer holds no bot token (Inv 4: keyring-only) so it cannot post/backdate a server-stamped
-    message, and — with a channel ACL that denies the bot manage-messages — cannot delete
-    history either. So it cannot LOWER this witness: after a replayed-watermark rollback of the
-    DB, ``read_latest`` still returns the highest seq the SERVER recorded, above the rolled-back
-    head, and ``verify_against_anchor`` fails closed. This is the backend ``latest()`` trusts."""
+    **``out_of_domain = False``.** Discord authors can edit and delete their own messages, and
+    an Administrator bot bypasses channel overwrites. The rolling channel therefore provides
+    operator visibility and cross-checking only; it cannot satisfy SEC-11 or set the monotonic
+    floor consumed by ``GitAuditLogAnchorStore.latest()``."""
 
-    out_of_domain = True
+    out_of_domain = False
 
     _PREFIX = "audit-anchor "
 
@@ -212,6 +213,303 @@ def discord_rest_witness(channel_id, bot_token: str,
     return DiscordAuditLogWitness(post_fn=post_fn, fetch_fn=fetch_fn, channel_id=channel_id)
 
 
+# ---- S3 Object Lock Compliance witness (the SEC-11 authority) -------------------------
+class S3ObjectLockWitness:
+    """Append/read canonical audit anchors retained by S3 Object Lock Compliance mode.
+
+    A current S3 object is not sufficient: versioning permits a writer to place a new version
+    or delete marker above a protected one. ``read_latest`` therefore lists the complete prefix,
+    rejects every delete marker, verifies every version's canonical bytes/content-addressed key,
+    and accepts authority only from versions whose server-reported Compliance retention remains
+    active for the configured minimum window. Any ambiguity or API fault returns ``None``.
+    """
+
+    out_of_domain = True
+    _SCHEMA_VERSION = 1
+    _KIND = "audit-anchor"
+    _HASH = re.compile(r"^[0-9a-f]{64}$")
+    _RETENTION_SKEW = timedelta(minutes=5)
+    _MAX_OBJECT_BYTES = 4_096
+
+    def __init__(
+        self,
+        *,
+        client,
+        bucket: str,
+        expected_bucket_owner: str,
+        prefix: str = "ai-investment-cockpit/v1",
+        min_retention_days: int = 365,
+        now_fn=None,
+    ) -> None:
+        self._client = client
+        self._bucket = str(bucket).strip()
+        self._owner = str(expected_bucket_owner).strip()
+        self._prefix = str(prefix).strip().strip("/")
+        self._anchor_prefix = f"{self._prefix}/audit-anchor/"
+        self._min_retention_days = int(min_retention_days)
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        if (
+            re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", self._bucket) is None
+            or not re.fullmatch(r"\d{12}", self._owner)
+        ):
+            raise AnchorError("S3 witness bucket identity is invalid")
+        if not self._prefix or ".." in self._prefix or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9!_.*'()/=-]*", self._prefix
+        ):
+            raise AnchorError("S3 witness prefix is invalid")
+        if self._min_retention_days < 1:
+            raise AnchorError("S3 witness minimum retention must be positive")
+
+    def _request(self, **kwargs) -> dict:
+        return {
+            "Bucket": self._bucket,
+            "ExpectedBucketOwner": self._owner,
+            **kwargs,
+        }
+
+    def _now(self) -> datetime:
+        value = self._now_fn()
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise AnchorError("S3 witness clock must be timezone-aware")
+        return value.astimezone(timezone.utc)
+
+    @classmethod
+    def _payload(cls, seq: int, head_hash: str) -> bytes:
+        return json.dumps(
+            {
+                "head_hash": head_hash,
+                "kind": cls._KIND,
+                "schema_version": cls._SCHEMA_VERSION,
+                "seq": int(seq),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    def _key(self, seq: int, payload_digest: str) -> str:
+        return f"{self._anchor_prefix}{int(seq):020d}-{payload_digest}.json"
+
+    def _require_bucket_lock(self) -> None:
+        response = self._client.get_object_lock_configuration(**self._request())
+        config = response.get("ObjectLockConfiguration") or {}
+        retention = ((config.get("Rule") or {}).get("DefaultRetention") or {})
+        if config.get("ObjectLockEnabled") != "Enabled" or retention.get("Mode") != "COMPLIANCE":
+            raise AnchorError("S3 witness bucket is not Object Lock Compliance-enabled")
+        days = retention.get("Days")
+        years = retention.get("Years")
+        if (days is None) == (years is None):
+            raise AnchorError("S3 witness bucket default retention is ambiguous")
+        total_days = int(days) if days is not None else int(years) * 365
+        if total_days < self._min_retention_days:
+            raise AnchorError("S3 witness bucket default retention is too short")
+
+    def _list_versions(self) -> tuple[list[dict], list[dict]]:
+        versions: list[dict] = []
+        delete_markers: list[dict] = []
+        markers: set[tuple[str, str]] = set()
+        request = self._request(Prefix=self._anchor_prefix, MaxKeys=1000)
+        while True:
+            response = self._client.list_object_versions(**request)
+            versions.extend(response.get("Versions") or [])
+            delete_markers.extend(response.get("DeleteMarkers") or [])
+            if not response.get("IsTruncated"):
+                return versions, delete_markers
+            key_marker = str(response.get("NextKeyMarker") or "")
+            version_marker = str(response.get("NextVersionIdMarker") or "")
+            marker = (key_marker, version_marker)
+            if not key_marker or marker in markers:
+                raise AnchorError("S3 witness version pagination is invalid")
+            markers.add(marker)
+            request = self._request(
+                Prefix=self._anchor_prefix,
+                MaxKeys=1000,
+                KeyMarker=key_marker,
+                VersionIdMarker=version_marker,
+            )
+
+    @staticmethod
+    def _retention_time(value) -> datetime:
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except (TypeError, ValueError) as exc:
+                raise AnchorError("S3 witness retention timestamp is invalid") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise AnchorError("S3 witness retention timestamp is timezone-naive")
+        return parsed.astimezone(timezone.utc)
+
+    def _read_version(self, key: str, version_id: str) -> tuple[int, str, bool]:
+        if not key.startswith(self._anchor_prefix) or not version_id or version_id == "null":
+            raise AnchorError("S3 witness version identity is invalid")
+        response = self._client.get_object(
+            **self._request(Key=key, VersionId=version_id, ChecksumMode="ENABLED")
+        )
+        content_length = response.get("ContentLength")
+        if (
+            not isinstance(content_length, int)
+            or isinstance(content_length, bool)
+            or content_length < 1
+            or content_length > self._MAX_OBJECT_BYTES
+        ):
+            raise AnchorError("S3 witness object size is invalid")
+        body = response.get("Body")
+        try:
+            raw = body.read() if hasattr(body, "read") else body
+        finally:
+            if hasattr(body, "close"):
+                body.close()
+        if not isinstance(raw, bytes) or len(raw) != content_length:
+            raise AnchorError("S3 witness object body is invalid")
+        try:
+            record = json.loads(raw.decode("utf-8"))
+            seq = int(record["seq"])
+            head_hash = str(record["head_hash"])
+        except (UnicodeError, ValueError, KeyError, TypeError) as exc:
+            raise AnchorError("S3 witness object is malformed") from exc
+        if seq < 1 or self._HASH.fullmatch(head_hash) is None or raw != self._payload(seq, head_hash):
+            raise AnchorError("S3 witness object is not canonical")
+        digest = hashlib.sha256(raw).hexdigest()
+        checksum = base64.b64encode(bytes.fromhex(digest)).decode("ascii")
+        if response.get("ChecksumSHA256") != checksum:
+            raise AnchorError("S3 witness object checksum is missing or invalid")
+        if key != self._key(seq, digest):
+            raise AnchorError("S3 witness key does not bind its payload")
+        metadata = response.get("Metadata") or {}
+        if (
+            metadata.get("payload-sha256") != digest
+            or metadata.get("schema-version") != str(self._SCHEMA_VERSION)
+        ):
+            raise AnchorError("S3 witness metadata does not bind its payload")
+        retention = self._client.get_object_retention(
+            **self._request(Key=key, VersionId=version_id)
+        ).get("Retention") or {}
+        if retention.get("Mode") != "COMPLIANCE":
+            raise AnchorError("S3 witness object is not Compliance-retained")
+        retain_until = self._retention_time(retention.get("RetainUntilDate"))
+        minimum = self._now() + timedelta(days=self._min_retention_days) - self._RETENTION_SKEW
+        return seq, head_hash, retain_until >= minimum
+
+    def _read_latest_strict(self) -> "tuple[int, str] | None":
+        self._require_bucket_lock()
+        versions, delete_markers = self._list_versions()
+        if delete_markers:
+            raise AnchorError("S3 witness prefix contains a delete marker")
+        active: list[tuple[int, str]] = []
+        all_records: list[tuple[int, str]] = []
+        for version in versions:
+            record = self._read_version(
+                str(version.get("Key") or ""), str(version.get("VersionId") or "")
+            )
+            all_records.append(record[:2])
+            if record[2]:
+                active.append(record[:2])
+        if not all_records:
+            return None
+        by_seq: dict[int, set[str]] = {}
+        for seq, head_hash in all_records:
+            by_seq.setdefault(seq, set()).add(head_hash)
+        if any(len(heads) != 1 for heads in by_seq.values()):
+            raise AnchorError("S3 witness contains conflicting anchors")
+        if not active:
+            raise AnchorError("S3 witness contains no sufficiently retained anchor")
+        latest = max(active, key=lambda item: item[0])
+        if max(seq for seq, _head in all_records) > latest[0]:
+            raise AnchorError("S3 witness latest anchor lacks sufficient retention")
+        return latest
+
+    def read_latest(self) -> "tuple[int, str] | None":
+        try:
+            return self._read_latest_strict()
+        except Exception:
+            return None
+
+    def publish(self, seq: int, head_hash: str) -> None:
+        seq = int(seq)
+        if seq < 1 or self._HASH.fullmatch(str(head_hash)) is None:
+            raise AnchorError("S3 witness anchor is invalid")
+        try:
+            current = self._read_latest_strict()
+            _guard_monotonic(
+                current[0] if current else None,
+                current[1] if current else None,
+                seq,
+                head_hash,
+            )
+            if current == (seq, head_hash):
+                return
+            payload = self._payload(seq, head_hash)
+            digest_bytes = hashlib.sha256(payload).digest()
+            digest = digest_bytes.hex()
+            key = self._key(seq, digest)
+            result = self._client.put_object(
+                **self._request(
+                    Key=key,
+                    Body=payload,
+                    ContentType="application/json",
+                    Metadata={
+                        "payload-sha256": digest,
+                        "schema-version": str(self._SCHEMA_VERSION),
+                    },
+                    ChecksumSHA256=base64.b64encode(digest_bytes).decode("ascii"),
+                    IfNoneMatch="*",
+                )
+            )
+            version_id = str(result.get("VersionId") or "")
+            observed = self._read_version(key, version_id)
+            if observed != (seq, head_hash, True):
+                raise AnchorError("S3 witness publication is not durably retained")
+        except AnchorError:
+            raise
+        except Exception as exc:
+            raise AnchorError(f"S3 witness publication failed: {type(exc).__name__}") from exc
+
+
+def s3_object_lock_witness(
+    *,
+    bucket: str,
+    region: str,
+    expected_bucket_owner: str,
+    access_key_id: str,
+    secret_access_key: str,
+    prefix: str = "ai-investment-cockpit/v1",
+    min_retention_days: int = 365,
+) -> S3ObjectLockWitness:
+    """Build a region/endpoint-pinned S3 witness with no ambient AWS credential/config chain."""
+    import boto3
+    from botocore.config import Config
+
+    if not all(str(value).strip() for value in (region, access_key_id, secret_access_key)):
+        raise AnchorError("S3 witness credentials and region must be explicit")
+    if (
+        re.fullmatch(r"[a-z]{2}(?:-gov)?-[a-z]+-\d", str(region)) is None
+        or str(region).startswith("cn-")
+    ):
+        raise AnchorError("S3 witness region is invalid or outside the pinned AWS partition")
+    client = boto3.client(
+        "s3",
+        region_name=region,
+        endpoint_url=f"https://s3.{region}.amazonaws.com",
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+        use_ssl=True,
+        verify=True,
+        config=Config(
+            signature_version="s3v4",
+            retries={"mode": "standard", "max_attempts": 3},
+            s3={"addressing_style": "virtual"},
+        ),
+    )
+    return S3ObjectLockWitness(
+        client=client,
+        bucket=bucket,
+        expected_bucket_owner=expected_bucket_owner,
+        prefix=prefix,
+        min_retention_days=min_retention_days,
+    )
+
+
 # ---- prospective strategy commitment (server-stamped, exact-message lookup) -----------
 @dataclass(frozen=True)
 class SemanticWitnessReceipt:
@@ -232,9 +530,11 @@ class DiscordSemanticWitness:
     _PREFIX = "merger-selection-commitment "
     _HASH = re.compile(r"^[0-9a-f]{64}$")
 
-    def __init__(self, *, post_fn, fetch_fn, channel_id=None) -> None:
+    def __init__(self, *, post_fn, fetch_fn, identity_fn=None, channel_id=None) -> None:
         self._post = post_fn
         self._fetch = fetch_fn
+        self._identity = identity_fn
+        self._author_id: str | None = None
         self._channel_id = channel_id
 
     @classmethod
@@ -253,6 +553,38 @@ class DiscordSemanticWitness:
             raise AnchorError("semantic witness timestamp is timezone-naive")
         return parsed.astimezone(timezone.utc)
 
+    def _expected_author_id(self) -> str:
+        if self._author_id is not None:
+            return self._author_id
+        if self._identity is None:
+            raise AnchorError("semantic witness bot identity is unavailable")
+        try:
+            identity = self._identity()
+        except Exception as exc:
+            raise AnchorError(f"semantic witness identity failed: {type(exc).__name__}") from exc
+        author_id = str(identity.get("id") or "").strip() if isinstance(identity, dict) else ""
+        if not author_id or identity.get("bot") is not True:
+            raise AnchorError("semantic witness identity is not an authenticated bot")
+        self._author_id = author_id
+        return author_id
+
+    def _binds(self, message: dict, *, expected_id: str, expected_content: str) -> bool:
+        author = message.get("author")
+        return bool(
+            str(message.get("id") or "") == expected_id
+            and message.get("content") == expected_content
+            and "edited_timestamp" in message
+            and message.get("edited_timestamp") is None
+            and message.get("webhook_id") is None
+            and isinstance(author, dict)
+            and str(author.get("id") or "") == self._expected_author_id()
+            and author.get("bot") is True
+            and (
+                self._channel_id is None
+                or str(message.get("channel_id") or "") == str(self._channel_id)
+            )
+        )
+
     def publish(self, content_hash: str) -> SemanticWitnessReceipt:
         expected = self._content(content_hash)
         try:
@@ -262,13 +594,8 @@ class DiscordSemanticWitness:
         if not isinstance(message, dict):
             raise AnchorError("semantic witness publish returned no message receipt")
         message_id = str(message.get("id") or "").strip()
-        if (
-            not message_id
-            or message.get("content") != expected
-            or (
-                self._channel_id is not None
-                and str(message.get("channel_id") or "") != str(self._channel_id)
-            )
+        if not message_id or not self._binds(
+            message, expected_id=message_id, expected_content=expected
         ):
             raise AnchorError("semantic witness receipt does not bind the commitment")
         return SemanticWitnessReceipt(
@@ -284,14 +611,10 @@ class DiscordSemanticWitness:
             message = self._fetch(expected_id)
         except Exception as exc:
             raise AnchorError(f"semantic witness read failed: {type(exc).__name__}") from exc
-        if (
-            not isinstance(message, dict)
-            or str(message.get("id") or "") != expected_id
-            or message.get("content") != self._content(content_hash)
-            or (
-                self._channel_id is not None
-                and str(message.get("channel_id") or "") != str(self._channel_id)
-            )
+        if not isinstance(message, dict) or not self._binds(
+            message,
+            expected_id=expected_id,
+            expected_content=self._content(content_hash),
         ):
             raise AnchorError("semantic witness message does not bind the commitment")
         return self._server_time(message.get("timestamp"))
@@ -304,6 +627,7 @@ def discord_rest_semantic_witness(
     import urllib.request
 
     base = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    identity_url = "https://discord.com/api/v10/users/@me"
     headers = {
         "Authorization": f"Bot {bot_token}",
         "Content-Type": "application/json",
@@ -321,4 +645,13 @@ def discord_rest_semantic_witness(
         req = urllib.request.Request(f"{base}/{message_id}", headers=headers, method="GET")
         return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
 
-    return DiscordSemanticWitness(post_fn=post_fn, fetch_fn=fetch_fn, channel_id=channel_id)
+    def identity_fn():
+        req = urllib.request.Request(identity_url, headers=headers, method="GET")
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+
+    return DiscordSemanticWitness(
+        post_fn=post_fn,
+        fetch_fn=fetch_fn,
+        identity_fn=identity_fn,
+        channel_id=channel_id,
+    )

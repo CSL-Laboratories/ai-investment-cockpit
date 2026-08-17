@@ -20,7 +20,7 @@ A hash-chained, HMAC-keyed, externally-anchorable append-only log:
               can DELETE the tail and REPLAY that captured watermark; ``verify_chain()`` cannot
               distinguish a rollback-to-a-genuine-past-state from that state. Only the EXTERNAL
               out-of-DB witness closes THAT class: verify_against_anchor() pins a specific
-              external anchor point (head posted to #audit-log + committed to git). That anchor
+              external anchor point (a Compliance-retained S3 object; git/Discord are mirrors).
               is consulted on the gate + mode-read + gateway + budget paths (wired WP6/WP8;
               the durable witness is wired at ``main.compose()`` in W10) and fails closed when
               the verified head is below or absent from it.
@@ -34,8 +34,8 @@ A hash-chained, HMAC-keyed, externally-anchorable append-only log:
               in-process lock + cross-process seq-collision retry.
 
 The HMAC key is held only by this storage-layer object — never handed to an agent. WP5
-wires the remaining operational pieces: persist the head anchor to an external witness
-(git / #audit-log) and verify at startup, route every state write through
+wires the remaining operational pieces: persist the head anchor to an external WORM witness
+and verify at startup, route every state write through
 record_state_change, and run a periodic reconciliation (unresolved_intents /
 orphan_results / verify_completeness).
 """

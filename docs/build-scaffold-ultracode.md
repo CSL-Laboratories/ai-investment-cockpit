@@ -11,8 +11,9 @@ related: [README, cockpit-review-and-integrated-plan, draft-discord-control-plan
 > **BUILD COMPLETE — 2026-07-08.** WP0→WP9 all shipped to `main` and green, in the scaffold's build order (WP0 → WP1a → WP1b → WP2 → {WP3, WP4} → WP5 → {WP6, WP7} → WP8 → WP9). WP9 (system test harness) = commit 9f6ff44; its historical baseline was 586 passed / 3 skipped with Ruff clean. Every WP `Accept:` line and all 9 invariants below remain the settled spec and are preserved verbatim. [[PLAN]] owns current lifecycle and status; [[REGISTER]] owns claims.
 >
 > **Current-state correction (2026-08-13):** later packages implemented the monotonic audit
-> sequence/domain binding and witness adapters, but SEC-11 remains open until the out-of-domain
-> Discord witness is activated and freshly red-teamed. Robinhood/live and auto deployment remain
+> sequence/domain binding and witness adapters, but W-25 keeps SEC-11 open until the S3 Object
+> Lock Compliance witness is activated and freshly red-teamed. Discord is a mirror under the
+> fixed Administrator constraint. Robinhood/live and auto deployment remain
 > unbuilt/blocked. Do not use the historical deferred/status prose below as the current schedule.
 >
 > **The system is PAPER-FIRST. No real money has moved and none may until the pre-live gates pass**, including the 2-week paper soak mandated in "Build order & session plan" below. The "Deferred (do not build yet)" section remains fully deferred: the Robinhood Agentic MCP live path (Phase 3 gate), `auto_full` unlock logic (Phase 3.5), the PWA dashboard, options support, and Codex research jobs are NOT built.

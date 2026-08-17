@@ -49,7 +49,8 @@ class EnvFileSecretError(RuntimeError):
 # lists agree, which is what stops this copy from silently going stale.
 _KEYRING_SECRET_NAMES = (
     "audit-hmac-key", "discord_bot_token", "alpaca_key", "alpaca_secret",
-    "finnhub_key", "cockpit_api_key",
+    "finnhub_key", "cockpit_api_key", "witness_s3_access_key_id",
+    "witness_s3_secret_access_key",
 )
 # Generic shapes that are a secret regardless of vendor. A name we have never seen before is
 # still refused if it looks like a credential — the allowlist is what may PASS, not what fails.
@@ -329,14 +330,28 @@ class Settings(BaseSettings):
     decision_agent_cwd: str | None = None
 
     # ---- SEC-11 external audit witness (W10) ------------------------------------------
-    # The ignored, machine-local mirror written by GitCommitWitness. Production
-    # disables that class's optional git-commit callback; Discord is the only out-of-domain
-    # trust source. Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.
+    # The ignored, machine-local mirror written by GitCommitWitness. Production disables that
+    # class's optional git-commit callback. Env: COCKPIT_AUDIT_HEAD_FILE. Non-secret.
     audit_head_file: str = "data/audit-head.json"
-    # The private #audit-log Discord channel id the DiscordAuditLogWitness posts to (server-
-    # stamped, out-of-domain). None until provisioned; the bot TOKEN is keyring-only (Inv 4),
-    # NEVER here. Env: COCKPIT_AUDIT_LOG_CHANNEL_ID.
+    # The private #audit-log Discord channel id used for the operator-visible audit mirror and
+    # W-24 exact-message chronology. Discord is NOT SEC-11 authority when the bot retains
+    # Administrator. The bot TOKEN is keyring-only (Inv 4), never here.
     audit_log_channel_id: int | None = None
+    # W-25: the only qualifying SEC-11 trust source. All values here are non-secret identifiers;
+    # the access-key pair lives only in the OS credential store. Partial provisioning creates no
+    # adapter. The bucket must have versioning + Object Lock with default Compliance retention.
+    witness_s3_bucket: str | None = None
+    witness_s3_region: str | None = None
+    witness_s3_expected_bucket_owner: str | None = None
+    witness_s3_prefix: str = "ai-investment-cockpit/v1"
+    witness_s3_min_retention_days: int = Field(default=365, ge=30, le=36_500)
+
+    @field_validator("witness_s3_expected_bucket_owner")
+    @classmethod
+    def _validate_witness_bucket_owner(cls, value):
+        if value is not None and re.fullmatch(r"\d{12}", str(value)) is None:
+            raise ValueError("witness S3 expected bucket owner must be a 12-digit AWS account ID")
+        return value
 
     # ---- RW-01 earnings-calendar window ------------------------------------------------
     # How many days forward the earnings calendar is re-read each poll. NOT a cosmetic knob:
