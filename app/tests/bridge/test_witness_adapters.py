@@ -174,6 +174,7 @@ def test_semantic_witness_binds_exact_message_id_hash_and_server_time():
     def post(content):
         message = {
             "id": "123456789",
+            "channel_id": "42",
             "timestamp": "2026-07-07T14:00:01Z",
             "content": content,
         }
@@ -193,6 +194,23 @@ def test_semantic_witness_binds_exact_message_id_hash_and_server_time():
     messages[receipt.message_id]["content"] = "merger-selection-commitment " + "b" * 64
     with pytest.raises(AnchorError, match="does not bind"):
         witness.verify(receipt.message_id, digest)
+
+
+def test_semantic_witness_rejects_a_foreign_channel_receipt():
+    message = {
+        "id": "123456789",
+        "channel_id": "99",
+        "timestamp": "2026-07-07T14:00:01Z",
+        "content": "merger-selection-commitment " + "a" * 64,
+    }
+    witness = DiscordSemanticWitness(
+        post_fn=lambda _content: message,
+        fetch_fn=lambda _message_id: message,
+        channel_id=42,
+    )
+
+    with pytest.raises(AnchorError, match="does not bind"):
+        witness.publish("a" * 64)
 
 
 @pytest.mark.parametrize("fault", ["wrong-id", "wrong-content", "naive-time"])

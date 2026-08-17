@@ -50,6 +50,7 @@ from orchestrator.state import EVENT_EDGAR_POLL_COMPLETED
 SELECTION_SCHEMA = "merger_selection_manifest.v1"
 EVENT_SELECTION = "merger_selection_commitment"
 MAX_WITNESS_CLOCK_SKEW = timedelta(minutes=5)
+MAX_SELECTION_QUOTE_AGE = timedelta(minutes=5)
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _CIK = re.compile(r"^\d{10}$")
@@ -79,7 +80,33 @@ _COMMITTED_ROW_FIELDS = frozenset({
 _SPACE = re.compile(r"\s+")
 _TAG = re.compile(r"<[^>]+>")
 _CASH = re.compile(
-    r"(?:\$|usd\s+)(\d+(?:\.\d+)?)\s+(?:in\s+cash\s+)?per\s+(?:each\s+)?share"
+    r"(?:each|every)\s+(?:issued\s+and\s+outstanding\s+|outstanding\s+)?"
+    r"share\s+of\s+(?:the\s+)?(?:(?:company|target)(?:'s)?\s+)?common\s+stock"
+    r"[^.]{0,240}?"
+    r"(?:"
+    r"(?:will|shall)\s+(?:receive|(?:be\s+)?entitled\s+to\s+receive)|"
+    r"(?:will|shall)\s+(?:be\s+)?converted\s+(?:automatically\s+)?into\s+"
+    r"(?:the\s+)?right\s+to\s+receive"
+    r")"
+    r"[^.]{0,120}?(?:\$|usd\s+)(\d+(?:\.\d+)?)\s+"
+    r"(?:in\s+cash\s+)?per\s+(?:each\s+)?share"
+)
+_DEFINITIVE = re.compile(
+    r"(?:entered\s+into\s+)?(?:a\s+)?definitive\s+"
+    r"(?:agreement\s+and\s+plan\s+of\s+)?merger"
+)
+_NOT_DEFINITIVE = re.compile(
+    r"(?:has|have)\s+not\s+entered\s+into\s+(?:a\s+)?definitive\s+"
+    r"(?:agreement\s+and\s+plan\s+of\s+)?merger|"
+    r"no\s+definitive\s+(?:merger(?:\s+agreement)?|agreement\s+and\s+plan\s+of\s+merger)|"
+    r"non-binding\s+(?:offer|proposal)|indication\s+of\s+interest"
+)
+_STOCK_CONSIDERATION = re.compile(
+    r"stock\s+consideration|cash\s+(?:and|plus)\s+stock\s+consideration|"
+    r"(?:receive|plus|and)[^.]{0,100}"
+    r"(?:\d+(?:\.\d+)?|\d+/\d+|one(?:-|\s)(?:half|quarter)|one)"
+    r"(?:\s+of)?\s+(?:a\s+)?shares?\s+of\s+[^.]{0,80}(?:common\s+)?stock|"
+    r"\d+(?:\.\d+)?\s+shares\s+of\s+[^.]{0,80}(?:and|plus)\s+(?:\$|usd)"
 )
 _ISO_DATE = r"\d{4}-\d{2}-\d{2}"
 _MONTH_DATE = (
@@ -102,6 +129,9 @@ _FAILED = re.compile(
     r"announced\s+(?:the\s+)?termination\s+of\s+(?:the\s+)?merger\s+agreement|"
     r"merger\s+agreement\s+(?:was|has\s+been)\s+terminated|"
     r"transaction\s+will\s+not\s+proceed"
+)
+_CONDITIONAL_OUTCOME = re.compile(
+    r"\b(?:if|unless|whether|would|could|may|might|should|in\s+the\s+event)\b"
 )
 
 
@@ -129,6 +159,20 @@ def _unique_match(pattern: re.Pattern, text: str, *, field: str) -> str:
     return values.pop()
 
 
+def _asserted(pattern: re.Pattern, text: str) -> bool:
+    """Accept an outcome only from an unconditional sentence-sized assertion.
+
+    Merger agreements routinely describe what happens *if* a transaction terminates. Treating
+    that boilerplate as an observed failure would poison the evaluation labels. The parser is
+    intentionally conservative: a sentence containing conditional/modal language is not an
+    outcome authority even when it also contains one of the pinned phrases.
+    """
+    return any(
+        pattern.search(sentence) and not _CONDITIONAL_OUTCOME.search(sentence)
+        for sentence in re.split(r"[.!?;]+", text)
+    )
+
+
 def _derive_eligibility(text: str, *, amended: bool) -> dict:
     offers = {str(Decimal(value)) for value in _CASH.findall(text)}
     if len(offers) != 1:
@@ -142,19 +186,11 @@ def _derive_eligibility(text: str, *, amended: bool) -> dict:
         exchanges.append("nyse")
     if len(set(exchanges)) != 1:
         raise SemanticEvidenceUnavailable("SEC source does not identify one supported US exchange")
-    definitive = bool(re.search(
-        r"(?:entered\s+into\s+)?(?:a\s+)?definitive\s+(?:agreement\s+and\s+plan\s+of\s+)?merger",
-        text,
-    ))
-    if not definitive or re.search(
-        r"(?:has|have)\s+not\s+entered\s+into\s+(?:a\s+)?definitive\s+merger|"
-        r"no\s+definitive\s+merger\s+agreement|non-binding\s+(?:offer|proposal)|"
-        r"indication\s+of\s+interest",
-        text,
-    ):
+    definitive = bool(_DEFINITIVE.search(text))
+    if not definitive or _NOT_DEFINITIVE.search(text):
         raise SemanticEvidenceUnavailable("SEC source does not state a definitive merger")
-    resolved = bool(_CLOSED.search(text))
-    terminated = bool(_FAILED.search(text))
+    resolved = _asserted(_CLOSED, text)
+    terminated = _asserted(_FAILED, text)
     return {
         "cash_offer": offers.pop(),
         "security_type": "common_equity",
@@ -164,12 +200,7 @@ def _derive_eligibility(text: str, *, amended: bool) -> dict:
         "lifecycle_status": "terminated" if (resolved or terminated) else "active",
         "has_cvr": bool(re.search(r"contingent\s+value\s+right|\bcvr\b", text)),
         "has_earnout": bool(re.search(r"earn[- ]?out", text)),
-        "has_stock": bool(re.search(
-            r"stock\s+consideration|cash\s+and\s+stock\s+consideration|"
-            r"per\s+share\s+(?:and|plus)\s+\d+(?:\.\d+)?\s+shares|"
-            r"\d+(?:\.\d+)?\s+shares\s+of\s+[^.]{0,80}(?:and|plus)\s+(?:\$|usd)",
-            text,
-        )),
+        "has_stock": bool(_STOCK_CONSIDERATION.search(text)),
         # This is a strategy-construction fact, independently enforced by the proposal path.
         # Target-option treatment in a merger filing does not mean this strategy uses options.
         "uses_options_or_leverage": False,
@@ -201,11 +232,11 @@ def _require_strategy_eligible(label: dict) -> None:
 
 def _outcome_states(text: str) -> set[str]:
     states = set()
-    if _CLOSED.search(text):
+    if _asserted(_CLOSED, text):
         states.add("closed")
-    if _FAILED.search(text):
+    if _asserted(_FAILED, text):
         states.add("failed")
-    if re.search(r"(?:merger|transaction)\s+remains\s+pending", text):
+    if _asserted(re.compile(r"(?:merger|transaction)\s+remains\s+pending"), text):
         states.add("open")
     return states
 
@@ -321,10 +352,13 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
             or _date(payload.get("filing_date"), field="selection filing date")
             > _date(row["selected_at"], field="selected_at")
             or _utc(payload.get("detection_ts"), field="selection detection time") > committed
+            or _utc(
+                eligibility.created_at, field="selection filing audit time", allow_naive=True
+            ) > committed
             or not raw_store.verify(row["source_accession"])
         ):
             raise SemanticEvidenceUnavailable("selection filing source is not prospectively bound")
-        _verify_price_source_in(
+        price_raw, price_event = _verify_price_source_in(
             session,
             raw_root,
             row["entry_price_source"],
@@ -333,6 +367,19 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
             price=Decimal(row["entry_ask"]),
             entry=True,
         )
+        price_time = _utc(price_raw.get("exchange_ts"), field="selection quote timestamp")
+        price_recorded = _utc(
+            price_event.created_at, field="selection quote audit time", allow_naive=True
+        )
+        if (
+            price_time > committed
+            or price_recorded > committed
+            or price_recorded < price_time
+            or committed - price_time > MAX_SELECTION_QUOTE_AGE
+        ):
+            raise SemanticEvidenceUnavailable(
+                "selection entry quote is not fresh point-in-time evidence"
+            )
         current = _current_edgar_binding_in(
             session,
             cik=row["target_cik"],
@@ -584,7 +631,9 @@ class CashMergerSemanticVerifier:
         final_baseline = (final.payload or {}).get("baseline_accession")
         final_cursor = (final.payload or {}).get("cursor_accession")
         if (
-            recorded < completed
+            (final.refs or {}).get("cik") != cik
+            or (final.payload or {}).get("cik") != cik
+            or recorded < completed
             or recorded - completed > MAX_WITNESS_CLOCK_SKEW
             or _ACCESSION.fullmatch(str(final_baseline or "")) is None
             or _ACCESSION.fullmatch(str(final_cursor or "")) is None

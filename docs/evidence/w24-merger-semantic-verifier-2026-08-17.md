@@ -54,6 +54,16 @@ language, edited witness messages, and a later selection filing hidden behind an
 source. The final version validates local source/poll authority before Discord publication and
 repeats it in the persistence transaction after the server receipt.
 
+A fresh direct adversarial pass after the first commit found five additional gaps: broader
+negated-agreement language could satisfy the positive parser; unrelated option/employee
+cash-per-share text could supply the offer; conditional termination boilerplate could become an
+outcome; a same-day quote was date-bound but not fresh to the commitment instant; and the Discord
+receipt did not bind its channel id. The remediation requires an affirmative target-common-stock
+consideration sentence, expands negation and written-fraction stock detection, accepts outcomes
+only from unconditional sentence-sized assertions, requires the signed entry quote to precede
+the commitment by no more than five minutes, binds publish/read receipts to the configured
+channel, and rechecks the final EDGAR poll's CIK refs. Each attack has a regression.
+
 The operator's preferred OpenCode review path was attempted read-only with DeepSeek v4 Pro and
 Flash. The agents read the artifact but repeatedly timed out without returning findings or an
 attestation; they made no repository edits. That absence is recorded as unavailable external
@@ -65,10 +75,13 @@ Run from `app/` on Windows with `TMP=TEMP=C:\t`, ambient `COCKPIT_*` values clea
 `COCKPIT_ENV_FILE=C:\t\cockpit-test-no-env` so the ignored operator `app/.env` could not affect
 unconfigured-default tests:
 
-- focused semantic/tool hardening: **15 passed**;
-- expanded W-24/W-23/witness/tool/composition compatibility slice: **77 passed**, 1 third-party
+- initial focused semantic/tool hardening: **15 passed**;
+- initial expanded W-24/W-23/witness/tool/composition compatibility slice: **77 passed**, 1
+  third-party deprecation warning;
+- post-adversarial W-24/W-23/witness/tool/composition slice: **50 passed**, 1 third-party
   deprecation warning;
-- full Windows suite: **2,260 passed, 1 skipped**, 5 third-party deprecation warnings, in 310.42s;
+- final full Windows suite: **2,266 passed, 1 skipped**, 5 third-party deprecation warnings, in
+  304.35s;
 - `ruff check . ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean before documentation reconciliation; rerun before commit.
 

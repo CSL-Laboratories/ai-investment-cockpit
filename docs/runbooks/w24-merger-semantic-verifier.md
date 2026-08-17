@@ -26,9 +26,12 @@ The production verifier accepts only a cohort that satisfies all of these condit
    research universe, not a claim of global deal discovery or an execution allowlist.
 2. The manifest contains identity, selection date, eligibility prediction, entry ask, signed SEC
    source, signed quote source, and fresh per-CIK EDGAR binding—never an outcome or outcome price.
+   The quote's exchange timestamp and audit event must precede commitment, and the quote may be
+   no more than five minutes old; a favorable earlier same-day quote is not admissible.
 3. The manifest's canonical SHA-256 receives an exact-message Discord server timestamp within five
    minutes of creation in the configured private audit channel. Later verification fetches that
-   exact message id; missing, edited, deleted, foreign, or unreachable evidence fails closed.
+   exact message id and rechecks its channel id; missing, edited, deleted, foreign, or unreachable
+   evidence fails closed.
 4. Outcomes are recorded only after the witness. Every label is re-derived from hash-verified SEC
    bytes by the pinned parser. Source-derived but ineligible mixed/stock/CVR/earnout/rumor/
    terminated rows are excluded by refusal, not silently filtered.
@@ -54,7 +57,7 @@ prospective selection commitment. Composition still installs `CashMergerSemantic
 witness is absent and status remains unavailable. This is correct. Do not switch to a fake/local
 witness, reuse W-23 retrospective fixtures, or add an override.
 
-The local implementation gate is 2,260 passed / 1 skipped with Ruff clean. This is code evidence,
+The local implementation gate is 2,266 passed / 1 skipped with Ruff clean. This is code evidence,
 not a substitute for the external witness, prospective cohort, PR review, or cross-platform CI;
 see [[evidence/w24-merger-semantic-verifier-2026-08-17]].
 

@@ -262,7 +262,14 @@ class DiscordSemanticWitness:
         if not isinstance(message, dict):
             raise AnchorError("semantic witness publish returned no message receipt")
         message_id = str(message.get("id") or "").strip()
-        if not message_id or message.get("content") != expected:
+        if (
+            not message_id
+            or message.get("content") != expected
+            or (
+                self._channel_id is not None
+                and str(message.get("channel_id") or "") != str(self._channel_id)
+            )
+        ):
             raise AnchorError("semantic witness receipt does not bind the commitment")
         return SemanticWitnessReceipt(
             message_id=message_id,
@@ -281,6 +288,10 @@ class DiscordSemanticWitness:
             not isinstance(message, dict)
             or str(message.get("id") or "") != expected_id
             or message.get("content") != self._content(content_hash)
+            or (
+                self._channel_id is not None
+                and str(message.get("channel_id") or "") != str(self._channel_id)
+            )
         ):
             raise AnchorError("semantic witness message does not bind the commitment")
         return self._server_time(message.get("timestamp"))

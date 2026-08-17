@@ -45,7 +45,7 @@ canonical invariant list, and nothing else restates it.
   graph now composes a model-free verifier, exact-message Discord witness, prospective manifest,
   source-derived labels/outcomes/deal terms, complete-filing-set checks, and a final transactional
   recheck. Real prospective evidence, external-witness configuration, cross-platform CI, and PR
-  review remain pending, so W-23 still returns no edge. The local W-24 gate is 2,260 passed / 1
+  review remain pending, so W-23 still returns no edge. The local W-24 gate is 2,266 passed / 1
   skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].

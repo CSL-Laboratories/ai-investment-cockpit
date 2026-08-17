@@ -85,6 +85,7 @@ def _semantic_witness(clock):
     def post(content):
         message = {
             "id": str(900_000 + len(messages)),
+            "channel_id": "42",
             "timestamp": (clock.now() + timedelta(seconds=1)).isoformat(),
             "content": content,
         }
@@ -131,11 +132,13 @@ def _append_filing(st, *, root, row_id, cik, accession, filed_on, detected_at, r
         return event.seq, ref.sha256
 
 
-def _append_quote(st, *, root, row, key, observed_on, price):
+def _append_quote(st, *, root, row, key, observed_on, price, observed_at=None):
     record = {
         "symbol": row["symbol"],
-        "exchange_ts": datetime.combine(
-            observed_on, time(20), tzinfo=timezone.utc
+        "exchange_ts": (
+            observed_at
+            if observed_at is not None
+            else datetime.combine(observed_on, time(20), tzinfo=timezone.utc)
         ).isoformat(),
         "price": price,
         "ask": price,
@@ -197,7 +200,7 @@ def _state(tmp_path):
     return st, clock, tmp_path / "raw"
 
 
-def _seed_selection(st, root, rows):
+def _seed_selection(st, root, rows, *, evaluation_quote_age=timedelta(minutes=1)):
     for index, row in enumerate(rows):
         selected = datetime.fromisoformat(row["selected_at"]).date()
         eligibility_raw = _eligibility_text(row["eligibility_label"]["cash_offer"])
@@ -229,6 +232,11 @@ def _seed_selection(st, root, rows):
             key=f"semantic-entry-{index}",
             observed_on=selected,
             price=row["entry_ask"],
+            observed_at=(
+                SELECTION_NOW - evaluation_quote_age
+                if row["split"] == "evaluation"
+                else None
+            ),
         )
         if row["split"] == "evaluation":
             _append_poll(
@@ -524,19 +532,77 @@ def test_unsigned_domain_row_cannot_hide_outside_signed_filing_universe(tmp_path
 
 def test_mixed_cash_and_stock_language_is_never_classified_cash_only():
     text = (
-        "entered into a definitive merger. common stock listed on nasdaq will receive "
-        "$10 in cash per share plus 0.5 shares of buyer common stock"
+        "entered into a definitive merger. each share of common stock listed on nasdaq "
+        "will receive $10 in cash per share plus 0.5 shares of buyer common stock"
     )
     assert _derive_eligibility(text, amended=False)["has_stock"] is True
 
 
 def test_negated_or_nonbinding_language_cannot_satisfy_definitive_agreement():
     text = (
-        "the issuer has not entered into a definitive merger. common stock listed on nasdaq "
-        "would receive $10 in cash per share under a non-binding proposal"
+        "the issuer has not entered into a definitive merger. each share of common stock "
+        "listed on nasdaq will receive $10 in cash per share under a non-binding proposal"
     )
     with pytest.raises(SemanticEvidenceUnavailable, match="definitive"):
         _derive_eligibility(text, amended=False)
+
+
+def test_negated_agreement_and_plan_language_cannot_satisfy_definitive_agreement():
+    text = (
+        "the issuer has not entered into a definitive agreement and plan of merger. "
+        "each share of common stock listed on nasdaq will receive $10 in cash per share"
+    )
+    with pytest.raises(SemanticEvidenceUnavailable, match="definitive"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_unrelated_cash_per_share_language_cannot_define_target_consideration():
+    text = (
+        "the issuer entered into a definitive merger involving common stock listed on nasdaq. "
+        "employee options will receive $10 in cash per share."
+    )
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_written_fraction_stock_consideration_is_not_classified_cash_only():
+    text = (
+        "the issuer entered into a definitive merger. each share of common stock listed on "
+        "nasdaq will receive $10 in cash per share plus one-half of a share of buyer common stock"
+    )
+    assert _derive_eligibility(text, amended=False)["has_stock"] is True
+
+
+def test_conditional_termination_boilerplate_is_not_an_observed_failure():
+    from strategies.merger_semantics import _derive_outcome
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="absent or semantically ambiguous"):
+        _derive_outcome(
+            "if the merger agreement has been terminated, the company may owe a fee"
+        )
+
+
+def test_stale_same_day_entry_quote_is_refused_before_witness_publication(tmp_path):
+    st, clock, root = _state(tmp_path)
+    rows = _cohort_rows()
+    evaluation = [row for row in rows if row["split"] == "evaluation"]
+    for row in evaluation:
+        row["selected_at"] = SELECTION_NOW.date().isoformat()
+    _seed_selection(
+        st, root, rows, evaluation_quote_age=MAX_SELECTION_STALE_QUOTE_AGE
+    )
+    witness, messages = _semantic_witness(clock)
+    candidates = [{name: row[name] for name in _CANDIDATE_NAMES} for row in evaluation]
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="fresh point-in-time"):
+        record_selection_commitment(
+            st,
+            candidates,
+            training_cutoff="2024-01-01",
+            raw_root=root,
+            witness=witness,
+        )
+    assert messages == {}
 
 
 def test_retrospective_server_timestamp_is_refused_before_manifest_persistence(tmp_path):
@@ -639,3 +705,5 @@ _CANDIDATE_NAMES = (
     "deal_id", "symbol", "target_cik", "source_accession", "selected_at", "entry_ask",
     "eligibility_prediction", "eligibility_source", "entry_price_source",
 )
+
+MAX_SELECTION_STALE_QUOTE_AGE = timedelta(minutes=6)

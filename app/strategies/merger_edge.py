@@ -515,7 +515,7 @@ def _source_event_in(session, reference: dict, *, event_type: str) -> AuditEntry
 def _verify_price_source_in(
     session, raw_root: Path, reference: dict, *, symbol: str,
     observed_on: date, price: Decimal, entry: bool,
-) -> None:
+) -> tuple[dict, AuditEntry]:
     from orchestrator.state import EVENT_MARKET_DATA_RAW
 
     event = _source_event_in(session, reference, event_type=EVENT_MARKET_DATA_RAW)
@@ -567,6 +567,10 @@ def _verify_price_source_in(
             matches.append(raw)
     if len(matches) != 1:
         raise MergerEvidenceError("calibration price is not uniquely present in signed raw data")
+    # W-24's prospective selector additionally binds the raw quote timestamp to the external
+    # commitment instant.  Existing calibration callers deliberately ignore this return value;
+    # returning the already verified row/event avoids a second, potentially different snapshot.
+    return matches[0], event
 
 
 def _verify_calibration_sources_in(
