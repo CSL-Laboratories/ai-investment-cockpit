@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-13
+last-verified: 2026-08-14
 ---
 
 # The plan
@@ -21,17 +21,34 @@ last-verified: 2026-08-13
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #33 on 2026-08-13.
+state/lifecycle reconciled through PR #35 and the 2026-08-14 bring-up evidence.
 
 ---
 
-## 0. Current state — 2026-08-13
+## 0. Current state — 2026-08-14
 
-`main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
+The first live W-22 bring-up snapshot is recorded in
+[[evidence/w22-paper-mvp-2026-08-14]]. At 11:17 PT the `read_only` process had a valid audit
+chain, no breaker/watch-only state, healthy signed paper-equity sampling, zero feed errors, and
+all 11 Alpaca IEX book sequences at 78. That is operational evidence, not trading-performance
+evidence: there were no proposals eligible for opening execution and no paper fills.
+
+Two local bring-up defects are fixed on `fix/w22-paper-bringup-bugs`: additive migration of the
+legacy risk-verdict column (`BUG-100`) and post-response quote timestamp validation (`BUG-101`).
+`BUG-102` and the underlying Alpaca request defect `BUG-103` are locally closed: startup now
+hydrates completed daily bars, and the client supplies the bounded historical `start` required
+by Alpaca instead of accepting its current-day default. A post-11:26 PT restart populated both
+quotes and ADV/volatility for all 11 symbols with no faults; cross-platform CI is still pending.
+`BUG-104` is also locally closed: audit verification now reads the ledger and signed high-water
+from one SQLite snapshot, preventing a legitimate concurrent ingest commit from producing a
+false one-minute truncation result and paper-performance `watch_only` alert. Genuine hash,
+sequence, watermark, truncation, and erasure failures remain fail-closed.
+
+`origin/main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
 boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
-fail-closed transaction-cost/net-edge gate (`W-21`), and
-BUG-040–051, BUG-097–099. There are no open pull requests awaiting merge.
+fail-closed transaction-cost/net-edge gate (`W-21`), RW-15 paper reconciliation, W-22's audited
+paper loop, and BUG-040–051/097–099. The local bring-up branch adds BUG-100–104.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
 triage, briefs, interrogation, and proposal drafting; deterministic risk/mode/approval controls;
@@ -44,9 +61,9 @@ unattended paper proof; a deterministic expected-edge source; event-driven paper
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** RW-14 merged in PR #31 and W-21 merged in PR #33. RW-15 is locally
-committed at `943d2a1`; W-22 is implemented on its stacked package branch with 2,180 passed /
-1 skipped on Windows and Ruff clean after fresh attack→fix→regression review. The requested
+**Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, and W-22 in
+PR #35. The local `fix/w22-paper-bringup-bugs` working tree passes 2,186 tests / 1 skipped on
+Windows with Ruff clean after focused adversarial regressions and live 11-symbol validation. The requested
 OpenCode DeepSeek Pro/Flash external audit could not attest: the Pro workspace reported
 insufficient balance and alternate read-only reviewer calls timed out without output or
 repository changes. All six PR #31 matrix jobs stopped
@@ -56,10 +73,14 @@ pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** review/push RW-15, then W-22; restore cross-platform CI and collect the
-named RW-11/RW-14/RW-15/RW-19 evidence. Run W-22's first and second market days only on those
-verified inputs. `DEC-05` must be resolved before any `RW-18` authentication, and RW-13 remains
-blocked until the M1–M4 gates actually pass.
+**Immediate sequence:** review/push the W-22 bring-up fixes, restore
+cross-platform CI, and collect the named RW-11/RW-14/RW-15/RW-19 evidence. The operator moved
+`DEC-03` into the active paper-MVP scope on 2026-08-14;
+[[research/dec03-strategy-selection-2026-08-14]] records the candidate comparison and proposed
+`W-23` boundary. Until the operator selects the strategy and `W-23` supplies a separately
+reviewed deterministic edge source, opening paper orders remain fail-closed. Run W-22's first and second
+qualifying market days only on verified inputs. `DEC-05` must be resolved before any `RW-18`
+authentication, and RW-13 remains blocked until the M1–M4.5 gates actually pass.
 
 ---
 
@@ -95,8 +116,8 @@ move capital.
 
 | Level | What it proves | Milestones |
 |---|---|---|
-| **Paper reliability** | Scheduled ingest/triage, human approval, paper execution, reconciliation, and audit mechanics | M1–M4 |
-| **Dynamic paper autonomy** | Events wake a deterministic arbiter; gaps, duplicates, floods, stale data, and paper-order outcomes recover without babysitting; no capital | M5 / `RW-13` after M1–M4 |
+| **Paper reliability** | Scheduled ingest/triage, human approval, paper execution, reconciliation, and audit mechanics | M1–M4.5 |
+| **Dynamic paper autonomy** | Events wake a deterministic arbiter; gaps, duplicates, floods, stale data, and paper-order outcomes recover without babysitting; no capital | M5 / `RW-13` after M1–M4.5 |
 | **Live broker operation** | The controlled path reaches a real broker: human-gated `review_live` first; only `auto_veto` and `auto_full` are autonomous live execution | M6–M8 / `W17`–`W19` |
 
 Dynamic awareness does not grant execution authority, and execution autonomy does not grant a
@@ -121,7 +142,11 @@ situations institutions cannot fit into — the structural opposite.
 
 Niche selection — [[llm-hybrid-trading]] argues for closed-end-fund discounts and small
 merger-arb, and against index-inclusion (decayed to ~0.3%) and post-bankruptcy equities (high
-dispersion) — is a **later decision, made after the engine is proven.** Not now.
+dispersion) — moved into active paper-MVP scope by operator direction on 2026-08-14. `DEC-03`
+is not closed merely by moving it: [[research/dec03-strategy-selection-2026-08-14]] recommends a
+cash-only, long-target merger-arbitrage research slice, but the operator must choose it (or CEF
+discounts / no strategy) before `W-23` is claimed. Strategy selection does not assert alpha,
+authorize live capital, or permit a model-authored expected return.
 
 ---
 
@@ -225,7 +250,7 @@ property of the *fetcher*, never of the caller. Build the poll version so the st
 a fetcher swap, not a refactor.
 
 Scheduled as `RW-13` in [[REGISTER]]. It is **not part of the paper-reliability MVP**, because
-M1–M4 provide the stable inputs and order lifecycle needed to test it honestly. It is a **hard
+M1–M4.5 provide the stable inputs and order lifecycle needed to test it honestly. It is a **hard
 prerequisite of every live-autonomy rung**: completing M4 must never be reported as completing
 the cockpit's autonomy work.
 
@@ -423,6 +448,7 @@ stays broken — which is precisely how a gate gets gamed by accident. Scope, pe
    ``client_order_id`` (= ``cockpit-{order.id}``) for the lost-response case.
 3. **Retirement:** ``main._no_broker_history`` is deleted in the same PR.
 4. **Reachability test:** a system test that fails when the poll job is not scheduled.
+
 5. **Claims:** `RW-15`; settles `ReconcileReport.ambiguous_aborts`; the partial-fill
    remaining-notional refinement waits on `DEC-04` (see [[REGISTER]]).
 6. **Platforms:** pure httpx polling, no subprocess/paths — CI-neutral.
@@ -436,6 +462,29 @@ progress, and refuses chain/row/identity disagreement in the exposure-preserving
 Startup and the one-minute scheduler both reach the same service, and `_no_broker_history` is
 retired. Windows: 2,165 passed / 1 skipped; Ruff clean. The real resting/partial/terminal and
 lost-response Alpaca paper gate remains online evidence, as does the cross-platform matrix.
+
+### M4.5 — Deterministic paper edge source (`DEC-03` → proposed `W-23`)
+
+`DEC-03` is now in active paper-MVP scope because M4's mechanics cannot create an opening
+`Order` while the trusted expected edge is unavailable. The decision and implementation remain
+separate: `DEC-03` selects the strategy; only then may `W-23` be claimed for the order-path
+change. The detailed comparison and acceptance contract are in
+[[research/dec03-strategy-selection-2026-08-14]].
+
+The current recommendation is a deliberately narrow merger-arbitrage research slice: announced
+cash-only transactions, long the public target only, no acquirer short, no options, no CVR or
+mixed consideration, and no deal outside the existing 30-calendar-day `long` horizon. An SEC
+filing can establish deal terms; it cannot establish expected return. Before an edge is trusted,
+a point-in-time outcome data set must deterministically calibrate completion probability and
+failure loss, with immutable evidence and a conservative versioned estimate.
+
+`W-23` must inject the same provider into both proposal drafting and
+`PaperExecutionService._fresh_risk`, recompute immediately before approval, and return no edge
+on stale/missing/amended/terminated/mismatched evidence. The model remains limited to
+schema-gated fact extraction and never supplies probability, failure price, or return. The
+package requires reachability tests, a fresh adversarial review, and Ubuntu/Windows/macOS CI.
+Selecting the strategy or completing `W-23` grants neither paper mode nor live authority; the
+ordinary risk → mode → human approval → `OrderGateway` chain remains mandatory.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
@@ -459,7 +508,7 @@ optional enhancement and not an order-authority path.
 - Stable source/id dedup, immutable corrections, gap detection, reconnect backfill, replay, and
   bounded flood/coalescing behavior are in scope. Both stream and cron converge on the same
   idempotent triage service.
-- **Prerequisites:** M1–M4, `RW-17`/`BUG-096`, `BUG-097`, and `RW-19`'s dated stream/load
+- **Prerequisites:** M1–M4.5, `RW-17`/`BUG-096`, `BUG-097`, and `RW-19`'s dated stream/load
   evidence resolving `DEC-07`.
 - **Replay gate:** run the fast path and cron independently on separate clean stores and require
   identical triage dispositions, budget spend, proposals, and orders; then run fast path followed
@@ -548,7 +597,7 @@ mode ladder may still fall to `watch_only`; no implementation may weaken that fa
 Dependency order:
 
 `{RW-11 evidence → RW-12, RW-19 evidence → DEC-07, DEC-05 → RW-18}` run as bounded evidence
-lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → RW-13 → W16 → beta
+lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → DEC-03 → W-23 → RW-13 → W16 → beta
 stabilization → W17 → W18 → W19`. RW-14's online acceptance remains a parallel evidence lane
 and cannot close on an assumed entitlement/feed.
 
@@ -561,9 +610,9 @@ may run alongside it.
 
 | Phase | Purpose | Primary packages/evidence | Exit condition |
 |---|---|---|---|
-| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22` code; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
+| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22`; after operator selection, `W-23`; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
 | **2. Online testing and evidence** | Prove platforms, credentials, vendor contracts, live data, and broker outcomes | cross-platform CI; `RW-11`, `RW-19`/`DEC-07`, `RW-14`, `RW-15`; `DEC-05 → RW-18`; SEC-11 witness activation | every required CI/live-day/precision/reconciliation/source-contract gate recorded; no mocked result substitutes for an online gate |
-| **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` on the M1–M4 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
+| **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` plus the `DEC-03`-selected `W-23` edge source on the M1–M4.5 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
 | **4. Production beta** | Exercise dynamic paper autonomy under real operating conditions without capital | `RW-13 → W16` | replay parity/idempotency, bounded gap/flood behavior, and ≥4 consecutive market weeks of enabled dynamic-paper soak with fault injection |
 | **5. Stabilization and bugfixing** | Freeze features and remove defects exposed by beta | beta findings, open BUG/OPS/SEC residuals, platform/restart/recovery regressions | no open P0/high defects; no unexplained order/reconciliation/audit gaps; clean full matrix and repeated recovery drills |
 | **6. Full-scale deployment** | Roll out the operator-owned system in separately authorized authority rungs | ≥6-month paper evidence; `RW-18`; all pre-live gates; then `W17 → W18 → W19` | each rung has its own authorization, soak, adversarial review, reconciliation proof, witness proof, and rollback/kill evidence |
@@ -575,7 +624,9 @@ be developed, locally committed, and pushed for backup without opening a PR; the
 workflow runs on pull requests and pushes to `main`, not ordinary branch pushes. This is a cost
 control, not a gate waiver.
 
-The remaining implementation order is `W-21 → RW-15 → W-22`. When a later package genuinely needs
+The remaining implementation order is `W-21 → RW-15 → W-22 → DEC-03 → W-23`. `DEC-03` is
+an operator decision, not permission to implement an arbitrary signal; `W-23` remains blocked
+until that selection is explicit. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;
 then rebase/update it onto `main`. A stacked branch is not evidence that its predecessor is
@@ -749,7 +800,9 @@ Named so that "we should also…" has somewhere to land.
 - **Managing anyone else's money, or selling signals.** Own capital needs no registration; the
   moment either of those changes, adviser/BD rules apply. An auto-trading signal product
   forfeits the publisher's exclusion outright.
-- **Niche selection** (CEF / merger-arb / etc.). After the engine is proven. See §1.
+- **Any niche other than the one explicitly selected by `DEC-03`.** Strategy selection itself is
+  now in scope; additional strategies remain separate future decisions and packages. See §1 and
+  [[research/dec03-strategy-selection-2026-08-14]].
 - **L2 depth data.** See §3.
 - **Autonomy in judgment.** More breadth, better extraction, richer briefs, less babysitting —
   yes. The model deciding what to trade — no, and the research is the reason, not caution.

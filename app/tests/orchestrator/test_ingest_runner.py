@@ -25,6 +25,7 @@ from core.clock import FrozenClock
 from ingest.calendars import CalendarPoller
 from ingest.clock_contract import ClockContractError
 from ingest.edgar_brew import EdgarBrewPoller
+from orchestrator.breakers import BreakerEngine
 from orchestrator.ingest_runner import FEED_CALENDAR, FEED_EDGAR, IngestRunner, PersistSink
 from orchestrator.state import OrchestratorState
 from schemas.models.market_event import MarketEvent
@@ -252,6 +253,37 @@ def test_status_of_an_unreadable_freshness_reader_fails_closed(st, parquet_root)
     runner.add_poller(FEED_EDGAR, CalendarPoller(lambda: []), status_fn=boom)
     verdict = runner.status()["feeds"][FEED_EDGAR]["feed_status"]
     assert verdict["status"] == "unreadable" and verdict["trustworthy"] is False
+
+
+def test_edgar_degradation_enters_watch_only_and_a_clean_poll_recovers_fail_closed(
+    st, parquet_root,
+):
+    state = {"trustworthy": False}
+
+    class Poller:
+        def poll(self, now, on_event):
+            return 0
+
+    class Outcome:
+        status = type("S", (), {"value": "current"})()
+        quiet_day = False
+        reason = "SEC source health changed"
+
+        @property
+        def trustworthy(self):
+            return state["trustworthy"]
+
+    runner = _runner(st, parquet_root)
+    runner.add_poller(FEED_EDGAR, Poller(), status_fn=lambda _day: Outcome())
+    first = runner.poll(FEED_EDGAR)
+    assert first["feed_status"]["trustworthy"] is False
+    assert BreakerEngine(st).is_watch_only(FEED_EDGAR)
+
+    state["trustworthy"] = True
+    second = runner.poll(FEED_EDGAR)
+    assert second["feed_status"]["trustworthy"] is True
+    assert not BreakerEngine(st).is_watch_only(FEED_EDGAR)
+    assert st.audit.verify_chain().ok
 
 
 # ---------------------------------------------------------------------------------------

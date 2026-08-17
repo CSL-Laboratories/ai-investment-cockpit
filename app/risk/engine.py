@@ -295,7 +295,7 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
                     f"{': ' + verdict_detail if verdict_detail else ''} -> human review (QT-06)"),
         CheckResult("net_edge_available", net_edge_available, False,
                     f"trusted net-edge state is {edge_state}; unavailable edge cannot mint "
-                    "an order until a deterministic strategy source exists (W-21)"),
+                    "an order until deterministic strategy evidence verifies (W-21/W-23)"),
     ]
 
     failed_hard = [c.name for c in checks if c.hard and not c.passed]

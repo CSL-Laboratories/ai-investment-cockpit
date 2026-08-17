@@ -18,6 +18,7 @@ from ingest.market_data import (
 from orchestrator.state import EVENT_MARKET_DATA_RAW
 from orchestrator.quant_ws import SnapshotSource
 from quant.events import to_ns
+from storage.parquet_store import write_snapshot
 
 NOW = datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)
 
@@ -123,6 +124,54 @@ def test_future_or_failed_poll_never_reads_fresh(tmp_path):
     assert service.stale_reason("AAPL", now=clock.now(), limit_s=120) is not None
 
 
+def test_quote_timestamp_is_compared_with_time_observed_after_remote_call(tmp_path):
+    class AdvancingClock(FrozenClock):
+        def advance(self, delta):
+            self._at += delta
+
+    clock = AdvancingClock(NOW)
+    client = Client(clock)
+    original = client.latest_quote
+
+    def delayed_quote(symbol):
+        clock.advance(timedelta(seconds=1))
+        return original(symbol)
+
+    client.latest_quote = delayed_quote
+    service = MarketDataService(
+        client,
+        symbols=("AAPL", "MSFT"),
+        clock=clock,
+        raw_root=tmp_path / "raw",
+        snapshot_source=SnapshotSource(),
+    )
+
+    result = service.poll_quotes()
+
+    assert result == {
+        "updated": ["AAPL", "MSFT"],
+        "failed": [],
+        "at": NOW.isoformat(),
+    }
+    assert service.quote("AAPL")["age_s"] == pytest.approx(2.0)
+    assert service.quote("MSFT")["age_s"] == pytest.approx(1.0)
+
+
+def test_quote_still_fails_closed_when_future_after_remote_call(tmp_path):
+    service, client, _, _ = _service(tmp_path)
+    original = client.latest_quote
+
+    def slightly_future_quote(symbol):
+        quote = original(symbol)
+        quote["ts"] = (NOW + timedelta(microseconds=1)).isoformat()
+        return quote
+
+    client.latest_quote = slightly_future_quote
+
+    assert service.poll_quotes()["failed"] == ["AAPL"]
+    assert service.book("AAPL") is None
+
+
 def test_daily_bar_cache_survives_a_second_service_without_refetch(tmp_path):
     service, client, clock, source = _service(tmp_path)
     assert service.refresh_daily_bars()["updated"] == ["AAPL"]
@@ -137,6 +186,61 @@ def test_daily_bar_cache_survives_a_second_service_without_refetch(tmp_path):
     assert restarted.refresh_daily_bars()["cached"] == ["AAPL"]
     assert restarted.metrics("AAPL") == metrics
     assert client.bar_calls == 1
+
+
+def test_unbound_preseeded_daily_bar_cache_is_never_self_signed(tmp_path):
+    class Audit:
+        def __init__(self):
+            self.entries = []
+
+        def append(self, event_type, **kwargs):
+            self.entries.append((event_type, kwargs))
+
+    clock = FrozenClock(NOW)
+    client = Client(clock)
+    audit = Audit()
+    raw_root = tmp_path / "raw"
+    forged = [
+        {
+            "t": (NOW - timedelta(days=25 - offset)).isoformat(),
+            "c": str(Decimal("100") + Decimal(offset) / Decimal("1000000")),
+            "v": "1000000000000",
+        }
+        for offset in range(25)
+    ]
+    write_snapshot(raw_root / "daily-bars", NOW.date().isoformat(), "AAPL", forged)
+    service = MarketDataService(
+        client,
+        symbols={"AAPL"},
+        clock=clock,
+        raw_root=raw_root,
+        snapshot_source=SnapshotSource(),
+        audit_log=audit,
+    )
+
+    result = service.refresh_daily_bars()
+
+    assert result["failed"] == ["AAPL"]
+    assert result["cached"] == []
+    assert service.metrics("AAPL") is None
+    assert client.bar_calls == 0
+    assert audit.entries == []
+
+
+def test_current_session_daily_bar_never_enters_authority_bearing_metrics(tmp_path):
+    service, client, _, _ = _service(tmp_path)
+    client.daily_bars = lambda _symbol, *, limit: [
+        *_bars(),
+        {"t": NOW.isoformat(), "c": "10000", "v": "999999999"},
+    ]
+
+    assert service.refresh_daily_bars()["failed"] == []
+    metric = service.metrics("AAPL")
+
+    assert metric is not None
+    assert metric.as_of.isoformat() == "2026-07-03"
+    assert metric.observations == 3
+    assert metric.median_daily_dollar_volume == Decimal("204000")
 
 
 def test_holdings_only_symbols_join_the_polled_universe(tmp_path):

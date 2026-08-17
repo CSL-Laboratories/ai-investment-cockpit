@@ -83,6 +83,7 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
 
     monkeypatch.setattr(service_module, "triage_loop", capture_triage)
     monkeypatch.setenv("COCKPIT_WATCHLIST", "INTC,AAPL,SPCX,GOOGL,WDC")
+    monkeypatch.setenv("COCKPIT_MERGER_WATCHLIST", "AAPL")
     state, app, services = compose(
         db_url=f"sqlite:///{(tmp_path / 'paper.db').as_posix()}",
         parquet_root=str(tmp_path / "raw-paper"),
@@ -93,6 +94,8 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     assert app.state.paper.account()["account"] == "alpaca-paper"
     expected = frozenset({"INTC", "AAPL", "SPCX", "GOOGL", "WDC"})
     assert app.state.paper._watchlist() == expected  # noqa: SLF001 - composition contract
+    assert state.edge_provider is app.state.paper._edge_provider  # noqa: SLF001
+    assert state.edge_provider.strategy_watchlist == frozenset({"AAPL"})
     assert app.state.watchlist == expected
     assert app.state.market_data.poll_quotes()["failed"] == []
     assert app.state.market_data.refresh_daily_bars()["failed"] == []
@@ -148,8 +151,8 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     inside, _ = app.state.paper._fresh_risk(proposal("INTC"), "INTC")  # noqa: SLF001
     inside_checks = {row["name"]: row["passed"] for row in inside["checks"]}
     assert inside_checks["symbol_allowlist"] is True
-    # W-21: approval-time risk must re-run the same ADV cost path. Production has no
-    # deterministic edge source yet, so the fresh check is explicitly fail-closed.
+    # W-21/W-23: approval-time risk re-runs the ADV cost and deterministic edge path. No
+    # immutable merger evidence is provisioned here, so the fresh check is fail-closed.
     assert inside["decision"] == "needs_human"
     assert inside_checks["net_edge_available"] is False
     from risk.engine import evaluate

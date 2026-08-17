@@ -85,8 +85,9 @@ class MarketImpactInputs:
 class EdgeEstimate:
     """Schema-like trusted edge input reserved for a deterministic strategy source.
 
-    The unit is gross holding-period return in basis points of position notional.  No current
-    production source constructs this object; ``None`` is the deliberate fail-closed state.
+    The unit is gross holding-period return in basis points of position notional. W-23's
+    cash-merger provider may construct it from signed immutable evidence; every unavailable,
+    stale, or ineligible state still supplies ``None`` and fails closed.
     """
 
     expected_gross_return_bps: Decimal

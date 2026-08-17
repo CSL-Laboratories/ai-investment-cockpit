@@ -120,6 +120,37 @@ def test_single_writer_concurrency(env):
     assert v.ok and v.head_seq == 20                        # 4x5 appends, contiguous (OPS-01)
 
 
+def test_verify_chain_uses_one_snapshot_during_concurrent_append(env, monkeypatch):
+    """BUG-104: a concurrent commit between the row and watermark reads is not tamper.
+
+    Python 3.11 sqlite3 legacy transaction control does not begin a transaction for SELECT,
+    so the old verifier could read rows at head N, then read the watermark at N+1 after a WAL
+    writer committed.  The chain was healthy but verification briefly reported truncation and
+    the paper-performance loop entered watch-only until its next tick.
+    """
+    audit, _ = env
+    audit.append("seed")
+    original_read_hwm = audit._read_hwm
+    raced = False
+
+    def append_between_snapshot_reads(session):
+        nonlocal raced
+        if not raced:
+            raced = True
+            writer = threading.Thread(target=lambda: audit.append("concurrent"))
+            writer.start()
+            writer.join(timeout=5)
+            assert not writer.is_alive()
+        return original_read_hwm(session)
+
+    monkeypatch.setattr(audit, "_read_hwm", append_between_snapshot_reads)
+    during_race = audit.verify_chain()
+    after_race = audit.verify_chain()
+
+    assert during_race.ok and during_race.head_seq == 1
+    assert after_race.ok and after_race.head_seq == 2
+
+
 def test_two_phase_reconciliation(env):
     audit, _ = env
     i = audit.intent("place_order", payload={"symbol": "AAPL"})

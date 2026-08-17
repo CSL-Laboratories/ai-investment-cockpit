@@ -13,7 +13,7 @@ an ``OrchestratorState`` is supplied they persist it through the audited state-c
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
 from typing import Any
@@ -296,6 +296,17 @@ class AlpacaPaperHTTPClient:
             raise AlpacaPaperError("invalid equity symbol for bars request")
         if not 3 <= int(limit) <= 1000:
             raise AlpacaPaperError("daily bar limit must be between 3 and 1000")
+        now = self._clock()
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise AlpacaPaperError("daily-bars clock returned a timezone-naive datetime")
+        # Alpaca defaults an omitted `start` to the beginning of the current day. `limit=60`
+        # therefore returns only today's bar rather than sixty historical bars. A two-calendar-
+        # day window per requested trading day comfortably covers weekends and exchange holidays;
+        # the response remains bounded by `limit`, descending, and MarketDataService excludes the
+        # current incomplete session before deriving authority-bearing metrics.
+        start = (
+            now.astimezone(timezone.utc) - timedelta(days=max(14, int(limit) * 2))
+        ).date().isoformat()
         body = self._request(
             "GET",
             DATA_BASE_URL,
@@ -306,6 +317,7 @@ class AlpacaPaperHTTPClient:
                 "feed": "iex",
                 "limit": int(limit),
                 "sort": "desc",
+                "start": start,
             },
         )
         bars = body.get("bars") if isinstance(body, dict) else None

@@ -597,6 +597,7 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
 
       * ``build_scheduler`` MUST receive ``ingest=`` — drop it and every other test still
         passes while production silently never polls a feed;
+      * daily bars MUST hydrate before the API serves proposals, including after a late restart;
       * ``start_streams()`` MUST happen BEFORE ``serve()`` — ``serve`` blocks forever, so
         the reversed order means the news WebSocket never starts, in production only.
 
@@ -644,6 +645,13 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
     # Compose the REAL graph FIRST, then hand it back from the patched compose. (Building it
     # inside the patch would re-enter the patch — `_compose` calls `main.compose`.)
     graph = _compose(tmp_path, transport=FakeTransport([]), deliver=Capture())[:3]
+    monkeypatch.setattr(
+        graph[1].state.market_data,
+        "refresh_daily_bars",
+        lambda: order.append("market_bars.refresh") or {
+            "updated": ["AAPL"], "cached": [], "failed": [],
+        },
+    )
 
     started: list = []
     monkeypatch.setattr(logging_mod, "configure_logging", fake_configure_logging)
@@ -662,7 +670,10 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
 
     main_mod.run()
 
-    assert order == ["configure_logging:INFO", "compose", "scheduler.start", "start_streams", "serve"], \
+    assert order == [
+        "configure_logging:INFO", "compose", "market_bars.refresh", "scheduler.start",
+        "start_streams", "serve",
+    ], \
         "serve() blocks forever — anything after it never runs"
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
     assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}
@@ -671,6 +682,17 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
     assert seen["paper"] is graph[1].state.paper
     assert started == [[FEED_ALPACA_NEWS]]
     assert seen["bound_host"] == "127.0.0.1", "the API must stay loopback-only"
+
+
+def test_startup_daily_bar_hydration_fails_closed_without_blocking_awareness(caplog):
+    class BrokenMarketData:
+        def refresh_daily_bars(self):
+            raise RuntimeError("vendor unavailable")
+
+    result = main_mod._startup_market_data(market_data=BrokenMarketData())
+
+    assert result == {"failed": ["startup_hydration"], "error": "RuntimeError"}
+    assert "startup daily-bar hydration unavailable" in caplog.text
 
 
 def test_discord_secret_name_matches_the_provisioning_doc():

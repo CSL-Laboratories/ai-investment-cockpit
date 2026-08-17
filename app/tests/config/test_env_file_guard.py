@@ -202,6 +202,15 @@ def test_operator_watchlist_is_normalized_deduplicated_and_durable(tmp_path, mon
     assert s.watchlist_symbols == frozenset({"INTC", "AAPL", "SPCX", "GOOGL", "WDC"})
 
 
+def test_merger_strategy_watchlist_is_separate_and_empty_by_default():
+    assert Settings(_env_file=None).merger_watchlist_symbols == frozenset()
+    settings = Settings(
+        watchlist="AAPL,MSFT", merger_watchlist=" aapl AAPL ", _env_file=None
+    )
+    assert settings.watchlist_symbols == frozenset({"AAPL", "MSFT"})
+    assert settings.merger_watchlist_symbols == frozenset({"AAPL"})
+
+
 def test_operator_allowlist_loads_from_env_file_and_is_frozen_at_startup(tmp_path, monkeypatch):
     synthetic_id = "123456789012345678"
     env = write_env(tmp_path, f"COCKPIT_OPERATOR_IDS={synthetic_id}\n")

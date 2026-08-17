@@ -330,10 +330,32 @@ class AuditLog:
             h = s.execute(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).scalar_one_or_none()
         return (h.seq, h.entry_hash) if h else (0, None)
 
-    def verify_chain(self) -> VerifyResult:
-        with self._sf() as s:
-            rows = s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
-            wm = self._read_hwm(s)
+    def verify_session(self, s) -> VerifyResult:
+        """Verify the ledger in the caller's active read transaction.
+
+        Authority-bearing consumers must select signed events and the domain rows they
+        cover from this same snapshot.  Calling ``verify_chain()`` and then opening a new
+        session leaves a check/use window in which a keyless writer can repoint mutable
+        rows after verification.
+        """
+        # Linearize the in-process erasure floor at the start of verification.  A legitimate
+        # append may commit after this point while the read snapshot below still represents
+        # the immediately preceding valid head; that must not be mistaken for rollback merely
+        # because append() has since advanced ``_observed_head``.
+        with self._lock:
+            observed_floor = self._observed_head
+        # Python's sqlite3 driver uses legacy transaction control through 3.11: a
+        # SELECT does not issue BEGIN.  Without an explicit read transaction, the
+        # ledger-row SELECT and later authority-row SELECTs can observe different WAL
+        # snapshots.  Pin every read made through this session to one snapshot.  Other
+        # supported SQLAlchemy dialects begin a read transaction normally.
+        if s.get_bind().dialect.name == "sqlite":
+            connection = s.connection()
+            dbapi_connection = connection.connection.driver_connection
+            if not dbapi_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
+        rows = s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
+        wm = self._read_hwm(s)
         prev, expected = None, 1
         for r in rows:
             if r.seq != expected:
@@ -366,24 +388,51 @@ class AuditLog:
         # verified is an erasure, never a fresh start. Restart-spanning erasures are
         # caught by the external anchor (verify_against_anchor), not here.
         with self._lock:
-            if head_seq < self._observed_head:
+            if head_seq < observed_floor:
                 return VerifyResult(False, head_seq, prev,
                                     f"erasure/rollback: head seq {head_seq} below previously "
-                                    f"observed head {self._observed_head}")
-            self._observed_head = head_seq
+                                    f"observed head {observed_floor}")
+            self._observed_head = max(self._observed_head, head_seq)
         return VerifyResult(True, head_seq, prev)
 
-    def verify_against_anchor(self, anchored_seq: int, anchored_hash: str) -> VerifyResult:
-        """SEC-11: reject a chain whose head is BEHIND a specific external anchor point."""
-        base = self.verify_chain()
+    def verify_session_against_anchor(
+        self, s, anchored_seq: int, anchored_hash: str
+    ) -> VerifyResult:
+        """Verify the ledger and an external anchor in one caller-owned snapshot."""
+        base = self.verify_session(s)
         if not base.ok:
             return base
         if base.head_seq < anchored_seq:
             return VerifyResult(False, base.head_seq, base.head_hash,
                                 f"rollback: head seq {base.head_seq} < anchored {anchored_seq}")
-        with self._sf() as s:
-            at = s.execute(select(AuditEntry).where(AuditEntry.seq == anchored_seq)).scalar_one_or_none()
+        at = s.execute(
+            select(AuditEntry).where(AuditEntry.seq == anchored_seq)
+        ).scalar_one_or_none()
         if at is None or not hmac.compare_digest(at.entry_hash, anchored_hash):
             return VerifyResult(False, base.head_seq, base.head_hash,
                                 f"anchor hash mismatch at seq {anchored_seq}")
         return base
+
+    def verified_events(self, event_type: str) -> list[AuditEntry]:
+        """Return events only when their complete ledger snapshot verifies."""
+        with self._sf() as s, s.begin():
+            result = self.verify_session(s)
+            if not result.ok:
+                raise AuditIntegrityError(result.error or "audit chain is invalid")
+            rows = s.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type == event_type)
+                .order_by(AuditEntry.seq)
+            ).scalars().all()
+            for row in rows:
+                s.expunge(row)
+            return rows
+
+    def verify_chain(self) -> VerifyResult:
+        with self._sf() as s, s.begin():
+            return self.verify_session(s)
+
+    def verify_against_anchor(self, anchored_seq: int, anchored_hash: str) -> VerifyResult:
+        """SEC-11: reject a chain whose head is BEHIND a specific external anchor point."""
+        with self._sf() as s, s.begin():
+            return self.verify_session_against_anchor(s, anchored_seq, anchored_hash)

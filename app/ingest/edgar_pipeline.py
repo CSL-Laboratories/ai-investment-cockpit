@@ -29,7 +29,10 @@ rate at or above the 10 req/s ceiling, so the control sits at the request, not a
 from __future__ import annotations
 
 import logging
+import re
+import threading
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
@@ -43,6 +46,14 @@ log = logging.getLogger(__name__)
 # periodic form; we count it and move on, because the first time a ticker is ever polled that
 # is the CORRECT and expected outcome for every periodic filing it has.
 _BASELINE = "baseline"
+_SUBMISSIONS_ARCHIVE_NAME = re.compile(r"^CIK\d{10}-submissions-\d{3}\.json$")
+_SEC_ACCESSION = re.compile(r"^\d{10}-\d{2}-\d{6}$")
+_MAX_HISTORICAL_SUBMISSION_FILES = 20
+_BASELINE_EVENTS = frozenset({
+    "poll-baseline-established",
+    "poll-baseline-advanced",
+    "poll-baseline-touched",
+})
 
 
 class EdgarInProcessStatus(str, Enum):
@@ -72,6 +83,273 @@ class EdgarInProcessOutcome:
 
 class EdgarPipelineRunError(RuntimeError):
     """A scheduled in-process run could not establish trustworthy current evidence."""
+
+
+def _as_utc(value) -> datetime:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _verified_poll_baseline_in(session, audit_log, cik: str):
+    """Return a baseline only when its complete mutable history is audit-consistent."""
+    from sqlalchemy import select
+
+    from filings.edgar.submissions_poll import pad_cik
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollbaseline import PollBaseline
+
+    verified = audit_log.verify_session(session)
+    if not verified.ok:
+        raise EdgarPipelineRunError(
+            f"audit chain invalid before EDGAR baseline use: {verified.error}"
+        )
+    cik10 = pad_cik(cik)
+    row = session.execute(
+        select(PollBaseline).where(PollBaseline.cik == cik10)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    events = session.execute(
+        select(AuditEntry)
+        .where(AuditEntry.event_type.in_(_BASELINE_EVENTS))
+        .order_by(AuditEntry.seq)
+    ).scalars().all()
+    transitions = [event for event in events if (event.refs or {}).get("row_id") == row.id]
+    cutoff = None
+    established = None
+    for event in transitions:
+        refs = event.refs or {}
+        payload = event.payload or {}
+        if (
+            refs.get("model") != PollBaseline.__tablename__
+            or refs.get("cik") != cik10
+        ):
+            raise EdgarPipelineRunError("EDGAR baseline audit identity is inconsistent")
+        if event.event_type == "poll-baseline-established":
+            if established is not None:
+                raise EdgarPipelineRunError("EDGAR baseline has multiple establishment events")
+            established = event
+            cutoff = payload.get("cutoff_accession_no")
+        elif established is None:
+            raise EdgarPipelineRunError("EDGAR baseline transition precedes establishment")
+        elif event.event_type == "poll-baseline-advanced":
+            if payload.get("previous_cutoff_accession_no") != cutoff:
+                raise EdgarPipelineRunError("EDGAR baseline transition continuity failed")
+            cutoff = payload.get("cutoff_accession_no")
+        elif payload.get("cutoff_accession_no") != cutoff:
+            raise EdgarPipelineRunError("EDGAR baseline touch does not match signed state")
+    latest = transitions[-1] if transitions else None
+    if (
+        established is None
+        or latest is None
+        or cutoff != row.cutoff_accession_no
+        or _as_utc(established.created_at) != _as_utc(row.established_at)
+        or _as_utc(latest.created_at) != _as_utc(row.updated_at)
+    ):
+        raise EdgarPipelineRunError("mutable EDGAR baseline diverges from signed history")
+    return row
+
+
+class _VerifiedPollBaselineStore:
+    """Adapter-owned baseline store that refuses keyless row substitution before use."""
+
+    def __init__(self, session_factory, audit_log):
+        self._sf = session_factory
+        self._audit = audit_log
+        self._expected: dict[str, str | None] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def is_audited(self) -> bool:
+        return True
+
+    @staticmethod
+    def _refs(row) -> dict[str, str]:
+        return {"model": row.__tablename__, "row_id": row.id, "cik": row.cik}
+
+    def load(self, cik: str):
+        from filings.edgar.submissions_poll import pad_cik
+
+        cik10 = pad_cik(cik)
+        with self._lock, self._sf() as session, session.begin():
+            row = _verified_poll_baseline_in(session, self._audit, cik10)
+            if row is not None:
+                self._expected[cik10] = row.cutoff_accession_no
+                session.expunge(row)
+            return row
+
+    def establish(self, cik: str, cutoff_accession_no: str | None, now: datetime) -> bool:
+        from filings.edgar.submissions_poll import pad_cik
+        from schemas.models.pollbaseline import PollBaseline
+        from core.ids import new_id
+
+        cik10 = pad_cik(cik)
+        with self._lock, self._sf() as session, session.begin():
+            existing = _verified_poll_baseline_in(session, self._audit, cik10)
+            if existing is not None:
+                self._expected[cik10] = existing.cutoff_accession_no
+                return False
+            row = PollBaseline(
+                id=new_id("baseline"), cik=cik10,
+                cutoff_accession_no=cutoff_accession_no,
+                established_at=now, updated_at=now,
+            )
+            session.add(row)
+            session.flush()
+            self._audit.append_in(
+                session, "poll-baseline-established", actor="submissions-poller",
+                refs=self._refs(row),
+                payload={"cutoff_accession_no": cutoff_accession_no},
+            )
+            self._expected[cik10] = cutoff_accession_no
+            return True
+
+    def _mutate(self, cik: str, cutoff_accession_no: str | None, now: datetime) -> None:
+        from filings.edgar.submissions_poll import pad_cik
+
+        cik10 = pad_cik(cik)
+        with self._lock, self._sf() as session, session.begin():
+            row = _verified_poll_baseline_in(session, self._audit, cik10)
+            if row is None:
+                raise EdgarPipelineRunError(f"no verified baseline exists for CIK {cik10}")
+            expected = self._expected.get(cik10)
+            if row.cutoff_accession_no != expected:
+                raise EdgarPipelineRunError("EDGAR baseline changed during the active poll")
+            previous = row.cutoff_accession_no
+            row.cutoff_accession_no = cutoff_accession_no
+            row.updated_at = now
+            session.flush()
+            if cutoff_accession_no == previous:
+                event_type = "poll-baseline-touched"
+                payload = {"cutoff_accession_no": cutoff_accession_no}
+            else:
+                event_type = "poll-baseline-advanced"
+                payload = {
+                    "previous_cutoff_accession_no": previous,
+                    "cutoff_accession_no": cutoff_accession_no,
+                }
+            self._audit.append_in(
+                session, event_type, actor="submissions-poller",
+                refs=self._refs(row), payload=payload,
+            )
+            self._expected[cik10] = cutoff_accession_no
+
+    def advance(self, cik: str, cutoff_accession_no: str, now: datetime) -> None:
+        self._mutate(cik, cutoff_accession_no, now)
+
+    def touch(self, cik: str, now: datetime) -> None:
+        from filings.edgar.submissions_poll import pad_cik
+
+        cik10 = pad_cik(cik)
+        if cik10 not in self._expected:
+            self.load(cik10)
+        self._mutate(cik10, self._expected.get(cik10), now)
+
+
+class _CompleteSubmissionsFetcher:
+    """Reject any post-boundary submissions row the deterministic poller would skip."""
+
+    def __init__(self, delegate, baseline_store, *, strict_ciks=()):
+        self._delegate = delegate
+        self._baselines = baseline_store
+        self._strict_ciks = frozenset(str(cik) for cik in strict_ciks)
+
+    def __getattr__(self, name):
+        return getattr(self._delegate, name)
+
+    def get_bytes(self, url):
+        return self._delegate.get_bytes(url)
+
+    def get_json(self, url):
+        from filings.edgar.fetch import pad_cik
+        from filings.edgar.submissions_poll import PROCESS_FORMS
+
+        document = self._delegate.get_json(url)
+        recent = (document.get("filings") or {}).get("recent") if isinstance(document, dict) else None
+        if not isinstance(recent, dict):
+            return document
+        requested = re.search(r"/submissions/CIK(\d{10})\.json(?:\?.*)?$", str(url))
+        if requested is None:
+            raise EdgarPipelineRunError("SEC submissions response has no requested CIK identity")
+        cik = requested.group(1)
+        try:
+            response_cik = pad_cik(document.get("cik", ""))
+        except (TypeError, ValueError) as exc:
+            raise EdgarPipelineRunError("SEC submissions response CIK is malformed") from exc
+        if response_cik != cik:
+            raise EdgarPipelineRunError("SEC submissions response CIK mismatches its request")
+        baseline = self._baselines.load(cik)
+        if cik not in self._strict_ciks or baseline is None:
+            return document
+        accessions = recent.get("accessionNumber")
+        count = len(accessions) if isinstance(accessions, list) else -1
+        if (
+            count < 0
+            or not recent
+            or any(not isinstance(values, list) or len(values) != count
+                   for values in recent.values())
+        ):
+            raise EdgarPipelineRunError(
+                "malformed SEC submissions arrays block strategy freshness"
+            )
+        forms = recent.get("form")
+        dates = recent.get("filingDate")
+        documents = recent.get("primaryDocument")
+        accepted = recent.get("acceptanceDateTime")
+        if not all(isinstance(values, list) for values in (forms, dates, documents, accepted)):
+            raise EdgarPipelineRunError(
+                "SEC submissions response lacks required strategy chronology"
+            )
+        normalized_accessions = [str(value).strip() for value in accessions]
+        if (
+            any(_SEC_ACCESSION.fullmatch(value) is None for value in normalized_accessions)
+            or len(set(normalized_accessions)) != count
+        ):
+            raise EdgarPipelineRunError(
+                "SEC submissions accessions are invalid or ambiguous"
+            )
+        try:
+            parsed_dates = [date.fromisoformat(str(value)) for value in dates]
+            parsed_acceptance = [_as_utc(value) for value in accepted]
+        except (TypeError, ValueError) as exc:
+            raise EdgarPipelineRunError(
+                "SEC submissions chronology is malformed"
+            ) from exc
+        if any(
+            parsed_dates[index] > parsed_dates[index - 1]
+            or parsed_acceptance[index] > parsed_acceptance[index - 1]
+            or parsed_acceptance[index].date() != parsed_dates[index]
+            for index in range(1, count)
+        ) or (count and parsed_acceptance[0].date() != parsed_dates[0]):
+            raise EdgarPipelineRunError(
+                "SEC submissions rows are not in unambiguous newest-first order"
+            )
+        if baseline.cutoff_accession_no is None:
+            boundary = count
+        else:
+            matches = [
+                index for index, value in enumerate(normalized_accessions)
+                if value == baseline.cutoff_accession_no
+            ]
+            if not matches:
+                return document  # vendored poller raises its boundary-missing fault
+            if len(matches) != 1:
+                raise EdgarPipelineRunError(
+                    "saved SEC submissions boundary is ambiguous"
+                )
+            boundary = matches[0]
+        for index in range(boundary):
+            accession = normalized_accessions[index]
+            form = str(forms[index]).strip()
+            primary = str(documents[index]).strip()
+            if not accession or not primary or form not in PROCESS_FORMS:
+                raise EdgarPipelineRunError(
+                    f"unsupported post-boundary SEC filing {accession or '<missing>'} "
+                    "blocks freshness"
+                )
+        return document
 
 
 @dataclass
@@ -225,10 +503,12 @@ class InProcessEdgarFetch:
         session_factory,
         settings,
         tickers: Iterable[str],
+        strict_tickers: Iterable[str],
         db_path,
         raw_store_root,
         audit_log,
         clock,
+        process_epoch,
         fetcher_factory,
     ) -> None:
         from ingest.edgar_brew import make_brew_fetch
@@ -236,9 +516,13 @@ class InProcessEdgarFetch:
         self._session_factory = session_factory
         self._settings = settings
         self._tickers = tuple(sorted(set(tickers)))
+        self._strict_tickers = frozenset(
+            str(ticker).strip().upper() for ticker in strict_tickers
+        )
         self._raw_store_root = Path(raw_store_root)
         self._audit_log = audit_log
         self._clock = clock
+        self._process_epoch = str(process_epoch or "")
         self._fetcher_factory = fetcher_factory
         # company_tickers.json is a full-market document. Resolve the static operator
         # watchlist at most once per UTC/clock day instead of re-downloading it every
@@ -266,6 +550,10 @@ class InProcessEdgarFetch:
                 self._cik_mapping_day = mapping_day
             else:
                 mapping = self._cik_mapping
+            strict_ciks = {
+                cik for ticker, cik in mapping.items()
+                if str(ticker).strip().upper() in self._strict_tickers
+            }
             _sync_watchlist_companies(
                 self._session_factory, mapping, clock=self._clock,
                 audit_log=self._audit_log,
@@ -278,6 +566,8 @@ class InProcessEdgarFetch:
                 raw_store=build_raw_store(self._settings, root=self._raw_store_root),
                 audit_log=self._audit_log,
                 clock=self._clock,
+                process_epoch=self._process_epoch,
+                strict_completeness_ciks=strict_ciks,
             )
             batch = self._reader(cursor, monotonic_now)
             complete = result.ok and result.ciks_polled == len(set(mapping.values()))
@@ -314,7 +604,7 @@ class InProcessEdgarFetch:
 
 def build_in_process_edgar_fetch(
     *, session_factory, settings, tickers, db_path, raw_store_root, audit_log, clock,
-    fetcher_factory=None,
+    process_epoch="", strict_tickers=(), fetcher_factory=None,
 ):
     """Build the scheduled adapter, or ``None`` when it has no bounded watchlist scope."""
     ticker_scope = tuple(sorted(set(tickers)))
@@ -327,10 +617,12 @@ def build_in_process_edgar_fetch(
         session_factory=session_factory,
         settings=settings,
         tickers=ticker_scope,
+        strict_tickers=strict_tickers,
         db_path=db_path,
         raw_store_root=raw_store_root,
         audit_log=audit_log,
         clock=clock,
+        process_epoch=process_epoch,
         fetcher_factory=fetcher_factory,
     )
 
@@ -365,6 +657,243 @@ def _prior_same_form(session_factory, filing) -> Any:
             .order_by(Filing.filing_date.desc(), Filing.accession_no.desc())
             .limit(1)
         ).scalars().first()
+
+
+def _filing_audit_hook(audit_log, raw_store):
+    """Return the adapter-owned atomic W-23 filing/raw binding hook.
+
+    ``filings/`` is pinned vendored source. Its ``on_filing`` seam is the supported extension
+    point, so cockpit-specific audit policy belongs here rather than in the vendored poller.
+    """
+    from orchestrator.state import EVENT_FILING_INGESTED
+
+    def _audit_filing(session, filing):
+        audit_log.append_in(
+            session,
+            EVENT_FILING_INGESTED,
+            actor="edgar",
+            refs={
+                "model": filing.__tablename__,
+                "row_id": filing.id,
+                "raw_ref": filing.raw_ref,
+            },
+            payload={
+                "cik": filing.cik,
+                "accession_no": filing.accession_no,
+                "form_type": filing.form_type.value,
+                "filing_date": filing.filing_date.isoformat(),
+                "detection_ts": filing.detection_ts.isoformat(),
+                "raw_content_hash": raw_store.stored_hash(filing.raw_ref),
+            },
+        )
+
+    return _audit_filing
+
+
+def backfill_filing_accession(
+    session_factory, *, cik: str, accession: str, fetcher, raw_store,
+    audit_log, clock: Clock = default_clock, anchor_store=None,
+):
+    """Re-fetch and atomically sign one exact historical SEC accession.
+
+    Normal polling deliberately baselines a newly watched issuer and skips already-present
+    rows.  This bounded operator path is the supported way to establish W-23 provenance for a
+    post-announcement target or a legacy unsigned row.  It searches only SEC's main submissions
+    document plus a finite number of SEC-declared archive shards, fetches the exact primary
+    document through the normal fair-access client, and never contacts a model or broker.
+    """
+    from sqlalchemy import select
+
+    from filings.edgar.fetch import archive_document_url, pad_cik, submissions_url
+    from filings.edgar.submissions_poll import PROCESS_FORMS, iter_recent_filings
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.filing import Filing, FormType
+
+    cik10 = pad_cik(cik)
+    accession = str(accession).strip()
+    if not accession or len(accession) > 25:
+        raise ValueError("historical filing accession is invalid")
+    main_url = submissions_url(cik10)
+    main = fetcher.get_json(main_url)
+    matches = [
+        row for row in iter_recent_filings(main, cik10) if row.accession == accession
+    ]
+    files = (main.get("filings") or {}).get("files") or []
+    if not matches and len(files) > _MAX_HISTORICAL_SUBMISSION_FILES:
+        raise EdgarPipelineRunError("SEC historical submissions shard limit exceeded")
+    base_url = main_url.rsplit("/", 1)[0]
+    for item in files if not matches else []:
+        name = str((item or {}).get("name") or "") if isinstance(item, dict) else ""
+        if _SUBMISSIONS_ARCHIVE_NAME.fullmatch(name) is None:
+            raise EdgarPipelineRunError("SEC historical submissions shard name is invalid")
+        archived = fetcher.get_json(f"{base_url}/{name}")
+        matches.extend(
+            row for row in iter_recent_filings(
+                {"cik": cik10, "filings": {"recent": archived}}, cik10
+            )
+            if row.accession == accession
+        )
+        if matches:
+            break
+    if len(matches) != 1:
+        raise EdgarPipelineRunError(
+            f"exact accession {accession!r} was not uniquely present in bounded SEC history"
+        )
+    source = matches[0]
+    if source.form not in PROCESS_FORMS or not source.primary_document:
+        raise EdgarPipelineRunError("historical filing is outside the supported form/document scope")
+    body = fetcher.get_bytes(
+        archive_document_url(cik10, accession, source.primary_document)
+    )
+    try:
+        raw_store.write(accession, body)
+    except FileExistsError:
+        if raw_store.resolve(accession) != body:
+            raise EdgarPipelineRunError(
+                "existing historical raw bytes disagree with the SEC response"
+            ) from None
+
+    with session_factory() as session, session.begin():
+        latest_anchor = anchor_store.latest() if anchor_store is not None else None
+        verified = (
+            audit_log.verify_session_against_anchor(session, *latest_anchor)
+            if latest_anchor is not None
+            else audit_log.verify_session(session)
+        )
+        if not verified.ok:
+            raise EdgarPipelineRunError(
+                f"audit chain invalid before historical filing import: {verified.error}"
+            )
+        existing = session.execute(
+            select(Filing).where(Filing.accession_no == accession)
+        ).scalar_one_or_none()
+        if existing is None:
+            filing = Filing(
+                cik=cik10,
+                accession_no=accession,
+                form_type=FormType(source.form),
+                filing_date=source.filing_date,
+                detection_ts=clock.now(),
+                raw_ref=accession,
+                primary_doc=source.primary_document,
+            )
+            session.add(filing)
+            session.flush()
+        else:
+            filing = existing
+            if (
+                filing.cik != cik10
+                or filing.form_type.value != source.form
+                or filing.filing_date != source.filing_date
+                or filing.raw_ref != accession
+                or filing.primary_doc != source.primary_document
+            ):
+                raise EdgarPipelineRunError(
+                    "legacy filing row disagrees with the re-fetched SEC metadata"
+                )
+        signed = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "filing_ingested")
+        ).scalars().all()
+        matches = [
+            event for event in signed
+            if (event.refs or {}).get("row_id") == filing.id
+            and (event.payload or {}).get("accession_no") == accession
+        ]
+        if matches:
+            expected_hash = raw_store.stored_hash(accession)
+
+            if any(
+                (event.refs or {}).get("model") != Filing.__tablename__
+                or (event.refs or {}).get("raw_ref") != accession
+                or (event.payload or {}).get("cik") != cik10
+                or (event.payload or {}).get("form_type") != filing.form_type.value
+                or (
+                    (event.payload or {}).get("filing_date") is not None
+                    and (event.payload or {}).get("filing_date")
+                    != filing.filing_date.isoformat()
+                )
+                or _as_utc((event.payload or {}).get("detection_ts"))
+                != _as_utc(filing.detection_ts)
+                or (event.payload or {}).get("raw_content_hash") != expected_hash
+                for event in matches
+            ):
+                raise EdgarPipelineRunError("existing signed filing binding is conflicting")
+            enriched = [
+                event for event in matches
+                if (event.payload or {}).get("filing_date") == filing.filing_date.isoformat()
+            ]
+            if len(enriched) > 1:
+                raise EdgarPipelineRunError("historical filing has conflicting enriched bindings")
+            if not enriched:
+                _filing_audit_hook(audit_log, raw_store)(session, filing)
+        else:
+            _filing_audit_hook(audit_log, raw_store)(session, filing)
+        session.expunge(filing)
+        return filing
+
+
+def _record_poll_completions(
+    session_factory, audit_log, clock, ciks: Iterable[str], *, process_epoch: str
+) -> None:
+    """Append durable per-CIK proof that one SEC poll completed without a hidden gap.
+
+    The mutable poll cursor is operational telemetry, not order authority.  W-23 consumes this
+    HMAC-chain event instead, together with the exact filing-event head it covered.  The event
+    is written only after submissions polling and deterministic extraction complete; a crash
+    before this transaction therefore leaves the strategy unavailable rather than blessing a
+    partially processed run.
+    """
+    from sqlalchemy import select
+
+    from filings.edgar.submissions_poll import pad_cik
+    from orchestrator.state import EVENT_EDGAR_POLL_COMPLETED, EVENT_FILING_INGESTED
+    from schemas.models.audit_entry import AuditEntry
+    from schemas.models.pollcursor import PollCursor
+
+    append_in = getattr(audit_log, "append_in", None)
+    if not callable(append_in):
+        raise EdgarPipelineRunError("EDGAR poll completion requires an audit log")
+    normalized = tuple(sorted({pad_cik(cik) for cik in ciks}))
+    if not normalized:
+        return
+    completed_at = clock.now()
+    with session_factory() as session, session.begin():
+        for cik in normalized:
+            baseline = _verified_poll_baseline_in(session, audit_log, cik)
+            cursor = session.execute(
+                select(PollCursor).where(PollCursor.cik == cik)
+            ).scalar_one_or_none()
+            filing_events = session.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type == EVENT_FILING_INGESTED)
+                .order_by(AuditEntry.seq.desc())
+            ).scalars().all()
+            filing_head = next(
+                (event.seq for event in filing_events
+                 if (event.payload or {}).get("cik") == cik),
+                0,
+            )
+            refs = {"cik": cik}
+            if baseline is not None:
+                refs.update({"model": baseline.__tablename__, "row_id": baseline.id})
+            append_in(
+                session,
+                EVENT_EDGAR_POLL_COMPLETED,
+                actor="edgar-pipeline",
+                refs=refs,
+                payload={
+                    "cik": cik,
+                    "process_epoch": process_epoch,
+                    "completed_at": completed_at.isoformat(),
+                    "baseline_accession": (
+                        None if baseline is None else baseline.cutoff_accession_no
+                    ),
+                    "cursor_accession": (
+                        None if cursor is None else cursor.last_accession_no
+                    ),
+                    "filing_event_seq": filing_head,
+                },
+            )
 
 
 def _persist_deltas(session_factory, deltas) -> int:
@@ -630,6 +1159,8 @@ def run_edgar_pipeline(
     raw_store: Any = None,
     audit_log: Any = None,
     clock: Clock = default_clock,
+    process_epoch: str = "",
+    strict_completeness_ciks: Iterable[str] = (),
     transport: Any = None,
 ) -> EdgarPipelineResult:
     """Poll SEC for ``ciks``, ingest new filings, and persist their cited deltas.
@@ -655,10 +1186,22 @@ def run_edgar_pipeline(
         log.info("EDGAR pipeline: empty CIK list — nothing to poll")
         return result
 
+    baseline_store = (
+        _VerifiedPollBaselineStore(session_factory, audit_log)
+        if audit_log is not None else None
+    )
+    poll_fetcher = (
+        _CompleteSubmissionsFetcher(
+            fetcher, baseline_store, strict_ciks=strict_completeness_ciks
+        )
+        if baseline_store is not None else fetcher
+    )
     poller = SubmissionsPoller(
-        fetcher, raw_store, session_factory, clock=clock, audit_log=audit_log,
+        poll_fetcher, raw_store, session_factory, clock=clock, audit_log=audit_log,
+        baseline_store=baseline_store,
         baseline_on_first_poll=audit_log is not None,
         max_new_filings_per_poll=getattr(settings, "sec_max_new_filings_per_poll", 25),
+        on_filing=_filing_audit_hook(audit_log, raw_store) if audit_log is not None else None,
     )
     # BUG-053: first contact with a CIK records the current feed position (an AUDITED
     # PollBaseline) instead of treating the issuer's whole recent window as new work —
@@ -703,6 +1246,7 @@ def run_edgar_pipeline(
     for filing in candidates:
         by_cik.setdefault(filing.cik, []).append(filing)
 
+    delta_failed_ciks: set[str] = set()
     for cik, filings in by_cik.items():
         from filings.edgar.fetch import SecFairAccessHalt, SecResourceLimitHalt
 
@@ -717,6 +1261,7 @@ def run_edgar_pipeline(
             )
         except (SecFairAccessHalt, SecResourceLimitHalt) as exc:
             result.poll_errors.append((cik, type(exc).__name__))
+            delta_failed_ciks.add(cik)
             log.warning("SEC halt during companyfacts enrichment; extraction fan-out stopped")
             break
         for filing in filings:
@@ -728,6 +1273,7 @@ def run_edgar_pipeline(
                 # once its complete deterministic extraction succeeds.
                 error = f"companyfacts:{facts_error}"
                 result.delta_errors.append((filing.accession_no, error))
+                delta_failed_ciks.add(cik)
                 _record_extraction_state(
                     session_factory, filing, status="error", error=error,
                     clock=clock, audit_log=audit_log,
@@ -754,6 +1300,7 @@ def run_edgar_pipeline(
             except Exception as exc:          # noqa: BLE001 - isolate one filing's failure
                 error = type(exc).__name__
                 result.delta_errors.append((filing.accession_no, error))
+                delta_failed_ciks.add(cik)
                 _record_extraction_state(
                     session_factory, filing, status="error", error=error,
                     clock=clock, audit_log=audit_log,
@@ -766,6 +1313,33 @@ def run_edgar_pipeline(
                 session_factory, filing, status="complete", error=None,
                 clock=clock, audit_log=audit_log,
             )
+
+    # A fair-access/resource halt is global: no CIK from that run receives a freshness grant.
+    # Otherwise preserve per-CIK isolation while excluding any issuer with a baseline, item,
+    # polling, or extraction error.  The durable events are the only liveness authority used by
+    # the merger strategy; an in-memory status string can never substitute for them.
+    if audit_log is not None and not halted:
+        from filings.edgar.submissions_poll import pad_cik
+
+        failed_ciks = set(delta_failed_ciks)
+        for label, _reason in result.poll_errors:
+            candidate = str(label).split(":", 1)[0]
+            try:
+                failed_ciks.add(pad_cik(candidate))
+            except ValueError:
+                continue
+        successful_ciks = [
+            cik for cik, poll in polled.items()
+            if cik not in failed_ciks and not poll.errors
+        ]
+        try:
+            _record_poll_completions(
+                session_factory, audit_log, clock, successful_ciks,
+                process_epoch=process_epoch,
+            )
+        except Exception as exc:  # noqa: BLE001 - missing authority makes the run degraded
+            result.poll_errors.append(("poll-watermark", type(exc).__name__))
+            log.warning("EDGAR poll completion watermark failed: %r", exc)
 
     log.info("%s", result.summary())
     return result

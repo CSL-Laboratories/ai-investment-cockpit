@@ -254,6 +254,26 @@ class Settings(BaseSettings):
     def watchlist_symbols(self) -> frozenset[str]:
         return frozenset(self.watchlist.split(",")) if self.watchlist else frozenset()
 
+    # W-23 strategy authority is deliberately narrower than the general awareness/order
+    # watchlist.  A filing, model, or discovery feed cannot enroll a merger target: the
+    # operator must place it in BOTH lists and restart the process.  Keeping a distinct env
+    # name also makes an empty strategy universe the safe production default.
+    # Env: COCKPIT_MERGER_WATCHLIST=TARGET,...
+    merger_watchlist: str = ""
+
+    @field_validator("merger_watchlist", mode="before")
+    @classmethod
+    def _validate_merger_watchlist(cls, value):
+        return normalize_watchlist(value)
+
+    @property
+    def merger_watchlist_symbols(self) -> frozenset[str]:
+        return (
+            frozenset(self.merger_watchlist.split(","))
+            if self.merger_watchlist
+            else frozenset()
+        )
+
     # Approval authority is loaded once at startup from the dedicated non-secret env name and
     # frozen into a private set.  ``operator_ids_config`` is excluded from dumps/repr; changing
     # that raw field later cannot change the authorization seam consumed by bridge.operators.

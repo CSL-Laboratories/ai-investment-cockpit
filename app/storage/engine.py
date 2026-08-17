@@ -44,11 +44,21 @@ def _apply_additive_migrations(engine) -> None:
     """
     if engine.dialect.name != "sqlite":
         return
-    columns = {
-        column["name"] for column in inspect(engine).get_columns("portfolio_snapshot")
+    migrations = {
+        "portfolio_snapshot": {
+            "equity": "ALTER TABLE portfolio_snapshot ADD COLUMN equity NUMERIC(18, 2)",
+        },
+        "risk_decision": {
+            "execution_verdict": (
+                "ALTER TABLE risk_decision ADD COLUMN execution_verdict JSON"
+            ),
+        },
     }
-    if "equity" not in columns:
-        with engine.begin() as connection:
-            connection.execute(text(
-                "ALTER TABLE portfolio_snapshot ADD COLUMN equity NUMERIC(18, 2)"
-            ))
+    for table_name, additions in migrations.items():
+        columns = {
+            column["name"] for column in inspect(engine).get_columns(table_name)
+        }
+        for column_name, statement in additions.items():
+            if column_name not in columns:
+                with engine.begin() as connection:
+                    connection.execute(text(statement))

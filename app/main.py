@@ -174,6 +174,38 @@ def _startup_reconcile(state, *, paper=None) -> None:
         )
 
 
+def _startup_market_data(*, market_data=None) -> dict:
+    """Hydrate completed daily bars before proposal services become reachable.
+
+    The scheduled refresh is 07:30 ET, while an operator may legitimately start or restart the
+    process later. Cron does not replay a job registered after its trigger, so relying on that
+    single tick leaves ADV/volatility absent until the following day. The market-data service
+    owns caching and per-symbol fail-closed faults; startup merely invokes the same idempotent
+    refresh used by the scheduler and reports its result.
+    """
+    if market_data is None:
+        return {"skipped": "market_data_not_wired"}
+    try:
+        result = market_data.refresh_daily_bars()
+    except Exception as exc:  # noqa: BLE001 - awareness still boots; missing metrics deny orders
+        log.warning(
+            "RW-14 startup daily-bar hydration unavailable: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return {"failed": ["startup_hydration"], "error": type(exc).__name__}
+    failed = list(result.get("failed", []))
+    if failed:
+        log.warning("RW-14 startup daily-bar hydration failed for symbols: %s", failed)
+    else:
+        log.info(
+            "RW-14 startup daily-bar hydration ready: updated=%s cached=%s",
+            len(result.get("updated", [])),
+            len(result.get("cached", [])),
+        )
+    return result
+
+
 def _urllib_json_get(url: str, *, headers=None, params=None, timeout: float = 20.0):
     """Stdlib JSON GET. Injected everywhere as ``http_get`` so no ingest module imports a client.
 
@@ -376,6 +408,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
                           finra_row_mapper=None, clock=None, session_factory=None,
                           audit_log=None, watchlist=(), cockpit_db_path=None,
                           parquet_root="data/raw", edgar_clock=None,
+                          edgar_process_epoch="",
+                          merger_watchlist=(),
                           edgar_fetcher_factory=None):
     """W20 + RW-01 — build the production ingest fetch CLOSURES. All I/O lives in these
     factories, never in the pure ingest modules (which take an injected ``fetch``).
@@ -459,6 +493,8 @@ def build_ingest_fetchers(settings, *, http_get=None, ws_connect=None,
             raw_store_root=Path(parquet_root) / "sec",
             audit_log=audit_log,
             clock=edgar_clock,
+            process_epoch=edgar_process_epoch,
+            strict_tickers=merger_watchlist,
             fetcher_factory=edgar_fetcher_factory,
         )
     elif sec_user_agent:
@@ -586,7 +622,7 @@ def build_operator_deliver(settings):
 
 
 def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root="data/raw",
-                          deliver=None):
+                          deliver=None, edge_provider=None):
     """Compose the real Alpaca PAPER seam behind the existing guarded ``OrderGateway``.
 
     Missing credentials leave the service absent and visible as ``501 not_wired``; they never
@@ -659,6 +695,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         market_data=market_data,
         order_reconciler=order_reconciler,
         deliver=deliver,
+        edge_provider=edge_provider,
         require_performance=True,
     )
 
@@ -760,6 +797,7 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     from orchestrator.halt import default_halt_path, ensure_halt_dir
     from orchestrator.state import OrchestratorState
     from storage.engine import create_all, make_engine, make_session_factory
+    from strategies.merger_edge import CashMergerEdgeProvider
     from workflows.services import build_services
 
     settings = get_settings()
@@ -790,9 +828,19 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     def watchlist_fn():
         return configured_watchlist
 
+    # DEC-03/W-23 selects a deterministic source without granting it order authority. The
+    # same instance is injected into draft and approval-time verification; an empty strategy
+    # watchlist or absent evidence leaves it visibly unavailable.
+    edge_provider = CashMergerEdgeProvider(
+        state,
+        raw_root=parquet_root,
+        strategy_watchlist=settings.merger_watchlist_symbols,
+    )
+    state.edge_provider = edge_provider
+
     paper = build_paper_execution(
         state, client=paper_client, watchlist_fn=watchlist_fn, parquet_root=parquet_root,
-        deliver=deliver,
+        deliver=deliver, edge_provider=edge_provider,
     )
     # RW-15: settle broker-visible orders before the completeness report. No provisioned paper
     # transport means unresolved submits remain visible; production never substitutes fake history.
@@ -802,12 +850,15 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
                               deliver=deliver, parquet_root=parquet_root,
                               quote_fn=paper.quote if paper is not None else None,
                               book_fn=market_data.book if market_data is not None else None,
+                              observation_fn=(market_data.observation
+                                              if market_data is not None else None),
                               metrics_fn=(market_data.metrics
                                           if market_data is not None else None),
                               verify_params=(market_data.verify_params
                                              if market_data is not None else None),
                               holdings_fn=(paper.holdings_symbols if paper is not None else None),
-                              watchlist_fn=watchlist_fn)
+                              watchlist_fn=watchlist_fn,
+                              edge_provider=edge_provider)
     app = create_app(
         state,
         services=services,
@@ -833,6 +884,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
         session_factory=state.session_factory, audit_log=state.audit,
         watchlist=configured_watchlist, cockpit_db_path=edgar_db_path,
         parquet_root=parquet_root, edgar_clock=state.clock,
+        edgar_process_epoch=state.process_epoch,
+        merger_watchlist=settings.merger_watchlist_symbols,
         edgar_fetcher_factory=edgar_fetcher_factory,
     )
     app.state.ingest = build_ingest_runner(state, parquet_root=parquet_root, fetchers=fetchers,
@@ -866,6 +919,7 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
 
     state, app, services = compose()
     ingest = app.state.ingest
+    _startup_market_data(market_data=app.state.market_data)
     build_scheduler(
         state,
         services=services,

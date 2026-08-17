@@ -93,6 +93,7 @@ def quant_status(state) -> dict:
     market_data = getattr(state, "market_data", None)
     market_status = market_data.status() if market_data is not None else None
     verify_params = market_data.verify_params if market_data is not None else None
+    edge_provider = getattr(state, "edge_provider", None)
     return {
         "engine": "available",
         "strategies": list(STRATEGIES),
@@ -112,7 +113,11 @@ def quant_status(state) -> dict:
             ),
             "require_quant_verdict": market_data is not None,
             "require_net_edge": market_data is not None,
-            "expected_edge_source": "unavailable — deterministic strategy source not selected",
+            "expected_edge_source": (
+                edge_provider.status_text()
+                if edge_provider is not None
+                else "unavailable — deterministic strategy source not selected"
+            ),
             "impact_coefficient_y": (
                 None if verify_params is None else str(verify_params.impact_coefficient_y)
             ),

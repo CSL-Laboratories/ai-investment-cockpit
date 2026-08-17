@@ -50,10 +50,27 @@ class MarketMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketObservation:
+    """One atomically published quote/book/raw-evidence tuple."""
+
+    symbol: str
+    quote: dict
+    book: BookSnapshot
+    raw_ref: str
+    content_hash: str
+
+    @property
+    def identity(self) -> tuple[str, int, int, str, str]:
+        return (self.symbol, self.book.seq, self.book.ts, self.raw_ref, self.content_hash)
+
+
+@dataclass(frozen=True, slots=True)
 class _QuoteSlot:
     quote: dict
     exchange_time: datetime
     book: BookSnapshot
+    raw_ref: str
+    content_hash: str
 
 
 def parse_exchange_time(value) -> datetime:
@@ -242,6 +259,8 @@ class MarketDataService:
             "exchange_ts": str(quote["ts"]),
             "exchange_ts_ns": book.ts,
             "seq": book.seq,
+            "price": str(quote["price"]),
+            "spread_pct": str(quote["spread_pct"]),
             "bid": str(quote["bid"]),
             "ask": str(quote["ask"]),
             "bid_size": int(quote["bid_size"]),
@@ -270,44 +289,93 @@ class MarketDataService:
         with self._lock:
             self._audited_raw.add(identity)
 
-    def _persist_quote(self, quote: dict, book: BookSnapshot) -> None:
+    def _require_raw_binding(
+        self, *, kind: str, day: str, key: str, digest: str, count: int
+    ) -> None:
+        """Accept a pre-existing cache only when it was signed before this read."""
+        if self._audit is None:
+            return
+        verified_events = getattr(self._audit, "verified_events", None)
+        if verified_events is None:
+            raise MarketDataError("audit log cannot verify pre-existing raw snapshots")
+        raw_ref = f"market-data://{day}/{key}"
+        matches = [
+            event for event in verified_events(EVENT_MARKET_DATA_RAW)
+            if (event.refs or {}).get("raw_ref") == raw_ref
+        ]
+        expected = (kind, day, key, digest, count)
+        bindings = {
+            (
+                (event.payload or {}).get("kind"),
+                (event.payload or {}).get("date"),
+                (event.payload or {}).get("raw_key"),
+                (event.payload or {}).get("content_hash"),
+                (event.payload or {}).get("count"),
+            )
+            for event in matches
+        }
+        if bindings != {expected}:
+            raise MarketDataError("pre-existing raw snapshot lacks one unambiguous signed binding")
+        with self._lock:
+            self._audited_raw.add((day, key))
+
+    def _persist_quote(self, quote: dict, book: BookSnapshot) -> tuple[str, str]:
         root = self._raw_root / "quotes"
         stamp = datetime.fromtimestamp(book.ts / 1_000_000_000, tz=timezone.utc)
         day = stamp.date().isoformat()
-        key = f"{book.symbol}-quote-{book.ts}"
+        key = f"{book.symbol}-quote-{book.ts}-{book.seq}"
+        raw = self._raw_quote(quote, book)
+        created = False
         try:
-            _, digest = write_snapshot(root, day, key, [self._raw_quote(quote, book)])
+            _, digest = write_snapshot(root, day, key, [raw])
+            created = True
         except FileExistsError:
-            digest = content_hash(read_snapshot(root, day, key))
-        self._bind_raw(kind="quote", day=day, key=key, digest=digest, count=1)
+            existing = read_snapshot(root, day, key)
+            if existing != [raw]:
+                raise MarketDataError("pre-existing quote snapshot conflicts with the observation")
+            digest = content_hash(existing)
+            self._require_raw_binding(
+                kind="quote", day=day, key=key, digest=digest, count=1
+            )
+        if created:
+            self._bind_raw(kind="quote", day=day, key=key, digest=digest, count=1)
+        return f"market-data://{day}/{key}", digest
 
     def poll_quotes(self) -> dict:
         """Poll every symbol once. Faults are retained as fail-closed freshness state."""
-        now = self._now()
+        poll_started_at = self._now()
         symbols = self._refresh_symbols()
         updated: list[str] = []
         failed: list[str] = []
         for symbol in symbols:
             try:
                 quote = dict(self._client.latest_quote(symbol))
+                observed_at = self._now()
                 stamp = parse_exchange_time(quote.get("ts"))
-                if stamp > now:
+                if stamp > observed_at:
                     raise MarketDataError("quote timestamp is in the future")
                 with self._lock:
                     seq = self._seq[symbol] + 1
                 book = self._book(symbol, quote, stamp, seq)
+                bid = _positive_decimal(quote.get("bid"), field="bid")
+                ask = _positive_decimal(quote.get("ask"), field="ask")
+                price = (bid + ask) / Decimal("2")
+                spread_pct = Decimal("100") * (ask - bid) / price
                 normalized = dict(quote)
                 normalized.update({
                     "symbol": symbol,
+                    "price": price,
+                    "spread_pct": spread_pct,
                     "ts_ns": book.ts,
-                    "age_s": (now - stamp).total_seconds(),
+                    "age_s": (observed_at - stamp).total_seconds(),
                 })
-                slot = _QuoteSlot(normalized, stamp, book)
+                raw_ref, digest = self._persist_quote(normalized, book)
+                normalized.update({"raw_ref": raw_ref, "content_hash": digest})
+                slot = _QuoteSlot(normalized, stamp, book, raw_ref, digest)
                 with self._lock:
                     self._slots[symbol] = slot
                     self._seq[symbol] = seq
                     self._faults.pop(symbol, None)
-                self._persist_quote(normalized, book)
                 from orchestrator.quant_ws import engine_snapshot
 
                 self._snapshot_source.publish(
@@ -318,21 +386,28 @@ class MarketDataService:
                 with self._lock:
                     self._faults[symbol] = "quote_unavailable"
                 failed.append(symbol)
-        return {"updated": updated, "failed": failed, "at": now.isoformat()}
+        return {"updated": updated, "failed": failed, "at": poll_started_at.isoformat()}
 
-    def quote(self, symbol: str) -> dict:
+    def observation(self, symbol: str) -> MarketObservation:
         clean = str(symbol).strip().upper()
         now = self._now()
         with self._lock:
             slot = self._slots.get(clean)
             fault = self._faults.get(clean)
-        if slot is None or fault is not None:
-            raise MarketDataError(f"no current valid quote for {clean}")
-        out = dict(slot.quote)
-        out["age_s"] = (now - slot.exchange_time).total_seconds()
+            if slot is None or fault is not None:
+                raise MarketDataError(f"no current valid quote for {clean}")
+            out = dict(slot.quote)
+            book = slot.book
+            raw_ref = slot.raw_ref
+            digest = slot.content_hash
+            exchange_time = slot.exchange_time
+        out["age_s"] = (now - exchange_time).total_seconds()
         if out["age_s"] < 0:
             raise MarketDataError(f"quote timestamp is in the future for {clean}")
-        return out
+        return MarketObservation(clean, out, book, raw_ref, digest)
+
+    def quote(self, symbol: str) -> dict:
+        return self.observation(symbol).quote
 
     def book(self, symbol: str) -> BookSnapshot | None:
         clean = str(symbol).strip().upper()
@@ -407,7 +482,17 @@ class MarketDataService:
             try:
                 if path.exists():
                     rows = read_snapshot(root, today.isoformat(), symbol)
+                    completed = self._completed_bars(rows, today)
+                    if not isinstance(rows, list) or len(completed) != len(rows):
+                        raise MarketDataError("cached daily bars contain invalid or incomplete rows")
                     digest = content_hash(rows)
+                    self._require_raw_binding(
+                        kind="daily_bars",
+                        day=today.isoformat(),
+                        key=symbol,
+                        digest=digest,
+                        count=len(rows),
+                    )
                     disposition = cached
                 else:
                     rows = self._completed_bars(
@@ -417,13 +502,13 @@ class MarketDataService:
                     _, digest = write_snapshot(root, today.isoformat(), symbol, rows)
                     rows = read_snapshot(root, today.isoformat(), symbol)
                     disposition = updated
-                self._bind_raw(
-                    kind="daily_bars",
-                    day=today.isoformat(),
-                    key=symbol,
-                    digest=digest,
-                    count=len(rows),
-                )
+                    self._bind_raw(
+                        kind="daily_bars",
+                        day=today.isoformat(),
+                        key=symbol,
+                        digest=digest,
+                        count=len(rows),
+                    )
                 metric = calculate_daily_metrics(symbol, rows)
                 with self._lock:
                     self._metrics[symbol] = metric

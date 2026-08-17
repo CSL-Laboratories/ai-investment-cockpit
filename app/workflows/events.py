@@ -43,7 +43,12 @@ from core.ids import new_id
 from ingest.normalize import content_hash
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
-from storage.parquet_store import read_snapshot, verify_snapshot, write_snapshot
+from storage.parquet_store import (
+    SnapshotIntegrityError,
+    read_snapshot,
+    read_verified_snapshot,
+    write_snapshot,
+)
 from workflows.constants import EVENT_INGEST_BATCH
 
 
@@ -270,15 +275,17 @@ def resolve_raw(parquet_root, raw_ref: str, *, state=None, row=None) -> dict:
     if state is not None:
         expected = _audit_bound_hash(state, key)
         try:
-            ok = verify_snapshot(parquet_root, date, key, expected)
+            records = read_verified_snapshot(parquet_root, date, key, expected)
         except FileNotFoundError as exc:
             raise RawUnavailableError(f"raw snapshot missing for {raw_ref!r}") from exc
-        if not ok:
+        except SnapshotIntegrityError:
             raise RawIntegrityError(f"snapshot {date}/{key} does not match audit-bound hash")
-    try:
-        records = read_snapshot(parquet_root, date, key)
-    except FileNotFoundError as exc:
-        raise RawUnavailableError(f"raw snapshot missing for {raw_ref!r}") from exc
+
+    else:
+        try:
+            records = read_snapshot(parquet_root, date, key)
+        except FileNotFoundError as exc:
+            raise RawUnavailableError(f"raw snapshot missing for {raw_ref!r}") from exc
     if idx >= len(records):
         raise RawIntegrityError(f"raw index {idx} out of range for {date}/{key}")
     try:
