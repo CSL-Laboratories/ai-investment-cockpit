@@ -23,15 +23,15 @@ canonical invariant list, and nothing else restates it.
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
   sequences advancing, valid audit/performance state, zero feed errors, and the exact empirical
   gates that remain open. It is evidence, not a paper-MVP completion claim.
-- `fix/w22-paper-bringup-bugs` contains `dab983b` (legacy risk-verdict migration) and `18e3cd9`
-  (post-response quote-time validation). `BUG-102`/`BUG-103` now hydrate daily bars at startup
+- PR #36 merged the W-22 bring-up repairs: `dab983b` (legacy risk-verdict migration) and
+  `18e3cd9` (post-response quote-time validation). `BUG-102`/`BUG-103` hydrate daily bars at startup
   and send Alpaca the bounded historical interval its API requires. `BUG-104` pins audit rows
   and their signed high-water to one SQLite read snapshot so a concurrent ingest commit cannot
   create a false audit-failure alert. A late-start live check populated quotes and metrics for
-  all 11 symbols; the complete local suite is now 2,186 passed / 1 skipped with Ruff clean, and
-  cross-platform CI remains pending.
+  all 11 symbols. Those repairs now have the same green six-job Ubuntu/Windows/macOS × Python
+  3.11/3.12 matrix as PR #36.
 - The operator selected constrained cash-only, long-target merger arbitrage for `DEC-03` on
-  2026-08-14. `W-23` is locally implemented on `work/w23-cash-merger-edge`; its immutable evidence,
+  2026-08-14. `W-23` merged in PR #36; its immutable evidence,
   conservative calibration, and activation workflow are in [[runbooks/w23-cash-merger-edge]].
   Three independent review passes found additional merge blockers; local remediation now closes
   cache/provenance, audit/database and raw-filesystem snapshots, EDGAR baseline/completeness and
@@ -40,22 +40,24 @@ canonical invariant list, and nothing else restates it.
   verifier is implemented and adversarially reviewed. The first PR #36 matrix passed five of six
   jobs; Windows 3.11 exposed `BUG-105`, a transient Parquet staging-handle cleanup failure. Its
   byte-image read/retry repair passed the full replacement Ubuntu/Windows/macOS × Python
-  3.11/3.12 matrix. Real empirical evidence remains pending, so W-23 stays fail-closed. See
+  3.11/3.12 matrix. `W-24` is claimed for the separately reviewed deterministic semantic
+  verifier; real prospective evidence remains pending, so W-23 stays fail-closed. See
   [[evidence/w23-cash-merger-edge-2026-08-14]].
 
-- `origin/main` includes PR #35. The old
+- `origin/main` includes PR #36 at merge commit `2cbb6d5`. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
   matrix jobs stopped before running a step because GitHub reported failed recent account
   payments or a spending limit that needs to be increased. That is missing attestation, not a
   repository test failure.
-- `RW-17` and BUG-041–045, BUG-047–051, BUG-098, and BUG-099 are merged. `RW-11` and
+- `RW-17` and BUG-041–045, BUG-047–051, and BUG-098–105 are merged. `RW-11` and
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
   entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
-  expected edge remains intentionally unavailable and fail-closed until a deterministic strategy
-  source is separately selected and reviewed. RW-15 and W-22 are merged in PRs #34/#35. The
-  current bring-up tree passes 2,185 tests / 1 skipped with Ruff clean. Cross-platform CI, real
+  expected edge remains intentionally unavailable and fail-closed until W-24 supplies verified
+  semantic authority. RW-15 and W-22 are merged in PRs #34/#35; W-23
+  and the bring-up fixes are merged in PR #36. The PR #36 tree passes 2,240 tests / 1 skipped
+  locally with Ruff clean and its complete six-job matrix is green. Real
   Alpaca reconciliation, and the two market-day W-22 proof remain evidence gates;
   [[runbooks/w22-paper-mvp]] is the operator handoff.
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →

@@ -2,7 +2,7 @@
 title: W-23 cash-merger evidence and activation runbook
 type: runbook
 status: live
-last-verified: 2026-08-14
+last-verified: 2026-08-16
 related:
   - PLAN
   - REGISTER
@@ -16,7 +16,8 @@ W-23 implements the deterministic expected-edge source selected by `DEC-03`. It 
 authorize paper mode, live capital, autonomous trading, or deal discovery. The provider has no
 broker import or route to `OrderGateway`; it can return only a verified `EdgeEstimate` or `None`.
 The production composition currently returns `None`: the separately reviewed semantic verifier
-needed to bind merger terms and empirical labels to raw filings has not been implemented.
+needed to bind merger terms and empirical labels to raw filings is claimed as `W-24` but has not
+been implemented.
 
 ## Current safe state
 
@@ -24,8 +25,8 @@ needed to bind merger terms and empirical labels to raw filings has not been imp
 the existing mega-cap awareness watchlist is not merger evidence, and there is intentionally no
 runtime/configuration bypass around the closed semantic-evidence gate. Therefore
 `/quant/status` reports `cash_merger_30d.v1` as unavailable and new opening Orders remain
-fail-closed. Keep the detached W-22 read-only soak on its pinned revision while this branch is
-reviewed and tested.
+fail-closed. PR #36 is merged with a green six-job matrix; that code result does not satisfy the
+remaining semantic or empirical gates.
 
 Do not invent a cohort, copy probabilities from a fund, treat raw spread as edge, or enroll a
 company merely because it is already in `COCKPIT_WATCHLIST`. An actual eligible target must be
@@ -206,8 +207,8 @@ they do not open the production semantic gate or create order authority.
   --document C:\evidence\target-deal.json
 ```
 
-Do **not** add a W-23 target or activate paper trading from these artifacts. A future, separately
-scoped safety change must first implement the independent semantic verifier described above and
+Do **not** add a W-23 target or activate paper trading from these artifacts. `W-24`, a separately
+scoped safety change, must first implement the independent semantic verifier described above and
 repeat adversarial review. Only after that work, offline tests, and cross-platform CI are green
 may an eligible target be added to both guarded non-secret settings:
 

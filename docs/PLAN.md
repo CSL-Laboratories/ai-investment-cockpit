@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-14
+last-verified: 2026-08-16
 ---
 
 # The plan
@@ -21,11 +21,11 @@ last-verified: 2026-08-14
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #35 and the 2026-08-14 bring-up evidence.
+state/lifecycle reconciled through PR #36 and the 2026-08-14 bring-up evidence.
 
 ---
 
-## 0. Current state — 2026-08-14
+## 0. Current state — 2026-08-16
 
 The first live W-22 bring-up snapshot is recorded in
 [[evidence/w22-paper-mvp-2026-08-14]]. At 11:17 PT the `read_only` process had a valid audit
@@ -33,7 +33,7 @@ chain, no breaker/watch-only state, healthy signed paper-equity sampling, zero f
 all 11 Alpaca IEX book sequences at 78. That is operational evidence, not trading-performance
 evidence: there were no proposals eligible for opening execution and no paper fills.
 
-Two local bring-up defects are fixed on `fix/w22-paper-bringup-bugs`: additive migration of the
+PR #36 merged the W-22 bring-up fixes: additive migration of the
 legacy risk-verdict column (`BUG-100`) and post-response quote timestamp validation (`BUG-101`).
 `BUG-102` and the underlying Alpaca request defect `BUG-103` are locally closed: startup now
 hydrates completed daily bars, and the client supplies the bounded historical `start` required
@@ -44,11 +44,12 @@ from one SQLite snapshot, preventing a legitimate concurrent ingest commit from 
 false one-minute truncation result and paper-performance `watch_only` alert. Genuine hash,
 sequence, watermark, truncation, and erasure failures remain fail-closed.
 
-`origin/main` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
+`origin/main` at `2cbb6d5` contains the WP0–WP9 foundation, the contained QT engine, the fail-closed calendar
 boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation), event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
 fail-closed transaction-cost/net-edge gate (`W-21`), RW-15 paper reconciliation, W-22's audited
-paper loop, and BUG-040–051/097–099. The local bring-up branch adds BUG-100–104.
+paper loop, W-23's production-closed deterministic cash-merger edge machinery, and
+BUG-040–051/097–105.
 
 **What works now:** scheduled ingest and awareness; raw/cited evidence storage; schema-gated
 triage, briefs, interrogation, and proposal drafting; deterministic risk/mode/approval controls;
@@ -56,14 +57,17 @@ human-approved Alpaca paper submission through `OrderGateway`; Discord/API statu
 surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/daily-bar
 inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
-**What is not complete:** RW-15's real broker-status evidence; cross-platform CI; W-22's two-day
-unattended paper proof; a deterministic expected-edge source; event-driven paper autonomy
+**What is not complete:** RW-15's real broker-status evidence; the older packages' missing
+cross-platform attestations; W-22's two-day unattended paper proof; the independent semantic
+verifier and real prospective evidence needed to activate W-23; event-driven paper autonomy
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-**Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, and W-22 in
-PR #35. The local `fix/w22-paper-bringup-bugs` working tree passes 2,186 tests / 1 skipped on
-Windows with Ruff clean after focused adversarial regressions and live 11-symbol validation. The requested
+**Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
+PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
+skipped on Windows with Ruff clean after focused adversarial regressions and live 11-symbol
+validation; its replacement Ubuntu/Windows/macOS × Python 3.11/3.12 matrix passed all six jobs.
+The requested
 OpenCode DeepSeek Pro/Flash external audit could not attest: the Pro workspace reported
 insufficient balance and alternate read-only reviewer calls timed out without output or
 repository changes. All six PR #31 matrix jobs stopped
@@ -73,14 +77,13 @@ pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** review/push the W-22 bring-up fixes, restore
-cross-platform CI, and collect the named RW-11/RW-14/RW-15/RW-19 evidence. The operator moved
-`DEC-03` into the active paper-MVP scope on 2026-08-14;
-[[research/dec03-strategy-selection-2026-08-14]] records the candidate comparison and proposed
-`W-23` boundary. Until the operator selects the strategy and `W-23` supplies a separately
-reviewed deterministic edge source, opening paper orders remain fail-closed. Run W-22's first and second
-qualifying market days only on verified inputs. `DEC-05` must be resolved before any `RW-18`
-authentication, and RW-13 remains blocked until the M1–M4.5 gates actually pass.
+**Immediate sequence:** implement and adversarially review `W-24`, the independent deterministic
+semantic verifier that W-23 deliberately left unavailable, while collecting the named
+RW-11/RW-14/RW-15/RW-19 evidence. Real prospective cohort and current-deal evidence remain a
+separate empirical gate; fixtures cannot activate the provider. Opening paper orders remain
+fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
+only on verified inputs. `DEC-05` must be resolved before any `RW-18` authentication, and RW-13
+remains blocked until the M1–M4.5 gates actually pass.
 
 ---
 
@@ -463,7 +466,7 @@ Startup and the one-minute scheduler both reach the same service, and `_no_broke
 retired. Windows: 2,165 passed / 1 skipped; Ruff clean. The real resting/partial/terminal and
 lost-response Alpaca paper gate remains online evidence, as does the cross-platform matrix.
 
-### M4.5 — Deterministic paper edge source (`DEC-03` → proposed `W-23`)
+### M4.5 — Deterministic paper edge source (`DEC-03` → `W-23` → `W-24`)
 
 `DEC-03` is now in active paper-MVP scope because M4's mechanics cannot create an opening
 `Order` while the trusted expected edge is unavailable. The decision and implementation remain
@@ -485,6 +488,46 @@ schema-gated fact extraction and never supplies probability, failure price, or r
 package requires reachability tests, a fresh adversarial review, and Ubuntu/Windows/macOS CI.
 Selecting the strategy or completing `W-23` grants neither paper mode nor live authority; the
 ordinary risk → mode → human approval → `OrderGateway` chain remains mandatory.
+
+**W-23 merge checkpoint (2026-08-16):** PR #36 merged the provider, immutable evidence records,
+draft/approval-time reachability, three independent adversarial rounds, and `BUG-105`. The final
+local gate was 2,240 passed / 1 skipped with Ruff clean; the replacement six-job platform/Python
+matrix is green. Production still returns no edge because operator-authored terms and historical
+labels are not independent semantic authority.
+
+**`W-24` intake — claimed on `work/w24-merger-semantic-verifier`:**
+
+1. **Operator change:** W-23 may report a verified edge only when a deterministic verifier binds
+   every authority-bearing deal term and cohort label to immutable raw sources, proves the
+   complete declared candidate universe, and proves predictions were committed before outcomes.
+   Missing, retrospective, incomplete, ambiguous, or self-labelled evidence remains visibly
+   unavailable. No mode is promoted automatically.
+2. **Extended path:** replace only `CashMergerEdgeProvider._verify_semantic_authority`'s hard
+   refusal with an injected, model-free verifier; extend the existing merger evidence schemas,
+   read-only provisioning tool, composition/status seam, and W-23 raw/audit snapshot rules. No
+   code or I/O enters `app/risk/`, and no verifier receives a broker or order capability.
+3. **Retirement:** the hard-coded `SemanticEvidenceUnavailable` production stub is removed in
+   the same package only after the injected production verifier is composed. Research fixtures
+   remain unable to select a permissive verifier.
+4. **Reachability proof:** composed tests must fail if production can return an edge without a
+   complete source manifest, an externally witnessed pre-outcome commitment, source-derived
+   outcome/deal-term claims, or a fresh final verification at both draft and approval time.
+5. **Package ID:** `W-24` only. Capturing a real cohort/current target is evidence, not code and
+   not permission to weaken minimum sample, precision, chronology, freshness, or W-21 cost gates.
+6. **Platforms:** pure Python/SQLAlchemy/`Path` code over existing SQLite, raw-store, Parquet, and
+   audit seams. No subprocess, model runtime, MCP, broker, platform branch, or new credential.
+   Ubuntu/Windows/macOS × Python 3.11/3.12 CI remains mandatory.
+7. **Size:** target below 1,000 production LOC plus tests. If complete-universe acquisition needs
+   a new external feed or prospective collector, stop at a separately claimed evidence/source
+   package; W-24 must not encode a guessed source contract.
+
+The verifier's trust root is source evidence, not an operator assertion: positive deal terms and
+outcomes require exact cited spans or structured fields from signed raw filings; negative and
+exclusion claims require coverage of the complete declared document set; cohort membership
+requires a manifest of every source item in the frozen selection interval; and prediction
+commitment must be witnessed outside the mutable cockpit store before any outcome source
+timestamp. Historical rows created after their outcomes can test mechanics but can never satisfy
+production authority.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
@@ -597,7 +640,7 @@ mode ladder may still fall to `watch_only`; no implementation may weaken that fa
 Dependency order:
 
 `{RW-11 evidence → RW-12, RW-19 evidence → DEC-07, DEC-05 → RW-18}` run as bounded evidence
-lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → DEC-03 → W-23 → RW-13 → W16 → beta
+lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → DEC-03 → W-23 → W-24 → RW-13 → W16 → beta
 stabilization → W17 → W18 → W19`. RW-14's online acceptance remains a parallel evidence lane
 and cannot close on an assumed entitlement/feed.
 
@@ -610,9 +653,9 @@ may run alongside it.
 
 | Phase | Purpose | Primary packages/evidence | Exit condition |
 |---|---|---|---|
-| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22`; after operator selection, `W-23`; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
+| **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22`; after operator selection, `W-23 → W-24`; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
 | **2. Online testing and evidence** | Prove platforms, credentials, vendor contracts, live data, and broker outcomes | cross-platform CI; `RW-11`, `RW-19`/`DEC-07`, `RW-14`, `RW-15`; `DEC-05 → RW-18`; SEC-11 witness activation | every required CI/live-day/precision/reconciliation/source-contract gate recorded; no mocked result substitutes for an online gate |
-| **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` plus the `DEC-03`-selected `W-23` edge source on the M1–M4.5 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
+| **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` plus the `DEC-03`-selected `W-23` edge source and `W-24` semantic authority on the M1–M4.5 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
 | **4. Production beta** | Exercise dynamic paper autonomy under real operating conditions without capital | `RW-13 → W16` | replay parity/idempotency, bounded gap/flood behavior, and ≥4 consecutive market weeks of enabled dynamic-paper soak with fault injection |
 | **5. Stabilization and bugfixing** | Freeze features and remove defects exposed by beta | beta findings, open BUG/OPS/SEC residuals, platform/restart/recovery regressions | no open P0/high defects; no unexplained order/reconciliation/audit gaps; clean full matrix and repeated recovery drills |
 | **6. Full-scale deployment** | Roll out the operator-owned system in separately authorized authority rungs | ≥6-month paper evidence; `RW-18`; all pre-live gates; then `W17 → W18 → W19` | each rung has its own authorization, soak, adversarial review, reconciliation proof, witness proof, and rollback/kill evidence |
@@ -624,9 +667,9 @@ be developed, locally committed, and pushed for backup without opening a PR; the
 workflow runs on pull requests and pushes to `main`, not ordinary branch pushes. This is a cost
 control, not a gate waiver.
 
-The remaining implementation order is `W-21 → RW-15 → W-22 → DEC-03 → W-23`. `DEC-03` is
-an operator decision, not permission to implement an arbitrary signal; `W-23` remains blocked
-until that selection is explicit. When a later package genuinely needs
+The completed implementation spine is `W-21 → RW-15 → W-22 → DEC-03 → W-23`; `W-24` is
+the next claimed package because W-23 intentionally kept operator-authored semantic claims
+non-executable. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;
 then rebase/update it onto `main`. A stacked branch is not evidence that its predecessor is
