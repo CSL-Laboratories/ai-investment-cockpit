@@ -49,6 +49,26 @@ canonical invariant list, and nothing else restates it.
   skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
+- `BUG-106` is committed on `work/bug106-edgar-baseline-timestamp` at `5dea321` plus evidence
+  commit `ae2f312`. Signed audit time is now the EDGAR baseline timestamp authority, with a
+  bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
+  ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped
+  with a valid audit chain at sequence 10,040 and zero proposals/orders. Windows: 2,248 passed /
+  1 skipped; Ruff clean. See [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
+- `RW-19` retained evidence now covers two completed 11-symbol IEX/SIP sessions and three live
+  IEX stream samples. Combined IEX recall is about 75% at the 10/25/50 bps measurement
+  thresholds and the maximum observed one-second burst is 1,114 frames. This confirms feed
+  non-equivalence but does not resolve `DEC-07`; reconnect/backfill, broader regimes, news
+  identity, and measured-burst persistence/triage remain open.
+- The stopped-system preflight is green for controlled background `read_only` bring-up: loopback
+  port free, HALT absent, audit chain valid, zero proposal/risk/approval/order rows, 11 awareness
+  symbols, required feed/operator credentials present, and operational Discord delivery channels
+  configured. The merger watchlist remains empty and the private Discord audit-witness channel id
+  is absent, so expected edge, SEC-11, and paper opening orders correctly remain unavailable.
+- GitHub's 2026-08-17 incident prevented publication. Four clean local branches and their exact
+  publish/merge sequence are recorded in
+  [[evidence/github-outage-session-handoff-2026-08-17]]. Do not start `RW-13` or a new production
+  package before that queue is reconciled into `main`.
 
 - `origin/main` includes PR #36 at merge commit `2cbb6d5`. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
@@ -113,8 +133,12 @@ defects got fixed twice on two branches.
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
 | [[runbooks/w23-cash-merger-edge]] | Deterministic cash-merger evidence schemas, conservative calibration, and separate paper-activation gate |
+| [[runbooks/w24-merger-semantic-verifier]] | Prospective semantic-authority contract, external witness, cohort workflow, and fail-closed activation boundary |
 | [[evidence/w22-paper-mvp-2026-08-14]] | Dated first-day status, live-feed observations, and unclosed evidence gates |
 | [[evidence/w23-cash-merger-edge-2026-08-14]] | W-23 local implementation, attack→fix findings, tests, and unclosed activation gates |
+| [[evidence/w24-merger-semantic-verifier-2026-08-17]] | W-24 implementation, adversarial findings, local gates, and remaining prospective evidence |
+| [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]] | BUG-106 deterministic repair contract and bounded composed live confirmation |
+| [[evidence/github-outage-session-handoff-2026-08-17]] | Exact local branch/commit inventory, stopped-system preflight, merge order, and paste-ready next-session prompt |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 

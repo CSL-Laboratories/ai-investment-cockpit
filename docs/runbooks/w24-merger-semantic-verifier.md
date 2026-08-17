@@ -52,10 +52,12 @@ token plus `COCKPIT_AUDIT_LOG_CHANNEL_ID`; there is no new secret.
 
 ## Current safe state
 
-As of 2026-08-17, the operator environment has no `COCKPIT_AUDIT_LOG_CHANNEL_ID` and no real
-prospective selection commitment. Composition still installs `CashMergerSemanticVerifier`, but its
-witness is absent and status remains unavailable. This is correct. Do not switch to a fake/local
-witness, reuse W-23 retrospective fixtures, or add an override.
+As of 2026-08-17, the operator environment has no `COCKPIT_AUDIT_LOG_CHANNEL_ID`, an empty merger
+strategy watchlist, and no real prospective selection commitment. Composition still installs
+`CashMergerSemanticVerifier`, but its witness and eligible execution universe are absent and
+status remains unavailable. This is correct. Do not switch to a fake/local witness, reuse W-23
+retrospective fixtures, copy the broader awareness watchlist into strategy authority, or add an
+override.
 
 The local implementation gate is 2,266 passed / 1 skipped with Ruff clean. This is code evidence,
 not a substitute for the external witness, prospective cohort, PR review, or cross-platform CI;

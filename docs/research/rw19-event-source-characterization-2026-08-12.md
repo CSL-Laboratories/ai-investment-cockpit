@@ -2,7 +2,7 @@
 title: RW-19 event-source characterization — measurement ledger
 type: research
 status: live
-last-verified: 2026-08-14
+last-verified: 2026-08-17
 ---
 
 # RW-19 event-source characterization
@@ -143,9 +143,9 @@ Additional bounded commands use the same evidence contract:
 
 | Spike | State | Evidence required before closure |
 |---|---|---|
-| Operator-universe IEX/SIP | first explicit-universe session captured | Repeat completed-session captures until each candidate threshold has a stable distribution; price SIP against measured false negatives |
-| Market WS | first 60-second live sample captured | Repeat across regimes; add corrections, reconnect trace, REST identity/backfill limits, and IEX connection-limit behavior |
-| News WS ↔ REST | pending | Article/update identity equivalence, correction behavior, reconnect gaps, burst distribution, history coverage |
+| Operator-universe IEX/SIP | two completed sessions captured; non-equivalence confirmed | Repeat across regimes until each candidate threshold has a stable distribution; price SIP against measured false negatives |
+| Market WS | three 60-second live samples captured; maximum observed one-second burst 1,114 frames | Add corrections, deliberate reconnect trace, REST identity/backfill limits, and IEX connection-limit behavior |
+| News WS ↔ REST | one 180-second sample captured but insufficient | Article/update identity equivalence, correction behavior, reconnect gaps, burst distribution, history coverage |
 | SEC discovery | declared UA configured; submissions polling healthy | Re-verify official Latest Filings Atom/RSS, measure latency/cadence under the declared UA, and retain submissions as correctness/backfill |
 | Paper order events ↔ REST | pending safe paper activity | Fill/partial/cancel/reject ordering and latency, accessible REST history, injected event loss and terminal convergence; no live order |
 | SQLite / triage load | pending recorded stream | Replay recorded distributions through one writer; measure contention/tick duration before setting queue/coalescing bounds |
@@ -198,11 +198,57 @@ This is a real operator-universe density/latency sample. Reconnect/gap injection
 identity, multi-session distributions, and SQLite/triage replay under the measured 509-frame
 one-second burst remain open.
 
+## Repeated operator-universe measurements — 2026-08-17
+
+All 13 retained RW-19 manifests re-verified against their SHA-256 inventories with zero
+failures before these results were used. The account capability probe again returned HTTP 200
+for a live IEX quote and HTTP 403 for the equivalent live SIP quote. The entitlement boundary
+therefore remained unchanged on the measurement date.
+
+### Second completed-session IEX/SIP capture — session 2026-08-14
+
+The hash-verified schema-v2 manifest is
+`data/evidence/rw19/2026-08-14/20260817T144920Z/manifest.json` (ignored raw evidence, retained
+locally). Across the 11-symbol operator universe, the regular session reported IEX volume of
+13,287,057 and SIP volume of 390,437,575, a **3.4031%** fraction. Same-minute close error was
+0.769 / 5.983 / 13.038 / 36.633 bps at p50 / p95 / p99 / maximum.
+
+| Regular-session threshold | SIP triggers | IEX hits | Recall | False negatives |
+|---|---:|---:|---:|---:|
+| 10 bps | 1,033 | 782 | **75.70%** | 251: 4 missing IEX minutes, 247 present below threshold |
+| 25 bps | 258 | 199 | **77.13%** | 59: all present below threshold |
+| 50 bps | 58 | 47 | **81.03%** | 11: all present below threshold |
+| 100 bps | 7 | 6 | 85.71% | sample too small for a conclusion |
+
+Combining the two completed operator-universe sessions (2026-08-13 and 2026-08-14) produces
+29,994,911 IEX-reported shares versus 836,896,774 SIP-reported shares, a **3.5841%** fraction.
+The combined 10 / 25 / 50 bps recall is 1,689/2,242 (**75.33%**), 440/587 (**74.96%**), and
+101/134 (**75.37%**) respectively. At 10 bps, 529 of 553 false negatives had an IEX minute
+whose move remained below the SIP threshold; only 24 were missing-minute cases. The two-day
+result strengthens the non-equivalence finding but is not a stable-regime study and does not
+by itself select a subscription or trigger threshold.
+
+### Repeated live IEX and news captures — 2026-08-17
+
+Two additional bounded 60-second market captures retained 14,988 and 17,336 unique data
+frames. The first contained 14,135 quotes, 842 trades, and 11 bars with a maximum one-second
+burst of 901 frames. The second contained 16,540 quotes, 785 trades, and 11 bars with a maximum
+one-second burst of 1,114 frames. Both reported zero invalid records, duplicate frames, or
+corrected identities. These observations raise the measured replay/load target above the first
+509-frame burst, but they still do not measure a deliberate disconnect, reconnect loss, or REST
+backfill identity.
+
+A bounded 180-second news capture observed one WebSocket identity and zero REST identities.
+That sample verifies the capture path but cannot establish stream/REST recall, correction
+semantics, or quiet-day behavior.
+
 ## DEC-07 status
 
-**Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. The first
-explicit operator-universe session shows material IEX false negatives at small one-minute
-movement thresholds, but the sample is only one day and reconnect/backfill behavior is still
-unmeasured. No production adapter may encode either “IEX is sufficient” or “SIP is required”
-from this sample. The next evidence is repeated completed sessions plus a deliberate
-reconnect/REST-backfill comparison over this same universe.
+**Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. Two
+completed operator-universe sessions show material, repeatable IEX false negatives at small
+one-minute movement thresholds, and three bounded live captures establish a current observed
+burst floor. The sample still spans only two adjacent sessions, while reconnect/backfill and
+measured-burst SQLite/triage behavior remain untested. No production adapter may encode either
+“IEX is sufficient” or “SIP is required” from this evidence. The next evidence is broader
+regime coverage plus a deliberate reconnect/REST-backfill comparison and replay at or above the
+observed 1,114-frame one-second burst over this same universe.

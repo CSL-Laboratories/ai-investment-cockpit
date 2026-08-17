@@ -2,19 +2,20 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: live
-last-verified: 2026-08-13
+last-verified: 2026-08-17
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
 > **[LIVE]** STILL LIVE — the SEC-* findings register. Claims go in [[REGISTER]]; the write-ups stay here.
 
-> **Current deployment posture (2026-08-13):** the deterministic security mechanisms and
+> **Current deployment posture (2026-08-17):** the deterministic security mechanisms and
 > regression suite are locally green, but the cockpit remains paper-first and not production
 > live. SEC-11 witness activation remains the chief P0 pre-live blocker; loss/staleness inputs,
 > real reconciliation, dynamic-paper evidence, low-privilege host provisioning, and all
-> broker/live gates remain open as recorded below. The latest GitHub matrix jobs did not start
-> because the Actions overage budget was exhausted, so cross-platform attestation for PRs
-> #27–#29 is pending.
+> broker/live gates remain open as recorded below. PR #36's replacement six-job matrix is green;
+> older named attestations and the local BUG-106/W-24 branches remain pending as recorded in
+> [[REGISTER]]. GitHub's 2026-08-17 service incident prevented those local branches from being
+> published and reviewed; it does not waive their matrix gates.
 
 # Security hardening backlog
 
@@ -46,6 +47,9 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   commits it onto the active development branch. This removes branch collisions
 >   but changes no trust decision: `out_of_domain=False` remains excluded from
 >   `latest()`, Discord remains the only qualifying witness, and SEC-11 stays OPEN.
+>   **2026-08-17 deployment check:** the Discord bot credential is provisioned but
+>   `COCKPIT_AUDIT_LOG_CHANNEL_ID` is absent. The valid local chain/mirror therefore still has no
+>   out-of-domain trust authority; no paper/live/autonomous promotion is permitted.
 > - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
 >   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
 >   (credential starvation — ACTIVATION pending the low-priv account + launcher;
