@@ -2,6 +2,8 @@
 write-once, and post-ingest edit detection via verify_snapshot."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -37,6 +39,38 @@ def test_write_once(tmp_path):
     write_snapshot(tmp_path, "2026-07-06", "AAPL", RECORDS)
     with pytest.raises(FileExistsError):
         write_snapshot(tmp_path, "2026-07-06", "AAPL", RECORDS)
+
+
+def test_writer_closes_os_files_before_arrow_reads(tmp_path, monkeypatch):
+    original = pq.read_table
+    sources = []
+
+    def reject_os_path(source, *args, **kwargs):
+        sources.append(source)
+        assert isinstance(source, pa.BufferReader)
+        return original(source, *args, **kwargs)
+
+    monkeypatch.setattr(pq, "read_table", reject_os_path)
+    write_snapshot(tmp_path, "2026-07-06", "AAPL", RECORDS)
+    assert len(sources) == 2
+
+
+def test_staging_cleanup_retries_a_transient_reader_lock(tmp_path, monkeypatch):
+    original = Path.unlink
+    blocked_attempts = 0
+
+    def transient_lock(path, *args, **kwargs):
+        nonlocal blocked_attempts
+        if path.name.startswith(".AAPL-") and blocked_attempts < 2:
+            blocked_attempts += 1
+            raise PermissionError("simulated transient Windows reader lock")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", transient_lock)
+    path, digest = write_snapshot(tmp_path, "2026-07-06", "AAPL", RECORDS)
+    assert blocked_attempts == 2
+    assert verify_snapshot(tmp_path, "2026-07-06", "AAPL", digest) is True
+    assert path.exists()
 
 
 def test_post_ingest_edit_detected(tmp_path):

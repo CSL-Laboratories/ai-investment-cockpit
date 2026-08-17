@@ -13,10 +13,14 @@ import hmac
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+
+_UNLINK_RETRY_DELAYS = (0.01, 0.05, 0.1, 0.25, 0.5)
 
 
 def content_hash(records) -> str:
@@ -28,6 +32,23 @@ def snapshot_path(root, date: str, symbol: str) -> Path:
     return Path(root) / date / f"{symbol}.parquet"
 
 
+def _read_records(path: Path) -> list[dict]:
+    """Parse a byte image after its OS file handle has been deterministically closed."""
+    raw = path.read_bytes()
+    return pq.read_table(pa.BufferReader(raw)).to_pylist()
+
+
+def _unlink_staged(path: Path) -> None:
+    """Remove a staging link after short-lived Windows readers release it."""
+    for delay in _UNLINK_RETRY_DELAYS:
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    path.unlink(missing_ok=True)
+
+
 def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[Path, str]:
     p = snapshot_path(root, date, symbol)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -36,7 +57,7 @@ def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[P
     staged = Path(staged_name)
     try:
         pq.write_table(pa.Table.from_pylist(records), staged)
-        staged_digest = content_hash(pq.read_table(staged).to_pylist())
+        staged_digest = content_hash(_read_records(staged))
         # A same-filesystem hard link is an atomic create-if-absent on Ubuntu, Windows,
         # and macOS.  Unlike an exists-check followed by pq.write_table, it can never
         # overwrite or bless a file raced into the authority-bearing cache path.
@@ -45,11 +66,11 @@ def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[P
         except FileExistsError as exc:
             raise FileExistsError(f"snapshot already exists (write-once): {p}") from exc
         if not hmac.compare_digest(
-            content_hash(pq.read_table(p).to_pylist()), staged_digest
+            content_hash(_read_records(p)), staged_digest
         ):
             raise RuntimeError(f"snapshot changed during publication: {p}")
     finally:
-        staged.unlink(missing_ok=True)
+        _unlink_staged(staged)
     # BUG-094: hash what was PERSISTED, not the pre-persist Python objects. Pyarrow infers
     # one column type, so a mixed int/float column round-trips int 5 as float 5.0 — hashing
     # the inputs made a legitimately-written snapshot fail verify_snapshot later (a false
@@ -60,7 +81,7 @@ def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[P
 
 
 def read_snapshot(root, date: str, symbol: str) -> list[dict]:
-    return pq.read_table(snapshot_path(root, date, symbol)).to_pylist()
+    return _read_records(snapshot_path(root, date, symbol))
 
 
 class SnapshotIntegrityError(RuntimeError):
@@ -76,8 +97,7 @@ def read_verified_snapshot(
     the two opens.  Reading the bytes once pins one opened file object; parsing and hashing
     that in-memory image makes a later pathname substitution irrelevant.
     """
-    raw = snapshot_path(root, date, symbol).read_bytes()
-    records = pq.read_table(pa.BufferReader(raw)).to_pylist()
+    records = _read_records(snapshot_path(root, date, symbol))
     if not hmac.compare_digest(content_hash(records), expected_hash):
         raise SnapshotIntegrityError(
             f"snapshot {date}/{symbol} does not match its authority-bound hash"

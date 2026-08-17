@@ -2,7 +2,7 @@
 title: W-23 deterministic cash-merger edge — local implementation evidence
 type: evidence
 status: live
-last-verified: 2026-08-14
+last-verified: 2026-08-16
 related:
   - REGISTER
   - research/dec03-strategy-selection-2026-08-14
@@ -15,8 +15,9 @@ related:
 
 Branch: `work/w23-cash-merger-edge`.
 PR #36 head reviewed: `5115e2e5dae585298e2414268f30722f1adb5ee1`.
-Second-review remediation: uncommitted working-tree diff based on that head; the operator has
-not requested a commit or push.
+Second-review remediation committed and pushed as
+`0f4af5329b33315a82c7357157a476414f2ff3e1`. The `BUG-105` cross-platform repair described
+below is the subsequent validation artifact.
 
 This record proves local implementation and Windows regression only. It does **not** prove
 strategy profitability, empirical calibration quality, an eligible current deal, cross-platform
@@ -179,6 +180,20 @@ blocker, marked all nine canonical invariants pass, and independently reproduced
 suite result below. Its merge recommendation is code-approved only after this working tree is
 committed/pushed and the Windows/Ubuntu/macOS CI matrix is green; W-23 activation remains blocked.
 
+## First cross-platform matrix and BUG-105
+
+The six-job PR #36 matrix for `0f4af53` passed Ubuntu, macOS, and Windows 3.12 on both supported
+Python versions where applicable; Windows 3.11 alone failed after 2,227 passing tests. PyArrow
+25.0.1 had read a staging Parquet file by pathname, and the subsequent cleanup hit `WinError 32`
+while that hard link was transiently open. The published snapshot's integrity check had passed,
+but cleanup raised and correctly failed the run.
+
+`BUG-105` now reads staged, published, ordinary, and authority-verified Parquet records from a
+byte image whose OS handle is closed before PyArrow receives a `BufferReader`. Staging cleanup
+also retries only `PermissionError` for a bounded 0.91 seconds; a persistent denial still raises.
+Regressions prove the writer never hands PyArrow an OS pathname and that a transient lock is
+retried without weakening write-once publication or hash verification.
+
 ## Local gates
 
 Run from `app/` on Windows with `TMP=TEMP=C:\t` and `COCKPIT_ENV_FILE` pointed at a nonexistent
@@ -195,6 +210,10 @@ test path so the operator's ignored `app/.env` could not affect defaults:
   operator tooling: 118 passed, 1 third-party deprecation warning;
 - final Windows full suite after the malformed-feed identity and boundary hardening:
   **2,238 passed, 1 skipped**, 5 third-party deprecation warnings;
+- exact failed dependency reproduction target, Windows Python 3.11 + PyArrow 25.0.1:
+  2,000 consecutive snapshot publications passed after `BUG-105`;
+- final Windows full suite including `BUG-105`: **2,240 passed, 1 skipped**,
+  5 third-party deprecation warnings;
 - `ruff check .`: clean;
 - `ruff check ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean.
@@ -209,7 +228,8 @@ evidence.
 
 ## Remaining gates
 
-1. Required Windows/Ubuntu/macOS CI matrix on the remediation commit.
+1. Replacement Windows/Ubuntu/macOS CI matrix on the `BUG-105` repair. The first remediation
+   matrix passed five of six jobs; only Windows 3.11 failed as described above.
 2. Separately scoped implementation and adversarial review of an independent semantic verifier
    for complete-universe selection, pre-outcome predictions, ground-truth outcomes, and cited deal
    terms. W-23 is production-unavailable until then.

@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-14
+last-verified: 2026-08-16
 ---
 
 # Docs index
@@ -17,7 +17,7 @@ last-verified: 2026-08-14
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-14
+## Current repository snapshot — 2026-08-16
 
 - The first dated W-22 bring-up record is
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
@@ -37,8 +37,10 @@ canonical invariant list, and nothing else restates it.
   cache/provenance, audit/database and raw-filesystem snapshots, EDGAR baseline/completeness and
   restart freshness, calibration chronology, and composed order races. Operator-authored cohort
   labels and deal terms remain deliberately non-executable until a separate independent semantic
-  verifier is implemented and adversarially reviewed. Cross-platform CI and real empirical
-  evidence remain pending, so W-23 stays fail-closed. See
+  verifier is implemented and adversarially reviewed. The first PR #36 matrix passed five of six
+  jobs; Windows 3.11 exposed `BUG-105`, a transient Parquet staging-handle cleanup failure. Its
+  byte-image read/retry repair is locally green and awaits the replacement matrix. Real empirical
+  evidence also remains pending, so W-23 stays fail-closed. See
   [[evidence/w23-cash-merger-edge-2026-08-14]].
 
 - `origin/main` includes PR #35. The old
