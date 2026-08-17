@@ -85,6 +85,16 @@ unconfigured-default tests:
 - `ruff check . ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean before documentation reconciliation; rerun before commit.
 
+After BUG-106 merged to `origin/main` in PR #37, W-24 merged that base and reconciled the two
+predicted status-document conflicts. The combined tree passed 126 focused EDGAR/W-24/witness/
+composition tests, then **2,274 passed / 1 skipped** in the full sanitized Windows suite, with
+Ruff clean. Production code merged automatically; only `docs/README.md` and `docs/REGISTER.md`
+required manual reconciliation.
+
+All six PR #38 Ubuntu/Windows/macOS × Python 3.11/3.12 jobs then stopped in 3–4 seconds before
+running a step. GitHub annotated them with failed recent account payments or a spending limit
+that must be increased. This is missing cross-platform attestation, not a code-test failure.
+
 The warning set is unchanged third-party FastAPI/Starlette, AnyIO/Starlette, and Python `audioop`
 deprecation output; no test warning indicates a W-24 control failure.
 
@@ -101,7 +111,8 @@ the service was not left running.
 
 ## Remaining gates
 
-1. Reviewed PR and green Ubuntu/Windows/macOS × Python 3.11/3.12 matrix.
+1. Runnable green Ubuntu/Windows/macOS × Python 3.11/3.12 matrix; PR #38 is merged, but its
+   billing-blocked no-step jobs do not provide cross-platform attestation.
 2. Configure the private audit channel and prove exact-message Discord publish/read retention.
 3. Prospectively commit a real complete ≥30-deal cohort and wait for all outcome horizons and
    strict post-horizon EDGAR coverage; retrospective W-23 fixtures cannot satisfy this gate.

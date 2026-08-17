@@ -18,7 +18,25 @@ GitHub reported a broad incident affecting Git operations, pull requests, APIs, 
 during this session. Work therefore stopped at clean local commits. Nothing in this record treats
 the outage as a test failure or waives CI, review, or empirical evidence.
 
-## Authoritative starting point
+## Publication outcome
+
+GitHub recovered and the recorded sequence was executed without rewriting public history:
+
+1. BUG-106 merged in PR #37 (`6e07ac3`).
+2. W-24 was updated from that base and merged in PR #38 (`db4e46d`).
+3. RW-19 was updated from that base and merged in PR #39 (`4219ca9`).
+4. `docs/20260817-offline-session-handoff` was then updated from PR #39 as the final
+   documentation-only reconciliation.
+
+All six PR #38 matrix jobs stopped in 3–4 seconds without running a step. GitHub's annotation
+cited failed recent account payments or the spending limit, so cross-platform CI remains a
+missing attestation rather than a code-test failure.
+
+The sections below retain the outage-time branch inventory, recovery procedure, and paste-ready
+prompt as historical evidence. They are not the current execution queue. The remaining work is
+the named online/empirical evidence in [[../PLAN]] and [[../REGISTER]]; `RW-13` remains blocked.
+
+## Historical starting point
 
 `origin/main` was last fetched at PR #36 merge `2cbb6d5`. Do not start a new production package.
 Publish and merge the local branches below first, one at a time, and preserve `read_only` mode.
@@ -83,9 +101,10 @@ This is sufficient for a controlled background `read_only` bring-up. It is not s
 opening paper order, paper-MVP completion, live capital, `review_live`, `auto_veto`, or
 `auto_full`.
 
-## Publish and merge sequence
+## Historical publish and merge sequence
 
-Wait until GitHub reports Git operations, pull requests, APIs, and Actions operational. Then:
+This was the operator-approved recovery sequence and has now been executed through RW-19, with
+this handoff branch as the final reconciliation:
 
 1. Fetch `origin`; confirm `origin/main` has not moved beyond an unreviewed dependency.
 2. Push `work/bug106-edgar-baseline-timestamp`, open a small PR, run the six-job matrix, review,
@@ -101,7 +120,10 @@ Wait until GitHub reports Git operations, pull requests, APIs, and Actions opera
 Prefer merging current `origin/main` into the topic branch if avoiding rewritten public history.
 Do not force-push unless the operator intentionally chooses a rebase and verifies the lease.
 
-## Next-session paste-ready prompt
+## Historical next-session paste-ready prompt
+
+The following prompt was prepared during the outage and is retained for audit context. Do not
+reuse it as current state; use [[../PLAN]] and [[../REGISTER]] instead.
 
 ```text
 Repository: C:\Users\Lucas\Documents\GitHub\ai-investment-cockpit

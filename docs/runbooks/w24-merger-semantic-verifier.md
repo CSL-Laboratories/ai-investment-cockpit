@@ -59,9 +59,10 @@ status remains unavailable. This is correct. Do not switch to a fake/local witne
 retrospective fixtures, copy the broader awareness watchlist into strategy authority, or add an
 override.
 
-The local implementation gate is 2,266 passed / 1 skipped with Ruff clean. This is code evidence,
-not a substitute for the external witness, prospective cohort, PR review, or cross-platform CI;
-see [[evidence/w24-merger-semantic-verifier-2026-08-17]].
+The implementation merged in PR #38. Its final BUG-106-integrated Windows gate is 2,274 passed /
+1 skipped with Ruff clean. This is code evidence, not a substitute for the external witness,
+prospective cohort, or cross-platform CI; see
+[[evidence/w24-merger-semantic-verifier-2026-08-17]].
 
 The minimum evaluation horizon means a qualifying real 30-deal cohort cannot be completed on the
 same day it is selected. Background/read-only and named live-feed evidence can run now; opening

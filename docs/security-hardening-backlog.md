@@ -13,9 +13,9 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 > live. SEC-11 witness activation remains the chief P0 pre-live blocker; loss/staleness inputs,
 > real reconciliation, dynamic-paper evidence, low-privilege host provisioning, and all
 > broker/live gates remain open as recorded below. PR #36's replacement six-job matrix is green;
-> older named attestations and the local BUG-106/W-24 branches remain pending as recorded in
-> [[REGISTER]]. GitHub's 2026-08-17 service incident prevented those local branches from being
-> published and reviewed; it does not waive their matrix gates.
+> BUG-106 and W-24 merged in PRs #37/#38, and the repeated RW-19 measurements merged in PR #39.
+> Their older named attestations and empirical gates remain pending as recorded in [[REGISTER]].
+> GitHub's 2026-08-17 service incident delayed publication but did not waive any matrix gate.
 
 # Security hardening backlog
 
