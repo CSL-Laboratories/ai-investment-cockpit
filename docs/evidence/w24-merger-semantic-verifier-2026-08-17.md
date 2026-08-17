@@ -85,6 +85,12 @@ unconfigured-default tests:
 - `ruff check . ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean before documentation reconciliation; rerun before commit.
 
+After BUG-106 merged to `origin/main` in PR #37, W-24 merged that base and reconciled the two
+predicted status-document conflicts. The combined tree passed 126 focused EDGAR/W-24/witness/
+composition tests, then **2,274 passed / 1 skipped** in the full sanitized Windows suite, with
+Ruff clean. Production code merged automatically; only `docs/README.md` and `docs/REGISTER.md`
+required manual reconciliation.
+
 The warning set is unchanged third-party FastAPI/Starlette, AnyIO/Starlette, and Python `audioop`
 deprecation output; no test warning indicates a W-24 control failure.
 

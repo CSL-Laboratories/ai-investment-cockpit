@@ -50,8 +50,14 @@ canonical invariant list, and nothing else restates it.
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
 
-- `origin/main` includes PR #36 at merge commit `2cbb6d5`. The old
-  `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
+- `origin/main` includes BUG-106 in PR #37 at merge `6e07ac3`, on top of PR #36 at `2cbb6d5`.
+  Production EDGAR baseline timestamps now take their
+  authority from the signed audit event, and narrowly bounded legacy rows reconcile once through
+  a signed repair. A real `read_only` composed run repaired all 11 legacy rows, ingested one
+  filing with four deltas, then completed a clean 11/11 retry with the audit chain valid and zero
+  proposals, approvals, or orders. The PR #37 six-job matrix was running at merge time; see
+  [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
+- The old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
   branches are stale history, not merge candidates.
 - RW-14 merged with 2,121 passed / 1 skipped locally on Windows and Ruff clean. All six PR #31
   matrix jobs stopped before running a step because GitHub reported failed recent account

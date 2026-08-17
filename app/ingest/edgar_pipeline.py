@@ -54,6 +54,7 @@ _BASELINE_EVENTS = frozenset({
     "poll-baseline-advanced",
     "poll-baseline-touched",
 })
+_LEGACY_BASELINE_CLOCK_SKEW_SECONDS = 1.0
 
 
 class EdgarInProcessStatus(str, Enum):
@@ -90,6 +91,12 @@ def _as_utc(value) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _is_legacy_baseline_clock_skew(row_value, event_value) -> bool:
+    """Recognize only BUG-106's small, forward-moving double clock sample."""
+    skew = (_as_utc(event_value) - _as_utc(row_value)).total_seconds()
+    return 0 < skew <= _LEGACY_BASELINE_CLOCK_SKEW_SECONDS
 
 
 def _verified_poll_baseline_in(session, audit_log, cik: str):
@@ -141,14 +148,50 @@ def _verified_poll_baseline_in(session, audit_log, cik: str):
         elif payload.get("cutoff_accession_no") != cutoff:
             raise EdgarPipelineRunError("EDGAR baseline touch does not match signed state")
     latest = transitions[-1] if transitions else None
-    if (
-        established is None
-        or latest is None
-        or cutoff != row.cutoff_accession_no
-        or _as_utc(established.created_at) != _as_utc(row.established_at)
-        or _as_utc(latest.created_at) != _as_utc(row.updated_at)
-    ):
+    if established is None or latest is None or cutoff != row.cutoff_accession_no:
         raise EdgarPipelineRunError("mutable EDGAR baseline diverges from signed history")
+    already_reconciled = any(
+        (event.payload or {}).get("timestamp_reconciliation") == "BUG-106"
+        for event in transitions
+    )
+    try:
+        established_matches = (
+            _as_utc(established.created_at) == _as_utc(row.established_at)
+        )
+        updated_matches = _as_utc(latest.created_at) == _as_utc(row.updated_at)
+        repairable = not already_reconciled and (
+            (established_matches or _is_legacy_baseline_clock_skew(
+                row.established_at, established.created_at
+            ))
+            and (updated_matches or _is_legacy_baseline_clock_skew(
+                row.updated_at, latest.created_at
+            ))
+        )
+    except (TypeError, ValueError):
+        repairable = False
+        established_matches = False
+        updated_matches = False
+    if not established_matches or not updated_matches:
+        if not repairable:
+            raise EdgarPipelineRunError("mutable EDGAR baseline diverges from signed history")
+        # BUG-106 migration: pre-fix rows sampled the poller clock immediately before
+        # AuditLog sampled its signed clock. Rebuild only those narrowly bounded,
+        # forward-moving timestamp fields from verified authority. The repair is itself a
+        # signed touch in the same transaction; cutoff or identity divergence still fails.
+        repaired = audit_log.append_in(
+            session,
+            "poll-baseline-touched",
+            actor="edgar-baseline-repair",
+            refs={"model": row.__tablename__, "row_id": row.id, "cik": cik10},
+            payload={
+                "cutoff_accession_no": cutoff,
+                "timestamp_reconciliation": "BUG-106",
+                "established_at": established.created_at.isoformat(),
+            },
+        )
+        row.established_at = established.created_at
+        row.updated_at = repaired.created_at
+        session.flush()
     return row
 
 
@@ -198,11 +241,18 @@ class _VerifiedPollBaselineStore:
             )
             session.add(row)
             session.flush()
-            self._audit.append_in(
+            event = self._audit.append_in(
                 session, "poll-baseline-established", actor="submissions-poller",
                 refs=self._refs(row),
                 payload={"cutoff_accession_no": cutoff_accession_no},
             )
+            # BUG-106: AuditLog owns the signed timestamp. A real clock advances between
+            # the poller's ``now`` sample and append_in's sample, so persisting ``now`` made
+            # every production baseline differ from its signed history by milliseconds.
+            # Keep the provisional values for the non-null insert, then bind the domain row
+            # to the returned event inside this same transaction. Do not relax verification.
+            row.established_at = event.created_at
+            row.updated_at = event.created_at
             self._expected[cik10] = cutoff_accession_no
             return True
 
@@ -230,10 +280,11 @@ class _VerifiedPollBaselineStore:
                     "previous_cutoff_accession_no": previous,
                     "cutoff_accession_no": cutoff_accession_no,
                 }
-            self._audit.append_in(
+            event = self._audit.append_in(
                 session, event_type, actor="submissions-poller",
                 refs=self._refs(row), payload=payload,
             )
+            row.updated_at = event.created_at
             self._expected[cik10] = cutoff_accession_no
 
     def advance(self, cik: str, cutoff_accession_no: str, now: datetime) -> None:
