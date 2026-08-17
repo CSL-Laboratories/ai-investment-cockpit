@@ -15,7 +15,7 @@ import json
 import pytest
 
 from bridge.anchor import AnchorError, AnchorRewind, GitAuditLogAnchorStore
-from bridge.witness import DiscordAuditLogWitness, GitCommitWitness
+from bridge.witness import DiscordAuditLogWitness, DiscordSemanticWitness, GitCommitWitness
 
 
 # ---- GitCommitWitness ------------------------------------------------------------------
@@ -165,6 +165,73 @@ def test_git_only_store_is_never_trusted_for_latest(tmp_path):
 def test_out_of_domain_flags():
     assert GitCommitWitness.out_of_domain is False       # mirror + reviewed-history detection
     assert DiscordAuditLogWitness.out_of_domain is True  # server-stamped runtime trust source
+    assert DiscordSemanticWitness.out_of_domain is True
+
+
+def test_semantic_witness_binds_exact_message_id_hash_and_server_time():
+    messages = {}
+
+    def post(content):
+        message = {
+            "id": "123456789",
+            "channel_id": "42",
+            "timestamp": "2026-07-07T14:00:01Z",
+            "content": content,
+        }
+        messages[message["id"]] = message
+        return message
+
+    witness = DiscordSemanticWitness(
+        post_fn=post, fetch_fn=lambda message_id: messages[message_id], channel_id=42
+    )
+    digest = "a" * 64
+    receipt = witness.publish(digest)
+
+    assert receipt.message_id == "123456789"
+    assert receipt.server_ts.isoformat() == "2026-07-07T14:00:01+00:00"
+    assert witness.verify(receipt.message_id, digest) == receipt.server_ts
+
+    messages[receipt.message_id]["content"] = "merger-selection-commitment " + "b" * 64
+    with pytest.raises(AnchorError, match="does not bind"):
+        witness.verify(receipt.message_id, digest)
+
+
+def test_semantic_witness_rejects_a_foreign_channel_receipt():
+    message = {
+        "id": "123456789",
+        "channel_id": "99",
+        "timestamp": "2026-07-07T14:00:01Z",
+        "content": "merger-selection-commitment " + "a" * 64,
+    }
+    witness = DiscordSemanticWitness(
+        post_fn=lambda _content: message,
+        fetch_fn=lambda _message_id: message,
+        channel_id=42,
+    )
+
+    with pytest.raises(AnchorError, match="does not bind"):
+        witness.publish("a" * 64)
+
+
+@pytest.mark.parametrize("fault", ["wrong-id", "wrong-content", "naive-time"])
+def test_semantic_witness_rejects_unbound_publish_receipts(fault):
+    message = {
+        "id": "123",
+        "timestamp": "2026-07-07T14:00:01+00:00",
+        "content": "merger-selection-commitment " + "a" * 64,
+    }
+    if fault == "wrong-id":
+        message["id"] = ""
+    elif fault == "wrong-content":
+        message["content"] = "foreign"
+    else:
+        message["timestamp"] = "2026-07-07T14:00:01"
+    witness = DiscordSemanticWitness(
+        post_fn=lambda _text: message, fetch_fn=lambda _message_id: message
+    )
+
+    with pytest.raises(AnchorError):
+        witness.publish("a" * 64)
 
 
 def test_rewriting_the_git_mirror_cannot_lower_the_witness(tmp_path):

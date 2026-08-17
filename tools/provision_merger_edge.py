@@ -1,4 +1,4 @@
-"""Provision immutable W-23 evidence while the cockpit is read-only.
+"""Provision immutable W-23/W-24 evidence while the cockpit is read-only.
 
 Examples (run from the repository root):
 
@@ -12,6 +12,10 @@ Examples (run from the repository root):
   python tools/provision_merger_edge.py --db-url sqlite:///app/cockpit.db \
       --raw-root app/data/raw filing --cik 0000000000 --accession 0000000000-26-000001
 
+  python tools/provision_merger_edge.py --db-url sqlite:///app/cockpit.db \
+      --raw-root app/data/raw selection --candidates candidates.json \
+      --training-cutoff 2026-08-16
+
 The JSON files are operator-reviewed local evidence. This tool never calls a model or broker,
 never changes mode, and refuses to write unless the audited mode is ``read_only``.
 """
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -28,10 +33,16 @@ sys.path.insert(0, str(APP))
 from filings.raw_store import RawStore                                  # noqa: E402
 from config.settings import get_settings                               # noqa: E402
 from core.clock import default_clock                                    # noqa: E402
-from main import _build_anchor_store, _hmac_key, run_startup_security_checks  # noqa: E402
+from main import (                                                        # noqa: E402
+    _build_anchor_store,
+    _build_merger_semantic_witness,
+    _hmac_key,
+    run_startup_security_checks,
+)
 from ingest.edgar_pipeline import (                                         # noqa: E402
     backfill_filing_accession,
     build_sec_fetcher,
+    run_edgar_pipeline,
 )
 from orchestrator.halt import default_halt_path, ensure_halt_dir        # noqa: E402
 from orchestrator.mode_ladder import ModeLadder                         # noqa: E402
@@ -42,6 +53,9 @@ from strategies.merger_edge import (                                    # noqa: 
     record_calibration_evidence,
     record_deal_evidence,
     write_calibration_cohort,
+)
+from strategies.merger_semantics import (                                # noqa: E402
+    record_selection_commitment,
 )
 
 
@@ -60,9 +74,48 @@ def _reported_content_hash(row, *, raw_store=None) -> str:
     return raw_store.stored_hash(str(raw_ref))
 
 
+def _poll_selection_candidates(state, settings, raw_root: Path, candidates: object) -> None:
+    """Fresh-poll one complete, identity-safe prospective selection universe."""
+    if not isinstance(candidates, list) or len(candidates) < 30:
+        raise ValueError("selection candidates must contain at least 30 CIK-bound objects")
+    ciks = [
+        str(row.get("target_cik") or "")
+        for row in candidates
+        if isinstance(row, dict)
+    ]
+    if (
+        len(ciks) != len(candidates)
+        or any(re.fullmatch(r"\d{10}", cik) is None for cik in ciks)
+        or len(set(ciks)) != len(ciks)
+    ):
+        raise ValueError(
+            "selection candidates require one unique, zero-padded 10-digit CIK each"
+        )
+    ciks = sorted(ciks)
+    fetcher = build_sec_fetcher(settings)
+    if fetcher is None:
+        raise RuntimeError("prospective selection requires COCKPIT_SEC_USER_AGENT")
+    poll = run_edgar_pipeline(
+        state.session_factory,
+        settings=settings,
+        ciks=ciks,
+        fetcher=fetcher,
+        raw_store=RawStore(raw_root / "sec"),
+        audit_log=state.audit,
+        clock=state.clock,
+        process_epoch=state.process_epoch,
+        strict_completeness_ciks=ciks,
+    )
+    if not poll.ok or poll.ciks_polled != len(ciks):
+        raise RuntimeError(f"prospective selection EDGAR poll failed: {poll.summary()}")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Provision signed, immutable W-23 cash-merger evidence (read-only mode only)."
+        description=(
+            "Provision signed, immutable W-23/W-24 cash-merger evidence "
+            "(read-only mode only)."
+        )
     )
     parser.add_argument("--db-url", required=True, help="cockpit SQLAlchemy database URL")
     parser.add_argument("--raw-root", required=True, help="cockpit raw-data root")
@@ -73,6 +126,14 @@ def _parser() -> argparse.ArgumentParser:
     calibration.add_argument("--cohort", required=True, help="raw cohort JSON array")
     calibration.add_argument("--day", required=True, help="cohort snapshot date (YYYY-MM-DD)")
     calibration.add_argument("--key", required=True, help="write-once cohort key")
+
+    selection = sub.add_parser(
+        "selection", help="server-witness a complete outcome-free evaluation manifest"
+    )
+    selection.add_argument("--candidates", required=True, help="candidate JSON array")
+    selection.add_argument(
+        "--training-cutoff", required=True, help="last training selection date (YYYY-MM-DD)"
+    )
 
     deal = sub.add_parser("deal", help="sign an operator-reviewed SEC deal record")
     deal.add_argument("--document", required=True, help="deal JSON object")
@@ -102,6 +163,7 @@ def main(argv=None) -> int:
     if ModeLadder(state).current().value != "read_only":
         raise RuntimeError("evidence provisioning is allowed only while audited mode is read_only")
 
+    semantic_witness = _build_merger_semantic_witness(settings)
     if args.action == "calibration":
         records = _json(args.cohort)
         if not isinstance(records, list):
@@ -112,6 +174,17 @@ def main(argv=None) -> int:
         document.update({"cohort_ref": ref, "cohort_content_hash": digest})
         row = record_calibration_evidence(
             state, document, raw_root=raw_root, actor="operator_cli"
+        )
+    elif args.action == "selection":
+        candidates = _json(args.candidates)
+        _poll_selection_candidates(state, settings, raw_root, candidates)
+        row = record_selection_commitment(
+            state,
+            candidates,
+            training_cutoff=args.training_cutoff,
+            raw_root=raw_root,
+            witness=semantic_witness,
+            actor="operator_cli",
         )
     elif args.action == "deal":
         document = _json(args.document)

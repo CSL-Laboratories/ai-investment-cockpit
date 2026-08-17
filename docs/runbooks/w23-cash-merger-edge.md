@@ -2,7 +2,7 @@
 title: W-23 cash-merger evidence and activation runbook
 type: runbook
 status: live
-last-verified: 2026-08-14
+last-verified: 2026-08-16
 related:
   - PLAN
   - REGISTER
@@ -15,17 +15,18 @@ related:
 W-23 implements the deterministic expected-edge source selected by `DEC-03`. It does not
 authorize paper mode, live capital, autonomous trading, or deal discovery. The provider has no
 broker import or route to `OrderGateway`; it can return only a verified `EdgeEstimate` or `None`.
-The production composition currently returns `None`: the separately reviewed semantic verifier
-needed to bind merger terms and empirical labels to raw filings has not been implemented.
+The production composition includes W-24's deterministic semantic verifier, but currently returns
+`None`: no real server-witnessed prospective cohort or current target has been provisioned and the
+external audit channel is not configured. See [[runbooks/w24-merger-semantic-verifier]].
 
 ## Current safe state
 
 `COCKPIT_MERGER_WATCHLIST` defaults to empty, no empirical merger cohort has been provisioned,
-the existing mega-cap awareness watchlist is not merger evidence, and there is intentionally no
-runtime/configuration bypass around the closed semantic-evidence gate. Therefore
+the existing mega-cap awareness watchlist is not merger evidence, and there is no
+runtime/configuration bypass around the semantic-evidence gate. Therefore
 `/quant/status` reports `cash_merger_30d.v1` as unavailable and new opening Orders remain
-fail-closed. Keep the detached W-22 read-only soak on its pinned revision while this branch is
-reviewed and tested.
+fail-closed. PR #36 is merged with a green six-job matrix; that code result does not satisfy the
+remaining semantic or empirical gates.
 
 Do not invent a cohort, copy probabilities from a fund, treat raw spread as edge, or enroll a
 company merely because it is already in `COCKPIT_WATCHLIST`. An actual eligible target must be
@@ -54,11 +55,10 @@ worst observed failure/open price ratios. Those three probabilities sum exactly 
 then independently requires the resulting gross edge to cover at least three times modeled
 execution cost.
 
-These mechanical checks do not prove that an operator-selected cohort is complete, that its
+W-23's mechanical checks alone do not prove that an operator-selected cohort is complete, that its
 predictions were committed before outcomes, or that human labels accurately describe the cited
-filings. They are research diagnostics only. Production remains unavailable until a separately
-scoped and adversarially reviewed verifier independently attests the complete selection universe,
-pre-outcome prediction commitment, ground-truth outcomes, and every authority-bearing deal term.
+filings. W-24 now supplies those checks, but only a real prospective manifest and source evidence
+can satisfy them; W-23-only research fixtures remain non-authoritative.
 
 Every outcome must be observed strictly after selection. An `open` row is valid only at exactly
 30 calendar days after `selected_at`; a `closed` or `failed` row must resolve within that same
@@ -122,11 +122,12 @@ provisioning tool overwrites every derived statistic and the cohort reference/ha
 
 ```json
 {
-  "schema_version": "merger_calibration.v1",
+  "schema_version": "merger_calibration.v2",
   "version": "cash_merger_30d.v1",
   "method": "wilson95_heldout_worst_case_prices_v2",
   "frozen": true,
-  "frozen_at": "2026-08-14T20:00:00+00:00"
+  "frozen_at": "2026-09-30T20:00:00+00:00",
+  "selection_manifest_id": "msel_<64 lowercase hex>"
 }
 ```
 
@@ -180,7 +181,8 @@ until a new immutable review record covers it. A termination is recorded as a ne
 Run from the repository root against the operational DB/raw paths. The tool refuses any audited
 mode other than `read_only`, writes the raw cohort once, signs the derived record into the audit
 chain, and never contacts a model or broker. These commands provision research/audit artifacts;
-they do not open the production semantic gate or create order authority.
+only the W-24 sequence can create semantic authority, and it still grants neither mode nor order
+authority.
 
 ```powershell
 .\.venv\Scripts\python.exe tools\provision_merger_edge.py `
@@ -206,10 +208,9 @@ they do not open the production semantic gate or create order authority.
   --document C:\evidence\target-deal.json
 ```
 
-Do **not** add a W-23 target or activate paper trading from these artifacts. A future, separately
-scoped safety change must first implement the independent semantic verifier described above and
-repeat adversarial review. Only after that work, offline tests, and cross-platform CI are green
-may an eligible target be added to both guarded non-secret settings:
+Do **not** add a W-23 target or activate paper trading from retrospective artifacts. Follow the
+prospective W-24 runbook; only after its code review/CI and real evidence gates are green may an
+eligible target be added to both guarded non-secret settings:
 
 ```dotenv
 COCKPIT_WATCHLIST=TARGET
@@ -238,10 +239,10 @@ approval-time verification consume one atomically published quote/book/raw-evide
 the exact daily metric object whose ADV, observation count, and realized volatility are all
 recomputed from the signed bars.
 
-## Paper activation remains blocked
+## Paper activation remains blocked on evidence
 
-W-23 must not be used to enter `paper` until the independent semantic verifier is implemented,
-reviewed, and supported by real evidence. Once that separate gate exists, a schema-validated
+W-23 must not be used to enter `paper` until W-24 is reviewed and supported by real evidence.
+Once that evidence exists, a schema-validated
 proposal will still go through deterministic risk → mode → exact-symbol human approval →
 `OrderGateway` → Alpaca paper. Approval-time risk recomputes
 the edge from the fixed persisted quantity and current signed quote. Any movement or evidence

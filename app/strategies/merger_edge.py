@@ -37,8 +37,8 @@ from storage.parquet_store import (
 )
 
 DEAL_SCHEMA = "merger_deal.v1"
-CALIBRATION_SCHEMA = "merger_calibration.v1"
-EDGE_SCHEMA = "merger_edge_evidence.v1"
+CALIBRATION_SCHEMA = "merger_calibration.v2"
+EDGE_SCHEMA = "merger_edge_evidence.v2"
 COHORT_ROW_SCHEMA = "merger_calibration_cohort_row.v2"
 SOURCE_ID = "cash_merger_30d.v1"
 TIME_HORIZON = "long"
@@ -101,6 +101,7 @@ _CALIBRATION_FIELDS = frozenset({
     "cohort_content_hash", "cohort_as_of", "cohort_size", "training_cutoff",
     "training_cohort_size", "evaluation_cohort_size", "heldout_field_count",
     "heldout_correct_fields",
+    "selection_manifest_id",
     "p_close", "p_fail", "p_open", "break_price_ratio", "open_price_ratio",
 })
 
@@ -288,6 +289,9 @@ def _normalized_calibration(document: dict) -> dict:
     digest = str(document["cohort_content_hash"])
     if _CAL_REF.fullmatch(ref) is None or _HASH.fullmatch(digest) is None:
         raise MergerEvidenceError("calibration cohort reference/hash is invalid")
+    selection_manifest_id = str(document["selection_manifest_id"]).strip()
+    if re.fullmatch(r"msel_[0-9a-f]{64}", selection_manifest_id) is None:
+        raise MergerEvidenceError("calibration selection manifest id is invalid")
     p_close = _decimal(document["p_close"], field="p_close")
     p_fail = _decimal(document["p_fail"], field="p_fail")
     p_open = _decimal(document["p_open"], field="p_open")
@@ -309,6 +313,7 @@ def _normalized_calibration(document: dict) -> dict:
         "evaluation_cohort_size": evaluation_size,
         "heldout_field_count": heldout,
         "heldout_correct_fields": correct,
+        "selection_manifest_id": selection_manifest_id,
         "p_close": str(p_close),
         "p_fail": str(p_fail),
         "p_open": str(p_open),
@@ -510,7 +515,7 @@ def _source_event_in(session, reference: dict, *, event_type: str) -> AuditEntry
 def _verify_price_source_in(
     session, raw_root: Path, reference: dict, *, symbol: str,
     observed_on: date, price: Decimal, entry: bool,
-) -> None:
+) -> tuple[dict, AuditEntry]:
     from orchestrator.state import EVENT_MARKET_DATA_RAW
 
     event = _source_event_in(session, reference, event_type=EVENT_MARKET_DATA_RAW)
@@ -562,6 +567,10 @@ def _verify_price_source_in(
             matches.append(raw)
     if len(matches) != 1:
         raise MergerEvidenceError("calibration price is not uniquely present in signed raw data")
+    # W-24's prospective selector additionally binds the raw quote timestamp to the external
+    # commitment instant.  Existing calibration callers deliberately ignore this return value;
+    # returning the already verified row/event avoids a second, potentially different snapshot.
+    return matches[0], event
 
 
 def _verify_calibration_sources_in(
@@ -914,6 +923,7 @@ def _record_immutable(
     state, row, event_type: str, *, actor: str, payload: dict,
     raw_store: RawStore | None = None, now: datetime | None = None,
     calibration_raw_root: Path | None = None,
+    semantic_verifier=None,
 ):
     model = type(row)
     with _authority_session(state) as session:
@@ -977,6 +987,19 @@ def _record_immutable(
             )
             _require_current_deal_filing_set(deal_document, current)
             _require_same_authority_binding(document, current)
+            if semantic_verifier is None:
+                raise SemanticEvidenceUnavailable(
+                    "independent deal-term and calibration semantic verifier is not provisioned"
+                )
+            semantic_hash = semantic_verifier.verify(
+                deal_document=deal_document,
+                calibration_document=_normalized_calibration(calibration.document),
+                session=session,
+            )
+            if document.get("semantic_authority_hash") != semantic_hash:
+                raise MergerEvidenceError(
+                    "semantic authority changed before edge persistence"
+                )
         existing = session.get(model, row.id)
         if existing is not None:
             if existing.content_hash != row.content_hash:
@@ -1057,10 +1080,13 @@ def record_calibration_evidence(state, document: dict, *, raw_root, actor: str =
 class CashMergerEdgeProvider:
     """Return a verified 30-day cash-merger edge or fail closed to ``None``."""
 
-    def __init__(self, state, *, raw_root, strategy_watchlist) -> None:
+    def __init__(
+        self, state, *, raw_root, strategy_watchlist, semantic_verifier=None
+    ) -> None:
         self.state = state
         self.raw_root = Path(raw_root)
         self.strategy_watchlist = frozenset(str(s).strip().upper() for s in strategy_watchlist)
+        self.semantic_verifier = semantic_verifier
         self._reason = (
             "operator strategy watchlist is empty"
             if not self.strategy_watchlist
@@ -1073,17 +1099,21 @@ class CashMergerEdgeProvider:
             self._reason = reason
 
     def _verify_semantic_authority(
-        self, *, deal_document: dict, calibration_document: dict
-    ) -> None:
-        """Production-closed pending a separately scoped independent attestor.
-
-        Hashing operator-authored labels or deal terms cannot make those claims order
-        authority. There is intentionally no constructor/configuration bypass for this gate.
-        """
-        del deal_document, calibration_document
-        raise SemanticEvidenceUnavailable(
-            "independent deal-term and calibration semantic verifier is not provisioned"
+        self, *, deal_document: dict, calibration_document: dict, session=None
+    ) -> str:
+        """Delegate to the injected deterministic W-24 verifier or fail closed."""
+        if self.semantic_verifier is None:
+            raise SemanticEvidenceUnavailable(
+                "independent deal-term and calibration semantic verifier is not provisioned"
+            )
+        digest = self.semantic_verifier.verify(
+            deal_document=deal_document,
+            calibration_document=calibration_document,
+            session=session,
         )
+        if not isinstance(digest, str) or _HASH.fullmatch(digest) is None:
+            raise SemanticEvidenceUnavailable("semantic verifier returned invalid authority")
+        return digest
 
     def status_text(self) -> str:
         with self._lock:
@@ -1336,7 +1366,7 @@ class CashMergerEdgeProvider:
 
         deal, filing_binding = self._verify_deal(symbol, now)
         calibration = self._verify_calibration(now)
-        self._verify_semantic_authority(
+        semantic_authority_hash = self._verify_semantic_authority(
             deal_document=deal.document,
             calibration_document=calibration.document,
         )
@@ -1379,6 +1409,7 @@ class CashMergerEdgeProvider:
             "deal_content_hash": deal.content_hash,
             "calibration_evidence_id": calibration.id,
             "calibration_content_hash": calibration.content_hash,
+            "semantic_authority_hash": semantic_authority_hash,
             "filing_event_seq": filing_binding["filing_event_seq"],
             "filing_set_hash": filing_binding["filing_set_hash"],
             "edgar_poll_event_seq": filing_binding["edgar_poll_event_seq"],
@@ -1408,6 +1439,7 @@ class CashMergerEdgeProvider:
                      "schema_version": EDGE_SCHEMA, "source_id": SOURCE_ID},
             raw_store=RawStore(self.raw_root / "sec", min_free_bytes=0), now=now,
             calibration_raw_root=self.raw_root,
+            semantic_verifier=self.semantic_verifier,
         )
         return EdgeEstimate(
             expected_gross_return_bps=gross_bps,
