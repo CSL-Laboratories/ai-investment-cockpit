@@ -101,6 +101,22 @@ def _build_anchor_store(settings):
     return GitAuditLogAnchorStore(*adapters)
 
 
+def _build_merger_semantic_witness(settings):
+    """Build W-24's exact-message witness from the existing Discord audit channel contract.
+
+    Missing token/channel is an expected fail-closed state: composition still installs the
+    deterministic verifier, but no retrospective or same-host evidence can impersonate the
+    required server-stamped pre-outcome commitment.
+    """
+    from bridge.witness import discord_rest_semantic_witness
+    from core.secrets import get_secret
+
+    token = get_secret(_DISCORD_TOKEN_NAME)
+    if token is None or settings.audit_log_channel_id is None:
+        return None
+    return discord_rest_semantic_witness(settings.audit_log_channel_id, token.reveal())
+
+
 def run_startup_security_checks(settings):
     """W11 (SEC-05 / SEC-06) — fail-closed startup checks invoked by ``compose()`` BEFORE the app
     graph is built: (1) the decision-agent account provably cannot read the bearer stores
@@ -798,6 +814,7 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     from orchestrator.state import OrchestratorState
     from storage.engine import create_all, make_engine, make_session_factory
     from strategies.merger_edge import CashMergerEdgeProvider
+    from strategies.merger_semantics import CashMergerSemanticVerifier
     from workflows.services import build_services
 
     settings = get_settings()
@@ -831,10 +848,16 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     # DEC-03/W-23 selects a deterministic source without granting it order authority. The
     # same instance is injected into draft and approval-time verification; an empty strategy
     # watchlist or absent evidence leaves it visibly unavailable.
+    semantic_verifier = CashMergerSemanticVerifier(
+        state,
+        raw_root=parquet_root,
+        witness=_build_merger_semantic_witness(settings),
+    )
     edge_provider = CashMergerEdgeProvider(
         state,
         raw_root=parquet_root,
         strategy_watchlist=settings.merger_watchlist_symbols,
+        semantic_verifier=semantic_verifier,
     )
     state.edge_provider = edge_provider
 

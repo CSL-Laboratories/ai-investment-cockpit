@@ -96,6 +96,10 @@ def test_compose_wires_injected_paper_client_and_static_watchlist_behind_gateway
     assert app.state.paper._watchlist() == expected  # noqa: SLF001 - composition contract
     assert state.edge_provider is app.state.paper._edge_provider  # noqa: SLF001
     assert state.edge_provider.strategy_watchlist == frozenset({"AAPL"})
+    from strategies.merger_semantics import CashMergerSemanticVerifier
+
+    assert isinstance(state.edge_provider.semantic_verifier, CashMergerSemanticVerifier)
+    assert state.edge_provider.semantic_verifier.witness is None  # absent audit channel => closed
     assert app.state.watchlist == expected
     assert app.state.market_data.poll_quotes()["failed"] == []
     assert app.state.market_data.refresh_daily_bars()["failed"] == []
@@ -200,6 +204,20 @@ def test_compose_wires_durable_git_witness_not_file_anchor(tmp_path, monkeypatch
     assert state.anchor_store.latest() is None                     # local mirror still untrusted
     res = compute_gate(state, Mode.auto_veto)
     assert not res.unlockable and res.metrics.get("anchor_ok") is False   # fail closed
+
+
+def test_merger_semantic_witness_uses_existing_keyring_token_and_audit_channel():
+    from bridge.witness import DiscordSemanticWitness
+    from config.settings import Settings
+    from core.secrets import set_secret
+    from main import _build_merger_semantic_witness
+
+    set_secret("discord_bot_token", "test-token-never-logged")
+    witness = _build_merger_semantic_witness(
+        Settings(audit_log_channel_id=123456789, _env_file=None)
+    )
+
+    assert isinstance(witness, DiscordSemanticWitness)
 
 
 def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clock):

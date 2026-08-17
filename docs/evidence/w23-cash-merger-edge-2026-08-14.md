@@ -18,6 +18,8 @@ PR #36 head reviewed: `5115e2e5dae585298e2414268f30722f1adb5ee1`.
 Second-review remediation committed and pushed as
 `0f4af5329b33315a82c7357157a476414f2ff3e1`. The `BUG-105` cross-platform repair described
 below is commit `f8bf9a8301500cc3f693941537ae5da2a24c3ced`.
+The green-matrix documentation head is `26e87687711ec2a9a7da63252a49c0ec15115ef7`;
+PR #36 merged it to `main` as `2cbb6d594b8b5f77f9228549c02a9f73259680b0` on 2026-08-16.
 
 This record proves local implementation, Windows regression, and the required cross-platform CI
 matrix for the named commits. It does **not** prove strategy profitability, empirical calibration
@@ -233,7 +235,7 @@ evidence.
 
 ## Remaining gates
 
-1. Separately scoped implementation and adversarial review of an independent semantic verifier
+1. `W-24`: separately scoped implementation and adversarial review of an independent semantic verifier
    for complete-universe selection, pre-outcome predictions, ground-truth outcomes, and cited deal
    terms. W-23 is production-unavailable until then.
 2. Real, independently reviewed, survivorship-safe point-in-time cohort meeting that verifier and

@@ -27,7 +27,10 @@ wires the production functions from config + keyring.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bridge.anchor import AnchorError, _guard_monotonic
@@ -207,3 +210,115 @@ def discord_rest_witness(channel_id, bot_token: str,
         return [(m.get("timestamp"), m.get("content", "")) for m in data]
 
     return DiscordAuditLogWitness(post_fn=post_fn, fetch_fn=fetch_fn, channel_id=channel_id)
+
+
+# ---- prospective strategy commitment (server-stamped, exact-message lookup) -----------
+@dataclass(frozen=True)
+class SemanticWitnessReceipt:
+    message_id: str
+    server_ts: datetime
+
+
+class DiscordSemanticWitness:
+    """Witness one outcome-free selection-manifest hash in Discord's trust domain.
+
+    Unlike the rolling audit-head adapter, semantic commitments are addressed by exact message
+    id.  A later calibration must fetch that same immutable server-stamped post; looking only at
+    the latest 100 channel messages would make old cohorts unverifiable and would not bind a
+    particular pre-outcome timestamp.
+    """
+
+    out_of_domain = True
+    _PREFIX = "merger-selection-commitment "
+    _HASH = re.compile(r"^[0-9a-f]{64}$")
+
+    def __init__(self, *, post_fn, fetch_fn, channel_id=None) -> None:
+        self._post = post_fn
+        self._fetch = fetch_fn
+        self._channel_id = channel_id
+
+    @classmethod
+    def _content(cls, content_hash: str) -> str:
+        if cls._HASH.fullmatch(str(content_hash)) is None:
+            raise AnchorError("semantic commitment hash is invalid")
+        return f"{cls._PREFIX}{content_hash}"
+
+    @staticmethod
+    def _server_time(value) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise AnchorError("semantic witness returned an invalid server timestamp") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise AnchorError("semantic witness timestamp is timezone-naive")
+        return parsed.astimezone(timezone.utc)
+
+    def publish(self, content_hash: str) -> SemanticWitnessReceipt:
+        expected = self._content(content_hash)
+        try:
+            message = self._post(expected)
+        except Exception as exc:
+            raise AnchorError(f"semantic witness publish failed: {type(exc).__name__}") from exc
+        if not isinstance(message, dict):
+            raise AnchorError("semantic witness publish returned no message receipt")
+        message_id = str(message.get("id") or "").strip()
+        if (
+            not message_id
+            or message.get("content") != expected
+            or (
+                self._channel_id is not None
+                and str(message.get("channel_id") or "") != str(self._channel_id)
+            )
+        ):
+            raise AnchorError("semantic witness receipt does not bind the commitment")
+        return SemanticWitnessReceipt(
+            message_id=message_id,
+            server_ts=self._server_time(message.get("timestamp")),
+        )
+
+    def verify(self, message_id: str, content_hash: str) -> datetime:
+        expected_id = str(message_id).strip()
+        if not expected_id:
+            raise AnchorError("semantic witness message id is missing")
+        try:
+            message = self._fetch(expected_id)
+        except Exception as exc:
+            raise AnchorError(f"semantic witness read failed: {type(exc).__name__}") from exc
+        if (
+            not isinstance(message, dict)
+            or str(message.get("id") or "") != expected_id
+            or message.get("content") != self._content(content_hash)
+            or (
+                self._channel_id is not None
+                and str(message.get("channel_id") or "") != str(self._channel_id)
+            )
+        ):
+            raise AnchorError("semantic witness message does not bind the commitment")
+        return self._server_time(message.get("timestamp"))
+
+
+def discord_rest_semantic_witness(
+    channel_id, bot_token: str, *, timeout: float = 10.0
+) -> DiscordSemanticWitness:
+    """Build the exact-message Discord witness using the existing keyring-held bot token."""
+    import urllib.request
+
+    base = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+        "User-Agent": "cockpit-merger-semantic-witness (https://localhost, 1.0)",
+    }
+
+    def post_fn(text: str):
+        body = json.dumps({"content": text}).encode("utf-8")
+        req = urllib.request.Request(base, data=body, headers=headers, method="POST")
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+
+    def fetch_fn(message_id: str):
+        if not message_id.isdigit():
+            raise AnchorError("Discord semantic witness message id is invalid")
+        req = urllib.request.Request(f"{base}/{message_id}", headers=headers, method="GET")
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+
+    return DiscordSemanticWitness(post_fn=post_fn, fetch_fn=fetch_fn, channel_id=channel_id)
