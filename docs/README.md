@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-16
+last-verified: 2026-08-17
 ---
 
 # Docs index
@@ -17,7 +17,7 @@ last-verified: 2026-08-16
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-16
+## Current repository snapshot — 2026-08-17
 
 - The first dated W-22 bring-up record is
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
@@ -36,13 +36,19 @@ canonical invariant list, and nothing else restates it.
   Three independent review passes found additional merge blockers; local remediation now closes
   cache/provenance, audit/database and raw-filesystem snapshots, EDGAR baseline/completeness and
   restart freshness, calibration chronology, and composed order races. Operator-authored cohort
-  labels and deal terms remain deliberately non-executable until a separate independent semantic
-  verifier is implemented and adversarially reviewed. The first PR #36 matrix passed five of six
+  labels and deal terms remain deliberately non-executable unless W-24's independent semantic
+  verifier can re-derive them from signed sources and validate a server-witnessed prospective
+  cohort. The first PR #36 matrix passed five of six
   jobs; Windows 3.11 exposed `BUG-105`, a transient Parquet staging-handle cleanup failure. Its
   byte-image read/retry repair passed the full replacement Ubuntu/Windows/macOS × Python
-  3.11/3.12 matrix. `W-24` is claimed for the separately reviewed deterministic semantic
-  verifier; real prospective evidence remains pending, so W-23 stays fail-closed. See
-  [[evidence/w23-cash-merger-edge-2026-08-14]].
+  3.11/3.12 matrix. `W-24` is implemented on `work/w24-merger-semantic-verifier`: the production
+  graph now composes a model-free verifier, exact-message Discord witness, prospective manifest,
+  source-derived labels/outcomes/deal terms, complete-filing-set checks, and a final transactional
+  recheck. Real prospective evidence, external-witness configuration, cross-platform CI, and PR
+  review remain pending, so W-23 still returns no edge. The local W-24 gate is 2,260 passed / 1
+  skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
+  [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
+  [[runbooks/w24-merger-semantic-verifier]].
 
 - `origin/main` includes PR #36 at merge commit `2cbb6d5`. The old
   `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
@@ -54,8 +60,8 @@ canonical invariant list, and nothing else restates it.
 - `RW-17` and BUG-041–045, BUG-047–051, and BUG-098–105 are merged. `RW-11` and
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
   entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
-  expected edge remains intentionally unavailable and fail-closed until W-24 supplies verified
-  semantic authority. RW-15 and W-22 are merged in PRs #34/#35; W-23
+  expected edge remains intentionally unavailable and fail-closed until W-24's real prospective
+  semantic evidence exists. RW-15 and W-22 are merged in PRs #34/#35; W-23
   and the bring-up fixes are merged in PR #36. The PR #36 tree passes 2,240 tests / 1 skipped
   locally with Ruff clean and its complete six-job matrix is green. Real
   Alpaca reconciliation, and the two market-day W-22 proof remain evidence gates;

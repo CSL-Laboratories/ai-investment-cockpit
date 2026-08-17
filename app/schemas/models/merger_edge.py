@@ -1,4 +1,4 @@
-"""Immutable W-23 merger-deal, calibration, and computed-edge evidence.
+"""Immutable W-23/W-24 merger evidence and prospective selection commitments.
 
 These rows are derived control records, not raw filings or calibration cohorts.  Raw SEC bytes
 remain in ``filings.RawStore`` and cohort/quote observations remain in write-once Parquet.  Every
@@ -34,6 +34,20 @@ class MergerCalibrationEvidence(Base):
     document: Mapped[dict] = mapped_column(JSON, nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     frozen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MergerSelectionCommitment(Base):
+    """A server-witnessed, outcome-free evaluation universe committed prospectively."""
+
+    __tablename__ = "merger_selection_commitment"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    document: Mapped[dict] = mapped_column(JSON, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    witness_message_id: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    witnessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

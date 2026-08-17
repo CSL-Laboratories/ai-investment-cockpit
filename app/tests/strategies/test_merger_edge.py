@@ -151,6 +151,7 @@ def _calibration(ref, digest, **updates):
         "evaluation_cohort_size": statistics["evaluation_cohort_size"],
         "heldout_field_count": statistics["heldout_field_count"],
         "heldout_correct_fields": statistics["heldout_correct_fields"],
+        "selection_manifest_id": f"msel_{'a' * 64}",
         "p_close": statistics["p_close"],
         "p_fail": statistics["p_fail"],
         "p_open": statistics["p_open"],
@@ -175,12 +176,14 @@ def _proposal(**updates):
     return payload
 
 
-class _ResearchOnlyEdgeProvider(CashMergerEdgeProvider):
-    """Test-only subclass for exercising controls below the closed production gate."""
+class _ResearchSemanticVerifier:
+    """Test-only injected verifier for exercising independent W-23 controls."""
 
-    def _verify_semantic_authority(self, *, deal_document, calibration_document):
+    def verify(self, *, deal_document, calibration_document, session=None):
+        del session
         assert deal_document["schema_version"] == DEAL_SCHEMA
         assert calibration_document["schema_version"] == CALIBRATION_SCHEMA
+        return "f" * 64
 
 
 def _eligibility(**updates):
@@ -502,8 +505,9 @@ def merger(st, clock, tmp_path):
     st.market_data = market_data
     assert market_data.poll_quotes()["failed"] == []
     assert market_data.refresh_daily_bars()["failed"] == []
-    provider = _ResearchOnlyEdgeProvider(
-        st, raw_root=root, strategy_watchlist={SYMBOL}
+    provider = CashMergerEdgeProvider(
+        st, raw_root=root, strategy_watchlist={SYMBOL},
+        semantic_verifier=_ResearchSemanticVerifier(),
     )
     return st, root, client, market_data, provider, raw_ref.sha256
 
@@ -534,8 +538,9 @@ def test_verified_edge_uses_frozen_inputs_and_persists_immutable_evidence(merger
 
     # A reconstructed provider after a process restart reuses the same signed input record;
     # it does not mint a conflicting edge or fall back to mutable "latest row" state.
-    restarted = _ResearchOnlyEdgeProvider(
-        st, raw_root=_root, strategy_watchlist={SYMBOL}
+    restarted = CashMergerEdgeProvider(
+        st, raw_root=_root, strategy_watchlist={SYMBOL},
+        semantic_verifier=_ResearchSemanticVerifier(),
     )
     assert restarted.estimate(_proposal(), quote=quote) == first
     with st.session_factory() as session:

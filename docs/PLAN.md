@@ -58,8 +58,8 @@ surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/
 inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
 **What is not complete:** RW-15's real broker-status evidence; the older packages' missing
-cross-platform attestations; W-22's two-day unattended paper proof; the independent semantic
-verifier and real prospective evidence needed to activate W-23; event-driven paper autonomy
+cross-platform attestations; W-22's two-day unattended paper proof; W-24's real prospective
+cohort/current-target evidence and external witness needed to activate W-23; event-driven paper autonomy
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
@@ -77,10 +77,10 @@ pending; this was not a repository test failure.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
-**Immediate sequence:** implement and adversarially review `W-24`, the independent deterministic
-semantic verifier that W-23 deliberately left unavailable, while collecting the named
-RW-11/RW-14/RW-15/RW-19 evidence. Real prospective cohort and current-deal evidence remain a
-separate empirical gate; fixtures cannot activate the provider. Opening paper orders remain
+**Immediate sequence:** finish review/CI for the implemented `W-24` verifier and begin its real
+prospective cohort capture while collecting the named RW-11/RW-14/RW-15/RW-19 evidence. A real
+evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
+fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
 only on verified inputs. `DEC-05` must be resolved before any `RW-18` authentication, and RW-13
 remains blocked until the M1–M4.5 gates actually pass.
@@ -529,6 +529,22 @@ commitment must be witnessed outside the mutable cockpit store before any outcom
 timestamp. Historical rows created after their outcomes can test mechanics but can never satisfy
 production authority.
 
+**W-24 implementation checkpoint (2026-08-17):** the branch composes a production
+`CashMergerSemanticVerifier` with no configuration switch to a permissive implementation. A
+selection commitment contains no outcomes and must have at least 30 unique evaluation identities,
+bind signed selection filings/entry quotes plus fresh
+per-CIK EDGAR coverage, and receive an exact-message Discord server timestamp within five minutes
+of creation. Calibration is schema v2 and names that commitment. Verification re-derives every
+eligibility label, rejects source-derived rows outside the cash-only universe, derives outcomes
+from the complete signed filing set through the horizon, requires a non-backdated post-horizon
+poll, and re-runs inside edge persistence. The parser is intentionally narrow; language it cannot
+classify returns unavailable. No model, broker, subprocess, platform branch, or `app/risk/` I/O
+was added. This closes the code gap only: the real prospective cohort, current eligible target,
+Discord audit-channel configuration, CI, and online evidence remain gates.
+The final local Windows gate is 2,260 passed / 1 skipped with Ruff clean; see
+[[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
+review attempts timed out without a verdict, so PR review remains an explicit missing attestation.
+
 ### M5 — Event-driven triggers  (`RW-13`)
 
 **Dynamic paper autonomy.** Drive triage from durable event candidates while retaining cron as
@@ -668,8 +684,8 @@ workflow runs on pull requests and pushes to `main`, not ordinary branch pushes.
 control, not a gate waiver.
 
 The completed implementation spine is `W-21 → RW-15 → W-22 → DEC-03 → W-23`; `W-24` is
-the next claimed package because W-23 intentionally kept operator-authored semantic claims
-non-executable. When a later package genuinely needs
+implemented locally and remains evidence/CI pending because W-23 correctly keeps any absent,
+retrospective, or unverifiable semantic claim non-executable. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;
 then rebase/update it onto `main`. A stacked branch is not evidence that its predecessor is
