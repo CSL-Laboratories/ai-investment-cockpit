@@ -17,11 +17,12 @@ Branch: `work/w23-cash-merger-edge`.
 PR #36 head reviewed: `5115e2e5dae585298e2414268f30722f1adb5ee1`.
 Second-review remediation committed and pushed as
 `0f4af5329b33315a82c7357157a476414f2ff3e1`. The `BUG-105` cross-platform repair described
-below is the subsequent validation artifact.
+below is commit `f8bf9a8301500cc3f693941537ae5da2a24c3ced`.
 
-This record proves local implementation and Windows regression only. It does **not** prove
-strategy profitability, empirical calibration quality, an eligible current deal, cross-platform
-behavior, paper-broker execution, or live/autonomous readiness. `COCKPIT_MERGER_WATCHLIST`
+This record proves local implementation, Windows regression, and the required cross-platform CI
+matrix for the named commits. It does **not** prove strategy profitability, empirical calibration
+quality, an eligible current deal, paper-broker execution, or live/autonomous readiness.
+`COCKPIT_MERGER_WATCHLIST`
 remains empty in the operational configuration, no cohort/deal evidence was provisioned, and no
 mode or trading authority changed.
 
@@ -194,6 +195,9 @@ also retries only `PermissionError` for a bounded 0.91 seconds; a persistent den
 Regressions prove the writer never hands PyArrow an OS pathname and that a transient lock is
 retried without weakening write-once publication or hash verification.
 
+The replacement run (`31991577590`) passed all six required jobs: Ubuntu, Windows, and macOS on
+Python 3.11 and 3.12. The previously failing Windows 3.11 job completed its full gate in 9m50s.
+
 ## Local gates
 
 Run from `app/` on Windows with `TMP=TEMP=C:\t` and `COCKPIT_ENV_FILE` pointed at a nonexistent
@@ -214,6 +218,7 @@ test path so the operator's ignored `app/.env` could not affect defaults:
   2,000 consecutive snapshot publications passed after `BUG-105`;
 - final Windows full suite including `BUG-105`: **2,240 passed, 1 skipped**,
   5 third-party deprecation warnings;
+- replacement GitHub Actions matrix: **6 of 6 jobs passed**, including Windows 3.11 and 3.12;
 - `ruff check .`: clean;
 - `ruff check ../tools/provision_merger_edge.py`: clean; and
 - `git diff --check`: clean.
@@ -228,14 +233,12 @@ evidence.
 
 ## Remaining gates
 
-1. Replacement Windows/Ubuntu/macOS CI matrix on the `BUG-105` repair. The first remediation
-   matrix passed five of six jobs; only Windows 3.11 failed as described above.
-2. Separately scoped implementation and adversarial review of an independent semantic verifier
+1. Separately scoped implementation and adversarial review of an independent semantic verifier
    for complete-universe selection, pre-outcome predictions, ground-truth outcomes, and cited deal
    terms. W-23 is production-unavailable until then.
-3. Real, independently reviewed, survivorship-safe point-in-time cohort meeting that verifier and
+2. Real, independently reviewed, survivorship-safe point-in-time cohort meeting that verifier and
    the schema/precision gates.
-4. A current eligible definitive cash deal whose terms, SEC records, and listing identity verify.
-5. Only after those gates: separate configuration of both watchlists, fresh current-process
+3. A current eligible definitive cash deal whose terms, SEC records, and listing identity verify.
+4. Only after those gates: separate configuration of both watchlists, fresh current-process
    EDGAR/quote/bar polls, operator validation, deliberate audited `paper` activation, and W-22's
    two qualifying market days at least a week apart.

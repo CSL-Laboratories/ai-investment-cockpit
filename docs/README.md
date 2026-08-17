@@ -39,8 +39,8 @@ canonical invariant list, and nothing else restates it.
   labels and deal terms remain deliberately non-executable until a separate independent semantic
   verifier is implemented and adversarially reviewed. The first PR #36 matrix passed five of six
   jobs; Windows 3.11 exposed `BUG-105`, a transient Parquet staging-handle cleanup failure. Its
-  byte-image read/retry repair is locally green and awaits the replacement matrix. Real empirical
-  evidence also remains pending, so W-23 stays fail-closed. See
+  byte-image read/retry repair passed the full replacement Ubuntu/Windows/macOS × Python
+  3.11/3.12 matrix. Real empirical evidence remains pending, so W-23 stays fail-closed. See
   [[evidence/w23-cash-merger-edge-2026-08-14]].
 
 - `origin/main` includes PR #35. The old
