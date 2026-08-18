@@ -52,11 +52,16 @@ canonical invariant list, and nothing else restates it.
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
 - The 2026-08-18 W-24 intake exposed `BUG-108`: one accession could not be both the original
-  semantic source and a later current EDGAR baseline. The isolated schema-v2 repair witnesses a
+  semantic source and a later current EDGAR baseline. PR #42's merged schema-v2 repair witnesses a
   complete ordered signed source set plus an explicit current accession, derives prospective and
   calibration eligibility from that frozen set, and rejects legacy/incomplete/tampered authority.
-  Merge and cross-platform CI remain pending; no real cohort or edge authority has been created.
+  Cross-platform CI remains pending; no real cohort or edge authority has been created.
   See [[evidence/w24-prospective-intake-2026-08-18]].
+- The post-merge W-24 continuation screened 65 discovery names. Only six had a currently supported
+  SEC feed head, and none of their 64 supported 2026 primary filings passed the eligibility parser.
+  An official CRNX announcement 8-K proves `BUG-109`: common authoritative cash-merger phrasing is
+  rejected by the pinned grammar. The refusal remains fail-closed; repair requires an isolated
+  real-source/adversarial-parser package and held-out precision evidence before any commitment.
 - `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
   with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
   ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped
@@ -153,7 +158,7 @@ defects got fixed twice on two branches.
 | [[evidence/rw11-live-poll-2026-08-18]] | RW-11 live 11-CIK reachability, clean SNDK baseline, audit/safety result, and still-open precision gate |
 | [[evidence/rw11-precision-label-sheet-2026-08-18]] | Unscored four-delta human-review seed plus separate 4/4 mechanical citation check |
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
-| [[evidence/w24-prospective-intake-2026-08-18]] | GET-only real candidate readiness screen and BUG-108 prospective source-set blocker |
+| [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 

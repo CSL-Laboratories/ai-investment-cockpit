@@ -88,6 +88,15 @@ The final local BUG-108 Windows gate is 2,303 passed / 1 skipped with Ruff clean
 pass also prevents parser phrases from being synthesized across filing boundaries. This remains
 local code evidence only, not the missing Ubuntu/macOS attestation or real prospective evidence.
 
+A bounded post-merge continuation did not start a commitment. Of 65 discovered names, only six
+had an absolute current SEC feed head in the supported form set, and none of their 64 supported
+2026 primary filings passed the eligibility parser. CRNX accession `0001140361-26-027642` is a
+confirmed real false negative: the filing contains the cash amount, common-stock identity, Nasdaq
+listing, and merger agreement, while `_CASH` and `_DEFINITIVE` reject ordinary filing grammar.
+`BUG-109` remains fail-closed. Do not substitute an exhibit, broaden a pattern, or hand-enter a
+label during intake; use a separately reviewed parser package and then satisfy the real held-out
+precision gate before attempting a prospective witness.
+
 ## Start a prospective cohort
 
 Stay in audited `read_only`. Provision the private Discord audit channel for the Administrator bot
