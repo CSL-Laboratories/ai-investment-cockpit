@@ -467,6 +467,85 @@ def _news_identity_rows(stream_rows: Iterable[dict]) -> list[dict]:
     return records
 
 
+def characterize_news_reconnect(
+    before_rows: Iterable[dict],
+    after_rows: Iterable[dict],
+    rest_rows: Iterable[dict],
+    *,
+    disconnected_at: datetime,
+    reconnected_at: datetime,
+) -> dict:
+    """Measure identity continuity and REST recovery across one deliberate news gap."""
+    if any(
+        value.tzinfo is None or value.utcoffset() is None
+        for value in (disconnected_at, reconnected_at)
+    ):
+        raise ValueError("reconnect timestamps must be timezone-aware")
+    disconnected_at = disconnected_at.astimezone(UTC)
+    reconnected_at = reconnected_at.astimezone(UTC)
+    if reconnected_at < disconnected_at:
+        raise ValueError("reconnected_at must not precede disconnected_at")
+
+    before_rows = list(before_rows)
+    after_rows = list(after_rows)
+    rest_rows = list(rest_rows)
+    before = _news_identity_rows(before_rows)
+    after = _news_identity_rows(after_rows)
+    before_ids = {str(row["identity"]) for row in before if row.get("identity") is not None}
+    after_ids = {str(row["identity"]) for row in after if row.get("identity") is not None}
+    stream_ids = before_ids | after_ids
+    rest_ids = {
+        str(row["id"])
+        for row in rest_rows
+        if isinstance(row, dict) and row.get("id") is not None
+    }
+
+    hashes: dict[str, set[str]] = {}
+    for row in (*before, *after):
+        identity = row.get("identity")
+        payload_hash = row.get("payload_hash")
+        if identity is not None and isinstance(payload_hash, str):
+            hashes.setdefault(str(identity), set()).add(payload_hash)
+    cross_segment_corrections = sum(
+        1
+        for identity in before_ids & after_ids
+        if len(hashes.get(identity, set())) > 1
+    )
+
+    blind_window_rest_ids = set()
+    for row in rest_rows:
+        if not isinstance(row, dict) or row.get("id") is None:
+            continue
+        source_ts = _parse_timestamp(row.get("updated_at") or row.get("created_at"))
+        if source_ts is not None and disconnected_at <= source_ts <= reconnected_at:
+            blind_window_rest_ids.add(str(row["id"]))
+
+    late_after_ids = set()
+    for row in after_rows:
+        message = row.get("message") if isinstance(row, dict) else None
+        if not isinstance(message, dict) or message.get("id") is None:
+            continue
+        source_ts = _parse_timestamp(message.get("updated_at") or message.get("created_at"))
+        if source_ts is not None and disconnected_at <= source_ts <= reconnected_at:
+            late_after_ids.add(str(message["id"]))
+
+    return {
+        "observed_disconnect_seconds": (reconnected_at - disconnected_at).total_seconds(),
+        "before_identities": len(before_ids),
+        "after_identities": len(after_ids),
+        "cross_segment_overlap": len(before_ids & after_ids),
+        "cross_segment_corrected_identities": cross_segment_corrections,
+        "combined_stream_identities": len(stream_ids),
+        "rest_identities": len(rest_ids),
+        "combined_stream_recall_of_rest": (
+            None if not rest_ids else len(stream_ids & rest_ids) / len(rest_ids)
+        ),
+        "blind_window_rest_identities": len(blind_window_rest_ids),
+        "blind_window_delivered_after_reconnect": len(blind_window_rest_ids & late_after_ids),
+        "blind_window_rest_recoverable": len(blind_window_rest_ids - stream_ids),
+    }
+
+
 def write_news_evidence(
     root: Path,
     *,
@@ -520,6 +599,101 @@ def write_news_evidence(
         "limitations": [
             "A zero-frame window is an insufficient sample, not evidence of stream correctness.",
             "Article IDs test identity equivalence; they do not prove correction ordering alone.",
+            "Raw article content is local evidence and must not be committed or redistributed.",
+        ],
+    }
+    manifest_path = capture_root / "manifest.json"
+    _write_json(manifest_path, manifest)
+    return manifest_path
+
+
+def write_news_reconnect_evidence(
+    root: Path,
+    *,
+    window_start: datetime,
+    disconnected_at: datetime,
+    reconnected_at: datetime,
+    window_end: datetime,
+    symbols: Iterable[str],
+    before_rows: list[dict],
+    after_rows: list[dict],
+    rest_rows: list[dict],
+    environment: dict[str, Any],
+) -> Path:
+    """Write an immutable two-segment news reconnect and REST-backfill capture."""
+    timestamps = (window_start, disconnected_at, reconnected_at, window_end)
+    if any(value.tzinfo is None or value.utcoffset() is None for value in timestamps):
+        raise ValueError("capture and reconnect timestamps must be timezone-aware")
+    if not window_start < disconnected_at <= reconnected_at < window_end:
+        raise ValueError("news reconnect timestamps are not monotonic")
+    scope = tuple(
+        sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
+    )
+    if not scope:
+        raise ValueError("an explicit non-empty symbol universe is required")
+    capture_id = window_start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    capture_root = Path(root) / "news-reconnect" / window_start.date().isoformat() / capture_id
+    if capture_root.exists():
+        raise FileExistsError(f"capture already exists: {capture_root}")
+
+    reconnect = characterize_news_reconnect(
+        before_rows,
+        after_rows,
+        rest_rows,
+        disconnected_at=disconnected_at,
+        reconnected_at=reconnected_at,
+    )
+    before_identity = _news_identity_rows(before_rows)
+    after_identity = _news_identity_rows(after_rows)
+    combined_identity = [*before_identity, *after_identity]
+    rest_identity = [{"identity": row.get("id")} for row in rest_rows if isinstance(row, dict)]
+    summary = {
+        "before": characterize_identity_records(before_identity),
+        "after": characterize_identity_records(after_identity),
+        "combined_stream": characterize_identity_records(combined_identity),
+        "ws_rest_identity": compare_identity_surfaces(combined_identity, rest_identity),
+        "reconnect": reconnect,
+    }
+
+    before_hash = _write_json(capture_root / "raw" / "alpaca-news-ws-before.json", before_rows)
+    after_hash = _write_json(capture_root / "raw" / "alpaca-news-ws-after.json", after_rows)
+    rest_hash = _write_json(capture_root / "raw" / "alpaca-news-rest.json", rest_rows)
+    summary_hash = _write_json(capture_root / "summary.json", summary)
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "work_package": "RW-19",
+        "capture_kind": "alpaca-news-reconnect-ws-rest",
+        "window_start": window_start.astimezone(UTC).isoformat(),
+        "disconnected_at": disconnected_at.astimezone(UTC).isoformat(),
+        "reconnected_at": reconnected_at.astimezone(UTC).isoformat(),
+        "window_end": window_end.astimezone(UTC).isoformat(),
+        "universe": list(scope),
+        "sample_size": {
+            "websocket_before": len(before_rows),
+            "websocket_after": len(after_rows),
+            "rest": len(rest_rows),
+        },
+        "environment": environment,
+        "raw": {
+            "websocket_before": {
+                "path": "raw/alpaca-news-ws-before.json",
+                "sha256": before_hash,
+            },
+            "websocket_after": {
+                "path": "raw/alpaca-news-ws-after.json",
+                "sha256": after_hash,
+            },
+            "rest": {"path": "raw/alpaca-news-rest.json", "sha256": rest_hash},
+        },
+        "summary": {"path": "summary.json", "sha256": summary_hash},
+        "source_terms": {
+            "websocket": "https://docs.alpaca.markets/us/docs/streaming-real-time-news",
+            "rest": "https://docs.alpaca.markets/us/docs/historical-news-data",
+        },
+        "limitations": [
+            "One deliberate reconnect cannot establish a production loss rate.",
+            "No observed correction is not evidence that corrections never occur.",
+            "REST exposes the latest article representation and may not preserve update history.",
             "Raw article content is local evidence and must not be committed or redistributed.",
         ],
     }

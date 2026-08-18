@@ -8,6 +8,7 @@ from datetime import UTC, date, datetime
 import pytest
 
 from ingest.characterization import (
+    characterize_news_reconnect,
     characterize_market_frames,
     characterize_identity_records,
     compare_bar_feeds,
@@ -18,6 +19,7 @@ from ingest.characterization import (
     write_capability_evidence,
     write_market_stream_evidence,
     write_news_evidence,
+    write_news_reconnect_evidence,
 )
 
 
@@ -195,6 +197,99 @@ def test_news_evidence_binds_raw_surfaces_and_compares_article_ids(tmp_path):
     }
     manifest = json.loads(manifest_path.read_text())
     assert manifest["sample_size"] == {"websocket": 1, "rest": 2}
+
+
+def test_news_reconnect_counts_cross_segment_correction_and_rest_recovery():
+    disconnected = datetime(2026, 8, 12, 14, 0, 10, tzinfo=UTC)
+    reconnected = datetime(2026, 8, 12, 14, 0, 15, tzinfo=UTC)
+    before = [{
+        "received_at": "2026-08-12T14:00:09Z",
+        "message": {
+            "id": 7,
+            "created_at": "2026-08-12T14:00:08Z",
+            "updated_at": "2026-08-12T14:00:08Z",
+            "headline": "before",
+        },
+    }]
+    after = [
+        {
+            "received_at": "2026-08-12T14:00:16Z",
+            "message": {
+                "id": 7,
+                "created_at": "2026-08-12T14:00:08Z",
+                "updated_at": "2026-08-12T14:00:15Z",
+                "headline": "corrected",
+            },
+        },
+        {
+            "received_at": "2026-08-12T14:00:16Z",
+            "message": {
+                "id": 8,
+                "created_at": "2026-08-12T14:00:12Z",
+                "updated_at": "2026-08-12T14:00:12Z",
+                "headline": "late delivery",
+            },
+        },
+    ]
+    rest = [
+        {"id": 7, "created_at": "2026-08-12T14:00:08Z", "updated_at": "2026-08-12T14:00:15Z"},
+        {"id": 8, "created_at": "2026-08-12T14:00:12Z", "updated_at": "2026-08-12T14:00:12Z"},
+        {"id": 9, "created_at": "2026-08-12T14:00:13Z", "updated_at": "2026-08-12T14:00:13Z"},
+    ]
+
+    result = characterize_news_reconnect(
+        before,
+        after,
+        rest,
+        disconnected_at=disconnected,
+        reconnected_at=reconnected,
+    )
+
+    assert result == {
+        "observed_disconnect_seconds": 5.0,
+        "before_identities": 1,
+        "after_identities": 2,
+        "cross_segment_overlap": 1,
+        "cross_segment_corrected_identities": 1,
+        "combined_stream_identities": 2,
+        "rest_identities": 3,
+        "combined_stream_recall_of_rest": pytest.approx(2 / 3),
+        "blind_window_rest_identities": 3,
+        "blind_window_delivered_after_reconnect": 2,
+        "blind_window_rest_recoverable": 1,
+    }
+
+
+def test_news_reconnect_writer_hash_binds_all_three_surfaces(tmp_path):
+    start = datetime(2026, 8, 12, 14, 0, tzinfo=UTC)
+    disconnected = datetime(2026, 8, 12, 14, 1, tzinfo=UTC)
+    reconnected = datetime(2026, 8, 12, 14, 1, 5, tzinfo=UTC)
+    end = datetime(2026, 8, 12, 14, 2, tzinfo=UTC)
+    manifest_path = write_news_reconnect_evidence(
+        tmp_path,
+        window_start=start,
+        disconnected_at=disconnected,
+        reconnected_at=reconnected,
+        window_end=end,
+        symbols=("AAPL",),
+        before_rows=[],
+        after_rows=[],
+        rest_rows=[],
+        environment={"paper_only": True},
+    )
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["capture_kind"] == "alpaca-news-reconnect-ws-rest"
+    assert manifest["sample_size"] == {
+        "websocket_before": 0,
+        "websocket_after": 0,
+        "rest": 0,
+    }
+    assert verify_evidence_manifest(manifest_path) == {
+        "ok": True,
+        "checked": ["raw.rest", "raw.websocket_after", "raw.websocket_before", "summary"],
+        "failures": [],
+    }
 
 
 def test_market_frames_keep_types_and_measure_source_delivery_timing():

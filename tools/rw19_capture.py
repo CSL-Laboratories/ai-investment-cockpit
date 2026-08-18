@@ -4,8 +4,8 @@ Usage from the repository root:
     .venv/Scripts/python tools/rw19_capture.py alpaca-bars \
         --date 2026-08-11 --symbols AAPL MSFT
 
-Credentials are read from the OS keyring and are never printed or written. The command only
-uses historical market-data GET endpoints; it cannot place or modify an order.
+Credentials are read from the OS keyring and are never printed or written. Commands use only
+market-data/news GET and bounded WebSocket endpoints; they cannot place or modify an order.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from ingest.characterization import (  # noqa: E402
     write_capability_evidence,
     write_market_stream_evidence,
     write_news_evidence,
+    write_news_reconnect_evidence,
 )
 
 DATA_URL = "https://data.alpaca.markets/v2/stocks/bars"
@@ -265,6 +266,59 @@ def capture_alpaca_news(args) -> Path:
     )
 
 
+def capture_alpaca_news_reconnect(args) -> Path:
+    segment_seconds = float(args.segment_seconds)
+    gap_seconds = float(args.gap_seconds)
+    if not 5 <= segment_seconds <= 1_800:
+        raise ValueError("--segment-seconds must be between 5 and 1800")
+    if not 1 <= gap_seconds <= 300:
+        raise ValueError("--gap-seconds must be between 1 and 300")
+    if segment_seconds * 2 + gap_seconds > 3_600:
+        raise ValueError("the complete reconnect capture must not exceed 3600 seconds")
+    symbols = _symbols(args.symbols)
+    key = require_secret("alpaca_key").reveal()
+    secret = require_secret("alpaca_secret").reveal()
+
+    window_start, disconnected_at, before_rows = _capture_news_ws(
+        key=key,
+        secret=secret,
+        symbols=symbols,
+        duration_seconds=segment_seconds,
+    )
+    time.sleep(gap_seconds)
+    reconnected_at, window_end, after_rows = _capture_news_ws(
+        key=key,
+        secret=secret,
+        symbols=symbols,
+        duration_seconds=segment_seconds,
+    )
+    headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    with httpx.Client(headers=headers, timeout=args.timeout) as client:
+        rest_rows = _fetch_news_rest(
+            client,
+            symbols=symbols,
+            start=window_start,
+            end=window_end,
+        )
+    return write_news_reconnect_evidence(
+        Path(args.output_root),
+        window_start=window_start,
+        disconnected_at=disconnected_at,
+        reconnected_at=reconnected_at,
+        window_end=window_end,
+        symbols=symbols,
+        before_rows=before_rows,
+        after_rows=after_rows,
+        rest_rows=rest_rows,
+        environment={
+            "capture_host": "local",
+            "paper_only": True,
+            "deliberate_disconnect": True,
+            "requested_gap_seconds": gap_seconds,
+        },
+    )
+
+
 def capture_alpaca_market(args) -> Path:
     if not 5 <= args.duration_seconds <= 3_600:
         raise ValueError("--duration-seconds must be between 5 and 3600")
@@ -347,6 +401,20 @@ def parser() -> argparse.ArgumentParser:
     news.add_argument("--output-root", default=str(REPO_ROOT / "data" / "evidence" / "rw19"))
     news.add_argument("--timeout", type=float, default=30.0)
     news.set_defaults(handler=capture_alpaca_news)
+    news_reconnect = commands.add_parser(
+        "alpaca-news-reconnect",
+        help="capture two bounded news WS segments and REST recovery across a deliberate gap",
+    )
+    news_reconnect.add_argument(
+        "--symbols", nargs="+", required=True, help="explicit measurement universe"
+    )
+    news_reconnect.add_argument("--segment-seconds", type=float, default=300.0)
+    news_reconnect.add_argument("--gap-seconds", type=float, default=5.0)
+    news_reconnect.add_argument(
+        "--output-root", default=str(REPO_ROOT / "data" / "evidence" / "rw19")
+    )
+    news_reconnect.add_argument("--timeout", type=float, default=30.0)
+    news_reconnect.set_defaults(handler=capture_alpaca_news_reconnect)
     market = commands.add_parser("alpaca-market", help="capture bounded market WebSocket data")
     market.add_argument("--feed", choices=("test", "iex", "sip"), required=True)
     market.add_argument("--symbols", nargs="+", required=True, help="explicit measurement universe")
