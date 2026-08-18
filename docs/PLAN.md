@@ -51,13 +51,14 @@ legacy rows without creating a general override. A committed `read_only` live ru
 with no current error, and stopped with a valid audit chain at sequence 10,040 and zero orders.
 Its older named cross-platform attestation remains pending.
 
-The merged line through PR #39 contains the WP0–WP9 foundation, the contained QT engine, the
+The merged line through PR #41 contains the WP0–WP9 foundation, the contained QT engine, the
 fail-closed calendar boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation),
 event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
 fail-closed transaction-cost/net-edge gate (`W-21`), RW-15 paper reconciliation, W-22's audited
 paper loop, W-23's production-closed deterministic cash-merger edge machinery, W-24's semantic
-verifier, BUG-106, and the repeated RW-19 measurements.
+verifier, BUG-106, the repeated RW-19 measurements, and W-25's Administrator-safe WORM witness
+implementation.
 
 The outage recovery queue is recorded in
 [[evidence/github-outage-session-handoff-2026-08-17]]. BUG-106, W-24's verifier and adversarial
@@ -76,12 +77,15 @@ cohort/current-target evidence and external witness needed to activate W-23; eve
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
 
-RW-19 now has two completed 11-symbol IEX/SIP sessions and three bounded live IEX captures.
-Combined recall at 10/25/50 bps is approximately 75%, and the largest observed one-second burst
-is 1,114 frames. That confirms IEX/SIP non-equivalence but does not resolve `DEC-07`: broader
-regimes, deliberate reconnect/REST backfill, news identity, and measured-burst SQLite/triage
-behavior remain open. Building a synthetic event/outbox path before those measurements would be
-premature `RW-13`, so no such path was added.
+RW-19 now has two completed 11-symbol IEX/SIP sessions, repeated live IEX captures, a deliberate
+reconnect/REST comparison, and an isolated 1,114-frame persistence/triage replay. The reconnect
+window exposed 1,965 REST-recoverable identities. The single writer sustained only 74.67
+one-event writes/s, and raw fanout produced a 236,637-character triage packet. A one-hour news
+sample captured 10 stream and nine REST identities; all REST IDs overlapped, while one persistent
+stream-only ID rejected full equivalence. Those are measured design constraints, not permission
+to start `RW-13`: broader regimes, news correction/reconnect evidence, and a bounded deterministic
+coalescing decision remain open, so `DEC-07` is unresolved. See
+[[evidence/rw14-rw19-live-evidence-2026-08-18]].
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
 PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
@@ -92,8 +96,9 @@ OpenCode DeepSeek Pro/Flash external audit could not attest: the Pro workspace r
 insufficient balance and alternate read-only reviewer calls timed out without output or
 repository changes. All six PR #31 matrix jobs stopped
 before executing a step because GitHub reported failed recent account payments or a spending
-limit that needs to be increased. Cross-platform CI and RW-14's named live-data evidence remain
-pending; this was not a repository test failure.
+limit that needs to be increased. RW-14's named live-data drill passed on 2026-08-18; the
+cross-platform attestation remains pending, and the billing-blocked jobs were not repository
+test failures.
 Offline work may continue on isolated branches; no package becomes production-ready or a
 dependency baseline without its required CI and online evidence gate.
 
@@ -106,9 +111,13 @@ attestation, not approval. All six PR #38 matrix jobs stopped in 3–4 seconds b
 step with GitHub's payment/spending-limit annotation; that is missing CI attestation, not a code
 failure.
 
-**Immediate sequence:** configure the private Discord audit channel and begin W-24's real
-prospective cohort capture while collecting the named
-RW-11/RW-14/RW-15/RW-19 evidence. A real
+**Immediate sequence:** the private Discord audit channel is configured and verified as a W-24
+chronology mirror, but it is not SEC-11 authority under the fixed Administrator constraint.
+The 2026-08-18 real-candidate intake exposed `BUG-108`; its isolated schema-v2 repair preserves
+the current-baseline check while binding the original terms source, every signed intervening
+filing, and an explicit current accession. Merge/cross-platform attestation remain pending and no
+real selection exists, so expected edge stays unavailable. Continue the remaining named
+RW-11/RW-15/RW-19 evidence and provision the independent W-25 WORM authority. A real
 evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
@@ -303,13 +312,21 @@ pipeline faults as degraded rather than quiet success.
 
 - **Gate:** the in-process path produces cited deltas on a real market day, *and* field-level
   extraction precision ≥95% on a hand-labelled post-cutoff sample.
-- **Still open:** collect that evidence. Only then does a separate `RW-12` package delete
+- **2026-08-18 live check:** a trustworthy 11-CIK poll stored one SNDK 10-K as a clean first
+  baseline with zero poll/delta errors and no delta, advancing the valid operational chain to
+  sequence 10,241 with zero Orders. This is reachability evidence, not a precision sample; see
+  [[evidence/rw11-live-poll-2026-08-18]].
+- **Still open:** hand-label a meaningful post-cutoff delta sample and demonstrate ≥95% field
+  precision. Four prior real 8-K delta anchors pass exact raw-byte round-trip, but their semantic
+  fields remain deliberately unscored in [[evidence/rw11-precision-label-sheet-2026-08-18]]. Only
+  then does a separate `RW-12` package delete
   `edgar_brew.py` + its tests. Until then the legacy reader is an intentional fallback, not the
   primary configured path.
 
 ### M2 — Live market data on the ingestion trigger  (`RW-14`)
 
-**Package status — merged 2026-08-13 in PR #31; online evidence pending:**
+**Package status — merged 2026-08-13 in PR #31; named online evidence passed 2026-08-18;
+cross-platform attestation pending:**
 
 1. **Operator change:** the composed paper cockpit receives a production L1 book snapshot plus
    daily ADV/realized-volatility inputs, exposes advancing quant snapshots, and disables orders
@@ -350,9 +367,11 @@ order-path adversarial passes (sessions `ses_005cb948dffep00GT3p9o4wDZO`,
 `ses_005b314d6ffebMIQqTEdhH74zF`, and `ses_005b314deffelJJPoVNNHLTYxl`). Reproduced findings
 closed in PR #31 include graceful quote-cache degradation, holdings-only reachability,
 calendar/clock refusal, cadence/TTL alignment, composed allowlist coverage, and raw-hash
-binding. Cross-platform CI, real IEX entitlement/field coverage, live exchange-timestamp
-progression, and a real stale-to-L8 transition remain online evidence; none is inferred from
-fixtures. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff clean.
+binding. The 2026-08-18 composed live drill advanced all 11 quote sequences, crossed the
+120-second threshold on frozen real exchange timestamps, entered L8 while awareness continued,
+and recovered fresh in `read_only` with zero Orders. The older hosted/macOS cross-platform
+attestation remains missing. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff
+clean. See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 
 - Add a daily-bars poller alongside the quote poller (same Alpaca credentials; entitlement and
   feed coverage re-verified at build under `DEC-07`). Cache per symbol, refresh daily. Yields
@@ -365,7 +384,7 @@ fixtures. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff cl
   the 120s threshold coherent with the poll cadence.
 - PR #31 closes `BUG-097` in code: stale data routes through the single L8 watch-only
   mechanism, ingest/awareness keeps running, and the order-path change received adversarial
-  review. Its real stale-feed transition remains an online evidence gate.
+  review. The named real-age transition passed on 2026-08-18; cross-platform attestation remains.
 - **Gate:** `quant_book_seq` advances between observations on a live day; authority age is
   computed from the latest exchange timestamp. The synchronous gateway refuses stale data at
   every hour, while market-hours breaker sampling routes >120 seconds to L8 `watch_only` and
@@ -578,7 +597,22 @@ Discord channel identity, and final EDGAR CIK binding; see
 [[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
 review attempts timed out without a verdict, so that external attestation remains missing.
 
-**`W-25` intake — claimed on `work/w25-worm-audit-witness`:**
+**W-24 intake blocker and repair (2026-08-18):** a GET-only screen of 46 real discovery names
+found 19 with a current SEC mapping and supported filing head, but zero of those heads passed the
+pinned parser. The single-source/current-baseline rule could not retain an announcement's terms
+after a later ordinary filing. The isolated `BUG-108` repair replaces only the selection manifest
+with v2: it witnesses the original semantic source, a complete ordered set of locally signed
+supported filings through selection, and an explicit current accession that must still equal the
+strict EDGAR baseline. Both the prospective prediction and eventual evaluation label are derived
+from that frozen set. Omission, addition, chronology reversal, unsigned rows, future/post-commit
+evidence, v1, witness tampering, or any current-baseline/file-set change fails closed. No SQL
+migration is needed because there is no real v1 commitment. Merge, cross-platform attestation,
+the real ≥30-name cohort, held-out precision, and a current target remain open. The final local
+Windows gate is 2,303 passed / 1 skipped with Ruff clean after the adversarial pass blocked
+cross-filing parser phrase synthesis; see
+[[evidence/w24-prospective-intake-2026-08-18]].
+
+**`W-25` — merged in PR #41; activation evidence pending:**
 
 1. **Operator change:** the existing Discord operator bot may retain guild-wide
    `Administrator`, but Discord no longer counts as SEC-11's append-only trust root. Discord
@@ -726,8 +760,8 @@ mode ladder may still fall to `watch_only`; no implementation may weaken that fa
 3. `RW-19` records event capture/replay, stream-gap, load, WS/REST identity, and IEX/SIP
    evidence and resolves `DEC-07` before `RW-13`.
 4. `RW-17`/`BUG-096` is closed: an unknown calendar year refuses auto-arm/orders while ingest
-   and awareness continue. `RW-14`/`BUG-097` is merged; its real stale-feed-to-L8 transition
-   must still be evidenced before dynamic-paper soak.
+   and awareness continue. `RW-14`'s named stale-feed-to-L8 transition passed on 2026-08-18;
+   its hosted/macOS cross-platform attestation remains missing.
 5. Every numeric latency/load target is labelled proposed until measured; vendor facts and
    repository invariants are never presented as performance promises.
 
@@ -735,8 +769,8 @@ Dependency order:
 
 `{RW-11 evidence → RW-12, RW-19 evidence → DEC-07, DEC-05 → RW-18}` run as bounded evidence
 lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → DEC-03 → W-23 → W-24 → RW-13 → W16 → beta
-stabilization → W17 → W18 → W19`. RW-14's online acceptance remains a parallel evidence lane
-and cannot close on an assumed entitlement/feed.
+stabilization → W17 → W18 → W19`. RW-14's named online acceptance passed; its missing
+cross-platform attestation remains a parallel evidence lane and cannot close by assumption.
 
 ### Recommended development pipeline
 

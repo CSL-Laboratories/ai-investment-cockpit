@@ -51,25 +51,33 @@ canonical invariant list, and nothing else restates it.
   gate is 2,274 passed / 1 skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
+- The 2026-08-18 W-24 intake exposed `BUG-108`: one accession could not be both the original
+  semantic source and a later current EDGAR baseline. The isolated schema-v2 repair witnesses a
+  complete ordered signed source set plus an explicit current accession, derives prospective and
+  calibration eligibility from that frozen set, and rejects legacy/incomplete/tampered authority.
+  Merge and cross-platform CI remain pending; no real cohort or edge authority has been created.
+  See [[evidence/w24-prospective-intake-2026-08-18]].
 - `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
   with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
   ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped
   with a valid audit chain at sequence 10,040 and zero proposals/orders. Windows: 2,248 passed /
   1 skipped; Ruff clean. The PR #37 six-job matrix was running at merge time. See
   [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]].
-- The `RW-19` evidence update merged in PR #39 and now covers two completed 11-symbol IEX/SIP
-  sessions and three live IEX stream samples. Combined IEX recall is about 75% at the 10/25/50 bps measurement
-  thresholds and the maximum observed one-second burst is 1,114 frames. This confirms feed
-  non-equivalence but does not resolve `DEC-07`; reconnect/backfill, broader regimes, news
-  identity, and measured-burst persistence/triage remain open.
+- The `RW-19` evidence update merged in PR #39 and covers two completed 11-symbol IEX/SIP
+  sessions and three live IEX stream samples. A 2026-08-18 deliberate reconnect added a real
+  REST-recoverable gap, and an isolated 1,114-frame replay measured the single writer at only
+  74.67 one-event writes/s plus a 236,637-character raw triage packet. This confirms that bounded
+  coalescing is required before `RW-13`; broader regimes and news/correction identity remain open.
+  See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 - The stopped-system preflight is green for controlled background `read_only` bring-up: loopback
   port free, HALT absent, audit chain valid, zero proposal/risk/approval/order rows, 11 awareness
   symbols, required feed/operator credentials present, and operational Discord delivery channels
-  configured. The merger watchlist remains empty and the private Discord audit-witness channel id
-  is absent, so expected edge, SEC-11, and paper opening orders correctly remain unavailable.
+  configured. The private Discord audit channel is configured and verified as a W-24 chronology
+  mirror, but the merger watchlist remains empty and independent W-25 WORM authority is absent,
+  so expected edge, SEC-11, and paper opening orders correctly remain unavailable.
 - GitHub's 2026-08-17 incident interrupted publication. BUG-106, W-24, and the RW-19 evidence
-  subsequently merged in PRs #37–#39; this final documentation reconciliation preserves the
-  stopped-system preflight and recovery record in
+  subsequently merged in PRs #37–#39, the handoff in PR #40, and W-25 in PR #41. This
+  documentation reconciliation preserves the stopped-system preflight and recovery record in
   [[evidence/github-outage-session-handoff-2026-08-17]]. Do not start `RW-13` or a new production
   package while the named evidence gates remain open.
 - The old `inverse-cramer`, `samir`, `fix/core-secrets-gitignore`, and local `rw01-operationalize`
@@ -142,6 +150,10 @@ defects got fixed twice on two branches.
 | [[evidence/w25-admin-discord-worm-witness-2026-08-17]] | Administrator-safe Discord channel proof, WORM adapter boundary, fail-closed readback, and remaining real-cloud evidence |
 | [[evidence/bug106-edgar-baseline-timestamp-2026-08-17]] | BUG-106 deterministic repair contract and bounded composed live confirmation |
 | [[evidence/github-outage-session-handoff-2026-08-17]] | Exact local branch/commit inventory, stopped-system preflight, merge order, and paste-ready next-session prompt |
+| [[evidence/rw11-live-poll-2026-08-18]] | RW-11 live 11-CIK reachability, clean SNDK baseline, audit/safety result, and still-open precision gate |
+| [[evidence/rw11-precision-label-sheet-2026-08-18]] | Unscored four-delta human-review seed plus separate 4/4 mechanical citation check |
+| [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
+| [[evidence/w24-prospective-intake-2026-08-18]] | GET-only real candidate readiness screen and BUG-108 prospective source-set blocker |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 

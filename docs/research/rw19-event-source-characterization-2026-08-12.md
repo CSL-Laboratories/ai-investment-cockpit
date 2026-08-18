@@ -144,11 +144,11 @@ Additional bounded commands use the same evidence contract:
 | Spike | State | Evidence required before closure |
 |---|---|---|
 | Operator-universe IEX/SIP | two completed sessions captured; non-equivalence confirmed | Repeat across regimes until each candidate threshold has a stable distribution; price SIP against measured false negatives |
-| Market WS | three 60-second live samples captured; maximum observed one-second burst 1,114 frames | Add corrections, deliberate reconnect trace, REST identity/backfill limits, and IEX connection-limit behavior |
-| News WS ↔ REST | one 180-second sample captured but insufficient | Article/update identity equivalence, correction behavior, reconnect gaps, burst distribution, history coverage |
+| Market WS | repeated live samples plus deliberate reconnect/REST recovery captured; maximum observed one-second burst 1,114 frames | Add corrections, broader-regime distributions, and IEX connection-limit behavior |
+| News WS ↔ REST | one-hour sample captured 10 stream/9 REST identities; all REST IDs overlapped and one persistent stream-only ID rejected equivalence | Repeat across regimes; capture correction/update and reconnect behavior before setting loss/backfill policy |
 | SEC discovery | declared UA configured; submissions polling healthy | Re-verify official Latest Filings Atom/RSS, measure latency/cadence under the declared UA, and retain submissions as correctness/backfill |
 | Paper order events ↔ REST | pending safe paper activity | Fill/partial/cancel/reject ordering and latency, accessible REST history, injected event loss and terminal convergence; no live order |
-| SQLite / triage load | pending recorded stream | Replay recorded distributions through one writer; measure contention/tick duration before setting queue/coalescing bounds |
+| SQLite / triage load | 1,114-frame replay measured 74.67 one-event writes/s and a 236,637-character raw triage packet | Specify and separately test bounded filtering/coalescing before any dynamic trigger work |
 | Calendar drift | partially closed by RW-17 | Current/next-year official comparison exists; retain rollover capture in the RW-13 fault suite |
 
 ## Operator-universe update — 2026-08-14
@@ -242,13 +242,51 @@ A bounded 180-second news capture observed one WebSocket identity and zero REST 
 That sample verifies the capture path but cannot establish stream/REST recall, correction
 semantics, or quiet-day behavior.
 
+## Deliberate reconnect and measured-load evidence — 2026-08-18
+
+The hash-verified reconnect manifest is
+`data/evidence/rw19/reconnect/2026-08-18/20260818T150425Z/manifest.json`. Two 30-second
+11-symbol IEX segments retained 11,388 and 11,214 frames around a deliberate five-second socket
+close. A GET-only quote/trade history fetch over the combined window returned 25,050 distinct
+measurement identities; 22,436 overlapped the two stream segments (89.56% REST-window recall).
+
+The conservative blind window through the first post-reconnect receive was 5.392 seconds. REST
+contained 2,035 identities in that interval, of which 1,965 were absent from the stream segments
+and recoverable by history. Seventy source-timestamp identities from the interval arrived after
+reconnect, so the measurement does not equate source-time and receive-time ordering. This proves
+that scoped REST recovery is available; it does not yet choose the exact future cursor/boundary
+contract.
+
+The isolated load manifest is
+`data/evidence/rw19/load/2026-08-18/20260818T150927Z/manifest.json`. Replaying 1,114 distinct
+recorded frames through the production one-event-per-call persistence shape and one SQLite WAL
+writer produced no integrity/write failure, but required 14.919 seconds: 74.67 events/s, with
+15.996 ms p95 and 18.128 ms p99 call latency. The no-network, schema-valid triage tick itself
+took 0.217 seconds but constructed a 236,637-character raw-frame packet. These are negative
+capacity/design results: direct raw-frame persistence and prompt fanout cannot be the dynamic
+trigger. Bounded deterministic filtering/coalescing must be specified before `RW-13`.
+
+A five-minute news attempt retained a hash-valid 0-WebSocket/0-REST sample at
+`data/evidence/rw19/news/2026-08-18/20260818T150726Z/manifest.json`. Its recall remains null;
+the sample is insufficient and makes no quiet-day or identity-equivalence claim.
+
+A later one-hour capture retained ten unique WebSocket identities and nine REST identities at
+`data/evidence/rw19/news/2026-08-18/20260818T152559Z/manifest.json`. All nine REST identities
+appeared on the stream. Identity `61278730` was stream-only and remained absent from a repeated
+GET of the exact frozen window several hours later, rejecting full identity equivalence for this
+sample. The stream had zero duplicates, invalid records, or observed corrected identities;
+source-to-receive delay was 0.320 seconds p50 and 0.480 maximum. This is useful identity evidence,
+but ten articles and zero corrections cannot set a loss rate or prove correction/reconnect
+semantics.
+
 ## DEC-07 status
 
 **Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. Two
 completed operator-universe sessions show material, repeatable IEX false negatives at small
-one-minute movement thresholds, and three bounded live captures establish a current observed
-burst floor. The sample still spans only two adjacent sessions, while reconnect/backfill and
-measured-burst SQLite/triage behavior remain untested. No production adapter may encode either
-“IEX is sufficient” or “SIP is required” from this evidence. The next evidence is broader
-regime coverage plus a deliberate reconnect/REST-backfill comparison and replay at or above the
-observed 1,114-frame one-second burst over this same universe.
+one-minute movement thresholds. The deliberate reconnect now proves REST-recoverable blind-window
+identities, the measured 1,114-frame replay proves the current one-event writer/raw prompt
+shape is too slow and too large for direct dynamic fanout, and the one-hour news sample rejects
+WS/REST identity equivalence. No production adapter may encode
+either “IEX is sufficient” or “SIP is required” from this evidence. The next evidence is broader
+regime coverage, news correction/reconnect samples, and a bounded filtering/coalescing contract;
+designing or implementing that contract is later `RW-13`, which remains blocked.
