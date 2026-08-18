@@ -621,11 +621,20 @@ authoritative announcement 8-K states an all-cash Nasdaq common-stock merger, bu
 "canceled and automatically converted" / "Agreement and Plan of Merger" language falls outside
 the pinned grammar. No partial cohort or Discord commitment was created. Remediation is a separate
 parser-hardening package with frozen real positive and adversarial negative sources, followed by
-the held-out precision gate; no manual label or grammar bypass is permitted. The isolated local
-`BUG-109` repair now recognizes the exact CRNX source while blocking cross-sentence, option,
+the held-out precision gate; no manual label or grammar bypass is permitted. The `BUG-109` repair
+now recognizes the exact CRNX source while blocking cross-sentence, option,
 preferred-share, note, negation, cashless, and cross-document misattribution cases. Its Windows
-gate is 2,311 passed / 1 skipped with Ruff clean, but merge, independent review, cross-platform
-attestation, and held-out human precision remain open, so this creates no selection authority.
+gate is 2,311 passed / 1 skipped with Ruff clean. It merged in PR #43 at `4bcf333`; all six hosted
+jobs executed zero steps under the existing payment restriction, so independent/cross-platform
+attestation and held-out human precision remain open.
+
+The strict post-merge rescreen preserved the 43/16/6 SEC-head split and tested every supported
+2026 primary filing for those six names. CRNX alone now forms a deterministic five-filing semantic
+set from accession `0001140361-26-027642` through strict head `0001140361-26-032951`; the other
+five still refuse. One unsigned candidate is not a ≥30-name universe, and CRNX's combined primary
+sources state neither one exact expected-resolution date nor one exact outside date in the pinned
+grammar, so the current-target gate also remains unavailable. No raw import, quote, selection row,
+or Discord witness was created; see [[evidence/w24-post-bug109-rescreen-2026-08-18]].
 
 **`W-25` — merged in PR #41; activation evidence pending:**
 

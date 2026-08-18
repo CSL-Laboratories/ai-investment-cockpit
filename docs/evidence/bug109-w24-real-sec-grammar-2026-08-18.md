@@ -1,6 +1,6 @@
 ---
 type: evidence
-status: implementation-complete-evidence-pending
+status: merged-evidence-pending
 last-verified: 2026-08-18
 ---
 
@@ -72,8 +72,10 @@ used that same isolation; `.env` was restored by `finally`, and the temporary ho
 
 ## Remaining gates
 
-This local package does not close W-24. It still requires merge and independent adversarial review,
-Ubuntu/macOS and Python 3.11/3.12 attestation, an independently human-labelled held-out parser audit
+This package merged in PR #43 at `4bcf3330c8befc9c33534fb9f91b44827d485726`; all six hosted
+matrix jobs executed zero steps under the payment restriction. It does not close W-24. W-24 still
+requires independent adversarial review, Ubuntu/macOS and Python 3.11/3.12 attestation, an
+independently human-labelled held-out parser audit
 at or above 95% with no false-positive eligibility/outcome, one complete real ≥30-deal prospective
 cohort, its witnessed chronology and horizon outcomes, and one current eligible target. Until all
 of those pass, expected edge remains unavailable, the merger execution watchlist remains empty,
