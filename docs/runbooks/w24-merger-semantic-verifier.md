@@ -70,6 +70,14 @@ The minimum evaluation horizon means a qualifying real 30-deal cohort cannot be 
 same day it is selected. Background/read-only and named live-feed evidence can run now; opening
 paper Orders cannot use this edge until the prospective horizon and all other MVP gates pass.
 
+The 2026-08-18 GET-only intake screen exposed `BUG-108`: the single candidate source must equal
+the current EDGAR baseline, but later ordinary filings generally supersede the announcement
+without restating the terms needed by calibration. Zero of 19 current SEC-mapped filing heads in
+the real screen passed the pinned parser. Selection is blocked pending a separately scoped,
+adversarially reviewed source-set contract; see
+[[evidence/w24-prospective-intake-2026-08-18]]. Do not weaken the current-baseline check, substitute
+an older accession, or post a partial manifest.
+
 ## Start a prospective cohort
 
 Stay in audited `read_only`. Provision the private Discord audit channel for the Administrator bot
