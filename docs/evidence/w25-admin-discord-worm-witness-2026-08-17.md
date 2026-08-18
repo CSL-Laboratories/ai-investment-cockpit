@@ -2,13 +2,14 @@
 title: W-25 Administrator-safe witness evidence — 2026-08-17
 type: evidence
 status: live
-last-verified: 2026-08-17
+last-verified: 2026-08-18
 related:
   - ../PLAN
   - ../REGISTER
   - ../security-hardening-backlog
   - ../runbooks/w24-merger-semantic-verifier
   - ../runbooks/w25-worm-audit-witness
+  - ../research/sec11-zero-cost-witness-feasibility-2026-08-18
 ---
 
 # W-25 Administrator-safe witness evidence — 2026-08-17
@@ -92,6 +93,21 @@ authority or an execution universe.
 HMAC key present/clean, and reports exactly the two new WORM credential names missing. Its exit 1
 is the intended provisioning-gate result, not a runtime/test failure.
 
+## 2026-08-18 cost and alternative follow-up
+
+The zero-additional-cost review did not approve a replacement witness. Same-VPS storage shares
+the cockpit rollback domain; Cloudflare R2 lacks the current adapter's required AWS Object Lock
+configuration/version-retention interface and documents removable Bucket Lock rules. A home
+device and Sigstore Rekor remain research candidates only.
+
+Code inspection also found `BUG-110`: `_read_latest_strict()` revalidates every retained version,
+`GitAuditLogAnchorStore.append()` calls that trust read before `S3ObjectLockWitness.publish()`
+does it again, and the new version is then read once more. Gate, mode, gateway, performance, and
+budget checks add further full reads. At the weekday 30-minute cadence this is unbounded request
+and latency growth. S3 activation is therefore held pending a bounded rollback-safe design and an
+explicit provider/cost decision. See
+[[../research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+
 ## Local gates and evidence still required
 
 The focused witness/composition/config/semantic/security suite passed **143 tests**. The full
@@ -102,6 +118,8 @@ failures.
 Still required:
 
 - independent review and runnable Ubuntu/Windows/macOS × Python 3.11/3.12 CI;
+- close `BUG-110` without weakening retained-version, delete/shadow, conflict, rollback, or
+  fail-closed checks, then record the operator's provider/cost decision;
 - real bucket/account/region/default-retention evidence and least-privilege policy;
 - real put/read-retention plus overwrite/delete/version-delete/retention-shortening/shadow/conflict
   and captured-watermark rollback drill;

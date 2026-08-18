@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-17
+last-verified: 2026-08-18
 ---
 
 # The plan
@@ -120,7 +120,9 @@ The 2026-08-18 real-candidate intake exposed `BUG-108`; its PR #42 schema-v2 rep
 the current-baseline check while binding the original terms source, every signed intervening
 filing, and an explicit current accession. PR #42 is merged; cross-platform attestation remains
 pending and no real selection exists, so expected edge stays unavailable. Continue the remaining named
-RW-11/RW-15/RW-19 evidence and provision the independent W-25 WORM authority. A real
+RW-11/RW-15/RW-19 evidence. Before provisioning W-25, resolve `BUG-110`'s unbounded retained-
+history verification cost and make an explicit funded-S3 versus separately reviewed zero-cost
+transparency-log decision. Same-host storage and Cloudflare R2 do not qualify. A real
 evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
@@ -684,6 +686,16 @@ window. Duplicate/conflicting same-sequence evidence, pagination failure, unknow
 any read error returns no trusted anchor. Real bucket provisioning plus a fresh delete/shadow/
 rollback adversarial drill is an online evidence gate, not inferred from mocks.
 
+**2026-08-18 cost/provider hold:** `BUG-110` is open before activation. The current S3 trust read
+lists and revalidates every retained version; the production append path performs that full read
+twice before re-reading the new version, and all consuming paths add more full reads. At the
+weekday `*/30` schedule, remote request/latency work grows with retained history rather than
+remaining bounded. The existing Hetzner VPS is the same rollback domain, and Cloudflare R2 does
+not provide the adapter's required AWS Object Lock/version-retention interface, so neither can be
+promoted from mirror to authority. Sigstore Rekor is a research candidate only. Resolve the bug
+without trusting a mutable latest pointer, local-only cache, or reduced security window; see
+[[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+
 ### M5 — Event-driven triggers  (`RW-13`)
 
 **Dynamic paper autonomy.** Drive triage from durable event candidates while retaining cron as
@@ -847,8 +859,10 @@ gates that local tests cannot establish:
 - `RW-15`: resting, partial, terminal, and lost-response Alpaca paper reconciliation.
 - `DEC-05 → RW-18`: only after the operator resolves credential read scope; discovery is
   authenticated but no-capital and places zero orders.
-- SEC-11/W-25: provision the S3 Object Lock Compliance witness and rerun the version-shadow,
-  delete-marker, retention, and delete-then-heal red team. Discord remains a mirror.
+- SEC-11/W-25: first close `BUG-110` with a bounded rollback-safe trust read and explicitly choose
+  funded S3 or a separately designed/reviewed transparency-log alternative. Only then provision
+  the selected independent witness and rerun version-shadow/deletion/retention/rollback evidence.
+  Same-host, Discord, git, and R2 remain mirrors under the current contract.
 
 #### Phase 3 — MVP
 

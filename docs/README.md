@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-17
+last-verified: 2026-08-18
 ---
 
 # Docs index
@@ -86,6 +86,12 @@ canonical invariant list, and nothing else restates it.
   configured. The private Discord audit channel is configured and verified as a W-24 chronology
   mirror, but the merger watchlist remains empty and independent W-25 WORM authority is absent,
   so expected edge, SEC-11, and paper opening orders correctly remain unavailable.
+- The 2026-08-18 zero-cost SEC-11 assessment rejects the existing Hetzner VPS and Cloudflare R2
+  as authoritative W-25 substitutes. Same-host storage shares the rollback domain; R2 does not
+  expose the current adapter's required AWS Compliance/version-retention contract. Sigstore Rekor
+  is a research candidate only. `BUG-110` additionally blocks S3 activation because the current
+  reader revalidates every retained version on every trust read, creating unbounded request and
+  latency growth. See [[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
 - GitHub's 2026-08-17 incident interrupted publication. BUG-106, W-24, and the RW-19 evidence
   subsequently merged in PRs #37–#39, the handoff in PR #40, and W-25 in PR #41. This
   documentation reconciliation preserves the stopped-system preflight and recovery record in
@@ -154,7 +160,7 @@ defects got fixed twice on two branches.
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |
 | [[runbooks/w23-cash-merger-edge]] | Deterministic cash-merger evidence schemas, conservative calibration, and separate paper-activation gate |
 | [[runbooks/w24-merger-semantic-verifier]] | Prospective semantic-authority contract, external witness, cohort workflow, and fail-closed activation boundary |
-| [[runbooks/w25-worm-audit-witness]] | Administrator-safe SEC-11 trust split, S3 Object Lock provisioning, and required delete/shadow/rollback evidence |
+| [[runbooks/w25-worm-audit-witness]] | Administrator-safe SEC-11 trust split, activation hold for `BUG-110`, S3 Object Lock provisioning, and required delete/shadow/rollback evidence |
 | [[evidence/w22-paper-mvp-2026-08-14]] | Dated first-day status, live-feed observations, and unclosed evidence gates |
 | [[evidence/w23-cash-merger-edge-2026-08-14]] | W-23 local implementation, attack→fix findings, tests, and unclosed activation gates |
 | [[evidence/w24-merger-semantic-verifier-2026-08-17]] | W-24 implementation, adversarial findings, local gates, and remaining prospective evidence |
@@ -183,6 +189,7 @@ defects got fixed twice on two branches.
 | [[research/llm-hybrid-trading]] | Viability research. Confirms the extraction-not-prediction architecture; sets the cost and accuracy bars in [[PLAN]] §2 |
 | [[research/autonomy-blockers-and-unblockers-2026-08-12]] | Dated evidence for the paper-reliability/dynamic-paper/live-broker distinction, Robinhood/MCP unknowns, event-trigger design, empirical spikes, and hold points in [[PLAN]] |
 | [[research/rw19-event-source-characterization-2026-08-12]] | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
+| [[research/sec11-zero-cost-witness-feasibility-2026-08-18]] | Same-host/R2 rejection, Rekor/home-device research candidates, AWS cost boundary, and `BUG-110` retained-history request-growth finding |
 | [[research/dec03-strategy-selection-2026-08-14]] | Closed DEC-03 comparison, selection, and the fail-closed W-23 edge-source contract |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
