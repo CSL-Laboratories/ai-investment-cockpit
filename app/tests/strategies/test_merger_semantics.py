@@ -602,6 +602,111 @@ def test_negated_agreement_and_plan_language_cannot_satisfy_definitive_agreement
         _derive_eligibility(text, amended=False)
 
 
+def test_real_crnx_agreement_and_cancellation_grammar_is_eligible():
+    # BUG-109: minimal frozen grammar from CRNX accession 0001140361-26-027642.  The old
+    # matcher stopped at the decimal par value and missed both the cancellation/conversion
+    # ordering and the standard Agreement and Plan of Merger assertion.
+    text = (
+        "item 1.01 entry into a material definitive agreement. the company entered into an "
+        "agreement and plan of merger. each share of common stock of the company, par value "
+        "$0.001 per share, issued and outstanding immediately prior to the effective time, "
+        "other than excluded shares, will be canceled and automatically converted into the "
+        "right to receive $85.00 per share in cash, without interest. the common stock is "
+        "listed on nasdaq."
+    )
+
+    assert _derive_eligibility(text, amended=False) == {
+        "cash_offer": "85.00",
+        "security_type": "common_equity",
+        "listing_country": "US",
+        "listing_exchange": "nasdaq",
+        "agreement_status": "definitive",
+        "lifecycle_status": "active",
+        "has_cvr": False,
+        "has_earnout": False,
+        "has_stock": False,
+        "uses_options_or_leverage": False,
+        "is_rumor_or_competing_bid": False,
+        "amendment_reviewed": False,
+    }
+
+
+def test_negated_plain_agreement_and_plan_language_remains_refused():
+    text = (
+        "the issuer has not entered into an agreement and plan of merger. each share of "
+        "common stock, par value $0.001 per share, issued and outstanding will be canceled "
+        "and automatically converted into the right to receive $85 per share in cash. "
+        "the common stock is listed on nasdaq."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="definitive"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_never_entered_plain_agreement_and_plan_language_remains_refused():
+    text = (
+        "the issuer has never entered into an agreement and plan of merger. each share of "
+        "common stock listed on nasdaq will receive $85 in cash per share."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="definitive"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_decimal_par_value_does_not_allow_cross_sentence_cash_synthesis():
+    text = (
+        "the issuer entered into an agreement and plan of merger. each share of common stock, "
+        "par value $0.001 per share, is issued and outstanding. employee options will be "
+        "canceled and automatically converted into the right to receive $85 per share in cash. "
+        "the common stock is listed on nasdaq."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_real_grammar_cannot_misattribute_same_sentence_option_payout():
+    text = (
+        "the issuer entered into an agreement and plan of merger. each share of common stock, "
+        "par value $0.001 per share, issued and outstanding, is unaffected while employee "
+        "options will be canceled and automatically converted into the right to receive $85 "
+        "per share in cash. the common stock is listed on nasdaq."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(text, amended=False)
+
+
+@pytest.mark.parametrize(
+    "foreign_subject",
+    [
+        "each share of preferred stock",
+        "notes",
+    ],
+)
+def test_real_grammar_cannot_misattribute_other_security_payout(foreign_subject):
+    text = (
+        "the issuer entered into an agreement and plan of merger. each share of common stock, "
+        "par value $0.001 per share, remains outstanding and "
+        f"{foreign_subject} will receive $85 in cash per share. "
+        "the common stock is listed on nasdaq."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(text, amended=False)
+
+
+def test_real_conversion_grammar_without_explicit_cash_remains_refused():
+    text = (
+        "the issuer entered into an agreement and plan of merger. each share of common stock, "
+        "par value $0.001 per share, issued and outstanding will be canceled and automatically "
+        "converted into the right to receive $85 per share. the common stock is listed on nasdaq."
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(text, amended=False)
+
+
 def test_unrelated_cash_per_share_language_cannot_define_target_consideration():
     text = (
         "the issuer entered into a definitive merger involving common stock listed on nasdaq. "
