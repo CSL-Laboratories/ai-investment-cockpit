@@ -279,6 +279,16 @@ source-to-receive delay was 0.320 seconds p50 and 0.480 maximum. This is useful 
 but ten articles and zero corrections cannot set a loss rate or prove correction/reconnect
 semantics.
 
+A purpose-built read-only news reconnect collector then opened two independently authenticated
+five-minute WebSocket segments around a deliberate gap and fetched REST over the exact combined
+window. The run from 22:05:51 through 22:15:56 UTC measured a 5.000752-second disconnect, and all
+four manifest items re-verified, but both stream segments and REST returned zero identities. The
+local manifest is
+`data/evidence/rw19/news-reconnect/2026-08-18/20260818T220551Z/manifest.json`; its canonical
+summary SHA-256 is `c0ecabcdef47e4d8c1a043a74c5e15679625af53cb616ba239bbfc49cfd1e38e`.
+This proves only that the bounded capture protocol completed; it is not a quiet-day claim and
+cannot establish news correction, reconnect delivery, or REST-backfill behavior.
+
 ## DEC-07 status
 
 **Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. Two
@@ -286,7 +296,9 @@ completed operator-universe sessions show material, repeatable IEX false negativ
 one-minute movement thresholds. The deliberate reconnect now proves REST-recoverable blind-window
 identities, the measured 1,114-frame replay proves the current one-event writer/raw prompt
 shape is too slow and too large for direct dynamic fanout, and the one-hour news sample rejects
-WS/REST identity equivalence. No production adapter may encode
+WS/REST identity equivalence. The later news reconnect capture was empty and therefore does not
+close that gate. No production adapter may encode
 either “IEX is sufficient” or “SIP is required” from this evidence. The next evidence is broader
-regime coverage, news correction/reconnect samples, and a bounded filtering/coalescing contract;
-designing or implementing that contract is later `RW-13`, which remains blocked.
+regime coverage, a non-empty news correction/reconnect sample, and a bounded
+filtering/coalescing contract; designing or implementing that contract is later `RW-13`, which
+remains blocked.

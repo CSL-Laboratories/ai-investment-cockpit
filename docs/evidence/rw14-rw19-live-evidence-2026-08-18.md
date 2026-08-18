@@ -127,6 +127,21 @@ All three manifest items re-verified. The local manifest is
 `data/evidence/rw19/news/2026-08-18/20260818T152559Z/manifest.json`; its canonical summary
 SHA-256 is `c2a3f81ded6f782c8c56ffc4ae655d9747dca2e4e8fab55a91415e4d619f6dd6`.
 
+A later purpose-built reconnect capture opened one authenticated five-minute news subscription,
+closed it deliberately, waited, and opened a second independently authenticated five-minute
+subscription before fetching REST over the frozen combined window. The first segment ran from
+22:05:51.769252 to 22:10:51.833001 UTC, and the second from 22:10:56.833753 to
+22:15:56.906312 UTC, yielding a measured 5.000752-second disconnect. Both WebSocket segments and
+REST returned zero articles. `stream_recall_of_rest` is therefore correctly null; this verifies
+the capture/reconnect protocol but supplies no identity, correction, late-delivery, or REST
+backfill observation.
+
+All four manifest items re-verified. The local manifest is
+`data/evidence/rw19/news-reconnect/2026-08-18/20260818T220551Z/manifest.json`; its canonical
+summary SHA-256 is `c0ecabcdef47e4d8c1a043a74c5e15679625af53cb616ba239bbfc49cfd1e38e`.
+The empty after-hours window is an insufficient sample, not evidence that news is quiet or that
+reconnect behavior is correct.
+
 ## Claims and remaining gates
 
 - RW-14's named online progression/staleness drill is complete; its cross-platform attestation
@@ -134,8 +149,10 @@ SHA-256 is `c2a3f81ded6f782c8c56ffc4ae655d9747dca2e4e8fab55a91415e4d619f6dd6`.
 - RW-19 now has a real deliberate reconnect, measured REST-recoverable gap, and measured
   single-writer/triage behavior. The capacity result is not green for direct raw-frame fanout.
 - The one-hour news sample rejects full WS/REST identity equivalence and establishes one
-  persistent stream-only identity. Broader regimes, news correction/update and reconnect
-  behavior, and a bounded coalescing design decision remain open. `DEC-07` is not resolved.
+  persistent stream-only identity. The later news reconnect collector completed, but its empty
+  sample closes no empirical gate. Broader regimes, non-empty news correction/update and
+  reconnect behavior, and a bounded coalescing design decision remain open. `DEC-07` is not
+  resolved.
 - Expected edge remains unavailable, the merger execution watchlist remains empty, and no paper
   opening Order, live authority, autonomous authority, or `RW-13` work is authorized by this
   evidence.
