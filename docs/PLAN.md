@@ -621,7 +621,11 @@ authoritative announcement 8-K states an all-cash Nasdaq common-stock merger, bu
 "canceled and automatically converted" / "Agreement and Plan of Merger" language falls outside
 the pinned grammar. No partial cohort or Discord commitment was created. Remediation is a separate
 parser-hardening package with frozen real positive and adversarial negative sources, followed by
-the held-out precision gate; no manual label or grammar bypass is permitted.
+the held-out precision gate; no manual label or grammar bypass is permitted. The isolated local
+`BUG-109` repair now recognizes the exact CRNX source while blocking cross-sentence, option,
+preferred-share, note, negation, cashless, and cross-document misattribution cases. Its Windows
+gate is 2,311 passed / 1 skipped with Ruff clean, but merge, independent review, cross-platform
+attestation, and held-out human precision remain open, so this creates no selection authority.
 
 **`W-25` — merged in PR #41; activation evidence pending:**
 

@@ -94,8 +94,10 @@ had an absolute current SEC feed head in the supported form set, and none of the
 confirmed real false negative: the filing contains the cash amount, common-stock identity, Nasdaq
 listing, and merger agreement, while `_CASH` and `_DEFINITIVE` reject ordinary filing grammar.
 `BUG-109` remains fail-closed. Do not substitute an exhibit, broaden a pattern, or hand-enter a
-label during intake; use a separately reviewed parser package and then satisfy the real held-out
-precision gate before attempting a prospective witness.
+label during intake. Its isolated local repair recognizes the untouched CRNX source and blocks the
+same-sentence alternate-security misattributions found during adversarial review. That local result
+does not permit intake: merge, independent/cross-platform review, and the real held-out precision
+gate remain prerequisites before attempting a prospective witness.
 
 ## Start a prospective cohort
 

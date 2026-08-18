@@ -150,12 +150,14 @@ reason to weaken selection inline: a pattern expansion changes semantic authorit
 separate bounded package with this official positive frozen alongside conditional, negated,
 mixed-consideration, multi-value, amendment, and cross-document negative cases. The independent
 held-out ≥95% precision audit and zero-false-positive eligibility requirement remain unchanged.
+The isolated local repair and its adversarial/full-suite evidence are recorded in
+[[bug109-w24-real-sec-grammar-2026-08-18]]; they do not retroactively create a candidate or witness.
 
 ## Gate status
 
 `BUG-108` is merged in PR #42; missing cross-platform attestation remains pending. W-24 selection
 itself remains open because no complete real ≥30-name universe has been reviewed or committed,
-and `BUG-109` now blocks parser readiness. The empty execution watchlist and unavailable edge are
-the correct state. Do not assemble a partial manifest, backdate selection, reuse a retrospective fixture,
+and `BUG-109` remains unmerged and precision-evidence pending. The empty execution watchlist and
+unavailable edge are the correct state. Do not assemble a partial manifest, backdate selection, reuse a retrospective fixture,
 substitute an older accession for the current baseline, or post a Discord commitment until the
 complete real universe and every signed source are ready for one atomic witnessed selection.
