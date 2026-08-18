@@ -60,9 +60,11 @@ canonical invariant list, and nothing else restates it.
 - The post-merge W-24 continuation screened 65 discovery names. Only six had a currently supported
   SEC feed head, and none of their 64 supported 2026 primary filings passed the eligibility parser.
   An official CRNX announcement 8-K proves `BUG-109`: common authoritative cash-merger phrasing is
-  rejected by the pinned grammar. An isolated local repair now passes the untouched source and
+  rejected by the pinned grammar. PR #43's merged repair now passes the untouched source and
   adversarial subject-switch cases, with 2,311 passed / 1 skipped and Ruff clean on Windows. It
-  remains non-authoritative pending merge, external/cross-platform review, and held-out precision.
+  remains evidence-pending because the six hosted jobs ran zero steps, and held-out precision is
+  absent. A strict post-merge rescreen found only one unsigned semantic candidate (CRNX), below the
+  ≥30 minimum; its primary source set also lacks exact dates required for current-target authority.
 - `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
   with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
   ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped
@@ -161,6 +163,7 @@ defects got fixed twice on two branches.
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
 | [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |
 | [[evidence/bug109-w24-real-sec-grammar-2026-08-18]] | BUG-109 real-source replay, adversarial parser repair, local gates, and remaining authority blockers |
+| [[evidence/w24-post-bug109-rescreen-2026-08-18]] | Strict post-PR #43 SEC-head/source-set rescreen and retained cohort/current-target refusals |
 | [[accounts-and-keys]] | Credential provisioning |
 | [[low-priv-agent-account]] | The SEC-05 low-privilege account |
 
