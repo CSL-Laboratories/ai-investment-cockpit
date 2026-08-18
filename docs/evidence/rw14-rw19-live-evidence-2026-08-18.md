@@ -142,6 +142,18 @@ summary SHA-256 is `c0ecabcdef47e4d8c1a043a74c5e15679625af53cb616ba239bbfc49cfd1
 The empty after-hours window is an insufficient sample, not evidence that news is quiet or that
 reconnect behavior is correct.
 
+A second run lengthened each segment to 15 minutes over the same frozen 11-symbol universe. The
+first segment ran from 22:47:04.900996 to 23:02:04.961668 UTC, and the second from
+23:02:09.962651 to 23:17:10.013831 UTC, yielding a measured 5.000983-second disconnect. Both
+WebSocket segments and the exact-window REST fetch again returned zero articles, so all identity,
+correction, late-delivery, backfill, and recall claims remain unavailable.
+
+All four second-run manifest items re-verified. Its local manifest is
+`data/evidence/rw19/news-reconnect/2026-08-18/20260818T224704Z/manifest.json`; the canonical
+summary SHA-256 is `5387f8718871c7100c16b47ee60adf039ebd30b39c76705e944d217d9a08a4ce`.
+Repeating the result over a longer after-hours window does not turn two empty samples into a
+quiet-day or reconnect-correctness claim. The next attempt must target an active news regime.
+
 ## Claims and remaining gates
 
 - RW-14's named online progression/staleness drill is complete; its cross-platform attestation
@@ -149,10 +161,10 @@ reconnect behavior is correct.
 - RW-19 now has a real deliberate reconnect, measured REST-recoverable gap, and measured
   single-writer/triage behavior. The capacity result is not green for direct raw-frame fanout.
 - The one-hour news sample rejects full WS/REST identity equivalence and establishes one
-  persistent stream-only identity. The later news reconnect collector completed, but its empty
-  sample closes no empirical gate. Broader regimes, non-empty news correction/update and
-  reconnect behavior, and a bounded coalescing design decision remain open. `DEC-07` is not
-  resolved.
+  persistent stream-only identity. The later news reconnect collector completed two real runs,
+  but both after-hours samples were empty and close no empirical gate. Broader regimes, non-empty
+  news correction/update and reconnect behavior, and a bounded coalescing design decision remain
+  open. `DEC-07` is not resolved.
 - Expected edge remains unavailable, the merger execution watchlist remains empty, and no paper
   opening Order, live authority, autonomous authority, or `RW-13` work is authorized by this
   evidence.

@@ -83,11 +83,11 @@ window exposed 1,965 REST-recoverable identities. The single writer sustained on
 one-event writes/s, and raw fanout produced a 236,637-character triage packet. A one-hour news
 sample captured 10 stream and nine REST identities; all REST IDs overlapped, while one persistent
 stream-only ID rejected full equivalence. Those are measured design constraints, not permission
-to start `RW-13`. A later two-segment authenticated news reconnect run completed around a measured
-5.000752-second deliberate gap, but its 10-minute after-hours window held zero stream/REST
-identities. That is a hash-valid insufficient sample, not reconnect or correction evidence.
-Broader regimes, a non-empty news correction/reconnect sample, and a bounded deterministic
-coalescing decision remain open, so `DEC-07` is unresolved. See
+to start `RW-13`. Later two-segment authenticated news reconnect runs completed across measured
+5.000752- and 5.000983-second deliberate gaps, but their 10- and 30-minute after-hours windows
+both held zero stream/REST identities. Those are hash-valid insufficient samples, not reconnect
+or correction evidence. Broader regimes, a non-empty news correction/reconnect sample, and a
+bounded deterministic coalescing decision remain open, so `DEC-07` is unresolved. See
 [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in

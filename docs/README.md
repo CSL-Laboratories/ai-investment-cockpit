@@ -76,9 +76,9 @@ canonical invariant list, and nothing else restates it.
   REST-recoverable gap, and an isolated 1,114-frame replay measured the single writer at only
   74.67 one-event writes/s plus a 236,637-character raw triage packet. This confirms that bounded
   coalescing is required before `RW-13`. A tested two-segment news reconnect collector also
-  completed a real five-minute/gap/five-minute run, but the after-hours sample contained zero
-  WebSocket and REST identities; it proves neither correction nor reconnect identity behavior.
-  Broader regimes and a non-empty news correction/reconnect sample remain open.
+  completed real 10-minute and 30-minute after-hours runs, but both contained zero WebSocket and
+  REST identities; they prove neither correction nor reconnect identity behavior. Broader regimes
+  and a non-empty news correction/reconnect sample remain open.
   See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 - The stopped-system preflight is green for controlled background `read_only` bring-up: loopback
   port free, HALT absent, audit chain valid, zero proposal/risk/approval/order rows, 11 awareness
