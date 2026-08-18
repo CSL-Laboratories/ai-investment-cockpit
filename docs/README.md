@@ -51,6 +51,12 @@ canonical invariant list, and nothing else restates it.
   gate is 2,274 passed / 1 skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
   [[evidence/w24-merger-semantic-verifier-2026-08-17]], and
   [[runbooks/w24-merger-semantic-verifier]].
+- The 2026-08-18 W-24 intake exposed `BUG-108`: one accession could not be both the original
+  semantic source and a later current EDGAR baseline. The isolated schema-v2 repair witnesses a
+  complete ordered signed source set plus an explicit current accession, derives prospective and
+  calibration eligibility from that frozen set, and rejects legacy/incomplete/tampered authority.
+  Merge and cross-platform CI remain pending; no real cohort or edge authority has been created.
+  See [[evidence/w24-prospective-intake-2026-08-18]].
 - `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
   with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
   ingested one filing/four deltas, completed the next 11/11 scheduled poll cleanly, and stopped

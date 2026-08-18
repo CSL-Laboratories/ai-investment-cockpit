@@ -47,10 +47,11 @@ from strategies.merger_edge import (
 from orchestrator.state import EVENT_EDGAR_POLL_COMPLETED
 
 
-SELECTION_SCHEMA = "merger_selection_manifest.v1"
+SELECTION_SCHEMA = "merger_selection_manifest.v2"
 EVENT_SELECTION = "merger_selection_commitment"
 MAX_WITNESS_CLOCK_SKEW = timedelta(minutes=5)
 MAX_SELECTION_QUOTE_AGE = timedelta(minutes=5)
+MAX_SELECTION_SOURCE_COUNT = 250
 
 _HASH = re.compile(r"^[0-9a-f]{64}$")
 _CIK = re.compile(r"^\d{10}$")
@@ -61,8 +62,9 @@ _MANIFEST_FIELDS = frozenset({
     "training_cutoff", "deals",
 })
 _CANDIDATE_INPUT_FIELDS = frozenset({
-    "deal_id", "symbol", "target_cik", "source_accession", "selected_at", "entry_ask",
-    "eligibility_prediction", "eligibility_source", "entry_price_source",
+    "deal_id", "symbol", "target_cik", "source_accession", "source_accessions",
+    "current_accession", "selected_at", "entry_ask", "eligibility_prediction",
+    "eligibility_source", "entry_price_source",
 })
 _CANDIDATE_FIELDS = _CANDIDATE_INPUT_FIELDS | frozenset({"selection_authority"})
 _AUTHORITY_FIELDS = frozenset({
@@ -133,6 +135,10 @@ _FAILED = re.compile(
 _CONDITIONAL_OUTCOME = re.compile(
     r"\b(?:if|unless|whether|would|could|may|might|should|in\s+the\s+event)\b"
 )
+_MERGER_AMENDMENT = re.compile(
+    r"(?:amend(?:ed|ment|ments|ing)?[^.]{0,80}(?:merger|transaction)|"
+    r"(?:merger|transaction)[^.]{0,80}amend(?:ed|ment|ments|ing)?)"
+)
 
 
 def _text(raw: bytes) -> str:
@@ -141,6 +147,11 @@ def _text(raw: bytes) -> str:
     except UnicodeDecodeError as exc:
         raise SemanticEvidenceUnavailable("SEC source text is not valid UTF-8") from exc
     return _SPACE.sub(" ", html.unescape(_TAG.sub(" ", decoded))).strip().lower()
+
+
+def _combined_source_text(texts: list[str]) -> str:
+    """Keep separately signed documents from synthesizing one accepted sentence."""
+    return " . ".join(texts)
 
 
 def _source_date(value: str, *, field: str) -> date:
@@ -257,9 +268,21 @@ def _normalized_candidate(value: dict, *, authority: bool) -> dict:
     symbol = str(value["symbol"]).strip().upper()
     cik = str(value["target_cik"]).strip()
     accession = str(value["source_accession"]).strip()
+    current_accession = str(value["current_accession"]).strip()
+    source_values = value["source_accessions"]
+    if not isinstance(source_values, list):
+        raise SemanticEvidenceUnavailable("selection source accessions must be an ordered list")
+    source_accessions = [str(item).strip() for item in source_values]
     if (
         not deal_id or len(deal_id) > 80 or _SYMBOL.fullmatch(symbol) is None
         or _CIK.fullmatch(cik) is None or _ACCESSION.fullmatch(accession) is None
+        or _ACCESSION.fullmatch(current_accession) is None
+        or not source_accessions
+        or len(source_accessions) > MAX_SELECTION_SOURCE_COUNT
+        or any(_ACCESSION.fullmatch(item) is None for item in source_accessions)
+        or len(set(source_accessions)) != len(source_accessions)
+        or source_accessions[0] != accession
+        or source_accessions[-1] != current_accession
     ):
         raise SemanticEvidenceUnavailable("selection candidate identity is invalid")
     selected = _date(value["selected_at"], field="selected_at")
@@ -274,6 +297,8 @@ def _normalized_candidate(value: dict, *, authority: bool) -> dict:
         "symbol": symbol,
         "target_cik": cik,
         "source_accession": accession,
+        "source_accessions": source_accessions,
+        "current_accession": current_accession,
         "selected_at": selected.isoformat(),
         "entry_ask": str(entry_ask),
         "eligibility_prediction": _normalized_eligibility(
@@ -322,7 +347,9 @@ def _normalized_manifest(document: dict) -> dict:
         raise SemanticEvidenceUnavailable("selection manifest evaluation universe is too small")
     if cutoff >= selection_date or committed.date() != selection_date:
         raise SemanticEvidenceUnavailable("selection manifest chronology is invalid")
-    unique_fields = ("deal_id", "symbol", "target_cik", "source_accession")
+    unique_fields = (
+        "deal_id", "symbol", "target_cik", "source_accession", "current_accession"
+    )
     if any(
         len({row[name] for row in deals}) != len(deals) for name in unique_fields
     ) or any(
@@ -342,6 +369,7 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
     raw_store = RawStore(raw_root / "sec", min_free_bytes=0)
     committed = _utc(document["committed_at"], field="manifest committed_at")
     for row in document["deals"]:
+        selected = _date(row["selected_at"], field="selected_at")
         eligibility = _source_event_in(
             session, row["eligibility_source"], event_type=EVENT_FILING_INGESTED
         )
@@ -349,8 +377,7 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
         if (
             payload.get("cik") != row["target_cik"]
             or payload.get("accession_no") != row["source_accession"]
-            or _date(payload.get("filing_date"), field="selection filing date")
-            > _date(row["selected_at"], field="selected_at")
+            or _date(payload.get("filing_date"), field="selection filing date") > selected
             or _utc(payload.get("detection_ts"), field="selection detection time") > committed
             or _utc(
                 eligibility.created_at, field="selection filing audit time", allow_naive=True
@@ -358,6 +385,86 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
             or not raw_store.verify(row["source_accession"])
         ):
             raise SemanticEvidenceUnavailable("selection filing source is not prospectively bound")
+        signed = _filing_event_map(session, cik=row["target_cik"], raw_store=raw_store)
+        domain_rows = session.execute(
+            select(Filing).where(Filing.cik == row["target_cik"])
+        ).scalars().all()
+        domain_accessions = [filing.accession_no for filing in domain_rows]
+        if (
+            len(domain_accessions) != len(set(domain_accessions))
+            or set(domain_accessions) != set(signed)
+        ):
+            raise SemanticEvidenceUnavailable(
+                "selection filing universe contains unsigned or conflicting rows"
+            )
+        try:
+            source = signed[row["source_accession"]]
+            current_source = signed[row["current_accession"]]
+        except KeyError as exc:
+            raise SemanticEvidenceUnavailable(
+                "selection source set contains an unsigned accession"
+            ) from exc
+        if any(filing.filing_date > selected for filing in signed.values()):
+            raise SemanticEvidenceUnavailable(
+                "selection filing universe contains a future-dated filing"
+            )
+        if source.filing_date > current_source.filing_date or any(
+            filing.filing_date > current_source.filing_date for filing in signed.values()
+        ):
+            raise SemanticEvidenceUnavailable(
+                "selection current accession is not the latest signed filing"
+            )
+        complete_set = {
+            filing.accession_no for filing in signed.values()
+            if source.filing_date <= filing.filing_date <= current_source.filing_date
+        }
+        if set(row["source_accessions"]) != complete_set:
+            raise SemanticEvidenceUnavailable(
+                "selection source set omits, adds, or reorders a signed filing"
+            )
+        complete = [signed[accession] for accession in row["source_accessions"]]
+        if any(
+            complete[index].filing_date > complete[index + 1].filing_date
+            for index in range(len(complete) - 1)
+        ):
+            raise SemanticEvidenceUnavailable(
+                "selection source set omits, adds, or reorders a signed filing"
+            )
+        filing_events = session.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == EVENT_FILING_INGESTED)
+            .order_by(AuditEntry.seq)
+        ).scalars().all()
+        texts = []
+        for filing in complete:
+            matching_events = [event for event in filing_events if (
+                (event.payload or {}).get("cik") == row["target_cik"]
+                and (event.payload or {}).get("accession_no") == filing.accession_no
+                and (event.refs or {}).get("row_id") == filing.id
+            )]
+            if (
+                filing.filing_date > selected
+                or _utc(filing.detection_ts, field="selection detection time", allow_naive=True)
+                > committed
+                or not matching_events
+                or any(
+                    _utc(event.created_at, field="selection filing audit time", allow_naive=True)
+                    > committed
+                    for event in matching_events
+                )
+            ):
+                raise SemanticEvidenceUnavailable(
+                    "selection source set was not fully signed before commitment"
+                )
+            texts.append(_text(raw_store.resolve(filing.raw_ref)))
+        amended = any(_MERGER_AMENDMENT.search(text) for text in texts[1:])
+        derived_prediction = _derive_eligibility(
+            _combined_source_text(texts), amended=amended
+        )
+        if row["eligibility_prediction"] != derived_prediction:
+            raise SemanticEvidenceUnavailable(
+                "selection eligibility prediction is not source-set-derived"
+            )
         price_raw, price_event = _verify_price_source_in(
             session,
             raw_root,
@@ -397,7 +504,7 @@ def _verify_selection_sources_in(session, raw_root: Path, document: dict) -> Non
             or (poll.refs or {}).get("cik") != row["target_cik"]
             or poll_payload.get("baseline_accession") != authority["baseline_accession"]
             or poll_payload.get("cursor_accession") != authority["cursor_accession"]
-            or authority["baseline_accession"] != row["source_accession"]
+            or authority["baseline_accession"] != row["current_accession"]
         ):
             raise SemanticEvidenceUnavailable("selection filing universe changed before commitment")
 
@@ -554,7 +661,7 @@ class CashMergerSemanticVerifier:
                 texts.append(_text(raw_store.resolve(accession)))
             except (OSError, RawStoreError, ValueError) as exc:
                 raise SemanticEvidenceUnavailable("deal SEC source is missing or corrupt") from exc
-        combined = " ".join(texts)
+        combined = _combined_source_text(texts)
         current_text = texts[document["source_accessions"].index(document["current_accession"])]
         amended = document["current_accession"] != document["announcement_accession"]
         if amended and "amend" not in current_text:
@@ -604,7 +711,7 @@ class CashMergerSemanticVerifier:
             != selected_authority["baseline_accession"]
             or selected_payload.get("cursor_accession")
             != selected_authority["cursor_accession"]
-            or selected_authority["baseline_accession"] != manifest_row["source_accession"]
+            or selected_authority["baseline_accession"] != manifest_row["current_accession"]
             or _utc(selected_payload.get("completed_at"), field="selection EDGAR poll")
             != _utc(
                 selected_authority["edgar_poll_completed_at"],
@@ -703,8 +810,20 @@ class CashMergerSemanticVerifier:
             eligibility_event = _source_event_in(
                 session, row["eligibility_source"], event_type=EVENT_FILING_INGESTED
             )
-            eligibility_text = _text(raw_store.resolve(row["source_accession"]))
-            derived_label = _derive_eligibility(eligibility_text, amended=False)
+            manifest_row = committed[str(row["deal_id"])] if row["split"] == "evaluation" else None
+            if manifest_row is None:
+                eligibility_text = _text(raw_store.resolve(row["source_accession"]))
+                amended = False
+            else:
+                eligibility_texts = [
+                    _text(raw_store.resolve(accession))
+                    for accession in manifest_row["source_accessions"]
+                ]
+                eligibility_text = _combined_source_text(eligibility_texts)
+                amended = any(
+                    _MERGER_AMENDMENT.search(text) for text in eligibility_texts[1:]
+                )
+            derived_label = _derive_eligibility(eligibility_text, amended=amended)
             if _normalized_eligibility(
                 row["eligibility_label"], kind="eligibility label"
             ) != derived_label:
@@ -719,11 +838,16 @@ class CashMergerSemanticVerifier:
             self._verify_outcome_universe_in(session, row, raw_store)
             if row["split"] != "evaluation":
                 continue
-            manifest_row = committed[str(row["deal_id"])]
-            candidate_view = {name: row[name] for name in _COMMITTED_ROW_FIELDS}
-            if _normalized_candidate(candidate_view, authority=False) != {
-                name: manifest_row[name] for name in _COMMITTED_ROW_FIELDS
-            }:
+            candidate_view = {
+                **{name: row[name] for name in _COMMITTED_ROW_FIELDS},
+                "source_accessions": manifest_row["source_accessions"],
+                "current_accession": manifest_row["current_accession"],
+            }
+            normalized_view = _normalized_candidate(candidate_view, authority=False)
+            if any(
+                normalized_view[name] != manifest_row[name]
+                for name in _COMMITTED_ROW_FIELDS
+            ):
                 raise SemanticEvidenceUnavailable("evaluation row differs from its commitment")
             detection = _utc(
                 (outcome_event.payload or {}).get("detection_ts"), field="outcome detection time"

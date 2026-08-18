@@ -1,6 +1,6 @@
 ---
 type: evidence
-status: blocked
+status: implementation-complete-evidence-pending
 last-verified: 2026-08-18
 ---
 
@@ -76,17 +76,40 @@ the later filing usually cannot reproduce the merger label. Requiring 30 individ
 targets on one selection date makes relying on same-day announcement filings unrealistic. The
 2026-08-18 screen reproduced this condition across all 19 current SEC-mapped names tested.
 
-This is not resolved by weakening the current-baseline check. A safe repair needs a separately
-scoped and adversarially reviewed selection schema that binds a complete reviewed source set plus
-the explicit current accession and current filing-set hash. Eligibility would be re-derived from
-the bound set, while any later unreviewed filing would still invalidate selection. Migration,
-manifest/witness hashing, outcome coverage, calibration parity, and current-target rechecks must
-all fail closed. No such repair is implemented or authorized by this evidence record.
+This is not resolved by weakening the current-baseline check. The separately scoped `BUG-108`
+branch implements `merger_selection_manifest.v2` with three distinct bindings per candidate:
+
+- `source_accession` remains the original semantic/eligibility source referenced by the unchanged
+  W-23 calibration row;
+- `source_accessions` is a witnessed, bounded, duplicate-free, filing-date-ordered set containing
+  every locally signed supported filing from that source through selection; and
+- `current_accession` is explicit, must end the reviewed set, and must still equal the strict
+  poll's audited `baseline_accession` at both pre-witness and post-witness transaction checks.
+
+The verifier rejects unsigned/conflicting domain rows, missing/extra/reordered accessions,
+future/post-commit filings, a non-current endpoint, a changed filing-set hash, and schema-v1 or
+post-witness manifest mutations. It derives the prospective prediction and eventual evaluation
+label from the same frozen source set. A later ordinary filing can therefore remain current
+without replacing the announcement's deal terms; an explicit merger amendment is separately
+recognized and must agree with `amendment_reviewed`. No SQL migration or legacy recommitment is
+needed because the live selection table was empty, and legacy v1 authority fails closed.
+
+The adversarial pass found one additional cross-document risk: a plain-space join could combine
+the end of one filing with the beginning of another into parser-accepted language that neither
+filing stated. The repair now inserts a hard sentence boundary between every signed document and
+has a regression proving split fragments cannot synthesize cash consideration. Final local
+Windows verification is 2,303 passed / 1 skipped with five dependency deprecation warnings; the
+23-test semantic slice and repository-wide Ruff are clean. This is not Ubuntu/macOS attestation.
+
+This is code/mechanical evidence only. It does not turn the 19 screened names into candidates,
+prove that SEC discovery was globally complete, or satisfy the real cohort, held-out precision,
+current-target, external-witness, or cross-platform gates.
 
 ## Gate status
 
-W-24 selection remains open and blocked on BUG-108. The empty execution watchlist and unavailable
-edge are the correct state. Do not assemble a partial manifest, backdate selection, reuse a
-retrospective fixture, substitute an older accession for the current baseline, or post a Discord
-commitment until the source-set contract is safely resolved and the complete real universe is
-ready for one atomic witnessed selection.
+`BUG-108` is repaired on its isolated branch, with merge and missing cross-platform attestation
+still pending. W-24 selection itself remains open because no complete real ≥30-name universe has
+been reviewed or committed. The empty execution watchlist and unavailable edge are the correct
+state. Do not assemble a partial manifest, backdate selection, reuse a retrospective fixture,
+substitute an older accession for the current baseline, or post a Discord commitment until the
+complete real universe and every signed source are ready for one atomic witnessed selection.

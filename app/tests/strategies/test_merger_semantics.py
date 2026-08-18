@@ -33,6 +33,7 @@ from strategies.merger_edge import (
 from strategies.merger_semantics import (
     CashMergerSemanticVerifier,
     SemanticEvidenceUnavailable,
+    _combined_source_text,
     _derive_eligibility,
     record_selection_commitment,
 )
@@ -215,7 +216,11 @@ def _seed_selection(st, root, rows, *, evaluation_quote_age=timedelta(minutes=1)
             row_id=f"semantic-selection-{index}",
             cik=row["target_cik"],
             accession=row["source_accession"],
-            filed_on=selected,
+            filed_on=(
+                selected - timedelta(days=10)
+                if row["split"] == "evaluation"
+                else selected
+            ),
             detected_at=(
                 SELECTION_NOW - timedelta(minutes=2)
                 if row["split"] == "evaluation"
@@ -327,7 +332,8 @@ def _seed_current_deal(st, root):
 
 
 def _semantic_system(
-    tmp_path, *, mutate_before_selection=None, mutate_rows=None, mutate_system=None
+    tmp_path, *, mutate_before_selection=None, mutate_candidates=None,
+    mutate_rows=None, mutate_system=None,
 ):
     st, clock, root = _state(tmp_path)
     rows = _cohort_rows()
@@ -342,13 +348,9 @@ def _semantic_system(
         mutate_before_selection(rows)
     _seed_selection(st, root, rows)
     witness, messages = _semantic_witness(clock)
-    candidates = [{
-        name: row[name]
-        for name in (
-            "deal_id", "symbol", "target_cik", "source_accession", "selected_at",
-            "entry_ask", "eligibility_prediction", "eligibility_source", "entry_price_source",
-        )
-    } for row in rows if row["split"] == "evaluation"]
+    candidates = [_candidate(row) for row in rows if row["split"] == "evaluation"]
+    if mutate_candidates is not None:
+        mutate_candidates(st, root, rows, candidates)
     commitment = record_selection_commitment(
         st,
         candidates,
@@ -426,6 +428,47 @@ def test_prospective_source_derived_semantics_reach_composed_paper_approval(tmp_
     )
     assert result["status"] == "submitted"
     assert len(broker.submitted) == 1
+
+
+def test_later_ordinary_filing_is_bound_without_replacing_semantic_source(tmp_path):
+    def add_current_filing(st, root, rows, candidates):
+        row = next(item for item in rows if item["split"] == "evaluation")
+        candidate = next(item for item in candidates if item["deal_id"] == row["deal_id"])
+        current = f"{row['source_accession']}-current"
+        filing_seq, _digest = _append_filing(
+            st,
+            root=root,
+            row_id="semantic-selection-current-filing",
+            cik=row["target_cik"],
+            accession=current,
+            filed_on=SELECTION_NOW.date(),
+            detected_at=SELECTION_NOW - timedelta(seconds=30),
+            raw=b"The registrant filed its quarterly report. The transaction remains pending.",
+        )
+        _append_poll(
+            st,
+            cik=row["target_cik"],
+            completed_at=SELECTION_NOW - timedelta(seconds=1),
+            filing_head=filing_seq,
+            baseline_accession=current,
+            cursor_accession=current,
+        )
+        candidate["source_accessions"] = [row["source_accession"], current]
+        candidate["current_accession"] = current
+
+    merger = _semantic_system(tmp_path, mutate_candidates=add_current_filing)
+    st, _root, _client, market_data, provider, _raw_hash, _witness, _messages = merger
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is not None
+    with st.session_factory() as session:
+        commitment = session.execute(select(MergerSelectionCommitment)).scalar_one()
+    current_row = next(
+        row for row in commitment.document["deals"]
+        if len(row["source_accessions"]) == 2
+    )
+    assert current_row["source_accession"] == current_row["source_accessions"][0]
+    assert current_row["current_accession"] == current_row["source_accessions"][-1]
+    assert commitment.document["schema_version"] == "merger_selection_manifest.v2"
 
 
 def test_dropped_committed_deal_fails_closed_even_when_w23_statistics_still_match(tmp_path):
@@ -576,6 +619,17 @@ def test_written_fraction_stock_consideration_is_not_classified_cash_only():
     assert _derive_eligibility(text, amended=False)["has_stock"] is True
 
 
+def test_separate_filings_cannot_synthesize_cash_consideration_language():
+    fragments = [
+        "the issuer entered into a definitive merger. each share of common stock listed "
+        "on nasdaq will receive",
+        "$10 in cash per share",
+    ]
+    assert _derive_eligibility(" ".join(fragments), amended=False)["cash_offer"] == "10"
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(_combined_source_text(fragments), amended=False)
+
+
 def test_conditional_termination_boilerplate_is_not_an_observed_failure():
     from strategies.merger_semantics import _derive_outcome
 
@@ -595,7 +649,7 @@ def test_stale_same_day_entry_quote_is_refused_before_witness_publication(tmp_pa
         st, root, rows, evaluation_quote_age=MAX_SELECTION_STALE_QUOTE_AGE
     )
     witness, messages = _semantic_witness(clock)
-    candidates = [{name: row[name] for name in _CANDIDATE_NAMES} for row in evaluation]
+    candidates = [_candidate(row) for row in evaluation]
 
     with pytest.raises(SemanticEvidenceUnavailable, match="fresh point-in-time"):
         record_selection_commitment(
@@ -624,7 +678,7 @@ def test_retrospective_server_timestamp_is_refused_before_manifest_persistence(t
         return message
 
     witness._post = retrospective  # noqa: SLF001
-    candidates = [{name: row[name] for name in _CANDIDATE_NAMES} for row in evaluation]
+    candidates = [_candidate(row) for row in evaluation]
 
     with pytest.raises(SemanticEvidenceUnavailable, match="clock-skew"):
         record_selection_commitment(
@@ -669,9 +723,9 @@ def test_later_selection_filing_cannot_be_hidden_behind_an_older_candidate_sourc
         cursor_accession=later_accession,
     )
     witness, messages = _semantic_witness(clock)
-    candidates = [{name: row[name] for name in _CANDIDATE_NAMES} for row in evaluation]
+    candidates = [_candidate(row) for row in evaluation]
 
-    with pytest.raises(SemanticEvidenceUnavailable, match="changed before commitment"):
+    with pytest.raises(SemanticEvidenceUnavailable, match="current accession"):
         record_selection_commitment(
             st,
             candidates,
@@ -682,6 +736,136 @@ def test_later_selection_filing_cannot_be_hidden_behind_an_older_candidate_sourc
     assert messages == {}, "invalid local authority must be rejected before Discord publication"
 
 
+def test_selection_source_set_cannot_omit_an_intervening_signed_filing(tmp_path):
+    st, clock, root = _state(tmp_path)
+    rows = _cohort_rows()
+    evaluation = [row for row in rows if row["split"] == "evaluation"]
+    for row in evaluation:
+        row["selected_at"] = SELECTION_NOW.date().isoformat()
+    _seed_selection(st, root, rows)
+    target = evaluation[0]
+    candidate = _candidate(target)
+    latest_seq = 0
+    added = []
+    for suffix in ("a-intermediate", "z-current"):
+        accession = f"{target['source_accession']}-{suffix}"
+        latest_seq, _digest = _append_filing(
+            st,
+            root=root,
+            row_id=f"semantic-selection-{suffix}",
+            cik=target["target_cik"],
+            accession=accession,
+            filed_on=SELECTION_NOW.date(),
+            detected_at=SELECTION_NOW - timedelta(seconds=30),
+            raw=b"The registrant filed an ordinary periodic report.",
+        )
+        added.append(accession)
+    _append_poll(
+        st,
+        cik=target["target_cik"],
+        completed_at=SELECTION_NOW - timedelta(seconds=1),
+        filing_head=latest_seq,
+        baseline_accession=added[-1],
+        cursor_accession=added[-1],
+    )
+    candidate["source_accessions"] = [target["source_accession"], added[-1]]
+    candidate["current_accession"] = added[-1]
+    candidates = [candidate] + [_candidate(row) for row in evaluation[1:]]
+    witness, messages = _semantic_witness(clock)
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="omits, adds, or reorders"):
+        record_selection_commitment(
+            st,
+            candidates,
+            training_cutoff="2024-01-01",
+            raw_root=root,
+            witness=witness,
+        )
+    assert messages == {}
+
+
+def test_selection_source_set_cannot_reorder_signed_filings(tmp_path):
+    st, clock, root = _state(tmp_path)
+    rows = _cohort_rows()
+    evaluation = [row for row in rows if row["split"] == "evaluation"]
+    for row in evaluation:
+        row["selected_at"] = SELECTION_NOW.date().isoformat()
+    _seed_selection(st, root, rows)
+    target = evaluation[0]
+    added = []
+    latest_seq = 0
+    for offset, suffix in ((-2, "a"), (-1, "b"), (0, "current")):
+        accession = f"{target['source_accession']}-{suffix}"
+        latest_seq, _digest = _append_filing(
+            st,
+            root=root,
+            row_id=f"semantic-selection-order-{suffix}",
+            cik=target["target_cik"],
+            accession=accession,
+            filed_on=SELECTION_NOW.date() + timedelta(days=offset),
+            detected_at=SELECTION_NOW - timedelta(seconds=30),
+            raw=b"The registrant filed an ordinary current report.",
+        )
+        added.append(accession)
+    _append_poll(
+        st,
+        cik=target["target_cik"],
+        completed_at=SELECTION_NOW - timedelta(seconds=1),
+        filing_head=latest_seq,
+        baseline_accession=added[-1],
+        cursor_accession=added[-1],
+    )
+    candidate = _candidate(target)
+    candidate["source_accessions"] = [
+        target["source_accession"], added[1], added[0], added[2]
+    ]
+    candidate["current_accession"] = added[2]
+    candidates = [candidate] + [_candidate(row) for row in evaluation[1:]]
+    witness, messages = _semantic_witness(clock)
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="omits, adds, or reorders"):
+        record_selection_commitment(
+            st,
+            candidates,
+            training_cutoff="2024-01-01",
+            raw_root=root,
+            witness=witness,
+        )
+    assert messages == {}
+
+
+def test_legacy_selection_manifest_v1_fails_closed(tmp_path):
+    merger = _semantic_system(tmp_path)
+    st, _root, _client, market_data, provider, _raw_hash, _witness, _messages = merger
+    with st.session_factory() as session, session.begin():
+        commitment = session.execute(select(MergerSelectionCommitment)).scalar_one()
+        commitment.document = {
+            **commitment.document,
+            "schema_version": "merger_selection_manifest.v1",
+        }
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert "unsupported selection manifest" in provider.status_text()
+
+
+def test_witnessed_source_set_tampering_fails_closed(tmp_path):
+    merger = _semantic_system(tmp_path)
+    st, _root, _client, market_data, provider, _raw_hash, _witness, _messages = merger
+    with st.session_factory() as session, session.begin():
+        commitment = session.execute(select(MergerSelectionCommitment)).scalar_one()
+        changed = dict(commitment.document)
+        changed["deals"] = [dict(row) for row in changed["deals"]]
+        changed["deals"][0]["source_accessions"] = [
+            *changed["deals"][0]["source_accessions"],
+            "tampered-accession",
+        ]
+        changed["deals"][0]["current_accession"] = "tampered-accession"
+        commitment.document = changed
+
+    assert provider.estimate(_proposal(), quote=market_data.quote(SYMBOL)) is None
+    assert "audit binding failed" in provider.status_text()
+
+
 def test_duplicate_identity_cannot_be_hidden_by_manifest_dictionary_collapse(tmp_path):
     st, clock, root = _state(tmp_path)
     rows = _cohort_rows()
@@ -690,7 +874,7 @@ def test_duplicate_identity_cannot_be_hidden_by_manifest_dictionary_collapse(tmp
         row["selected_at"] = SELECTION_NOW.date().isoformat()
     _seed_selection(st, root, rows)
     witness, messages = _semantic_witness(clock)
-    candidates = [{name: row[name] for name in _CANDIDATE_NAMES} for row in evaluation]
+    candidates = [_candidate(row) for row in evaluation]
     candidates[1]["deal_id"] = candidates[0]["deal_id"]
 
     with pytest.raises(SemanticEvidenceUnavailable, match="duplicate or incomplete"):
@@ -708,5 +892,13 @@ _CANDIDATE_NAMES = (
     "deal_id", "symbol", "target_cik", "source_accession", "selected_at", "entry_ask",
     "eligibility_prediction", "eligibility_source", "entry_price_source",
 )
+
+
+def _candidate(row):
+    return {
+        **{name: row[name] for name in _CANDIDATE_NAMES},
+        "source_accessions": [row["source_accession"]],
+        "current_accession": row["source_accession"],
+    }
 
 MAX_SELECTION_STALE_QUOTE_AGE = timedelta(minutes=6)

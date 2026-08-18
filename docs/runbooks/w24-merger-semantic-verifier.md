@@ -2,7 +2,7 @@
 title: W-24 prospective merger semantic authority runbook
 type: runbook
 status: live
-last-verified: 2026-08-17
+last-verified: 2026-08-18
 related:
   - PLAN
   - REGISTER
@@ -24,10 +24,13 @@ The production verifier accepts only a cohort that satisfies all of these condit
 1. At least 30 evaluation candidates are selected on one date; deal ids, symbols, CIKs, and
    accessions are individually unique. The witnessed manifest is the complete **declared**
    research universe, not a claim of global deal discovery or an execution allowlist.
-2. The manifest contains identity, selection date, eligibility prediction, entry ask, signed SEC
-   source, signed quote source, and fresh per-CIK EDGAR binding—never an outcome or outcome price.
-   The quote's exchange timestamp and audit event must precede commitment, and the quote may be
-   no more than five minutes old; a favorable earlier same-day quote is not admissible.
+2. Each schema-v2 manifest candidate separates its original semantic `source_accession` from an
+   explicit `current_accession` and binds the complete ordered set of signed 8-K/10-Q/10-K rows
+   between them. The current accession must remain the strict EDGAR baseline. Identity, selection
+   date, source-set-derived eligibility prediction, entry ask, signed quote source, current filing
+   set hash, and fresh per-CIK EDGAR binding are committed—never an outcome or outcome price. The
+   quote's exchange timestamp and audit event must precede commitment, and the quote may be no
+   more than five minutes old; a favorable earlier same-day quote is not admissible.
 3. The manifest's canonical SHA-256 receives an exact-message Discord server timestamp within five
    minutes of creation in the configured private audit channel. Later verification fetches that
    exact message id and rechecks its channel, authenticated bot author, unedited state, and absence
@@ -70,13 +73,20 @@ The minimum evaluation horizon means a qualifying real 30-deal cohort cannot be 
 same day it is selected. Background/read-only and named live-feed evidence can run now; opening
 paper Orders cannot use this edge until the prospective horizon and all other MVP gates pass.
 
-The 2026-08-18 GET-only intake screen exposed `BUG-108`: the single candidate source must equal
-the current EDGAR baseline, but later ordinary filings generally supersede the announcement
+The 2026-08-18 GET-only intake screen exposed `BUG-108`: the old single candidate source had to
+equal the current EDGAR baseline, but later ordinary filings generally supersede the announcement
 without restating the terms needed by calibration. Zero of 19 current SEC-mapped filing heads in
-the real screen passed the pinned parser. Selection is blocked pending a separately scoped,
-adversarially reviewed source-set contract; see
-[[evidence/w24-prospective-intake-2026-08-18]]. Do not weaken the current-baseline check, substitute
-an older accession, or post a partial manifest.
+the real screen passed the pinned parser. The schema-v2 repair keeps the original semantic source,
+binds every locally signed filing from it through the explicit current baseline, and re-derives
+evaluation eligibility from that frozen set. Omitted, added, reordered, unsigned, future-dated,
+post-commit, non-current, or tampered sources fail before witness publication or later authority.
+Legacy v1 manifests are rejected; there is no migration or recommitment because no real selection
+commitment exists. The real cohort and external/cross-platform evidence remain blocked; see
+[[evidence/w24-prospective-intake-2026-08-18]].
+
+The final local BUG-108 Windows gate is 2,303 passed / 1 skipped with Ruff clean. Its adversarial
+pass also prevents parser phrases from being synthesized across filing boundaries. This remains
+local code evidence only, not the missing Ubuntu/macOS attestation or real prospective evidence.
 
 ## Start a prospective cohort
 
@@ -84,11 +94,14 @@ Stay in audited `read_only`. Provision the private Discord audit channel for the
 and verify send/read-history plus exact-message fetch. Do not claim its channel permissions make
 messages immutable; edits are rejected and deletion/unavailability blocks the cohort. Keep research cohort
 membership separate from the capped execution watchlists: W-24 must not widen order authority to
-collect calibration evidence. Do not include a candidate unless its selection filing and entry
-quote have already been stored and signed. The `selection` command runs one strict EDGAR evidence
-poll for every candidate CIK in the same process before it posts the manifest; it refuses partial,
-degraded, over-budget, or stale coverage. The candidate source accession must be the audited current
-baseline, so an unreviewed later filing cannot be hidden.
+collect calibration evidence. Before selection, establish the audited EDGAR baseline and use the
+bounded `filing` command for the original semantic source, every intervening supported filing, and
+the current supported accession so each raw artifact and domain row is signed. The `selection`
+command runs one final strict EDGAR evidence poll for every candidate CIK in the same process before
+it posts the manifest; it refuses partial, degraded, over-budget, stale, unsigned, or incomplete
+coverage. `current_accession` must equal that poll's audited baseline, so an unreviewed later filing
+cannot be hidden. A latest unsupported SEC form still fails closed; this repair does not broaden the
+ingestion form set.
 
 Each candidate JSON object has exactly these outcome-free fields:
 
@@ -98,6 +111,12 @@ Each candidate JSON object has exactly these outcome-free fields:
   "symbol": "TARGET",
   "target_cik": "0000000000",
   "source_accession": "0000000000-26-000001",
+  "source_accessions": [
+    "0000000000-26-000001",
+    "0000000000-26-000002",
+    "0000000000-26-000003"
+  ],
+  "current_accession": "0000000000-26-000003",
   "selected_at": "2026-08-17",
   "entry_ask": "42.10",
   "eligibility_prediction": {"<exact W-23 eligibility fields>": "<prediction>"},
@@ -113,6 +132,13 @@ Each candidate JSON object has exactly these outcome-free fields:
   }
 }
 ```
+
+`source_accessions` begins with `source_accession`, ends with `current_accession`, has no
+duplicates, is nondecreasing by SEC filing date, and includes every signed supported filing in
+that inclusive filing-date interval. Same-day ordering is frozen by the witnessed list; no filing
+may be omitted. The eligibility source reference still points to the first semantic accession.
+Ordinary later filings may contribute no deal language, while an explicit merger amendment sets
+`amendment_reviewed` and must agree with the committed prediction and eventual label.
 
 Commit only after reviewing the exact list and confirming there are no outcome fields:
 

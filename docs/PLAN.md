@@ -113,10 +113,10 @@ failure.
 
 **Immediate sequence:** the private Discord audit channel is configured and verified as a W-24
 chronology mirror, but it is not SEC-11 authority under the fixed Administrator constraint.
-The 2026-08-18 real-candidate intake exposed `BUG-108`: W-24's single source accession must equal
-the current filing baseline even though a later ordinary filing usually omits the complete deal
-terms. Keep selection unavailable while a separately scoped, adversarially reviewed source-set
-contract is designed; do not bypass the current-baseline check. Continue the remaining named
+The 2026-08-18 real-candidate intake exposed `BUG-108`; its isolated schema-v2 repair preserves
+the current-baseline check while binding the original terms source, every signed intervening
+filing, and an explicit current accession. Merge/cross-platform attestation remain pending and no
+real selection exists, so expected edge stays unavailable. Continue the remaining named
 RW-11/RW-15/RW-19 evidence and provision the independent W-25 WORM authority. A real
 evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
@@ -597,12 +597,19 @@ Discord channel identity, and final EDGAR CIK binding; see
 [[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
 review attempts timed out without a verdict, so that external attestation remains missing.
 
-**W-24 intake blocker (2026-08-18):** a GET-only screen of 46 real discovery names found 19 with
-a current SEC mapping and supported filing head, but zero of those heads passed the pinned parser.
-The single-source/current-baseline rule cannot retain an announcement's terms after a later
-ordinary filing, while calibration reads only that one source. `BUG-108` blocks selection pending
-a separately scoped and adversarially reviewed complete-source-set contract. Do not weaken the
-anti-hiding check or post a partial commitment; see
+**W-24 intake blocker and repair (2026-08-18):** a GET-only screen of 46 real discovery names
+found 19 with a current SEC mapping and supported filing head, but zero of those heads passed the
+pinned parser. The single-source/current-baseline rule could not retain an announcement's terms
+after a later ordinary filing. The isolated `BUG-108` repair replaces only the selection manifest
+with v2: it witnesses the original semantic source, a complete ordered set of locally signed
+supported filings through selection, and an explicit current accession that must still equal the
+strict EDGAR baseline. Both the prospective prediction and eventual evaluation label are derived
+from that frozen set. Omission, addition, chronology reversal, unsigned rows, future/post-commit
+evidence, v1, witness tampering, or any current-baseline/file-set change fails closed. No SQL
+migration is needed because there is no real v1 commitment. Merge, cross-platform attestation,
+the real ≥30-name cohort, held-out precision, and a current target remain open. The final local
+Windows gate is 2,303 passed / 1 skipped with Ruff clean after the adversarial pass blocked
+cross-filing parser phrase synthesis; see
 [[evidence/w24-prospective-intake-2026-08-18]].
 
 **`W-25` — merged in PR #41; activation evidence pending:**
