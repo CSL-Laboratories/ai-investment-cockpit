@@ -46,12 +46,14 @@ _HMAC_SECRET_NAME = "audit-hmac-key"
 # Keyring entry names — these MUST match docs/setup/accounts-and-keys.md §5 exactly, since that
 # table is what the operator types into `keyring set`. (RW-01 fixed a real mismatch here: this
 # constant read "discord-bot-token" with HYPHENS while the operator provisions
-# "discord_bot_token" with UNDERSCORES, so the SEC-11 #audit-log witness and every Discord post
+# "discord_bot_token" with UNDERSCORES, so the #audit-log mirror and every Discord post
 # would have stayed dark even after correct provisioning. One spelling, taken from the doc.)
 _DISCORD_TOKEN_NAME = "discord_bot_token"   # keyring-only (Inv 4); #audit-log witness + delivery
 _ALPACA_KEY_NAME = "alpaca_key"
 _ALPACA_SECRET_NAME = "alpaca_secret"
 _FINNHUB_KEY_NAME = "finnhub_key"
+_WITNESS_S3_ACCESS_KEY_NAME = "witness_s3_access_key_id"
+_WITNESS_S3_SECRET_KEY_NAME = "witness_s3_secret_access_key"
 
 # Feed endpoints. Non-secret; the credential always travels in a HEADER, never in the query
 # string, so a raised urllib error (whose repr carries the URL) can never leak a key into a log.
@@ -75,19 +77,18 @@ def _hmac_key() -> bytes:
 
 
 def _build_anchor_store(settings):
-    """SEC-11 (W10, hardened by the G10 red-team 2026-07-08): the durable audit witness. ALWAYS
-    a non-None ``GitAuditLogAnchorStore`` — NEVER ``FileAnchorStore``. But the store's TRUST read
-    (``latest()``, which the gate/mode/gateway/budget consult) counts ONLY genuinely OUT-OF-DOMAIN
-    backends: the ``GitCommitWitness`` head file is a same-trust-domain local MIRROR and does
-    NOT satisfy the auto/live prerequisite on its own (its
-    runtime read is a local file a keyless writer can overwrite). The Discord ``#audit-log``
-    witness (server-stamped, out-of-domain) is the trust source; it joins once the bot token is in
-    keyring AND a channel is configured. Until then ``latest()`` is None and every consult FAILS
-    CLOSED — auto unreachable and the live/budget paths refuse. That is the correct posture: a
-    genuine out-of-domain witness is the prose prerequisite (bot creds) SEC-11's closure ACTIVATES
-    on; a git-only deployment is fail-closed, never falsely 'anchored'."""
+    """Build SEC-11's fail-closed witness store.
+
+    Git and Discord are operator-visible mirrors only. W-25 permits exactly the independently
+    retained S3 Object Lock Compliance adapter to satisfy ``latest()``. Missing/partial WORM
+    configuration therefore leaves the store non-None but without trusted authority.
+    """
     from bridge.anchor import GitAuditLogAnchorStore
-    from bridge.witness import GitCommitWitness, discord_rest_witness
+    from bridge.witness import (
+        GitCommitWitness,
+        discord_rest_witness,
+        s3_object_lock_witness,
+    )
     from core.secrets import get_secret
 
     # BUG-051: runtime commits on whichever development branch happens to be checked out make
@@ -98,6 +99,30 @@ def _build_anchor_store(settings):
     token = get_secret(_DISCORD_TOKEN_NAME)
     if token is not None and settings.audit_log_channel_id is not None:
         adapters.append(discord_rest_witness(settings.audit_log_channel_id, token.reveal()))
+    access_key = get_secret(_WITNESS_S3_ACCESS_KEY_NAME)
+    secret_key = get_secret(_WITNESS_S3_SECRET_KEY_NAME)
+    worm_ready = {
+        "bucket": bool(settings.witness_s3_bucket),
+        "region": bool(settings.witness_s3_region),
+        "expected bucket owner": bool(settings.witness_s3_expected_bucket_owner),
+        "access key": bool(access_key is not None and access_key.reveal().strip()),
+        "secret key": bool(secret_key is not None and secret_key.reveal().strip()),
+    }
+    if all(worm_ready.values()):
+        adapters.append(
+            s3_object_lock_witness(
+                bucket=settings.witness_s3_bucket,
+                region=settings.witness_s3_region,
+                expected_bucket_owner=settings.witness_s3_expected_bucket_owner,
+                access_key_id=access_key.reveal(),
+                secret_access_key=secret_key.reveal(),
+                prefix=settings.witness_s3_prefix,
+                min_retention_days=settings.witness_s3_min_retention_days,
+            )
+        )
+    elif any(worm_ready.values()):
+        missing = ", ".join(name for name, ready in worm_ready.items() if not ready)
+        log.warning("S3 Object Lock witness is partially configured; no authority: missing %s", missing)
     return GitAuditLogAnchorStore(*adapters)
 
 

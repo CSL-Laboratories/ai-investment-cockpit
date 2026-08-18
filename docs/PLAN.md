@@ -578,6 +578,51 @@ Discord channel identity, and final EDGAR CIK binding; see
 [[evidence/w24-merger-semantic-verifier-2026-08-17]]. The preferred read-only DeepSeek Pro/Flash
 review attempts timed out without a verdict, so that external attestation remains missing.
 
+**`W-25` intake — claimed on `work/w25-worm-audit-witness`:**
+
+1. **Operator change:** the existing Discord operator bot may retain guild-wide
+   `Administrator`, but Discord no longer counts as SEC-11's append-only trust root. Discord
+   remains an operator-delivery/audit mirror and, after exact-message hardening, a fail-closed
+   W-24 chronology surface. SEC-11 authority comes only from an independently provisioned S3
+   Object Lock bucket whose retained versions are outside the bot and local database trust
+   domains. Missing or unverifiable WORM storage keeps every dependent gate unavailable.
+2. **Extended path:** `bridge/witness.py`, `main._build_anchor_store`, guarded non-secret
+   settings, keyring names, status/setup documentation, and the existing
+   `GitAuditLogAnchorStore` adapter seam. No model, broker, order, mode-transition, or
+   `app/risk/` path changes.
+3. **Retirement:** `DiscordAuditLogWitness.out_of_domain=True` is retired in this package.
+   Discord rolling posts and the local git-head file become mirror-only; exactly one
+   Compliance-retained S3 adapter may satisfy `latest()`. W-24's exact-message Discord path
+   stays separate and rejects edited/wrong-author receipts rather than being promoted to an
+   audit-head witness.
+4. **Reachability proof:** composed tests fail if Discord Administrator/mirror state can unlock
+   an anchor consult, if missing/partial WORM configuration creates a trusted adapter, if a
+   current shadow version/delete marker hides a retained higher anchor, if retention is not
+   active Compliance mode, or if an edited/wrong-author W-24 message verifies.
+5. **Package IDs:** `W-25` and `BUG-107` only. `BUG-107` is the existing semantic verifier's
+   failure to reject Discord `edited_timestamp`/unexpected authors despite the runbook's
+   edit-fails-closed promise. This package does not activate a real bucket, close SEC-11, start
+   a cohort, or promote mode.
+6. **Platforms:** boto3 is used only behind explicit keyring-held AWS credentials and
+   non-secret bucket/region/prefix settings; the default AWS credential chain is never used.
+   The adapter itself is dependency-injected and deterministic under tests. Windows,
+   Ubuntu, and macOS × Python 3.11/3.12 CI remains mandatory.
+7. **Size:** one security vertical slice below roughly 1,000 production LOC plus tests and
+   provisioning policy/runbook text. Any bucket-creation automation or alternative cloud
+   provider is a separate package.
+
+**Pinned WORM contract:** the bucket must have versioning and Object Lock enabled with a
+bucket-default **Compliance** retention period. The runtime credential may put/get/list versions
+and read bucket/object retention, but receives no delete, retention mutation, legal-hold
+mutation, bucket-configuration mutation, or governance-bypass permission. Publications use
+content-addressed/sequence-addressed keys, but readers still enumerate every object version and
+delete marker because S3 permits new versions and delete markers above a protected version. A
+version contributes authority only when its bytes parse canonically, its metadata matches the
+payload, and its server-reported Compliance retention remains active for the configured minimum
+window. Duplicate/conflicting same-sequence evidence, pagination failure, unknown retention, or
+any read error returns no trusted anchor. Real bucket provisioning plus a fresh delete/shadow/
+rollback adversarial drill is an online evidence gate, not inferred from mocks.
+
 ### M5 — Event-driven triggers  (`RW-13`)
 
 **Dynamic paper autonomy.** Drive triage from durable event candidates while retaining cron as
@@ -741,7 +786,8 @@ gates that local tests cannot establish:
 - `RW-15`: resting, partial, terminal, and lost-response Alpaca paper reconciliation.
 - `DEC-05 → RW-18`: only after the operator resolves credential read scope; discovery is
   authenticated but no-capital and places zero orders.
-- SEC-11: activate the out-of-domain Discord witness and rerun the delete-then-heal red team.
+- SEC-11/W-25: provision the S3 Object Lock Compliance witness and rerun the version-shadow,
+  delete-marker, retention, and delete-then-heal red team. Discord remains a mirror.
 
 #### Phase 3 — MVP
 

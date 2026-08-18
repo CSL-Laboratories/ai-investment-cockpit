@@ -37,19 +37,22 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   + single-scheduler `try_consume` lock).
 > - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The monotonic non-reusable
 >   HMAC-covered sequence, domain-row binding, witness adapters, and consuming-path checks are
->   implemented. Closure still requires activation of the durable out-of-domain Discord
->   `#audit-log` witness plus a fresh delete-then-heal red team against that deployment;
->   same-domain file/git mirrors do **not** qualify. Closing SEC-11 then closes the remaining
+>   implemented. W-25 closure requires activation of the S3 Object Lock Compliance witness plus
+>   a fresh version-shadow/delete-marker/delete-then-heal red team against that deployment;
+>   same-domain file/git and Administrator-Discord mirrors do **not** qualify. Closing SEC-11 then closes the remaining
 >   SEC-07 / SEC-20 / SEC-21 audit-spine residuals because the gateway/budget consumers already
 >   consult `verify_against_anchor` when a qualifying witness is wired.
 >   **BUG-051 operational correction (2026-08-12):** the same-domain audit-head
 >   mirror is now git-ignored and file-only; the running cockpit never stages or
 >   commits it onto the active development branch. This removes branch collisions
 >   but changes no trust decision: `out_of_domain=False` remains excluded from
->   `latest()`, Discord remains the only qualifying witness, and SEC-11 stays OPEN.
->   **2026-08-17 deployment check:** the Discord bot credential is provisioned but
->   `COCKPIT_AUDIT_LOG_CHANNEL_ID` is absent. The valid local chain/mirror therefore still has no
->   out-of-domain trust authority; no paper/live/autonomous promotion is permitted.
+>   `latest()`. Discord now has the same mirror-only flag; S3 WORM is the only qualifier, and
+>   SEC-11 stays OPEN.
+>   **2026-08-17 deployment check:** the private Discord channel is configured and its hardened
+>   W-24 exact-message readback is green, but no S3 WORM bucket/credential is provisioned. The
+>   valid local chain/mirrors therefore still have no out-of-domain trust authority; no paper/
+>   live/autonomous promotion is permitted. See
+>   [[evidence/w25-admin-discord-worm-witness-2026-08-17]].
 > - **W11-closed (G11 adversarial gate, 2026-07-09):** SEC-03 (runtime capability
 >   boundary — tracer + live-MCP token binding + trust-root pinning), SEC-05
 >   (credential starvation — ACTIVATION pending the low-priv account + launcher;
@@ -387,7 +390,7 @@ still read the stores in a CONFIGURED deployment. Fixed:
 `decision_agent_account` is configured but the transport does not launch under it — threaded from
 BOTH decision-spawn sites (`workflows/agent_calls.call_agent`, `workflows/grounding.run_grounding_check`;
 a G11-round-2 asymmetry). Regressions: `tests/agent_runner/test_account_guard.py`. G11 held across
-three fresh rounds (0 repros). **ACTIVATION** (parallel to SEC-11's Discord witness): SEC-05 is
+three fresh rounds (0 repros). **ACTIVATION** (parallel to SEC-11's WORM witness): SEC-05 is
 ACTIVE only once the low-priv account + a `CreateProcessWithLogonW` launcher are provisioned
 ([[setup/low-priv-agent-account]]); until then `_logon_launch` raises — a configured account with no
 launcher cannot run decision jobs at all (fail closed, never a privileged fallback). **The
@@ -559,8 +562,11 @@ is no persisted "highest sequence seen," so a shortened chain is invisible.
 by the HMAC. Periodically **anchor** `(highest_seq, head_hash)` to an append-only
 external witness the local process can't silently rewrite: post to `#audit-log` (Discord
 server-timestamps it) **and** commit the head hash into git (a later rewrite shows in the
-diff Lucas reviews via GitHub Desktop). Verification rejects any chain whose head
-sequence is below the last anchor.
+diff Lucas reviews via GitHub Desktop). **W-25 correction:** those two destinations are
+mirrors, not authority, under the fixed Administrator-bot constraint. The qualifying witness
+is now a dedicated, versioned S3 bucket with Object Lock **Compliance** retention; verification
+enumerates all versions/delete markers and rejects any chain whose head sequence is below the
+last unambiguous, actively retained anchor.
 
 **Sharpening (WP5 adversarial re-verify, 2026-07-07 — keep the reason).** The in-DB signed
 watermark is **REPLAYABLE and is NOT sufficient on its own** — the external anchor is
@@ -642,14 +648,27 @@ Regressions: `tests/bridge/test_witness_adapters.py::test_git_only_store_is_neve
 + `..._rewriting_the_git_mirror_cannot_lower_the_witness`; `tests/orchestrator/test_sec11_anchor.py::
 test_git_only_store_fails_closed_at_gate_and_oracle` + `..._git_head_file_rewrite_cannot_unlock_with_durable_witness`.
 
+**W-25 fixed-Administrator correction (2026-08-17 — supersedes Discord=True, keep both threat
+records).** Discord permits a message author to edit/delete its own posts, and an Administrator
+bot bypasses channel overwrites. Therefore no channel ACL can make this bot's rolling audit posts
+append-only. `DiscordAuditLogWitness.out_of_domain=False`; Discord and git are mirrors only.
+`S3ObjectLockWitness.out_of_domain=True` is the sole production authority. It requires bucket-
+default Compliance retention, binds canonical bytes to a content-addressed key + metadata,
+enumerates every version, fails closed on any delete marker/conflict/malformed or insufficiently
+retained object, and re-reads the exact version after publication. boto3 receives explicit
+keyring-held credentials; its default credential chain is never consulted. W-24's separate exact-
+message Discord verifier now binds the authenticated bot author and rejects `edited_timestamp`,
+webhooks, wrong-channel messages, deletion, and read failure. That chronology surface still cannot
+satisfy SEC-11.
+
 **STATUS — SEC-11 remains OPEN as a pre-live P0 (do NOT imply closed).** The MECHANISM is complete
 and holds fail-closed against the fresh G10 red-team, but its ACTIVATION is contingent on the
-**prose prerequisite**: provisioning the durable OUT-OF-DOMAIN witness — a `discord-bot-token` in
-keyring + an `audit_log_channel_id` for a private `#audit-log` channel whose ACL denies the bot
-manage-messages. Until that is provisioned, the system is fail-closed-safe (no auto, no unsafe
-re-green) but auto/live/deep-budget do NOT operate. `GitCommitWitness` alone is a mirror, never the
-witness. SEC-11 closes only when the Discord witness is live AND a fresh red-team re-converges
-against the wired-with-Discord posture.
+**prose prerequisite**: provisioning the dedicated S3 Object Lock bucket, explicit least-
+privilege runtime credentials, non-secret bucket/region/account identity, and a fresh real
+delete/shadow/rollback red-team drill. Until that is evidenced, the system is fail-closed-safe
+(no auto, no unsafe re-green) but auto/live/deep-budget do NOT operate. `GitCommitWitness` and
+Discord rolling posts are mirrors, never the witness. A configured Discord channel does not close
+SEC-11. See [[runbooks/w25-worm-audit-witness]].
 
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If

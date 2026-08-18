@@ -4,7 +4,7 @@
     python tools/verify_keys.py --migrate    # copy near-miss names onto the canonical ones
 
 THE NAMES COME FROM THE CODE, NEVER FROM AN ARGUMENT. That is this tool's entire reason to
-exist. The obvious way to check provisioning is to type the five names into a one-liner — but
+exist. The obvious way to check provisioning is to type the names into a one-liner — but
 then the check and the app can disagree, and the check will happily confirm a set of secrets
 the cockpit cannot see. That happened for real during RW-01 bring-up: the operator provisioned
 ``alpaca-key`` (hyphens), "corrected" the checker to match, and got five green lines for
@@ -37,6 +37,8 @@ from main import (                                                      # noqa: 
     _DISCORD_TOKEN_NAME,
     _FINNHUB_KEY_NAME,
     _HMAC_SECRET_NAME,
+    _WITNESS_S3_ACCESS_KEY_NAME,
+    _WITNESS_S3_SECRET_KEY_NAME,
 )
 from orchestrator.auth import API_KEY_SECRET_NAME                       # noqa: E402
 
@@ -48,6 +50,8 @@ REQUIRED = [
     (_FINNHUB_KEY_NAME, "Finnhub free-tier key", "no Finnhub news, no earnings calendar"),
     (_DISCORD_TOKEN_NAME, "Discord bot token", "the brief is stored but DELIVERED NOWHERE"),
     (API_KEY_SECRET_NAME, "orchestrator X-API-Key", "every API route 401s, incl. /status"),
+    (_WITNESS_S3_ACCESS_KEY_NAME, "WORM witness AWS access key id", "SEC-11 stays unavailable"),
+    (_WITNESS_S3_SECRET_KEY_NAME, "WORM witness AWS secret key", "SEC-11 stays unavailable"),
 ]
 
 # App-minted, never operator-provisioned. Reported for completeness so its absence before the

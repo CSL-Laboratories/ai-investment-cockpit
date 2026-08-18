@@ -69,7 +69,9 @@ def test_the_keyring_name_list_has_not_gone_stale():
 
     live = {
         main._HMAC_SECRET_NAME, main._DISCORD_TOKEN_NAME, main._ALPACA_KEY_NAME,
-        main._ALPACA_SECRET_NAME, main._FINNHUB_KEY_NAME, API_KEY_SECRET_NAME,
+        main._ALPACA_SECRET_NAME, main._FINNHUB_KEY_NAME,
+        main._WITNESS_S3_ACCESS_KEY_NAME, main._WITNESS_S3_SECRET_KEY_NAME,
+        API_KEY_SECRET_NAME,
     }
     missing = live - set(_KEYRING_SECRET_NAMES)
     assert missing == set(), f"secret names the .env guard does not know about: {missing}"

@@ -19,11 +19,9 @@ HONESTY ABOUT THE GUARANTEE (do not overclaim):
   * ``FileAnchorStore`` (append-only JSONL) is only a MIRROR. A keyless writer who can delete
     the DB tail can usually also truncate a local file — same trust domain. It is useful as a
     fast local cross-check and for staging, NOT as the real witness.
-  * The REAL guarantee needs a witness in a DIFFERENT trust domain that the local writer cannot
-    forge: the ``#audit-log`` Discord post (a server-side timestamp the local writer cannot
-    backdate). The ignored audit-head file is only a same-domain local mirror.
-    ``GitAuditLogAnchorStore`` wraps those; the concrete adapters live in ``bridge/witness.py``
-    (``GitCommitWitness`` + ``DiscordAuditLogWitness``) and are wired at ``main.compose()`` (W10).
+  * The real guarantee needs independently retained storage the local writer cannot rewrite.
+    W-25 uses S3 Object Lock Compliance mode for that authority. The ignored audit-head file and
+    Discord rolling posts are mirrors only; an Administrator bot can mutate Discord history.
 """
 from __future__ import annotations
 
@@ -154,12 +152,12 @@ def post_head_anchor(st, *, record: bool = True, actor: str = "anchor") -> tuple
     return (seq, head_hash)
 
 
-# ---- the real out-of-domain witness: SKETCH -------------------------------------------
+# ---- out-of-domain witness adapter seam ------------------------------------------------
 @runtime_checkable
 class ExternalWitnessAdapter(Protocol):
     """The seam used by witness adapters. Only adapters marked ``out_of_domain=True``
-    contribute to the runtime trust read. Production supplies a machine-local audit-head
-    mirror (explicitly untrusted) and a server-stamped ``#audit-log`` Discord post.
+    contribute to the runtime trust read. Production supplies machine-local/Discord mirrors
+    (explicitly untrusted) plus a version-aware S3 Object Lock Compliance adapter.
     """
 
     def publish(self, seq: int, head_hash: str) -> None:
@@ -173,8 +171,7 @@ class ExternalWitnessAdapter(Protocol):
 
 class GitAuditLogAnchorStore:
     """The production witness (W10). Wraps one or more ``ExternalWitnessAdapter`` backends —
-    the concrete ``GitCommitWitness`` + ``DiscordAuditLogWitness`` in ``bridge/witness.py``,
-    wired at ``main.compose()``.
+    the concrete adapters in ``bridge/witness.py``, wired at ``main.compose()``.
 
     **``latest()`` — the TRUST read the gate/mode/gateway/budget consult to fail closed —
     returns the MAX only over backends whose ``out_of_domain`` is True (SEC-11, hardened by the
@@ -183,13 +180,12 @@ class GitAuditLogAnchorStore:
     theater as a runtime witness (the exact ``FileAnchorStore``-in-effect failure the SEC-11 rule
     forbids). So when the ONLY wired backend is a same-domain mirror, ``latest()`` returns None
     and every consult FAILS CLOSED (auto unreachable; live/budget refuse) — the correct posture
-    until a genuine out-of-domain witness (a server-stamped ``#audit-log`` post) is provisioned.
-    With a real out-of-domain backend, LOWERING the witness requires forging the SERVER's held
-    history, which a keyless local writer cannot do.
+    until the S3 Object Lock Compliance witness is fully provisioned and readable. Discord never
+    supplies that authority under the fixed Administrator-bot constraint.
 
     ``append`` publishes to ALL backends, but only an out-of-domain backend may set the
     monotonic floor. An untrusted local mirror must never veto publication to the trusted
-    Discord witness; each trusted backend additionally self-guards on ``publish``."""
+    WORM witness; each trusted backend additionally self-guards on ``publish``."""
 
     def __init__(self, *adapters: ExternalWitnessAdapter) -> None:
         if not adapters:

@@ -131,7 +131,7 @@ class ModeLadder:
             -> caught by ``verify_chain`` (seq-gap + the SEC-11 signed watermark), which the
             mode oracle MUST consult for parity with the performance gate (the reproduced
             bypass exploited exactly this asymmetry). Deferred defense-in-depth: an out-of-DB
-            anchor (``AuditLog.verify_against_anchor``, git/#audit-log) closes truncation by a
+            anchor (``AuditLog.verify_against_anchor``, S3 Object Lock Compliance) closes truncation by a
             KEY-HOLDER too (SEC-11/SEC-20); it lands with the WP6 external witness."""
         # Verify the whole chain first: catches truncation/rollback the per-entry HMAC cannot.
         v = self.st.audit.verify_chain()

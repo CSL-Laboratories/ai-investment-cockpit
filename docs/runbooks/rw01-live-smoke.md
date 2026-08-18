@@ -316,17 +316,17 @@ The recurring theme: **silence is never good news on its own.** Every feed disti
 "nothing happened" from "I could not tell you what happened", and `/status` is where you
 read the difference.
 
-## 7. Optional: close the SEC-11 witness loop
+## 7. Optional: observe the audit mirrors
 
 If you created an `#audit-log` channel and set `COCKPIT_AUDIT_LOG_CHANNEL_ID`, the
 orchestrator posts the verified audit head there every 30 minutes. That server-stamped
-history is the genuine out-of-domain witness — the git-tracked head file alone is a
-same-trust-domain mirror and does **not** satisfy the prerequisite.
+history is an operator-visible mirror, like the local head file. Under the fixed Administrator
+bot constraint, neither destination satisfies SEC-11.
 
-This matters only when you eventually want an auto mode. Without it, `latest()` is `None`
-and every auto/live consult fails closed, which is the correct posture for RW-01. Do not
+Only the separately provisioned S3 Object Lock Compliance adapter may make `latest()` non-None.
+Without it, every auto/live consult fails closed, which is the correct posture for RW-01. Do not
 read "the anchor job is running" as "SEC-11 is closed" — see
-[[security-hardening-backlog]] SEC-11 for what closure requires.
+[[runbooks/w25-worm-audit-witness]] for the real activation evidence.
 
 ## 8. Done
 

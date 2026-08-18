@@ -2,8 +2,8 @@
 title: Accounts & keys — provisioning the cockpit's credentials
 type: setup-guide
 status: live
-last-verified: 2026-07-06
-repository-state-reviewed: 2026-08-13
+last-verified: 2026-08-17
+repository-state-reviewed: 2026-08-17
 related: [security-architecture, security-hardening-backlog, research-report, research-supplement, build-scaffold-ultracode]
 ---
 
@@ -31,7 +31,7 @@ authorized full-scale deployment phase in [[PLAN]].
 | Lifecycle stage | Needs | Cost |
 |---|---|---|
 | **Offline development** | No vendor credential required for deterministic fixtures/tests | **$0** |
-| **Online testing → paper MVP/beta** | Claude decision runtime · SEC descriptive User-Agent (non-secret) · Alpaca data/paper keys · Finnhub key · private Discord guild + bot | plan/subscription usage only |
+| **Online testing → paper MVP/beta** | Claude decision runtime · SEC descriptive User-Agent (non-secret) · Alpaca data/paper keys · Finnhub key · private Discord guild + bot · dedicated S3 Object Lock audit bucket | plan/subscription usage plus small AWS storage/request charges |
 | **Full-scale deployment** | Robinhood discovery identity only after `DEC-05`; funding only after `RW-18`, the paper evidence window, and all pre-live gates | separately authorized loss-tolerable capital only |
 
 ## 1. AI runtime — Claude (and optionally Codex)
@@ -76,6 +76,22 @@ authorized full-scale deployment phase in [[PLAN]].
    state-changing interaction is checked against your operator id (single-operator
    allowlist).
 
+The operator bot may retain `Administrator`. That means its rolling `#audit-log` posts are an
+operator-visible mirror, not append-only authority: Discord authors can mutate their own messages
+and Administrator bypasses channel overwrites. W-24 separately fetches an exact message, binds the
+authenticated bot author, and rejects edits/deletion; it still does not satisfy SEC-11.
+
+### 3a. S3 Object Lock (SEC-11 authority)
+
+Create a dedicated private S3 bucket with Versioning, Object Lock, and bucket-default
+`COMPLIANCE` retention for seven years. Enable Block Public Access, Bucket owner enforced object
+ownership, and default SSE-S3 encryption. Create a dedicated runtime IAM principal limited to the
+one audit prefix: put/get object versions, list bucket versions, and read bucket/object retention.
+Explicitly deny delete/version-delete, retention/legal-hold mutation, bucket Object Lock/versioning
+mutation, and governance bypass. Record the non-secret bucket name, region, and 12-digit account
+id in config. Store only its access-key pair in keyring. Follow
+[[runbooks/w25-worm-audit-witness]]; mocked tests do not close SEC-11.
+
 ## 4. Broker
 
 - **Paper MVP/beta — Alpaca paper:** already covered by the Alpaca keys above. This is the
@@ -100,6 +116,8 @@ keyring set ai-investment-cockpit alpaca_secret
 keyring set ai-investment-cockpit finnhub_key
 keyring set ai-investment-cockpit discord_bot_token
 keyring set ai-investment-cockpit cockpit_api_key
+keyring set ai-investment-cockpit witness_s3_access_key_id
+keyring set ai-investment-cockpit witness_s3_secret_access_key
 ```
 
 | Secret name | Holds | Lifecycle use |
@@ -108,6 +126,7 @@ keyring set ai-investment-cockpit cockpit_api_key
 | `finnhub_key` | Finnhub free-tier key — serves BOTH the news poller and the earnings calendar | online testing through beta |
 | `discord_bot_token` | Discord bot token | online testing onward |
 | `cockpit_api_key` | The `X-API-Key` guarding the loopback orchestrator API — **you invent it** (`python -c "import secrets;print(secrets.token_urlsafe(32))"`), it is not a vendor credential. Unset ⇒ **every** route 401s, including `/status` (fails closed, never open) | local composed testing onward |
+| `witness_s3_access_key_id` / `witness_s3_secret_access_key` | Dedicated least-privilege S3 Object Lock witness principal; never the general AWS/admin credential | SEC-11 activation onward |
 | *(Robinhood MCP)* | external MCP/CLI session store, not cockpit keyring | `RW-18` no-capital discovery/full-scale only |
 
 **Spelling is load-bearing.** These names are read verbatim by `core.secrets`; a
@@ -124,6 +143,11 @@ delivery channel ids — `COCKPIT_BRIEF_CHANNEL_ID` (your `#morning-brew`),
 `COCKPIT_SYSTEM_CHANNEL_ID`, `COCKPIT_AUDIT_LOG_CHANNEL_ID`. Each is independently
 optional; an unmapped channel fails closed (reported undelivered) rather than being
 redirected into another channel. See [[runbooks/rw01-live-smoke]] for the full bring-up.
+
+The WORM witness also needs non-secret `COCKPIT_WITNESS_S3_BUCKET`,
+`COCKPIT_WITNESS_S3_REGION`, `COCKPIT_WITNESS_S3_EXPECTED_BUCKET_OWNER`, and optionally the
+pinned prefix/minimum-retention settings shown in `app/.env.example`. Partial configuration
+installs no trusted adapter.
 
 The watchlist is validated and bounded at startup, read-only while the process runs, and feeds
 both intraday relevance and the deterministic symbol allowlist. There is intentionally no API or
@@ -158,8 +182,9 @@ and per-broker post-PDT house rules.
 - [ ] Alpaca account + API key/secret
 - [ ] Finnhub free key
 - [ ] Private Discord guild + bot (Message Content intent) + bot invited
-- [ ] `keyring set` all five secrets under `ai-investment-cockpit`
+- [ ] `keyring set` all seven secrets under `ai-investment-cockpit`
 - [ ] Guild id + operator user id + `#morning-brew` channel id recorded (config)
+- [ ] Dedicated S3 Object Lock Compliance bucket + least-privilege witness identity provisioned
 - [ ] Repo is private; host full-disk encryption enabled
 - [ ] *(RW-18 only, after DEC-05)* isolated/no-capital Robinhood discovery identity authorized
 - [ ] *(W17 only, after every pre-live gate)* funded, loss-tolerable account separately authorized

@@ -220,6 +220,74 @@ def test_merger_semantic_witness_uses_existing_keyring_token_and_audit_channel()
     assert isinstance(witness, DiscordSemanticWitness)
 
 
+def test_administrator_discord_channel_is_a_mirror_not_sec11_authority():
+    from config.settings import Settings
+    from core.secrets import set_secret
+    from main import _build_anchor_store
+
+    set_secret("discord_bot_token", "test-token-never-logged")
+    store = _build_anchor_store(Settings(audit_log_channel_id=123456789, _env_file=None))
+
+    assert store.has_out_of_domain_witness is False
+    assert store.latest() is None
+
+
+def test_partial_worm_configuration_creates_no_trusted_adapter():
+    from config.settings import Settings
+    from core.secrets import set_secret
+    from main import _build_anchor_store
+
+    set_secret("witness_s3_access_key_id", "AKIAEXPLICITONLY")
+    store = _build_anchor_store(
+        Settings(
+            witness_s3_bucket="cockpit-worm-example",
+            witness_s3_region="us-west-2",
+            _env_file=None,
+        )
+    )
+
+    assert store.has_out_of_domain_witness is False
+    assert store.latest() is None
+
+
+def test_complete_worm_configuration_uses_only_explicit_keyring_credentials(monkeypatch):
+    import bridge.witness as witness_module
+    from config.settings import Settings
+    from core.secrets import set_secret
+    from main import _build_anchor_store
+
+    captured = {}
+
+    class Trusted:
+        out_of_domain = True
+
+        def read_latest(self):
+            return None
+
+        def publish(self, _seq, _head_hash):
+            return None
+
+    def fake_factory(**kwargs):
+        captured.update(kwargs)
+        return Trusted()
+
+    monkeypatch.setattr(witness_module, "s3_object_lock_witness", fake_factory)
+    set_secret("witness_s3_access_key_id", "AKIAEXPLICITONLY")
+    set_secret("witness_s3_secret_access_key", "explicit-secret")
+    store = _build_anchor_store(
+        Settings(
+            witness_s3_bucket="cockpit-worm-example",
+            witness_s3_region="us-west-2",
+            witness_s3_expected_bucket_owner="123456789012",
+            _env_file=None,
+        )
+    )
+
+    assert store.has_out_of_domain_witness is True
+    assert captured["access_key_id"] == "AKIAEXPLICITONLY"
+    assert captured["secret_access_key"] == "explicit-secret"
+
+
 def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clock):
     pytest.importorskip("httpx")
     from fastapi.testclient import TestClient
