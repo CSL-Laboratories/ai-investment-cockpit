@@ -2,8 +2,8 @@
 title: W-25 S3 Object Lock Compliance audit witness
 type: runbook
 status: activation-pending
-last-verified: 2026-08-17
-related: [PLAN, REGISTER, security-hardening-backlog, setup/accounts-and-keys]
+last-verified: 2026-08-18
+related: [PLAN, REGISTER, security-hardening-backlog, setup/accounts-and-keys, research/sec11-zero-cost-witness-feasibility-2026-08-18]
 ---
 
 # W-25 WORM audit witness
@@ -11,6 +11,11 @@ related: [PLAN, REGISTER, security-hardening-backlog, setup/accounts-and-keys]
 This runbook activates SEC-11 without changing the fixed Discord Administrator role. It grants no
 paper/live/auto authority by itself. Keep the cockpit `read_only`; the S3 bucket must be real and
 the adversarial drill must pass before SEC-11 can be marked closed.
+
+> **Activation hold — 2026-08-18:** do not provision this bucket yet. `BUG-110` must first bound
+> the adapter's retained-history request/latency growth, and the operator must explicitly choose
+> ongoing S3 cost or a separately reviewed alternative. This hold changes no trust rule: an
+> absent witness remains fail-closed.
 
 ## Trust split
 
@@ -25,7 +30,21 @@ delete marker, same-sequence conflict, malformed/cross-key payload, pagination a
 insufficient retention, unreadable bucket policy, or any S3 error. The writer performs a strict
 read-before-write and then re-reads the exact returned version and its retention.
 
-## One-time AWS provisioning
+## Cost and alternative-provider checkpoint
+
+The anchor payloads are tiny; the current cost/availability risk is proof retrieval. Every trusted
+read downloads and checks all retained versions, and a production append performs that full read
+twice before re-reading the new version. The scheduler attempts an anchor every 30 minutes on
+weekdays. `BUG-110` must make remote work bounded without trusting a mutable latest pointer,
+same-host cache, reduced cadence, or weaker conflict/delete/retention detection.
+
+The existing Hetzner VPS cannot be the authority because a host or snapshot rollback can restore
+the database and witness together. Cloudflare R2 cannot use this adapter's required AWS Object
+Lock/version-retention verification and remains a mirror. Sigstore Rekor and an independently
+administered device are research candidates, not configured witnesses. See
+[[../research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+
+## One-time AWS provisioning — only after the activation hold closes
 
 Use a dedicated new bucket in the operator's AWS account. In the AWS console:
 

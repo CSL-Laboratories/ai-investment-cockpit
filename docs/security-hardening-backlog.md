@@ -2,7 +2,7 @@
 title: Security hardening backlog — adversarial-review findings (required before auto/live)
 type: security-backlog
 status: live
-last-verified: 2026-08-17
+last-verified: 2026-08-18
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
@@ -37,7 +37,8 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   + single-scheduler `try_consume` lock).
 > - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The monotonic non-reusable
 >   HMAC-covered sequence, domain-row binding, witness adapters, and consuming-path checks are
->   implemented. W-25 closure requires activation of the S3 Object Lock Compliance witness plus
+>   implemented. W-25 closure first requires `BUG-110`'s bounded, rollback-safe trust read, then
+>   activation of the selected independent witness plus
 >   a fresh version-shadow/delete-marker/delete-then-heal red team against that deployment;
 >   same-domain file/git and Administrator-Discord mirrors do **not** qualify. Closing SEC-11 then closes the remaining
 >   SEC-07 / SEC-20 / SEC-21 audit-spine residuals because the gateway/budget consumers already
@@ -669,6 +670,18 @@ delete/shadow/rollback red-team drill. Until that is evidenced, the system is fa
 (no auto, no unsafe re-green) but auto/live/deep-budget do NOT operate. `GitCommitWitness` and
 Discord rolling posts are mirrors, never the witness. A configured Discord channel does not close
 SEC-11. See [[runbooks/w25-worm-audit-witness]].
+
+**2026-08-18 zero-cost/cost-growth correction.** A file, database, container, volume, git
+repository, or service on the existing Hetzner VPS shares the cockpit's snapshot/administrator
+rollback domain and remains a mirror. Cloudflare R2 is not a drop-in: its documented S3 surface
+does not provide the adapter's AWS Object Lock configuration/version-retention contract, and its
+Bucket Lock rules are removable through the account control plane. Sigstore Rekor has promising
+public append-only/inclusion-proof primitives but remains an unapproved research candidate.
+Separately, `BUG-110` blocks S3 activation: every trusted read revalidates all retained versions,
+the append path does so twice, and the `*/30` weekday schedule plus consuming-path reads creates
+unbounded remote request and latency growth. No cost workaround may weaken rollback, shadow,
+conflict, retention, or fail-closed checks. See
+[[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
 
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If
