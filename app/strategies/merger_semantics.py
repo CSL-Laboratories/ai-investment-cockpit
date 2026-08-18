@@ -81,25 +81,48 @@ _COMMITTED_ROW_FIELDS = frozenset({
 
 _SPACE = re.compile(r"\s+")
 _TAG = re.compile(r"<[^>]+>")
+# BUG-109: SEC merger clauses commonly put a decimal par value between the target security
+# identity and the consideration verb (for example ``par value $0.001 per share``).  Treat only a
+# period immediately followed by a digit as part of this bounded sentence span.  A normal period
+# still terminates the match, preserving the refusal to synthesize target consideration from a
+# later sentence or signed document.
+_CASH_SENTENCE_CHAR = r"(?:[^.]|\.(?=\d))"
+# The longer real-filing span must not jump from target common shares to a different security's
+# payout later in the same sentence.  These are subject-switch tokens found in option/award
+# treatment and contrast clauses, not target-share exceptions.  Refusing an unfamiliar structure
+# is preferable to assigning its cash amount to the strategy.
+_CASH_SUBJECT_SWITCH = (
+    r"(?:\b(?:while|whereas|but)\b|"
+    r"\b(?:each|every)\s+share\b|"
+    r"\b(?:employee\s+)?(?:options?|units?|awards?|warrants?)\b|"
+    r"\b(?:notes?|bonds?|debt|preferred\s+(?:stock|shares?))\b)"
+)
+_CASH_CONTEXT_CHAR = rf"(?:(?!{_CASH_SUBJECT_SWITCH}){_CASH_SENTENCE_CHAR})"
 _CASH = re.compile(
     r"(?:each|every)\s+(?:issued\s+and\s+outstanding\s+|outstanding\s+)?"
     r"share\s+of\s+(?:the\s+)?(?:(?:company|target)(?:'s)?\s+)?common\s+stock"
-    r"[^.]{0,240}?"
+    rf"{_CASH_CONTEXT_CHAR}{{0,700}}?"
     r"(?:"
     r"(?:will|shall)\s+(?:receive|(?:be\s+)?entitled\s+to\s+receive)|"
-    r"(?:will|shall)\s+(?:be\s+)?converted\s+(?:automatically\s+)?into\s+"
+    r"(?:will|shall)\s+(?:(?:be\s+)?cancell?ed\s+and\s+)?"
+    r"(?:(?:automatically\s+)?(?:be\s+)?converted|"
+    r"(?:be\s+)?converted\s+automatically)\s+into\s+"
     r"(?:the\s+)?right\s+to\s+receive"
     r")"
     r"[^.]{0,120}?(?:\$|usd\s+)(\d+(?:\.\d+)?)\s+"
-    r"(?:in\s+cash\s+)?per\s+(?:each\s+)?share"
+    r"(?:in\s+cash\s+per\s+(?:each\s+)?share|"
+    r"per\s+(?:each\s+)?share(?:\s+|,\s*)(?:net\s+)?in\s+cash)"
 )
 _DEFINITIVE = re.compile(
     r"(?:entered\s+into\s+)?(?:a\s+)?definitive\s+"
-    r"(?:agreement\s+and\s+plan\s+of\s+)?merger"
+    r"(?:agreement\s+and\s+plan\s+of\s+)?merger|"
+    r"entered\s+into\s+(?:an?\s+|the\s+)?agreement\s+and\s+plan\s+of\s+merger"
 )
 _NOT_DEFINITIVE = re.compile(
-    r"(?:has|have)\s+not\s+entered\s+into\s+(?:a\s+)?definitive\s+"
+    r"(?:has|have)\s+(?:not|never)\s+entered\s+into\s+(?:a\s+)?definitive\s+"
     r"(?:agreement\s+and\s+plan\s+of\s+)?merger|"
+    r"(?:has|have)\s+(?:not|never)\s+entered\s+into\s+"
+    r"(?:an?\s+|the\s+)?agreement\s+and\s+plan\s+of\s+merger|"
     r"no\s+definitive\s+(?:merger(?:\s+agreement)?|agreement\s+and\s+plan\s+of\s+merger)|"
     r"non-binding\s+(?:offer|proposal)|indication\s+of\s+interest"
 )

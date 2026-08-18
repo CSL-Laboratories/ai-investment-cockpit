@@ -113,10 +113,10 @@ failure.
 
 **Immediate sequence:** the private Discord audit channel is configured and verified as a W-24
 chronology mirror, but it is not SEC-11 authority under the fixed Administrator constraint.
-The 2026-08-18 real-candidate intake exposed `BUG-108`; its isolated schema-v2 repair preserves
+The 2026-08-18 real-candidate intake exposed `BUG-108`; its PR #42 schema-v2 repair preserves
 the current-baseline check while binding the original terms source, every signed intervening
-filing, and an explicit current accession. Merge/cross-platform attestation remain pending and no
-real selection exists, so expected edge stays unavailable. Continue the remaining named
+filing, and an explicit current accession. PR #42 is merged; cross-platform attestation remains
+pending and no real selection exists, so expected edge stays unavailable. Continue the remaining named
 RW-11/RW-15/RW-19 evidence and provision the independent W-25 WORM authority. A real
 evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
@@ -600,17 +600,32 @@ review attempts timed out without a verdict, so that external attestation remain
 **W-24 intake blocker and repair (2026-08-18):** a GET-only screen of 46 real discovery names
 found 19 with a current SEC mapping and supported filing head, but zero of those heads passed the
 pinned parser. The single-source/current-baseline rule could not retain an announcement's terms
-after a later ordinary filing. The isolated `BUG-108` repair replaces only the selection manifest
+after a later ordinary filing. PR #42's `BUG-108` repair replaces only the selection manifest
 with v2: it witnesses the original semantic source, a complete ordered set of locally signed
 supported filings through selection, and an explicit current accession that must still equal the
 strict EDGAR baseline. Both the prospective prediction and eventual evaluation label are derived
 from that frozen set. Omission, addition, chronology reversal, unsigned rows, future/post-commit
 evidence, v1, witness tampering, or any current-baseline/file-set change fails closed. No SQL
-migration is needed because there is no real v1 commitment. Merge, cross-platform attestation,
+migration is needed because there is no real v1 commitment. Cross-platform attestation,
 the real ≥30-name cohort, held-out precision, and a current target remain open. The final local
 Windows gate is 2,303 passed / 1 skipped with Ruff clean after the adversarial pass blocked
 cross-filing parser phrase synthesis; see
 [[evidence/w24-prospective-intake-2026-08-18]].
+
+The bounded post-merge continuation expanded discovery to 65 names and then applied the absolute
+latest-SEC-filing rule before downloading semantic sources. Forty-three names had no current SEC
+ticker mapping, 16 had a newer unsupported filing type, and only six had a supported current feed
+head. None of the 64 supported 2026 primary documents across those six passed the eligibility
+parser. A direct check of CRNX accession `0001140361-26-027642` then isolated `BUG-109`: the
+authoritative announcement 8-K states an all-cash Nasdaq common-stock merger, but routine
+"canceled and automatically converted" / "Agreement and Plan of Merger" language falls outside
+the pinned grammar. No partial cohort or Discord commitment was created. Remediation is a separate
+parser-hardening package with frozen real positive and adversarial negative sources, followed by
+the held-out precision gate; no manual label or grammar bypass is permitted. The isolated local
+`BUG-109` repair now recognizes the exact CRNX source while blocking cross-sentence, option,
+preferred-share, note, negation, cashless, and cross-document misattribution cases. Its Windows
+gate is 2,311 passed / 1 skipped with Ruff clean, but merge, independent review, cross-platform
+attestation, and held-out human precision remain open, so this creates no selection authority.
 
 **`W-25` — merged in PR #41; activation evidence pending:**
 

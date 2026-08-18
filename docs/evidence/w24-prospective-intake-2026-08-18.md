@@ -105,11 +105,59 @@ This is code/mechanical evidence only. It does not turn the 19 screened names in
 prove that SEC discovery was globally complete, or satisfy the real cohort, held-out precision,
 current-target, external-witness, or cross-platform gates.
 
+## Post-merge bounded continuation
+
+After PR #42 merged at `dd0aa3303bd9b5a2f74e863d22d01231068208b9`, a new GET-only
+continuation expanded the discovery pool to 65 distinct target symbols. The screen used the
+official SEC ticker map and absolute submissions-feed head; it did not treat the latest supported
+filing as current when a newer unsupported form existed.
+
+| Current-state result | Count |
+|---|---:|
+| No current SEC ticker-map entry | 43 |
+| Current SEC head is outside 8-K/10-Q/10-K | 16 |
+| Current SEC head is supported | 6 |
+
+The six supported-head names were BHF, CCO, NATH, NSTS, CRNX, and RAMP. A second bounded pass
+downloaded and parsed all 64 supported primary 8-K/10-Q/10-K documents those issuers filed from
+2026-01-01 through 2026-08-18. The project `SecFetcher` enforced the configured User-Agent,
+two-request-per-second limiter, per-response cap, and aggregate run cap. It received 46,922,274
+bytes and raised no transport, fair-access, HTTP, or resource-budget error. Zero documents passed;
+the 24 emitted per-filing diagnostics (the newest four per issuer) each first refused on the absent
+accepted cash-per-share grammar.
+
+This bounded date window is not claimed to exhaust historical announcement sources. It is enough
+to refuse today's witness: even the maximum six supported-head names is below 30, and none had a
+validated semantic source in the tested window. No historical backfill, quote capture, selection
+row, or Discord message was created.
+
+## BUG-109 — real authoritative grammar is rejected
+
+The continuation then tested a known official positive source rather than inferring correctness
+from the discovery lists. CRNX's July 6 announcement is accession
+[`0001140361-26-027642`](https://www.sec.gov/Archives/edgar/data/1658247/000114036126027642/ef20077399_form8k.htm).
+The primary 8-K identifies CRNX common stock, Nasdaq, an Agreement and Plan of Merger, and $85.00
+per share in cash. The unmodified parser produced:
+
+- `_CASH.findall(...) == []` because the filing says shares are "canceled and automatically
+  converted" rather than using the grammar's narrower word order;
+- `_DEFINITIVE.search(...) is None` because the filing uses "entered into an Agreement and Plan
+  of Merger" rather than the grammar's literal `definitive merger` form; and
+- no negated-definitive or stock-consideration match.
+
+This is a real false negative and paper-MVP evidence blocker, registered as `BUG-109`. It is not a
+reason to weaken selection inline: a pattern expansion changes semantic authority and needs a
+separate bounded package with this official positive frozen alongside conditional, negated,
+mixed-consideration, multi-value, amendment, and cross-document negative cases. The independent
+held-out ≥95% precision audit and zero-false-positive eligibility requirement remain unchanged.
+The isolated local repair and its adversarial/full-suite evidence are recorded in
+[[bug109-w24-real-sec-grammar-2026-08-18]]; they do not retroactively create a candidate or witness.
+
 ## Gate status
 
-`BUG-108` is repaired on its isolated branch, with merge and missing cross-platform attestation
-still pending. W-24 selection itself remains open because no complete real ≥30-name universe has
-been reviewed or committed. The empty execution watchlist and unavailable edge are the correct
-state. Do not assemble a partial manifest, backdate selection, reuse a retrospective fixture,
+`BUG-108` is merged in PR #42; missing cross-platform attestation remains pending. W-24 selection
+itself remains open because no complete real ≥30-name universe has been reviewed or committed,
+and `BUG-109` remains unmerged and precision-evidence pending. The empty execution watchlist and
+unavailable edge are the correct state. Do not assemble a partial manifest, backdate selection, reuse a retrospective fixture,
 substitute an older accession for the current baseline, or post a Discord commitment until the
 complete real universe and every signed source are ready for one atomic witnessed selection.
