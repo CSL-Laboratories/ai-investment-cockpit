@@ -289,6 +289,14 @@ summary SHA-256 is `c0ecabcdef47e4d8c1a043a74c5e15679625af53cb616ba239bbfc49cfd1
 This proves only that the bounded capture protocol completed; it is not a quiet-day claim and
 cannot establish news correction, reconnect delivery, or REST-backfill behavior.
 
+A second run expanded the two WebSocket segments to 15 minutes each over the same 11-symbol
+universe. It ran from 22:47:04 through 23:17:10 UTC around a measured 5.000983-second gap. Both
+segments and REST again returned zero identities. All four items verify under local manifest
+`data/evidence/rw19/news-reconnect/2026-08-18/20260818T224704Z/manifest.json`; its canonical
+summary SHA-256 is `5387f8718871c7100c16b47ee60adf039ebd30b39c76705e944d217d9a08a4ce`.
+The repeated negative result confirms only that this after-hours regime is unsuitable for the
+required identity observation; it does not establish a quiet day or reconnect semantics.
+
 ## DEC-07 status
 
 **Open.** Current account capability is Basic/live-IEX shaped and live SIP is denied. Two
@@ -296,7 +304,7 @@ completed operator-universe sessions show material, repeatable IEX false negativ
 one-minute movement thresholds. The deliberate reconnect now proves REST-recoverable blind-window
 identities, the measured 1,114-frame replay proves the current one-event writer/raw prompt
 shape is too slow and too large for direct dynamic fanout, and the one-hour news sample rejects
-WS/REST identity equivalence. The later news reconnect capture was empty and therefore does not
+WS/REST identity equivalence. Both later news reconnect captures were empty and therefore do not
 close that gate. No production adapter may encode
 either “IEX is sufficient” or “SIP is required” from this evidence. The next evidence is broader
 regime coverage, a non-empty news correction/reconnect sample, and a bounded
