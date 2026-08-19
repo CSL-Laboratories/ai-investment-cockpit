@@ -39,9 +39,10 @@ Primary contracts: [Discord permissions](https://discord.com/developers/docs/top
 [AWS S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html).
 
 `S3ObjectLockWitness` is the only production adapter marked out-of-domain. It verifies bucket-
-default Compliance retention, lists every version/delete marker, binds canonical payload bytes to
-the key, metadata, and server checksum, caps reads, detects same-sequence conflicts, requires at
-least the configured remaining retention, and re-verifies the exact returned version after put.
+default Compliance retention, uses reverse-sequence keys plus a capped first-page proof, binds
+canonical payload bytes to the key, metadata, and server checksum, detects candidate delete/shadow/
+same-sequence conflicts, requires at least the configured remaining retention, and re-proves the
+exact returned version as the current head after put.
 Missing/partial config installs no trusted adapter. The boto3 factory receives explicit keyring
 credentials and pins the standard regional HTTPS endpoint, TLS verification, SigV4, virtual-host
 addressing, and bounded retries; ambient credential and endpoint settings cannot redirect it.
@@ -100,13 +101,11 @@ the cockpit rollback domain; Cloudflare R2 lacks the current adapter's required 
 configuration/version-retention interface and documents removable Bucket Lock rules. A home
 device and Sigstore Rekor remain research candidates only.
 
-Code inspection also found `BUG-110`: `_read_latest_strict()` revalidates every retained version,
-`GitAuditLogAnchorStore.append()` calls that trust read before `S3ObjectLockWitness.publish()`
-does it again, and the new version is then read once more. Gate, mode, gateway, performance, and
-budget checks add further full reads. At the weekday 30-minute cadence this is unbounded request
-and latency growth. S3 activation is therefore held pending a bounded rollback-safe design and an
-explicit provider/cost decision. See
-[[../research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+Code inspection found `BUG-110`; the local 2026-08-18 remediation now replaces its full-history
+scan with a capped reverse-sequence candidate proof and fixed post-write race check. A fresh
+adapter over 2,048 retained anchors used one list, one object read, and one retention read. This
+does not activate S3: review/merge, cross-platform attestation, the provider/cost decision, and the
+real cloud drill remain pending. See [[bug110-bounded-witness-read-2026-08-18]].
 
 ## Local gates and evidence still required
 
@@ -118,8 +117,8 @@ failures.
 Still required:
 
 - independent review and runnable Ubuntu/Windows/macOS × Python 3.11/3.12 CI;
-- close `BUG-110` without weakening retained-version, delete/shadow, conflict, rollback, or
-  fail-closed checks, then record the operator's provider/cost decision;
+- merge and independently/cross-platform attest `BUG-110`'s bounded candidate proof, then record
+  the operator's provider/cost decision;
 - real bucket/account/region/default-retention evidence and least-privilege policy;
 - real put/read-retention plus overwrite/delete/version-delete/retention-shortening/shadow/conflict
   and captured-watermark rollback drill;

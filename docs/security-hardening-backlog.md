@@ -566,8 +566,9 @@ server-timestamps it) **and** commit the head hash into git (a later rewrite sho
 diff Lucas reviews via GitHub Desktop). **W-25 correction:** those two destinations are
 mirrors, not authority, under the fixed Administrator-bot constraint. The qualifying witness
 is now a dedicated, versioned S3 bucket with Object Lock **Compliance** retention; verification
-enumerates all versions/delete markers and rejects any chain whose head sequence is below the
-last unambiguous, actively retained anchor.
+uses reverse-sequence keys and a capped first-page proof to recover the complete highest-sequence
+group, then rejects any chain whose head sequence is below that unambiguous, actively retained
+anchor. Incomplete candidate enumeration or any candidate delete/shadow/conflict fails closed.
 
 **Sharpening (WP5 adversarial re-verify, 2026-07-07 — keep the reason).** The in-DB signed
 watermark is **REPLAYABLE and is NOT sufficient on its own** — the external anchor is
@@ -655,8 +656,10 @@ bot bypasses channel overwrites. Therefore no channel ACL can make this bot's ro
 append-only. `DiscordAuditLogWitness.out_of_domain=False`; Discord and git are mirrors only.
 `S3ObjectLockWitness.out_of_domain=True` is the sole production authority. It requires bucket-
 default Compliance retention, binds canonical bytes to a content-addressed key + metadata,
-enumerates every version, fails closed on any delete marker/conflict/malformed or insufficiently
-retained object, and re-reads the exact version after publication. boto3 receives explicit
+uses fixed-width reverse-sequence v2 keys and one capped version page to prove the complete
+highest-sequence group, fails closed on a candidate delete marker/conflict/malformed or
+insufficiently retained object, and re-proves the exact returned version as the current head after
+publication. boto3 receives explicit
 keyring-held credentials; its default credential chain is never consulted. W-24's separate exact-
 message Discord verifier now binds the authenticated bot author and rejects `edited_timestamp`,
 webhooks, wrong-channel messages, deletion, and read failure. That chronology surface still cannot
@@ -677,11 +680,13 @@ rollback domain and remains a mirror. Cloudflare R2 is not a drop-in: its docume
 does not provide the adapter's AWS Object Lock configuration/version-retention contract, and its
 Bucket Lock rules are removable through the account control plane. Sigstore Rekor has promising
 public append-only/inclusion-proof primitives but remains an unapproved research candidate.
-Separately, `BUG-110` blocks S3 activation: every trusted read revalidates all retained versions,
-the append path does so twice, and the `*/30` weekday schedule plus consuming-path reads creates
-unbounded remote request and latency growth. No cost workaround may weaken rollback, shadow,
-conflict, retention, or fail-closed checks. See
-[[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+`BUG-110`'s local 2026-08-18 remediation removes the retained-history growth without trusting a
+mutable pointer or local cache: S3's lexicographic ordering puts the highest reverse-sequence key
+first, one 128-entry page must prove its whole sequence group, and ambiguity returns no anchor.
+Read and append operation counts are constant; post-write concurrency is rechecked. The package
+still blocks activation until review/merge and cross-platform attestation. No cost workaround may
+weaken rollback, candidate shadow/conflict/delete, retention, or fail-closed checks. See
+[[evidence/bug110-bounded-witness-read-2026-08-18]].
 
 ### SEC-12 — Pin hash coverage and canonical serialization
 **Attack.** The docs never say *which* columns or *what* serialization feed each hash. If

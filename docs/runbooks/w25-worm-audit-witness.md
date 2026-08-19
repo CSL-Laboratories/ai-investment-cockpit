@@ -12,10 +12,10 @@ This runbook activates SEC-11 without changing the fixed Discord Administrator r
 paper/live/auto authority by itself. Keep the cockpit `read_only`; the S3 bucket must be real and
 the adversarial drill must pass before SEC-11 can be marked closed.
 
-> **Activation hold — 2026-08-18:** do not provision this bucket yet. `BUG-110` must first bound
-> the adapter's retained-history request/latency growth, and the operator must explicitly choose
-> ongoing S3 cost or a separately reviewed alternative. This hold changes no trust rule: an
-> absent witness remains fail-closed.
+> **Activation hold — 2026-08-18:** do not provision this bucket yet. `BUG-110` has a local
+> bounded-read remediation, but it still needs review, merge, and cross-platform attestation; the
+> operator must also explicitly choose ongoing S3 cost or a separately reviewed alternative.
+> This hold changes no trust rule: an absent witness remains fail-closed.
 
 ## Trust split
 
@@ -25,18 +25,31 @@ the adversarial drill must pass before SEC-11 can be marked closed.
 - dedicated S3 bucket/prefix: the only trusted rolling audit-head adapter. Only actively retained
   Object Lock `COMPLIANCE` versions count.
 
-The reader lists every object version and delete marker under the prefix. It fails closed on a
-delete marker, same-sequence conflict, malformed/cross-key payload, pagination anomaly, wrong or
-insufficient retention, unreadable bucket policy, or any S3 error. The writer performs a strict
-read-before-write and then re-reads the exact returned version and its retention.
+Schema-v2 object keys contain a fixed-width inverted sequence, so the highest claimed sequence
+sorts first under S3's documented lexicographic order. The reader requests one page capped at 128
+versions/delete markers, validates every returned key, and accepts only one complete highest-
+sequence group. If a truncated page does not reach a lower sequence, completeness is ambiguous and
+the read fails closed. A candidate delete marker, duplicate/conflicting version, malformed/cross-
+key payload, wrong or insufficient retention, unreadable bucket policy, or any API anomaly also
+returns no trusted anchor. The writer strictly reads before the write and then repeats the bounded
+head proof, binding the exact returned version id, so concurrent forks/higher heads cannot be
+reported as a successful publication.
 
 ## Cost and alternative-provider checkpoint
 
-The anchor payloads are tiny; the current cost/availability risk is proof retrieval. Every trusted
-read downloads and checks all retained versions, and a production append performs that full read
-twice before re-reading the new version. The scheduler attempts an anchor every 30 minutes on
-weekdays. `BUG-110` must make remote work bounded without trusting a mutable latest pointer,
-same-host cache, reduced cadence, or weaker conflict/delete/retention detection.
+The anchor payloads are tiny. With the local BUG-110 repair, an ordinary trust read uses one bucket-
+lock request, one 128-entry `ListObjectVersions`, one candidate `GetObject`, and one
+`GetObjectRetention`, independent of retained-history length. A non-idempotent production append
+keeps the store and adapter defense-in-depth prechecks plus a post-write race proof, for a fixed
+maximum of three of each read and one put. It does not trust a mutable latest pointer, same-host
+cache, or reduced cadence.
+
+The runtime proof intentionally establishes the load-bearing monotonic floor, not a forensic scan
+of every lower historical key. A lower-sequence artifact cannot sort ahead of or conceal a valid
+higher reverse-sequence key and contributes no authority; every entry returned in the proof page
+is still validated. Activation evidence must separately inventory the real prefix and exercise
+delete/version-delete/shadow attempts. The prefix must be empty before first schema-v2 activation;
+there is no schema-v1 migration because no production bucket was provisioned.
 
 The existing Hetzner VPS cannot be the authority because a host or snapshot rollback can restore
 the database and witness together. Cloudflare R2 cannot use this adapter's required AWS Object

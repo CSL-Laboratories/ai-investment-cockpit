@@ -26,8 +26,9 @@ There is no approved zero-additional-cost replacement for W-25 yet.
   research candidates only. Neither may set `out_of_domain=True` or close SEC-11 without a
   separately claimed design, implementation, adversarial review, and real rollback evidence.
 - AWS S3 remains the only implemented production authority, but it is not a permanent-free
-  service. The current adapter also has unbounded retained-history request/latency growth, now
-  registered as `BUG-110`; do not provision or activate it until that defect is resolved.
+  service. `BUG-110`'s unbounded retained-history request/latency growth now has a local bounded-
+  proof remediation; do not provision or activate it until that branch is reviewed, merged, and
+  attested and the provider/cost choice is explicit.
 
 Nothing in this assessment changes runtime authority. The required state remains `read_only`,
 expected edge unavailable, merger execution watchlist empty, no paper opening orders, no live or
@@ -99,7 +100,7 @@ operating contract. Sources: [S3 Object Lock](https://docs.aws.amazon.com/Amazon
 [S3 pricing](https://aws.amazon.com/s3/pricing/), and
 [AWS Free Tier FAQ](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/free-tier-FAQ.html).
 
-## `BUG-110`: current S3 verification is not request-bounded
+## `BUG-110`: finding and local remediation
 
 The issue is not anchor payload storage; each payload is tiny. The issue is repeated proof work:
 
@@ -119,11 +120,22 @@ bucket-lock reads, writes, retries, and every consuming-path lookup. At 1,040 an
 155,750,400 of each. The final publication in those periods also becomes progressively slower
 because it revalidates the complete history twice.
 
-This is a pre-activation availability and cost defect, not permission to skip versions, trust a
-mutable latest pointer, cache authority only on the VPS, or reduce the security window silently.
-`BUG-110` must design a bounded proof/read contract that still detects hidden higher sequences,
-conflicts, delete markers, and restored local caches. Its tests must include a whole-local-state
-rollback and measured remote operation counts independent of retained history.
+This was a pre-activation availability and cost defect, not permission to trust a mutable latest
+pointer, cache authority only on the VPS, or reduce the security window silently.
+
+The local `work/bug110-bounded-witness-read` remediation uses schema-v2 keys containing a fixed-
+width inverted sequence. Under S3's documented lexicographic ordering, every higher sequence sorts
+before every lower sequence. One page capped at 128 entries must contain the complete highest-
+sequence group: if a truncated page contains no lower sequence, it is ambiguous and returns no
+anchor. The sole candidate object is checked for canonical bytes, key/digest/metadata/checksum
+binding, exact version id after a write, and active Compliance retention. Candidate delete markers,
+duplicates/forks, malformed entries, incomplete enumeration, API faults, and concurrent higher-
+head races fail closed. No local cache or mutable latest object contributes authority.
+
+A fresh adapter over 2,048 retained anchors used exactly one bucket-lock read, one list, one object
+read, and one retention read. A non-idempotent append through the defense-in-depth store uses a
+fixed three of each read plus one put, independent of history. The Windows suite passed 2,321 /
+1 skipped with Ruff clean. See [[../evidence/bug110-bounded-witness-read-2026-08-18]].
 
 ## Safe next decision
 
@@ -141,6 +153,7 @@ remain mirrors only.
 
 ## Independent review status
 
-An operator-authorized read-only Claude Code Sonnet review was attempted on 2026-08-18 with edit,
-shell, and network tools unavailable. It timed out after two minutes without output or workspace
-changes. That is missing independent attestation, not an approval or a finding.
+Two operator-authorized read-only Claude Code Sonnet reviews were attempted on 2026-08-18: one
+with read-only file tools and one tool-less with the relevant diff embedded in its prompt. Both
+timed out without output or workspace changes. That is missing independent attestation, not an
+approval or a finding.
