@@ -101,11 +101,12 @@ the cockpit rollback domain; Cloudflare R2 lacks the current adapter's required 
 configuration/version-retention interface and documents removable Bucket Lock rules. A home
 device and Sigstore Rekor remain research candidates only.
 
-Code inspection found `BUG-110`; the local 2026-08-18 remediation now replaces its full-history
+Code inspection found `BUG-110`; its PR #48 remediation now replaces the full-history
 scan with a capped reverse-sequence candidate proof and fixed post-write race check. A fresh
 adapter over 2,048 retained anchors used one list, one object read, and one retention read. This
-does not activate S3: review/merge, cross-platform attestation, the provider/cost decision, and the
-real cloud drill remain pending. See [[bug110-bounded-witness-read-2026-08-18]].
+does not activate S3: all six hosted PR #48 jobs executed zero steps under the payment restriction,
+so independent/cross-platform attestation, the provider/cost decision, and the real cloud drill
+remain pending. See [[bug110-bounded-witness-read-2026-08-18]].
 
 ## Local gates and evidence still required
 
@@ -117,8 +118,8 @@ failures.
 Still required:
 
 - independent review and runnable Ubuntu/Windows/macOS × Python 3.11/3.12 CI;
-- merge and independently/cross-platform attest `BUG-110`'s bounded candidate proof, then record
-  the operator's provider/cost decision;
+- independently/cross-platform attest the merged `BUG-110` candidate proof, then record the
+  operator's provider/cost decision;
 - real bucket/account/region/default-retention evidence and least-privilege policy;
 - real put/read-retention plus overwrite/delete/version-delete/retention-shortening/shadow/conflict
   and captured-watermark rollback drill;

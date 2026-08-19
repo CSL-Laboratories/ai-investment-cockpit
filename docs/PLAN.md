@@ -120,10 +120,11 @@ The 2026-08-18 real-candidate intake exposed `BUG-108`; its PR #42 schema-v2 rep
 the current-baseline check while binding the original terms source, every signed intervening
 filing, and an explicit current accession. PR #42 is merged; cross-platform attestation remains
 pending and no real selection exists, so expected edge stays unavailable. Continue the remaining named
-RW-11/RW-15/RW-19 evidence. Before provisioning W-25, resolve `BUG-110`'s unbounded retained-
-history verification cost and make an explicit funded-S3 versus separately reviewed zero-cost
-transparency-log decision. Same-host storage and Cloudflare R2 do not qualify. A real
-evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
+RW-11/RW-15/RW-19 evidence. PR #48 closes `BUG-110`'s unbounded retained-history verification
+cost locally; all six hosted jobs executed zero steps under the payment restriction. Before
+provisioning W-25, restore the missing attestation and make an explicit funded-S3 versus separately
+reviewed zero-cost transparency-log decision. Same-host storage and Cloudflare R2 do not qualify.
+A real evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
 only on verified inputs. `DEC-05` must be resolved before any `RW-18` authentication, and RW-13
@@ -689,13 +690,13 @@ rollback adversarial drill is an online evidence gate, not inferred from mocks.
 **2026-08-18 cost/provider hold and finding:** the pre-BUG-110 S3 trust read listed and revalidated
 every retained version; the production append path performed that full read twice before reading
 the new version, so weekday `*/30` scheduling and consuming-path reads grew with history. The
-local remediation below bounds that work, but review/merge/cross-platform gates remain. The
+PR #48 remediation below bounds that work, but independent/cross-platform gates remain. The
 existing Hetzner VPS is still the same rollback domain, and Cloudflare R2 still lacks the adapter's
 required AWS Object Lock/version-retention interface, so neither can be promoted from mirror to
 authority. Sigstore Rekor remains a research candidate. See
 [[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
 
-**`BUG-110` intake — claimed on `work/bug110-bounded-witness-read`:**
+**`BUG-110` intake — delivered in PR #48 from `work/bug110-bounded-witness-read`:**
 
 1. **Operator change:** W-25's configured trust read has a fixed remote-operation ceiling as
    retained anchor history grows. This package activates no bucket, witness, mode, or order.
@@ -704,8 +705,8 @@ authority. Sigstore Rekor remains a research candidate. See
    one capped first-page candidate proof. Preserve the anchor store's independent monotonic
    pre-read and require the S3 adapter to re-prove the current retained head after every write;
    both defense-in-depth reads remain constant-cost.
-3. **Retirement:** the full-prefix pagination/all-version body-and-retention scan and the
-   scan is deleted in this package. No parallel S3 trust path remains.
+3. **Retirement:** the full-prefix pagination/all-version body-and-retention scan is deleted in
+   this package. No parallel S3 trust path remains.
 4. **Reachability proof:** witness-adapter regressions must show constant `ListObjectVersions`,
    `GetObject`, and `GetObjectRetention` counts after thousands of retained anchors; a capped page
    that cannot prove the complete highest-sequence group returns no anchor. Existing composed
@@ -727,15 +728,16 @@ key, candidate delete marker, same-sequence conflict, insufficient retention, bo
 or API anomaly still returns no trusted anchor. This ordering proof is external; no local cache or
 mutable latest pointer contributes authority.
 
-**2026-08-18 local result:** the schema-v2 bounded proof and bounded post-write head recheck are
-implemented on `work/bug110-bounded-witness-read` from main
-`ed9ca96ccab4b3e050416f1c803086494a97b954`. A rebuilt adapter found head 2,048 with exactly one
+**2026-08-18 merged result:** commit `42fe9ab40e6f132fc8aaa6338d8726afcbfe3e83`
+merged in PR #48 as `8f66d6c07fb32224a316e4ce9afb1d0a1b51f9f7`. A rebuilt adapter found
+head 2,048 with exactly one
 bucket-lock read, one capped version-list request, one object read, and one retention read. The
 defense-in-depth store + adapter prechecks and post-write race proof remain a fixed three of each
 read on an ordinary non-idempotent append. Focused witness/rollback/scheduler tests passed 80/80;
-the hermetic Windows suite passed 2,321 / 1 skipped and Ruff is clean. This is not an activation:
-independent review, the Ubuntu/macOS matrix, provider/cost authorization, and real Object Lock
-delete/shadow/retention/rollback evidence remain open.
+the hermetic Windows suite passed 2,321 / 1 skipped and Ruff is clean. All six hosted PR #48 jobs
+executed zero steps under GitHub's payment restriction; this is missing attestation, not a code
+failure. This is not an activation: independent/cross-platform review, provider/cost authorization,
+and real Object Lock delete/shadow/retention/rollback evidence remain open.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
@@ -900,8 +902,9 @@ gates that local tests cannot establish:
 - `RW-15`: resting, partial, terminal, and lost-response Alpaca paper reconciliation.
 - `DEC-05 → RW-18`: only after the operator resolves credential read scope; discovery is
   authenticated but no-capital and places zero orders.
-- SEC-11/W-25: first close `BUG-110` with a bounded rollback-safe trust read and explicitly choose
-  funded S3 or a separately designed/reviewed transparency-log alternative. Only then provision
+- SEC-11/W-25: `BUG-110`'s bounded rollback-safe trust read merged in PR #48; restore its missing
+  cross-platform attestation and explicitly choose funded S3 or a separately designed/reviewed
+  transparency-log alternative. Only then provision
   the selected independent witness and rerun version-shadow/deletion/retention/rollback evidence.
   Same-host, Discord, git, and R2 remain mirrors under the current contract.
 

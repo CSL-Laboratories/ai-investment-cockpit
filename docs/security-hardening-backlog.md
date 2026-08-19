@@ -37,8 +37,9 @@ related: [security-architecture, prompt-injection-defense, draft-discord-control
 >   + single-scheduler `try_consume` lock).
 > - **OPEN — P0 pre-live blocker: SEC-11 (audit spine).** The monotonic non-reusable
 >   HMAC-covered sequence, domain-row binding, witness adapters, and consuming-path checks are
->   implemented. W-25 closure first requires `BUG-110`'s bounded, rollback-safe trust read, then
->   activation of the selected independent witness plus
+>   implemented, and `BUG-110`'s bounded rollback-safe trust read merged in PR #48. W-25 closure
+>   still requires cross-platform attestation, selection and activation of an independent witness,
+>   plus
 >   a fresh version-shadow/delete-marker/delete-then-heal red team against that deployment;
 >   same-domain file/git and Administrator-Discord mirrors do **not** qualify. Closing SEC-11 then closes the remaining
 >   SEC-07 / SEC-20 / SEC-21 audit-spine residuals because the gateway/budget consumers already
@@ -680,12 +681,12 @@ rollback domain and remains a mirror. Cloudflare R2 is not a drop-in: its docume
 does not provide the adapter's AWS Object Lock configuration/version-retention contract, and its
 Bucket Lock rules are removable through the account control plane. Sigstore Rekor has promising
 public append-only/inclusion-proof primitives but remains an unapproved research candidate.
-`BUG-110`'s local 2026-08-18 remediation removes the retained-history growth without trusting a
+`BUG-110`'s merged 2026-08-18 remediation removes the retained-history growth without trusting a
 mutable pointer or local cache: S3's lexicographic ordering puts the highest reverse-sequence key
 first, one 128-entry page must prove its whole sequence group, and ambiguity returns no anchor.
-Read and append operation counts are constant; post-write concurrency is rechecked. The package
-still blocks activation until review/merge and cross-platform attestation. No cost workaround may
-weaken rollback, candidate shadow/conflict/delete, retention, or fail-closed checks. See
+Read and append operation counts are constant; post-write concurrency is rechecked. PR #48 merged
+the package, but W-25 activation still waits on independent/cross-platform attestation. No cost
+workaround may weaken rollback, candidate shadow/conflict/delete, retention, or fail-closed checks. See
 [[evidence/bug110-bounded-witness-read-2026-08-18]].
 
 ### SEC-12 — Pin hash coverage and canonical serialization

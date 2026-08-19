@@ -1,7 +1,7 @@
 ---
 title: BUG-110 bounded S3 witness read evidence — 2026-08-18
 type: evidence
-status: local-validation-complete
+status: merged-local-validation-complete
 last-verified: 2026-08-18
 related:
   - ../PLAN
@@ -18,7 +18,8 @@ related:
 Branch `work/bug110-bounded-witness-read` starts at exact merged main
 `ed9ca96ccab4b3e050416f1c803086494a97b954`. This package changes only the dormant W-25 S3
 adapter, focused regressions, and its documentation. It provisions no cloud resource and grants no
-authority.
+authority. Commit `42fe9ab40e6f132fc8aaa6338d8726afcbfe3e83` merged through PR #48 as
+`8f66d6c07fb32224a316e4ce9afb1d0a1b51f9f7`.
 
 The runtime remains `read_only`; the expected edge is unavailable, the merger execution watchlist
 is empty, there are no paper opening orders, live/autonomous modes remain unauthorized, and
@@ -79,6 +80,10 @@ green.
 - repository Ruff: clean;
 - `git diff --check`: clean.
 
+All six hosted PR #48 jobs ended after four seconds with no steps. GitHub attached the payment/
+spending-limit annotation to each job. That is missing Ubuntu/Windows/macOS × Python 3.11/3.12
+attestation, not a repository test failure.
+
 The full suite set `TMP`/`TEMP` to `C:\\t`, removed process-level `COCKPIT_*` variables, and set
 `COCKPIT_ENV_FILE` to a confirmed nonexistent test path. The operator's real `app/.env` was not
 moved, read, printed, or modified. The one skip and five warnings match the existing platform/
@@ -92,7 +97,6 @@ and added the bounded post-write race proof.
 
 ## Remaining gates
 
-- review and merge this branch;
 - rerun Ubuntu, Windows, and macOS on Python 3.11/3.12 when a no-cost runner is available;
 - explicitly select and authorize a provider/cost boundary;
 - provision a new empty dedicated prefix only after those gates;

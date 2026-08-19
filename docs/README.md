@@ -89,12 +89,13 @@ canonical invariant list, and nothing else restates it.
 - The 2026-08-18 zero-cost SEC-11 assessment rejects the existing Hetzner VPS and Cloudflare R2
   as authoritative W-25 substitutes. Same-host storage shares the rollback domain; R2 does not
   expose the current adapter's required AWS Compliance/version-retention contract. Sigstore Rekor
-  is a research candidate only. `BUG-110` now has a local bounded-read remediation: reverse-
+  is a research candidate only. `BUG-110`'s bounded-read remediation merged in PR #48: reverse-
   sequence v2 keys put the highest claim first, one capped version page must prove the complete
   candidate group, and retained history no longer changes request counts. The full Windows gate
-  is 2,321 passed / 1 skipped with Ruff clean. The branch is not yet merged; independent and
+  is 2,321 passed / 1 skipped with Ruff clean. All six hosted matrix jobs executed zero steps under
+  GitHub's payment restriction; that is missing attestation, not a code failure. Independent and
   cross-platform attestation, a provider/cost choice, and real Object Lock evidence remain
-  mandatory. See [[evidence/bug110-bounded-witness-read-2026-08-18]].
+  mandatory W-25 gates. See [[evidence/bug110-bounded-witness-read-2026-08-18]].
 - GitHub's 2026-08-17 incident interrupted publication. BUG-106, W-24, and the RW-19 evidence
   subsequently merged in PRs #37–#39, the handoff in PR #40, and W-25 in PR #41. This
   documentation reconciliation preserves the stopped-system preflight and recovery record in
