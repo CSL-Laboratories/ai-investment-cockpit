@@ -218,16 +218,19 @@ class S3ObjectLockWitness:
     """Append/read canonical audit anchors retained by S3 Object Lock Compliance mode.
 
     A current S3 object is not sufficient: versioning permits a writer to place a new version
-    or delete marker above a protected one. ``read_latest`` therefore lists the complete prefix,
-    rejects every delete marker, verifies every version's canonical bytes/content-addressed key,
-    and accepts authority only from versions whose server-reported Compliance retention remains
-    active for the configured minimum window. Any ambiguity or API fault returns ``None``.
+    or delete marker above a protected one. Schema v2 encodes the inverted sequence in each key,
+    so S3's lexicographic ordering places the highest claimed sequence first. ``read_latest``
+    requests one capped page and verifies only the complete highest-sequence group. A page that
+    cannot prove that group complete, or any other ambiguity/API fault, returns ``None``.
     """
 
     out_of_domain = True
-    _SCHEMA_VERSION = 1
+    _SCHEMA_VERSION = 2
     _KIND = "audit-anchor"
     _HASH = re.compile(r"^[0-9a-f]{64}$")
+    _MAX_SEQ = (10**20) - 1
+    _MAX_CANDIDATE_ENTRIES = 128
+    _KEY_SUFFIX = re.compile(r"^v2-(\d{20})-([0-9a-f]{64})\.json$")
     _RETENTION_SKEW = timedelta(minutes=5)
     _MAX_OBJECT_BYTES = 4_096
 
@@ -287,7 +290,22 @@ class S3ObjectLockWitness:
         ).encode("utf-8")
 
     def _key(self, seq: int, payload_digest: str) -> str:
-        return f"{self._anchor_prefix}{int(seq):020d}-{payload_digest}.json"
+        seq = int(seq)
+        if not 1 <= seq <= self._MAX_SEQ or self._HASH.fullmatch(str(payload_digest)) is None:
+            raise AnchorError("S3 witness key identity is invalid")
+        inverted = self._MAX_SEQ - seq
+        return f"{self._anchor_prefix}v2-{inverted:020d}-{payload_digest}.json"
+
+    def _key_identity(self, key: str) -> tuple[int, str]:
+        if not isinstance(key, str) or not key.startswith(self._anchor_prefix):
+            raise AnchorError("S3 witness key identity is invalid")
+        match = self._KEY_SUFFIX.fullmatch(key[len(self._anchor_prefix):])
+        if match is None:
+            raise AnchorError("S3 witness key identity is invalid")
+        seq = self._MAX_SEQ - int(match.group(1))
+        if not 1 <= seq <= self._MAX_SEQ:
+            raise AnchorError("S3 witness key sequence is invalid")
+        return seq, match.group(2)
 
     def _require_bucket_lock(self) -> None:
         response = self._client.get_object_lock_configuration(**self._request())
@@ -303,29 +321,58 @@ class S3ObjectLockWitness:
         if total_days < self._min_retention_days:
             raise AnchorError("S3 witness bucket default retention is too short")
 
-    def _list_versions(self) -> tuple[list[dict], list[dict]]:
-        versions: list[dict] = []
-        delete_markers: list[dict] = []
-        markers: set[tuple[str, str]] = set()
-        request = self._request(Prefix=self._anchor_prefix, MaxKeys=1000)
-        while True:
-            response = self._client.list_object_versions(**request)
-            versions.extend(response.get("Versions") or [])
-            delete_markers.extend(response.get("DeleteMarkers") or [])
-            if not response.get("IsTruncated"):
-                return versions, delete_markers
-            key_marker = str(response.get("NextKeyMarker") or "")
-            version_marker = str(response.get("NextVersionIdMarker") or "")
-            marker = (key_marker, version_marker)
-            if not key_marker or marker in markers:
-                raise AnchorError("S3 witness version pagination is invalid")
-            markers.add(marker)
-            request = self._request(
-                Prefix=self._anchor_prefix,
-                MaxKeys=1000,
-                KeyMarker=key_marker,
-                VersionIdMarker=version_marker,
-            )
+    def _list_candidate_versions(self) -> tuple[int | None, list[dict], list[dict]]:
+        """Return one complete highest-sequence group from one bounded S3 page.
+
+        General-purpose S3 buckets order keys lexicographically and versions of a key newest
+        first. The inverted fixed-width sequence therefore makes the first sequence group the
+        monotonic authority candidate. If the page ends before a lower sequence appears, a
+        truncated response could be hiding another same-sequence key/version and is refused.
+        """
+        response = self._client.list_object_versions(
+            **self._request(Prefix=self._anchor_prefix, MaxKeys=self._MAX_CANDIDATE_ENTRIES)
+        )
+        truncated = response.get("IsTruncated")
+        if not isinstance(truncated, bool):
+            raise AnchorError("S3 witness candidate listing truncation state is invalid")
+        versions = response.get("Versions", [])
+        delete_markers = response.get("DeleteMarkers", [])
+        if versions is None:
+            versions = []
+        if delete_markers is None:
+            delete_markers = []
+        if not isinstance(versions, list) or not isinstance(delete_markers, list):
+            raise AnchorError("S3 witness candidate listing is invalid")
+        if len(versions) + len(delete_markers) > self._MAX_CANDIDATE_ENTRIES:
+            raise AnchorError("S3 witness candidate listing exceeds its requested bound")
+
+        entries: list[tuple[int, str, dict]] = []
+        for kind, rows in (("version", versions), ("delete", delete_markers)):
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise AnchorError("S3 witness candidate entry is invalid")
+                key = row.get("Key")
+                version_id = row.get("VersionId")
+                seq, _digest = self._key_identity(key)
+                if not isinstance(version_id, str) or not version_id or version_id == "null":
+                    raise AnchorError("S3 witness version identity is invalid")
+                entries.append((seq, kind, row))
+
+        if not entries:
+            if truncated:
+                raise AnchorError("S3 witness empty candidate page is truncated")
+            return None, [], []
+
+        candidate_seq = max(seq for seq, _kind, _row in entries)
+        if truncated and all(seq == candidate_seq for seq, _kind, _row in entries):
+            raise AnchorError("S3 witness highest-sequence group exceeds its proof bound")
+        candidate_versions = [
+            row for seq, kind, row in entries if seq == candidate_seq and kind == "version"
+        ]
+        candidate_markers = [
+            row for seq, kind, row in entries if seq == candidate_seq and kind == "delete"
+        ]
+        return candidate_seq, candidate_versions, candidate_markers
 
     @staticmethod
     def _retention_time(value) -> datetime:
@@ -341,8 +388,9 @@ class S3ObjectLockWitness:
         return parsed.astimezone(timezone.utc)
 
     def _read_version(self, key: str, version_id: str) -> tuple[int, str, bool]:
-        if not key.startswith(self._anchor_prefix) or not version_id or version_id == "null":
+        if not version_id or version_id == "null":
             raise AnchorError("S3 witness version identity is invalid")
+        key_seq, key_digest = self._key_identity(key)
         response = self._client.get_object(
             **self._request(Key=key, VersionId=version_id, ChecksumMode="ENABLED")
         )
@@ -374,7 +422,7 @@ class S3ObjectLockWitness:
         checksum = base64.b64encode(bytes.fromhex(digest)).decode("ascii")
         if response.get("ChecksumSHA256") != checksum:
             raise AnchorError("S3 witness object checksum is missing or invalid")
-        if key != self._key(seq, digest):
+        if seq != key_seq or digest != key_digest or key != self._key(seq, digest):
             raise AnchorError("S3 witness key does not bind its payload")
         metadata = response.get("Metadata") or {}
         if (
@@ -391,33 +439,30 @@ class S3ObjectLockWitness:
         minimum = self._now() + timedelta(days=self._min_retention_days) - self._RETENTION_SKEW
         return seq, head_hash, retain_until >= minimum
 
-    def _read_latest_strict(self) -> "tuple[int, str] | None":
+    def _read_latest_strict(
+        self, *, expected_version: "tuple[str, str] | None" = None
+    ) -> "tuple[int, str] | None":
         self._require_bucket_lock()
-        versions, delete_markers = self._list_versions()
-        if delete_markers:
-            raise AnchorError("S3 witness prefix contains a delete marker")
-        active: list[tuple[int, str]] = []
-        all_records: list[tuple[int, str]] = []
-        for version in versions:
-            record = self._read_version(
-                str(version.get("Key") or ""), str(version.get("VersionId") or "")
-            )
-            all_records.append(record[:2])
-            if record[2]:
-                active.append(record[:2])
-        if not all_records:
+        candidate_seq, versions, delete_markers = self._list_candidate_versions()
+        if candidate_seq is None:
             return None
-        by_seq: dict[int, set[str]] = {}
-        for seq, head_hash in all_records:
-            by_seq.setdefault(seq, set()).add(head_hash)
-        if any(len(heads) != 1 for heads in by_seq.values()):
+        if delete_markers:
+            raise AnchorError("S3 witness highest-sequence group contains a delete marker")
+        if not versions:
+            raise AnchorError("S3 witness highest-sequence group contains no object version")
+        if len(versions) != 1:
             raise AnchorError("S3 witness contains conflicting anchors")
-        if not active:
-            raise AnchorError("S3 witness contains no sufficiently retained anchor")
-        latest = max(active, key=lambda item: item[0])
-        if max(seq for seq, _head in all_records) > latest[0]:
+        version = versions[0]
+        key = str(version.get("Key") or "")
+        version_id = str(version.get("VersionId") or "")
+        if expected_version is not None and (key, version_id) != expected_version:
+            raise AnchorError("S3 witness publication is not the current retained head")
+        record = self._read_version(key, version_id)
+        if record[0] != candidate_seq:
+            raise AnchorError("S3 witness candidate sequence does not bind its key")
+        if not record[2]:
             raise AnchorError("S3 witness latest anchor lacks sufficient retention")
-        return latest
+        return record[:2]
 
     def read_latest(self) -> "tuple[int, str] | None":
         try:
@@ -427,7 +472,7 @@ class S3ObjectLockWitness:
 
     def publish(self, seq: int, head_hash: str) -> None:
         seq = int(seq)
-        if seq < 1 or self._HASH.fullmatch(str(head_hash)) is None:
+        if not 1 <= seq <= self._MAX_SEQ or self._HASH.fullmatch(str(head_hash)) is None:
             raise AnchorError("S3 witness anchor is invalid")
         try:
             current = self._read_latest_strict()
@@ -457,8 +502,10 @@ class S3ObjectLockWitness:
                 )
             )
             version_id = str(result.get("VersionId") or "")
-            observed = self._read_version(key, version_id)
-            if observed != (seq, head_hash, True):
+            if not version_id or version_id == "null":
+                raise AnchorError("S3 witness publication returned no version identity")
+            observed = self._read_latest_strict(expected_version=(key, version_id))
+            if observed != (seq, head_hash):
                 raise AnchorError("S3 witness publication is not durably retained")
         except AnchorError:
             raise

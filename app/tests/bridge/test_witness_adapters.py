@@ -170,14 +170,23 @@ class FakeS3:
     def list_object_versions(self, **kwargs):
         self.calls.append(("list", kwargs))
         prefix = kwargs["Prefix"]
+        rows = [
+            (row["Key"], "version", {"Key": row["Key"], "VersionId": row["VersionId"]})
+            for row in self.versions
+            if row["Key"].startswith(prefix)
+        ]
+        rows.extend(
+            (row["Key"], "delete", dict(row))
+            for row in self.delete_markers
+            if row["Key"].startswith(prefix)
+        )
+        rows.sort(key=lambda item: item[0])
+        max_keys = int(kwargs["MaxKeys"])
+        selected = rows[:max_keys]
         return {
-            "Versions": [
-                {"Key": row["Key"], "VersionId": row["VersionId"]}
-                for row in self.versions
-                if row["Key"].startswith(prefix)
-            ],
-            "DeleteMarkers": list(self.delete_markers),
-            "IsTruncated": False,
+            "Versions": [row for _key, kind, row in selected if kind == "version"],
+            "DeleteMarkers": [row for _key, kind, row in selected if kind == "delete"],
+            "IsTruncated": len(rows) > max_keys,
         }
 
     def put_object(self, **kwargs):
@@ -231,8 +240,8 @@ class FakeS3:
         )
 
 
-def _worm():
-    client = FakeS3()
+def _worm(client=None):
+    client = client or FakeS3()
     witness = S3ObjectLockWitness(
         client=client,
         bucket="cockpit-worm-example",
@@ -252,7 +261,10 @@ def _inject(client, witness, seq, head_hash, *, key=None, mode="COMPLIANCE", day
             "Key": key or witness._key(seq, digest),  # noqa: SLF001
             "VersionId": f"injected-{len(client.versions)}",
             "Body": payload,
-            "Metadata": {"payload-sha256": digest, "schema-version": "1"},
+            "Metadata": {
+                "payload-sha256": digest,
+                "schema-version": str(witness._SCHEMA_VERSION),  # noqa: SLF001
+            },
             "Mode": mode,
             "RetainUntilDate": NOW + timedelta(days=days),
         },
@@ -271,6 +283,90 @@ def test_s3_witness_publishes_and_reverifies_the_exact_compliance_version():
     assert put["IfNoneMatch"] == "*"
     assert put["ChecksumSHA256"]
     assert any(name == "retention" for name, _kwargs in client.calls)
+
+
+def test_s3_witness_reverse_sequence_keys_put_the_highest_head_first():
+    witness, _client = _worm()
+
+    assert witness._key(2, "b" * 64) < witness._key(1, "a" * 64)  # noqa: SLF001
+
+
+def test_s3_witness_latest_read_cost_is_bounded_after_large_history_and_local_rebuild():
+    witness, client = _worm()
+    for seq in range(1, 2_049):
+        _inject(client, witness, seq, f"{seq:064x}")
+
+    rebuilt, _same_client = _worm(client)  # no process-local head/cache survives the rebuild
+    client.calls.clear()
+
+    assert rebuilt.read_latest() == (2_048, f"{2_048:064x}")
+    counts = {
+        name: sum(call_name == name for call_name, _kwargs in client.calls)
+        for name in ("lock", "list", "get", "retention")
+    }
+    assert counts == {"lock": 1, "list": 1, "get": 1, "retention": 1}
+    list_call = next(kwargs for name, kwargs in client.calls if name == "list")
+    assert list_call["MaxKeys"] == witness._MAX_CANDIDATE_ENTRIES  # noqa: SLF001
+    assert "KeyMarker" not in list_call and "VersionIdMarker" not in list_call
+
+
+def test_s3_witness_publish_through_store_has_fixed_pre_and_post_write_proofs():
+    witness, client = _worm()
+    store = GitAuditLogAnchorStore(witness)
+
+    store.append(1, "a" * 64)
+    assert sum(name == "list" for name, _kwargs in client.calls) == 3
+
+    client.calls.clear()
+    store.append(2, "b" * 64)
+    counts = {
+        name: sum(call_name == name for call_name, _kwargs in client.calls)
+        for name in ("lock", "list", "put", "get", "retention")
+    }
+    assert counts == {"lock": 3, "list": 3, "put": 1, "get": 3, "retention": 3}
+
+
+@pytest.mark.parametrize("race", ["same-sequence-fork", "higher-sequence"])
+def test_s3_witness_publish_fails_closed_if_a_concurrent_write_wins(race):
+    witness, client = _worm()
+    witness.publish(1, "a" * 64)
+    real_put = client.put_object
+
+    def raced_put(**kwargs):
+        result = real_put(**kwargs)
+        if race == "same-sequence-fork":
+            _inject(client, witness, 2, "c" * 64)
+        else:
+            _inject(client, witness, 3, "d" * 64)
+        return result
+
+    client.put_object = raced_put
+
+    with pytest.raises(AnchorError):
+        witness.publish(2, "b" * 64)
+
+
+def test_s3_witness_rejects_invalid_falsy_listing_collections():
+    witness, client = _worm()
+    client.list_object_versions = lambda **_kwargs: {
+        "Versions": {},
+        "DeleteMarkers": [],
+        "IsTruncated": False,
+    }
+
+    assert witness.read_latest() is None
+
+
+def test_s3_witness_ambiguous_highest_sequence_page_fails_closed_at_fixed_cost():
+    witness, client = _worm()
+    for variant in range(witness._MAX_CANDIDATE_ENTRIES + 1):  # noqa: SLF001
+        _inject(client, witness, 9, f"{variant:064x}")
+
+    client.calls.clear()
+
+    assert witness.read_latest() is None
+    assert sum(name == "list" for name, _kwargs in client.calls) == 1
+    assert not any(name in {"get", "retention"} for name, _kwargs in client.calls)
 
 
 @pytest.mark.parametrize("fault", ["delete-marker", "shadow-version", "conflict"])

@@ -686,15 +686,56 @@ window. Duplicate/conflicting same-sequence evidence, pagination failure, unknow
 any read error returns no trusted anchor. Real bucket provisioning plus a fresh delete/shadow/
 rollback adversarial drill is an online evidence gate, not inferred from mocks.
 
-**2026-08-18 cost/provider hold:** `BUG-110` is open before activation. The current S3 trust read
-lists and revalidates every retained version; the production append path performs that full read
-twice before re-reading the new version, and all consuming paths add more full reads. At the
-weekday `*/30` schedule, remote request/latency work grows with retained history rather than
-remaining bounded. The existing Hetzner VPS is the same rollback domain, and Cloudflare R2 does
-not provide the adapter's required AWS Object Lock/version-retention interface, so neither can be
-promoted from mirror to authority. Sigstore Rekor is a research candidate only. Resolve the bug
-without trusting a mutable latest pointer, local-only cache, or reduced security window; see
+**2026-08-18 cost/provider hold and finding:** the pre-BUG-110 S3 trust read listed and revalidated
+every retained version; the production append path performed that full read twice before reading
+the new version, so weekday `*/30` scheduling and consuming-path reads grew with history. The
+local remediation below bounds that work, but review/merge/cross-platform gates remain. The
+existing Hetzner VPS is still the same rollback domain, and Cloudflare R2 still lacks the adapter's
+required AWS Object Lock/version-retention interface, so neither can be promoted from mirror to
+authority. Sigstore Rekor remains a research candidate. See
 [[research/sec11-zero-cost-witness-feasibility-2026-08-18]].
+
+**`BUG-110` intake — claimed on `work/bug110-bounded-witness-read`:**
+
+1. **Operator change:** W-25's configured trust read has a fixed remote-operation ceiling as
+   retained anchor history grows. This package activates no bucket, witness, mode, or order.
+2. **Extended/replaced path:** replace `S3ObjectLockWitness._list_versions()` and the
+   all-history `_read_latest_strict()` scan with a versioned reverse-sequence key contract and
+   one capped first-page candidate proof. Preserve the anchor store's independent monotonic
+   pre-read and require the S3 adapter to re-prove the current retained head after every write;
+   both defense-in-depth reads remain constant-cost.
+3. **Retirement:** the full-prefix pagination/all-version body-and-retention scan and the
+   scan is deleted in this package. No parallel S3 trust path remains.
+4. **Reachability proof:** witness-adapter regressions must show constant `ListObjectVersions`,
+   `GetObject`, and `GetObjectRetention` counts after thousands of retained anchors; a capped page
+   that cannot prove the complete highest-sequence group returns no anchor. Existing composed
+   rollback, delete-marker, shadow, conflict, retention, gateway, gate, and mode tests remain
+   mandatory.
+5. **Package ID:** `BUG-110` only. Rekor/provider selection, real cloud provisioning, SEC-11
+   closure, W-24 authority, and any mode promotion remain separate decisions/evidence.
+6. **Platforms:** pure Python over the existing injected boto3 seam; no new subprocess,
+   credential, path, temp-file, network, or platform branch. The ordinary Ubuntu/Windows/macOS
+   matrix remains required.
+7. **Size:** below roughly 300 production LOC plus focused adversarial tests and documentation.
+
+The key schema is bumped before any real bucket exists. Fixed-width inverted sequence numbers make
+the highest claimed sequence lexicographically first under S3's documented ordering. The reader
+requests one capped page, validates every returned key, and reads only the complete highest-
+sequence group. A truncated page containing only that group is ambiguous and fails closed; a page
+that reaches a lower sequence proves that the candidate group is complete. A malformed leading
+key, candidate delete marker, same-sequence conflict, insufficient retention, body/key mismatch,
+or API anomaly still returns no trusted anchor. This ordering proof is external; no local cache or
+mutable latest pointer contributes authority.
+
+**2026-08-18 local result:** the schema-v2 bounded proof and bounded post-write head recheck are
+implemented on `work/bug110-bounded-witness-read` from main
+`ed9ca96ccab4b3e050416f1c803086494a97b954`. A rebuilt adapter found head 2,048 with exactly one
+bucket-lock read, one capped version-list request, one object read, and one retention read. The
+defense-in-depth store + adapter prechecks and post-write race proof remain a fixed three of each
+read on an ordinary non-idempotent append. Focused witness/rollback/scheduler tests passed 80/80;
+the hermetic Windows suite passed 2,321 / 1 skipped and Ruff is clean. This is not an activation:
+independent review, the Ubuntu/macOS matrix, provider/cost authorization, and real Object Lock
+delete/shadow/retention/rollback evidence remain open.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
