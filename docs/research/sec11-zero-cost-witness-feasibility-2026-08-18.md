@@ -26,9 +26,9 @@ There is no approved zero-additional-cost replacement for W-25 yet.
   research candidates only. Neither may set `out_of_domain=True` or close SEC-11 without a
   separately claimed design, implementation, adversarial review, and real rollback evidence.
 - AWS S3 remains the only implemented production authority, but it is not a permanent-free
-  service. `BUG-110`'s unbounded retained-history request/latency growth now has a local bounded-
-  proof remediation; do not provision or activate it until that branch is reviewed, merged, and
-  attested and the provider/cost choice is explicit.
+  service. `BUG-110`'s bounded-proof remediation merged in PR #48; do not provision or activate
+  it until independent/cross-platform attestation is restored and the provider/cost choice is
+  explicit.
 
 Nothing in this assessment changes runtime authority. The required state remains `read_only`,
 expected edge unavailable, merger execution watchlist empty, no paper opening orders, no live or
@@ -78,7 +78,7 @@ Any alternative must demonstrate all of these properties through the composed ru
 | Cloudflare R2 Bucket Locks | may fit an existing allowance | **rejected as a drop-in; redesign not approved** | R2's control plane permits removal of lock rules. Its S3 compatibility table marks `GetObjectLockConfiguration`/`PutObjectLockConfiguration` and object-lock request fields unimplemented, does not support expected-owner fields used by W-25, and does not document the version/retention interface the reader requires. |
 | Existing home PC/NAS | none if already owned | **research candidate only** | It would need independent administration, protected signing/trust material, monotonic rollback-resistant storage, reliable read availability, complete highest-head discovery, and recovery evidence. Ordinary local files or snapshots do not qualify. |
 | Sigstore public Rekor | public-good candidate | **research candidate only** | Rekor documents an append-only, queryable transparency log and inclusion proofs, but its public service is for signed software-supply-chain metadata. Generic audit-checkpoint fit, identity/search semantics, public metadata, quotas/acceptable use, trust-root updates, retention, and rollback recovery are not yet pinned. |
-| AWS S3 Object Lock Compliance | usage-priced after credits/free-plan window | **only implemented authority; activation held** | Compliance mode prevents retained-version deletion/shortening even by account root. Real activation still requires `BUG-110`, provisioning, least privilege, adversarial evidence, and cross-platform CI. |
+| AWS S3 Object Lock Compliance | usage-priced after credits/free-plan window | **only implemented authority; activation held** | Compliance mode prevents retained-version deletion/shortening even by account root. BUG-110 merged in PR #48; real activation still requires independent/cross-platform attestation, provisioning, least privilege, and adversarial evidence. |
 
 Cloudflare's current documentation says Bucket Locks prevent object deletion/overwrite, but it
 also documents dashboard, Wrangler, and API removal of lock rules. Its S3 compatibility page
@@ -140,7 +140,8 @@ fixed three of each read plus one put, independent of history. The Windows suite
 ## Safe next decision
 
 Do not add a same-host authoritative service and do not provision AWS merely to continue the
-paper-MVP sequence. First resolve `BUG-110`, then choose one of two separately reviewed paths:
+paper-MVP sequence. With `BUG-110` merged, restore its missing attestation and choose one of two
+separately reviewed paths:
 
 1. retain the existing S3 Compliance contract with a small explicit recurring-cost ceiling and
    billing alarms; or

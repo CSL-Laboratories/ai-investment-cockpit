@@ -12,9 +12,9 @@ This runbook activates SEC-11 without changing the fixed Discord Administrator r
 paper/live/auto authority by itself. Keep the cockpit `read_only`; the S3 bucket must be real and
 the adversarial drill must pass before SEC-11 can be marked closed.
 
-> **Activation hold — 2026-08-18:** do not provision this bucket yet. `BUG-110` has a local
-> bounded-read remediation, but it still needs review, merge, and cross-platform attestation; the
-> operator must also explicitly choose ongoing S3 cost or a separately reviewed alternative.
+> **Activation hold — 2026-08-18:** do not provision this bucket yet. `BUG-110`'s bounded-read
+> remediation merged in PR #48, but independent/cross-platform attestation remains;
+> the operator must also explicitly choose ongoing S3 cost or a separately reviewed alternative.
 > This hold changes no trust rule: an absent witness remains fail-closed.
 
 ## Trust split
@@ -37,7 +37,7 @@ reported as a successful publication.
 
 ## Cost and alternative-provider checkpoint
 
-The anchor payloads are tiny. With the local BUG-110 repair, an ordinary trust read uses one bucket-
+The anchor payloads are tiny. With the merged BUG-110 repair, an ordinary trust read uses one bucket-
 lock request, one 128-entry `ListObjectVersions`, one candidate `GetObject`, and one
 `GetObjectRetention`, independent of retained-history length. A non-idempotent production append
 keeps the store and adapter defense-in-depth prechecks plus a post-write race proof, for a fixed
