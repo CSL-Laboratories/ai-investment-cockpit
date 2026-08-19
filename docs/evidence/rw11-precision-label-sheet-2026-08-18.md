@@ -18,6 +18,23 @@ The parser output cannot label itself. All human-review cells below therefore re
 strategy, paper-order, live-order, or autonomous authority. Four rows alone are not claimed to
 be a meaningful sample. RW-11 and RW-12 remain open.
 
+## Evidence-tool development status
+
+The local `work/rw11-filing-precision` branch now contains a deterministic text-delta evidence
+freezer and scorer in `tools/rw11_precision.py`. It consumes a predeclared case manifest and an
+explicitly marked isolated raw store; it never reads `app/cockpit.db`. Its reviewer CSV omits the
+machine source field, change type, and materiality score. The separate scorer rejects a changed
+population, missing/duplicate rows, a case selector acting as reviewer, incomplete labels, and
+artifact/raw/code hash inconsistencies. It reports source-field and material-change precision
+separately, treats abstentions as failures in the conservative floor, and hard-codes no authority
+and an open/not-closed gate.
+
+Local validation is 17 focused tests, 313 filing/EDGAR/tool tests, and 2,338 passed / 1 skipped in
+the full Windows suite, with Ruff clean. A final Claude Code Sonnet 5 adversarial pass found no
+reproducible P0/P1/P2 defect after earlier findings were repaired. This development does not label
+the four rows below, does not capture numeric/companyfacts evidence, does not externally witness
+the local self-hashed artifacts, and does not replace the missing Ubuntu/macOS attestation.
+
 ## Mechanical precheck
 
 The ignored write-once raw blob at

@@ -311,6 +311,56 @@ not an opinion.
 
 ### M1 — Wire the extraction layer  (`RW-11`, implementation merged; evidence pending)
 
+**RW-11 evidence package intake — claimed on `work/rw11-filing-precision` from main
+`90a9194f4fa420ccb8b082e198f64f32125d4db3`:**
+
+1. **Operator change:** add a deterministic, offline evidence command that replays and freezes an
+   eligible post-cutoff text-delta population from a predeclared case manifest and explicitly
+   marked isolated raw store, emits a blind human-review sheet, and scores only a separately
+   completed label file.
+   It grants no strategy, mode, paper-order, live-order, or autonomous authority.
+2. **Extended path:** the evidence command reuses the existing deterministic filing parser,
+   delta engine, stored `Delta` contract, and citation resolver used by
+   `app/ingest/edgar_pipeline.py`. It captures current/prior comparison context before the stored
+   `Delta` shape discards it; it does not read or write `app/cockpit.db`, and it does not change
+   the composed poller, parser, scheduler, operational database, or order path.
+3. **Retirement:** no path is replaced. `RW-12` remains the separately blocked retirement of
+   `edgar_brew.py` and its tests, and cannot start until RW-11's real evidence gate passes.
+4. **Reachability proof:** existing
+   `tests/ingest/test_edgar_wiring.py::test_composed_runner_polls_pipeline_and_emits_cited_attributed_event`
+   protects production composition. New `tests/tools/test_rw11_precision.py` coverage will fail
+   if the evidence command cannot replay, freeze, blind, integrity-check, and score the real
+   contracts without touching the operational database.
+5. **Claimed IDs:** `RW-11` only. `RW-12` stays blocked and `RW-13` is not started.
+6. **Platforms:** use `pathlib`, canonical UTF-8 JSON/CSV, timezone-qualified timestamps, and
+   explicit paths; no subprocesses, credentials, or platform branches. Windows local evidence
+   does not substitute for the missing Ubuntu/macOS × Python 3.11/3.12 attestation.
+7. **Size:** one bounded text-evidence tool, tests, and documentation, approximately 1,000 changed
+   lines and not to expand further. The production pipeline's companyfacts-derived inputs are
+   transient, so unbiased live
+   case collection, numeric-delta capture, and independent human labelling remain explicit
+   empirical follow-ups, not hidden implementation work or silently reconstructed data.
+
+**Pinned baseline:** PR #49 merged the documentation reconciliation at the SHA above. Its six
+hosted matrix jobs executed zero steps under the same GitHub payment/spending-limit restriction;
+that is missing cross-platform attestation, not a code failure. The runtime remains `read_only`,
+expected edge is unavailable, the merger execution watchlist is empty, and no paper opening,
+live, or autonomous order authority is enabled.
+
+**Development result (2026-08-18):** `tools/rw11_precision.py` now provides an offline,
+database-free text-delta replay freezer, artifact verifier, blind review template, and separately
+bound scorer. The frozen population binds the complete predeclared case manifest (including
+zero-delta cases), expected and observed raw hashes, parser/delta/citation implementation hashes,
+and every emitted row. Source-locator and material-change precision remain separate; abstentions
+count as failures in the conservative floor; the case selector cannot be the recorded reviewer;
+and every manifest/report says `authority: none`, `gate_closed: false`. Seventeen focused tests,
+313 filing/EDGAR/tool tests, and the full Windows suite (2,338 passed / 1 skipped) are green with
+Ruff clean. Ten read-only Claude Code Sonnet 5 lanes informed architecture, sampling,
+cross-platform, and adversarial review; the final repaired-code pass found no reproducible
+P0/P1/P2 defect. This is tooling evidence only: local self-hashes are not an external witness,
+numeric/companyfacts capture is deliberately absent, no real expanded population or human labels
+were generated, and hosted Ubuntu/macOS attestation remains missing.
+
 PR #15 added the `sec:edgar` branch to `build_ingest_fetchers`, backed by
 `run_edgar_pipeline` when `sec_user_agent` and watchlist scope are configured. It is preferred
 over `brew_db_path`, persists the company mapping required for attributed events, and reports
