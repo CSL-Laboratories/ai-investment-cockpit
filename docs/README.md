@@ -116,6 +116,13 @@ canonical invariant list, and nothing else restates it.
   locally with Ruff clean and its complete six-job matrix is green. Real
   Alpaca reconciliation, and the two market-day W-22 proof remain evidence gates;
   [[runbooks/w22-paper-mvp]] is the operator handoff.
+- PR #50 merged the first RW-11 filing-precision evidence tool at
+  `eb069fadddc45fa0a702c67b0e00edf4f94a7e31`; all six hosted jobs again ran zero steps under the
+  payment/spending-limit restriction. The separate `work/rw11-companyfacts-capture` package is
+  local: it captures exact Company Facts bytes for a predeclared CIK census through the existing
+  fair-access client and permanently reports no authority/open gate. A real census, numeric
+  replay, labels, witness, and cross-platform attestation remain open; see
+  [[evidence/rw11-companyfacts-capture-2026-08-18]].
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
@@ -173,6 +180,7 @@ defects got fixed twice on two branches.
 | [[evidence/github-outage-session-handoff-2026-08-17]] | Exact local branch/commit inventory, stopped-system preflight, merge order, and paste-ready next-session prompt |
 | [[evidence/rw11-live-poll-2026-08-18]] | RW-11 live 11-CIK reachability, clean SNDK baseline, audit/safety result, and still-open precision gate |
 | [[evidence/rw11-precision-label-sheet-2026-08-18]] | Unscored four-delta human-review seed plus separate 4/4 mechanical citation check |
+| [[evidence/rw11-companyfacts-capture-2026-08-18]] | RW-11 prospective exact-byte Company Facts capture contract, local gates, and bounded online-test handoff |
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
 | [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |
 | [[evidence/bug109-w24-real-sec-grammar-2026-08-18]] | BUG-109 real-source replay, adversarial parser repair, local gates, and remaining authority blockers |

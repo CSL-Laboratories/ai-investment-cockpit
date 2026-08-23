@@ -361,6 +361,50 @@ P0/P1/P2 defect. This is tooling evidence only: local self-hashes are not an ext
 numeric/companyfacts capture is deliberately absent, no real expanded population or human labels
 were generated, and hosted Ubuntu/macOS attestation remains missing.
 
+**RW-11 Company Facts capture intake — claimed on `work/rw11-companyfacts-capture` from
+merged PR #50 main `eb069fadddc45fa0a702c67b0e00edf4f94a7e31`:**
+
+1. **Operator change:** add one operator-only evidence command that captures the exact SEC
+   Company Facts response bytes for every CIK in a predeclared prospective census and verifies
+   the resulting isolated, write-once package. It grants no strategy, mode, paper-order,
+   live-order, or autonomous authority.
+2. **Extended path:** the command calls only the existing `SecFetcher.get_bytes` fair-access
+   seam and canonical `companyfacts_url`, then reuses `RawStore` and the production
+   `iter_facts` walker for identity/shape evidence. It does not import or read `cockpit.db`, and
+   it does not alter runtime composition, the operational poller, schemas, risk, approval,
+   gateway, or order paths.
+3. **Retirement:** no path is replaced. The existing transient Company Facts enrichment remains
+   unchanged; numeric replay/scoring is a later separately bounded RW-11 package. `RW-12` stays
+   blocked and `RW-13` is not started.
+4. **Reachability proof:** hermetic `tests/tools/test_rw11_companyfacts.py` coverage injects the
+   network transport and fails on partial census publication, wrong-CIK or duplicate-key JSON,
+   tamper/reseal, changed blockers, incomplete byte accounting, overwrite, or a changed artifact
+   set. A zero-eligible-accession census remains an explicit open-gate result.
+5. **Claimed IDs:** `RW-11` only. The empirical precision gate remains open; this package cannot
+   change a watchlist, order count, or mode.
+6. **Platforms:** use `pathlib`, UTF-8 and canonical JSON, exclusive directory creation,
+   timezone-qualified per-response timestamps, exact raw bytes, and the existing platform-neutral
+   fetcher/store. Windows evidence cannot substitute for Ubuntu/macOS × Python 3.11/3.12.
+7. **Size:** one Company Facts collector/verifier, hermetic tests, and evidence documentation,
+   targeted below 1,000 changed lines and not to expand into numeric replay or scoring.
+
+**Development result (2026-08-18):** `tools/rw11_companyfacts.py` now binds the predeclared plan,
+source commit, exact raw response bytes, response CIK, per-response fetch time, capture window,
+implementation hashes, complete CIK order, SEC byte accounting, eligible post-cutoff accession
+summaries, and the still-open blocker set. The final path is claimed with exclusive `mkdir` only
+after every CIK fetched and validated; any interrupted final move leaves a permanently refused
+partial package rather than overwriteable evidence. Twelve focused tests pass, one host-capability
+symlink test skips, a real NTFS-junction diagnostic passes, and the full Windows gate is 2,350
+passed / 2 skipped with Ruff clean.
+One completed read-only Claude Code Sonnet 5 architecture lane correctly identified mutable
+snapshot timing and the need to keep capture separate from replay; those requirements are bound.
+Two other lanes timed out before a usable review and are not counted. A subsequent read-only
+Sonnet 5 adversarial pass found no P0 and one concrete P1: the implementation hash set omitted
+`raw_store.py`. The hash binding now covers that load-bearing module; the same repair also rejects
+Windows reparse points, including a locally verified NTFS junction. This remains tooling only:
+no real Company Facts census, numeric replay, independent labels, witness, or cross-platform
+attestation has been produced.
+
 PR #15 added the `sec:edgar` branch to `build_ingest_fetchers`, backed by
 `run_edgar_pipeline` when `sec_user_agent` and watchlist scope are configured. It is preferred
 over `brew_db_path`, persists the company mapping required for attributed events, and reports
@@ -374,7 +418,9 @@ pipeline faults as degraded rather than quiet success.
   [[evidence/rw11-live-poll-2026-08-18]].
 - **Still open:** hand-label a meaningful post-cutoff delta sample and demonstrate ≥95% field
   precision. Four prior real 8-K delta anchors pass exact raw-byte round-trip, but their semantic
-  fields remain deliberately unscored in [[evidence/rw11-precision-label-sheet-2026-08-18]]. Only
+  fields remain deliberately unscored in [[evidence/rw11-precision-label-sheet-2026-08-18]]. The
+  prospective Company Facts capture contract and bounded next-session run are recorded in
+  [[evidence/rw11-companyfacts-capture-2026-08-18]]. Only
   then does a separate `RW-12` package delete
   `edgar_brew.py` + its tests. Until then the legacy reader is an intentional fallback, not the
   primary configured path.
