@@ -71,6 +71,10 @@ merge metadata itself was rerun or that a new independent attestation was create
 | Ubuntu 24.04.4 WSL2 | 3.11.16 | fresh CI profile; native Linux-only `PATH` | passed | 2,366 passed / 4 skipped / 4 warnings |
 | Ubuntu 24.04.4 WSL2 | 3.12.3 | fresh CI profile; native Linux-only `PATH` | passed | 2,366 passed / 4 skipped / 4 warnings |
 
+These later results are operator-transcribed from the completed console runs. Unlike the earlier
+matrix at `46c7c812eccd476c4578dbef59200f5249c26db3`, no per-cell output logs were retained or
+hash-sealed, so this record is not a new independent attestation.
+
 Unlike the earlier uniformly fresh matrix, the later Windows 3.11 cell used the project
 environment with `discord.py` present; it is compared with the earlier supplemental result using
 the same profile. The other three later cells used fresh CI profiles. This distinction is recorded

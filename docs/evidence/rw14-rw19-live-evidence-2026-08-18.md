@@ -170,7 +170,9 @@ an active-session apparatus result, not a quiet-day claim and not evidence that 
 equivalent. The immediate verifier checked all four inventoried payloads with zero failures.
 The external manifest is
 `C:\Users\Lucas\Documents\ai-investment-cockpit-evidence\rw19-news-reconnect-2026-08-24-main-ebda9b6\news-reconnect\2026-08-24\20260824T194613Z\manifest.json`;
-its file SHA-256 is `20f1eb335f33c1a40fe99f30d10b9178320032ae875fbd804890fc819f257b22`.
+its file SHA-256 is `20f1eb335f33c1a40fe99f30d10b9178320032ae875fbd804890fc819f257b22`,
+and its canonical summary SHA-256 is
+`cc7bb96cceeaafd5dddacef7a07294de12772190793ce33a9d15206a51bac1cb`.
 With the manifest itself, the five package files are read-only and remain outside the tracked
 repository.
 

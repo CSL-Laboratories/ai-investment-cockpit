@@ -95,7 +95,7 @@ rows retain their named prerequisite.
 | ID | What | Sev | Status | Where |
 |---|---|---|---|---|
 | `BUG-096` | Market calendar covers only 2025–2026, then falls back to weekdays; an out-of-range NYSE holiday such as 2027-01-01 is treated as open instead of failing closed | high pre-live | closed | `orchestrator/market_calendar.py` |
-| `BUG-097` | Stale-data breaker used the generic L6 drop to `review_live`; PR #31 routes sampled quote staleness through the required L8 `watch_only` path | high pre-live | evidence pending — merged; real stale transition required | `orchestrator/breakers.py`, `orchestrator/scheduler.py` |
+| `BUG-097` | Stale-data breaker used the generic L6 drop to `review_live`; PR #31 routes sampled quote staleness through the required L8 `watch_only` path | high pre-live | closed — PR #31; real stale transition and current local matrix passed | `orchestrator/breakers.py`, `orchestrator/scheduler.py`; [[evidence/rw14-rw19-live-evidence-2026-08-18]] |
 | `BUG-100` | Existing SQLite databases predate `risk_decision.execution_verdict`; `create_all` does not add columns, so startup crashes on the first ORM read | high paper | closed — PR #36 | `storage/engine.py`, `tests/schemas/test_migration.py` |
 | `BUG-101` | Quote polling compared every sequential response with one pre-request clock sample, falsely rejecting later exchange timestamps as future data and forcing `watch_only` | high paper | closed — PR #36; two live cycles and matrix green | `ingest/market_data.py`, `tests/ingest/test_market_data.py` |
 | `BUG-102` | Daily bars run only at 07:30 ET, but the runbook permits an 08:30 start; a late start/restart leaves ADV/volatility empty all day | high paper | closed — PR #36; 11-symbol late-start live check and matrix green | `main.py`, `tests/system/test_rw01_market_day.py` |
@@ -112,7 +112,7 @@ rows retain their named prerequisite.
 | `BUG-043` | Discord `_quant` blocks the event loop; `/quant/sim` concurrency is unbounded | med | closed | PR #24 |
 | `BUG-044` | Two definitions of "how many shares" — `proposal_quantity` vs `_resolve_order` | med | closed | PR #29; current `DEC-09` local matrix green |
 | `BUG-045` | `settings.guild_id` does not exist; the bot always does a slow global command sync | low | closed | PR #23 |
-| `BUG-046` | `/ws/quant` lacked production composition and an honest snapshot producer; PR #31 wires both | low | evidence pending — merged; live sequence progression required | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py` |
+| `BUG-046` | `/ws/quant` lacked production composition and an honest snapshot producer; PR #31 wires both | low | closed — PR #31; live sequence progression and current local matrix passed | `orchestrator/app.py`, `orchestrator/quant_ws.py`, `main.py`; [[evidence/rw14-rw19-live-evidence-2026-08-18]] |
 | `BUG-047` | `GuardLimits.max_loss` documented in ticks, fed dollars | low | closed | PR #19 |
 | `BUG-048` | `AutoLoop` acks immediately, defeating `PENDING_NEW` | low | closed | PR #20 |
 | `BUG-049` | Purity gate checks only `verify.py`'s own imports, not transitive ones | low | closed | PR #18 |

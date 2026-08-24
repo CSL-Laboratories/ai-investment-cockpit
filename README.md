@@ -5,7 +5,7 @@ morning-brew daily briefing plus human-approved short/long-term trade decisions,
 from one always-on Windows workstation and operated from anywhere over Discord.
 
 > **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
-> complete; no live trading.** On clean main
+> complete; no live trading.** On PR #53's source tree, byte-identical to clean merged main
 > `ebda9b6691cfcfc72b76056d0190768e5f14cd66`, the required local Windows + Ubuntu/WSL2
 > Python 3.11/3.12 matrix is green, including the order-path, no-LLM-in-`risk/`, secrets,
 > and quant→brokers containment gates. Under `DEC-09`, this four-cell local matrix is the
