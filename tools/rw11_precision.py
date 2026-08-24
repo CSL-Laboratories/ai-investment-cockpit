@@ -400,7 +400,6 @@ def freeze(cases_path: Path, raw_root: Path, output_dir: Path, *, now: datetime 
             "numeric/companyfacts evidence is not captured by this text-only package",
             "independent human labels are not present at freeze time",
             "a cited live material delta and human sufficiency decision remain required",
-            "Ubuntu/macOS cross-platform attestation remains missing",
         ],
     }
     output = Path(output_dir)

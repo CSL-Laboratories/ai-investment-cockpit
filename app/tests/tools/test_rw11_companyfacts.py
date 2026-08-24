@@ -96,6 +96,11 @@ def test_capture_is_exact_hash_bound_and_explicitly_non_authoritative(tmp_path):
     assert manifest["captures"][0]["fetched_at"] == NOW.isoformat()
     assert manifest["captured_at"] == NOW.isoformat()
     assert manifest["eligible_accession_count"] == 1
+    assert not any(
+        platform in blocker
+        for blocker in manifest["known_blockers"]
+        for platform in ("Ubuntu", "macOS", "GitHub")
+    )
     assert rw11.verify(output)["ok"] is True
     stored = rw11.RawStore(output / "raw", min_free_bytes=0).resolve(f"companyfacts-{CIK}")
     assert stored == _payload()

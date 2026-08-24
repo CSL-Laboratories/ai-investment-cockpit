@@ -53,7 +53,7 @@ provisioned.
    then install the dependency set CI installs (see `.github/workflows/ci.yml`).
    Run the gates from `app/`:
    - Windows: `..\.venv\Scripts\python.exe -m pytest -q` and `..\.venv\Scripts\ruff.exe check .`
-   - Ubuntu / macOS: `../.venv/bin/python -m pytest -q` and `../.venv/bin/ruff check .`
+   - Ubuntu / WSL2: `../.venv/bin/python -m pytest -q` and `../.venv/bin/ruff check .`
 
    On Windows, point `TMP`/`TEMP` at a SHORT path (e.g. `C:\t`) first: pytest's
    nested tmp dirs plus this repo's deep fixture paths cross MAX_PATH and produce
@@ -62,7 +62,10 @@ provisioned.
    test that asserts an unconfigured default.
 4. Keep the repository private and commit only when the operator asks.
 5. Any order-path change needs an adversarial-review round.
-6. The cockpit targets **Ubuntu, Windows and macOS**; CI runs all three. Review any
-   subprocess spawn, path construction, credential lookup, or temp-file use against
-   all three, and prefer inspecting the failure (as `orchestrator/halt.py` does) over
-   branching on `os.name`.
+6. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+   Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation; do not
+   require GitHub-hosted execution or Hetzner for current package acceptance. macOS is a
+   best-effort portability target, not a release gate. Continue to write platform-neutral
+   code: review subprocess spawn, path construction, credential lookup, and temp-file use,
+   and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
+   `os.name`. See `DEC-09` in `docs/REGISTER.md`.

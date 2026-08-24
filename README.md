@@ -4,12 +4,12 @@ A solo-developer, subscription-powered, **human-gated** AI investing copilot: a
 morning-brew daily briefing plus human-approved short/long-term trade decisions, run
 from one always-on Windows workstation and operated from anywhere over Discord.
 
-> **Status (2026-08-13): foundation and quant engine built; paper-reliability MVP not yet
-> complete; no live trading.** The current Windows baseline is **2,098 passing / 1 skipped**
-> with `ruff` clean, including the order-path, no-LLM-in-`risk/`, secrets, and
-> quant→brokers containment gates. GitHub's latest Ubuntu/Windows/macOS matrix jobs did not
-> start because the account's Actions overage budget was exhausted, so cross-platform
-> attestation for PRs #27–#29 remains pending rather than failed code evidence.
+> **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
+> complete; no live trading.** On clean main
+> `46c7c812eccd476c4578dbef59200f5249c26db3`, the required local Windows + Ubuntu/WSL2
+> Python 3.11/3.12 matrix is green, including the order-path, no-LLM-in-`risk/`, secrets,
+> and quant→brokers containment gates. Under `DEC-09`, this four-cell local matrix is the
+> release authority; macOS is best-effort and GitHub-hosted runs are optional diagnostics.
 >
 > The system remains **paper-first**: no real capital has moved and none may until the
 > explicit pre-live gates pass — chief among them the **OPEN P0 audit-spine blocker (SEC-11
@@ -32,7 +32,7 @@ development sequence is `RW-14 → W-21 → RW-15 → W-22`; see
 | `docs/` | The design corpus — research → architecture → build → security → enhancements. **Start at [`docs/README.md`](docs/README.md).** |
 | `app/` | The code, per the WP0–WP9 scaffold ([`docs/build-scaffold-ultracode.md`](docs/build-scaffold-ultracode.md)). |
 | `app/quant/` | The QT quant engine — real FIFO order book, strategies, replay, costs, PnL. **Read [`docs/quant-engine.md`](docs/quant-engine.md) before changing anything here**; it carries the containment argument. |
-| `.github/workflows/ci.yml` | The merge-gates (Invariant-1 call-site, no-LLM-in-`risk/`, secrets-grep) — live on every push from WP0. |
+| `.github/workflows/ci.yml` | Optional manually dispatched hosted parity check. The authoritative merge gates run locally under `DEC-09`. |
 | `docs/setup/accounts-and-keys.md` | How to provision accounts/keys into the host OS credential store through `keyring`. |
 
 ## The load-bearing rules (never weaken silently)

@@ -105,6 +105,11 @@ def test_freeze_is_blind_hash_bound_and_explicitly_non_authoritative(tmp_path):
     assert manifest["rw11_gate"] == "OPEN"
     assert manifest["gate_closed"] is False
     assert manifest["scope"] == "text-delta-precision-only"
+    assert not any(
+        platform in blocker
+        for blocker in manifest["known_blockers"]
+        for platform in ("Ubuntu", "macOS", "GitHub")
+    )
     assert rw11.verify_freeze(output)["ok"] is True
 
     header = (output / "review_sheet.csv").read_text(encoding="utf-8").splitlines()[0]

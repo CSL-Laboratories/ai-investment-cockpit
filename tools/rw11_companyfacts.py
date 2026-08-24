@@ -50,11 +50,11 @@ CIK_RE = re.compile(r"^\d{10}$")
 ACCESSION_RE = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 ELIGIBLE_FORMS = ("10-K", "10-Q")
 KNOWN_BLOCKERS = (
-    "independent human labels at >=95% are absent",
+    "a supported prospective periodic accession and numeric replay are absent",
+    "a meaningful independently labelled population at >=95% is absent",
     "a meaningful real frozen delta population is absent",
     "a cited prospective live material numeric delta is absent",
     "the local package has no independent external witness",
-    "Ubuntu and macOS cross-platform attestation is absent",
 )
 IMPLEMENTATION_PATHS = (
     "app/filings/edgar/companyfacts.py",

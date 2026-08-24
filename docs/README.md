@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-18
+last-verified: 2026-08-24
 ---
 
 # Docs index
@@ -17,7 +17,21 @@ last-verified: 2026-08-18
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-18
+## Current repository snapshot — 2026-08-24
+
+- `DEC-09` now makes the local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix the
+  release-blocking platform gate. All four cells passed on clean main
+  `46c7c812eccd476c4578dbef59200f5249c26db3`; macOS is best-effort, hosted Actions are optional
+  manual diagnostics, and Hetzner is not part of current validation. Historical entries below
+  retain their then-accurate six-job/billing language, but those missing hosted/macOS runs are no
+  longer current blockers. This policy does not satisfy any independent-witness gate. See
+  [[evidence/local-platform-matrix-2026-08-24]].
+- The bounded RW-11 Company Facts session completed on that same clean commit: all 11 CIKs and
+  31,735,013 response bytes were captured and verified, with zero supported post-cutoff 10-K/10-Q
+  accessions. This proves reachability only. The independently completed four-row 8-K seed scored
+  8/8 semantic fields correct (100%), but is too small and narrow to satisfy the ≥30-row,
+  ≥3-issuer, periodic/numeric population gate. RW-11 remains open for a supported prospective
+  periodic accession, numeric replay, a cited material delta, and an external witness.
 
 - The first dated W-22 bring-up record is
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
@@ -44,8 +58,8 @@ canonical invariant list, and nothing else restates it.
   3.11/3.12 matrix. `W-24` merged in PR #38: the production
   graph now composes a model-free verifier, exact-message Discord witness, prospective manifest,
   source-derived labels/outcomes/deal terms, complete-filing-set checks, and a final transactional
-  recheck. Real prospective evidence, external-witness configuration, and cross-platform CI
-  remain pending, so W-23 still returns no edge. All six PR #38 matrix jobs stopped before a
+  recheck. Real prospective evidence and external-witness configuration remain pending, so W-23
+  still returns no edge. All six PR #38 matrix jobs stopped before a
   step with GitHub's payment/spending-limit annotation; that is missing attestation, not a code
   failure. The combined BUG-106/W-24 Windows integration
   gate is 2,274 passed / 1 skipped with Ruff clean. See [[evidence/w23-cash-merger-edge-2026-08-14]],
@@ -55,15 +69,16 @@ canonical invariant list, and nothing else restates it.
   semantic source and a later current EDGAR baseline. PR #42's merged schema-v2 repair witnesses a
   complete ordered signed source set plus an explicit current accession, derives prospective and
   calibration eligibility from that frozen set, and rejects legacy/incomplete/tampered authority.
-  Cross-platform CI remains pending; no real cohort or edge authority has been created.
+  The current `DEC-09` local matrix is green; no real cohort or edge authority has been created.
   See [[evidence/w24-prospective-intake-2026-08-18]].
 - The post-merge W-24 continuation screened 65 discovery names. Only six had a currently supported
   SEC feed head, and none of their 64 supported 2026 primary filings passed the eligibility parser.
   An official CRNX announcement 8-K proves `BUG-109`: common authoritative cash-merger phrasing is
   rejected by the pinned grammar. PR #43's merged repair now passes the untouched source and
   adversarial subject-switch cases, with 2,311 passed / 1 skipped and Ruff clean on Windows. It
-  remains evidence-pending because the six hosted jobs ran zero steps, and held-out precision is
-  absent. A strict post-merge rescreen found only one unsigned semantic candidate (CRNX), below the
+  remains evidence-pending because held-out precision is absent. The six hosted jobs ran zero
+  steps, a historical gap superseded as a blocker by `DEC-09`. A strict post-merge rescreen found
+  only one unsigned semantic candidate (CRNX), below the
   ≥30 minimum; its primary source set also lacks exact dates required for current-target authority.
 - `BUG-106` merged in PR #37. Signed audit time is now the EDGAR baseline timestamp authority,
   with a bounded one-time legacy repair. A real composed `read_only` run repaired 11/11 legacy rows,
@@ -93,8 +108,8 @@ canonical invariant list, and nothing else restates it.
   sequence v2 keys put the highest claim first, one capped version page must prove the complete
   candidate group, and retained history no longer changes request counts. The full Windows gate
   is 2,321 passed / 1 skipped with Ruff clean. All six hosted matrix jobs executed zero steps under
-  GitHub's payment restriction; that is missing attestation, not a code failure. Independent and
-  cross-platform attestation, a provider/cost choice, and real Object Lock evidence remain
+  GitHub's payment restriction; that is missing historical hosted attestation, not a code failure.
+  Independent witness evidence, a provider/cost choice, and real Object Lock evidence remain
   mandatory W-25 gates. See [[evidence/bug110-bounded-witness-read-2026-08-18]].
 - GitHub's 2026-08-17 incident interrupted publication. BUG-106, W-24, and the RW-19 evidence
   subsequently merged in PRs #37–#39, the handoff in PR #40, and W-25 in PR #41. This
@@ -121,7 +136,7 @@ canonical invariant list, and nothing else restates it.
   payment/spending-limit restriction. The separate `work/rw11-companyfacts-capture` package is
   local: it captures exact Company Facts bytes for a predeclared CIK census through the existing
   fair-access client and permanently reports no authority/open gate. A real census, numeric
-  replay, labels, witness, and cross-platform attestation remain open; see
+  replay, a meaningful label population, and witness remain open; see
   [[evidence/rw11-companyfacts-capture-2026-08-18]].
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
@@ -133,11 +148,10 @@ canonical invariant list, and nothing else restates it.
 3. Claim one row and one fresh branch. Keep one production-code package active at a time.
 4. Add a reachability/regression test, run targeted tests, the full local suite, and Ruff using
    the platform instructions in `AGENTS.md`; order-path changes also require adversarial review.
-5. Record whether evidence is local, cross-platform CI, live-market, paper-broker, or deployment
+5. Record whether evidence is local-platform, live-market, paper-broker, independent-witness, or deployment
    evidence. Those are not interchangeable.
-6. During an Actions-budget pause, local work and ordinary branch pushes may continue, but do
-   not mark the package production-ready or merge it as a dependency until its required CI and
-   online gates run.
+6. Run the four-cell local matrix required by `DEC-09` before merge. GitHub-hosted execution is
+   optional and does not replace any required online, broker, witness, or deployment gate.
 
 ---
 
@@ -181,6 +195,7 @@ defects got fixed twice on two branches.
 | [[evidence/rw11-live-poll-2026-08-18]] | RW-11 live 11-CIK reachability, clean SNDK baseline, audit/safety result, and still-open precision gate |
 | [[evidence/rw11-precision-label-sheet-2026-08-18]] | Unscored four-delta human-review seed plus separate 4/4 mechanical citation check |
 | [[evidence/rw11-companyfacts-capture-2026-08-18]] | RW-11 prospective exact-byte Company Facts capture contract, local gates, and bounded online-test handoff |
+| [[evidence/local-platform-matrix-2026-08-24]] | DEC-09 local Windows + Ubuntu/WSL2 Python 3.11/3.12 policy, exact matrix results, external artifact hash, and same-host limitations |
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
 | [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |
 | [[evidence/bug109-w24-real-sec-grammar-2026-08-18]] | BUG-109 real-source replay, adversarial parser repair, local gates, and remaining authority blockers |
