@@ -8,6 +8,7 @@ related:
   - ../PLAN
   - ../REGISTER
   - rw11-companyfacts-capture-2026-08-18
+  - rw11-prospective-text-population-2026-08-24
 ---
 
 # Local supported-platform matrix and DEC-09 policy — 2026-08-24
@@ -53,6 +54,37 @@ Windows `TMP`/`TEMP`.
 The six hosted jobs recorded in the raw artifact started zero steps because of GitHub's payment
 or spending-limit policy. That remains historical accounting evidence, not a code failure and,
 under `DEC-09`, not a current blocker.
+
+## Current validated tree after PR #53
+
+The later RW-11 text-population package ran the complete four-cell matrix on feature head
+`d18dc7711f0e9324e0a5749b51fb32d1686a36a9`. Its source tree
+`b51f712a803a29ad437fec9c891f8ea973ccbc1d` is identical to the tree of merged `main`
+`ebda9b6691cfcfc72b76056d0190768e5f14cd66`; PR #53 introduced no content change while merging.
+This binds the recorded gate results below to current `main` without pretending that
+merge metadata itself was rerun or that a new independent attestation was created:
+
+| Environment | Python | Dependency profile | Ruff | Pytest |
+|---|---:|---|---:|---:|
+| Windows 11 | 3.11.9 | project environment; `discord.py` present | passed | 2,373 passed / 2 skipped / 5 warnings |
+| Windows 11 | 3.12.10 | fresh CI profile; `discord.py` absent | passed | 2,368 passed / 2 skipped / 4 warnings |
+| Ubuntu 24.04.4 WSL2 | 3.11.16 | fresh CI profile; native Linux-only `PATH` | passed | 2,366 passed / 4 skipped / 4 warnings |
+| Ubuntu 24.04.4 WSL2 | 3.12.3 | fresh CI profile; native Linux-only `PATH` | passed | 2,366 passed / 4 skipped / 4 warnings |
+
+These later results are operator-transcribed from the completed console runs. Unlike the earlier
+matrix at `46c7c812eccd476c4578dbef59200f5249c26db3`, no per-cell output logs were retained or
+hash-sealed, so this record is not a new independent attestation.
+
+Unlike the earlier uniformly fresh matrix, the later Windows 3.11 cell used the project
+environment with `discord.py` present; it is compared with the earlier supplemental result using
+the same profile. The other three later cells used fresh CI profiles. This distinction is recorded
+rather than presented as a uniform fresh-environment rerun.
+
+The increase from the earlier table is exactly 23 passing tests in every comparable cell, matching
+the 23-test RW-11 collector suite added by PR #53. Skip patterns are unchanged. The first WSL2
+Python 3.11 attempt inherited the Windows npm `codex` shim without Windows `node`; the corrected
+native-Linux `PATH` rerun above passed without a code change or waived failure. The recorded test
+counts, warnings, and Ruff results are in [[rw11-prospective-text-population-2026-08-24]].
 
 ## Remaining limits
 

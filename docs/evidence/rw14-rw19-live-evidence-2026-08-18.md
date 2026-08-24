@@ -1,10 +1,10 @@
 ---
 type: evidence
 status: live
-last-verified: 2026-08-18
+last-verified: 2026-08-24
 ---
 
-# RW-14 stale-feed and RW-19 reconnect/load evidence — 2026-08-18
+# RW-14 stale-feed and RW-19 reconnect/load evidence — 2026-08-18 through 2026-08-24
 
 ## Scope and safety baseline
 
@@ -48,7 +48,8 @@ The local RW-14 manifest is
 `19c44389cca89438bc4b0560bb408d2e62a437a91d214222c8ac28176d278487`.
 
 This closes RW-14's named live progression and real-age stale-to-L8 evidence. It does not
-replace the still-missing hosted/macOS cross-platform attestation.
+replace that package's historical hosted/macOS no-step result; `DEC-09` separately supplies the
+current release-blocking local platform gate.
 
 ## RW-19 deliberate reconnect and REST backfill
 
@@ -152,19 +153,45 @@ All four second-run manifest items re-verified. Its local manifest is
 `data/evidence/rw19/news-reconnect/2026-08-18/20260818T224704Z/manifest.json`; the canonical
 summary SHA-256 is `5387f8718871c7100c16b47ee60adf039ebd30b39c76705e944d217d9a08a4ce`.
 Repeating the result over a longer after-hours window does not turn two empty samples into a
-quiet-day or reconnect-correctness claim. The next attempt must target an active news regime.
+quiet-day or reconnect-correctness claim.
+
+## 2026-08-24 regular-session news reconnect
+
+On clean merged main `ebda9b6691cfcfc72b76056d0190768e5f14cd66`, one separately authorized
+read-only capture targeted the complete 11-symbol awareness universe during the regular session.
+It opened two five-minute news WebSocket segments around one deliberate five-second disconnect,
+then fetched the exact frozen combined window through the historical-news GET endpoint. The
+window ran from `2026-08-24T19:46:13.750596+00:00` through
+`2026-08-24T19:56:18.893202+00:00`; the measured disconnect was 5.000998 seconds.
+
+Both WebSocket segments and REST returned zero identities. Recall is therefore correctly null,
+and the result supplies no correction, late-delivery, backfill, or identity observation. This is
+an active-session apparatus result, not a quiet-day claim and not evidence that the surfaces are
+equivalent. The immediate verifier checked all four inventoried payloads with zero failures.
+The external manifest is
+`C:\Users\Lucas\Documents\ai-investment-cockpit-evidence\rw19-news-reconnect-2026-08-24-main-ebda9b6\news-reconnect\2026-08-24\20260824T194613Z\manifest.json`;
+its file SHA-256 is `20f1eb335f33c1a40fe99f30d10b9178320032ae875fbd804890fc819f257b22`,
+and its canonical summary SHA-256 is
+`cc7bb96cceeaafd5dddacef7a07294de12772190793ce33a9d15206a51bac1cb`.
+With the manifest itself, the five package files are read-only and remain outside the tracked
+repository.
+
+Preflight and postflight both retained `read_only`, an empty merger execution watchlist, zero
+proposal/risk/approval/order/selection/edge rows, a valid audit chain at sequence 10,263, HALT
+absent, clean `main == origin/main`, and no cockpit listener. No Discord post, watchlist mutation,
+authority change, paper order, service start, or `RW-13` work occurred.
 
 ## Claims and remaining gates
 
-- RW-14's named online progression/staleness drill is complete; its cross-platform attestation
-  remains missing rather than failed.
+- RW-14's named online progression/staleness drill is complete; its historical hosted/macOS
+  attestation did not run, and `DEC-09` supplies the current release-blocking local platform gate.
 - RW-19 now has a real deliberate reconnect, measured REST-recoverable gap, and measured
   single-writer/triage behavior. The capacity result is not green for direct raw-frame fanout.
 - The one-hour news sample rejects full WS/REST identity equivalence and establishes one
-  persistent stream-only identity. The later news reconnect collector completed two real runs,
-  but both after-hours samples were empty and close no empirical gate. Broader regimes, non-empty
-  news correction/update and reconnect behavior, and a bounded coalescing design decision remain
-  open. `DEC-07` is not resolved.
+  persistent stream-only identity. The later news reconnect collector completed two after-hours
+  runs and one regular-session run, but all three reconnect samples were empty and close no
+  empirical gate. Broader regimes, non-empty news correction/update and reconnect behavior, and a
+  bounded coalescing design decision remain open. `DEC-07` is not resolved.
 - Expected edge remains unavailable, the merger execution watchlist remains empty, and no paper
   opening Order, live authority, autonomous authority, or `RW-13` work is authorized by this
   evidence.

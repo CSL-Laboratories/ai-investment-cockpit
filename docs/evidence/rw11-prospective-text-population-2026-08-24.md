@@ -75,7 +75,10 @@ safety-preflight attacks, dirty/unmerged source, CIK/array/chronology/cutoff def
 partial fetch, byte cap, overwrite, raw tamper, extra artifacts, premature execution, changed plan
 hash, zero-retry live construction, and forbidden database/runtime/risk/broker/order imports.
 
-Validation on the final patch:
+Validation ran on feature head `d18dc7711f0e9324e0a5749b51fb32d1686a36a9`. Its source tree
+`b51f712a803a29ad437fec9c891f8ea973ccbc1d` is identical to the tree of PR #53's merge commit
+`ebda9b6691cfcfc72b76056d0190768e5f14cd66`, so the recorded four-cell result binds the exact
+current `main` content without claiming that merge metadata was retested:
 
 | Environment | Result | Warnings | Ruff |
 |---|---:|---:|---:|

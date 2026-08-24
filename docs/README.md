@@ -20,20 +20,22 @@ canonical invariant list, and nothing else restates it.
 ## Current repository snapshot — 2026-08-24
 
 - `DEC-09` now makes the local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix the
-  release-blocking platform gate. All four cells passed on clean main
-  `46c7c812eccd476c4578dbef59200f5249c26db3`; macOS is best-effort, hosted Actions are optional
-  manual diagnostics, and Hetzner is not part of current validation. Historical entries below
-  retain their then-accurate six-job/billing language, but those missing hosted/macOS runs are no
-  longer current blockers. This policy does not satisfy any independent-witness gate. See
+  release-blocking platform gate. All four cells passed on the PR #53 source tree, which is
+  byte-identical to the tree of clean merged main `ebda9b6691cfcfc72b76056d0190768e5f14cd66`;
+  macOS is best-effort, hosted Actions are optional manual diagnostics, and Hetzner is not part of
+  current validation. Historical entries below retain their then-accurate six-job/billing
+  language, but those missing hosted/macOS runs are no longer current blockers. This policy does
+  not satisfy any independent-witness gate. See
   [[evidence/local-platform-matrix-2026-08-24]].
-- The bounded RW-11 Company Facts session completed on that same clean commit: all 11 CIKs and
-  31,735,013 response bytes were captured and verified, with zero supported post-cutoff 10-K/10-Q
-  accessions. This proves reachability only. The independently completed four-row 8-K seed scored
+- The bounded RW-11 Company Facts session completed on earlier clean main
+  `46c7c812eccd476c4578dbef59200f5249c26db3`: all 11 CIKs and 31,735,013 response bytes were
+  captured and verified, with zero supported post-cutoff 10-K/10-Q accessions. This proves
+  reachability only. The independently completed four-row 8-K seed scored
   8/8 semantic fields correct (100%), but is too small and narrow to satisfy the ≥30-row,
   ≥3-issuer, periodic/numeric population gate. RW-11 remains open for a supported prospective
   periodic accession, numeric replay, and a cited material delta. A separate text-population
   plan is now prospectively sealed and Discord-server-witnessed before its fixed 2026-08-25 through
-  2026-11-24 observation window. Its offline collector is under review and has not made future SEC
+  2026-11-24 observation window. Its offline collector merged in PR #53 and has not made future SEC
   requests; see [[evidence/rw11-prospective-text-population-2026-08-24]].
 
 - The first dated W-22 bring-up record is
@@ -95,8 +97,10 @@ canonical invariant list, and nothing else restates it.
   74.67 one-event writes/s plus a 236,637-character raw triage packet. This confirms that bounded
   coalescing is required before `RW-13`. A tested two-segment news reconnect collector also
   completed real 10-minute and 30-minute after-hours runs, but both contained zero WebSocket and
-  REST identities; they prove neither correction nor reconnect identity behavior. Broader regimes
-  and a non-empty news correction/reconnect sample remain open.
+  REST identities. A separately authorized 2026-08-24 ten-minute regular-session reconnect also
+  returned zero identities on both surfaces. These runs prove apparatus reachability, not
+  correction or reconnect identity behavior. Broader regimes and a non-empty news
+  correction/reconnect sample remain open.
   See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 - The stopped-system preflight is green for controlled background `read_only` bring-up: loopback
   port free, HALT absent, audit chain valid, zero proposal/risk/approval/order rows, 11 awareness
@@ -127,7 +131,8 @@ canonical invariant list, and nothing else restates it.
   repository test failure.
 - `RW-17` and BUG-041–045, BUG-047–051, and BUG-098–105 are merged. `RW-11` and
   `RW-19` have merged tooling but still need empirical evidence. RW-14 is merged; its live
-  entitlement/progression/stale-transition evidence remains pending. W-21 merged in PR #33;
+  progression/stale-transition drill passed 2026-08-18 and its current local platform gate is
+  green. W-21 merged in PR #33;
   expected edge remains intentionally unavailable and fail-closed until W-24's real prospective
   semantic evidence exists. RW-15 and W-22 are merged in PRs #34/#35; W-23
   and the bring-up fixes are merged in PR #36. The PR #36 tree passes 2,240 tests / 1 skipped
