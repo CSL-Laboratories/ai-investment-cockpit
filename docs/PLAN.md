@@ -430,8 +430,30 @@ reachability/quiet-census result only, so no numeric replay package can yet be g
 capture. The independently entered four-row 8-K text seed scored all eight semantic fields
 correct, but four rows from one issuer/form are below the meaningful ≥30-row / ≥3-issuer frozen
 population and contain no numeric cases. The current `DEC-09` four-cell local matrix is green.
-RW-11 therefore remains open for a supported prospective periodic accession, separately bounded
-numeric replay, meaningful population, cited material delta, and external witness.
+At that capture checkpoint, RW-11 remained open for a supported prospective periodic accession,
+separately bounded numeric replay, meaningful population, cited material delta, and external
+witness. The continuation below now supplies the prospective chronology witness only.
+
+**Prospective text-population continuation — witnessed 2026-08-24; collection not run:** On clean
+merged main `bc2e86e0514a80e136014669f868940419b954a5`, an outcome-independent 11-CIK plan
+(`0f882231ec1c989dba190980ef60f3075ceda6cb3a65973ed45b80e6eeb81449`) froze every exact
+8-K/10-K/10-Q filing dated 2026-08-25 through 2026-11-24, retaining the earliest 60 by declared
+chronology if capped and preserving every zero-delta case. Discord message
+`1541519272742756453` server-witnessed that hash at `2026-08-24T18:47:14.665Z`; exact-message GET
+confirmed bot/channel/content/id, null edit timestamp, no webhook, and the same server time. This
+is prospective chronology, not SEC-11 execution authority.
+
+`tools/rw11_text_population.py` is the separately bounded offline-first collector for that plan.
+It refuses before network unless the exact plan/witness hashes, elapsed fixed window, fresh green
+safety attestation, clean `HEAD == origin/main`, and absent declared output all verify. It uses only
+the existing zero-retry bounded `SecFetcher.get_bytes` path, stores exact submissions and filing
+bytes, proves complete chronology/cutoff coverage and periodic prior context, mechanically emits
+the existing precision case-manifest schema, and immediately verifies every artifact/hash/count.
+No future collection ran during development. RW-11 remains open for the actual meaningful frozen
+population, independent ≥95% labels, supported periodic numeric replay, and cited prospective
+material delta. The final local matrix is green: Windows Python 3.11 2,373/2 skipped, Windows
+Python 3.12 2,368/2, and WSL2 Python 3.11/3.12 each 2,366/4, with Ruff clean in all four cells;
+[[evidence/rw11-prospective-text-population-2026-08-24]].
 
 PR #15 added the `sec:edgar` branch to `build_ingest_fetchers`, backed by
 `run_edgar_pipeline` when `sec_user_agent` and watchlist scope are configured. It is preferred
