@@ -893,6 +893,49 @@ not a code failure or a current blocker under `DEC-09`. This is not an activatio
 review, provider/cost authorization, and real Object Lock delete/shadow/retention/rollback
 evidence remain open.
 
+### RW-19 plan-bound news-reconnect hardening — claimed 2026-08-24
+
+The offline package is claimed on `work/rw19-plan-bound-news-reconnect` from clean merged main
+`e09349829d23cf4e95f25536685d462428da1502`. It does not run another Alpaca capture. It prepares
+one prospective evidence-grade command so a later, separately authorized attempt cannot silently
+discard completed rows, paginate without a resource bound, publish into the repository, or be
+treated as closing `RW-19`/`DEC-07` merely because it completed.
+
+1. **Operator change:** one explicitly plan-bound, fresh-preflight-gated, external write-once,
+   partial-preserving, immediately verified news-reconnect evidence command. It changes no mode,
+   watchlist, model, risk, approval, broker, gateway, order, or runtime behavior.
+2. **Existing path extended:** the RW-19 evidence apparatus is extended by
+   `tools/rw19_news_reconnect_plan_bound.py`, reusing the deterministic news characterization
+   functions in `app/ingest/characterization.py` without changing that module or any production
+   composition path.
+3. **Replacement/retirement:** no production path is replaced. The legacy
+   `tools/rw19_capture.py alpaca-news-reconnect` command remains available for diagnostics and
+   re-verification of its existing evidence lineage, but is explicitly non-qualifying for a new
+   prospective RW-19 observation. Any deletion is a separately claimed cleanup, not part of this
+   package.
+4. **Reachability proof:** `app/tests/tools/test_rw19_news_reconnect_plan_bound.py` exercises the
+   composed command with fake sockets and HTTP leaves. It fails if plan/hash/source binding, the
+   exact universe, fresh safety preflight, socket handshake, resource caps, secret-reflection
+   rejection, partial tombstones, write-once publication, or immediate verification is removed.
+5. **Claimed IDs:** `RW-19` evidence only. `DEC-07` stays open; `RW-13` is not started.
+6. **Platforms:** the command uses canonical UTF-8 JSON, `pathlib`, bounded git subprocesses, a
+   same-parent staging directory, and link/reparse rejection on Windows and Ubuntu/WSL2, with
+   best-effort macOS portability. Validation uses the current four-cell local `DEC-09` matrix;
+   Windows tests retain the short `C:\t` temp path and isolated environment-file rule.
+7. **Size:** approximately 1,470 operator-only evidence-tool lines plus 800 non-blank hermetic
+   test lines and this handoff; zero production-runtime lines and zero production imports. This
+   is larger than the normal split heuristic. It remains one deliberately cohesive evidence
+   protocol because
+   either half of capture/tombstone/publication and full recomputation would be unsafe and unusable
+   alone. A shared-framework refactor is not folded in: changing the already hash-bound RW-11
+   collectors would invalidate their cross-version verification contract. The command's AST
+   isolation test and `tools/` location pin this narrow exception; future growth requires a split.
+
+The later plan—not this development branch—will prospectively freeze the exact sorted 11-symbol
+awareness universe, time window, resource ceilings, external output path, selection rationale,
+and clean merged collector SHA. Discord witnessing is not included or authorized here. See
+[[evidence/rw19-plan-bound-news-reconnect-2026-08-24]].
+
 ### M5 — Event-driven triggers  (`RW-13`)
 
 **Dynamic paper autonomy.** Drive triage from durable event candidates while retaining cron as
