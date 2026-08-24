@@ -31,7 +31,10 @@ canonical invariant list, and nothing else restates it.
   accessions. This proves reachability only. The independently completed four-row 8-K seed scored
   8/8 semantic fields correct (100%), but is too small and narrow to satisfy the ≥30-row,
   ≥3-issuer, periodic/numeric population gate. RW-11 remains open for a supported prospective
-  periodic accession, numeric replay, a cited material delta, and an external witness.
+  periodic accession, numeric replay, and a cited material delta. A separate text-population
+  plan is now prospectively sealed and Discord-server-witnessed before its fixed 2026-08-25 through
+  2026-11-24 observation window. Its offline collector is under review and has not made future SEC
+  requests; see [[evidence/rw11-prospective-text-population-2026-08-24]].
 
 - The first dated W-22 bring-up record is
   [[evidence/w22-paper-mvp-2026-08-14]]. It records a healthy `read_only` process, all 11 quote
@@ -135,9 +138,10 @@ canonical invariant list, and nothing else restates it.
   `eb069fadddc45fa0a702c67b0e00edf4f94a7e31`; all six hosted jobs again ran zero steps under the
   payment/spending-limit restriction. The separate `work/rw11-companyfacts-capture` package is
   local: it captures exact Company Facts bytes for a predeclared CIK census through the existing
-  fair-access client and permanently reports no authority/open gate. A real census, numeric
-  replay, a meaningful label population, and witness remain open; see
-  [[evidence/rw11-companyfacts-capture-2026-08-18]].
+  fair-access client and permanently reports no authority/open gate. The real census completed
+  quietly; numeric replay and a meaningful label population remain open. The later text-population
+  chronology witness is recorded separately; see [[evidence/rw11-companyfacts-capture-2026-08-18]]
+  and [[evidence/rw11-prospective-text-population-2026-08-24]].
 - The active lifecycle is defined in [[PLAN]]: offline development → online testing/evidence →
   paper MVP → production beta → stabilization/bugfixing → staged full-scale deployment.
 
@@ -195,6 +199,7 @@ defects got fixed twice on two branches.
 | [[evidence/rw11-live-poll-2026-08-18]] | RW-11 live 11-CIK reachability, clean SNDK baseline, audit/safety result, and still-open precision gate |
 | [[evidence/rw11-precision-label-sheet-2026-08-18]] | Unscored four-delta human-review seed plus separate 4/4 mechanical citation check |
 | [[evidence/rw11-companyfacts-capture-2026-08-18]] | RW-11 prospective exact-byte Company Facts capture contract, local gates, and bounded online-test handoff |
+| [[evidence/rw11-prospective-text-population-2026-08-24]] | Witnessed outcome-independent RW-11 text-population plan, Discord receipt, offline collector contract, and future fixed-window handoff |
 | [[evidence/local-platform-matrix-2026-08-24]] | DEC-09 local Windows + Ubuntu/WSL2 Python 3.11/3.12 policy, exact matrix results, external artifact hash, and same-host limitations |
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
 | [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |
