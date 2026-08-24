@@ -21,15 +21,16 @@ last-verified: 2026-08-24
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #51 and the 2026-08-24 RW-11 evidence session.
+state/lifecycle reconciled through PR #53 and the 2026-08-24 RW-11/RW-19 evidence sessions.
 
 ### Supported-platform validation (`DEC-09`, resolved 2026-08-24)
 
 The release-blocking matrix is local native Windows plus Ubuntu 24.04 under WSL2 on the
-operator's Windows workstation, each on Python 3.11 and 3.12. All four cells passed on clean
-main `46c7c812eccd476c4578dbef59200f5249c26db3`. macOS remains a best-effort portability
-target, not a release gate. GitHub-hosted Actions are optional manually dispatched diagnostics,
-not merge authority. Hetzner is outside this decision and is not required or tested for current
+operator's Windows workstation, each on Python 3.11 and 3.12. All four cells passed on the PR #53
+source tree, which is byte-identical to the tree of clean merged main
+`ebda9b6691cfcfc72b76056d0190768e5f14cd66`. macOS remains a best-effort portability target,
+not a release gate. GitHub-hosted Actions are optional manually dispatched diagnostics, not
+merge authority. Hetzner is outside this decision and is not required or tested for current
 packages. See [[evidence/local-platform-matrix-2026-08-24]].
 
 This policy does not weaken platform-neutral implementation requirements and does not convert
@@ -67,14 +68,14 @@ legacy rows without creating a general override. A committed `read_only` live ru
 with no current error, and stopped with a valid audit chain at sequence 10,040 and zero orders.
 Its older named hosted attestation did not run and is superseded as a blocker by `DEC-09`.
 
-The merged line through PR #51 contains the WP0–WP9 foundation, the contained QT engine, the
+The merged line through PR #53 contains the WP0–WP9 foundation, the contained QT engine, the
 fail-closed calendar boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation),
 event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
 fail-closed transaction-cost/net-edge gate (`W-21`), RW-15 paper reconciliation, W-22's audited
 paper loop, W-23's production-closed deterministic cash-merger edge machinery, W-24's semantic
 verifier, BUG-106, the repeated RW-19 measurements, and W-25's Administrator-safe WORM witness
-implementation.
+implementation, plus the sealed RW-11 prospective text-population collector.
 
 The outage recovery queue is recorded in
 [[evidence/github-outage-session-handoff-2026-08-17]]. BUG-106, W-24's verifier and adversarial
@@ -100,10 +101,11 @@ one-event writes/s, and raw fanout produced a 236,637-character triage packet. A
 sample captured 10 stream and nine REST identities; all REST IDs overlapped, while one persistent
 stream-only ID rejected full equivalence. Those are measured design constraints, not permission
 to start `RW-13`. Later two-segment authenticated news reconnect runs completed across measured
-5.000752- and 5.000983-second deliberate gaps, but their 10- and 30-minute after-hours windows
-both held zero stream/REST identities. Those are hash-valid insufficient samples, not reconnect
-or correction evidence. Broader regimes, a non-empty news correction/reconnect sample, and a
-bounded deterministic coalescing decision remain open, so `DEC-07` is unresolved. See
+5.000752-, 5.000983-, and 5.000998-second deliberate gaps. Their 10- and 30-minute after-hours
+windows and the 2026-08-24 ten-minute regular-session window all held zero stream/REST identities.
+Those are hash-valid insufficient samples, not reconnect or correction evidence. Broader regimes,
+a non-empty news correction/reconnect sample, and a bounded deterministic coalescing decision
+remain open, so `DEC-07` is unresolved. See
 [[evidence/rw14-rw19-live-evidence-2026-08-18]].
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in

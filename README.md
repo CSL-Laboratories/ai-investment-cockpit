@@ -6,22 +6,24 @@ from one always-on Windows workstation and operated from anywhere over Discord.
 
 > **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
 > complete; no live trading.** On clean main
-> `46c7c812eccd476c4578dbef59200f5249c26db3`, the required local Windows + Ubuntu/WSL2
+> `ebda9b6691cfcfc72b76056d0190768e5f14cd66`, the required local Windows + Ubuntu/WSL2
 > Python 3.11/3.12 matrix is green, including the order-path, no-LLM-in-`risk/`, secrets,
 > and quant→brokers containment gates. Under `DEC-09`, this four-cell local matrix is the
-> release authority; macOS is best-effort and GitHub-hosted runs are optional diagnostics.
+> release-blocking platform gate; macOS is best-effort and GitHub-hosted runs are optional
+> diagnostics.
 >
 > The system remains **paper-first**: no real capital has moved and none may until the
-> explicit pre-live gates pass — chief among them the **OPEN P0 audit-spine blocker (SEC-11
-> delete-then-heal)** in [`docs/security-hardening-backlog.md`](docs/security-hardening-backlog.md).
+> explicit pre-live gates pass — chief among them the **OPEN P0 SEC-11 independent-witness gate**
+> in [`docs/security-hardening-backlog.md`](docs/security-hardening-backlog.md).
 > A dollar only moves after a multi-week paper soak and the performance/security gates.
 > Graduated from the `csl-general` brainstorming vault on 2026-07-06.
 
 The cockpit currently supports scheduled awareness, cited/schema-gated briefing and proposal
-workflows, human-approved Alpaca paper submission through `OrderGateway`, and contained offline
-quant simulation. It does **not** yet provide broker-status polling/reconciliation, dynamic
-event-driven paper autonomy, Robinhood connectivity, or autonomous live execution. The current
-development sequence is `RW-14 → W-21 → RW-15 → W-22`; see
+workflows, human-approved Alpaca paper submission through `OrderGateway`, broker-status polling
+and reconciliation, and contained offline quant simulation. The implementation spine through
+W-24 is merged, but its named online, semantic-authority, and paper-day evidence gates remain
+open. Dynamic event-driven paper autonomy, Robinhood connectivity, and autonomous live execution
+are not enabled; see
 [`docs/PLAN.md`](docs/PLAN.md) for the offline-to-deployment lifecycle and
 [`docs/REGISTER.md`](docs/REGISTER.md) for claim state.
 
@@ -82,19 +84,14 @@ Phased: **one Workflow call per work package** (WP0 → WP1a → WP1b → … �
 human merge checkpoint and a deterministic gate between each. The orchestration manual
 is [`docs/ultracode-build-playbook.md`](docs/ultracode-build-playbook.md).
 
-## Run the gates (WP0 → WP9)
+## Run the gates
+
+Use the exact dependency profile and four-cell Windows + Ubuntu/WSL2 instructions in
+[`CLAUDE.md`](CLAUDE.md). From `app/`, run:
 
 ```bash
-cd app
-python -m pip install pydantic pydantic-settings keyring pyyaml jsonschema pyarrow fastapi httpx pytest ruff
-```
-
-```bash
-python -m pytest -q      # 2,098 pass / 1 skipped locally as of 2026-08-13; includes invariant gates
-```
-
-```bash
-ruff check .             # clean locally as of 2026-08-13
+python -m pytest -q      # includes invariant gates
+ruff check .
 ```
 
 Prove the quant containment is real rather than claimed — the gate should go **red** if you
