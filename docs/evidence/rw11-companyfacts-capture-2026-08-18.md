@@ -1,7 +1,7 @@
 ---
 type: evidence
 status: live
-last-verified: 2026-08-18
+last-verified: 2026-08-24
 ---
 
 # RW-11 prospective Company Facts capture — 2026-08-18
@@ -90,3 +90,18 @@ result without claiming precision or closing RW-11.
 Still required after capture: deterministic numeric replay/citation rows, an independently
 labelled meaningful real population at at least 95% on each required field, a cited prospective
 material delta, an external witness, and Ubuntu/macOS attestation.
+
+## 2026-08-24 outcome and platform-policy note
+
+The bounded collection subsequently completed on clean main
+`46c7c812eccd476c4578dbef59200f5249c26db3`: all 11 planned CIKs and 31,735,013 response bytes
+verified, with zero supported post-cutoff 10-K/10-Q accessions. The quiet census proves
+reachability only and provides no supported periodic case for numeric replay. A separate four-row
+8-K review seed scored 8/8 semantic fields correct but remains insufficient in size, issuer/form
+diversity, and numeric coverage.
+
+The final sentence of the original handoff above recorded the platform requirement then in force.
+`DEC-09` now replaces it with the green local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12
+matrix; macOS is best-effort and hosted runs are optional. Independent witness, meaningful
+population, cited prospective material delta, and numeric replay requirements are unchanged. See
+[[local-platform-matrix-2026-08-24]].

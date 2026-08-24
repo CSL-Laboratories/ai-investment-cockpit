@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-18
+last-verified: 2026-08-24
 ---
 
 # The plan
@@ -21,11 +21,26 @@ last-verified: 2026-08-18
 Written 2026-08-09, after the branch-consolidation audit (PRs #8/#9/#10) and the
 [[llm-hybrid-trading]] viability research; autonomy boundaries and gates refreshed
 2026-08-12 from [[research/autonomy-blockers-and-unblockers-2026-08-12]], and repository
-state/lifecycle reconciled through PR #39 and the 2026-08-17 implementation/evidence handoff.
+state/lifecycle reconciled through PR #51 and the 2026-08-24 RW-11 evidence session.
+
+### Supported-platform validation (`DEC-09`, resolved 2026-08-24)
+
+The release-blocking matrix is local native Windows plus Ubuntu 24.04 under WSL2 on the
+operator's Windows workstation, each on Python 3.11 and 3.12. All four cells passed on clean
+main `46c7c812eccd476c4578dbef59200f5249c26db3`. macOS remains a best-effort portability
+target, not a release gate. GitHub-hosted Actions are optional manually dispatched diagnostics,
+not merge authority. Hetzner is outside this decision and is not required or tested for current
+packages. See [[evidence/local-platform-matrix-2026-08-24]].
+
+This policy does not weaken platform-neutral implementation requirements and does not convert
+same-host WSL2 into an independent witness. Any older statement below that a hosted/macOS or
+six-cell attestation was missing remains historical evidence of that package's original state;
+it is superseded as a current blocker by `DEC-09`. Online vendor, broker, market-day, precision,
+external-witness, and deployment gates remain separate.
 
 ---
 
-## 0. Current state — 2026-08-17
+## 0. Current state — 2026-08-24
 
 The first live W-22 bring-up snapshot is recorded in
 [[evidence/w22-paper-mvp-2026-08-14]]. At 11:17 PT the `read_only` process had a valid audit
@@ -38,7 +53,8 @@ legacy risk-verdict column (`BUG-100`) and post-response quote timestamp validat
 `BUG-102` and the underlying Alpaca request defect `BUG-103` are locally closed: startup now
 hydrates completed daily bars, and the client supplies the bounded historical `start` required
 by Alpaca instead of accepting its current-day default. A post-11:26 PT restart populated both
-quotes and ADV/volatility for all 11 symbols with no faults; cross-platform CI is still pending.
+quotes and ADV/volatility for all 11 symbols with no faults. Its historical hosted matrix did
+not run; the current `DEC-09` local matrix is green.
 `BUG-104` is also locally closed: audit verification now reads the ledger and signed high-water
 from one SQLite snapshot, preventing a legitimate concurrent ingest commit from producing a
 false one-minute truncation result and paper-performance `watch_only` alert. Genuine hash,
@@ -49,9 +65,9 @@ timestamps now derive from their signed audit transition, and a bounded one-time
 legacy rows without creating a general override. A committed `read_only` live run repaired all
 11 legacy baselines once, ingested one filing/four deltas, completed the following 11/11 poll
 with no current error, and stopped with a valid audit chain at sequence 10,040 and zero orders.
-Its older named cross-platform attestation remains pending.
+Its older named hosted attestation did not run and is superseded as a blocker by `DEC-09`.
 
-The merged line through PR #41 contains the WP0–WP9 foundation, the contained QT engine, the
+The merged line through PR #51 contains the WP0–WP9 foundation, the contained QT engine, the
 fail-closed calendar boundary (`RW-17`), in-process EDGAR wiring (`RW-11` implementation),
 event-characterization
 tooling (`RW-19` implementation), live paper-market data (`RW-14` implementation), the
@@ -71,8 +87,8 @@ human-approved Alpaca paper submission through `OrderGateway`; Discord/API statu
 surfaces; contained synthetic/replay quant simulation; and cached Alpaca IEX L1/daily-bar
 inputs feeding quote risk, quant snapshots, ADV/volatility, and fail-closed freshness controls.
 
-**What is not complete:** RW-15's real broker-status evidence; the older packages' missing
-cross-platform attestations; W-22's two-day unattended paper proof; W-24's real prospective
+**What is not complete:** RW-15's real broker-status evidence; W-22's two-day unattended paper
+proof; W-24's real prospective
 cohort/current-target evidence and external witness needed to activate W-23; event-driven paper autonomy
 (`RW-13`); the
 external SEC-11 witness; Robinhood discovery/client wiring; and every live/auto rung.
@@ -100,10 +116,10 @@ insufficient balance and alternate read-only reviewer calls timed out without ou
 repository changes. All six PR #31 matrix jobs stopped
 before executing a step because GitHub reported failed recent account payments or a spending
 limit that needs to be increased. RW-14's named live-data drill passed on 2026-08-18; the
-cross-platform attestation remains pending, and the billing-blocked jobs were not repository
-test failures.
+billing-blocked jobs were not repository test failures and are no longer a current blocker under
+`DEC-09`.
 Offline work may continue on isolated branches; no package becomes production-ready or a
-dependency baseline without its required CI and online evidence gate.
+dependency baseline without the `DEC-09` local matrix and its applicable online evidence gates.
 
 W-24 merged in PR #38 after a direct adversarial pass closed five concrete findings and
 additionally strengthened final EDGAR CIK binding. Its combined BUG-106 integration gate passes
@@ -118,12 +134,12 @@ failure.
 chronology mirror, but it is not SEC-11 authority under the fixed Administrator constraint.
 The 2026-08-18 real-candidate intake exposed `BUG-108`; its PR #42 schema-v2 repair preserves
 the current-baseline check while binding the original terms source, every signed intervening
-filing, and an explicit current accession. PR #42 is merged; cross-platform attestation remains
-pending and no real selection exists, so expected edge stays unavailable. Continue the remaining named
+filing, and an explicit current accession. PR #42 is merged; no real selection exists, so
+expected edge stays unavailable. Continue the remaining named
 RW-11/RW-15/RW-19 evidence. PR #48 closes `BUG-110`'s unbounded retained-history verification
 cost locally; all six hosted jobs executed zero steps under the payment restriction. Before
-provisioning W-25, restore the missing attestation and make an explicit funded-S3 versus separately
-reviewed zero-cost transparency-log decision. Same-host storage and Cloudflare R2 do not qualify.
+provisioning W-25, make an explicit funded-S3 versus separately reviewed zero-cost
+transparency-log decision. Same-host storage and Cloudflare R2 do not qualify.
 A real evaluation cohort cannot be manufactured retrospectively or completed before its 30-day horizon;
 fixtures cannot activate the provider. Opening paper orders remain
 fail-closed until both code and evidence pass. Run W-22's first and second qualifying market days
@@ -333,8 +349,8 @@ not an opinion.
    contracts without touching the operational database.
 5. **Claimed IDs:** `RW-11` only. `RW-12` stays blocked and `RW-13` is not started.
 6. **Platforms:** use `pathlib`, canonical UTF-8 JSON/CSV, timezone-qualified timestamps, and
-   explicit paths; no subprocesses, credentials, or platform branches. Windows local evidence
-   does not substitute for the missing Ubuntu/macOS × Python 3.11/3.12 attestation.
+   explicit paths; no subprocesses, credentials, or platform branches. Validate under the four
+   local `DEC-09` Windows + Ubuntu/WSL2 × Python 3.11/3.12 cells.
 7. **Size:** one bounded text-evidence tool, tests, and documentation, approximately 1,000 changed
    lines and not to expand further. The production pipeline's companyfacts-derived inputs are
    transient, so unbiased live
@@ -343,7 +359,8 @@ not an opinion.
 
 **Pinned baseline:** PR #49 merged the documentation reconciliation at the SHA above. Its six
 hosted matrix jobs executed zero steps under the same GitHub payment/spending-limit restriction;
-that is missing cross-platform attestation, not a code failure. The runtime remains `read_only`,
+that was missing hosted attestation, not a code failure, and is retained as historical context.
+`DEC-09` now supplies the current local platform gate. The runtime remains `read_only`,
 expected edge is unavailable, the merger execution watchlist is empty, and no paper opening,
 live, or autonomous order authority is enabled.
 
@@ -359,7 +376,8 @@ Ruff clean. Ten read-only Claude Code Sonnet 5 lanes informed architecture, samp
 cross-platform, and adversarial review; the final repaired-code pass found no reproducible
 P0/P1/P2 defect. This is tooling evidence only: local self-hashes are not an external witness,
 numeric/companyfacts capture is deliberately absent, no real expanded population or human labels
-were generated, and hosted Ubuntu/macOS attestation remains missing.
+were generated, and the then-requested hosted Ubuntu/macOS attestation did not run. `DEC-09`
+supersedes that platform blocker without changing the empirical evidence gaps.
 
 **RW-11 Company Facts capture intake — claimed on `work/rw11-companyfacts-capture` from
 merged PR #50 main `eb069fadddc45fa0a702c67b0e00edf4f94a7e31`:**
@@ -384,7 +402,7 @@ merged PR #50 main `eb069fadddc45fa0a702c67b0e00edf4f94a7e31`:**
    change a watchlist, order count, or mode.
 6. **Platforms:** use `pathlib`, UTF-8 and canonical JSON, exclusive directory creation,
    timezone-qualified per-response timestamps, exact raw bytes, and the existing platform-neutral
-   fetcher/store. Windows evidence cannot substitute for Ubuntu/macOS × Python 3.11/3.12.
+   fetcher/store. Validate under the four local `DEC-09` cells.
 7. **Size:** one Company Facts collector/verifier, hermetic tests, and evidence documentation,
    targeted below 1,000 changed lines and not to expand into numeric replay or scoring.
 
@@ -402,8 +420,18 @@ Two other lanes timed out before a usable review and are not counted. A subseque
 Sonnet 5 adversarial pass found no P0 and one concrete P1: the implementation hash set omitted
 `raw_store.py`. The hash binding now covers that load-bearing module; the same repair also rejects
 Windows reparse points, including a locally verified NTFS junction. This remains tooling only:
-no real Company Facts census, numeric replay, independent labels, witness, or cross-platform
-attestation has been produced.
+no real Company Facts census, numeric replay, independent labels, or witness had yet been
+produced at this development checkpoint.
+
+**Online evidence result (2026-08-24):** one bounded 11-CIK capture on clean main
+`46c7c812eccd476c4578dbef59200f5249c26db3` fetched and hash-bound 31,735,013 bytes, passed
+immediate verification, and found zero supported post-cutoff 10-K/10-Q accessions. That is a
+reachability/quiet-census result only, so no numeric replay package can yet be grounded in this
+capture. The independently entered four-row 8-K text seed scored all eight semantic fields
+correct, but four rows from one issuer/form are below the meaningful ≥30-row / ≥3-issuer frozen
+population and contain no numeric cases. The current `DEC-09` four-cell local matrix is green.
+RW-11 therefore remains open for a supported prospective periodic accession, separately bounded
+numeric replay, meaningful population, cited material delta, and external witness.
 
 PR #15 added the `sec:edgar` branch to `build_ingest_fetchers`, backed by
 `run_edgar_pipeline` when `sec_user_agent` and watchlist scope are configured. It is preferred
@@ -428,7 +456,7 @@ pipeline faults as degraded rather than quiet success.
 ### M2 — Live market data on the ingestion trigger  (`RW-14`)
 
 **Package status — merged 2026-08-13 in PR #31; named online evidence passed 2026-08-18;
-cross-platform attestation pending:**
+current local platform gate passed 2026-08-24:**
 
 1. **Operator change:** the composed paper cockpit receives a production L1 book snapshot plus
    daily ADV/realized-volatility inputs, exposes advancing quant snapshots, and disables orders
@@ -446,7 +474,7 @@ cross-platform attestation pending:**
 5. **Package IDs:** `RW-14` is the single package; it resolves `DEC-01` and closes/unblocks
    `BUG-040`, `BUG-046`, and `BUG-097` without claiming later `W-21` cost-model work.
 6. **Platforms:** pure Python/httpx, injected clocks, `Path`-safe caches, and no subprocess,
-   credential-store, or platform-specific behavior. Ubuntu/Windows/macOS CI remains required.
+   credential-store, or platform-specific behavior. The local `DEC-09` matrix is required.
 7. **Size:** one vertical slice, targeted below roughly 1,000 production LOC plus tests and
    package documentation. A larger design returns here for splitting before implementation.
 
@@ -471,9 +499,10 @@ closed in PR #31 include graceful quote-cache degradation, holdings-only reachab
 calendar/clock refusal, cadence/TTL alignment, composed allowlist coverage, and raw-hash
 binding. The 2026-08-18 composed live drill advanced all 11 quote sequences, crossed the
 120-second threshold on frozen real exchange timestamps, entered L8 while awareness continued,
-and recovered fresh in `read_only` with zero Orders. The older hosted/macOS cross-platform
-attestation remains missing. Final offline gates: 2,121 passed / 1 skipped on Windows, with Ruff
-clean. See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
+and recovered fresh in `read_only` with zero Orders. The old hosted/macOS attestation never ran;
+`DEC-09` supersedes it as a blocker and the current local matrix is green. Final original offline
+gates: 2,121 passed / 1 skipped on Windows, with Ruff clean. See
+[[evidence/rw14-rw19-live-evidence-2026-08-18]].
 
 - Add a daily-bars poller alongside the quote poller (same Alpaca credentials; entitlement and
   feed coverage re-verified at build under `DEC-07`). Cache per symbol, refresh daily. Yields
@@ -486,7 +515,8 @@ clean. See [[evidence/rw14-rw19-live-evidence-2026-08-18]].
   the 120s threshold coherent with the poll cadence.
 - PR #31 closes `BUG-097` in code: stale data routes through the single L8 watch-only
   mechanism, ingest/awareness keeps running, and the order-path change received adversarial
-  review. The named real-age transition passed on 2026-08-18; cross-platform attestation remains.
+  review. The named real-age transition passed on 2026-08-18 and the current `DEC-09` local
+  platform matrix is green.
 - **Gate:** `quant_book_seq` advances between observations on a live day; authority age is
   computed from the latest exchange timestamp. The synchronous gateway refuses stale data at
   every hour, while market-hours breaker sampling routes >120 seconds to L8 `watch_only` and
@@ -520,8 +550,8 @@ The change M2 makes possible, and the one the research says decides viability.
 5. **Package IDs:** `W-21` only. A future deterministic edge producer or short-opening path is
    a separately claimed package and adversarial review, not latent authority hidden here.
 6. **Platforms:** pure stdlib/`Decimal` calculations with injected clocks and data; no new
-   subprocess, path, credential, temp-file, network, or platform-specific behavior. The normal
-   Ubuntu/Windows/macOS matrix remains required.
+   subprocess, path, credential, temp-file, network, or platform-specific behavior. The local
+   `DEC-09` matrix remains required.
 7. **Size:** one vertical slice, targeted below roughly 1,000 production LOC plus replacement
    tests and live-doc reconciliation. Crossing that line returns here for a split.
 
@@ -545,8 +575,8 @@ approval surface now prices the fixed persisted Order quantity; persisted W-21 e
 fresh risk armed if the market-data attachment disappears; `decide()` refuses missing RW-14
 metrics; status reads the active `VerifyParams`; and versioned edge/borrow plus invalid-input
 boundaries are pinned. A separately reviewed deterministic edge producer remains intentionally
-out of scope and unavailable. Cross-platform CI and all named RW-14 live evidence remain
-pending; this checkpoint is not live authorization.
+out of scope and unavailable. This historical checkpoint predated both the RW-14 live drill and
+the current `DEC-09` local matrix; it was not live authorization.
 
 - Replace `verify.py`'s displayed-depth walk with **spread (L1) + square-root impact (ADV, σ) +
   borrow on any short leg**.
@@ -583,7 +613,8 @@ approve, reject, and veto share the loopback execution service and `OrderGateway
 is post-transition and its success/failure is audited. Status exposes performance, audit-chain,
 and fill-notification health. Windows: 2,180 passed / 1 skipped; Ruff clean. The expected-edge
 source remains deliberately unavailable, so new opening orders continue to fail closed. The
-online/cross-platform/two-day gates above remain open; see [[runbooks/w22-paper-mvp]].
+online broker and two-day gates above remain open; the current local platform gate is green.
+See [[runbooks/w22-paper-mvp]].
 
 **`RW-15` — order-status poll + real broker reconciliation. A named prerequisite of this
 gate, scheduled NOW so the temporary state cannot become permanent (the RW-10 lesson).**
@@ -615,7 +646,8 @@ exact signed approval, advances only through audited FSM primitives, records cum
 progress, and refuses chain/row/identity disagreement in the exposure-preserving direction.
 Startup and the one-minute scheduler both reach the same service, and `_no_broker_history` is
 retired. Windows: 2,165 passed / 1 skipped; Ruff clean. The real resting/partial/terminal and
-lost-response Alpaca paper gate remains online evidence, as does the cross-platform matrix.
+lost-response Alpaca paper gate remains online evidence; current platform acceptance uses the
+green `DEC-09` local matrix.
 
 ### M4.5 — Deterministic paper edge source (`DEC-03` → `W-23` → `W-24`)
 
@@ -636,7 +668,7 @@ failure loss, with immutable evidence and a conservative versioned estimate.
 `PaperExecutionService._fresh_risk`, recompute immediately before approval, and return no edge
 on stale/missing/amended/terminated/mismatched evidence. The model remains limited to
 schema-gated fact extraction and never supplies probability, failure price, or return. The
-package requires reachability tests, a fresh adversarial review, and Ubuntu/Windows/macOS CI.
+package requires reachability tests, a fresh adversarial review, and the local `DEC-09` matrix.
 Selecting the strategy or completing `W-23` grants neither paper mode nor live authority; the
 ordinary risk → mode → human approval → `OrderGateway` chain remains mandatory.
 
@@ -667,7 +699,7 @@ labels are not independent semantic authority.
    not permission to weaken minimum sample, precision, chronology, freshness, or W-21 cost gates.
 6. **Platforms:** pure Python/SQLAlchemy/`Path` code over existing SQLite, raw-store, Parquet, and
    audit seams. No subprocess, model runtime, MCP, broker, platform branch, or new credential.
-   Ubuntu/Windows/macOS × Python 3.11/3.12 CI remains mandatory.
+   The local Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix remains mandatory.
 7. **Size:** target below 1,000 production LOC plus tests. If complete-universe acquisition needs
    a new external feed or prospective collector, stop at a separately claimed evidence/source
    package; W-24 must not encode a guessed source contract.
@@ -708,8 +740,8 @@ supported filings through selection, and an explicit current accession that must
 strict EDGAR baseline. Both the prospective prediction and eventual evaluation label are derived
 from that frozen set. Omission, addition, chronology reversal, unsigned rows, future/post-commit
 evidence, v1, witness tampering, or any current-baseline/file-set change fails closed. No SQL
-migration is needed because there is no real v1 commitment. Cross-platform attestation,
-the real ≥30-name cohort, held-out precision, and a current target remain open. The final local
+migration is needed because there is no real v1 commitment. The real ≥30-name cohort, held-out
+precision, external witness, and a current target remain open. The final local
 Windows gate is 2,303 passed / 1 skipped with Ruff clean after the adversarial pass blocked
 cross-filing parser phrase synthesis; see
 [[evidence/w24-prospective-intake-2026-08-18]].
@@ -727,8 +759,8 @@ the held-out precision gate; no manual label or grammar bypass is permitted. The
 now recognizes the exact CRNX source while blocking cross-sentence, option,
 preferred-share, note, negation, cashless, and cross-document misattribution cases. Its Windows
 gate is 2,311 passed / 1 skipped with Ruff clean. It merged in PR #43 at `4bcf333`; all six hosted
-jobs executed zero steps under the existing payment restriction, so independent/cross-platform
-attestation and held-out human precision remain open.
+jobs executed zero steps under the existing payment restriction. `DEC-09` supersedes that hosted
+gap as a platform blocker; independent witness and held-out human precision remain open.
 
 The strict post-merge rescreen preserved the 43/16/6 SEC-head split and tested every supported
 2026 primary filing for those six names. CRNX alone now forms a deterministic five-filing semantic
@@ -765,8 +797,8 @@ or Discord witness was created; see [[evidence/w24-post-bug109-rescreen-2026-08-
    a cohort, or promote mode.
 6. **Platforms:** boto3 is used only behind explicit keyring-held AWS credentials and
    non-secret bucket/region/prefix settings; the default AWS credential chain is never used.
-   The adapter itself is dependency-injected and deterministic under tests. Windows,
-   Ubuntu, and macOS × Python 3.11/3.12 CI remains mandatory.
+   The adapter itself is dependency-injected and deterministic under tests. The local Windows
+   + Ubuntu/WSL2 × Python 3.11/3.12 matrix remains mandatory.
 7. **Size:** one security vertical slice below roughly 1,000 production LOC plus tests and
    provisioning policy/runbook text. Any bucket-creation automation or alternative cloud
    provider is a separate package.
@@ -786,7 +818,8 @@ rollback adversarial drill is an online evidence gate, not inferred from mocks.
 **2026-08-18 cost/provider hold and finding:** the pre-BUG-110 S3 trust read listed and revalidated
 every retained version; the production append path performed that full read twice before reading
 the new version, so weekday `*/30` scheduling and consuming-path reads grew with history. The
-PR #48 remediation below bounds that work, but independent/cross-platform gates remain. The
+PR #48 remediation below bounds that work, but independent-witness and real-cloud gates remain.
+The
 existing Hetzner VPS is still the same rollback domain, and Cloudflare R2 still lacks the adapter's
 required AWS Object Lock/version-retention interface, so neither can be promoted from mirror to
 authority. Sigstore Rekor remains a research candidate. See
@@ -811,8 +844,8 @@ authority. Sigstore Rekor remains a research candidate. See
 5. **Package ID:** `BUG-110` only. Rekor/provider selection, real cloud provisioning, SEC-11
    closure, W-24 authority, and any mode promotion remain separate decisions/evidence.
 6. **Platforms:** pure Python over the existing injected boto3 seam; no new subprocess,
-   credential, path, temp-file, network, or platform branch. The ordinary Ubuntu/Windows/macOS
-   matrix remains required.
+   credential, path, temp-file, network, or platform branch. The local `DEC-09` matrix remains
+   required.
 7. **Size:** below roughly 300 production LOC plus focused adversarial tests and documentation.
 
 The key schema is bumped before any real bucket exists. Fixed-width inverted sequence numbers make
@@ -831,9 +864,10 @@ bucket-lock read, one capped version-list request, one object read, and one rete
 defense-in-depth store + adapter prechecks and post-write race proof remain a fixed three of each
 read on an ordinary non-idempotent append. Focused witness/rollback/scheduler tests passed 80/80;
 the hermetic Windows suite passed 2,321 / 1 skipped and Ruff is clean. All six hosted PR #48 jobs
-executed zero steps under GitHub's payment restriction; this is missing attestation, not a code
-failure. This is not an activation: independent/cross-platform review, provider/cost authorization,
-and real Object Lock delete/shadow/retention/rollback evidence remain open.
+executed zero steps under GitHub's payment restriction; that is historical accounting context,
+not a code failure or a current blocker under `DEC-09`. This is not an activation: independent
+review, provider/cost authorization, and real Object Lock delete/shadow/retention/rollback
+evidence remain open.
 
 ### M5 — Event-driven triggers  (`RW-13`)
 
@@ -938,8 +972,8 @@ mode ladder may still fall to `watch_only`; no implementation may weaken that fa
 3. `RW-19` records event capture/replay, stream-gap, load, WS/REST identity, and IEX/SIP
    evidence and resolves `DEC-07` before `RW-13`.
 4. `RW-17`/`BUG-096` is closed: an unknown calendar year refuses auto-arm/orders while ingest
-   and awareness continue. `RW-14`'s named stale-feed-to-L8 transition passed on 2026-08-18;
-   its hosted/macOS cross-platform attestation remains missing.
+   and awareness continue. `RW-14`'s named stale-feed-to-L8 transition passed on 2026-08-18,
+   and the current `DEC-09` local matrix is green.
 5. Every numeric latency/load target is labelled proposed until measured; vendor facts and
    repository invariants are never presented as performance promises.
 
@@ -947,8 +981,8 @@ Dependency order:
 
 `{RW-11 evidence → RW-12, RW-19 evidence → DEC-07, DEC-05 → RW-18}` run as bounded evidence
 lanes around the remaining serial code spine `W-21 → RW-15 → W-22 → DEC-03 → W-23 → W-24 → RW-13 → W16 → beta
-stabilization → W17 → W18 → W19`. RW-14's named online acceptance passed; its missing
-cross-platform attestation remains a parallel evidence lane and cannot close by assumption.
+stabilization → W17 → W18 → W19`. RW-14's named online acceptance and current local platform
+gate passed; its other empirical gates cannot close by assumption.
 
 ### Recommended development pipeline
 
@@ -960,7 +994,7 @@ may run alongside it.
 | Phase | Purpose | Primary packages/evidence | Exit condition |
 |---|---|---|---|
 | **1. Offline development** | Build deterministic vertical slices without consuming live services or CI budget | `W-21 → RW-15 → W-22`; after operator selection, `W-23 → W-24`; fixtures for `RW-11`/`RW-19` | targeted + full local suite and Ruff green; docs/register updated; adversarial review complete where authority changes |
-| **2. Online testing and evidence** | Prove platforms, credentials, vendor contracts, live data, and broker outcomes | cross-platform CI; `RW-11`, `RW-19`/`DEC-07`, `RW-14`, `RW-15`; `DEC-05 → RW-18`; SEC-11 witness activation | every required CI/live-day/precision/reconciliation/source-contract gate recorded; no mocked result substitutes for an online gate |
+| **2. Online testing and evidence** | Prove platforms, credentials, vendor contracts, live data, and broker outcomes | local `DEC-09` matrix; `RW-11`, `RW-19`/`DEC-07`, `RW-14`, `RW-15`; `DEC-05 → RW-18`; SEC-11 witness activation | every required platform/live-day/precision/reconciliation/source-contract gate recorded; no mocked result substitutes for an online gate |
 | **3. MVP** | Deliver reliable scheduled, human-gated paper operation | `W-22` plus the `DEC-03`-selected `W-23` edge source and `W-24` semantic authority on the M1–M4.5 stack | two unattended market days at least a week apart, full Discord loop, bid/ask paper fills, terminal reconciliation, green audit chain |
 | **4. Production beta** | Exercise dynamic paper autonomy under real operating conditions without capital | `RW-13 → W16` | replay parity/idempotency, bounded gap/flood behavior, and ≥4 consecutive market weeks of enabled dynamic-paper soak with fault injection |
 | **5. Stabilization and bugfixing** | Freeze features and remove defects exposed by beta | beta findings, open BUG/OPS/SEC residuals, platform/restart/recovery regressions | no open P0/high defects; no unexplained order/reconciliation/audit gaps; clean full matrix and repeated recovery drills |
@@ -968,13 +1002,12 @@ may run alongside it.
 
 #### Phase 1 — offline development
 
-Start each package from the latest merged `main`. During an Actions-budget pause, a branch may
-be developed, locally committed, and pushed for backup without opening a PR; the current
-workflow runs on pull requests and pushes to `main`, not ordinary branch pushes. This is a cost
-control, not a gate waiver.
+Start each package from the latest merged `main`. A branch may be developed, locally committed,
+and pushed for backup without consuming Actions budget; the hosted workflow is manual-only under
+`DEC-09`. This is a cost control, not a waiver of the local matrix or any empirical gate.
 
 The completed implementation spine is `W-21 → RW-15 → W-22 → DEC-03 → W-23 → W-24`;
-`W-24` remains evidence/CI pending because W-23 correctly keeps any absent,
+`W-24` remains evidence-pending because W-23 correctly keeps any absent,
 retrospective, or unverifiable semantic claim non-executable. When a later package genuinely needs
 unmerged predecessor code, use an explicitly recorded local stack: branch it from the predecessor,
 keep only one package under active edit, and do not open the dependent PR until its parent merges;
@@ -985,9 +1018,9 @@ behavior—fresh adversarial review.
 
 #### Phase 2 — online testing and evidence
 
-Restore a bounded Actions budget and open ready branches one at a time in dependency order.
-Require the Ubuntu/Windows/macOS × Python 3.11/3.12 matrix before merge. Then run the empirical
-gates that local tests cannot establish:
+Open ready branches one at a time in dependency order. Require the local native-Windows +
+Ubuntu/WSL2 × Python 3.11/3.12 matrix before merge. Hosted Actions may be dispatched as an
+optional diagnostic. Then run the empirical gates that local tests cannot establish:
 
 - `RW-11`: cited in-process EDGAR deltas on a real market day and ≥95% field precision; only
   after that may `RW-12` remove the fallback.
@@ -998,9 +1031,8 @@ gates that local tests cannot establish:
 - `RW-15`: resting, partial, terminal, and lost-response Alpaca paper reconciliation.
 - `DEC-05 → RW-18`: only after the operator resolves credential read scope; discovery is
   authenticated but no-capital and places zero orders.
-- SEC-11/W-25: `BUG-110`'s bounded rollback-safe trust read merged in PR #48; restore its missing
-  cross-platform attestation and explicitly choose funded S3 or a separately designed/reviewed
-  transparency-log alternative. Only then provision
+- SEC-11/W-25: `BUG-110`'s bounded rollback-safe trust read merged in PR #48; explicitly choose
+  funded S3 or a separately designed/reviewed transparency-log alternative. Only then provision
   the selected independent witness and rerun version-shadow/deletion/retention/rollback evidence.
   Same-host, Discord, git, and R2 remain mirrors under the current contract.
 
@@ -1024,7 +1056,7 @@ calendar rollover, stale quotes, process restart, and witness/vendor failure.
 
 Freeze new features. Convert every beta failure into a registered defect with a failing
 regression test and severity. Burn down P0/high defects first; include `BUG-082` only through its
-separately designed two-phase lock package, never a casual lock split. Repeat cross-platform,
+separately designed two-phase lock package, never a casual lock split. Repeat supported-platform,
 restart/replay, idempotency, kill/disarm, reconciliation, audit-witness, and data-staleness
 drills until there are no unexplained divergences. Regressions reopen the owning lifecycle gate.
 
@@ -1072,7 +1104,7 @@ Every production package follows this loop:
    the recorded evidence proves reachability and behavior. Never substitute a mocked green
    result for a required market-day, broker, witness, latency, or accuracy observation.
 8. **PR barrier:** one package, its tests, register update, retirement, and evidence links in one
-   reviewable change. GitHub's Ubuntu/Windows/macOS × Python 3.11/3.12 matrix must be green.
+   reviewable change. The local Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix must be green.
    Close the ID only after merge. Commit or push only when the operator asks.
 
 #### Stop rules
@@ -1114,8 +1146,8 @@ One entry in [[REGISTER]], and answers to these:
    removed. Not "the unit tests pass." *(This is the grounding failure: `decision_agent_cwd`
    had zero test references, so a dead security control looked healthy.)*
 5. **Which IDs does this claim?** Cross-check the register for an existing claim.
-6. **Windows / macOS / Linux implications.** Subprocess, path, credential, or temp file — say
-   how. CI runs all three.
+6. **Windows / Ubuntu implications.** Subprocess, path, credential, or temp file — say how for
+   native Windows and Ubuntu/WSL2. Note best-effort macOS portability where materially relevant.
 7. **Rough size.** Over ~1,000 LOC is more than one package. Split it before starting.
 
 A change that cannot answer 2, 3 and 4 is a scope change. It goes back to this document before

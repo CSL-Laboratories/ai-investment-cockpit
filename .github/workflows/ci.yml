@@ -1,35 +1,25 @@
 name: ci
 
 on:
-  # `push` is scoped to main. Unscoped, a branch with an open PR matched BOTH triggers and
-  # ran the whole matrix twice — tolerable at 2 jobs, 12 once the matrix landed.
-  push:
-    branches: [main]
-  pull_request:
+  # DEC-09 makes the native-Windows + Ubuntu/WSL2 local four-cell matrix authoritative.
+  # Hosted execution is an optional diagnostic and must be started explicitly so ordinary
+  # pushes and pull requests do not consume Actions budget.
+  workflow_dispatch:
 
-# A new push supersedes the run it interrupted. Without this, force-pushing a branch three
-# times leaves three full matrices racing, and only the last one's answer matters. main is
-# excluded from cancellation: its history is what the merge queue reasons about, so every
-# commit on it gets a result.
+# A second manual run for the same ref supersedes the run it interrupted.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   gates:
-    # The cockpit targets Ubuntu, Windows and macOS. Until now CI ran ubuntu-latest ONLY,
-    # while development and deployment happened on Windows — so every Windows defect had to
-    # be found by hand on the dev box. Two in the RW-01 history alone ("the claude CLI could
-    # never be spawned on Windows", "verify_keys picked a case-alias as its own repair
-    # source on Windows") were invisible to CI by construction. macOS has never been tested
-    # at all.
-    #
-    # fail-fast is off on purpose: when one platform breaks, the others must still report,
-    # because the useful signal is WHICH platforms differ.
+    # Optional hosted parity check for the two DEC-09 supported environments. It supplements,
+    # but does not replace, the required local Windows + Ubuntu/WSL2 Python 3.11/3.12 matrix.
+    # fail-fast is off so every requested cell reports.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
     runs-on: ${{ matrix.os }}
     defaults:

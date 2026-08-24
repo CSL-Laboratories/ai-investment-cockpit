@@ -70,6 +70,13 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - When unsure whether something is settled, grep the corpus before deciding.
 
 ## Run the gates
+
+`DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
+Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort; GitHub-hosted
+Actions are optional manual diagnostics; Hetzner is not part of current package validation.
+This changes platform evidence only and does not waive any online, broker, witness, paper-day,
+or pre-live gate.
+
 ```bash
 cd app
 python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler pytest ruff
