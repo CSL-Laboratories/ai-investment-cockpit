@@ -23,15 +23,39 @@ def _py_files(root: Path):
 _ORDER_CALL = re.compile(r"\b(place_equity_order|place_order|submit_order|place_crypto_order)\s*\(")
 
 
-def test_invariant_1_order_calls_only_in_brokers():
-    offenders = []
-    for p in _py_files(APP):
-        rel = p.relative_to(APP)
+def _order_path_offenders(app: Path, tools: Path) -> list[str]:
+    """Call sites outside ``brokers/`` (and ``app/tests/``) — also scan repo ``tools/``."""
+    offenders: list[str] = []
+    for p in _py_files(app):
+        rel = p.relative_to(app)
         if rel.parts and rel.parts[0] in ("brokers", "tests"):
             continue
         if _ORDER_CALL.search(p.read_text(encoding="utf-8")):
             offenders.append(str(rel))
+    if tools.is_dir():
+        root = app.parent
+        for p in _py_files(tools):
+            if _ORDER_CALL.search(p.read_text(encoding="utf-8")):
+                offenders.append(str(p.relative_to(root)))
+    return offenders
+
+
+def test_invariant_1_order_calls_only_in_brokers():
+    assert (ROOT / "tools").is_dir(), "Invariant 1 tools/ scan requires the repo tools/ directory"
+    offenders = _order_path_offenders(APP, ROOT / "tools")
     assert not offenders, f"Invariant 1: order placement called outside brokers/: {offenders}"
+
+
+def test_the_order_path_gate_actually_detects_a_tools_violation(tmp_path):
+    """CONTROL. Prove Inv 1 fires when an order call lands under repo-level tools/."""
+    app = tmp_path / "app"
+    tools = tmp_path / "tools"
+    app.mkdir()
+    tools.mkdir()
+    (tools / "rogue_order.py").write_text("place_order(symbol='SPY')\n", encoding="utf-8")
+
+    offenders = [o.replace("\\", "/") for o in _order_path_offenders(app, tools)]
+    assert offenders == ["tools/rogue_order.py"]
 
 
 # ---- Invariant 5: no LLM/subprocess inside risk/ (docs security-architecture §4 L2)

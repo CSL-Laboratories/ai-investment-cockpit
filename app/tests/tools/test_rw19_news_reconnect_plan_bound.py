@@ -158,11 +158,24 @@ class Connector:
         return self.sockets.pop(0)
 
 
-def success_socket(article_id: int | None = None) -> Socket:
+SEGMENT_LIMITS = {
+    "maximum_frames_per_segment": 20,
+    "maximum_frame_bytes": 20_000,
+    "maximum_control_frames_per_segment": 10,
+}
+PERMUTED_UNIVERSE = list(reversed(UNIVERSE))
+ACK_NOT_A_LIST = "subscription acknowledgement news is not a list"
+ACK_NON_STRING = "subscription acknowledgement contains a non-string entry"
+ACK_DUPLICATE = "subscription acknowledgement contains duplicate symbols"
+ACK_UNIVERSE_CHANGED = "subscription acknowledgement changed the symbol universe"
+
+
+def success_socket(article_id: int | None = None, *, news=None, trailing=()) -> Socket:
+    symbols = UNIVERSE if news is None else news
     frames = [
         '[{"T":"success","msg":"connected"}]',
         '[{"T":"success","msg":"authenticated"}]',
-        '[{"T":"subscription","news":' + json.dumps(UNIVERSE) + "}]",
+        json.dumps([{"T": "subscription", "news": symbols}]),
     ]
     if article_id is not None:
         frames.append(json.dumps([{
@@ -172,7 +185,23 @@ def success_socket(article_id: int | None = None) -> Socket:
             "updated_at": "2026-08-25T16:00:00Z",
             "symbols": ["NVDA"],
         }]))
+    frames.extend(trailing)
     return Socket(frames)
+
+
+def _capture_segment(socket: Socket, *, control_sink=None, row_sink=None):
+    return rw19._capture_news_segment(
+        connector=Connector([socket]),
+        key="fixture-key",
+        secret="fixture-secret",
+        symbols=tuple(UNIVERSE),
+        duration_seconds=5,
+        limits=SEGMENT_LIMITS,
+        row_sink=row_sink or (lambda _row: None),
+        control_sink=control_sink or (lambda _row: None),
+        clock=Clock(),
+        monotonic=lambda: 0,
+    )
 
 
 class StreamResponse:
@@ -299,6 +328,298 @@ def test_segment_requires_ordered_authentication_and_exact_subscription():
         {"action": "auth", "key": "fixture-key", "secret": "fixture-secret"},
         {"action": "subscribe", "news": UNIVERSE},
     ]
+
+
+def test_permuted_subscription_ack_passes_and_retains_vendor_order(tmp_path):
+    assert PERMUTED_UNIVERSE != UNIVERSE
+    assert set(PERMUTED_UNIVERSE) == set(UNIVERSE)
+    plan_path, plan_hash, _ = plan(tmp_path)
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([
+            success_socket(101, news=PERMUTED_UNIVERSE),
+            success_socket(102, news=PERMUTED_UNIVERSE),
+        ]),
+        client_factory=client_factory([
+            StreamResponse({"news": [{"id": 103}], "next_page_token": None})
+        ], {}),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=iter(range(100)).__next__,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "complete"
+    assert rw19.verify(tmp_path / "capture", expected_plan_sha256=plan_hash)["ok"] is True
+    before = rw19._read_jsonl(tmp_path / "capture" / "raw" / "control-before.jsonl", "test")
+    after = rw19._read_jsonl(tmp_path / "capture" / "raw" / "control-after.jsonl", "test")
+    assert before[-1]["message"] == {"T": "subscription", "news": PERMUTED_UNIVERSE}
+    assert after[-1]["message"] == {"T": "subscription", "news": PERMUTED_UNIVERSE}
+    assert before[-1]["message"]["news"] != UNIVERSE
+
+
+def test_canonical_subscription_ack_still_passes(tmp_path):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([success_socket(101), success_socket(102)]),
+        client_factory=client_factory([
+            StreamResponse({"news": [], "next_page_token": None})
+        ], {}),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=iter(range(100)).__next__,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "complete"
+    before = rw19._read_jsonl(tmp_path / "capture" / "raw" / "control-before.jsonl", "test")
+    assert before[-1]["message"] == {"T": "subscription", "news": UNIVERSE}
+    assert before[-1]["message"]["news"] == list(UNIVERSE)
+
+
+def test_subscription_ack_missing_symbol_is_tombstoned(tmp_path):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    missing = UNIVERSE[:-1]
+    assert len(missing) == 10
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([success_socket(news=missing)]),
+        client_factory=lambda **_kwargs: pytest.fail("REST must not run"),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=iter(range(100)).__next__,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "aborted"
+    assert result["classification"] == "FAILED_CAPTURE"
+    assert result["failure_class"] == "socket_subscribe"
+    assert not (tmp_path / "capture").exists()
+    tombstone = tmp_path / "aborted"
+    assert tombstone.is_dir()
+    assert rw19.verify_aborted(tombstone, expected_plan_sha256=plan_hash)["ok"] is True
+    controls = rw19._read_jsonl(tombstone / "raw" / "control-before.jsonl", "test")
+    assert any(
+        row["message"] == {"T": "subscription", "news": missing}
+        for row in controls
+    )
+
+
+def test_subscription_ack_extra_symbol_fails_closed():
+    extra = UNIVERSE + ["ZZZZ"]
+    assert len(extra) == 12
+    with pytest.raises(rw19.CaptureFailure) as error:
+        _capture_segment(success_socket(news=extra))
+    assert error.value.failure_class == "socket_subscribe"
+    assert error.value.detail == ACK_UNIVERSE_CHANGED
+
+
+def test_subscription_ack_duplicate_symbol_fails_closed():
+    duplicated = UNIVERSE + ["AAPL"]
+    assert len(duplicated) == 12
+    assert set(duplicated) == set(UNIVERSE)
+    with pytest.raises(rw19.CaptureFailure) as error:
+        _capture_segment(success_socket(news=duplicated))
+    assert error.value.failure_class == "socket_subscribe"
+    assert error.value.detail == ACK_DUPLICATE
+    assert error.value.detail != ACK_UNIVERSE_CHANGED
+
+
+@pytest.mark.parametrize(
+    "news",
+    [None, "AAPL", {"AAPL": True}, 11],
+    ids=["absent", "string", "dict", "integer"],
+)
+def test_subscription_ack_non_list_shapes_fail_closed(news):
+    if news is None:
+        frame = '[{"T":"subscription"}]'
+    else:
+        frame = json.dumps([{"T": "subscription", "news": news}])
+    socket = Socket([
+        '[{"T":"success","msg":"connected"}]',
+        '[{"T":"success","msg":"authenticated"}]',
+        frame,
+    ])
+    with pytest.raises(rw19.CaptureFailure) as error:
+        _capture_segment(socket)
+    assert error.value.failure_class == "socket_subscribe"
+    assert error.value.detail == ACK_NOT_A_LIST
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [1, {"sym": "AAPL"}, True, None],
+    ids=["int_entry", "unhashable_dict_entry", "bool_entry", "null_entry"],
+)
+def test_subscription_ack_non_string_entries_fail_closed(bad_entry):
+    news = [*UNIVERSE[:-1], bad_entry]
+    with pytest.raises(rw19.CaptureFailure) as error:
+        _capture_segment(success_socket(news=news))
+    assert error.value.failure_class == "socket_subscribe"
+    assert error.value.detail == ACK_NON_STRING
+    assert "TypeError" not in error.value.detail
+    assert error.value.detail != "socket transport raised TypeError"
+
+
+@pytest.mark.parametrize(
+    "news",
+    [UNIVERSE + ["*"], ["*"]],
+    ids=["universe_plus_wildcard", "wildcard_alone"],
+)
+def test_subscription_ack_wildcard_fails_closed(news):
+    with pytest.raises(rw19.CaptureFailure) as error:
+        _capture_segment(success_socket(news=news))
+    assert error.value.failure_class == "socket_subscribe"
+    assert error.value.detail == ACK_UNIVERSE_CHANGED
+
+
+def test_second_segment_subscription_mismatch_publishes_partial_tombstone(tmp_path):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    mismatched = success_socket(news=UNIVERSE[:-1])
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([success_socket(101), mismatched]),
+        client_factory=lambda **_kwargs: pytest.fail("REST must not run"),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=iter(range(100)).__next__,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "aborted"
+    assert result["classification"] == "FAILED_CAPTURE"
+    assert result["failure_class"] == "socket_subscribe"
+    assert not (tmp_path / "capture").exists()
+    tombstone = tmp_path / "aborted"
+    assert tombstone.is_dir()
+    assert rw19.verify_aborted(tombstone, expected_plan_sha256=plan_hash)["ok"] is True
+    # Tombstones may retain an offending subscription ack; verify_aborted must still accept.
+    controls = rw19._read_jsonl(tombstone / "raw" / "control-after.jsonl", "test")
+    assert any(
+        row["message"] == {"T": "subscription", "news": UNIVERSE[:-1]}
+        for row in controls
+    )
+    before = rw19._read_jsonl(tombstone / "raw" / "ws-before.jsonl", "test")
+    assert [row["message"]["id"] for row in before] == [101]
+
+
+def test_second_segment_mid_stream_subscription_mismatch_is_tombstoned(tmp_path):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    trailing = (json.dumps([{"T": "subscription", "news": UNIVERSE[:-1]}]),)
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([
+            success_socket(101),
+            success_socket(102, trailing=trailing),
+        ]),
+        client_factory=lambda **_kwargs: pytest.fail("REST must not run"),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=lambda: 0,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "aborted"
+    assert result["classification"] == "FAILED_CAPTURE"
+    assert result["failure_class"] == "socket_subscribe"
+    assert not (tmp_path / "capture").exists()
+    tombstone = tmp_path / "aborted"
+    assert tombstone.is_dir()
+    assert rw19.verify_aborted(tombstone, expected_plan_sha256=plan_hash)["ok"] is True
+    controls = rw19._read_jsonl(tombstone / "raw" / "control-after.jsonl", "test")
+    assert any(
+        row["message"] == {"T": "subscription", "news": UNIVERSE[:-1]}
+        for row in controls
+    )
+
+
+def test_mid_stream_permuted_subscription_is_journaled_and_continues():
+    assert PERMUTED_UNIVERSE != UNIVERSE
+    controls = []
+    rows = []
+    trailing = (
+        json.dumps([{"T": "subscription", "news": PERMUTED_UNIVERSE}]),
+        json.dumps([{
+            "T": "n",
+            "id": 55,
+            "created_at": "2026-08-25T16:00:00Z",
+            "updated_at": "2026-08-25T16:00:00Z",
+            "symbols": ["NVDA"],
+        }]),
+    )
+    _capture_segment(
+        success_socket(trailing=trailing),
+        control_sink=controls.append,
+        row_sink=rows.append,
+    )
+    subscription_news = [
+        row["message"]["news"]
+        for row in controls
+        if row["message"].get("T") == "subscription"
+    ]
+    assert subscription_news == [UNIVERSE, PERMUTED_UNIVERSE]
+    assert subscription_news[1] != UNIVERSE
+    assert [row["message"]["id"] for row in rows] == [55]
+
+
+@pytest.mark.parametrize(
+    "bad_news",
+    [UNIVERSE[:-1], UNIVERSE + ["ZZZZ"]],
+    ids=["drops_symbol", "adds_symbol"],
+)
+def test_mid_stream_subscription_mismatch_fails_closed_after_journaling(tmp_path, bad_news):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    trailing = (json.dumps([{"T": "subscription", "news": bad_news}]),)
+    result = rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([success_socket(101, trailing=trailing)]),
+        client_factory=lambda **_kwargs: pytest.fail("REST must not run"),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        # Freeze monotonic so the mid-stream control is read before segment timeout.
+        monotonic=lambda: 0,
+        sleeper=lambda _seconds: None,
+    )
+    assert result["status"] == "aborted"
+    assert result["classification"] == "FAILED_CAPTURE"
+    assert result["failure_class"] == "socket_subscribe"
+    assert not (tmp_path / "capture").exists()
+    tombstone = tmp_path / "aborted"
+    assert tombstone.is_dir()
+    assert rw19.verify_aborted(tombstone, expected_plan_sha256=plan_hash)["ok"] is True
+    controls = rw19._read_jsonl(tombstone / "raw" / "control-before.jsonl", "test")
+    assert any(
+        row["message"] == {"T": "subscription", "news": bad_news}
+        for row in controls
+    )
+    before = rw19._read_jsonl(tombstone / "raw" / "ws-before.jsonl", "test")
+    assert [row["message"]["id"] for row in before] == [101]
 
 
 def test_segment_buffers_news_arriving_before_subscription_ack():
@@ -773,6 +1094,57 @@ def test_verifier_rejects_extra_artifact(tmp_path):
         rw19.verify(tmp_path / "capture", expected_plan_sha256=plan_hash)
 
 
+def test_verifier_rejects_resealed_wrong_universe_subscription_ack(tmp_path):
+    plan_path, plan_hash, _ = plan(tmp_path)
+    rw19.collect(
+        plan_path,
+        preflight(tmp_path),
+        tmp_path / "capture",
+        expected_plan_sha256=plan_hash,
+        credential_loader=lambda: ("fixture-key", "fixture-secret"),
+        connector=Connector([success_socket(101), success_socket(102)]),
+        client_factory=client_factory([StreamResponse({"news": []})], {}),
+        source_state=source_state(),
+        source_state_reader=source_state,
+        clock=Clock(),
+        monotonic=iter(range(100)).__next__,
+        sleeper=lambda _seconds: None,
+    )
+    assert rw19.verify(tmp_path / "capture", expected_plan_sha256=plan_hash)["ok"] is True
+
+    control_path = tmp_path / "capture" / "raw" / "control-before.jsonl"
+    rows = rw19._read_jsonl(control_path, "test")
+    wrong = UNIVERSE[:-1]
+    rewritten = False
+    for row in rows:
+        if row["message"].get("T") == "subscription":
+            row["message"]["news"] = wrong
+            rewritten = True
+    assert rewritten
+    payload = b"".join(canonical(row) + b"\n" for row in rows)
+    control_path.write_bytes(payload)
+
+    manifest_path = tmp_path / "capture" / rw19.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["raw"]["control_before"] = {
+        "path": "raw/control-before.jsonl",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+        "rows": len(rows),
+    }
+    body = {key: value for key, value in manifest.items() if key != "collection_hash"}
+    manifest["collection_hash"] = hashlib.sha256(canonical(body)).hexdigest()
+    sidecar_hash = write_json(manifest_path, manifest)
+    (tmp_path / "capture" / rw19.MANIFEST_HASH_NAME).write_text(
+        sidecar_hash + "\n", encoding="ascii"
+    )
+    with pytest.raises(
+        rw19.EvidenceError,
+        match="journaled subscription acknowledgement violates the planned universe",
+    ):
+        rw19.verify(tmp_path / "capture", expected_plan_sha256=plan_hash)
+
+
 def test_verifier_rejects_reordered_capture_timestamps(tmp_path):
     plan_path, plan_hash, _ = plan(tmp_path)
     rw19.collect(
@@ -878,15 +1250,143 @@ def test_verifier_rejects_symlinked_package_root_when_supported(tmp_path):
 
 
 def test_tool_imports_no_runtime_or_order_path_module():
-    imported = set()
-    for node in ast.walk(ast.parse(TOOL.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module)
-        elif isinstance(node, ast.Import):
-            imported.update(alias.name for alias in node.names)
+    """Transitive containment (QT-06 idiom): walk the collector's first-party import
+    closure — module-level and function-local, including relative imports — and
+    forbid runtime/order-path roots.
+
+    Guarantees:
+    - Static import names whose top-level is a forbidden root are rejected, except
+      ``orchestrator.market_calendar`` (reached via characterization's function-local
+      import).
+    - Every visited file under ``app/`` whose dotted module name begins with a
+      forbidden root must itself be on the membership allowlist
+      ``{orchestrator.market_calendar, orchestrator}`` (the bare package init is
+      enqueued when importing a submodule).
+    - Allowlisted files are pinned: ``market_calendar`` may import only
+      ``{__future__, datetime}``; ``orchestrator/__init__.py`` must contain zero
+      import statements.
+    """
+    app_root = ROOT / "app"
     forbidden = ("brokers", "config", "main", "orchestrator", "risk", "sqlalchemy", "storage")
-    assert not any(
-        module == prefix or module.startswith(prefix + ".")
-        for module in imported
-        for prefix in forbidden
+    # Narrow: characterization's session-bounds helper only. Do not widen without a
+    # matching stdlib-purity proof for the newly allowed module.
+    allowed = frozenset({"orchestrator.market_calendar"})
+    membership_allowlist = frozenset({"orchestrator.market_calendar", "orchestrator"})
+    calendar_stdlib = frozenset({"__future__", "datetime"})
+
+    def module_path(parts: tuple[str, ...]) -> Path | None:
+        """Resolve a static module name inside ``app_root`` without importing it."""
+        if not parts:
+            return None
+        module = app_root.joinpath(*parts)
+        source = module.with_suffix(".py")
+        if source.is_file():
+            return source
+        package = module / "__init__.py"
+        return package if package.is_file() else None
+
+    def local_import_targets(path: Path, tree: ast.AST) -> set[Path]:
+        """Local modules reachable through ordinary static imports (incl. package inits)."""
+        try:
+            rel = path.relative_to(app_root)
+        except ValueError:
+            package: tuple[str, ...] = ()
+        else:
+            if path.name == "__init__.py":
+                package = rel.parent.parts
+            else:
+                package = rel.with_suffix("").parts[:-1]
+
+        targets: set[Path] = set()
+        for node in ast.walk(tree):
+            names: list[tuple[str, ...]] = []
+            if isinstance(node, ast.Import):
+                names.extend(tuple(alias.name.split(".")) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    keep = len(package) - (node.level - 1)
+                    if keep < 0:
+                        continue
+                    base = package[:keep]
+                else:
+                    base = ()
+                if node.module:
+                    base += tuple(node.module.split("."))
+                names.append(base)
+                names.extend(base + tuple(alias.name.split(".")) for alias in node.names)
+
+            for parts in names:
+                target = module_path(parts)
+                if target is not None:
+                    targets.add(target)
+                # Importing ``ingest.characterization`` executes package initializers first.
+                for end in range(1, len(parts)):
+                    initializer = app_root.joinpath(*parts[:end], "__init__.py")
+                    if initializer.is_file():
+                        targets.add(initializer)
+        return targets
+
+    def imported_modules(tree: ast.AST):
+        """Full module names from every static import form (module-level or nested)."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    yield alias.name
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                yield node.module
+
+    def is_forbidden(module: str) -> bool:
+        if module in allowed:
+            return False
+        return any(module == prefix or module.startswith(prefix + ".") for prefix in forbidden)
+
+    def dotted_module_name(path: Path) -> str | None:
+        try:
+            rel = path.relative_to(app_root)
+        except ValueError:
+            return None
+        if path.name == "__init__.py":
+            return ".".join(rel.parent.parts)
+        return ".".join(rel.with_suffix("").parts)
+
+    offenders: list[str] = []
+    pending = [TOOL]
+    visited: set[Path] = set()
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        try:
+            label = str(path.relative_to(ROOT)).replace("\\", "/")
+        except ValueError:
+            label = path.name
+        for module in imported_modules(tree):
+            if is_forbidden(module):
+                offenders.append(f"{label} imports {module}")
+        dotted = dotted_module_name(path)
+        if dotted:
+            top = dotted.split(".", 1)[0]
+            if top in forbidden and dotted not in membership_allowlist:
+                offenders.append(f"closure member {dotted} ({label})")
+        pending.extend(local_import_targets(path, tree) - visited)
+
+    assert not offenders, (
+        "RW-19 collector first-party closure must not reach runtime/order-path modules: "
+        f"{offenders}"
+    )
+
+    calendar = app_root / "orchestrator" / "market_calendar.py"
+    calendar_roots = {
+        module.split(".")[0]
+        for module in imported_modules(ast.parse(calendar.read_text(encoding="utf-8")))
+    }
+    assert calendar_roots <= calendar_stdlib, (
+        "orchestrator.market_calendar allowlist requires stdlib-only imports "
+        f"{sorted(calendar_stdlib)}; found {sorted(calendar_roots)}"
+    )
+    package_init = app_root / "orchestrator" / "__init__.py"
+    assert list(imported_modules(ast.parse(package_init.read_text(encoding="utf-8")))) == [], (
+        "orchestrator package init must contain zero import statements"
     )
