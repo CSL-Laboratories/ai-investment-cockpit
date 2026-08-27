@@ -511,6 +511,18 @@ def _safe_control(message: dict) -> dict:
     return {"T": control_type}
 
 
+def _subscription_ack_error(ack: object, symbols: tuple[str, ...]) -> str | None:
+    if not isinstance(ack, list):
+        return "subscription acknowledgement news is not a list"
+    if any(not isinstance(entry, str) for entry in ack):
+        return "subscription acknowledgement contains a non-string entry"
+    if len(set(ack)) != len(ack):
+        return "subscription acknowledgement contains duplicate symbols"
+    if set(ack) != set(symbols):
+        return "subscription acknowledgement changed the symbol universe"
+    return None
+
+
 def _expect_control(
     socket: Any,
     *,
@@ -571,10 +583,10 @@ def _expect_control(
         message = matched[0]
         if expected_message is not None and message.get("msg") != expected_message:
             raise CaptureFailure(failure_class, f"expected {expected_message} control")
-        if expected_type == "subscription" and message.get("news") != list(symbols):
-            raise CaptureFailure(
-                failure_class, "subscription acknowledgement changed the symbol universe"
-            )
+        if expected_type == "subscription":
+            detail = _subscription_ack_error(message.get("news"), symbols)
+            if detail is not None:
+                raise CaptureFailure(failure_class, detail)
         return received_at
 
 
@@ -689,6 +701,10 @@ def _capture_news_segment(
                             "received_at": received_at.isoformat(),
                             "message": _safe_control(message),
                         })
+                        if message_type == "subscription":
+                            detail = _subscription_ack_error(message.get("news"), symbols)
+                            if detail is not None:
+                                raise CaptureFailure("socket_subscribe", detail)
                     else:
                         raise CaptureFailure("socket_protocol", "unexpected news WebSocket message type")
     except CaptureFailure:
@@ -1076,6 +1092,18 @@ def verify(package_dir: Path, *, expected_plan_sha256: str) -> dict:
         expected_plan_sha256=expected_plan_sha256,
         output_key="capture_directory",
     )
+    # Complete packages must re-derive the ack invariant from journaled control rows.
+    # verify_aborted is exempt: a tombstone legitimately preserves the offending ack.
+    planned_universe = tuple(manifest["universe_symbols"])
+    for journal_name in ("control_before", "control_after"):
+        for row in rows[journal_name]:
+            message = row["message"]
+            if message.get("T") != "subscription":
+                continue
+            if _subscription_ack_error(message.get("news"), planned_universe) is not None:
+                raise EvidenceError(
+                    "journaled subscription acknowledgement violates the planned universe"
+                )
     _validate_source_state(manifest["post_source_state"], plan["source_commit"])
     before = rows["websocket_before"]
     after = rows["websocket_after"]
