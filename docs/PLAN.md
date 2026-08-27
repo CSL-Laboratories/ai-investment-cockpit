@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-24
+last-verified: 2026-08-27
 ---
 
 # The plan
@@ -107,6 +107,21 @@ Those are hash-valid insufficient samples, not reconnect or correction evidence.
 a non-empty news correction/reconnect sample, and a bounded deterministic coalescing decision
 remain open, so `DEC-07` is unresolved. See
 [[evidence/rw14-rw19-live-evidence-2026-08-18]].
+
+Two later plan-bound NVIDIA-window attempts aborted without collecting news articles.
+2026-08-26: headless resume arrived ~20 minutes after the sealed 20:50:00Z start; the collector
+refused before staging/credentials/network (exit 2, zero Alpaca requests). That record is an
+operator-authored pre-start refusal, not a collector tombstone; a first-class pre-start refusal
+command/schema would be a separate future package. 2026-08-27 aftermath: start and fresh
+preflight were green, WebSocket connect/auth succeeded, then Alpaca's correct but reordered
+11-symbol subscription ack failed order-identical list equality (`BUG-111`); the collector
+classified `socket_subscribe`, failed closed, and published a verified tombstone with zero news
+frames, zero REST, and no retry. Mid-stream subscription-control frames were journaled but not
+re-validated (`BUG-112`). Repair is on `work/rw19-ack-set-validation` (order-independent
+exact-unique-set validation). Empirical RW-19 status is unchanged: zero news articles from these
+attempts; no reconnect identity/correction/late-delivery/REST-backfill evidence; `DEC-07`
+unresolved. Useful negative progress, not completion. See
+[[evidence/rw19-ack-order-defect-2026-08-27]].
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
 PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
