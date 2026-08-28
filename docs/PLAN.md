@@ -125,10 +125,19 @@ Task Scheduler script — adversarially reviewed (four P1 probe-blindness defect
 with regressions) and validated on the Windows `.venv` runtime that executes it, with WSL cells
 deferred by explicit operator decision. Scheduling automates only launch timing; every capture
 still requires fresh per-window operator authorization, and the collector's own gates remain
-the enforcement point. Empirical RW-19 status is unchanged: zero news articles from these
-attempts; no reconnect identity/correction/late-delivery/REST-backfill evidence; `DEC-07`
-unresolved. Useful negative progress, not completion. See
-[[evidence/rw19-ack-order-defect-2026-08-27]].
+the enforcement point. That tooling then produced its first result. On 2026-08-28 the one-shot
+launcher ran the sealed close-transition window unattended end to end - fired at 19:15:01Z,
+fresh green preflight at T-2, collector started 0.016s off the sealed 19:30:00Z start, the
+deliberate five-second disconnect straddling the 20:00Z close - and reached
+`terminal_state=COMPLETE_VERIFIED`, the first non-empty plan-bound news capture: 4 identities
+across the two thirty-minute segments, combined stream recall of the REST census of 1.0, zero
+cross-segment overlap, and zero observed corrections. The empirical gate nevertheless stays
+open, because the blind window was empty - nothing was published during the disconnect, so
+there was nothing to lose or recover. The apparatus is now proven end to end; news
+blind-window loss and recovery, correction and update behavior across reconnect, and broader
+regimes remain unmeasured, and `DEC-07` is unresolved. Apparatus complete, evidence partial.
+See [[evidence/rw19-ack-order-defect-2026-08-27]] and
+[[evidence/rw19-close-transition-capture-2026-08-28]].
 
 **Verification posture:** RW-14 merged in PR #31, W-21 in PR #33, RW-15 in PR #34, W-22 in
 PR #35, and the bring-up repairs plus W-23 in PR #36. The PR #36 tree passes 2,240 tests / 1
