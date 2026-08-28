@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-27
+last-verified: 2026-08-28
 ---
 
 # The plan
@@ -117,8 +117,15 @@ preflight were green, WebSocket connect/auth succeeded, then Alpaca's correct bu
 11-symbol subscription ack failed order-identical list equality (`BUG-111`); the collector
 classified `socket_subscribe`, failed closed, and published a verified tombstone with zero news
 frames, zero REST, and no retry. Mid-stream subscription-control frames were journaled but not
-re-validated (`BUG-112`). Repair is on `work/rw19-ack-set-validation` (order-independent
-exact-unique-set validation). Empirical RW-19 status is unchanged: zero news articles from these
+re-validated (`BUG-112`). The repair merged as PR #56 (main `38eab5a2`). Because the operator
+repeatedly missed sealed window starts, per-window unattended-launch tooling followed on
+`work/rw19-autolaunch`: a strictly read-only fail-closed safety-preflight generator, a one-shot
+no-retry launcher with an outcome state machine and contained rehearsal mode, and a per-window
+Task Scheduler script — adversarially reviewed (four P1 probe-blindness defects found and fixed
+with regressions) and validated on the Windows `.venv` runtime that executes it, with WSL cells
+deferred by explicit operator decision. Scheduling automates only launch timing; every capture
+still requires fresh per-window operator authorization, and the collector's own gates remain
+the enforcement point. Empirical RW-19 status is unchanged: zero news articles from these
 attempts; no reconnect identity/correction/late-delivery/REST-backfill evidence; `DEC-07`
 unresolved. Useful negative progress, not completion. See
 [[evidence/rw19-ack-order-defect-2026-08-27]].
