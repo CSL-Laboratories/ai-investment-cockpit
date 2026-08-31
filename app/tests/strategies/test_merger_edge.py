@@ -402,10 +402,12 @@ def _composed_paper_service(merger):
     job = AgentJob(
         id=new_id("job"), runtime="claude", model="deep", model_pinned="pinned",
         prompt_template="trade_proposal.v1", prompt_hash="h" * 16,
-        input_refs={}, schema_id="TradeProposal", status="done", created_at=st.clock.now(),
+        input_refs={"_generation": 0}, schema_id="TradeProposal", status="done",
+        created_at=st.clock.now(),
     )
     st.audit.record_state_change(
-        job, "agent_job", actor="agent_calls", payload={"status": "done", "runtime": "claude"}
+        job, "agent_job", actor="agent_calls",
+        payload={"status": "done", "runtime": "claude", "generation": 0},
     )
     payload = {
         **_proposal(quantity=1), "order_type": "limit", "sizing_basis": "capped",
@@ -417,7 +419,15 @@ def _composed_paper_service(merger):
         order_id=scenario.order.id, created_at=st.clock.now(), updated_at=st.clock.now(),
     )
     st.audit.record_state_change(
-        proposal, "proposal", actor="proposals", payload={"status": "draft", "symbol": SYMBOL}
+        proposal, "trade_proposal", actor="proposals",
+        payload={
+            "proposal_id": proposal.id,
+            "status": "draft",
+            "symbol": SYMBOL,
+            "job_id": job.id,
+            "risk_decision_id": scenario.risk_decision.id,
+            "order_id": scenario.order.id,
+        },
     )
     service = PaperExecutionService(
         st, broker=broker, gateway=gateway, token_registry=registry,

@@ -22,7 +22,7 @@ from orchestrator.mode_ladder import (
     assert_execution_runtime,
     legal_transition,
 )
-from orchestrator.state import EVENT_ADJUDICATION, OrchestratorState
+from orchestrator.state import EVENT_ADJUDICATION, EVENT_WATCH_ONLY, OrchestratorState
 from storage.engine import create_all, make_engine, make_session_factory
 
 KEY = b"wp5-unit-key"
@@ -291,9 +291,32 @@ def test_watch_only_does_not_drop_mode_and_bumps_generation(st):
     assert lad.current() is Mode.auto_veto              # L8 does NOT drop mode
     with pytest.raises(bk.StaleAnalysisError):
         eng.assert_fresh_analysis("claude", gen0)       # pre-exhaustion analysis refused
+    with pytest.raises(bk.StaleAnalysisError):
+        eng.assert_fresh_analysis("claude", gen0 + 2)   # a forged future generation is not fresh
+    eng.assert_fresh_analysis("claude", gen0 + 1)
     # recovery fails closed to review_live, never the prior auto mode
     _, mode_after = eng.recover_from_watch_only("claude", prev_state=Mode.auto_veto)
     assert mode_after is Mode.review_live and not eng.is_watch_only("claude")
+
+
+def test_restart_with_malformed_signed_watch_only_event_fails_closed(st):
+    """A valid HMAC does not make a malformed state payload usable authority."""
+    st.audit.append(
+        EVENT_WATCH_ONLY,
+        actor="test",
+        refs={"vendor": "claude"},
+        payload={"vendor": "claude", "state": "exhausted"},  # generation deliberately absent
+    )
+
+    restarted = OrchestratorState.build(
+        st.session_factory,
+        hmac_key=KEY,
+        settings=Settings(),
+        clock=st.clock,
+    )
+
+    assert restarted.usage.integrity_error is not None
+    assert bk.BreakerEngine(restarted).is_watch_only() is True
 
 
 # ---- killswitch (SEC-04 ordering + sentinel) ------------------------------------------

@@ -9,6 +9,7 @@ from brokers.gateway import OrderGateway
 from brokers.paper_execution import PaperExecutionError, PaperExecutionService
 from config.settings import DecisionRuntime, Mode
 from core.ids import new_id
+from orchestrator.breakers import BreakerEngine
 from quant.book.lob import BookSnapshot, LevelSnapshot
 from quant.events import PriceScale, to_ns
 from quant.verify import VerifyParams
@@ -43,7 +44,7 @@ class _MarketData:
 
 
 def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
-             execution_verdict=None, edge_provider=None):
+             execution_verdict=None, edge_provider=None, generation=0):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -57,7 +58,8 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
     broker = AlpacaPaperBroker(client=client)
     registry = TokenRegistry()
     gateway = OrderGateway(
-        broker, st=st, token_registry=registry, execution_scope="paper"
+        broker, st=st, token_registry=registry, execution_scope="paper",
+        require_analysis_generation=True,
     )
     scenario = build_scenario(
         st, mode=Mode.paper, broker=broker, gateway=gateway, qty="1",
@@ -67,10 +69,12 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
     job = AgentJob(
         id=new_id("job"), runtime=runtime, model="deep", model_pinned="pinned",
         prompt_template="trade_proposal.v1", prompt_hash="h" * 16,
-        input_refs={}, schema_id="TradeProposal", status="done", created_at=st.clock.now(),
+        input_refs={"_generation": generation}, schema_id="TradeProposal", status="done",
+        created_at=st.clock.now(),
     )
     st.audit.record_state_change(
-        job, "agent_job", actor="agent_calls", payload={"status": "done", "runtime": runtime}
+        job, "agent_job", actor="agent_calls",
+        payload={"status": "done", "runtime": runtime, "generation": generation},
     )
     proposal = ProposalRecord(
         id="p1", symbol="AAPL", side="buy", status="draft", flagged=False,
@@ -83,7 +87,15 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
         order_id=scenario.order.id, created_at=st.clock.now(), updated_at=st.clock.now(),
     )
     st.audit.record_state_change(
-        proposal, "proposal", actor="proposals", payload={"status": "draft", "symbol": "AAPL"}
+        proposal, "trade_proposal", actor="proposals",
+        payload={
+            "proposal_id": proposal.id,
+            "status": "draft",
+            "symbol": "AAPL",
+            "job_id": job.id,
+            "risk_decision_id": scenario.risk_decision.id,
+            "order_id": scenario.order.id,
+        },
     )
     service = PaperExecutionService(
         st, broker=broker, gateway=gateway, token_registry=registry,
@@ -162,6 +174,126 @@ def test_runtime_mismatch_cannot_enter_paper_order_path(st, monkeypatch):
         assert exc.code == "runtime_not_allowed"
     else:  # pragma: no cover - explicit safety assertion
         raise AssertionError("a proposal from the non-selected runtime must not reach paper broker")
+    assert client.submitted == []
+
+
+def test_approval_refuses_stale_agent_generation(st):
+    service, scenario, client = _service(st)
+    breaker = BreakerEngine(st)
+    breaker.enter_watch_only("claude", "test exhaustion", actor="test")
+    breaker.recover_from_watch_only("claude", Mode.paper, actor="test")
+    assert breaker.current_generation("claude") == 2
+
+    try:
+        service.decide(
+            scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-stale-generation",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "stale_analysis"
+    else:  # pragma: no cover - explicit order-authority assertion
+        raise AssertionError("pre-blackout analysis must not regain paper authority")
+    assert client.submitted == []
+
+
+def test_approval_refuses_missing_generation(st):
+    missing_service, missing_scenario, missing_client = _service(st, generation=None)
+    try:
+        missing_service.decide(
+            missing_scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-missing-generation",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "analysis_authority_unavailable"
+    else:  # pragma: no cover
+        raise AssertionError("a missing signed generation must fail closed")
+    assert missing_client.submitted == []
+
+
+def test_approval_refuses_future_generation(st):
+    future_service, future_scenario, future_client = _service(st, generation=99)
+    try:
+        future_service.decide(
+            future_scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-future-generation",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "stale_analysis"
+    else:  # pragma: no cover
+        raise AssertionError("a future generation must not skip signed authority")
+    assert future_client.submitted == []
+
+
+def test_mutable_proposal_job_swap_cannot_replace_signed_generation(st):
+    service, scenario, client = _service(st)
+    replacement = AgentJob(
+        id=new_id("job"), runtime="claude", model="deep", model_pinned="pinned",
+        prompt_template="trade_proposal.v1", prompt_hash="r" * 16,
+        input_refs={"_generation": 0}, schema_id="TradeProposal", status="done",
+        created_at=st.clock.now(),
+    )
+    st.audit.record_state_change(
+        replacement,
+        "agent_job",
+        actor="agent_calls",
+        payload={"status": "done", "runtime": "claude", "generation": 0},
+    )
+    with st.session_factory() as session, session.begin():
+        proposal = session.get(ProposalRecord, "p1")
+        proposal.job_id = replacement.id
+    assert st.audit.verify_chain().ok
+
+    try:
+        service.decide(
+            scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-swapped-job",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "analysis_authority_unavailable"
+    else:  # pragma: no cover
+        raise AssertionError("a mutable job-id swap must not replace signed lineage")
+    assert client.submitted == []
+
+
+def test_gateway_rechecks_generation_after_approval_mint(st, monkeypatch):
+    import brokers.paper_execution as paper_module
+
+    service, scenario, client = _service(st)
+    original = paper_module.record_decision
+
+    def change_generation(*args, **kwargs):
+        adjudication = original(*args, **kwargs)
+        if kwargs.get("user_decision") == "approve":
+            # Simulate a vendor-state transition in the narrow interval after the service's
+            # signed-lineage check but before OrderGateway.review_equity_order.
+            st.usage.window("claude").generation += 1
+        return adjudication
+
+    monkeypatch.setattr(paper_module, "record_decision", change_generation)
+    try:
+        service.decide(
+            scenario.order.id,
+            actor=OPERATOR_ID,
+            decision="approve",
+            confirm_symbol="AAPL",
+            request_id="paper-generation-race",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "gateway_analysis_freshness"
+    else:  # pragma: no cover
+        raise AssertionError("gateway must recheck generation after approval mint")
     assert client.submitted == []
 
 
@@ -292,7 +424,10 @@ def test_equity_drawdown_trip_blocks_the_gateway_before_broker_submit(st):
         risk_decision_id=scenario.risk_decision.id,
         order_tuple_hash=scenario.tuple_hash,
     )
-    blocked = scenario.gateway.submit(scenario.order, **scenario.submit_kwargs())
+    blocked = scenario.gateway.submit(
+        scenario.order,
+        **scenario.submit_kwargs(analysis_vendor="claude", analysis_generation=0),
+    )
     assert not blocked.ok and blocked.stage == "breaker"
     assert "daily_equity_drawdown" in blocked.reason
     assert client.submitted == []

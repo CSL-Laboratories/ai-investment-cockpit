@@ -702,6 +702,7 @@ def build_paper_execution(state, *, client=None, watchlist_fn=None, parquet_root
         pending_exposure_cap=state.settings.pending_exposure_cap,
         approval_ttl_seconds=state.settings.approval_ttl_seconds,
         execution_scope="paper",
+        require_analysis_generation=True,
     )
     symbols = frozenset(watchlist_fn()) if watchlist_fn is not None else frozenset()
     def held_symbols():

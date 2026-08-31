@@ -310,7 +310,8 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
     state.audit.record_state_change(
         record, EVENT_PROPOSAL, actor="proposals",
         payload={"proposal_id": pid, "symbol": record.symbol, "status": status,
-                 "flagged": flagged},
+                 "flagged": flagged, "job_id": job_id,
+                 "risk_decision_id": risk_decision_id, "order_id": order_id},
     )
     return record
 

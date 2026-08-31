@@ -115,7 +115,11 @@ def test_approved_draft_resolves_canonical_order(st, clock, tmp_path):
     assert outcome.embed["risk"]["decision"] == "approved"
     assert outcome.embed["proposal_id"] == "prop-1"
     assert outcome.embed["order_id"] == order.id
-    assert _payloads(st, EVENT_PROPOSAL)[-1]["status"] == "draft"
+    proposal_event = _payloads(st, EVENT_PROPOSAL)[-1]
+    assert proposal_event["status"] == "draft"
+    assert proposal_event["job_id"] == outcome.record.job_id
+    assert proposal_event["risk_decision_id"] == outcome.risk_decision.id
+    assert proposal_event["order_id"] == order.id
     assert _payloads(st, "risk_decision")[-1]["decision"] == "approved"
     assert st.audit.verify_chain().ok
 

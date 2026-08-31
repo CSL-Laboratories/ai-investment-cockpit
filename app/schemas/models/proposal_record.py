@@ -35,7 +35,8 @@ class ProposalRecord(Base):
     # Schema-validated TradeProposal output.
     payload: Mapped[dict] = mapped_column(JSON)
 
-    # AgentJob id of the deep call that drafted it.
+    # AgentJob id of the deep call that drafted it.  BUG-113 also binds this id in the
+    # covering EVENT_PROPOSAL payload so a mutable-row rewrite cannot swap generations.
     job_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # RiskDecision id once evaluated; Order id once (and only if) approved.
