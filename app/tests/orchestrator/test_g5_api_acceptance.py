@@ -151,6 +151,7 @@ def test_g5_8_status_returns_mode_breakers_usage(client):
     assert body["audit_chain"]["ok"] is True
     assert body["mode"]["mode"] == "read_only"
     assert isinstance(body["breakers"], dict) and isinstance(body["usage"], dict)
+    assert body["usage_integrity_error"] is None
 
 
 def test_g5_8_status_reflects_a_breaker_trip(client, state):

@@ -38,7 +38,7 @@ from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
 from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
 
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
-from orchestrator.breakers import BreakerThresholds
+from orchestrator.breakers import BreakerThresholds, StaleAnalysisError
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.market_calendar import (
     CalendarCoverageError,
@@ -190,6 +190,7 @@ class OrderGateway:
         pending_exposure_cap: Decimal | None = None,
         approval_ttl_seconds: int | None = None,
         execution_scope: str = "live",
+        require_analysis_generation: bool = False,
     ) -> None:
         # SEC-03: broker + registry are PRIVATE instance state — never module globals, never
         # dispatched by string name. ``st`` (the TRUST ROOT — the HMAC-signed audit chain + its DB)
@@ -206,6 +207,9 @@ class OrderGateway:
             raise ValueError(f"unknown broker execution_scope {execution_scope!r}")
         self._execution_scope = execution_scope
         self._allowed_modes = _ORDER_AUTHORITY_BY_SCOPE[execution_scope]
+        # Production paper composition enables this.  Low-level gateway fixtures that test
+        # unrelated gates may omit agent lineage, but the real proposal path may not.
+        self._require_analysis_generation = bool(require_analysis_generation)
 
     def _resolve_state(self, ladder):
         """Return the pinned TRUST ROOT for gate (e). The signed audit chain is the order authority;
@@ -393,7 +397,8 @@ class OrderGateway:
 
     # ---- the pre-trade gate (checks a-f, h) — shared by review AND submit --------------
     def _precheck(self, st, order, *, approval, risk_decision, ladder, breaker_engine,
-                  risk_recheck, positions, producing_runtime, resolved_hash, clock):
+                  risk_recheck, positions, producing_runtime, analysis_vendor,
+                  analysis_generation, resolved_hash, clock):
         """Run gates (a) HALT, (b) mode, (c) SEC-01 breaker, (d) risk re-run, (e) approval
         validity, (f) runtime pin — in order. Returns ``(stage, event, reason)`` on the FIRST
         failure (``event`` is the audit event to record; ``None`` for the caller to default to
@@ -451,6 +456,31 @@ class OrderGateway:
                 None,
                 f"mode {mode_v!r} cannot use {self._execution_scope!r} broker transport",
             )
+        # BUG-113: the composed paper service derives these values from the signed
+        # proposal->AgentJob lineage.  Re-check inside both review and submit so a generation
+        # change between operator approval and the broker boundary fails closed.
+        if (
+            self._require_analysis_generation
+            or analysis_vendor is not None
+            or analysis_generation is not None
+        ):
+            if analysis_vendor != producing_runtime:
+                return (
+                    "analysis_freshness",
+                    None,
+                    "analysis vendor does not match the producing runtime",
+                )
+            try:
+                breaker_engine.assert_fresh_analysis(
+                    analysis_vendor,
+                    analysis_generation,
+                )
+            except (StaleAnalysisError, TypeError, ValueError):
+                return (
+                    "analysis_freshness",
+                    None,
+                    "analysis generation is missing, malformed, or stale (SEC-23)",
+                )
         try:
             active_breakers = breaker_engine.active_trips()
         except Exception:  # noqa: BLE001 - unreadable breaker authority must refuse
@@ -666,7 +696,8 @@ class OrderGateway:
 
     # ---- public: pure dry-run re-check (no submit, no token consume) --------------------
     def review_equity_order(self, order, *, approval, risk_decision, ladder, breaker_engine,
-                            risk_recheck, positions, producing_runtime, clock=None):
+                            risk_recheck, positions, producing_runtime,
+                            analysis_vendor=None, analysis_generation=None, clock=None):
         """Run gates (a)-(f) + (h) WITHOUT submitting or consuming the capability token — a
         pure dry-run TOCTOU re-check. Returns a ``GateOutcome``. ``place_equity_order`` calls
         this first and refuses if it refuses (G7: review precedes place)."""
@@ -677,7 +708,8 @@ class OrderGateway:
             fail = self._precheck(
                 st, order, approval=approval, risk_decision=risk_decision, ladder=ladder,
                 breaker_engine=breaker_engine, risk_recheck=risk_recheck, positions=positions,
-                producing_runtime=producing_runtime, resolved_hash=resolved_hash, clock=clock,
+                producing_runtime=producing_runtime, analysis_vendor=analysis_vendor,
+                analysis_generation=analysis_generation, resolved_hash=resolved_hash, clock=clock,
             )
             if fail is not None:
                 stage, event, reason = fail
@@ -697,7 +729,8 @@ class OrderGateway:
 
     # ---- public: the single LOCKED submit transaction (a)-(h) + two-phase submit --------
     def submit(self, order, *, approval, risk_decision, ladder, breaker_engine, risk_recheck,
-               positions, token_nonce, producing_runtime, clock=None) -> GateOutcome:
+               positions, token_nonce, producing_runtime, analysis_vendor=None,
+               analysis_generation=None, clock=None) -> GateOutcome:
         """Re-run EVERY gate immediately before the broker call, failing CLOSED on the first
         failure (audited; bypass events recorded so the gate sees them). Only if all pass:
         two-phase submit (intent -> broker.submit_order -> result), consume the single-use
@@ -712,7 +745,8 @@ class OrderGateway:
             fail = self._precheck(
                 st, order, approval=approval, risk_decision=risk_decision, ladder=ladder,
                 breaker_engine=breaker_engine, risk_recheck=risk_recheck, positions=positions,
-                producing_runtime=producing_runtime, resolved_hash=resolved_hash, clock=clock,
+                producing_runtime=producing_runtime, analysis_vendor=analysis_vendor,
+                analysis_generation=analysis_generation, resolved_hash=resolved_hash, clock=clock,
             )
             if fail is not None:
                 stage, event, reason = fail
@@ -929,13 +963,14 @@ class OrderGateway:
     # ---- public: place = review THEN submit (review provably precedes submit) -----------
     def place_equity_order(self, order, *, approval, risk_decision, ladder, breaker_engine,
                            risk_recheck, positions, token_nonce, producing_runtime,
-                           clock=None) -> GateOutcome:
+                           analysis_vendor=None, analysis_generation=None, clock=None) -> GateOutcome:
         """G7: PROVABLY calls ``review_equity_order`` first and refuses (no submit, no token
         consume) if the review refuses; otherwise runs the locked ``submit`` transaction."""
         review = self.review_equity_order(
             order, approval=approval, risk_decision=risk_decision, ladder=ladder,
             breaker_engine=breaker_engine, risk_recheck=risk_recheck, positions=positions,
-            producing_runtime=producing_runtime, clock=clock,
+            producing_runtime=producing_runtime, analysis_vendor=analysis_vendor,
+            analysis_generation=analysis_generation, clock=clock,
         )
         if not review.ok:
             return GateOutcome(False, review.stage, f"review refused: {review.reason}",
@@ -943,7 +978,8 @@ class OrderGateway:
         return self.submit(
             order, approval=approval, risk_decision=risk_decision, ladder=ladder,
             breaker_engine=breaker_engine, risk_recheck=risk_recheck, positions=positions,
-            token_nonce=token_nonce, producing_runtime=producing_runtime, clock=clock,
+            token_nonce=token_nonce, producing_runtime=producing_runtime,
+            analysis_vendor=analysis_vendor, analysis_generation=analysis_generation, clock=clock,
         )
 
 

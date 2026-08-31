@@ -279,22 +279,32 @@ class BreakerEngine:
         return SystemEvent("#system", "watch_only", None, reason, self._mode_str(), clock.now())
 
     def is_watch_only(self, vendor: str | None = None) -> bool:
-        """True iff a (or the given) vendor window is exhausted — the order path is disabled
-        while any vendor is watch-only."""
+        """True iff a (or the given) vendor window is non-ok.
+
+        ``degraded`` already prevents the runner from dispatching.  Treating it as order-safe
+        would let a restored health fault block fresh analysis while old analysis kept trading.
+        """
         if vendor is not None:
-            return self.st.usage.window(vendor).state == "exhausted"
-        return any(w.state == "exhausted" for w in self.st.usage._w.values())
+            return self.st.usage.window(vendor).state != "ok"
+        return any(w.state != "ok" for w in self.st.usage._w.values())
 
     def current_generation(self, vendor: str) -> int:
         return self.st.usage.window(vendor).generation
 
     def assert_fresh_analysis(self, vendor: str, analysis_generation: int) -> None:
-        """SEC-23 — refuse analysis minted before the current usage-window generation (a
-        blackout must not become cover for auto-execution after a reset)."""
+        """SEC-23 — require an exact current generation.
+
+        Older analysis predates a blackout/reset.  A future or malformed integer is not
+        authority either: accepting ``>=`` would let a mutable/forged caller skip ahead of the
+        signed ledger and make the real next generation look stale.
+        """
         cur = self.current_generation(vendor)
-        if analysis_generation < cur:
+        if (isinstance(analysis_generation, bool)
+                or not isinstance(analysis_generation, int)
+                or analysis_generation != cur):
             raise StaleAnalysisError(
-                f"analysis generation {analysis_generation} < current {cur} for {vendor} (SEC-23)"
+                f"analysis generation {analysis_generation!r} != current {cur} "
+                f"for {vendor} (SEC-23)"
             )
 
     def recover_from_watch_only(self, vendor: str, prev_state, *, clock=None,

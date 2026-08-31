@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from bridge.approval import Rejection, record_decision, token_nonce_for_approval
 from bridge.operators import is_authorized
 from brokers.order_tuple import canonical_order_tuple
@@ -26,9 +28,11 @@ from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_PAPER_NOTIFICATION
 from risk.engine import evaluate
 from schemas.models.agent_job import AgentJob
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
+from workflows.constants import EVENT_AGENT_JOB, EVENT_PROPOSAL
 from workflows.proposals import build_execution_verdict, build_risk_context
 
 
@@ -48,6 +52,9 @@ class _Bundle:
     proposal: ProposalRecord
     risk_decision: RiskDecision
     agent_job: AgentJob
+    analysis_vendor: str | None = None
+    analysis_generation: int | None = None
+    analysis_authority_error: str | None = None
 
 
 class PaperExecutionService:
@@ -189,6 +196,13 @@ class PaperExecutionService:
 
     def _load_bundle(self, order_id: str) -> _Bundle:
         with self.state.session_factory() as session:
+            verified = self.state.audit.verify_session(session)
+            if not verified.ok:
+                raise PaperExecutionError(
+                    "lineage_unverified",
+                    "paper order lineage cannot be trusted because the audit chain failed "
+                    f"verification: {verified.error or 'unknown error'}",
+                )
             order = session.get(Order, order_id)
             if order is None:
                 raise PaperExecutionError("not_found", "paper order not found", 404)
@@ -199,6 +213,11 @@ class PaperExecutionService:
                 if proposal is not None and proposal.job_id
                 else None
             )
+            authority_entries = session.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type.in_([EVENT_AGENT_JOB, EVENT_PROPOSAL]))
+                .order_by(AuditEntry.seq)
+            ).scalars().all()
             for row in (order, proposal, risk_decision, agent_job):
                 if row is not None:
                     session.expunge(row)
@@ -207,7 +226,78 @@ class PaperExecutionService:
                 "incomplete_lineage",
                 "order is missing its proposal, risk decision, or producing agent job",
             )
-        return _Bundle(order, proposal, risk_decision, agent_job)
+        authority_error: str | None = None
+        vendor: str | None = None
+        generation: int | None = None
+        proposal_entries = [
+            entry for entry in authority_entries
+            if entry.event_type == EVENT_PROPOSAL
+            and (entry.refs or {}).get("model") == ProposalRecord.__tablename__
+            and (entry.refs or {}).get("row_id") == proposal.id
+        ]
+        job_entries = [
+            entry for entry in authority_entries
+            if entry.event_type == EVENT_AGENT_JOB
+            and (entry.refs or {}).get("model") == AgentJob.__tablename__
+            and (entry.refs or {}).get("row_id") == agent_job.id
+        ]
+        if len(proposal_entries) != 1 or len(job_entries) != 1:
+            authority_error = "lineage requires exactly one signed proposal and agent-job event"
+        else:
+            proposal_payload = proposal_entries[0].payload or {}
+            job_payload = job_entries[0].payload or {}
+            vendor = job_payload.get("runtime")
+            generation = job_payload.get("generation")
+            row_generation = (agent_job.input_refs or {}).get("_generation")
+            if (
+                proposal_payload.get("proposal_id") != proposal.id
+                or proposal_payload.get("job_id") != proposal.job_id
+                or proposal_payload.get("risk_decision_id") != proposal.risk_decision_id
+                or proposal_payload.get("order_id") != proposal.order_id
+                or proposal.risk_decision_id != risk_decision.id
+                or proposal.order_id != order.id
+                or order.proposal_id != proposal.id
+                or order.risk_decision_id != risk_decision.id
+            ):
+                authority_error = "signed proposal lineage does not match the persisted order bundle"
+            elif (
+                not isinstance(vendor, str)
+                or not vendor
+                or vendor != agent_job.runtime
+                or job_payload.get("status") != agent_job.status
+                or isinstance(generation, bool)
+                or not isinstance(generation, int)
+                or generation < 0
+                or row_generation != generation
+            ):
+                authority_error = "signed agent generation/runtime does not match its persisted row"
+        return _Bundle(
+            order,
+            proposal,
+            risk_decision,
+            agent_job,
+            analysis_vendor=vendor,
+            analysis_generation=generation,
+            analysis_authority_error=authority_error,
+        )
+
+    def _assert_fresh_analysis(self, bundle: _Bundle) -> None:
+        if bundle.analysis_authority_error is not None:
+            raise PaperExecutionError(
+                "analysis_authority_unavailable",
+                "paper approval requires signed proposal-to-agent generation authority: "
+                f"{bundle.analysis_authority_error}",
+            )
+        try:
+            BreakerEngine(self.state).assert_fresh_analysis(
+                bundle.analysis_vendor,
+                bundle.analysis_generation,
+            )
+        except Exception as exc:  # noqa: BLE001 - malformed/stale authority refuses approval
+            raise PaperExecutionError(
+                "stale_analysis",
+                "paper approval requires analysis from the current vendor generation",
+            ) from exc
 
     @staticmethod
     def _resolved(order: Order) -> dict:
@@ -314,6 +404,11 @@ class PaperExecutionService:
             if isinstance(adjudication, Rejection):
                 raise PaperExecutionError(adjudication.code, adjudication.reason, 403)
             raise PaperExecutionError("unauthorized", "actor is not authorized", 403)
+        if choice == "approve":
+            # BUG-113: verify the HMAC-bound proposal -> AgentJob generation before any
+            # approval capability is minted. Reject/veto remains available to terminalize an
+            # old proposal safely; only order authority requires freshness.
+            self._assert_fresh_analysis(bundle)
         if proposal.flagged or proposal.status != "draft":
             raise PaperExecutionError(
                 "proposal_not_executable",
@@ -423,6 +518,8 @@ class PaperExecutionService:
             positions=list(latest.holdings or []),
             token_nonce=token_nonce_for_approval(adjudication.id),
             producing_runtime=agent_job.runtime,
+            analysis_vendor=bundle.analysis_vendor,
+            analysis_generation=bundle.analysis_generation,
             clock=self.state.clock,
         )
         if not outcome.ok:

@@ -18,10 +18,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, Protocol, runtime_checkable
 
+from sqlalchemy import select
+
 from agent_runner.usage import UsageTracker
 from config.settings import Settings, get_settings
 from core.clock import Clock, default_clock
 from core.ids import new_id
+from schemas.models.audit_entry import AuditEntry
 from storage.audit import AuditLog
 
 # ---- audit event types (single source of truth; Inv 6) --------------------------------
@@ -50,6 +53,58 @@ BYPASS_EVENTS = frozenset({
     "resubmit_after_denied",
     "approval_against_failed_risk",
 })
+
+
+def _restore_usage_tracker(
+    session_factory: Callable,
+    audit: AuditLog,
+    *,
+    anchor_store: "AnchorStore | None" = None,
+) -> UsageTracker:
+    """Rebuild L8 state from one verified, snapshot-pinned signed-ledger read.
+
+    ``UsageWindow`` domain rows are mutable and therefore cannot authorize an order.  The
+    append-only HMAC ledger is already the canonical state-change authority (Inv 6).  A bad
+    chain, anchor mismatch, malformed payload, or contradictory vendor/ref binding installs a
+    synthetic exhausted window: awareness can boot, but ``BreakerEngine.is_watch_only()``
+    disables every order path until the integrity problem is repaired.
+    """
+    tracker = UsageTracker()
+    try:
+        with session_factory() as session:
+            anchor = anchor_store.latest() if anchor_store is not None else None
+            verified = (
+                audit.verify_session_against_anchor(session, anchor[0], anchor[1])
+                if anchor is not None
+                else audit.verify_session(session)
+            )
+            if not verified.ok:
+                tracker.fail_closed(
+                    f"watch-only ledger verification failed: {verified.error or 'unknown error'}"
+                )
+                return tracker
+            rows = session.execute(
+                select(AuditEntry)
+                .where(AuditEntry.event_type == EVENT_WATCH_ONLY)
+                .order_by(AuditEntry.seq)
+            ).scalars().all()
+            for row in rows:
+                payload = row.payload or {}
+                refs = row.refs or {}
+                vendor = payload.get("vendor")
+                if refs.get("vendor") != vendor:
+                    raise ValueError("watch-only vendor differs between signed refs and payload")
+                tracker.restore(
+                    vendor,
+                    state=payload.get("state"),
+                    generation=payload.get("generation"),
+                )
+    except Exception as exc:  # noqa: BLE001 - unreadable safety authority must fail closed
+        tracker.fail_closed(
+            f"watch-only ledger restoration failed: {type(exc).__name__}: {exc}"
+        )
+        return tracker
+    return tracker
 
 
 @dataclass(frozen=True)
@@ -135,10 +190,20 @@ class OrchestratorState:
         clock. ``hmac_key`` is the audit-chain key (from keyring in production; a literal
         in tests). ``anchor_store`` is the SEC-11 external witness (production wires the
         git/#audit-log store; tests may inject a file/in-memory stand-in)."""
+        audit = AuditLog(session_factory, hmac_key=hmac_key, clock=clock)
+        restored_usage = (
+            usage
+            if usage is not None
+            else _restore_usage_tracker(
+                session_factory,
+                audit,
+                anchor_store=anchor_store,
+            )
+        )
         return cls(
             session_factory=session_factory,
-            audit=AuditLog(session_factory, hmac_key=hmac_key, clock=clock),
-            usage=usage if usage is not None else UsageTracker(),
+            audit=audit,
+            usage=restored_usage,
             settings=settings if settings is not None else get_settings(),
             clock=clock,
             anchor_store=anchor_store,

@@ -191,6 +191,52 @@ remains blocked until the M1–M4.5 gates actually pass.
 
 Engine 1 makes Engine 2 safer and better-informed. It never makes it *profitable*.
 
+### BUG-113 durable watch-only generation — claimed 2026-08-31
+
+The bounded hardening package is claimed on
+`work/bug113-durable-watch-only-generation` from clean merged main `987842b8`. It closes a
+restart hole found in the 2026-08-30 repository audit without enabling a new authority rung.
+
+1. **Operator change:** a vendor-limit blackout remains visibly fail-closed after process
+   restart, and a proposal whose producing analysis predates that blackout cannot be approved or
+   submitted in paper mode.
+2. **Existing path extended:** restore the latest verified signed `watch_only` events in
+   `orchestrator/state.py`, then enforce the `AgentJob.input_refs["_generation"]` stamp in
+   `brokers/paper_execution.py` before approval authority is minted and again inside the gateway
+   call boundary.
+3. **Retirement:** no parallel path is created. The fresh default `UsageTracker()` composition is
+   replaced by signed-ledger restoration in this package; the runner's in-process counter remains
+   the single mutable façade.
+4. **Production reachability proof:**
+   `tests/system/test_rw01_market_day.py::test_composed_restart_restores_watch_only_generation`
+   fails if composition restoration is removed, and
+   `tests/brokers/test_paper_execution.py::test_approval_refuses_stale_agent_generation`
+   fails if order-authority enforcement is removed.
+5. **Claimed ID:** `BUG-113` only; no existing row claims this durability/enforcement defect.
+6. **Platforms:** SQLite/audit reads and typed integer comparisons only; no subprocess, path,
+   credential, or temp-file behavior changes. Native Windows and Ubuntu/WSL2 run the same code;
+   the full `DEC-09` Python 3.11/3.12 matrix remains the acceptance gate.
+7. **Size:** expected below 250 production LOC plus focused restart/adversarial tests and these
+   claim records, well below the package split threshold.
+
+**Implementation and adversarial evidence — 2026-08-31:** production composition now restores
+each vendor's latest state/generation from a full-chain-verified, single-snapshot audit read. A
+bad chain/anchor or malformed signed transition installs an operator-visible global watch-only
+sentinel while awareness can still boot. New proposal events bind the producing AgentJob,
+RiskDecision, and Order; paper approval re-derives the AgentJob runtime/generation from those
+signed events, requires exact equality with current generation, and the production paper gateway
+rechecks it in both review and submit. Pre-BUG-113 draft proposals lack the new signed lineage and
+therefore fail closed; they must be re-drafted rather than migrated into authority.
+
+The fresh attack→fix→regression round covers (1) restart clearing an exhausted window, (2) a
+validly signed but malformed transition, (3) a future-generation skip, (4) a keyless mutable
+proposal-to-job swap while the audit chain remains green, and (5) a generation change after
+approval mint but before gateway review. All now refuse or restore fail-closed. The complete
+`DEC-09` matrix is green on the uncommitted branch: Windows 3.11.9 and 3.12.10 each report
+2,521 passed / 3 environmental skips / 5 warnings; Ubuntu/WSL2 3.11.16 and 3.12.3 each report
+2,514 passed / 5 environmental skips / 4 warnings. Ruff and dependency consistency are clean in
+all four cells. This is local implementation evidence only; `BUG-113` stays claimed until merge.
+
 ### The MVP, concretely
 
 **End-to-end paper trades, with heavy Discord integration.**

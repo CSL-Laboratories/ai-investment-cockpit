@@ -40,6 +40,8 @@ import main as main_mod
 from bridge.deliver import CHANNEL_BRIEF, build_deliver
 from core.secrets import set_secret
 from orchestrator.auth import API_KEY_HEADER, API_KEY_SECRET_NAME
+from orchestrator.breakers import BreakerEngine
+from orchestrator.mode_ladder import ModeLadder
 from orchestrator import scheduler as sch
 from orchestrator.ingest_runner import (
     FEED_ALPACA_NEWS,
@@ -286,6 +288,43 @@ def _brew_transport(refs: list[str], scored: list[dict]) -> FakeTransport:
         envelope(triage_body(scored, now=OPEN_UTC)),
         envelope(brief_body(sorted(refs), now=OPEN_UTC)),
     ])
+
+
+def test_composed_restart_restores_watch_only_generation(tmp_path):
+    """BUG-113 reachability: real compose cannot clear a signed L8 blackout."""
+    state1, _app1, _services1, _http1 = _compose(
+        tmp_path,
+        transport=FakeTransport([]),
+        deliver=None,
+    )
+    ModeLadder(state1).set_mode(Mode.paper, actor="test")
+    breaker1 = BreakerEngine(state1)
+    breaker1.enter_watch_only("claude", "test vendor exhaustion", actor="test")
+    exhausted_generation = breaker1.current_generation("claude")
+
+    state2, _app2, _services2, _http2 = _compose(
+        tmp_path,
+        transport=FakeTransport([]),
+        deliver=None,
+    )
+    breaker2 = BreakerEngine(state2)
+    assert state2.usage.integrity_error is None
+    assert breaker2.is_watch_only("claude") is True
+    assert breaker2.current_generation("claude") == exhausted_generation
+
+    breaker2.recover_from_watch_only("claude", Mode.paper, actor="test")
+    recovered_generation = breaker2.current_generation("claude")
+    assert recovered_generation == exhausted_generation + 1
+
+    state3, _app3, _services3, _http3 = _compose(
+        tmp_path,
+        transport=FakeTransport([]),
+        deliver=None,
+    )
+    breaker3 = BreakerEngine(state3)
+    assert state3.usage.integrity_error is None
+    assert breaker3.is_watch_only("claude") is False
+    assert breaker3.current_generation("claude") == recovered_generation
 
 
 # =======================================================================================
