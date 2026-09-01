@@ -31,10 +31,13 @@ from strategies.merger_edge import (
     write_calibration_cohort,
 )
 from strategies.merger_semantics import (
+    _CASH,
     CashMergerSemanticVerifier,
     SemanticEvidenceUnavailable,
     _combined_source_text,
     _derive_eligibility,
+    _require_strategy_eligible,
+    _text,
     record_selection_commitment,
 )
 from tests.strategies.test_merger_edge import (
@@ -52,6 +55,37 @@ from tests.workflows.conftest import NOW
 
 
 SELECTION_NOW = NOW - timedelta(days=45)
+
+_BHF_10Q_ACCESSION = "0001685040-26-000028"
+_BHF_10Q_CASH_HEAD = (
+    "Pursuant to the Merger Agreement, at the effective time of the Merger "
+    "(the “Effective Time”), each share of our common stock issued and outstanding "
+    "immediately prior to the Effective Time will be converted into the right to receive "
+    "$70.00 per share, net in cash, without interest."
+)
+_SAFT_10Q_ACCESSION = "0001172052-26-000023"
+_SAFT_10Q_AGREEMENT_HEAD = (
+    "On July 23, 2026, the Company entered into an Agreement and Plan of Merger "
+    "(the “Merger Agreement”) with MAPFRE U.S.A. Corp., a Massachusetts corporation "
+    "(“Parent”), and Splash Merger Sub, Inc., a Delaware corporation and wholly owned "
+    "direct subsidiary of Parent (“Merger Subsidiary”), pursuant to which the Company "
+    "is to be acquired by Parent."
+)
+_SAFT_10Q_CASH_HEAD = (
+    "At the effective time of the Merger, each issued and outstanding share of the "
+    "Company’s common stock (other than certain excluded shares and shares held by "
+    "stockholders who properly exercise appraisal rights) will be cancelled and converted "
+    "into the right to receive $105.00 per share in cash, without interest thereon."
+)
+_SAFT_10Q_BOILERPLATE = (
+    "In addition, at or immediately prior to the effective time, our outstanding equity "
+    "awards, including stock options and restricted stock units, will be cancelled and "
+    "converted into the right to receive cash payments based on the Merger consideration, "
+    "subject to the terms of the Merger Agreement. Under the program, Safety may repurchase "
+    "shares of its common stock for cash in public or private transactions, in the open "
+    "market or otherwise. Common Stock, par value $0.01 per share | SAFT | "
+    "The Nasdaq Stock Market, LLC"
+)
 
 
 def _eligibility_text(cash_offer: str) -> bytes:
@@ -650,6 +684,85 @@ def test_never_entered_plain_agreement_and_plan_language_remains_refused():
     )
 
     with pytest.raises(SemanticEvidenceUnavailable, match="definitive"):
+        _derive_eligibility(text, amended=False)
+
+
+@pytest.mark.parametrize(
+    ("issuer", "accession", "excerpt", "expected_offer"),
+    [
+        pytest.param(
+            "BHF",
+            _BHF_10Q_ACCESSION,
+            _BHF_10Q_CASH_HEAD,
+            "70.00",
+            id="BHF-10Q-0001685040-26-000028",
+        ),
+        pytest.param(
+            "SAFT",
+            _SAFT_10Q_ACCESSION,
+            _SAFT_10Q_CASH_HEAD,
+            "105.00",
+            id="SAFT-10Q-0001172052-26-000023",
+        ),
+    ],
+)
+def test_real_10q_cash_heads_extract_one_offer(issuer, accession, excerpt, expected_offer):
+    assert _CASH.findall(_text(excerpt.encode("utf-8"))) == [expected_offer], (
+        f"{issuer} {accession}"
+    )
+
+
+def test_cash_head_allows_whitespace_after_dollar():
+    spaced = _BHF_10Q_CASH_HEAD.replace("$70.00", "$ 70.00")
+
+    assert _CASH.findall(_text(spaced.encode("utf-8"))) == ["70.00"]
+
+
+def test_real_saft_head_ignores_award_and_repurchase_boilerplate():
+    text = _text(
+        f"{_SAFT_10Q_AGREEMENT_HEAD} {_SAFT_10Q_CASH_HEAD} {_SAFT_10Q_BOILERPLATE}".encode(
+            "utf-8"
+        )
+    )
+
+    label = _derive_eligibility(text, amended=False)
+
+    assert label["cash_offer"] == "105.00"
+    assert label["has_stock"] is False
+
+
+def test_incomplete_real_cash_head_remains_unavailable():
+    incomplete = _BHF_10Q_CASH_HEAD.replace(", net in cash", "")
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
+        _derive_eligibility(_text(incomplete.encode("utf-8")), amended=False)
+
+
+def test_stock_consideration_around_real_head_remains_outside_strategy_universe():
+    text = _text(
+        (
+            f"{_SAFT_10Q_AGREEMENT_HEAD} {_SAFT_10Q_CASH_HEAD} "
+            "The holders will also receive 0.5 shares of Parent common stock."
+            " Common Stock | SAFT | The Nasdaq Stock Market, LLC"
+        ).encode("utf-8")
+    )
+    label = _derive_eligibility(text, amended=False)
+
+    assert label["has_stock"] is True
+    with pytest.raises(SemanticEvidenceUnavailable, match="outside the pinned"):
+        _require_strategy_eligible(label)
+
+
+def test_acquirer_cash_boilerplate_cannot_complete_incomplete_target_head():
+    text = _text(
+        (
+            "Each share of our common stock will be converted into the right to receive "
+            "$ 70.00 per share. Each share of the acquirer’s common stock will receive "
+            "$1.00 per share in cash."
+        ).encode("utf-8")
+    )
+
+    with pytest.raises(SemanticEvidenceUnavailable, match="cash-per-share"):
         _derive_eligibility(text, amended=False)
 
 

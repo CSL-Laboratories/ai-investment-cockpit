@@ -81,6 +81,10 @@ _COMMITTED_ROW_FIELDS = frozenset({
 
 _SPACE = re.compile(r"\s+")
 _TAG = re.compile(r"<[^>]+>")
+_ASCII_APOSTROPHE = str.maketrans({
+    "\u2018": "'",
+    "\u2019": "'",
+})
 # BUG-109: SEC merger clauses commonly put a decimal par value between the target security
 # identity and the consideration verb (for example ``par value $0.001 per share``).  Treat only a
 # period immediately followed by a digit as part of this bounded sentence span.  A normal period
@@ -100,7 +104,7 @@ _CASH_SUBJECT_SWITCH = (
 _CASH_CONTEXT_CHAR = rf"(?:(?!{_CASH_SUBJECT_SWITCH}){_CASH_SENTENCE_CHAR})"
 _CASH = re.compile(
     r"(?:each|every)\s+(?:issued\s+and\s+outstanding\s+|outstanding\s+)?"
-    r"share\s+of\s+(?:the\s+)?(?:(?:company|target)(?:'s)?\s+)?common\s+stock"
+    r"share\s+of\s+(?:(?:the|our)\s+)?(?:(?:company|target)(?:'s)?\s+)?common\s+stock"
     rf"{_CASH_CONTEXT_CHAR}{{0,700}}?"
     r"(?:"
     r"(?:will|shall)\s+(?:receive|(?:be\s+)?entitled\s+to\s+receive)|"
@@ -109,7 +113,7 @@ _CASH = re.compile(
     r"(?:be\s+)?converted\s+automatically)\s+into\s+"
     r"(?:the\s+)?right\s+to\s+receive"
     r")"
-    r"[^.]{0,120}?(?:\$|usd\s+)(\d+(?:\.\d+)?)\s+"
+    r"[^.]{0,120}?(?:\$\s*|usd\s+)(\d+(?:\.\d+)?)\s+"
     r"(?:in\s+cash\s+per\s+(?:each\s+)?share|"
     r"per\s+(?:each\s+)?share(?:\s+|,\s*)(?:net\s+)?in\s+cash)"
 )
@@ -169,7 +173,8 @@ def _text(raw: bytes) -> str:
         decoded = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SemanticEvidenceUnavailable("SEC source text is not valid UTF-8") from exc
-    return _SPACE.sub(" ", html.unescape(_TAG.sub(" ", decoded))).strip().lower()
+    clean = html.unescape(_TAG.sub(" ", decoded)).translate(_ASCII_APOSTROPHE)
+    return _SPACE.sub(" ", clean).strip().lower()
 
 
 def _combined_source_text(texts: list[str]) -> str:
