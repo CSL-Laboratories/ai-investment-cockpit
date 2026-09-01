@@ -61,7 +61,8 @@ _BHF_10Q_CASH_HEAD = (
     "Pursuant to the Merger Agreement, at the effective time of the Merger "
     "(the “Effective Time”), each share of our common stock issued and outstanding "
     "immediately prior to the Effective Time will be converted into the right to receive "
-    "$70.00 per share, net in cash, without interest."
+    "$70.00 per share, net in cash, without interest and less any amounts that are required "
+    "to be deducted or withheld under applicable law."
 )
 _SAFT_10Q_ACCESSION = "0001172052-26-000023"
 _SAFT_10Q_AGREEMENT_HEAD = (
