@@ -148,9 +148,16 @@ class AuditLog:
 
     # ---- core insert (shared by append / append_in) ------------------------
     def _insert(self, s, event_type, actor, refs, payload) -> AuditEntry:
+        # BUG-114: read the monotonic authority before the row head. ``append_in`` must
+        # release ``_lock`` before its caller commits, and Python's sqlite3 legacy mode does
+        # not pin a snapshot for SELECT. With the opposite order, that caller could commit
+        # between these reads: this session then allocated above the NEW high-water while
+        # linking to the OLD head, creating a non-colliding valid-HMAC fork. In this order a
+        # concurrent commit is either visible to the later head read, or a later insert wins
+        # the same seq and this writer fails/retries rather than corrupting the chain.
+        hwm = self._read_hwm(s)
         head = s.execute(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).scalar_one_or_none()
         max_existing = head.seq if head else 0
-        hwm = self._read_hwm(s)
         # SEC-11 (W10) fail-closed guards on the signed high-water BEFORE allocating a seq:
         if hwm == -1:
             raise AuditIntegrityError("audit high-water signature invalid (tamper) — refusing to append")

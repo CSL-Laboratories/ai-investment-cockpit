@@ -151,6 +151,59 @@ def test_verify_chain_uses_one_snapshot_during_concurrent_append(env, monkeypatc
     assert after_race.ok and after_race.head_seq == 2
 
 
+def test_append_allocation_does_not_link_new_seq_to_stale_head(env, monkeypatch):
+    """BUG-114: a commit between allocation reads must not create an audit fork.
+
+    ``append_in`` releases the in-process audit lock before its caller commits. Under
+    sqlite3 legacy transaction control, another session's SELECT does not pin a snapshot.
+    The old allocation order could therefore read head N, observe the first transaction's
+    committed high-water N+1, and insert N+2 with ``prev_hash`` still pointing at N.
+    """
+    audit, sf = env
+    audit.append("seed")
+    inserted = threading.Event()
+    allow_commit = threading.Event()
+    committed = threading.Event()
+    worker_errors: list[Exception] = []
+
+    def transactional_writer():
+        try:
+            with sf() as session, session.begin():
+                audit.append_in(session, "transactional")
+                inserted.set()
+                if not allow_commit.wait(timeout=5):
+                    raise TimeoutError("standalone writer did not release transaction")
+        except Exception as exc:  # expose thread failures to the test thread
+            worker_errors.append(exc)
+        finally:
+            committed.set()
+
+    writer = threading.Thread(target=transactional_writer)
+    writer.start()
+    assert inserted.wait(timeout=5)
+
+    original_read_hwm = audit._read_hwm
+    raced = False
+
+    def commit_between_allocation_reads(session):
+        nonlocal raced
+        if threading.current_thread() is threading.main_thread() and not raced:
+            raced = True
+            allow_commit.set()
+            assert committed.wait(timeout=5)
+        return original_read_hwm(session)
+
+    monkeypatch.setattr(audit, "_read_hwm", commit_between_allocation_reads)
+    audit.append("standalone")
+    writer.join(timeout=5)
+
+    assert raced
+    assert not writer.is_alive()
+    assert worker_errors == []
+    result = audit.verify_chain()
+    assert result.ok and result.head_seq == 3
+
+
 def test_two_phase_reconciliation(env):
     audit, _ = env
     i = audit.intent("place_order", payload={"symbol": "AAPL"})
