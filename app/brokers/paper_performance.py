@@ -155,6 +155,8 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
                 and row.actor == "alpaca_paper" and payload.get("kind") == "positions"):
             at = _utc_datetime(payload.get("_ts"))
             equity = _dec(payload.get("equity"))
+            if at is not None and at > now:
+                return PaperPerformance(False, trading_day, reason="future signed equity snapshot")
             if (at is not None and at.astimezone(EASTERN).date().isoformat() == trading_day
                     and equity.is_finite() and equity >= 0):
                 snapshots.append((at, equity))
@@ -183,6 +185,8 @@ def reconstruct_paper_performance(state, *, now=None) -> PaperPerformance:
     snapshots.sort(key=lambda item: item[0])
     opened_at, day_open = snapshots[0]
     as_of, current = snapshots[-1]
+    if (now - as_of).total_seconds() > 120:
+        return PaperPerformance(False, trading_day, reason="signed equity snapshot is stale")
     drawdown = max(Decimal("0"), day_open - current)
 
     cumulative: dict[str, tuple[Decimal, Decimal]] = {}

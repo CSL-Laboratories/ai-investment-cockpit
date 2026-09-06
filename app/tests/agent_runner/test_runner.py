@@ -157,10 +157,29 @@ def test_no_secret_in_argv_or_prompt():
 
 def test_continue_session_resumes():
     t = FakeTransport([envelope(VALID_BODY, session_id="s1")])
-    r = continue_session(spec(session_id="s1"), "why this size?", transport=t, usage=UsageTracker())
+    r = continue_session(spec(session_id="s1", decision_stage=False), "why this size?",
+                         transport=t, usage=UsageTracker())
     assert r.status == OK
     argv = t.calls[0]["argv"]
     assert "--resume" in argv and argv[argv.index("--resume") + 1] == "s1"
+
+
+def test_claude_decision_resume_refuses_before_spawn():
+    t = FakeTransport([])
+    with pytest.raises(ValueError, match="cannot resume"):
+        continue_session(spec(session_id="s1"), "why?", transport=t)
+    assert t.calls == []
+
+
+def test_claude_decision_repair_has_no_saved_session_or_tools():
+    t = FakeTransport([envelope({}), envelope(VALID_BODY)])
+    assert run_agent(spec(), transport=t, usage=UsageTracker()).status == OK
+    for call in t.calls:
+        argv = call["argv"]
+        assert "--resume" not in argv
+        assert "--no-session-persistence" in argv
+        assert argv[argv.index("--tools") + 1] == ""
+        assert argv[argv.index("--disallowedTools") + 1] == "*"
 
 
 def test_non_decision_codex_job_builds():

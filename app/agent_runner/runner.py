@@ -2,7 +2,7 @@
 
 run_agent(spec) builds a ``claude -p`` / ``codex exec`` argv, runs it through the
 transport, and enforces the safety envelope:
-  * SEC-06  — decision-stage jobs run tool-starved (empty allowedTools);
+  * SEC-06  — decision-stage jobs run with an inspected capability-denial profile;
   * Inv 4   — no secret value may appear in the argv or prompt;
   * Inv 7 / SEC-23 — timeout / non-zero exit / limit signal / empty output are
               fail-closed health faults that trip the vendor breaker (never yield output);
@@ -73,7 +73,19 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
             "--model", _cli_model(spec.model_alias, spec.runtime),
             "--max-turns", str(spec.max_turns),
         ]
-        if resume and spec.session_id:
+        if spec.decision_stage:
+            if resume:
+                raise ValueError("SEC-06: an ephemeral Claude decision job cannot resume")
+            # BUG-115: allowedTools is pre-approval, not removal of available tools.
+            # Safe/restricted modes preserve subscription auth; --bare does not.
+            # Unknown switches on an older CLI fail closed through the exit-code gate.
+            argv += [
+                "--tools", "", "--disallowedTools", "*",
+                "--strict-mcp-config", "--safe-mode", "--restricted",
+                "--setting-sources", "", "--disable-slash-commands",
+                "--no-session-persistence", "--no-chrome",
+            ]
+        elif resume and spec.session_id:
             argv += ["--resume", spec.session_id]
         # explicit, minimal allowedTools; empty set -> the 'none' sentinel
         argv += ["--allowedTools", ",".join(spec.allowed_tools) if spec.allowed_tools else "none"]
@@ -443,16 +455,16 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         + "\n\nYour previous output was rejected: " + str(reason)[:500]
         + "\nReturn ONLY corrected JSON that matches the required schema; no prose."
     )
-    # Codex decision sessions are intentionally ephemeral (SEC-24). Repair gets the complete
+    # Decision sessions are intentionally ephemeral (SEC-24 / BUG-115). Repair gets the complete
     # original prompt plus validation error, so it can be a fresh turn without weakening the
-    # one-repair contract. Non-decision Codex and Claude retain their existing resume behavior.
-    codex_ephemeral = spec.runtime == "codex" and spec.decision_stage
+    # one-repair contract. Non-decision jobs retain their existing resume behavior.
+    ephemeral = spec.decision_stage
     rspec = replace(
         spec,
         prompt=repair_prompt,
-        session_id=None if codex_ephemeral else (session_id or spec.session_id),
+        session_id=None if ephemeral else (session_id or spec.session_id),
     )
-    argv = build_argv(rspec, resume=bool(session_id) and not codex_ephemeral)
+    argv = build_argv(rspec, resume=bool(session_id) and not ephemeral)
     if rspec.decision_stage:
         inspect_argv(argv, decision_stage=True)
         assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)

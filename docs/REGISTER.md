@@ -89,6 +89,30 @@ stopped-system preflight and historical handoff in
 
 ## Defect ledger
 
+### Operator-authorized gate review — 2026-09-06
+
+`RW-20` is claimed by Codex/Astra on `codex/audit-gates-2026-09-06`: repair the
+three priority authority defects below, with separately authored adversarial tests,
+then record concurrency/restart, isolation and DEC-09 evidence. The operator also
+authorized the subsequent held semantic-miss package (`RW-21`) and research/measurement
+review. Production packages are implemented sequentially. No selection, watchlist,
+date, witness, paper-activation or live gate is waived. Scope and acceptance are in
+[[runbooks/rw20-gate-repair-plan-2026-09-06]]. The original audit is preserved in
+[[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
+
+| ID | What | Sev | Status | Where |
+|---|---|---|---|---|
+| `BUG-115` | Claude decision argv mistakes `--allowedTools none` for tool disablement; inherited tools/MCP are not explicitly excluded | high | claimed — RW-20 | `agent_runner/runner.py`, `agent_runner/tool_inspector.py`; original A7 |
+| `BUG-116` | Fresh risk evaluates mutable proposal economics instead of the fixed authorized order, permitting an unsigned size edit to bypass tightened limits | high | claimed — RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A1 |
+| `BUG-117` | Fresh broker equity is signed but approval consumes cached loss metrics until the scheduled sampler runs | high | claimed — RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A2 |
+| `BUG-118` | Independent writers can both resolve one audit intent because the duplicate-result read is not pinned before allocating a fresh sequence | high | claimed — RW-20 concurrency pressure | `storage/audit.py::result`; independently reproduced with a valid chain |
+| `BUG-119` | Codex decision argv inspector accepts duplicate sandbox overrides and unknown switches | high boundary | claimed — RW-20 authority pressure | `agent_runner/tool_inspector.py`; inspector acceptance reproduced, no model-controlled injection claimed |
+
+Historical status correction: BUG-113 is merged through PR #59 (`1e2d4e3`), and
+BUG-114 through PR #68 (`61ca0af`, repair `3035d83`). Older ledger rows below retain
+their original pre-merge evidence wording; this note does not claim new matrix or
+soak acceptance for either repair.
+
 Found by the 2026-08-09 audit. Every closed row below shipped with a regression test; blocked
 rows retain their named prerequisite.
 

@@ -29,6 +29,7 @@ from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from bridge.embeds import render_proposal_embed
 from core.ids import new_id
+from core.proposal_authority import proposal_payload_hash
 from ingest.normalize import escape_untrusted
 from orchestrator.halt import default_halt_path, halt_is_set
 from orchestrator.limits import current_limits
@@ -99,12 +100,12 @@ on a finer grid and a verdict computed on the wrong scale misreads every price."
 def build_risk_context(state, *, quote, watchlist: frozenset[str],
                        quant_verdict=None, quant_book_seq=None,
                        require_quant_verdict: bool = False,
-                       require_net_edge: bool = False) -> RiskContext:
+                       require_net_edge: bool = False, snapshot=None) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
     (absent -> zeros -> risk fails conservatively) + the injected quote (None ->
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
     limits = current_limits(state)
-    snap = _latest_snapshot(state)
+    snap = snapshot if snapshot is not None else _latest_snapshot(state)
     cash = _dec(snap.cash) if snap is not None else Decimal("0")
     buying_power = _dec(snap.buying_power) if snap is not None else Decimal("0")
     holdings: dict = {}
@@ -116,7 +117,18 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
     quote_age_s = float(q["age_s"]) if q.get("age_s") is not None else float("inf")
     quote_spread = _dec(q.get("spread_pct", 0)) if q else Decimal("0")
     performance = getattr(state, "paper_performance", None)
+    performance_fresh = False
     if performance is not None and getattr(performance, "ok", False):
+        from brokers.paper_performance import EASTERN
+
+        at = getattr(performance, "as_of", None)
+        now = state.clock.now()
+        performance_fresh = (
+            at is not None and at.tzinfo is not None
+            and 0 <= (now - at).total_seconds() <= 120
+            and performance.trading_day == now.astimezone(EASTERN).date().isoformat()
+        )
+    if performance_fresh:
         equity_drawdown = _dec(getattr(performance, "equity_drawdown_today", None))
     elif getattr(state, "paper_performance_required", False):
         equity_drawdown = Decimal("NaN")
@@ -307,10 +319,24 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
         job_id=job_id, risk_decision_id=risk_decision_id, order_id=order_id,
         flagged=flagged, created_at=now, updated_at=now,
     )
+    tuple_hash = None
+    if order_id is not None:
+        with state.session_factory() as session:
+            order = session.get(Order, order_id)
+            if order is None:
+                raise ValueError("cannot bind a proposal to a missing order")
+            tuple_hash = order_tuple_hash(canonical_order_tuple(
+                symbol=order.symbol, side=order.side, qty=order.qty,
+                order_type=order.order_type, limit_price=order.limit_price, tif=order.tif,
+            ))
+            if tuple_hash != order.order_tuple_hash:
+                raise ValueError("cannot bind a proposal to a changed order tuple")
     state.audit.record_state_change(
         record, EVENT_PROPOSAL, actor="proposals",
         payload={"proposal_id": pid, "symbol": record.symbol, "status": status,
-                 "flagged": flagged, "job_id": job_id,
+                 "flagged": flagged, "side": record.side, "job_id": job_id,
+                 "proposal_payload_hash": proposal_payload_hash(proposal),
+                 "order_tuple_hash": tuple_hash,
                  "risk_decision_id": risk_decision_id, "order_id": order_id},
     )
     return record

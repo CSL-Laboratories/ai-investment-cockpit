@@ -40,6 +40,33 @@ def test_starved_decision_argv_passes():
     inspect_argv(build_argv(_decision_spec()), decision_stage=True)   # no raise
 
 
+@pytest.mark.parametrize("flag,width", [
+    ("--tools", 2), ("--disallowedTools", 2), ("--strict-mcp-config", 1),
+    ("--safe-mode", 1), ("--restricted", 1), ("--setting-sources", 2),
+    ("--no-session-persistence", 1), ("--disable-slash-commands", 1), ("--no-chrome", 1),
+])
+def test_claude_missing_required_denial_refuses(flag, width):
+    argv = build_argv(_decision_spec())
+    index = argv.index(flag)
+    del argv[index:index + width]
+    with pytest.raises(ToolStarvationError):
+        inspect_argv(argv)
+
+
+@pytest.mark.parametrize("extra", [
+    ["--tools", ""], ["--setting-sources", "user"], ["--plugin-dir", "/tmp/plugin"],
+    ["--chrome"], ["--resume", "saved"], ["--future-tool"], ["positional prompt"],
+])
+def test_claude_extra_flags_and_prompts_refuse(extra):
+    with pytest.raises(ToolStarvationError):
+        inspect_argv(build_argv(_decision_spec()) + extra)
+
+
+def test_permission_allowlist_alone_never_proves_tool_removal():
+    with pytest.raises(ToolStarvationError):
+        inspect_argv(["claude", "-p", "--allowedTools", "none"])
+
+
 def test_granted_tool_next_token_refused():
     with pytest.raises(ToolStarvationError, match="tool-starved"):
         inspect_argv(["claude", "-p", "--allowedTools", "Bash"], decision_stage=True)

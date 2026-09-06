@@ -9,6 +9,7 @@ from brokers.gateway import OrderGateway
 from brokers.paper_execution import PaperExecutionError, PaperExecutionService
 from config.settings import DecisionRuntime, Mode
 from core.ids import new_id
+from core.proposal_authority import proposal_payload_hash
 from orchestrator.breakers import BreakerEngine
 from quant.book.lob import BookSnapshot, LevelSnapshot
 from quant.events import PriceScale, to_ns
@@ -95,6 +96,9 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
             "job_id": job.id,
             "risk_decision_id": scenario.risk_decision.id,
             "order_id": scenario.order.id,
+            "side": proposal.side, "flagged": proposal.flagged,
+            "proposal_payload_hash": proposal_payload_hash(proposal.payload),
+            "order_tuple_hash": scenario.order.order_tuple_hash,
         },
     )
     service = PaperExecutionService(
