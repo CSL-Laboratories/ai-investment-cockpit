@@ -4,6 +4,11 @@ The premise remains worthwhile as a human-gated awareness and discipline tool. I
 edge and time savings are hypotheses. The current evidence supports continuing read-only
 observation and bounded repairs; it does not support increasing autonomy.
 
+The [offline scorer](../runbooks/research-value-score.md) now implements separate extraction,
+paired time and cost-adjusted strategy arithmetic with ten synthetic calculator checks.
+Its [current output](../evidence/research-value-status-2026-09-06.json) correctly reports all three
+as unmeasured because independently collected study inputs were not supplied. It grants no gate.
+
 ## What the existing observations establish
 
 The checked-in September 4 natural-head screen covered 192 discovery names: 50 had no current
