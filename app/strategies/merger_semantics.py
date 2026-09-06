@@ -10,7 +10,6 @@ an injected witness adapter; normal verification only invokes that exact-message
 """
 from __future__ import annotations
 
-import html
 import re
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -45,6 +44,7 @@ from strategies.merger_edge import (
     _verify_price_source_in,
 )
 from orchestrator.state import EVENT_EDGAR_POLL_COMPLETED
+from strategies.semantic_text import displayed_text
 
 
 SELECTION_SCHEMA = "merger_selection_manifest.v2"
@@ -80,7 +80,6 @@ _COMMITTED_ROW_FIELDS = frozenset({
 })
 
 _SPACE = re.compile(r"\s+")
-_TAG = re.compile(r"<[^>]+>")
 _ASCII_APOSTROPHE = str.maketrans({
     "\u2018": "'",
     "\u2019": "'",
@@ -162,6 +161,9 @@ _FAILED = re.compile(
 _CONDITIONAL_OUTCOME = re.compile(
     r"\b(?:if|unless|whether|would|could|may|might|should|in\s+the\s+event)\b"
 )
+_NEGATED_ASSERTION = re.compile(
+    r"\b(?:not|never|no|neither|nor|false|falsely|incorrectly|untrue|denied|denies|deny|refuted)\b"
+)
 _MERGER_AMENDMENT = re.compile(
     r"(?:amend(?:ed|ment|ments|ing)?[^.]{0,80}(?:merger|transaction)|"
     r"(?:merger|transaction)[^.]{0,80}amend(?:ed|ment|ments|ing)?)"
@@ -173,7 +175,12 @@ def _text(raw: bytes) -> str:
         decoded = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SemanticEvidenceUnavailable("SEC source text is not valid UTF-8") from exc
-    clean = html.unescape(_TAG.sub(" ", decoded)).translate(_ASCII_APOSTROPHE)
+    # BUG-120: non-displayed content cannot supply semantic assertions. Citations continue
+    # to use the independent raw-byte locator; this rendering is only for matching.
+    try:
+        clean = displayed_text(decoded).translate(_ASCII_APOSTROPHE)
+    except ValueError as exc:
+        raise SemanticEvidenceUnavailable("SEC source has ambiguous semantic markup") from exc
     return _SPACE.sub(" ", clean).strip().lower()
 
 
@@ -192,10 +199,29 @@ def _source_date(value: str, *, field: str) -> date:
 
 
 def _unique_match(pattern: re.Pattern, text: str, *, field: str) -> str:
-    values = {match.group(1) for match in pattern.finditer(text)}
+    values = {match.group(1) for match in _assertion_matches(pattern, text)}
     if len(values) != 1:
         raise SemanticEvidenceUnavailable(f"SEC source does not state one unambiguous {field}")
     return values.pop()
+
+
+def _assertion_matches(pattern: re.Pattern, text: str):
+    # Decimal periods stay inside the sentence. A pinned negative predicate such as
+    # "transaction will not proceed" is an affirmative failure assertion; negation
+    # outside the matched predicate still refuses ("it is not true that ...").
+    sentences = re.split(r"([!?]|\.(?!\d))", text)
+    for index in range(0, len(sentences), 2):
+        sentence = sentences[index]
+        if index + 1 < len(sentences) and sentences[index + 1] == "?":
+            continue
+        for match in pattern.finditer(sentence):
+            context = sentence[:match.start()] + " " + sentence[match.end():]
+            # A month named May in the matched date is not a modal assertion. Cash's
+            # wide subject-to-verb span, however, is not exempt from negation checks.
+            if pattern is _CASH:
+                context = sentence
+            if not (_NEGATED_ASSERTION.search(context) or _CONDITIONAL_OUTCOME.search(context)):
+                yield match
 
 
 def _asserted(pattern: re.Pattern, text: str) -> bool:
@@ -206,14 +232,11 @@ def _asserted(pattern: re.Pattern, text: str) -> bool:
     intentionally conservative: a sentence containing conditional/modal language is not an
     outcome authority even when it also contains one of the pinned phrases.
     """
-    return any(
-        pattern.search(sentence) and not _CONDITIONAL_OUTCOME.search(sentence)
-        for sentence in re.split(r"[.!?;]+", text)
-    )
+    return next(_assertion_matches(pattern, text), None) is not None
 
 
 def _derive_eligibility(text: str, *, amended: bool) -> dict:
-    offers = {str(Decimal(value)) for value in _CASH.findall(text)}
+    offers = {str(Decimal(match.group(1))) for match in _assertion_matches(_CASH, text)}
     if len(offers) != 1:
         raise SemanticEvidenceUnavailable("SEC source does not state one cash-per-share value")
     if "common stock" not in text:
@@ -225,7 +248,7 @@ def _derive_eligibility(text: str, *, amended: bool) -> dict:
         exchanges.append("nyse")
     if len(set(exchanges)) != 1:
         raise SemanticEvidenceUnavailable("SEC source does not identify one supported US exchange")
-    definitive = bool(_DEFINITIVE.search(text))
+    definitive = _asserted(_DEFINITIVE, text)
     if not definitive or _NOT_DEFINITIVE.search(text):
         raise SemanticEvidenceUnavailable("SEC source does not state a definitive merger")
     resolved = _asserted(_CLOSED, text)
@@ -690,10 +713,10 @@ class CashMergerSemanticVerifier:
             except (OSError, RawStoreError, ValueError) as exc:
                 raise SemanticEvidenceUnavailable("deal SEC source is missing or corrupt") from exc
         combined = _combined_source_text(texts)
-        current_text = texts[document["source_accessions"].index(document["current_accession"])]
-        amended = document["current_accession"] != document["announcement_accession"]
-        if amended and "amend" not in current_text:
-            raise SemanticEvidenceUnavailable("current deal amendment is not explicit in source")
+        # BUG-122: a new current filing is not itself an amendment. Use the same complete
+        # source-set predicate as prospective selection/calibration, including intervening
+        # amendments even when the absolute current head is a routine filing.
+        amended = any(_MERGER_AMENDMENT.search(text) for text in texts)
         derived = _derive_eligibility(combined, amended=amended)
         for name, value in derived.items():
             if document[name] != value:

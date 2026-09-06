@@ -107,6 +107,9 @@ date, witness, paper-activation or live gate is waived. Scope and acceptance are
 | `BUG-117` | Fresh broker equity is signed but approval consumes cached loss metrics until the scheduled sampler runs | high | claimed — RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A2 |
 | `BUG-118` | Independent writers can both resolve one audit intent because the duplicate-result read is not pinned before allocating a fresh sequence | high | claimed — RW-20 concurrency pressure | `storage/audit.py::result`; independently reproduced with a valid chain |
 | `BUG-119` | Codex decision argv inspector accepts duplicate sandbox overrides and unknown switches | high boundary | claimed — RW-20 authority pressure | `agent_runner/tool_inspector.py`; inspector acceptance reproduced, no model-controlled injection claimed |
+| `BUG-120` | Semantic text extraction admits non-displayed script/style/hidden/comment/attribute text as filing authority | high semantic | claimed — RW-21 | `strategies/merger_semantics.py::_text`; original A3 |
+| `BUG-121` | Positive semantic regexes can accept negated outcome, definitive-agreement and explicit-date assertions | high semantic | claimed — RW-21 | `strategies/merger_semantics.py`; original A4 plus independent negation probes |
+| `BUG-122` | Current-deal verification mistakes an ordinary later accession for an amendment and rejects the complete source set | medium | claimed — RW-21 | `strategies/merger_semantics.py::_verify_deal`; original A6 |
 
 Historical status correction: BUG-113 is merged through PR #59 (`1e2d4e3`), and
 BUG-114 through PR #68 (`61ca0af`, repair `3035d83`). Older ledger rows below retain
