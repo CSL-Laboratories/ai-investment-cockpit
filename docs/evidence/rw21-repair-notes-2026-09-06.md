@@ -28,8 +28,11 @@ Held cash-language work remains visibly pending: SAFT's repurchase false-positiv
 FSEA/SLP/CCO alternate cash structures have identified official source URLs, but the exact original
 response bytes are not in this checkout. The operator was asked for the declared SEC User-Agent
 contact; the one-shot capture tool refuses without it. No identity, raw filing, hash, independent
-label or failed-capture success was fabricated. The existing BHF/SAFT/CRNX real excerpts and the
-year-only/conditional/auto-extension refusal controls remain in the tests.
+label or failed-capture success was fabricated. The existing BHF/SAFT excerpts, the explicitly
+reconstructed CRNX grammar control, and the year-only/conditional/auto-extension refusal controls
+remain in the tests. Five historical BHF/SAFT review excerpts are now separately
+[pinned with provenance and seven offline checks](rw21-held-excerpts/README.md). These preserve
+the known SAFT stock false positive as an open defect; they do not replace full-primary capture.
 
 Historical fixtures can validate a grammar repair; they are not independent held-out precision
 or recall evidence. That measurement requires a frozen population including rejected documents
