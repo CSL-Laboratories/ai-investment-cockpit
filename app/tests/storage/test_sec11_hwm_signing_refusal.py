@@ -90,10 +90,16 @@ def test_changed_hwm_at_write_boundary_must_refuse(env, monkeypatch, operation, 
         elif operation == "intent":
             audit.intent("fixture-only-must-refuse")
         else:
+            # Hold the companion state row unflushed through preflight so the
+            # independent metadata fault can commit (flushing first takes the
+            # SQLite write lock; see the state-first control). ``_insert``
+            # then flushes both rows; the raise must roll them back together.
             with env["sf"]() as session, session.begin():
-                session.add(ModeState(id="must-rollback", mode="read_only", created_at=_now()))
-                session.flush()
-                audit.append_in(session, "must-refuse")
+                session.add(ModeState(
+                    id="must-rollback", mode="read_only", created_at=_now(),
+                ))
+                with session.no_autoflush:
+                    audit.append_in(session, "must-refuse")
     monkeypatch.setattr(audit, "_hash", original_hash)
 
     with env["sf"]() as session:
