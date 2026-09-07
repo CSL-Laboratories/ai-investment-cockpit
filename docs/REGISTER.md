@@ -23,6 +23,17 @@ and the claim board, not the specification.
 
 ## Delivery position recorded 2026-08-24
 
+### RW-24 measured reliability follow-up — scoped next, 2026-09-07
+
+Owner: Codex/Astra, same isolated branch. Begins after RW-23 repair commits/review.
+Intake, reproducible baselines and validation: [[evidence/rw24-reliability-2026-09-07]].
+
+| ID | Defect/improvement | Priority | Status |
+|---|---|---|---|
+| `BUG-157` | Intraday discovered holding is excluded by daily-bars readiness latch | P2 | scoped — RW-24 |
+| `BUG-158` | Malformed frames bypass the stream diagnostic frame limit | P3 | scoped — RW-24 |
+| `RW-24` | Bounded fixes, measured triage scans, installed/fallback Discord validation | — | scoped next |
+
 ### RW-23 post-merge audit repair — claimed 2026-09-07
 
 `RW-23` is claimed by Codex/Astra on `codex/audit-reliability-2026-09-07`, from merged

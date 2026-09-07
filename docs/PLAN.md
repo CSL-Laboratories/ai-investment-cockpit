@@ -12,6 +12,12 @@ last-verified: 2026-08-28
 
 # The plan
 
+### RW-24 reliability follow-up — scoped next, 2026-09-07
+
+After RW-23 implementation and review, repair BUG-157/158 and apply only measured,
+bounded triage/validation improvements. Intake: [[evidence/rw24-reliability-2026-09-07]].
+The final archived source, including both packages, runs the full DEC-09 matrix.
+
 ### RW-23 audit repair intake — 2026-09-07
 
 The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from

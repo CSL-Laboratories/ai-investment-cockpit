@@ -1,7 +1,7 @@
 ---
 title: RW-23 post-merge audit repair and reliability follow-up
 type: evidence
-status: in-progress
+status: implemented-pending-final-matrix
 last-verified: 2026-09-07
 ---
 
@@ -44,10 +44,52 @@ passes and covers that exact application tree. New fixes require new validation.
 
 - Claim and baseline report recorded before implementation. User authorizes local commits;
   publishing or merging is outside this request.
-- Implementation, adversarial review and validation entries follow as slices complete.
+- `e3304bf` — BUG-149: scrub before the missing-size persistence branch; 27 focused
+  tests passed, including initially failing field-by-field canary probes. Independent review passed.
+- `9596136` — BUG-147 / CLN-01: shared health classification for initial and repair
+  responses, with durable watch-only history; 54 focused tests passed, including restart/recovery.
+- `fda5017` — BUG-146: markup boundaries preserve denial scope and cannot assemble a
+  new assertion across hidden material; 179 semantic tests passed, including 42 new cases.
+- `b4c0bed` — BUG-150: detached original payload in a separate raw column, hash-bound
+  and replayable; legacy derivatives stay explicitly legacy. Independent review passed.
+- `3b93be1` — BUG-153: count distinct latest operator decisions, excluding submission
+  consumption. Review caught the actual consumption-kind spelling, malformed decisions,
+  and superseded approvals; all were fixed. 88 combined raw/gate/workflow tests passed.
+- `1072e9c` — BUG-154: verify, read limits, count, corroborate and append within one
+  SQLite transaction. 87 scoped tests passed; independent review additionally injected
+  commit failure through all retries and anchor/deletion races. No spend or observed-head
+  advance survived a failed commit.
+- `bdde8d7` — BUG-152: staged signing before publication, exact signed identity reuse
+  after restart, and verified bytes at metric consumption. All 33 focused checks passed,
+  including seven independently authored publication/substitution/concurrency probes.
+- `adf5544` — BUG-155/156: paired chronology fix because wire actions and their reports
+  need one consistent ordering contract. 434 broad quant tests passed; the final clock
+  refusal and multiple-replacement controls passed in a 20-case focused run. Independent
+  root review required receive/ingest ordering refusal; pending replacement exposure stays reserved.
+- `b1e03e8` — BUG-151: 58 focused checks passed, including five failures demonstrated
+  against the old module. Bounded identity-only gap tracking stays visible while workers
+  run; unrelated news cannot clear it. Exact recovery verifies duplicate raw evidence.
+  Connection and poll health remain honest. Gap tracking is process-local diagnostics,
+  not a durable outbox or a claim of lossless stream replay.
+- BUG-148: 153 focused tests passed after independent review, including 43 dedicated
+  and separately authored adversarial cases. Sells use verified remaining shares, broker
+  availability, local reservations, exact submit acknowledgement binding, and conservative
+  handling of unknown broker outcomes. The grouped run passes; an earlier mixed-order
+  targeted invocation had seven fixture-discovery errors, not assertion failures.
+- Remaining slice reviews found additional necessary composed controls: available broker
+  shares and unsubmitted local sales must add as disjoint reservations; local veto cannot
+  prove an uncertain broker submit was cancelled; daily-bar signing must survive a crash
+  before file publication and reject post-write substitution; simulation replacement
+  acknowledgements must preserve pending exposure limits.
+
+The original production-line estimate is being exceeded by these independent review
+repairs. The defect list remains frozen to BUG-146–156; each reviewable domain still has
+its own commit. Further performance work is deferred to a separate intake after these
+repairs, rather than expanding this correctness package.
 
 # Remaining gates
 
-The DEC-09 matrix and independent authority review are pending for the changed source.
+Independent authority review has passed. The final DEC-09 matrix is pending for the
+combined RW-23 and separately scoped RW-24 source.
 Existing independent witness, cohort, prospective observations, paper-day and pre-live gates
 remain unchanged. A locally committed repair is not a merged/closed register item.
