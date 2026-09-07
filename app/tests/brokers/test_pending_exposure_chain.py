@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import delete, select, update
 
 from brokers.gateway import OrderGateway
-from brokers.order_state_machine import create_order, transition
+from brokers.order_state_machine import IllegalOrderTransition, create_order, transition
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from core.ids import new_id
 from orchestrator.state import EVENT_ADJUDICATION, EVENT_ORDER_TRANSITION
@@ -24,6 +25,7 @@ from schemas.models.approval_record import ApprovalRecord
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.risk_decision import RiskDecision
+from storage.audit import audit_meta
 
 from tests.brokers.conftest import build_scenario
 
@@ -406,44 +408,50 @@ def test_deleted_order_row_chain_intact_fails_closed(st):
 # (1h) round-5 bypass 1: a laundered notional=0 on a LATER signed transition cannot shrink it
 # =======================================================================================
 def test_laundered_zero_notional_on_later_transition_counts_max(st):
-    """The reproduced round-5 bypass 1 (notional laundering): the signed transition notional is
-    re-derived from the MUTABLE ``order_row.notional`` at EVERY signing. A keyless writer zeroes
-    that column BEFORE a routine legit transition, so the later signed transition launders 0 into
-    a chain-signed value; notional is NOT in ``order_tuple_hash``, so this trips neither gate (e)
-    nor ``verify_chain``. The OLD latest-verified-wins ``chain_notional`` then trusted the laundered
-    0 and order2 contributed 0 -> order1(1500)+order2(0)+order3(1500) = 3000 <= cap slipped the
-    over-cap third order past gate (h). Taking the MAX across order2's WHOLE signed history (the
-    birth signs the real 1500 atomically) counts it at 1500 -> refused at gate (h); broker idle.
+    """BUG-125 refuses to sign a zeroed mutable notional over its signed predecessor.
+
+    Refusal preserves the entire order/audit/watermark state. The existing conservative
+    pending-exposure cap still counts the approved sibling's signed 1500 after refusal.
     """
     broker = RecordingBroker()
     sc = build_scenario(st, gateway=OrderGateway(broker, pending_exposure_cap=CAP),
                         broker=broker)
     transition(st, sc.order, "approved", actor="claude", reason="approved")  # order1 open: 1500
 
-    # order2 birth 'proposed' signs the real notional 1500; a keyless writer then zeroes the
-    # mutable column BEFORE order2's routine legit 'approved' transition, which re-loads the row
-    # (notional=0) and signs a laundered notional=0.
-    o2 = create_order(st, proposal_id=new_id("p"), risk_decision_id=new_id("rd"),
-                      account="paper", symbol="MSFT", side="buy", qty="10", order_type="limit",
-                      limit_price="150", tif="day", notional="1500",
-                      order_tuple_hash=new_id("h"), actor="claude")
+    # The approved sibling's real notional is already signed before the keyless mutation.
+    o2 = _approved_sibling(st)
     with st.session_factory() as s, s.begin():
         s.execute(update(Order).where(Order.id == o2.id).values(notional=Decimal("0")))
     with st.session_factory() as s:                  # routine flow re-loads the row (notional=0)
         o2r = s.get(Order, o2.id)
         s.expunge(o2r)
-    transition(st, o2r, "approved", actor="claude", reason="approved")   # signs the laundered 0
-    assert st.audit.verify_chain().ok                # notional not in the hash -> chain stays green
+    def snapshot():
+        with st.session_factory() as session:
+            rows = [
+                [{column.name: getattr(row, column.name) for column in model.__table__.columns}
+                 for row in session.scalars(select(model).order_by(model.id))]
+                for model in (Order, AuditEntry)
+            ]
+            return rows, dict(session.execute(select(audit_meta)).all())
+
+    caller_before = {column.name: getattr(o2r, column.name) for column in Order.__table__.columns}
+    before = snapshot()
+    with pytest.raises(IllegalOrderTransition):
+        transition(st, o2r, "submitted", actor="claude", reason="submitted")
+    assert snapshot() == before
+    assert {column.name: getattr(o2r, column.name)
+            for column in Order.__table__.columns} == caller_before
+    assert st.audit.verify_chain().ok
     with st.session_factory() as s:
         o2_entries = [e for e in
                       s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
                       if e.event_type == EVENT_ORDER_TRANSITION
                       and (e.refs or {}).get("row_id") == o2.id]
     assert [(e.payload["to"], Decimal(e.payload["notional"])) for e in o2_entries] == [
-        ("proposed", Decimal("1500")), ("approved", Decimal("0"))]   # laundered 0 on the tail
+        ("proposed", Decimal("1500")), ("approved", Decimal("1500"))]
 
     o3, appr3, rd3 = _fresh_submittable(st, sc)
-    # order2 is summed at its MAX signed notional (birth 1500), not the laundered tail 0.
+    # The unchanged pending-exposure guard still counts order2 at its signed 1500.
     ok, total, cap = sc.gateway._pending_ok(st, o3)
     assert not ok and total == Decimal("4500") and cap == CAP
 
@@ -586,7 +594,8 @@ def test_transition_payloads_carry_notional_and_symbol(st):
     assert len(by_row[o.id]) == 2                    # birth + approved
     for p in by_row[o.id]:
         assert p["symbol"] == "AAPL"
-        assert p["notional"] == "1500" and isinstance(p["notional"], str)
+        assert isinstance(p["notional"], str) and Decimal(p["notional"]) == Decimal("1500")
     (p2,) = by_row[o2.id]
-    assert p2["symbol"] == "MSFT" and p2["notional"] == "800"   # 4 * 200, derived
+    assert p2["symbol"] == "MSFT"
+    assert isinstance(p2["notional"], str) and Decimal(p2["notional"]) == Decimal("800")
     assert st.audit.verify_chain().ok

@@ -230,15 +230,27 @@ class AuditLog:
         with self._lock:
             return self._insert(session, event_type, actor, refs, payload)
 
-    def record_state_change(self, model_row, event_type, actor=None, payload=None):
+    def record_state_change(self, model_row, event_type, actor=None, payload=None, *, prepare=None):
         """Persist a load-bearing state row AND its AuditEntry in ONE transaction — the only
         sanctioned way to mutate RiskDecision / ApprovalRecord / order-state rows (never a
-        bare Repo.add). Guarantees no state change without a covering audit record."""
-        with self._sf() as s, s.begin():
-            s.add(model_row)
-            s.flush()
-            refs = {"model": model_row.__tablename__, "row_id": model_row.id}
-            entry = self.append_in(s, event_type, actor=actor, refs=refs, payload=payload)
+        bare Repo.add). Guarantees no state change without a covering audit record.
+
+        BUG-125: ``prepare(session)`` may validate authority and stage a fresh managed row
+        before any flush; a callable payload receives its database-normalized values.
+        Keep rows attached through COMMIT so a rollback expires supplied existing rows.
+        Guarded callers publish the staged row only after this method succeeds.
+        """
+        with self._sf() as s:
+            with s.begin():
+                if prepare is not None:
+                    model_row = prepare(s)
+                s.add(model_row)
+                s.flush()
+                if callable(payload):
+                    s.refresh(model_row)
+                    payload = payload(model_row)
+                refs = {"model": model_row.__tablename__, "row_id": model_row.id}
+                entry = self.append_in(s, event_type, actor=actor, refs=refs, payload=payload)
             s.expunge(model_row)
             s.expunge(entry)
             return model_row, entry
