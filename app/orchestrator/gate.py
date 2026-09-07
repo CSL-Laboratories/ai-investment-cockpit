@@ -83,10 +83,14 @@ def _to_naive_utc(dt: datetime) -> datetime:
 
 
 def _dec(x) -> Decimal:
+    """Parse a gate metric. BUG-129: garbage used to read as Decimal("0") — a malformed
+    drawdown payload then read as ZERO drawdown against the max-drawdown ceiling (fail
+    open). Unparseable input now reads as NaN, and every consumer treats NaN as
+    fail-closed (refuse), never as a passing zero."""
     try:
         return x if isinstance(x, Decimal) else Decimal(str(x))
     except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
+        return Decimal("NaN")
 
 
 def _weeks_in_modes(mode_events: list[tuple[datetime, str]], now: datetime, modes: set[str]) -> float:
@@ -167,11 +171,21 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
 
     bypass_count = sum(1 for r in rows if r.event_type in BYPASS_EVENTS)
     breaker_trip_count = sum(1 for r in rows if r.event_type == EVENT_BREAKER_TRIP)
-    max_drawdown = max(
-        (_dec((r.payload or {}).get("drawdown", 0)) for r in rows
-         if r.event_type == EVENT_DRAWDOWN_MARK),
-        default=Decimal("0"),
-    )
+    # BUG-129: a malformed drawdown payload must BLOCK the unlock, not read as zero.
+    # NaN is not "no drawdown" — it is "we cannot prove the drawdown", and an auto
+    # unlock requires proof.
+    drawdown_vals: list[Decimal] = []
+    for r in rows:
+        if r.event_type != EVENT_DRAWDOWN_MARK:
+            continue
+        dd = _dec((r.payload or {}).get("drawdown", 0))
+        if not dd.is_finite():
+            return GateResult(False, tgt,
+                              ["malformed drawdown payload on the verified chain "
+                               "(fail closed: cannot prove drawdown is within limits)"],
+                              {"chain_ok": True, "anchor_ok": True})
+        drawdown_vals.append(dd)
+    max_drawdown = max(drawdown_vals, default=Decimal("0"))
 
     mode_events: list[tuple[datetime, str]] = []
     for r in rows:
@@ -181,7 +195,14 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
         ts = p.get("_ts")
         to = p.get("to")
         if ts and to:
-            mode_events.append((datetime.fromisoformat(ts), to))
+            try:
+                mode_events.append((datetime.fromisoformat(ts), to))
+            except (ValueError, TypeError):
+                # BUG-129b: one malformed verified _ts must lock the gate, not crash it.
+                return GateResult(False, tgt,
+                                  ["malformed mode_change timestamp on the verified chain "
+                                   "(fail closed)"],
+                                  {"chain_ok": True, "anchor_ok": True})
     weeks_lower = _weeks_in_modes(mode_events, now_naive, _LOWER_MODES)
     weeks_auto_veto = _weeks_in_modes(mode_events, now_naive, {Mode.auto_veto.value})
 

@@ -109,27 +109,57 @@ def current_limits(state) -> dict:
     that verifies; an unverified latest row is SKIPPED (never allowed to loosen the effective
     limits) in favour of the most recent verified row, else the conservative Settings default
     baseline (budget 5 / threshold 60). Fail closed: a tampered row can only tighten by being
-    ignored, never loosen."""
+    ignored, never loosen.
+
+    BUG-126: the walk above is not enough on a BROKEN chain. A keyless writer that DELETES
+    a genuine SUB-DEFAULT tightening (deep budget 5->2 erased) leaves an older, LOOSER
+    verified row (or no row) behind, and returning it reverts to the looser cap — a
+    loosening. So on a chain that does NOT verify, a surviving verified row is honored
+    ONLY when the break is provably a forged APPEND above it: the verified prefix
+    1..candidate.seq is contiguous/linked/HMAC-valid AND the signed high-water does not
+    exceed the live head (a head below the high-water is a deleted genuine tail, even
+    when the surviving prefix looks clean). Anything else fails closed to the tightest
+    floor — an erased tightening can only tighten, never loosen."""
     with state.session_factory() as s:
         rows = s.execute(
             select(AuditEntry)
             .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE)
             .order_by(AuditEntry.seq.desc())
         ).scalars().all()
-    limits = default_limits(state.settings)
+    candidate = None
     for row in rows:
         if not state.audit.verify_entry(row):
             continue   # forged/mutated row -> ignore (fail closed); do not loosen
-        if (row.payload or {}).get("limits"):
-            limits.update(row.payload["limits"])
-        return limits  # first verified row (newest-first) is the audited source of truth
-    # SEC-21 round-3: NO verified EVENT_LIMITS_CHANGE row. If the chain verifies, the operator
-    # genuinely never tightened -> the Settings defaults are authoritative. But a keyless writer
-    # can DELETE (seq gap) or byte-flip (HMAC break) a genuine SUB-DEFAULT tightening; the
-    # per-row skip above then silently reverts to the LOOSER default (deep budget 5->2 erased ->
-    # back to 5), a loosening. A full-chain scan catches that tamper regardless of the
-    # event_type filter, so if the chain does not verify we FAIL CLOSED to the tightest floor —
-    # an erased tightening can only tighten, never loosen.
-    if not state.audit.verify_chain().ok:
+        candidate = row
+        break          # first verified row (newest-first) is the audited source of truth
+    if state.audit.verify_chain().ok:
+        limits = default_limits(state.settings)
+        if candidate is not None and (candidate.payload or {}).get("limits"):
+            limits.update(candidate.payload["limits"])
+        return limits
+    # Chain is broken: fall back to the candidate ONLY for a forged append above an
+    # intact verified prefix. A deleted genuine tail (head below the signed high-water),
+    # a break at/below the candidate, or no surviving candidate all fail closed.
+    hwm = state.audit.high_water_mark()
+    with state.session_factory() as s:
+        chain_rows = s.execute(
+            select(AuditEntry).order_by(AuditEntry.seq)
+        ).scalars().all()
+    head_seq = chain_rows[-1].seq if chain_rows else 0
+    if hwm == -1 or (hwm is not None and head_seq < hwm):
+        # Watermark tamper, or a deleted genuine tail: the surviving rows cannot prove
+        # what the operator last set -> tightest floor (SEC-21 round-3).
         return fail_closed_limits(state.settings)
+    if candidate is None:
+        return fail_closed_limits(state.settings)
+    by_seq = {r.seq: r for r in chain_rows}
+    prev = None
+    for seq in range(1, candidate.seq + 1):
+        r = by_seq.get(seq)
+        if r is None or r.prev_hash != prev or not state.audit.verify_entry(r):
+            return fail_closed_limits(state.settings)
+        prev = r.entry_hash
+    limits = default_limits(state.settings)
+    if (candidate.payload or {}).get("limits"):
+        limits.update(candidate.payload["limits"])
     return limits

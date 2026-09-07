@@ -107,9 +107,20 @@ def read_verified_snapshot(
 
 def verify_snapshot(root, date: str, symbol: str, expected_hash: str) -> bool:
     """Re-read the persisted file and confirm its content still hashes to ``expected_hash``
-    (the value bound into the audit chain at ingest). Detects any post-ingest edit."""
+    (the value bound into the audit chain at ingest). Detects any post-ingest edit.
+
+    BUG-145: only SnapshotIntegrityError mapped to False — a missing/truncated file
+    (FileNotFoundError/OSError/ArrowInvalid from the read) PROPAGATED, so a caller
+    asking "does this snapshot still verify?" got an exception instead of a False.
+    Absence and unreadability are the strongest possible integrity failures: they
+    verify as False. (Callers that need to distinguish absence keep using
+    read_verified_snapshot with their own FileNotFoundError handling.)
+    """
     try:
         read_verified_snapshot(root, date, symbol, expected_hash)
     except SnapshotIntegrityError:
+        return False
+    except (FileNotFoundError, OSError, pa.ArrowException):
+        # Absence, unreadability, and corruption are all integrity failures: False.
         return False
     return True

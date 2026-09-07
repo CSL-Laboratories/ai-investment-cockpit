@@ -26,6 +26,10 @@ from decimal import Decimal, InvalidOperation
 REG_T_MIN_EQUITY = Decimal("2000")
 SUPPORTED_ASSET_TYPES = {"equity"}                       # options/crypto not live (re-verify)
 KNOWN_ORDER_TYPES = {"market", "limit", "stop", "stop_limit"}
+# BUG-127b: order-capable modes (mirrors config.settings.Mode minus read_only, without
+# importing config — risk/ stays dependency-light per Invariant 5). A str-Enum member
+# compares/hashes equal to its value, so Mode.paper matches "paper" here.
+_ORDER_CAPABLE_MODES = frozenset({"paper", "review_live", "auto_veto", "auto_full"})
 
 
 def _d(x) -> Decimal:
@@ -33,6 +37,15 @@ def _d(x) -> Decimal:
         return x if isinstance(x, Decimal) else Decimal(str(x))
     except (InvalidOperation, ValueError, TypeError):
         return Decimal("NaN")
+
+
+def _finite(x) -> Decimal | None:
+    """The value as a finite Decimal, else None. BUG-127: raw Decimal NaN comparisons
+    raise InvalidOperation, so every gate input that can arrive as NaN (a poisoned
+    snapshot, a misconfigured cap) must pass through here and fail CLOSED (check
+    reads False) instead of crashing evaluate()."""
+    d = _d(x)
+    return d if d.is_finite() else None
 
 
 @dataclass(frozen=True)
@@ -86,6 +99,13 @@ class RiskContext:
     quant_book_seq: int | None = None
     """The book sequence the caller is about to trade against. When it has moved past the
     verdict's ``book_seq``, the verdict describes a book that no longer exists."""
+    quant_verdict_now_ns: int | None = None
+    """Evaluation clock (nanoseconds) for the verdict-age ceiling. BUG-128: the
+    ``quant_verdict_max_age_ns`` ceiling was dead — no timestamp was ever compared, so an
+    hours-old verdict on an unmoved book priced as fresh. When a clock is supplied, a
+    verdict that is missing/future-dated/older than the ceiling reads ``stale`` (human
+    review when required, never silent acceptance). None keeps deliberately uncomposed
+    callers additive; production composition always supplies the market-data clock."""
 
     require_net_edge: bool = False
     """W-21 production posture.  When armed, an unavailable trusted edge forces human review
@@ -114,6 +134,17 @@ def _verdict_state(ctx: RiskContext) -> tuple[str, str]:
             f"verdict describes book seq {seq}, the order would trade against "
             f"{ctx.quant_book_seq}"
         )
+
+    # BUG-128: enforce the verdict-age ceiling whenever the caller supplies a clock.
+    now_ns = ctx.quant_verdict_now_ns
+    if now_ns is not None:
+        ts = getattr(verdict, "computed_at_ns", None)
+        if (not isinstance(ts, int) or isinstance(ts, bool) or ts > now_ns
+                or now_ns - ts > ctx.quant_verdict_max_age_ns):
+            return "stale", (
+                "verdict age exceeds the execution-verdict ceiling "
+                f"(computed_at_ns={ts!r}, max_age_ns={ctx.quant_verdict_max_age_ns})"
+            )
 
     raw = getattr(verdict, "verdict", None)
     name = getattr(raw, "value", raw)
@@ -153,7 +184,9 @@ def order_notional(proposal: dict, ctx: RiskContext) -> Decimal:
     if proposal.get("notional") is not None:
         candidates.append(_d(proposal["notional"]))
     if proposal.get("quantity") is not None:
-        candidates.append(_d(proposal["quantity"]) * ctx.quote_price)
+        # BUG-127: coerce the quote through _d first — a float/NaN quote must yield NaN
+        # (filtered below), never a TypeError/InvalidOperation out of evaluate().
+        candidates.append(_d(proposal["quantity"]) * _d(ctx.quote_price))
     if not candidates:
         return Decimal("0")
     finite = [c for c in candidates if c.is_finite()]
@@ -161,7 +194,9 @@ def order_notional(proposal: dict, ctx: RiskContext) -> Decimal:
 
 
 def _portfolio_value(ctx: RiskContext) -> Decimal:
-    return ctx.cash + sum(_d(h.get("market_value", 0)) for h in ctx.holdings.values())
+    # BUG-127: coerce cash — a float/NaN cash balance must not raise TypeError here;
+    # the caller normalizes a non-finite total to 0 (no equity) downstream.
+    return _d(ctx.cash) + sum(_d(h.get("market_value", 0)) for h in ctx.holdings.values())
 
 
 def _match_auto_rule(proposal: dict, notional: Decimal, rules) -> str | None:
@@ -208,7 +243,25 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     daily_loss_ok = (realized_loss.is_finite() and loss_limit.is_finite()
                      and realized_loss <= loss_limit)
 
-    concentration_ok = (not is_buy) or port <= 0 or ((held_val + notional) / port) <= ctx.concentration_pct
+    # BUG-127: every remaining gate input is normalized through _finite BEFORE any
+    # comparison. A NaN cap/quote reads as a FAILED check (fail closed), never a crash.
+    quote_price = _finite(ctx.quote_price)
+    quote_spread = _finite(ctx.quote_spread_pct)
+    max_spread = _finite(ctx.max_spread_pct)
+    max_notional_cap = _finite(ctx.max_notional)
+    buying_power = _finite(ctx.buying_power)
+    pending_notional = _finite(ctx.pending_notional)
+    pending_cap = _finite(ctx.pending_exposure_cap)
+    concentration_pct = _finite(ctx.concentration_pct)
+    quote_age = _finite(ctx.quote_age_s)
+    quote_stale_after = _finite(ctx.quote_staleness_s)
+    exec_ceiling = _finite(ctx.max_execution_cost_bps)
+
+    concentration_ok = (
+        (not is_buy) or port <= 0
+        or (concentration_pct is not None
+            and ((held_val + notional) / port) <= concentration_pct)
+    )
 
     # ---- QT-06: execution verification (Tier B). See quant/verify.py.
     #
@@ -218,7 +271,12 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     # order on a system with no feed, or wave through the ones that matter.
     verdict_state, verdict_detail = _verdict_state(ctx)
     cost_bps = _verdict_cost_bps(ctx)
-    cost_over_ceiling = cost_bps.is_finite() and cost_bps > ctx.max_execution_cost_bps
+    if exec_ceiling is None:
+        # An unreadable cost ceiling cannot bless any modelled cost: any present cost
+        # blocks; only a missing verdict (nothing to price) stays out of the HARD lane.
+        cost_over_ceiling = cost_bps.is_finite()
+    else:
+        cost_over_ceiling = cost_bps.is_finite() and cost_bps > exec_ceiling
     execution_cost_sane = verdict_state != "uneconomic" and not cost_over_ceiling
 
     # SOFT -> human review. Fires on a marginal trade AND, when a verdict is required, on a
@@ -248,20 +306,27 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     checks = [
         CheckResult("notional_positive", size_finite and notional > 0, True,
                     "order size must be a finite, positive amount"),
-        CheckResult("quote_sane", ctx.quote_price > 0, True, "quote price must be > 0"),
+        CheckResult("quote_sane", quote_price is not None and quote_price > 0, True,
+                    "quote price must be a finite value > 0"),
         CheckResult("asset_type_supported", proposal.get("asset_type") in SUPPORTED_ASSET_TYPES, True,
                     f"asset_type in {sorted(SUPPORTED_ASSET_TYPES)}"),
         CheckResult("order_type_known", proposal.get("order_type") in KNOWN_ORDER_TYPES, True,
                     f"order_type in {sorted(KNOWN_ORDER_TYPES)}"),
         CheckResult("symbol_allowlist", symbol in ctx.holdings or symbol in ctx.watchlist, True,
                     "symbol must be held or on the reconciled watchlist (SEC-15)"),
-        CheckResult("quote_freshness", ctx.quote_age_s <= ctx.quote_staleness_s, True,
+        CheckResult("quote_freshness",
+                    quote_age is not None and quote_stale_after is not None
+                    and quote_age <= quote_stale_after, True,
                     f"quote age {ctx.quote_age_s}s <= {ctx.quote_staleness_s}s"),
-        CheckResult("spread", ctx.quote_spread_pct <= ctx.max_spread_pct, True,
+        CheckResult("spread",
+                    quote_spread is not None and max_spread is not None
+                    and quote_spread <= max_spread, True,
                     f"spread {ctx.quote_spread_pct} <= {ctx.max_spread_pct}"),
-        CheckResult("max_notional", notional <= ctx.max_notional, True,
+        CheckResult("max_notional",
+                    max_notional_cap is not None and notional <= max_notional_cap, True,
                     f"notional {notional} <= {ctx.max_notional}"),
-        CheckResult("buying_power", (not is_buy) or notional <= ctx.buying_power, True,
+        CheckResult("buying_power", (not is_buy)
+                    or (buying_power is not None and notional <= buying_power), True,
                     f"buy notional {notional} <= buying_power {ctx.buying_power}"),
         # no naked shorts: a sell must be a reconciled holding, bounded by its value (SEC-15)
         CheckResult("sell_backed", (not is_sell) or (symbol in ctx.holdings and notional <= held_val), True,
@@ -272,12 +337,17 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
                     f"post-trade {symbol} concentration <= {ctx.concentration_pct}"),
         CheckResult("daily_loss_limit", daily_loss_ok, True,
                     f"realized loss {ctx.realized_loss_today} <= {ctx.daily_loss_limit}"),
-        CheckResult("pending_exposure", ctx.pending_notional + notional <= ctx.pending_exposure_cap, True,
+        CheckResult("pending_exposure",
+                    pending_notional is not None and pending_cap is not None
+                    and pending_notional + notional <= pending_cap, True,
                     f"pending {ctx.pending_notional} + {notional} <= {ctx.pending_exposure_cap} (SEC-07)"),
         CheckResult("reg_t_minimum", port >= REG_T_MIN_EQUITY, True,
                     f"equity >= Reg-T ${REG_T_MIN_EQUITY} (post-PDT, no day-trade counts)"),
-        CheckResult("mode_allows_order", ctx.mode != "read_only", True,
-                    "orders are disabled in read_only mode"),
+        # BUG-127b: the mode gate is an allowlist, not a denylist. Any unrecognised
+        # mode (None, garbage, a future ladder value this gate was never taught) refuses:
+        # orders are disabled unless the mode is one this gate affirmatively knows.
+        CheckResult("mode_allows_order", ctx.mode in _ORDER_CAPABLE_MODES, True,
+                    f"mode {ctx.mode!r} must be an order-capable mode"),
         CheckResult("execution_cost_sane", execution_cost_sane, True,
                     f"modelled execution cost {cost_bps} <= {ctx.max_execution_cost_bps}bps "
                     f"and ADV validity holds (W-21; verdict={verdict_state})"),
@@ -307,16 +377,26 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     else:
         decision = "approved"
 
-    caps = [ctx.max_notional, ctx.pending_exposure_cap - ctx.pending_notional]
+    # BUG-127: sanitize the ceiling inputs — a NaN cap inside min() raises
+    # InvalidOperation via Decimal comparison. Non-finite caps read as 0 headroom.
+    raw_caps = [
+        _d(ctx.max_notional),
+        _d(ctx.pending_exposure_cap) - _d(ctx.pending_notional),
+    ]
+    caps: list[Decimal] = [c for c in (_d(c) for c in raw_caps) if c.is_finite()]
     if is_buy:
-        caps.append(ctx.buying_power)
+        bp = _finite(ctx.buying_power)
+        caps.append(bp if bp is not None else Decimal("0"))
         if port > 0:
-            caps.append(ctx.concentration_pct * port - held_val)     # concentration headroom
+            headroom = _d(ctx.concentration_pct) * port - held_val
+            caps.append(headroom if headroom.is_finite() else Decimal("0"))
         if opening_new and ctx.open_positions + 1 > ctx.max_positions:
             caps.append(Decimal("0"))
     if is_sell:
         caps.append(held_val)
     if port < REG_T_MIN_EQUITY:
+        caps.append(Decimal("0"))
+    if not caps:
         caps.append(Decimal("0"))
     max_allowed = max(min(caps), Decimal("0"))
 

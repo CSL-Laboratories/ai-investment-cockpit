@@ -19,6 +19,7 @@ refused (``assert_fresh_analysis``, SEC-23). Recovery from watch-only is fail-cl
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -94,7 +95,21 @@ class BreakerSignals:
 
 
 # ---- pure predicates (deterministic; no I/O) ------------------------------------------
+# BUG-130: non-finite signals fail CLOSED (trip). A NaN drawdown is "cannot prove the
+# loss is within limits", not "no loss"; a NaN data age is "cannot prove freshness",
+# not "fresh". (Decimal NaN `>` would otherwise raise InvalidOperation out of the
+# triage tick; float NaN `>` would silently read healthy.)
+def _breach_unreadable(value) -> bool:
+    try:
+        d = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return True
+    return not d.is_finite()
+
+
 def breach_daily_equity_drawdown(drawdown, limit) -> bool:
+    if _breach_unreadable(drawdown) or _breach_unreadable(limit):
+        return True
     return _dec(drawdown) > _dec(limit)
 
 
@@ -107,7 +122,16 @@ def breach_schema_failures(failures: int, total: int, rate: float, min_sample: i
 
 
 def breach_stale_data(age_s: float, limit_s: float) -> bool:
-    return age_s > limit_s
+    # BUG-130: float NaN comparisons never raise but always read False (healthy) — an
+    # unreadable age must trip, not pass. The at-limit boundary stays strict `>`
+    # (age exactly 120.0s is fresh; pinned by test_core).
+    try:
+        age, lim = float(age_s), float(limit_s)
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(age) or not math.isfinite(lim):
+        return True
+    return age > lim
 
 
 def breach_broker_errors(errors: int, limit: int) -> bool:
@@ -283,7 +307,15 @@ class BreakerEngine:
 
         ``degraded`` already prevents the runner from dispatching.  Treating it as order-safe
         would let a restored health fault block fresh analysis while old analysis kept trading.
+
+        BUG-131: a set ``integrity_error`` (contradictory/unverifiable watch-only ledger at
+        startup) disables EVERY vendor view, not just the global one. Otherwise a
+        per-vendor ``is_watch_only("claude")`` read False over a ledger the composer
+        already proved untrustworthy, and ``_assert_fresh_analysis`` minted approval
+        authority underneath it.
         """
+        if getattr(self.st.usage, "integrity_error", None):
+            return True
         if vendor is not None:
             return self.st.usage.window(vendor).state != "ok"
         return any(w.state != "ok" for w in self.st.usage._w.values())
@@ -297,7 +329,16 @@ class BreakerEngine:
         Older analysis predates a blackout/reset.  A future or malformed integer is not
         authority either: accepting ``>=`` would let a mutable/forged caller skip ahead of the
         signed ledger and make the real next generation look stale.
+
+        BUG-131: refuse outright when the usage ledger failed integrity restoration, even
+        if this vendor's window happens to read current. A contradictory ledger means no
+        per-vendor generation value is trustworthy.
         """
+        if getattr(self.st.usage, "integrity_error", None):
+            raise StaleAnalysisError(
+                f"watch-only ledger integrity failure for {vendor}: "
+                f"{self.st.usage.integrity_error} (SEC-23)"
+            )
         cur = self.current_generation(vendor)
         if (isinstance(analysis_generation, bool)
                 or not isinstance(analysis_generation, int)

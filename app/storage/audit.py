@@ -483,6 +483,27 @@ class AuditLog:
         with self._sf() as s, s.begin():
             return self.verify_session(s)
 
+    def high_water_mark(self) -> int | None:
+        """The signed monotonic high-water (highest ``seq`` EVER allocated).
+
+        ``None`` on a virgin chain (never appended); ``-1`` if the watermark is
+        missing on a non-empty chain or its signature is invalid (tamper). Read-only:
+        unlike ``verify_chain`` it reports the watermark without judging the rows, so
+        callers (e.g. the audited-limits reader) can distinguish a forged appended
+        tail (head above the watermark — ignorable) from a deleted genuine tail
+        (head below the watermark — fail closed). Never raises on tamper; it REPORTS it.
+        """
+        with self._sf() as s, s.begin():
+            head = s.execute(
+                select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)
+            ).scalar_one_or_none()
+            wm = self._read_hwm(s)
+            if wm == -1:
+                return -1
+            if wm is None and head is not None:
+                return -1  # rows present but watermark deleted: the delete-then-heal signature
+            return wm
+
     def verify_against_anchor(self, anchored_seq: int, anchored_hash: str) -> VerifyResult:
         """SEC-11: reject a chain whose head is BEHIND a specific external anchor point."""
         with self._sf() as s, s.begin():

@@ -22,6 +22,11 @@ from __future__ import annotations
 
 from typing import Callable
 
+from sqlalchemy import select
+
+from schemas.models.audit_entry import AuditEntry
+from schemas.models.risk_decision import RiskDecision
+
 # Deterministic LOCATOR keys we may echo from a source_ref. Anything else (e.g. a model-written
 # ``excerpt``/``summary``/``text`` field) is DROPPED — only the raw-corpus resolver may produce
 # operator-facing source text (SEC-17).
@@ -61,12 +66,14 @@ def _check_names(checks) -> list[str]:
     return []
 
 
-def render_risk_section(risk_decision) -> dict:
-    """The risk block, sourced 100% from the deterministic ``RiskDecision`` (SEC-17)."""
+def _canonical_facts(risk_decision) -> dict:
+    """The rendered risk facts in JSON-native canonical form — the comparison basis for
+    the signed-audit reconcile (BUG-136). Mirrors exactly what the render functions show."""
     checks = getattr(risk_decision, "checks", {}) or {}
     failed = getattr(risk_decision, "failed_checks", []) or []
     warnings = getattr(risk_decision, "warnings", []) or []
     ceil = getattr(risk_decision, "max_allowed_notional", None)
+    verdict = getattr(risk_decision, "execution_verdict", None)
     return {
         "decision": getattr(risk_decision, "decision", None),
         "checks": _check_status(_check_names(checks), failed),
@@ -74,7 +81,105 @@ def render_risk_section(risk_decision) -> dict:
         "warnings": list(warnings),
         "max_allowed_notional": None if ceil is None else str(ceil),
         "human_required": bool(getattr(risk_decision, "human_required", False)),
+        "execution_verdict": verdict if isinstance(verdict, dict) else None,
     }
+
+
+def _canonical_audit(audit_payload: dict) -> dict:
+    """The signed copy in the same canonical shape. ``checks`` arrive as the WP4
+    ``{name, passed, hard, detail}`` records; only name+pass/fail is operator-visible,
+    so the comparison uses the same projection as the render."""
+    payload = audit_payload or {}
+    failed = list(payload.get("failed_checks") or [])
+    names: list[str] = []
+    seen: set[str] = set()
+    for c in payload.get("checks") or []:
+        name = str(c.get("name")) if isinstance(c, dict) and "name" in c else str(c)
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    check_rows = [
+        {"name": name, "status": "fail" if name in set(failed) else "pass"}
+        for name in names
+    ]
+    ceil = payload.get("max_allowed_notional")
+    verdict = payload.get("execution_verdict")
+    return {
+        "decision": payload.get("decision"),
+        "checks": check_rows,
+        "failed_checks": failed,
+        "warnings": list(payload.get("warnings") or []),
+        "max_allowed_notional": None if ceil is None else str(ceil),
+        "human_required": bool(payload.get("human_required", False)),
+        "execution_verdict": verdict if isinstance(verdict, dict) else None,
+    }
+
+
+def verified_risk_facts(st, risk_decision_id: str) -> dict | None:
+    """The HMAC-verified signed risk-fact copy for a RiskDecision row, or None.
+
+    Returns the payload of the LATEST verified ``risk_decision`` audit entry bound to
+    this row (refs.model + refs.row_id, stamped by ``record_state_change``). None when
+    no verified entry covers the row — which itself fails the render closed. Read-only.
+    """
+    if not risk_decision_id:
+        return None
+    with st.session_factory() as s:
+        entries = s.execute(
+            select(AuditEntry)
+            .where(AuditEntry.event_type == "risk_decision")
+            .order_by(AuditEntry.seq.desc())
+        ).scalars().all()
+        wanted = [
+            e for e in entries
+            if (e.refs or {}).get("model") == RiskDecision.__tablename__
+            and (e.refs or {}).get("row_id") == risk_decision_id
+            and st.audit.verify_entry(e)
+        ]
+    if not wanted:
+        return None
+    return dict(wanted[0].payload or {})
+
+
+def render_risk_section(risk_decision, *, audit_facts: dict | None = None) -> dict:
+    """The risk block, sourced 100% from the deterministic ``RiskDecision`` (SEC-17).
+
+    BUG-136: the row is MUTABLE — a keyless DB writer can repaint it after the signed
+    ``risk_decision`` audit entry is written, and the operator would then see forged
+    risk facts. When ``audit_facts`` (the HMAC-verified signed copy, see
+    :func:`verified_risk_facts`) is supplied, the row is reconciled against it FIRST:
+    any mismatch renders an UNVERIFIED refusal block instead of risk facts. ``None``
+    keeps the legacy direct render (tests, same-tick paths) and is marked as such.
+    """
+    if audit_facts is not None and (
+        "decision" not in (audit_facts or {})
+        or _canonical_facts(risk_decision) != _canonical_audit(audit_facts)
+    ):
+        return {
+            "decision": None,
+            "checks": [],
+            "failed_checks": [],
+            "warnings": [],
+            "max_allowed_notional": None,
+            "human_required": True,
+            "verified": False,
+            "unverified": True,
+            "reason": "risk facts disagree with the signed audit record — do not act",
+        }
+    checks = getattr(risk_decision, "checks", {}) or {}
+    failed = getattr(risk_decision, "failed_checks", []) or []
+    warnings = getattr(risk_decision, "warnings", []) or []
+    ceil = getattr(risk_decision, "max_allowed_notional", None)
+    out = {
+        "decision": getattr(risk_decision, "decision", None),
+        "checks": _check_status(_check_names(checks), failed),
+        "failed_checks": list(failed),
+        "warnings": list(warnings),
+        "max_allowed_notional": None if ceil is None else str(ceil),
+        "human_required": bool(getattr(risk_decision, "human_required", False)),
+    }
+    out["verified"] = audit_facts is not None
+    return out
 
 
 _VERDICT_LABEL = {
@@ -85,7 +190,7 @@ _VERDICT_LABEL = {
 }
 
 
-def render_execution_section(risk_decision) -> dict:
+def render_execution_section(risk_decision, *, audit_facts: dict | None = None) -> dict:
     """The execution-quality block (QT-06), sourced STRICTLY from the ``RiskDecision`` row.
 
     Same rule as ``render_risk_section`` and for the same reason: the operator decides from
@@ -101,8 +206,25 @@ def render_execution_section(risk_decision) -> dict:
 
     ``None`` when no verdict was computed, which is the normal state while no book feed is
     wired. Rendered as "not evaluated" — never as "evaluated and fine".
+
+    BUG-136: when ``audit_facts`` is supplied, the row's verdict is reconciled against the
+    signed copy first; a mismatch renders UNVERIFIED instead of execution facts.
     """
     verdict = getattr(risk_decision, "execution_verdict", None)
+    if audit_facts is not None:
+        signed = (audit_facts or {}).get("execution_verdict")
+        signed_norm = signed if isinstance(signed, dict) else None
+        row_norm = verdict if isinstance(verdict, dict) else None
+        # No "decision" key means no genuine signed risk payload covers this row
+        # (e.g. the verified-entry lookup came back empty) — refuse regardless.
+        if row_norm != signed_norm or "decision" not in (audit_facts or {}):
+            return {
+                "evaluated": False,
+                "summary": "UNVERIFIED — execution facts disagree with the signed "
+                           "audit record — do not act",
+                "verified": False,
+                "unverified": True,
+            }
     if not isinstance(verdict, dict) or not verdict:
         return {
             "evaluated": False,
@@ -136,14 +258,18 @@ def render_execution_section(risk_decision) -> dict:
 
 
 def render_proposal_embed(proposal: dict, risk_decision,
-                          raw_excerpt_fn: Callable[[dict], str] | None = None) -> dict:
+                          raw_excerpt_fn: Callable[[dict], str] | None = None,
+                          audit_facts: dict | None = None) -> dict:
     """Build the operator-facing embed dict for a proposal + its RiskDecision.
 
     ``proposal`` is the TradeProposal dict (model-authored ORDER parameters + prose).
     ``risk_decision`` is the deterministic WP4 output — the ONLY source of the risk section.
     ``raw_excerpt_fn(source_ref) -> str`` returns a deterministic substring of the raw parquet
     item (by byte offset); it is the ONLY source of a source excerpt. If it is ``None`` the
-    sources block is rendered as unavailable rather than falling back to model text (SEC-17)."""
+    sources block is rendered as unavailable rather than falling back to model text (SEC-17).
+    ``audit_facts`` is the HMAC-verified signed risk-fact copy (see
+    :func:`verified_risk_facts`); when supplied, both risk sections reconcile the mutable
+    row against it and refuse to display on mismatch (BUG-136)."""
     p = proposal or {}
 
     # ORDER parameters — the concrete order the operator is authorizing. These are proposal
@@ -183,9 +309,9 @@ def render_proposal_embed(proposal: dict, risk_decision,
         "title": f"{side} {symbol} — {otype}",
         "proposal_id": p.get("proposal_id"),
         "order": order,
-        "risk": render_risk_section(risk_decision),
+        "risk": render_risk_section(risk_decision, audit_facts=audit_facts),
         # QT-06. Deterministic, from the RiskDecision row only — never from ``proposal``.
-        "execution": render_execution_section(risk_decision),
+        "execution": render_execution_section(risk_decision, audit_facts=audit_facts),
         # model prose, explicitly labelled — informational, never a risk fact:
         "model_thesis": p.get("thesis"),
         "model_invalidation": p.get("invalidation"),

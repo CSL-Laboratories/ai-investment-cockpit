@@ -291,6 +291,14 @@ class Settings(BaseSettings):
         return normalize_operator_ids(value)
 
     def model_post_init(self, __context) -> None:
+        # BUG-143: the .env secret guard ran ONLY in get_settings(), so any composition
+        # path constructing Settings() directly loaded the durable .env file unpoliced.
+        # The guard runs here too — on EVERY construction against the default env file —
+        # so the "startup FAILS CLOSED" property holds by construction, not caller
+        # discipline. (Per-call ``_env_file=`` test seams bypass the default path by
+        # design; values already loaded are never logged — the guard names KEYS and
+        # LINES only.)
+        assert_no_secrets_in_env_file()
         del __context
         frozen = (
             frozenset(self.operator_ids_config.split(","))

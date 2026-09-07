@@ -23,6 +23,7 @@ from workflows.agent_calls import call_agent
 from workflows.constants import EVENT_INTERROGATION
 from workflows.events import resolve_raw
 from workflows.grounding import extract_slice
+from workflows.packets import wrap_untrusted
 from workflows.prompts import load_prompt
 from workflows.scrubber import scrub_output_fields
 
@@ -76,7 +77,15 @@ def fresh_interrogate(state, *, question: str, proposal_id: str | None = None,
             unresolved.append(str(ref))   # noted in context; never trusted prose
     context_parts = [extract_slice(raw_items)] if raw_items else []
     if unresolved:
-        context_parts.append("unresolvable_refs=" + ",".join(sorted(unresolved)))
+        # BUG-144: the unresolvable-refs line used to be concatenated RAW into the
+        # prompt, outside any <untrusted-content> wrapper — a stale/foreign ref carrying
+        # prompt-shaped bytes reached the model unwrapped on the SEC-18 fresh-context
+        # path. Wrap it like every other untrusted input (refs are identifier-shaped
+        # today via normalize, but the wrapper must not depend on that staying true).
+        context_parts.append(wrap_untrusted(
+            "unresolvable_refs=" + escape_untrusted(",".join(sorted(unresolved))),
+            source="interrogation-unresolved-refs",
+        ))
     stored_json = json.dumps(stored_output, sort_keys=True, default=str)
     context_parts.append(
         '<untrusted-content source="stored-validated-output">\n'

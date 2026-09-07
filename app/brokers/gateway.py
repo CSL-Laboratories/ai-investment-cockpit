@@ -35,7 +35,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 from brokers.capability import CapabilityError, SubmitToken, TokenRegistry
-from brokers.order_state_machine import TERMINAL_STATES, legal_order_transition, transition
+from brokers.order_state_machine import (
+    TERMINAL_STATES,
+    IllegalOrderTransition,
+    legal_order_transition,
+    transition,
+)
 
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from orchestrator.breakers import BreakerThresholds, StaleAnalysisError
@@ -536,10 +541,19 @@ class OrderGateway:
             return ("approval", None,
                     "no HMAC-signed adjudication binds this approval to this order")
         ttl = self._ttl_seconds(st)
-        if ttl is not None and db_appr.decided_at is not None:
-            age = (_naive_utc(clock.now()) - _naive_utc(db_appr.decided_at)).total_seconds()
-            if age > ttl:
-                return ("approval", None, f"approval expired ({age:.0f}s > {ttl}s TTL)")
+        if ttl is not None:
+            # BUG-132: the TTL is documented (Settings.approval_ttl_seconds) as measured
+            # from the RiskDecision EVAL, and the read-side helper
+            # (bridge.approval.approval_validity) enforces exactly that — but this gate
+            # measured from the approval's decided_at, so a fresh approval minted over a
+            # stale risk evaluation passed. Measure from evaluated_at, falling back to
+            # decided_at only for legacy rows that predate the column.
+            eval_at = getattr(db_rd, "evaluated_at", None) or db_appr.decided_at
+            if eval_at is not None:
+                age = (_naive_utc(clock.now()) - _naive_utc(eval_at)).total_seconds()
+                if age > ttl:
+                    return ("approval", None,
+                            f"risk evaluation expired ({age:.0f}s > {ttl}s TTL)")
 
         # (f) runtime pin (SEC-08) — auto modes refuse a non-claude producing runtime.
         try:
@@ -903,17 +917,33 @@ class OrderGateway:
             )
 
             # Advance the order proposed/approved -> submitted (audited; via the FSM).
+            # BUG-125b: the in-memory order can be stale vs the durable row (a caller-held
+            # object mutated after the pre-broker guard). BUG-125 makes transition() fail
+            # CLOSED on that drift — but here that raise would escape as a raw exception
+            # OVER an already-recorded broker submit. Convert it to an audited refusal
+            # instead: the broker side-effect stands (covered by the intent/result pair +
+            # client_order_id idempotency + reconcile_startup), and the operator sees a
+            # refusal, not a traceback.
             order.approval_id = approval.id
-            if order.state == "proposed":
-                transition(st, order, "approved", actor=producing_runtime,
-                           reason="approval consumed", clock=clock)
-            transition(
-                st, order, "submitted", actor=producing_runtime,
-                reason="submitted to broker", clock=clock,
-                broker_order_id=result["broker_order_id"],
-                filled_qty=result["filled_qty"] if result["filled_qty"] is not None else 0,
-                avg_fill_price=result["avg_fill_price"],
-            )
+            try:
+                if order.state == "proposed":
+                    transition(st, order, "approved", actor=producing_runtime,
+                               reason="approval consumed", clock=clock)
+                transition(
+                    st, order, "submitted", actor=producing_runtime,
+                    reason="submitted to broker", clock=clock,
+                    broker_order_id=result["broker_order_id"],
+                    filled_qty=result["filled_qty"] if result["filled_qty"] is not None else 0,
+                    avg_fill_price=result["avg_fill_price"],
+                )
+            except IllegalOrderTransition as exc:
+                reason = f"order FSM refused the post-submit transition (stale order): {exc}"
+                log.warning("order %s: %s", order.id, reason)
+                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
+                                     stage="order_state", reason=reason,
+                                     actor=producing_runtime)
+                return GateOutcome(False, "order_state", reason,
+                                   order_tuple_hash=resolved_hash)
 
             # BUG-052: consume the broker's ACK. A paper market order fills synchronously
             # at submit; leaving it 'submitted' meant the filled/cancelled FSM edges had no
@@ -953,6 +983,15 @@ class OrderGateway:
                     except (IntegrityError, OperationalError) as exc:
                         log.warning(
                             "order %s: ack transition to %r failed transiently (%s); order "
+                            "stays 'submitted' (open, fail-safe) for a later poll to resolve",
+                            order.id, ack_state, exc,
+                        )
+                    except IllegalOrderTransition as exc:
+                        # BUG-125b: stale in-memory order vs the durable row — the FSM
+                        # refused; the order stays 'submitted' (open, fail-safe) for the
+                        # status poll to reconcile, same as the transient path above.
+                        log.warning(
+                            "order %s: ack transition to %r refused as stale (%s); order "
                             "stays 'submitted' (open, fail-safe) for a later poll to resolve",
                             order.id, ack_state, exc,
                         )

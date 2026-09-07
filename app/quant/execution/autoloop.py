@@ -32,7 +32,7 @@ from quant.costs import FeeSchedule
 from quant.events import Event, Fill, PriceScale, Trade
 from quant.execution.sim_venue import SimVenue
 from quant.guards import Guards
-from quant.oms import OMS, CancelOrder, Intent, NewOrder, ReplaceOrder
+from quant.oms import OMS, CancelOrder, IllegalTransition, Intent, NewOrder, ReplaceOrder
 from quant.pnl import PnLTracker
 from quant.strategies.base import Strategy, StrategyContext
 
@@ -65,6 +65,11 @@ class AutoLoopResult:
     desync_cancels: int = 0
     """Feed events naming an order the venue's book did not hold. See ``runner.RunResult``
     for why this is a reported number rather than an exception or a silence."""
+    desync_fills: int = 0
+    """Fills for orders the OMS already holds terminal (BUG-139 belt-and-braces). The
+    venue-confirmed cancel flow above should make these unreachable in-loop; if one ever
+    lands, the run reports it instead of dying on an IllegalTransition — an unattended
+    loop must not turn a bookkeeping race into an outage."""
     blocked_reasons: dict[str, int] = field(default_factory=dict)
     final_position: int = 0
     attribution: dict | None = None
@@ -128,6 +133,15 @@ class AutoLoop:
 
             self.result.events += 1
             self._absorb_outcomes(self.venue.advance(event.ingest_ts))
+            # BUG-139: retire OMS orders whose traveling cancels the venue CONFIRMED.
+            # A fill that landed before the cancel arrived is a legitimate fill of a
+            # live order (absorbed above); only a still-live order may be retired here —
+            # a terminal one already reconciled the race the other way.
+            for client_id in self.venue.drain_confirmed_cancels():
+                order = self.oms.get(client_id)
+                if order is not None and order.is_live:
+                    self.oms.on_cancelled(client_id, ts=event.ingest_ts,
+                                          reason="venue_confirmed_cancel")
             try:
                 self._absorb(self.venue.apply_market_event(event))
             except OrderNotFound:
@@ -219,8 +233,16 @@ class AutoLoop:
             elif isinstance(intent, CancelOrder):
                 order = self.oms.get(intent.client_id)
                 if order is not None and order.is_live:
-                    self.venue.cancel_order(intent.client_id, ts=ts)
-                    self.oms.on_cancelled(intent.client_id, ts=ts, reason="strategy_cancel")
+                    # BUG-139: a TRAVELING cancel must not retire the OMS order at send
+                    # time — the cancel can lose the withdraw-vs-fill race, and marking
+                    # CANCELLED up front turned the later legitimate fill into an
+                    # IllegalTransition that killed the run. The venue confirms on
+                    # arrival (drained in run()); only the instant path retires here.
+                    if self.venue.latency.cancel_ns and ts:
+                        self.venue.cancel_order(intent.client_id, ts=ts)
+                    elif self.venue.cancel_order(intent.client_id, ts=ts):
+                        self.oms.on_cancelled(intent.client_id, ts=ts,
+                                              reason="strategy_cancel")
             elif isinstance(intent, ReplaceOrder):
                 order = self.oms.get(intent.client_id)
                 if order is not None and order.is_live:
@@ -289,7 +311,14 @@ class AutoLoop:
             order = self.oms.get(fill.order_id)
             if order is None:
                 continue
-            self.oms.on_fill(fill)
+            try:
+                self.oms.on_fill(fill)
+            except IllegalTransition:
+                # BUG-139: a fill for a terminal order (e.g. a cancel confirmation and
+                # a fill crossing in one batch). Counted, never fatal — same split as
+                # the OrderNotFound desync above.
+                self.result.desync_fills += 1
+                continue
             self.result.fills.append(fill)
             self.pnl.on_fill(fill)
             ctx = self._context(fill.ingest_ts)
