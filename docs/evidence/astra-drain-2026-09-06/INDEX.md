@@ -17,7 +17,7 @@ Noble claim priority if packages contend: (1) audit append/HWM beyond #114, (2) 
 | Soak isolation checklist | reference; linked worktrees + read-only mount notes | `../astra-soak-isolation-checklist-2026-09-06.md` |
 | Audit append hardening | **real-miss-found**; Order FSM freshness/rollback (F1/F2); HWM late damage deferred to HWM report; no PR yet | `../astra-audit-append-hardening-2026-09-06.md` |
 | HWM re-sign claim-shape | **real-miss-found**; claim refuse invalid HWM at signing (miss #13); distinct from #68/#70; no PR yet | `../astra-hwm-resign-claim-shape-2026-09-06.md` |
-| DEC-09 matrix gaps | in flight / partial fixtures | `../astra-dec09-matrix-gaps-2026-09-06/` |
+| DEC-09 matrix gaps | residual fail-opens M1/M2/M3; evidence-only; cash-subject RW-21 proposed red tests | `../astra-dec09-matrix-gaps-2026-09-06.md` |
 
 ## Prompts
 
@@ -33,3 +33,4 @@ No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge;
 
 - 2026-09-06 ~18:23 PT: added HWM re-sign claim-shape report (real-miss-found).
 - 2026-09-06 ~18:23 PT: added audit-append-hardening report (real-miss-found; Order FSM claim shape).
+- 2026-09-06 ~18:33 PT: added DEC-09 matrix gaps final report (M1/M2/M3).

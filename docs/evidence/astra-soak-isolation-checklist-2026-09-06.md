@@ -216,6 +216,17 @@ four-case supplement records that control, the distinct package-path counterexam
 read-only SQL side effects, and clone independence; the rejected hypothesis is not counted
 as a passing experiment.
 
+An additional rehearsal used an independent `--no-local --no-hardlinks` clone of the
+**actual repository history**, registering detached copies of the three full pins only
+inside `/tmp`. Their tracked-file counts and SHA-256 manifests exactly matched the real
+trees in the first table. It rebased the actual `892e2db` documentation commit plus a
+synthetic development commit onto a synthetic successor of `c5ef0ad`, then checked the
+development copy out at each of the three historical pins and returned to the rebased
+topic. **All five checkpoints preserved every protected copy's HEAD, file record and Git
+metadata record.** This supplements the synthetic graph tests with the exact committed
+source corpus. It did not replay all historical application commits, copy real runtime
+data, or perform any branch/rebase operation in the original repository.
+
 These mechanisms are consistent with Git's documented
 [rebase ref updates and shell execution](https://git-scm.com/docs/git-rebase),
 [hook execution](https://git-scm.com/docs/githooks),
@@ -374,6 +385,9 @@ The [local evidence directory](../../data/astra-soak-isolation-2026-09-06/) cont
   `runtime-probe-initial-hypothesis.py` and `.txt` retain the rejected top-level import
   hypothesis. No real process was renamed or restarted.
 - `git-fsck.json`: the read-only object verification command and successful result.
+- `exact-commit-rehearsal.py` and `.json`: independent source-only clone, exact three pins,
+  rebase/checkout commands and five successful preservation checkpoints; no real runtime
+  database, dotenv or raw data was copied.
 - `session-permissions.json`: process capability flags and all mount-point/options rows,
   omitting backing-store details. `venv-metadata-baseline.json` records 417 environment
   configuration/entrypoint/distribution-metadata entries; it does not hash all installed
