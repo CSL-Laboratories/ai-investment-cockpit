@@ -3,7 +3,8 @@ name = "ai-investment-cockpit"
 version = "0.0.0"
 description = "Local AI Investment Cockpit — solo-dev, subscription-powered, human-gated AI investing copilot."
 requires-python = ">=3.11"
-# Full runtime deps documented here; CI installs the WP0 subset explicitly (.github/workflows/ci.yml).
+# Full runtime deps documented here; CI installs this set plus pytest/ruff explicitly
+# (.github/workflows/ci.yml). Every validation cell includes discord.py; fallback is isolated.
 # Pin + hash-lock before install — supply-chain hardening (docs/security-architecture §7).
 dependencies = [
   "fastapi",

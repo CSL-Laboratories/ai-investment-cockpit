@@ -1,31 +1,17 @@
-"""WP6/QT-09 — ``build_bot`` against REAL discord.py.
+"""WP6/QT-09 — construct the real Discord command tree without login or network.
 
-WHY THIS FILE HAD TO EXIST
-----------------------------
-discord.py is deliberately omitted from CI so ``tests/bridge/test_bot.py`` exercises the
-no-discord fallback path. The consequence, unnoticed until QT-09, was that NOTHING ever
-executed ``build_bot``'s body: the only test of it asserts the ``RuntimeError`` raised when
-discord.py is absent.
-
-So the command tree had never once been constructed, and it could not be. The stub loop bound
-its loop variable as a default parameter (``async def _cmd(interaction, _name=name)``), which
-discord.py rejects — ``_extract_parameters_from_callback`` demands a type annotation on every
-parameter after the interaction and reads a bare default as a slash-command OPTION. Every
-call to ``build_bot`` raised ``TypeError`` before registering a single command.
-
-A guarded import (``pytest.importorskip``) keeps this suite green on the CI subset while
-making the real path testable wherever discord.py is installed. Skipping is the correct
-outcome in CI; silently having no coverage was not.
+discord.py is required by the validation profile: a missing dependency fails collection.
+The absent-dependency fallback is exercised separately in an isolated subprocess by
+``test_bot.py``, so every full matrix cell covers both paths.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
+import discord
 import pytest
 
-pytest.importorskip("discord")
-
-from bridge.bot import SLASH_COMMANDS, _WIRED_COMMANDS, build_bot  # noqa: E402
+from bridge.bot import SLASH_COMMANDS, _WIRED_COMMANDS, build_bot
 
 
 @pytest.fixture
@@ -41,7 +27,7 @@ def tree(st):
 
 def test_the_command_tree_actually_builds(tree):
     """The regression this file exists for. Before the closure fix this raised TypeError."""
-    assert tree is not None
+    assert isinstance(tree, discord.app_commands.CommandTree)
 
 
 def test_every_advertised_command_is_registered(tree):
