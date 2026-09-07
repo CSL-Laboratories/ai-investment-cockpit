@@ -23,13 +23,41 @@ and the claim board, not the specification.
 
 ## Delivery position recorded 2026-08-24
 
+### RW-23 post-merge audit repair — claimed 2026-09-07
+
+`RW-23` is claimed by Codex/Astra on `codex/audit-reliability-2026-09-07`, from merged
+main `c231dc2`. The operator authorized documentation, repairs and local commits in slices.
+The existing autonomous evidence runs keep their original checkout and configuration.
+The package gate is focused regressions, fresh independent authority review and the full
+local DEC-09 matrix. IDs remain claimed until merge; no empirical gate is closed here.
+
+| ID | Defect | Priority | Status |
+|---|---|---|---|
+| `BUG-146` | HTML separators sever denial from cash-merger terms | P1 | claimed — RW-23 |
+| `BUG-147` | Empty/error repair responses lose watch-only generation on restart | P1 | claimed — RW-23 |
+| `BUG-148` | Dollar-only sell backing permits quantity above owned shares | P1 | claimed — RW-23 |
+| `BUG-149` | Missing sizing persists model prose before outbound scrub | P2 | claimed — RW-23 |
+| `BUG-150` | Ordinary news raw store discards original body and metadata | P2 | claimed — RW-23 |
+| `BUG-151` | Stream persistence errors are absent from operator health | P2 | claimed — RW-23 |
+| `BUG-152` | Failed daily-bar audit binding strands the dated cache | P2 | claimed — RW-23 |
+| `BUG-153` | Approval consumption inflates gate adjudication denominator | P2 | claimed — RW-23 |
+| `BUG-154` | Deep-budget verification and spend count use different snapshots | P2 | claimed — RW-23 |
+| `BUG-155` | Simulator advances orders past earlier exchange cancellations | P2 | claimed — RW-23 |
+| `BUG-156` | Simulator dispatches fill reports before receive time | P2 | claimed — RW-23 |
+
+Baseline findings and reproduction outputs: [[evidence/astra-audit-2026-09-07/AUDIT]].
+Intake and delivery record: [[evidence/rw23-audit-repair-2026-09-07]]. Further bug/performance
+work will be recorded from measurements and scoped after these repairs, without widening
+execution authority. CLN-01 is promoted into BUG-147's correctness repair where appropriate.
+
 ### RW-22 review remediation — claimed 2026-09-07
 
 | ID | What | Status | Owner | Gate |
 |---|---|---|---|---|
 | `RW-22` | Repair the five independently reproduced findings in the local Muse/OpenCode bug-fix branch: BUG-140 cash qualification, BUG-139 simulation fill refusal, BUG-126 damaged-history limits, BUG-136 persisted risk rendering, and BUG-131 false vendor recovery | claimed — implemented and locally validated on `work/bugfix-audit-2026-09-07` at `cacaff4`; reviewed baseline `0809a61`; unmerged | Codex/Astra + subagents | independent adversarial review passed; all 89 new regression cases passed in each full DEC-09 cell; Windows 3.11/3.12: 2,875 passed / 5 skipped each; WSL2 3.11/3.12: 2,873 passed / 7 skipped each; Ruff and dependency checks clean; [[evidence/rw22-review-remediation-2026-09-07]] |
 
-This is one operator-authorized follow-up package on the existing unmerged branch.
+RW-22 merged in PR #80 at `c231dc2` on 2026-09-07; its historical implementation
+and validation source is `cacaff4`. The table's original branch status is historical.
 The BUG numbers above retain the original commit's identifiers; the five findings
 do not certify the other BUG-126..145 claims. No empirical or activation gate changes.
 

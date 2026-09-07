@@ -12,6 +12,15 @@ last-verified: 2026-08-28
 
 # The plan
 
+### RW-23 audit repair intake — 2026-09-07
+
+The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from
+merged main `c231dc2`. This is one bounded correctness package extending existing authority,
+workflow, ingest and simulation paths; its seven intake answers and validation record are in
+[[evidence/rw23-audit-repair-2026-09-07]]. No new capability or empirical gate is introduced.
+Further reliability/performance work follows a measured review and its own scope entry.
+RW-22 has merged in PR #80; older branch-status text below records its pre-merge state.
+
 > **This is the only document that defines what we are building next and in what order.**
 > Everything else is either a live register ([[REGISTER]], [[security-hardening-backlog]]),
 > a subsystem contract ([[build-scaffold-ultracode]], [[quant-engine]]), reference research,
