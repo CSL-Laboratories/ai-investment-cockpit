@@ -27,7 +27,7 @@ and the claim board, not the specification.
 
 | ID | What | Status | Owner | Gate |
 |---|---|---|---|---|
-| `RW-22` | Repair the five independently reproduced findings in the local Muse/OpenCode bug-fix branch: BUG-140 cash qualification, BUG-139 simulation fill refusal, BUG-126 damaged-history limits, BUG-136 persisted risk rendering, and BUG-131 false vendor recovery | claimed — implemented on `work/bugfix-audit-2026-09-07`, reviewed baseline `0809a61`; platform validation pending | Codex/Astra + subagents | regression proofs and independent adversarial review passed; full local DEC-09 matrix next; [[evidence/rw22-review-remediation-2026-09-07]] |
+| `RW-22` | Repair the five independently reproduced findings in the local Muse/OpenCode bug-fix branch: BUG-140 cash qualification, BUG-139 simulation fill refusal, BUG-126 damaged-history limits, BUG-136 persisted risk rendering, and BUG-131 false vendor recovery | claimed — implemented and locally validated on `work/bugfix-audit-2026-09-07` at `cacaff4`; reviewed baseline `0809a61`; unmerged | Codex/Astra + subagents | independent adversarial review passed; all 89 new regression cases passed in each full DEC-09 cell; Windows 3.11/3.12: 2,875 passed / 5 skipped each; WSL2 3.11/3.12: 2,873 passed / 7 skipped each; Ruff and dependency checks clean; [[evidence/rw22-review-remediation-2026-09-07]] |
 
 This is one operator-authorized follow-up package on the existing unmerged branch.
 The BUG numbers above retain the original commit's identifiers; the five findings

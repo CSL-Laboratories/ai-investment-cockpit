@@ -12,6 +12,8 @@ last-verified: 2026-09-07
 The operator-authorized follow-up to local `work/bugfix-audit-2026-09-07` repairs five
 independently reproduced review findings. See [[evidence/rw22-review-remediation-2026-09-07]]
 for the exact changes, regression and adversarial evidence, and local platform results.
+All four DEC-09 cells passed against implementation commit `cacaff4`, including all
+89 new regression cases in each cell.
 The branch remains unmerged; no selection, witness, paper or live gate is satisfied by this work.
 
 ## Operator gate audit — 2026-09-06
