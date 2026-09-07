@@ -36,3 +36,5 @@ No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge;
 - 2026-09-06 ~18:33 PT: added DEC-09 matrix gaps final report (M1/M2/M3).
 
 - 2026-09-06 ~19:35 PT: BUG-125 F1/F2 opened as PR #74; cockpit Astra research stopped ahead of 8:15 hard stop.
+
+- 2026-09-06 ~19:40 PT: BUG-125/#74 MERGED (`ce62cf2`). Drain freeze closing; post-wall no new Codex/Astra until Lucas reopens. watch_only claim-shape mid-flight left out of this freeze if unfinished.

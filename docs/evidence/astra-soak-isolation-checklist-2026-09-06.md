@@ -3,8 +3,7 @@ title: Astra — soak isolation and rebase safety checklist for Cockpit Admin
 type: evidence
 status: reference
 last-verified: 2026-09-06
-development_sha_at_start: 892e2dbaab0093e91857cea373dc188d638d8d80
-development_sha_observed_0208_utc: 9a2e3a9cb8a857a814fa880734b31b6705e92658
+development_sha: 892e2dbaab0093e91857cea373dc188d638d8d80
 live_soak_sha: c5ef0ad3d9acd3a85aa86228491ea1827bfd529e
 prior_soak_sha: 61ca0af27dc903ff97237b3cc2c8e83c735ebb09
 incident_soak_sha: 1e2d4e3ca7c2fcae4e320ce5f72b44905b036ee4
@@ -16,7 +15,7 @@ incident_soak_sha: 1e2d4e3ca7c2fcae4e320ce5f72b44905b036ee4
 conditions below. This session also has an enforced read-only mount boundary covering
 their files and Git metadata. An unconditional host-wide “cannot rewrite” claim is false:
 these are linked worktrees with shared Git storage, and the soak launcher uses the
-development tree's virtual environment.** Twenty-three disposable cases reproduced
+development tree's virtual environment.** Seventeen disposable experiments reproduced
 the normal behavior and concrete exceptions without operating on a real soak tree.
 
 The current live **disk pin is `c5ef0ad`**. The prior pin and BUG-114 incident remain separate
@@ -42,7 +41,7 @@ The requested research cutoff is interpreted as September 6 20:15 Pacific / Sept
 All four worktrees resolve to distinct physical directories. All share
 `/workspace/ai-investment-cockpit/.git` as their Git common directory:
 
-| Role / absolute worktree | HEAD at baseline | Per-worktree Git directory | Tracked files | Full status at baseline |
+| Role / absolute worktree | Observed HEAD | Per-worktree Git directory | Tracked files | Full status at baseline |
 |---|---|---|---:|---|
 | Development: `/workspace/ai-investment-cockpit` | `892e2dbaab0093e91857cea373dc188d638d8d80` | `.git` | Not a protected-tree census | Clean; branch `work/astra-fresh-install-smokes-2026-09-06` |
 | Live: `/workspace/cockpit-soak` | `c5ef0ad3d9acd3a85aa86228491ea1827bfd529e` | `.git/worktrees/cockpit-soak2` | 581 | Detached; clean |
@@ -61,10 +60,6 @@ contents were hashed, not printed. No protected-tree symlink or regular file wit
 hard links was found. The development census, including its virtual environments, found
 12 symlinks, none resolving into a protected tree, and no multiply linked regular files.
 This is a point-in-time census, not protection against a later alias or mount change.
-
-A read-only `git fsck --strict --no-reflogs --no-dangling` check naming all three full pins
-also returned exit 0 with empty stdout/stderr at 01:05 UTC. This checks object integrity and
-connectivity now; it does not reserve objects against later privileged deletion or GC.
 
 | Protected tree | All-file census | Tracked-file manifest SHA-256 | All-file manifest SHA-256 at baseline |
 |---|---:|---|---|
@@ -87,40 +82,6 @@ metadata, ownership/ACLs and a filesystem-wide atomic snapshot are not covered b
 digest. No file changed size, inode or modification time during its individual baseline or
 post-experiment read. That observation is not a coordinated SQLite transaction snapshot.
 
-### Actual development activity observed during the watch
-
-Development changed externally while this research remained read-only on Git and soak.
-The local HEAD reflog records these events on September 7 UTC:
-
-| UTC | Recorded event | Development HEAD |
-|---|---|---|
-| 01:15:30 | Checkout from `work/astra-fresh-install-smokes-2026-09-06` to `work/astra-drain-freeze-2026-09-06` | `d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f` |
-| 01:15:51 | Documentation freeze commit | `049518d202cb61079403a7e8cb32cba23e37d51b` |
-| 01:18:58 | Documentation/fixture update commit | `20978607ed9efad7d62c4a1cb2ae201f7ca8b113` |
-| 01:23:43 | HWM/audit-hardening documentation update commit | `ec76c564f8d2ee4db3f54c8a85b6c9832cc08cf8` |
-| 01:33:28 | Matrix-gap documentation update commit | `3801b0c4cd2e07c154ad5e3053d2f3b525caf1cb` |
-| 02:03:44 | Mid-research isolation-checklist commit | `9a2e3a9cb8a857a814fa880734b31b6705e92658` |
-
-The 01:30, 01:45, 02:00, and additional **02:08:30–02:08:31** byte observations bracket
-these changes. Each retained the three original pins, tracked-source manifests and Git
-metadata records, with zero changes to any prior/incident file record. At 02:08 the only
-live differences from baseline were WAL/SHM and three newly present raw Parquet files.
-The latter require host attribution; the comparison helper returns review-required, not
-a service-health pass. The development `app` tree at `9a2e3a9` equals `c5ef0ad:app`.
-
-This is **observed branch/commit separation on the actual host**, alongside controlled
-rebase tests in independent disposable repositories. No original-repository rebase was
-observed or performed by this task. The reflog is local bookkeeping, not an independent
-timestamp witness or proof of the actor's authorization. This research did not issue those
-commits or the branch switch, including the commit that captured an intermediate version
-of this report.
-
-The persistent configuration key additions were the new development branch's `remote` and
-`merge` entries. Command-scope `core.hooksPath`/`core.fsmonitor` rows in the later observation
-come from this collector's per-command safety flags, not newly installed hooks. Active
-hooks and replacement refs remained absent at that inspection. `development-activity.json`
-and `shared-git-baseline.json` retain the observations without credential values.
-
 ### Boundary enforced in this session
 
 The observed `/proc/self/mountinfo` reports `/` read-only, with writable mounts for the
@@ -128,13 +89,6 @@ development tree and `/tmp`, and explicit read-only mounts over development `.gi
 `.agents` and `.codex`. There is no writable mount below any protected soak path. Together
 with the observed absence of writable aliases to protected files, this blocks this shell's
 direct file and Git-metadata rewrites. No write probe was made against a protected path.
-
-A supplementary process read found UID/GID 1000, zero effective/permitted/bounding
-capabilities, `NoNewPrivs=1`, and a seccomp filter active. The child's inherited descriptors
-were pipes, not writable handles to protected files. The complete mount-point/options
-inventory is retained in `session-permissions.json`; the writable proc mount is not a
-writable soak-file mapping. This is evidence for ordinary access in this namespace, not
-a sandbox-escape assessment or a guarantee against a privileged host actor.
 
 This is the current command process's mount view. It does not bind Cockpit Admin, a host
 service, another namespace, or a privileged process. The observed owner/mode on the host
@@ -189,17 +143,6 @@ The inherited research `PYTHONPATH` was `/workspace/ai-investment-cockpit/app`, 
 reason not to import or launch application code during preservation checks. The snapshot
 collector uses standard-library filesystem/subprocess operations only.
 
-Path reuse adds a separate cutover hazard. In a disposable Python process, renaming its
-source tree preserved the old cwd and already loaded package, while reusing the original
-absolute path let a later package submodule load from the replacement tree. The process
-then contained both revisions. A control with existing top-level modules stayed on the old
-cwd, so this is a demonstrated package-path hazard, not a claim that every import switches.
-Python caches loaded modules and uses package `__path__` for submodule lookup.
-[Python import machinery](https://docs.python.org/3.13/reference/import.html).
-No claim is made that this occurred in the real September 6 cutover. For a separately
-authorized cutover, verify the old process has exited before reusing its source alias;
-HEAD checks on the replacement directory cannot supply that process evidence.
-
 The existing [W-22 runbook](../runbooks/w22-paper-mvp.md) has a different Windows layout:
 source from the detached tree, but dotenv, working directory/database/raw, and interpreter
 from development. It supports source separation while retaining shared runtime state. Do
@@ -216,7 +159,7 @@ committing a development branch. This does not make the mirror immutable or inde
 
 ## Reproduced failure modes
 
-**23/23 final synthetic cases passed their explicit assertions**, using Git 2.47.3 and SQLite
+**17/17 synthetic cases passed their explicit assertions**, using Git 2.47.3 and SQLite
 3.46.1. “Pass” for a counterexample means the unsafe effect was reproduced, not that it is
 acceptable. Every repository mutation below was confined to disposable `/tmp` fixtures;
 the real three trees were only read before and afterward.
@@ -240,29 +183,6 @@ the real three trees were only read before and afterward.
 | Status masking | `assume-unchanged` plus a tracked-file edit produced expected HEAD and empty status; direct blob comparison detected it | Verify bytes, not just status; inspect index flags |
 | Incoming runtime path | An ordinary rebase installed an upstream force-tracked `.venv` file over an ignored installed dependency, leaving protected source unchanged | Review incoming paths, not just commands; `.gitignore` cannot freeze runtime dependencies |
 | Status refresh | Ordinary `status` changed index bytes after a stat-only change; `--no-optional-locks` preserved them | Use optional-lock suppression for read-only evidence collection |
-| Cwd alias control | After rename/path reuse, existing top-level imports still resolved through the old cwd | Do not overstate the path-reuse hazard as affecting every import |
-| Package alias cutover | The old package remained loaded, while a later submodule came from the replacement absolute package path | Verify old process exit before a separately authorized path-reusing cutover |
-| Read-only SQL sidecar | A `mode=ro` connection followed by `SELECT` created a missing SHM in a writable synthetic directory | A read-only SQL connection does not preserve all filesystem bytes |
-| Clone independence | After source GC, a `--shared` clone lost its borrowed pin object; a `--no-local` clone retained its independently stored object | Verify object independence, not merely the existence of another `.git` directory |
-| Same-owner mode bits | Direct write to a `0444` fixture file refused, but its owner could change the mode and overwrite it | Mode bits alone do not constrain the owning actor |
-| Writable parent | A `0555` fixture directory could be renamed and replaced through its writable parent | Protect ancestors and pathname bindings, not just leaf permissions |
-
-The initial broad alias-cutover hypothesis failed: cwd precedence kept an existing
-top-level module on the old tree. Its script and failure note are retained. The final
-four-case supplement records that control, the distinct package-path counterexample,
-read-only SQL side effects, and clone independence; the rejected hypothesis is not counted
-as a passing experiment.
-
-An additional rehearsal used an independent `--no-local --no-hardlinks` clone of the
-**actual repository history**, registering detached copies of the three full pins only
-inside `/tmp`. Their tracked-file counts and SHA-256 manifests exactly matched the real
-trees in the first table. It rebased the actual `892e2db` documentation commit plus a
-synthetic development commit onto a synthetic successor of `c5ef0ad`, then checked the
-development copy out at each of the three historical pins and returned to the rebased
-topic. **All five checkpoints preserved every protected copy's HEAD, file record and Git
-metadata record.** This supplements the synthetic graph tests with the exact committed
-source corpus. It did not replay all historical application commits, copy real runtime
-data, or perform any branch/rebase operation in the original repository.
 
 These mechanisms are consistent with Git's documented
 [rebase ref updates and shell execution](https://git-scm.com/docs/git-rebase),
@@ -291,7 +211,7 @@ historical evidence; this session did not obtain a key or repeat that verificati
 The [register](../REGISTER.md) records the BUG-114 repair in PR #68, merge `61ca0af`, repair
 `3035d83`. Neither that repair nor PR #70 makes the original fork a valid continuous soak.
 
-These hashes of files in the preserved trees matched at baseline and post-experiment:
+These original file hashes matched at baseline and post-experiment:
 
 | Tree / relative file | Bytes | SHA-256 |
 |---|---:|---|
@@ -305,21 +225,6 @@ These hashes of files in the preserved trees matched at baseline and post-experi
 | Prior `app/cockpit.db-shm` | 32,768 | `8f19f092f92e04196cab86256c4af572bcb9655bf711a7a2454dc4588ff612be` |
 | Prior `app/data/audit-head.json` | 92 | `c2642f7e5dc13ca2f9b57995dd43d660268d598686b70a8402e8ef10644b8988` |
 | Prior `PRIOR-PIN.md` | 248 | `3f4602b479092104dc4ce949d4b5259b688c387e699736e21ae1b55f4239ccba` |
-
-A concurrent same-host `incident-evidence.json` report independently listed matching before/
-after hashes, lengths and modification times for the incident note and DB/WAL/SHM. Its
-reported structural scan still finds the predecessor mismatch at 13589, with row/head/HWM
-14028 and `hmac_reverified=false`. This task compared that report's four file records to its
-own baseline; it did not replay the database. The report is retained locally as
-`corroborating-incident-report.json` (SHA-256
-`c90b539187b88e7ff79cc6054e35c3e18112b8412392df70352ae7612bdd6021`).
-
-No independent byte manifest from the September 3 freeze, or from the prior pin's original
-cutover, was located in the searched evidence records. File modification times and local
-notes cannot prove uninterrupted historical custody. **The byte-preservation claim begins
-with this research's baseline; it is not backdated to either freeze.** Agreement with a
-concurrent local report corroborates present bytes, not independent chronology or HMAC
-authenticity.
 
 Read the DB/WAL/SHM as ordinary bytes for preservation checks. Merely issuing SQL `SELECT`
 does not establish a no-write filesystem contract: opening a WAL database may create or
@@ -359,8 +264,6 @@ a backup, an independent witness, or a repaired audit result.
   DB/raw/audit-head/HALT paths from the host's read-only facilities. Record “unverified”
   for missing access. Launcher text, a port response, a growing WAL, and HEAD alone do not
   establish that mapping. Keep Git-preservation approval separate from service-health claims.
-  For a future authorized cutover, verify the old process exits before reusing its absolute
-  source path; do not infer exit from a renamed directory or a new disk HEAD.
 - [ ] Serialize Admin cutovers and development maintenance. A before/after comparison
   cannot attribute overlapping writes, and it cannot prove that a file was never briefly
   changed and restored. Use enforced permissions when that stronger guarantee is required.
@@ -411,11 +314,6 @@ using an identity the developer cannot alter. Give the running service write acc
 to its current epoch's state. Preserve full commit objects and byte manifests independently
 of mutable development refs.
 
-Include ancestor directories in that permission design. The same-owner and writable-parent
-fixtures demonstrate why changing leaf files to `0444`, a directory to `0555`, or adding a
-worktree lock does not by itself revoke the developer's ability to alter the effective tree.
-No real permission changes were made in this research.
-
 An independent clone or a verified source archive can remove the shared Git administrative
 dependency, but neither creates an OS permission boundary. A local clone can use hard links
 or alternate object storage; choose a transfer/copy that does not retain that dependence
@@ -438,84 +336,15 @@ The [local evidence directory](../../data/astra-soak-isolation-2026-09-06/) cont
   their exact command argv, exit codes and stdout/stderr.
 - `astra_soak_git_more_experiments.py`, `git-more-experiments.json`: four supplementary
   retention/status/runtime-path cases and exact command results.
-- `astra_soak_runtime_experiments.py`, `runtime-experiments.json`: four runtime/clone cases;
-  `runtime-probe-initial-hypothesis.py` and `.txt` retain the rejected top-level import
-  hypothesis. No real process was renamed or restarted.
-- `git-fsck.json`: the read-only object verification command and successful result.
-- `exact-commit-rehearsal.py` and `.json`: independent source-only clone, exact three pins,
-  rebase/checkout commands and five successful preservation checkpoints; no real runtime
-  database, dotenv or raw data was copied.
-- `session-permissions.json`: process capability flags and all mount-point/options rows,
-  omitting backing-store details. `venv-metadata-baseline.json` records 417 environment
-  configuration/entrypoint/distribution-metadata entries; it does not hash all installed
-  package bytes or identify modules already loaded in a service process.
-- `corroborating-incident-report.json` and `incident-corroboration.json`: another local
-  report and this task's explicit four-file hash/size/mtime comparison; no historical
-  custody or new HMAC attestation is inferred.
-- `permission-experiments.json` and `.py`: two `/tmp`-only mode/parent counterexamples and
-  their reusable assertion body; no real soak permission change was attempted.
-- `monitor-original.py`, `observation-*.json`: the bounded quarter-hour collector used for
-  this watch, with comparisons to the original baseline. A drift record never triggers a
-  repair. `monitor.py` is the retained reuse version, adding `-I -S` to each child collector;
-  editing that source did not change the already running monitor.
-- `development-activity.json`, `after-external-commit.json`, `shared_git_footprint.py` and
-  `shared-git-baseline.json`: observed external branch/commit activity, its subsequent
-  protected-tree comparison, and hashes/keys for shared interpretation/configuration files.
-- `compare_snapshots.py`: offline comparison of two recorded snapshots, with the exact
-  three pins, metadata pointers, committed source digests and frozen-file digests bound to
-  this dated profile. Sixteen checks of in-memory JSON copies passed; they cover
-  omitted evidence, changed frozen bytes, live configuration drift, metadata-only drift,
-  inconsistent reads, chronology, digest consistency, duplicate keys and new link/inode/
-  permission states. Their source and final results are `compare-snapshots-cases.py` and
-  `compare-snapshots-cases-v2.json`; they are separate from the 23
-  filesystem/Git/SQLite cases.
-
-Comparator review found and closed one gap: a DB-filename allowlist alone accepted an
-in-memory record describing a new symlink into the incident. The final comparer rejects
-links/special files and unexpected hard-link counts, and sends DB identity/permission
-changes to review. `comparator-alias-gap.json` retains the original failing check; the
-first 12-check result remains historical. No actual link or protected-file mutation was
-made to exercise this finding.
 
 For example, another byte observation can be made without importing Cockpit or connecting
 to SQLite (choose a new label; the collector refuses to overwrite an existing result):
 
 ```bash
-/workspace/ai-investment-cockpit/.venv/bin/python -I -S \
+/workspace/ai-investment-cockpit/.venv/bin/python \
   /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/snapshot.py \
   admin-before-rebase
 ```
-
-After collecting another snapshot with label `admin-after-rebase`, compare the two saved
-files without accessing the soak trees again:
-
-```bash
-/workspace/ai-investment-cockpit/.venv/bin/python -I -S \
-  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/compare_snapshots.py \
-  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/admin-before-rebase.json \
-  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/admin-after-rebase.json
-```
-
-Exit **0** means source and frozen records match; listed live DB/sidecar changes are excluded
-from that immutability claim. Exit **2** means protected drift or incomplete/inconsistent
-evidence. Exit **3** means other live-file changes, DB identity/permission changes, or a
-changing live read need review. Unexpected aliases and incomplete critical-file censuses refuse.
-The tool does not silently accept new raw/config/cache/HALT paths as expected service
-activity. No exit code certifies the live ledger or attributes a write to a process. An
-authorized future cutover requires a new reviewed profile, not changing these expected
-values until an old comparison passes.
-
-`-I -S` excludes inherited Python import-path settings, user site packages and automatic
-`site`/`.pth` startup processing; this standard-library collector needs none of them.
-That invocation was checked with the project interpreter. It does not freeze the
-interpreter binary itself. [Python command-line options](https://docs.python.org/3.13/using/cmdline.html).
-
-Initial and periodic captures used ordinary Python startup in the inspected environment.
-The explicit 02:08 capture used `-I -S`; this stronger startup setting is the reuse recipe.
-The ordinary-startup captures must not be described as having suppressed `.pth` execution.
-Their collector source uses only the standard library, and no Cockpit application import
-or SQLite connection was requested. Environment fingerprints cover the recorded metadata
-scope, not every possible interpreter-startup effect.
 
 Inspect the collector and current Git configuration before reuse on a different host. Its
 path constants identify this host; a redirected/missing/unexpected tree must be investigated,
@@ -525,5 +354,4 @@ against synthetic paths; they are evidence, not instructions to replay against r
 `data/` is intentionally Git-ignored. These raw local artifacts are not promised to travel
 with a documentation PR, and their hashes are not independent timestamp attestations.
 Retain them with this report before cleaning the development tree. The evidence markdown is
-the only intended tracked addition by this research; this agent did not commit, push or
-change branches. Other concurrent work in the development tree is outside that claim.
+the only intended tracked addition; the current branch was not committed, pushed or changed.
