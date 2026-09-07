@@ -94,6 +94,13 @@ development tree and `/tmp`, and explicit read-only mounts over development `.gi
 with the observed absence of writable aliases to protected files, this blocks this shell's
 direct file and Git-metadata rewrites. No write probe was made against a protected path.
 
+A supplementary process read found UID/GID 1000, zero effective/permitted/bounding
+capabilities, `NoNewPrivs=1`, and a seccomp filter active. The child's inherited descriptors
+were pipes, not writable handles to protected files. The complete mount-point/options
+inventory is retained in `session-permissions.json`; the writable proc mount is not a
+writable soak-file mapping. This is evidence for ordinary access in this namespace, not
+a sandbox-escape assessment or a guarantee against a privileged host actor.
+
 This is the current command process's mount view. It does not bind Cockpit Admin, a host
 service, another namespace, or a privileged process. The observed owner/mode on the host
 paths is `box:box`, directories `0755`; those ordinary permissions do not isolate another
@@ -367,6 +374,10 @@ The [local evidence directory](../../data/astra-soak-isolation-2026-09-06/) cont
   `runtime-probe-initial-hypothesis.py` and `.txt` retain the rejected top-level import
   hypothesis. No real process was renamed or restarted.
 - `git-fsck.json`: the read-only object verification command and successful result.
+- `session-permissions.json`: process capability flags and all mount-point/options rows,
+  omitting backing-store details. `venv-metadata-baseline.json` records 417 environment
+  configuration/entrypoint/distribution-metadata entries; it does not hash all installed
+  package bytes or identify modules already loaded in a service process.
 - `monitor.py`, `observation-*.json`: bounded quarter-hour observations through the requested
   cutoff, with comparisons to the original baseline. A drift record never triggers a repair.
 

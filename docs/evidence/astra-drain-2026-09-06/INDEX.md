@@ -25,3 +25,7 @@ All Astra `codex exec` prompts used this drain are under `prompts/`.
 ## Hard rules preserved
 
 No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge; secrets not printed; branch→PR→main only.
+
+## Amend log
+
+- 2026-09-06 ~18:18 PT: mid-flight fixture refresh (audit-harden contracts, DEC-09 matrix helper, isolation checklist polish) while final reports still landing.

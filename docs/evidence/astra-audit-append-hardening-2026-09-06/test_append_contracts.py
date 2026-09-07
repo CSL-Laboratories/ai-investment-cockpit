@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import event, select, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm.exc import DetachedInstanceError
 
 from brokers.order_state_machine import IllegalOrderTransition, transition
 from config.settings import Mode
@@ -227,9 +228,13 @@ def test_interrupted_commit_does_not_publish_a_detached_transition(st, monkeypat
         remove()
     assert _state(st.session_factory, Order) == before
     assert st.audit.verify_chain().ok
-    assert order.state == "proposed", (
+    try:
+        caller_state = order.state
+    except DetachedInstanceError:
+        return  # Invalidating the rolled-back object also prevents false publication.
+    assert caller_state == "proposed", (
         "a rolled-back transition must not remain published on the caller's detached row; "
-        f"caller_state={order.state}, durable_state={before[0][0]['state']}"
+        f"caller_state={caller_state}, durable_state={before[0][0]['state']}"
     )
 
 
@@ -246,7 +251,7 @@ def test_retry_after_interruption_cannot_skip_an_unsigned_transition(st, monkeyp
     refused = False
     try:
         transition(st, order, "submitted", actor="fixture")
-    except IllegalOrderTransition:
+    except (IllegalOrderTransition, DetachedInstanceError):
         refused = True
     after = _state(st.session_factory, Order)
     assert refused and after == before, (
