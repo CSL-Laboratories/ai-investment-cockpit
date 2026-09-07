@@ -76,11 +76,13 @@ def _canonical(entry_id, seq, prev_hash, event_type, actor, refs, payload) -> by
 
 
 class AuditIntegrityError(Exception):
-    """A keyless-writer tamper made an append unsafe (SEC-11 W10): the signed monotonic
-    high-water is absent on a non-empty chain, or its signature is invalid. Refusing to
-    append is fail-closed — healing the watermark at a refilled head is exactly the
-    delete-then-heal bypass this closes. Distinct from ``IntegrityError``/``OperationalError``
-    (a benign cross-process seq collision, which ``append`` retries) so it is NEVER retried."""
+    """A keyless-writer tamper made an append unsafe (SEC-11 W10 / BUG-124): the signed
+    monotonic high-water is absent on a non-empty chain, its signature is invalid, or an
+    append that already observed established authority reread a missing/invalid watermark
+    at the signing boundary. Refusing to append is fail-closed — healing the watermark at
+    a refilled or damaged head is exactly the delete-then-heal bypass this closes.
+    Distinct from ``IntegrityError``/``OperationalError`` (a benign cross-process seq
+    collision, which ``append`` retries) so it is NEVER retried."""
 
 
 @dataclass
@@ -125,13 +127,34 @@ class AuditLog:
         return hmac.compare_digest(recomputed, entry.entry_hash or "")
 
     # ---- signed monotonic high-water mark (SEC-11) -------------------------
-    def _bump_hwm(self, s, seq: int) -> None:
-        """Advance the signed high-water to ``max(current, seq)`` and re-sign. It NEVER
-        decreases, even across a keyless tail ``DELETE`` — that monotonicity is what makes a
-        freed seq non-reissuable (``_insert`` allocates above it) so a delete-then-refill
-        lands as a seq GAP ``verify_chain`` rejects, instead of the old re-greening refill."""
+    def _bump_hwm(self, s, seq: int, *, established: bool) -> None:
+        """Advance the signed high-water to ``max(current, seq)`` and re-sign.
+
+        It NEVER decreases, even across a keyless tail ``DELETE`` — that
+        monotonicity is what makes a freed seq non-reissuable (``_insert``
+        allocates above it) so a delete-then-refill lands as a seq GAP
+        ``verify_chain`` rejects, instead of the old re-greening refill.
+
+        BUG-124: reread authority AFTER the entry flush and BEFORE any
+        metadata DELETE/INSERT/signing. Missing authority may initialize
+        only a genuine first watermark (``established`` is false). Invalid
+        authority always refuses. An append that observed an established
+        watermark must not replace damaged metadata — that residue is
+        evidence, and the caller's transaction rolls back the attempted
+        entry (and any companion state row).
+        """
         cur = self._read_hwm(s)
-        hwm = seq if cur is None or cur < 0 else max(cur, seq)
+        if cur == -1:
+            raise AuditIntegrityError(
+                "audit high-water signature invalid (tamper) — refusing to append")
+        if cur is None:
+            if established:
+                raise AuditIntegrityError(
+                    "audit high-water missing after established authority "
+                    "(tamper) — refusing to append")
+            hwm = seq
+        else:
+            hwm = max(cur, seq)
         s.execute(audit_meta.delete().where(audit_meta.c.k.in_(["head_seq", "head_seq_sig"])))
         s.execute(audit_meta.insert().values(k="head_seq", v=str(hwm)))
         s.execute(audit_meta.insert().values(k="head_seq_sig", v=self._sign(str(hwm))))
@@ -169,6 +192,9 @@ class AuditLog:
         # Allocate ABOVE the high-water, so a freed tail seq is NEVER reissued (non-reusable):
         # a delete-then-refill then shows as a contiguity gap, not a silent re-green.
         seq = max(hwm or 0, max_existing) + 1
+        # BUG-124: first initialization is the only path that may create a watermark
+        # from a missing reread. A valid preflight watermark is established authority.
+        established = hwm is not None
         prev_hash = head.entry_hash if head else None
         created = self._clock.now().astimezone(timezone.utc).replace(tzinfo=None)   # naive UTC (stable round-trip)
         p = dict(payload or {})
@@ -180,7 +206,7 @@ class AuditLog:
                          event_type=event_type, actor=actor, refs=r, payload=p, created_at=created)
         s.add(row)
         s.flush()
-        self._bump_hwm(s, seq)
+        self._bump_hwm(s, seq, established=established)
         return row
 
     def append(self, event_type: str, actor=None, refs=None, payload=None) -> AuditEntry:
