@@ -15,7 +15,7 @@ incident_soak_sha: 1e2d4e3ca7c2fcae4e320ce5f72b44905b036ee4
 conditions below. This session also has an enforced read-only mount boundary covering
 their files and Git metadata. An unconditional host-wide “cannot rewrite” claim is false:
 these are linked worktrees with shared Git storage, and the soak launcher uses the
-development tree's virtual environment.** Twenty-one disposable experiments reproduced
+development tree's virtual environment.** Twenty-three disposable cases reproduced
 the normal behavior and concrete exceptions without operating on a real soak tree.
 
 The current live **disk pin is `c5ef0ad`**. The prior pin and BUG-114 incident remain separate
@@ -181,7 +181,7 @@ committing a development branch. This does not make the mirror immutable or inde
 
 ## Reproduced failure modes
 
-**21/21 final synthetic cases passed their explicit assertions**, using Git 2.47.3 and SQLite
+**23/23 final synthetic cases passed their explicit assertions**, using Git 2.47.3 and SQLite
 3.46.1. “Pass” for a counterexample means the unsafe effect was reproduced, not that it is
 acceptable. Every repository mutation below was confined to disposable `/tmp` fixtures;
 the real three trees were only read before and afterward.
@@ -209,6 +209,8 @@ the real three trees were only read before and afterward.
 | Package alias cutover | The old package remained loaded, while a later submodule came from the replacement absolute package path | Verify old process exit before a separately authorized path-reusing cutover |
 | Read-only SQL sidecar | A `mode=ro` connection followed by `SELECT` created a missing SHM in a writable synthetic directory | A read-only SQL connection does not preserve all filesystem bytes |
 | Clone independence | After source GC, a `--shared` clone lost its borrowed pin object; a `--no-local` clone retained its independently stored object | Verify object independence, not merely the existence of another `.git` directory |
+| Same-owner mode bits | Direct write to a `0444` fixture file refused, but its owner could change the mode and overwrite it | Mode bits alone do not constrain the owning actor |
+| Writable parent | A `0555` fixture directory could be renamed and replaced through its writable parent | Protect ancestors and pathname bindings, not just leaf permissions |
 
 The initial broad alias-cutover hypothesis failed: cwd precedence kept an existing
 top-level module on the old tree. Its script and failure note are retained. The final
@@ -254,7 +256,7 @@ historical evidence; this session did not obtain a key or repeat that verificati
 The [register](../REGISTER.md) records the BUG-114 repair in PR #68, merge `61ca0af`, repair
 `3035d83`. Neither that repair nor PR #70 makes the original fork a valid continuous soak.
 
-These original file hashes matched at baseline and post-experiment:
+These hashes of files in the preserved trees matched at baseline and post-experiment:
 
 | Tree / relative file | Bytes | SHA-256 |
 |---|---:|---|
@@ -268,6 +270,21 @@ These original file hashes matched at baseline and post-experiment:
 | Prior `app/cockpit.db-shm` | 32,768 | `8f19f092f92e04196cab86256c4af572bcb9655bf711a7a2454dc4588ff612be` |
 | Prior `app/data/audit-head.json` | 92 | `c2642f7e5dc13ca2f9b57995dd43d660268d598686b70a8402e8ef10644b8988` |
 | Prior `PRIOR-PIN.md` | 248 | `3f4602b479092104dc4ce949d4b5259b688c387e699736e21ae1b55f4239ccba` |
+
+A concurrent same-host `incident-evidence.json` report independently listed matching before/
+after hashes, lengths and modification times for the incident note and DB/WAL/SHM. Its
+reported structural scan still finds the predecessor mismatch at 13589, with row/head/HWM
+14028 and `hmac_reverified=false`. This task compared that report's four file records to its
+own baseline; it did not replay the database. The report is retained locally as
+`corroborating-incident-report.json` (SHA-256
+`c90b539187b88e7ff79cc6054e35c3e18112b8412392df70352ae7612bdd6021`).
+
+No independent byte manifest from the September 3 freeze, or from the prior pin's original
+cutover, was located in the searched evidence records. File modification times and local
+notes cannot prove uninterrupted historical custody. **The byte-preservation claim begins
+with this research's baseline; it is not backdated to either freeze.** Agreement with a
+concurrent local report corroborates present bytes, not independent chronology or HMAC
+authenticity.
 
 Read the DB/WAL/SHM as ordinary bytes for preservation checks. Merely issuing SQL `SELECT`
 does not establish a no-write filesystem contract: opening a WAL database may create or
@@ -359,6 +376,11 @@ using an identity the developer cannot alter. Give the running service write acc
 to its current epoch's state. Preserve full commit objects and byte manifests independently
 of mutable development refs.
 
+Include ancestor directories in that permission design. The same-owner and writable-parent
+fixtures demonstrate why changing leaf files to `0444`, a directory to `0555`, or adding a
+worktree lock does not by itself revoke the developer's ability to alter the effective tree.
+No real permission changes were made in this research.
+
 An independent clone or a verified source archive can remove the shared Git administrative
 dependency, but neither creates an OS permission boundary. A local clone can use hard links
 or alternate object storage; choose a transfer/copy that does not retain that dependence
@@ -392,8 +414,28 @@ The [local evidence directory](../../data/astra-soak-isolation-2026-09-06/) cont
   omitting backing-store details. `venv-metadata-baseline.json` records 417 environment
   configuration/entrypoint/distribution-metadata entries; it does not hash all installed
   package bytes or identify modules already loaded in a service process.
+- `corroborating-incident-report.json` and `incident-corroboration.json`: another local
+  report and this task's explicit four-file hash/size/mtime comparison; no historical
+  custody or new HMAC attestation is inferred.
+- `permission-experiments.json` and `.py`: two `/tmp`-only mode/parent counterexamples and
+  their reusable assertion body; no real soak permission change was attempted.
 - `monitor.py`, `observation-*.json`: bounded quarter-hour observations through the requested
   cutoff, with comparisons to the original baseline. A drift record never triggers a repair.
+- `compare_snapshots.py`: offline comparison of two recorded snapshots, with the exact
+  three pins, metadata pointers, committed source digests and frozen-file digests bound to
+  this dated profile. Sixteen checks of in-memory JSON copies passed; they cover
+  omitted evidence, changed frozen bytes, live configuration drift, metadata-only drift,
+  inconsistent reads, chronology, digest consistency, duplicate keys and new link/inode/
+  permission states. Their source and final results are `compare-snapshots-cases.py` and
+  `compare-snapshots-cases-v2.json`; they are separate from the 23
+  filesystem/Git/SQLite cases.
+
+Comparator review found and closed one gap: a DB-filename allowlist alone accepted an
+in-memory record describing a new symlink into the incident. The final comparer rejects
+links/special files and unexpected hard-link counts, and sends DB identity/permission
+changes to review. `comparator-alias-gap.json` retains the original failing check; the
+first 12-check result remains historical. No actual link or protected-file mutation was
+made to exercise this finding.
 
 For example, another byte observation can be made without importing Cockpit or connecting
 to SQLite (choose a new label; the collector refuses to overwrite an existing result):
@@ -403,6 +445,25 @@ to SQLite (choose a new label; the collector refuses to overwrite an existing re
   /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/snapshot.py \
   admin-before-rebase
 ```
+
+After collecting another snapshot with label `admin-after-rebase`, compare the two saved
+files without accessing the soak trees again:
+
+```bash
+/workspace/ai-investment-cockpit/.venv/bin/python -I -S \
+  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/compare_snapshots.py \
+  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/admin-before-rebase.json \
+  /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/admin-after-rebase.json
+```
+
+Exit **0** means source and frozen records match; listed live DB/sidecar changes are excluded
+from that immutability claim. Exit **2** means protected drift or incomplete/inconsistent
+evidence. Exit **3** means other live-file changes, DB identity/permission changes, or a
+changing live read need review. Unexpected aliases and incomplete critical-file censuses refuse.
+The tool does not silently accept new raw/config/cache/HALT paths as expected service
+activity. No exit code certifies the live ledger or attributes a write to a process. An
+authorized future cutover requires a new reviewed profile, not changing these expected
+values until an old comparison passes.
 
 `-I -S` excludes inherited Python import-path settings, user site packages and automatic
 `site`/`.pth` startup processing; this standard-library collector needs none of them.
