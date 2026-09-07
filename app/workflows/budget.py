@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from orchestrator.limits import current_limits, limits_from_verified_session
 from schemas.models.audit_entry import AuditEntry
@@ -58,16 +58,48 @@ def signed_event_type(state, event_id: str, *, session=None) -> str | None:
 def make_event_type_verifier(state):
     """A ``deterministic_urgency(verify_event_type=...)`` callable: True iff a MarketEvent's
     mutable ``event_type`` column (halt/filing OR ``calendar:%``) matches its signed
-    EVENT_INGEST_BATCH value (SEC-11). Memoized per event id for the caller's lifetime (one
-    triage tick) so the hot loop does not re-scan the ingest ledger per candidate×calendar."""
-    cache: dict = {}
+    EVENT_INGEST_BATCH value (SEC-11). Lazily capture one verified ledger snapshot for this
+    caller's lifetime (one triage tick); neither authority nor misses survive the next tick.
+    Spend authorization remains independently verified by ``DeepBudget.try_consume``."""
+    bindings: dict[str, str | None] | None = None
 
     def _verify(event) -> bool:
+        nonlocal bindings
         eid = getattr(event, "id", None)
-        if eid not in cache:
-            cache[eid] = signed_event_type(state, eid)
-        signed = cache[eid]
-        return signed is not None and signed == getattr(event, "event_type", None)
+        actual = getattr(event, "event_type", None)
+        if not isinstance(eid, str) or not eid or not isinstance(actual, str) or not actual:
+            return False
+        if bindings is None:
+            # An invalid snapshot is sticky for this tick. Publish no partial bindings if
+            # verification, decoding, or the transaction fails; the next tick can retry.
+            bindings = {}
+            try:
+                with state.session_factory() as session, session.begin():
+                    _assert_budget_chain_ok(state, session)
+                    entries = session.execute(select(AuditEntry).where(
+                        AuditEntry.event_type == EVENT_INGEST_BATCH
+                    )).scalars().all()
+                    snapshot: dict[str, str | None] = {}
+                    for entry in entries:
+                        types = (entry.payload or {}).get("event_types")
+                        if types is None:  # legacy ingest rows predate domain-row bindings
+                            continue
+                        if not isinstance(types, dict):
+                            return False
+                        for bound_id, signed in types.items():
+                            if (not isinstance(bound_id, str) or not bound_id
+                                    or not isinstance(signed, str) or not signed):
+                                return False
+                            if bound_id in snapshot and snapshot[bound_id] != signed:
+                                snapshot[bound_id] = None  # conflicting bindings never recover
+                            else:
+                                snapshot.setdefault(bound_id, signed)
+                bindings = snapshot
+            except (BudgetIntegrityError, AuditIntegrityError, SQLAlchemyError,
+                    OSError, TypeError, ValueError):
+                return False
+        signed = bindings.get(eid)
+        return signed is not None and signed == actual
     return _verify
 
 
