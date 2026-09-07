@@ -389,13 +389,6 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     proposal = dict(result.validated)
     pid = _resolve_proposal_id(state, proposal)        # BUG-093: final id before any row uses it
 
-    # ---- guard: an order-shaped proposal needs a size -----------------------------------
-    if proposal.get("quantity") is None and proposal.get("notional") is None:
-        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
-                                 flagged=False, job_id=job.id)
-        return ProposalOutcome("needs_human", proposal, record, None, None, None,
-                               ("neither quantity nor notional present",))
-
     # ---- SEC-09: scrub model prose BEFORE store/audit/post -------------------------------
     # ``generated_by`` is a model-authored free-text object (runtime/model/session_id strings
     # are unconstrained — additionalProperties:false bounds KEYS, not string CONTENTS), so it
@@ -410,6 +403,13 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                                  flagged=True, job_id=job.id)
         return ProposalOutcome("quarantined", proposal, record, None, None, None,
                                ("outbound scrub blocked (SEC-09)",))
+
+    # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
+    if proposal.get("quantity") is None and proposal.get("notional") is None:
+        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
+                                 flagged=False, job_id=job.id)
+        return ProposalOutcome("needs_human", proposal, record, None, None, None,
+                               ("neither quantity nor notional present",))
 
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------
     def _resolver(ref: str) -> dict:
