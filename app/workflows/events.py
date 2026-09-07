@@ -147,7 +147,9 @@ def persist_events(state, event_dicts: list[dict], *, parquet_root, clock=None) 
         batch_id = new_id()
         raw_key = f"events-{batch_id}"
         records = [
-            {"idx": i, "identity": _identity(item), "item": _canonical_item(item)}
+            {"idx": i, "identity": _identity(item), "item": _canonical_item(item),
+             "raw_input": (json.dumps(item["raw_input"], sort_keys=True, separators=(",", ":"),
+                                      default=str) if "raw_input" in item else None)}
             for i, item in enumerate(fresh)
         ]
         _, batch_hash = write_snapshot(parquet_root, date=date, symbol=raw_key, records=records)
@@ -198,8 +200,8 @@ def persist_events(state, event_dicts: list[dict], *, parquet_root, clock=None) 
 
 
 def _record_item(item: dict) -> dict:
-    """The exact dict persisted as the raw record's ``item``."""
-    return dict(item)
+    """Normalized derivative; original source has its own persisted JSON column."""
+    return {key: value for key, value in item.items() if key != "raw_input"}
 
 
 def _item_hash(item: dict) -> str:
@@ -207,6 +209,8 @@ def _item_hash(item: dict) -> str:
     (``to_market_event`` hashed the raw feed payload at ingest — SEC-13 'bound at
     ingest'); dicts without one get ``content_hash`` of the stored record itself."""
     h = item.get("content_hash")
+    if "raw_input" in item and content_hash(item["raw_input"]) != h:
+        raise RawIntegrityError("original source does not match its ingest-bound hash")
     if isinstance(h, str) and h:
         return h
     return content_hash(_record_item(item))
@@ -290,9 +294,12 @@ def resolve_raw(parquet_root, raw_ref: str, *, state=None, row=None) -> dict:
         raise RawIntegrityError(f"raw index {idx} out of range for {date}/{key}")
     try:
         item = json.loads(records[idx]["item"])
+        if records[idx].get("raw_input") is not None:
+            item["raw_input"] = json.loads(records[idx]["raw_input"])
     except (KeyError, TypeError, ValueError) as exc:
         raise RawIntegrityError(f"raw record {raw_ref!r} is not decodable") from exc
-    if row is not None and _item_hash(item) != row.content_hash:
+    item_hash = _item_hash(item)
+    if row is not None and item_hash != row.content_hash:
         raise RawIntegrityError(
             f"item hash mismatch for {raw_ref!r} vs MarketEvent {getattr(row, 'id', '?')}"
         )

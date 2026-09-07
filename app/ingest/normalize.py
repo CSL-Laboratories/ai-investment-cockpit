@@ -111,6 +111,9 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
     if source not in ALLOWED_SOURCES:
         raise ValueError(f"source not allowlisted: {source!r}")   # §5 feed allowlist
     raw = raw if raw is not None else {"headline": headline, "summary": summary}
+    # BUG-150: retain a detached source image, separately from bounded/escaped fields.
+    # This is storage input only; packet/grounding builders select normalized fields.
+    raw_input = json.loads(json.dumps(raw, sort_keys=True, default=str))
     return {
         "source": source,
         "article_id": str(article_id),
@@ -120,5 +123,6 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         "summary": escape_untrusted(summary),
         "ts": _safe_ts(ts),
         "raw_ref": f"{source}:{_safe_ref_component(article_id)}",   # BUG-085: prompt-bound
-        "content_hash": content_hash(raw),
+        "content_hash": content_hash(raw_input),
+        "raw_input": raw_input,
     }
