@@ -34,3 +34,5 @@ No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge;
 - 2026-09-06 ~18:23 PT: added HWM re-sign claim-shape report (real-miss-found).
 - 2026-09-06 ~18:23 PT: added audit-append-hardening report (real-miss-found; Order FSM claim shape).
 - 2026-09-06 ~18:33 PT: added DEC-09 matrix gaps final report (M1/M2/M3).
+
+- 2026-09-06 ~19:35 PT: BUG-125 F1/F2 opened as PR #74; cockpit Astra research stopped ahead of 8:15 hard stop.

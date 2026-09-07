@@ -3,7 +3,8 @@ title: Astra — soak isolation and rebase safety checklist for Cockpit Admin
 type: evidence
 status: reference
 last-verified: 2026-09-06
-development_sha: 892e2dbaab0093e91857cea373dc188d638d8d80
+development_sha_at_start: 892e2dbaab0093e91857cea373dc188d638d8d80
+development_sha_observed_0208_utc: 9a2e3a9cb8a857a814fa880734b31b6705e92658
 live_soak_sha: c5ef0ad3d9acd3a85aa86228491ea1827bfd529e
 prior_soak_sha: 61ca0af27dc903ff97237b3cc2c8e83c735ebb09
 incident_soak_sha: 1e2d4e3ca7c2fcae4e320ce5f72b44905b036ee4
@@ -41,7 +42,7 @@ The requested research cutoff is interpreted as September 6 20:15 Pacific / Sept
 All four worktrees resolve to distinct physical directories. All share
 `/workspace/ai-investment-cockpit/.git` as their Git common directory:
 
-| Role / absolute worktree | Observed HEAD | Per-worktree Git directory | Tracked files | Full status at baseline |
+| Role / absolute worktree | HEAD at baseline | Per-worktree Git directory | Tracked files | Full status at baseline |
 |---|---|---|---:|---|
 | Development: `/workspace/ai-investment-cockpit` | `892e2dbaab0093e91857cea373dc188d638d8d80` | `.git` | Not a protected-tree census | Clean; branch `work/astra-fresh-install-smokes-2026-09-06` |
 | Live: `/workspace/cockpit-soak` | `c5ef0ad3d9acd3a85aa86228491ea1827bfd529e` | `.git/worktrees/cockpit-soak2` | 581 | Detached; clean |
@@ -85,6 +86,40 @@ retain device/inode, link count, byte length and modification time. Access times
 metadata, ownership/ACLs and a filesystem-wide atomic snapshot are not covered by that
 digest. No file changed size, inode or modification time during its individual baseline or
 post-experiment read. That observation is not a coordinated SQLite transaction snapshot.
+
+### Actual development activity observed during the watch
+
+Development changed externally while this research remained read-only on Git and soak.
+The local HEAD reflog records these events on September 7 UTC:
+
+| UTC | Recorded event | Development HEAD |
+|---|---|---|
+| 01:15:30 | Checkout from `work/astra-fresh-install-smokes-2026-09-06` to `work/astra-drain-freeze-2026-09-06` | `d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f` |
+| 01:15:51 | Documentation freeze commit | `049518d202cb61079403a7e8cb32cba23e37d51b` |
+| 01:18:58 | Documentation/fixture update commit | `20978607ed9efad7d62c4a1cb2ae201f7ca8b113` |
+| 01:23:43 | HWM/audit-hardening documentation update commit | `ec76c564f8d2ee4db3f54c8a85b6c9832cc08cf8` |
+| 01:33:28 | Matrix-gap documentation update commit | `3801b0c4cd2e07c154ad5e3053d2f3b525caf1cb` |
+| 02:03:44 | Mid-research isolation-checklist commit | `9a2e3a9cb8a857a814fa880734b31b6705e92658` |
+
+The 01:30, 01:45, 02:00, and additional **02:08:30–02:08:31** byte observations bracket
+these changes. Each retained the three original pins, tracked-source manifests and Git
+metadata records, with zero changes to any prior/incident file record. At 02:08 the only
+live differences from baseline were WAL/SHM and three newly present raw Parquet files.
+The latter require host attribution; the comparison helper returns review-required, not
+a service-health pass. The development `app` tree at `9a2e3a9` equals `c5ef0ad:app`.
+
+This is **observed branch/commit separation on the actual host**, alongside controlled
+rebase tests in independent disposable repositories. No original-repository rebase was
+observed or performed by this task. The reflog is local bookkeeping, not an independent
+timestamp witness or proof of the actor's authorization. This research did not issue those
+commits or the branch switch, including the commit that captured an intermediate version
+of this report.
+
+The persistent configuration key additions were the new development branch's `remote` and
+`merge` entries. Command-scope `core.hooksPath`/`core.fsmonitor` rows in the later observation
+come from this collector's per-command safety flags, not newly installed hooks. Active
+hooks and replacement refs remained absent at that inspection. `development-activity.json`
+and `shared-git-baseline.json` retain the observations without credential values.
 
 ### Boundary enforced in this session
 
@@ -419,8 +454,13 @@ The [local evidence directory](../../data/astra-soak-isolation-2026-09-06/) cont
   custody or new HMAC attestation is inferred.
 - `permission-experiments.json` and `.py`: two `/tmp`-only mode/parent counterexamples and
   their reusable assertion body; no real soak permission change was attempted.
-- `monitor.py`, `observation-*.json`: bounded quarter-hour observations through the requested
-  cutoff, with comparisons to the original baseline. A drift record never triggers a repair.
+- `monitor-original.py`, `observation-*.json`: the bounded quarter-hour collector used for
+  this watch, with comparisons to the original baseline. A drift record never triggers a
+  repair. `monitor.py` is the retained reuse version, adding `-I -S` to each child collector;
+  editing that source did not change the already running monitor.
+- `development-activity.json`, `after-external-commit.json`, `shared_git_footprint.py` and
+  `shared-git-baseline.json`: observed external branch/commit activity, its subsequent
+  protected-tree comparison, and hashes/keys for shared interpretation/configuration files.
 - `compare_snapshots.py`: offline comparison of two recorded snapshots, with the exact
   three pins, metadata pointers, committed source digests and frozen-file digests bound to
   this dated profile. Sixteen checks of in-memory JSON copies passed; they cover
@@ -469,6 +509,13 @@ values until an old comparison passes.
 `site`/`.pth` startup processing; this standard-library collector needs none of them.
 That invocation was checked with the project interpreter. It does not freeze the
 interpreter binary itself. [Python command-line options](https://docs.python.org/3.13/using/cmdline.html).
+
+Initial and periodic captures used ordinary Python startup in the inspected environment.
+The explicit 02:08 capture used `-I -S`; this stronger startup setting is the reuse recipe.
+The ordinary-startup captures must not be described as having suppressed `.pth` execution.
+Their collector source uses only the standard library, and no Cockpit application import
+or SQLite connection was requested. Environment fingerprints cover the recorded metadata
+scope, not every possible interpreter-startup effect.
 
 Inspect the collector and current Git configuration before reuse on a different host. Its
 path constants identify this host; a redirected/missing/unexpected tree must be investigated,
