@@ -1,6 +1,6 @@
 ---
 title: RW-24 measured reliability follow-up
-status: in-progress
+status: implemented-pending-final-matrix
 last-verified: 2026-09-07
 ---
 
@@ -49,3 +49,31 @@ RW-23 repairs and independent reviews are complete; RW-24 is now the active pack
   Timings came from a shared workstation without external-anchor I/O; query reduction is
   the stable comparison. A portable benchmark will compare the frozen old body to actual
   changed production code and retain the final measurements.
+
+# Delivery and independent review
+
+- `6d2a747`: BUG-157 uses successful per-symbol daily readiness. Eight new composed
+  controls include discovery, retry, cache verification on re-add, rollover and removal
+  during fetch. All 33 focused checks passed; existing symbols incur no repeated fetch
+  or calculation when only a new holding needs metrics. Root reviewed the change.
+- `5c37e69`: BUG-158 applies the same frame bound before a malformed-frame continue.
+  Both new tests failed against the baseline; 22 focused checks passed after the fix.
+- `98bd5e5`: all matrix environments now install `discord.py`; six real command-tree
+  tests are required instead of skipped. A subprocess with an import blocker exercises
+  the absent-library fallback even when Discord is installed. All 14 bridge checks passed.
+- `b9374ec`: one lazy verified snapshot per triage tick replaces repeated per-ID ledger
+  queries. A new tick reloads; spending always rechecks authority. Missing legacy maps
+  supply no bindings, malformed maps refuse, and conflicting IDs remain ambiguous.
+  82 focused budget/triage checks passed. Independent authority review added six warmed-
+  cache/witness-failure tests; its 76-case run passed. Both reviewers found no remaining blocker.
+- Actual production benchmark, alternating order with one warmup and three timed rounds:
+  1,000 signed ingest entries / 100 candidates took 2,981.647 ms with the frozen old body
+  and 75.060 ms with changed production (median). SELECT count fell from 100 to 3.
+  Smaller scenarios also improved. This is a synthetic operation-level measurement,
+  not a claim about whole-system latency; external witness I/O is excluded.
+
+# Validation status
+
+All implementation slices and independent authority review are complete. The combined
+RW-23/RW-24 source is being frozen for the four DEC-09 cells: native Windows and Ubuntu
+WSL2, each on Python 3.11 and 3.12. Final evidence and exact source binding follow.

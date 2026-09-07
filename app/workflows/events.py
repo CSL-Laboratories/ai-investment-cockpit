@@ -26,9 +26,11 @@ Owned mapping (contract 'Mapping rules'):
     matched against existing rows' ``raw_ref`` (fallback rows) and ``content_hash``
     (parquet rows; a byte-identical re-emit hashes identically).
 
-Raw parquet records are stored as ``{"idx": i, "identity": ..., "item": <canonical JSON>}``
-so mixed-type fields (Alpaca ISO ``ts`` vs Finnhub epoch ``ts``) survive the parquet
-round-trip byte-exactly; ``resolve_raw`` returns the decoded item dict.
+Parquet records store ``idx``, ``identity``, a normalized ``item`` JSON column and, for
+new normalized feed events, a separate ``raw_input`` JSON column containing the original
+payload. JSON preserves mixed-type fields across parquet round trips. ``resolve_raw``
+returns the decoded derivative with its verified original attached when present; legacy
+records without that column cannot supply original payloads.
 """
 from __future__ import annotations
 

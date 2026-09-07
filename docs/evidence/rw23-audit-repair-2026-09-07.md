@@ -71,7 +71,7 @@ passes and covers that exact application tree. New fixes require new validation.
   run; unrelated news cannot clear it. Exact recovery verifies duplicate raw evidence.
   Connection and poll health remain honest. Gap tracking is process-local diagnostics,
   not a durable outbox or a claim of lossless stream replay.
-- BUG-148: 153 focused tests passed after independent review, including 43 dedicated
+- `0ec03d1` — BUG-148: 153 focused tests passed after independent review, including 43 dedicated
   and separately authored adversarial cases. Sells use verified remaining shares, broker
   availability, local reservations, exact submit acknowledgement binding, and conservative
   handling of unknown broker outcomes. The grouped run passes; an earlier mixed-order
