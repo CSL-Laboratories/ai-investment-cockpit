@@ -1,0 +1,322 @@
+{
+  "created_utc": "2026-09-07T01:22:02.053765+00:00",
+  "excludes": "disposable fixture databases under per-run tmp; this manifest itself",
+  "files": {
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06.md": {
+      "size": 19184,
+      "sha256": "394ef5e4130d71b6be2d1dda2ef6c5e17e0928a20d4627134248c870b0688da2"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/final-source.json": {
+      "size": 576,
+      "sha256": "7ba9756f26eba65f63f8ecc30ac930808374733ddef4ffe44167c73ad4134123"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/historical_probes.py": {
+      "size": 15117,
+      "sha256": "8aed73414889be25e85fe27e9940f4da776ff068c193f0a44d4d2f3540973786"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/local-source.json": {
+      "size": 766,
+      "sha256": "8c5f06fcf0fb347fa675df38877f14d9efd95edb6ca18cad152ddb15f0b0f3b5"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/remote-source.json": {
+      "size": 1026,
+      "sha256": "7be2766374ceaba023e37173ce7f0a7ce40432ba51711ecb9aba77b0ea9d986e"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/run_checks.py": {
+      "size": 2340,
+      "sha256": "fc4ba3f3ad259f1af91c6b8496bfb6ef0c769366157617776794536a4748f2bd"
+    },
+    "docs/evidence/astra-hwm-resign-claim-shape-2026-09-06/test_refusal_contracts.py": {
+      "size": 12113,
+      "sha256": "a5024f62b15f8e6e9ae1b71c88e198ed4034575bfa804bca5e506d7551a672fb"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/baseline/command.json": {
+      "size": 882,
+      "sha256": "b4669a7878d591b0923e565316da9b928ad5859f50a60c559a95d8279d64731e"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/baseline/junit.xml": {
+      "size": 22274,
+      "sha256": "d9ac58b62aa4550627a3ca0777d9a9798763492cdcc53e9d19cba19fa59a80e0"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/baseline/output.log": {
+      "size": 271,
+      "sha256": "97af530b955f5f9341c41e090934ddf148d99c619a0e62077f007ac7430ad2e0"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/command.json": {
+      "size": 755,
+      "sha256": "8085af327f79df9271ccb8e7207b099a2cf0ec13cfde70ec2fe7a4482e45d70e"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/junit.xml": {
+      "size": 16483,
+      "sha256": "fc2963e25827b6a4e708274f05ac13836b6d685e430915f22c859f78db46c237"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-append-in].json": {
+      "size": 307,
+      "sha256": "413bc5504fa556e98e9097f13f6164c80eb6d15b1866d162fdc0c211e33bc157"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-append].json": {
+      "size": 305,
+      "sha256": "8c67e1fce454aecc0849d3c34169d427aef50093442a0425ce719f13e2664c53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-intent].json": {
+      "size": 305,
+      "sha256": "5893eb3c60987dcbc93af48626670e3e97683b5e9a82fbaea2c0162eae40de6c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-append-in].json": {
+      "size": 302,
+      "sha256": "2dff37f5409e99d39cf36629625131caedb8da90ca279f4ad204b0bf374492e3"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-append].json": {
+      "size": 300,
+      "sha256": "5cf7507b260073dd6d0fd274dc9e2916c51613ace86833c88950eb6704d4170a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-intent].json": {
+      "size": 300,
+      "sha256": "7fb153c9f6ef55f640b651ba8907b8b5d0779c037f6ebc38a249c1ad11b28ac9"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-append-in].json": {
+      "size": 307,
+      "sha256": "9648781901119abccc36e1a42c573811c1a41761c324880e082c29282590a629"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-append].json": {
+      "size": 305,
+      "sha256": "d891db752e2c8f8650308d3c92c6fe9bbe0fc12bf0612c429ed7fae2ede303b1"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-intent].json": {
+      "size": 305,
+      "sha256": "11a38d9817f13fbb0182b535ebcc8092bf79b01caebfb64b4679e41b511e1dae"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-append-in].json": {
+      "size": 303,
+      "sha256": "7bc9e02a8bb53a9b80c2204b06a7da29e729da93e726f170f7d735a58e619e4f"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-append].json": {
+      "size": 301,
+      "sha256": "34e4a21fd6ff67321b315f7301ba2eacf3c43986daa74086e926ae4438ee8c19"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-intent].json": {
+      "size": 301,
+      "sha256": "ac01b2010caef22b8cdde40d0e3099eb9f40e97348d4a10cf10596512351b0f7"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_edgar_completion_rollback_must_preserve_valid_shared_verifier.json": {
+      "size": 230,
+      "sha256": "8a6fc4fcb109faf3cff99618919c194294c2f7565cd44f324a74067e3576c097"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_pinned_snapshot_preserves_refusal[invalid-signature-pinned-append-in].json": {
+      "size": 104,
+      "sha256": "e10384c92fd98d8eb1138f5eb7ec87ce35b93c7cc904bc8a26527b16c4d28e53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_pinned_snapshot_preserves_refusal[invalid-signature-result].json": {
+      "size": 94,
+      "sha256": "8149ce897561afd0d8d345a241ba7d2e14d797c176363e3b3e2b0248db781f4c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_pinned_snapshot_preserves_refusal[missing-pair-pinned-append-in].json": {
+      "size": 104,
+      "sha256": "e10384c92fd98d8eb1138f5eb7ec87ce35b93c7cc904bc8a26527b16c4d28e53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_pinned_snapshot_preserves_refusal[missing-pair-result].json": {
+      "size": 94,
+      "sha256": "8149ce897561afd0d8d345a241ba7d2e14d797c176363e3b3e2b0248db781f4c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_preexisting_hwm_damage_already_refuses[invalid-signature].json": {
+      "size": 115,
+      "sha256": "8b1611eca44c70afd73cd75f89b3da2f31d26b41daba0da3edd747167d423d92"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-pair].json": {
+      "size": 110,
+      "sha256": "63358b9066b873530e402b9f3f11afaf1a5c1775c6b07fc873a183011b4962b4"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-signature].json": {
+      "size": 115,
+      "sha256": "b46ecbcf20d8403a384ce76a55ead3089b4410c2ba38f6485305ae51f8b47d1a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-value].json": {
+      "size": 111,
+      "sha256": "2208f853ca8700bf265baf8ffe26d3b1aceb928644dae3688581d7d3450ef00a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_sql_write_boundary_with_independent_writer_must_refuse[invalid-signature].json": {
+      "size": 305,
+      "sha256": "2d96d0db41314706c9729c6f4f30628624f958924583496fdec7880e35bd6858"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_sql_write_boundary_with_independent_writer_must_refuse[missing-pair].json": {
+      "size": 300,
+      "sha256": "d5f317fd0173eb4aa3d71e5dade1e6676d0fb2cc4636b61bcb3c834bdb071137"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_state_first_transaction_blocks_concurrent_meta_change.json": {
+      "size": 60,
+      "sha256": "ffc49bba9b9632297905b1071e692ab1103d91647d28319af7ddffcfedd1f8c6"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_uncommitted_verification_must_not_poison_floor[rollback].json": {
+      "size": 252,
+      "sha256": "763436fe56f8df3e594e55302d1e3acb6f00cabbe0dcd3481366787c47cc9403"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/observations/test_uncommitted_verification_must_not_poison_floor[savepoint-rollback].json": {
+      "size": 262,
+      "sha256": "dfafacc152e6d67dc35b34fda92f581ef669a3741f319d6ce4202d33d4ae9209"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-contracts/output.log": {
+      "size": 11449,
+      "sha256": "f1ca05e349a2a5e530b72565bdb46d64e7cfae29966cbf97de56967557a10997"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-lint/command.json": {
+      "size": 539,
+      "sha256": "2f8a80a853bf4955ce3da370c854a6d1091b1a9ce0c99a7841a97141e4fbdfb5"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/final-lint/output.log": {
+      "size": 30,
+      "sha256": "5b196eb3a6acb50d3fa398d04ca284985cc1ffec870e940264b00780bfd2c971"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/historical-reconfirmation/command.json": {
+      "size": 787,
+      "sha256": "b75682a52711409a0c1a4f28325cce6ad4b5be42e3f3f17345a4d1bb6fce7753"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/historical-reconfirmation/junit.xml": {
+      "size": 16668,
+      "sha256": "769411b20158d4632d26e3ef114017169ae8ff1edb745e31546f270c9d0b583a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/historical-reconfirmation/output.log": {
+      "size": 11356,
+      "sha256": "9005fa3fff893b5a1daee36bf5ad7ddce9968e274890c95b416a3938d21d86cd"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/lint/command.json": {
+      "size": 539,
+      "sha256": "9d6717e0023f771090176fced91f35e9e6b1ea452ad8690a7d6f7638be112bd8"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/lint/output.log": {
+      "size": 30,
+      "sha256": "5b196eb3a6acb50d3fa398d04ca284985cc1ffec870e940264b00780bfd2c971"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/command.json": {
+      "size": 758,
+      "sha256": "1cba3ca1cbe86736a1f593b1c7f544117bf64e93ed1baab5e26387a153bbae07"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/junit.xml": {
+      "size": 14638,
+      "sha256": "201dac972488828a480c4e7cae6ef4d004629618cc05e01acb96e980862282bb"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-append-in].json": {
+      "size": 307,
+      "sha256": "413bc5504fa556e98e9097f13f6164c80eb6d15b1866d162fdc0c211e33bc157"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-append].json": {
+      "size": 305,
+      "sha256": "8c67e1fce454aecc0849d3c34169d427aef50093442a0425ce719f13e2664c53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[invalid-signature-intent].json": {
+      "size": 305,
+      "sha256": "5893eb3c60987dcbc93af48626670e3e97683b5e9a82fbaea2c0162eae40de6c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-append-in].json": {
+      "size": 302,
+      "sha256": "2dff37f5409e99d39cf36629625131caedb8da90ca279f4ad204b0bf374492e3"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-append].json": {
+      "size": 300,
+      "sha256": "5cf7507b260073dd6d0fd274dc9e2916c51613ace86833c88950eb6704d4170a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-pair-intent].json": {
+      "size": 300,
+      "sha256": "7fb153c9f6ef55f640b651ba8907b8b5d0779c037f6ebc38a249c1ad11b28ac9"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-append-in].json": {
+      "size": 307,
+      "sha256": "9648781901119abccc36e1a42c573811c1a41761c324880e082c29282590a629"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-append].json": {
+      "size": 305,
+      "sha256": "d891db752e2c8f8650308d3c92c6fe9bbe0fc12bf0612c429ed7fae2ede303b1"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-signature-intent].json": {
+      "size": 305,
+      "sha256": "11a38d9817f13fbb0182b535ebcc8092bf79b01caebfb64b4679e41b511e1dae"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-append-in].json": {
+      "size": 303,
+      "sha256": "7bc9e02a8bb53a9b80c2204b06a7da29e729da93e726f170f7d735a58e619e4f"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-append].json": {
+      "size": 301,
+      "sha256": "34e4a21fd6ff67321b315f7301ba2eacf3c43986daa74086e926ae4438ee8c19"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_changed_hwm_at_write_boundary_must_refuse[missing-value-intent].json": {
+      "size": 301,
+      "sha256": "ac01b2010caef22b8cdde40d0e3099eb9f40e97348d4a10cf10596512351b0f7"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_edgar_completion_rollback_must_preserve_valid_shared_verifier.json": {
+      "size": 230,
+      "sha256": "8a6fc4fcb109faf3cff99618919c194294c2f7565cd44f324a74067e3576c097"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_pinned_snapshot_preserves_refusal[invalid-signature-pinned-append-in].json": {
+      "size": 104,
+      "sha256": "e10384c92fd98d8eb1138f5eb7ec87ce35b93c7cc904bc8a26527b16c4d28e53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_pinned_snapshot_preserves_refusal[invalid-signature-result].json": {
+      "size": 94,
+      "sha256": "8149ce897561afd0d8d345a241ba7d2e14d797c176363e3b3e2b0248db781f4c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_pinned_snapshot_preserves_refusal[missing-pair-pinned-append-in].json": {
+      "size": 104,
+      "sha256": "e10384c92fd98d8eb1138f5eb7ec87ce35b93c7cc904bc8a26527b16c4d28e53"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_pinned_snapshot_preserves_refusal[missing-pair-result].json": {
+      "size": 94,
+      "sha256": "8149ce897561afd0d8d345a241ba7d2e14d797c176363e3b3e2b0248db781f4c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_preexisting_hwm_damage_already_refuses[invalid-signature].json": {
+      "size": 115,
+      "sha256": "8b1611eca44c70afd73cd75f89b3da2f31d26b41daba0da3edd747167d423d92"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-pair].json": {
+      "size": 110,
+      "sha256": "63358b9066b873530e402b9f3f11afaf1a5c1775c6b07fc873a183011b4962b4"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-signature].json": {
+      "size": 115,
+      "sha256": "b46ecbcf20d8403a384ce76a55ead3089b4410c2ba38f6485305ae51f8b47d1a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_preexisting_hwm_damage_already_refuses[missing-value].json": {
+      "size": 111,
+      "sha256": "2208f853ca8700bf265baf8ffe26d3b1aceb928644dae3688581d7d3450ef00a"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_state_first_transaction_blocks_concurrent_meta_change.json": {
+      "size": 60,
+      "sha256": "ffc49bba9b9632297905b1071e692ab1103d91647d28319af7ddffcfedd1f8c6"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_uncommitted_verification_must_not_poison_floor[rollback].json": {
+      "size": 252,
+      "sha256": "763436fe56f8df3e594e55302d1e3acb6f00cabbe0dcd3481366787c47cc9403"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/observations/test_uncommitted_verification_must_not_poison_floor[savepoint-rollback].json": {
+      "size": 262,
+      "sha256": "dfafacc152e6d67dc35b34fda92f581ef669a3741f319d6ce4202d33d4ae9209"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/refusal-contracts/output.log": {
+      "size": 10045,
+      "sha256": "37126011b2641f9128f44f3acbbf151193f36bfb02159a045b78f717dfdddfe1"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/results.json": {
+      "size": 1716,
+      "sha256": "c608868afbd9a30f53c250ba50633bf28ed7be3ba1c407001e827e70df0a4a2e"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/sql-boundary/command.json": {
+      "size": 785,
+      "sha256": "6aaf77a727e327cd110a59db987ded22d2478578cc9a879f4a00f98b6f8c561c"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/sql-boundary/junit.xml": {
+      "size": 2087,
+      "sha256": "7caba91455b4673879c8f1e4961efeb9563fe9f5f431522562aa11f1664a264b"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/sql-boundary/observations/test_sql_write_boundary_with_independent_writer_must_refuse[invalid-signature].json": {
+      "size": 305,
+      "sha256": "2d96d0db41314706c9729c6f4f30628624f958924583496fdec7880e35bd6858"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/sql-boundary/observations/test_sql_write_boundary_with_independent_writer_must_refuse[missing-pair].json": {
+      "size": 300,
+      "sha256": "d5f317fd0173eb4aa3d71e5dade1e6676d0fb2cc4636b61bcb3c834bdb071137"
+    },
+    "data/astra-hwm-resign-claim-shape-2026-09-06/sql-boundary/output.log": {
+      "size": 1679,
+      "sha256": "eedbe05b8300369e05a293b4ad98a9e368a41abfd19c18c7439b5a0def685da7"
+    }
+  }
+}

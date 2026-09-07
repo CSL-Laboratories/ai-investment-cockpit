@@ -1,0 +1,24 @@
+{
+  "remote_checked_utc": "2026-09-07 01:11:44 UTC",
+  "remote_main": {
+    "sha": "d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f",
+    "message": "Merge pull request #71 from NotSkittlz/work/astra-fresh-install-smokes-2026-09-06\n\ndocs: freeze Astra fresh-install smokes 2026-09-06",
+    "changed_files": [
+      "docs/evidence/astra-fresh-install-smokes-2026-09-06.md"
+    ]
+  },
+  "remote_sources": [
+    {
+      "sha": "df9baf0c35787aea2c0cef840f6f18ed897a7eda",
+      "url": "https://github.com/NotSkittlz/ai-investment-cockpit/blob/d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f/app/storage/audit.py"
+    },
+    {
+      "sha": "081d30f7a0ed2a308758faca7c359c700c0ec010",
+      "url": "https://github.com/NotSkittlz/ai-investment-cockpit/blob/d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f/app/storage/engine.py"
+    },
+    {
+      "sha": "9d8eebc07cb3ceff1c424a2c220cd16adafcd2a7",
+      "url": "https://github.com/NotSkittlz/ai-investment-cockpit/blob/d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f/app/ingest/edgar_pipeline.py"
+    }
+  ]
+}
