@@ -1,0 +1,14 @@
+{
+  "local_head": "892e2dbaab0093e91857cea373dc188d638d8d80",
+  "app_tree": "5125e7edd2489c027364bbbfbd4556d928109817",
+  "app_matches_local_post70_main": true,
+  "local_blobs": {
+    "app/storage/audit.py": "df9baf0c35787aea2c0cef840f6f18ed897a7eda",
+    "app/storage/engine.py": "081d30f7a0ed2a308758faca7c359c700c0ec010",
+    "app/ingest/edgar_pipeline.py": "9d8eebc07cb3ceff1c424a2c220cd16adafcd2a7"
+  },
+  "copied_probe_source": "/workspace/w24-evidence/astra-drain-2026-09-06/astra-audit-concurrency-beyond-114-2026-09-06/test_probes.py",
+  "copied_probe_sha256": "8aed73414889be25e85fe27e9940f4da776ff068c193f0a44d4d2f3540973786",
+  "miss_list_sha256": "438ab3007d2cfe0a18f61b92eac9eaa4cca4e992f264df695b4ce30c6078b8f1",
+  "incident_database_opened": false
+}

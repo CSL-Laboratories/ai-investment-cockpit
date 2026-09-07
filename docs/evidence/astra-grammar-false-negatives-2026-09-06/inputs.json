@@ -1,0 +1,675 @@
+{
+  "scope": "RW-21/W-24 held SAFT/FSEA/SLP/CCO research; no authority",
+  "main_commit": "c5ef0ad3d9acd3a85aa86228491ea1827bfd529e",
+  "evidence_root": "/workspace/w24-evidence",
+  "provenance": "Existing cached primary HTML from prior screens. Local file hashes are measured now; no fresh SEC retrieval, signed ingestion, response-header verification, or independent holdout.",
+  "code": [
+    {
+      "path": "app/strategies/merger_semantics.py",
+      "sha256": "b87bc0675d95fc4c9cc10696f1ac07b18890aa7115ab04c92acd05cb558339fe"
+    },
+    {
+      "path": "app/strategies/semantic_text.py",
+      "sha256": "89f2abab8346a4f9e2d775e198159ae5c83efef700f373bffff917154b1cdb62"
+    },
+    {
+      "path": "app/strategies/merger_edge.py",
+      "sha256": "8ec44a631aa72dda4b0a0ed0c10c3a9b90684240ce916b697c52707eeca3ebe0"
+    }
+  ],
+  "metadata": [
+    {
+      "path": "rescreen-raw/head-classify.json",
+      "sha256": "ba08c0b7fa0111527dcab06efde2a50b083f0b8a0f07de7d33c6fd724d068a2f"
+    },
+    {
+      "path": "rescreen-raw-2026-09-04/head-classify.json",
+      "sha256": "7323e5baa441cde8850b1e8bd2ddbb0f8bf9f3f58909ebcbd627f2487d8ce86d"
+    }
+  ],
+  "existing_excerpts": {
+    "path": "docs/evidence/rw21-held-excerpts/existing-excerpts.json",
+    "sha256": "a8626387e2de9d5e037f3277e7914d6161eb0f3f9ad3a114aebe385b31678ef1"
+  },
+  "last_screen_date": "2026-09-04",
+  "last_screen_heads": {
+    "CCO": {
+      "symbol": "CCO",
+      "cik": "0001334978",
+      "absolute_head": {
+        "accession": "0001334978-26-000025",
+        "form": "10-Q",
+        "filingDate": "2026-08-05",
+        "primaryDocument": "cco-20260630.htm"
+      },
+      "result": "absolute_head_supported",
+      "supported_2026": [
+        {
+          "accession": "0001334978-26-000025",
+          "form": "10-Q",
+          "filingDate": "2026-08-05",
+          "primaryDocument": "cco-20260630.htm"
+        },
+        {
+          "accession": "0001334978-26-000023",
+          "form": "8-K",
+          "filingDate": "2026-08-05",
+          "primaryDocument": "cco-20260805.htm"
+        },
+        {
+          "accession": "0001213900-26-058449",
+          "form": "8-K",
+          "filingDate": "2026-05-18",
+          "primaryDocument": "ea0291061-8k_clear.htm"
+        },
+        {
+          "accession": "0001213900-26-055090",
+          "form": "8-K",
+          "filingDate": "2026-05-12",
+          "primaryDocument": "ea0290250-8k_clear.htm"
+        },
+        {
+          "accession": "0001334978-26-000018",
+          "form": "10-Q",
+          "filingDate": "2026-05-06",
+          "primaryDocument": "cco-20260331.htm"
+        },
+        {
+          "accession": "0001334978-26-000017",
+          "form": "8-K",
+          "filingDate": "2026-05-06",
+          "primaryDocument": "cco-20260506.htm"
+        },
+        {
+          "accession": "0001213900-26-042767",
+          "form": "8-K",
+          "filingDate": "2026-04-13",
+          "primaryDocument": "ea0285692-8k_clear.htm"
+        },
+        {
+          "accession": "0001213900-26-040144",
+          "form": "8-K",
+          "filingDate": "2026-04-06",
+          "primaryDocument": "ea0285093-8k_clear.htm"
+        },
+        {
+          "accession": "0001213900-26-035140",
+          "form": "8-K",
+          "filingDate": "2026-03-27",
+          "primaryDocument": "ea028374701-8k_clear.htm"
+        },
+        {
+          "accession": "0001334978-26-000010",
+          "form": "10-K",
+          "filingDate": "2026-02-26",
+          "primaryDocument": "cco-20251231.htm"
+        },
+        {
+          "accession": "0001334978-26-000006",
+          "form": "8-K",
+          "filingDate": "2026-02-26",
+          "primaryDocument": "cco-20260226.htm"
+        },
+        {
+          "accession": "0001193125-26-043066",
+          "form": "8-K",
+          "filingDate": "2026-02-09",
+          "primaryDocument": "d939743d8k.htm"
+        }
+      ]
+    },
+    "FSEA": {
+      "symbol": "FSEA",
+      "cik": "0001943802",
+      "absolute_head": {
+        "accession": "0000943374-26-000392",
+        "form": "8-K",
+        "filingDate": "2026-08-27",
+        "primaryDocument": "fsea-20260827.htm"
+      },
+      "result": "absolute_head_supported",
+      "supported_2026": [
+        {
+          "accession": "0000943374-26-000392",
+          "form": "8-K",
+          "filingDate": "2026-08-27",
+          "primaryDocument": "fsea-20260827.htm"
+        },
+        {
+          "accession": "0001193125-26-339258",
+          "form": "10-Q",
+          "filingDate": "2026-08-07",
+          "primaryDocument": "fsea-20260630.htm"
+        },
+        {
+          "accession": "0001193125-26-225434",
+          "form": "10-Q",
+          "filingDate": "2026-05-15",
+          "primaryDocument": "fsea-20260331.htm"
+        },
+        {
+          "accession": "0001193125-26-206551",
+          "form": "8-K",
+          "filingDate": "2026-05-05",
+          "primaryDocument": "d74001d8k.htm"
+        },
+        {
+          "accession": "0001193125-26-116794",
+          "form": "10-K",
+          "filingDate": "2026-03-20",
+          "primaryDocument": "fsea-20251231.htm"
+        }
+      ]
+    },
+    "SAFT": {
+      "symbol": "SAFT",
+      "cik": "0001172052",
+      "absolute_head": {
+        "accession": "0001104659-26-105083",
+        "form": "PREM14A",
+        "filingDate": "2026-09-03",
+        "primaryDocument": "tm2623530-1_prem14a.htm"
+      },
+      "result": "absolute_head_unsupported_form"
+    },
+    "SLP": {
+      "symbol": "SLP",
+      "cik": "0001023459",
+      "absolute_head": {
+        "accession": "0001023459-26-000060",
+        "form": "8-K",
+        "filingDate": "2026-08-28",
+        "primaryDocument": "slp-20260827.htm"
+      },
+      "result": "absolute_head_supported",
+      "supported_2026": [
+        {
+          "accession": "0001023459-26-000060",
+          "form": "8-K",
+          "filingDate": "2026-08-28",
+          "primaryDocument": "slp-20260827.htm"
+        },
+        {
+          "accession": "0001023459-26-000054",
+          "form": "8-K",
+          "filingDate": "2026-08-13",
+          "primaryDocument": "slp-20260813.htm"
+        },
+        {
+          "accession": "0001023459-26-000038",
+          "form": "10-Q",
+          "filingDate": "2026-07-09",
+          "primaryDocument": "simu-20260531.htm"
+        },
+        {
+          "accession": "0001023459-26-000037",
+          "form": "8-K",
+          "filingDate": "2026-07-09",
+          "primaryDocument": "slp-20260709.htm"
+        },
+        {
+          "accession": "0001023459-26-000024",
+          "form": "8-K",
+          "filingDate": "2026-06-17",
+          "primaryDocument": "slp-20260615.htm"
+        },
+        {
+          "accession": "0001023459-26-000020",
+          "form": "8-K",
+          "filingDate": "2026-06-16",
+          "primaryDocument": "slp-20260615.htm"
+        },
+        {
+          "accession": "0001023459-26-000016",
+          "form": "10-Q",
+          "filingDate": "2026-04-10",
+          "primaryDocument": "simu-20260228.htm"
+        },
+        {
+          "accession": "0001023459-26-000013",
+          "form": "8-K",
+          "filingDate": "2026-04-09",
+          "primaryDocument": "slp-20260409.htm"
+        },
+        {
+          "accession": "0001023459-26-000010",
+          "form": "8-K",
+          "filingDate": "2026-02-18",
+          "primaryDocument": "slp-20260212.htm"
+        },
+        {
+          "accession": "0001023459-26-000006",
+          "form": "10-Q",
+          "filingDate": "2026-01-09",
+          "primaryDocument": "simu-20251130.htm"
+        },
+        {
+          "accession": "0001023459-26-000003",
+          "form": "8-K",
+          "filingDate": "2026-01-08",
+          "primaryDocument": "slp-20260108.htm"
+        }
+      ]
+    }
+  },
+  "filings": [
+    {
+      "symbol": "SAFT",
+      "accession": "0001104659-26-086331",
+      "form": "8-K",
+      "filing_date": "2026-07-23",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001104659-26-086331__tm2621207d3_8k.htm",
+      "bytes": 36532,
+      "sha256": "db17c809615e31996978acf3b5eab49f84c8331fd017518daea36fb0b7871bcd",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000110465926086331/tm2621207d3_8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001104659-26-086488",
+      "form": "8-K",
+      "filing_date": "2026-07-24",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001104659-26-086488__tm2621207d1_8k.htm",
+      "bytes": 62564,
+      "sha256": "212d36818587822557ef9a9571deeeda625e83e52c4ebb56514a200d8f8ebf12",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000110465926086488/tm2621207d1_8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000002",
+      "form": "8-K",
+      "filing_date": "2026-02-25",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000002__saft-20260225x8k.htm",
+      "bytes": 29836,
+      "sha256": "864d2cd906e6674e27e6880210ef2ba0a61d369fb5ae9cd757f0f479b204f9aa",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000002/saft-20260225x8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000005",
+      "form": "10-K",
+      "filing_date": "2026-02-27",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000005__saft-20251231x10k.htm",
+      "bytes": 6888139,
+      "sha256": "e43b4f65a2fd9400e04436153e9f20d9a8aad7f337e21094451c4d9702b9821b",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000005/saft-20251231x10k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000013",
+      "form": "8-K",
+      "filing_date": "2026-05-06",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000013__saft-20260506x8k.htm",
+      "bytes": 30028,
+      "sha256": "a3fb107d0a59ee7d3ba4c106d14bd99d9e53801a67ff6749f04b003be03e8599",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000013/saft-20260506x8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000015",
+      "form": "10-Q",
+      "filing_date": "2026-05-08",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000015__saft-20260331x10q.htm",
+      "bytes": 2337840,
+      "sha256": "853c0a84b969d855bfbc1efd1d8210000da19fb9671127aa27c2a7c53c967d33",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000015/saft-20260331x10q.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000017",
+      "form": "8-K",
+      "filing_date": "2026-05-14",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000017__saft-20260513x8k.htm",
+      "bytes": 55457,
+      "sha256": "aeba466e7b782dd868aa7a081d64c9ab9bc1c23b3aaf91e2144eca6ed17899ac",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000017/saft-20260513x8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000019",
+      "form": "8-K",
+      "filing_date": "2026-06-15",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000019__saft-20260609x8k.htm",
+      "bytes": 32111,
+      "sha256": "04dd4410eaa3531247a59ebcd1284bf1b70c5f63decfa38b77f55a277e0b3a84",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000019/saft-20260609x8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000021",
+      "form": "8-K",
+      "filing_date": "2026-08-05",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000021__saft-20260805x8k.htm",
+      "bytes": 29755,
+      "sha256": "1aca353aee5e9fa01a43120dad469d2fd9698c67b55056446ff06730b51ba3d6",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000021/saft-20260805x8k.htm"
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000023",
+      "form": "10-Q",
+      "filing_date": "2026-08-07",
+      "cik": "0001172052",
+      "path": "rescreen-raw/docs/SAFT__0001172052-26-000023__saft-20260630x10q.htm",
+      "bytes": 2838355,
+      "sha256": "be6f2e65a29902ca333576f97081bf46db4df9b1ae8fe9380676f682a85e5898",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1172052/000117205226000023/saft-20260630x10q.htm"
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0000943374-26-000392",
+      "form": "8-K",
+      "filing_date": "2026-08-27",
+      "cik": "0001943802",
+      "path": "rescreen-raw/docs/FSEA__0000943374-26-000392__fsea-20260827.htm",
+      "bytes": 31806,
+      "sha256": "c96bfef6fc4d7626d316786befc27a64416d328f1ffbd281be6b87a0a9328b71",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1943802/000094337426000392/fsea-20260827.htm"
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-116794",
+      "form": "10-K",
+      "filing_date": "2026-03-20",
+      "cik": "0001943802",
+      "path": "rescreen-raw/docs/FSEA__0001193125-26-116794__fsea-20251231.htm",
+      "bytes": 8059302,
+      "sha256": "5106b54f08a0dc76cd3d5cab1f52e6869bd6c40918ba00fd79f09330aa7918f9",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1943802/000119312526116794/fsea-20251231.htm"
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-206551",
+      "form": "8-K",
+      "filing_date": "2026-05-05",
+      "cik": "0001943802",
+      "path": "rescreen-raw/docs/FSEA__0001193125-26-206551__d74001d8k.htm",
+      "bytes": 31175,
+      "sha256": "d595321ba544decf1545e4fea72e82fe9733c1ff724fe5450ecea42d28ea6eb4",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1943802/000119312526206551/d74001d8k.htm"
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-225434",
+      "form": "10-Q",
+      "filing_date": "2026-05-15",
+      "cik": "0001943802",
+      "path": "rescreen-raw/docs/FSEA__0001193125-26-225434__fsea-20260331.htm",
+      "bytes": 5743088,
+      "sha256": "53366db2bdb54988edc7e3885106816b9ad18b5c34d39d0329609777bc625964",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1943802/000119312526225434/fsea-20260331.htm"
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-339258",
+      "form": "10-Q",
+      "filing_date": "2026-08-07",
+      "cik": "0001943802",
+      "path": "rescreen-raw/docs/FSEA__0001193125-26-339258__fsea-20260630.htm",
+      "bytes": 7143326,
+      "sha256": "83aeabb158624c09ecf81107e4057e34859552059a28048acb4c8ea47f37e054",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1943802/000119312526339258/fsea-20260630.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000003",
+      "form": "8-K",
+      "filing_date": "2026-01-08",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000003__slp-20260108.htm",
+      "bytes": 27958,
+      "sha256": "03f27f9d6a9f8797ce9ec44c79e4c79c737d10b82ac6b13fe2f53bdabe9ac576",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000003/slp-20260108.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000006",
+      "form": "10-Q",
+      "filing_date": "2026-01-09",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000006__simu-20251130.htm",
+      "bytes": 1095913,
+      "sha256": "3618242dfe9848af181ea4fc511b968ab72c0572137c269f8c8b89cef7a878ed",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000006/simu-20251130.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000010",
+      "form": "8-K",
+      "filing_date": "2026-02-18",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000010__slp-20260212.htm",
+      "bytes": 42886,
+      "sha256": "26ee7663c1ab9666940ddd7e517538385ebe258199784ddc883538f823efd587",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000010/slp-20260212.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000013",
+      "form": "8-K",
+      "filing_date": "2026-04-09",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000013__slp-20260409.htm",
+      "bytes": 27750,
+      "sha256": "2aa0e0c1d0d6725d41b832758995a79439ffbc5425c2d2c2235785146879f4d1",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000013/slp-20260409.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000016",
+      "form": "10-Q",
+      "filing_date": "2026-04-10",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000016__simu-20260228.htm",
+      "bytes": 1436999,
+      "sha256": "639c96d84be30adfc2c9f1746fb90ceb06e486c3debb7dfb671d649cbc88885e",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000016/simu-20260228.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000020",
+      "form": "8-K",
+      "filing_date": "2026-06-16",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000020__slp-20260615.htm",
+      "bytes": 36373,
+      "sha256": "ced61fd862a6dd416f481ef6d04d22f462bd616bb7bb72929b07c4d35ffac855",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000020/slp-20260615.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000024",
+      "form": "8-K",
+      "filing_date": "2026-06-17",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000024__slp-20260615.htm",
+      "bytes": 73483,
+      "sha256": "aa97d80981bfdcdcf121e414ca2b091933f5521c8639328a8e49d44253397a43",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000024/slp-20260615.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000037",
+      "form": "8-K",
+      "filing_date": "2026-07-09",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000037__slp-20260709.htm",
+      "bytes": 27479,
+      "sha256": "1879295d25cd37c46f74557a1f65db54ead7226240661db5bd48b697881d5778",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000037/slp-20260709.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000038",
+      "form": "10-Q",
+      "filing_date": "2026-07-09",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000038__simu-20260531.htm",
+      "bytes": 1504457,
+      "sha256": "2af4a6ec021fe37596e5b78a10cca0df87185fd2c1758204dc58afb06d63fe8e",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000038/simu-20260531.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000054",
+      "form": "8-K",
+      "filing_date": "2026-08-13",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000054__slp-20260813.htm",
+      "bytes": 41181,
+      "sha256": "cdd4d9350f50584bcf1d57b57115a7d4e117323cb91416420cf4f8eb123e0da1",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000054/slp-20260813.htm"
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000060",
+      "form": "8-K",
+      "filing_date": "2026-08-28",
+      "cik": "0001023459",
+      "path": "rescreen-raw/docs/SLP__0001023459-26-000060__slp-20260827.htm",
+      "bytes": 43022,
+      "sha256": "24be312468dab7deebdb463b2a3a61f9681e2d654f54c68412cef406dc9035b0",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1023459/000102345926000060/slp-20260827.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001193125-26-043066",
+      "form": "8-K",
+      "filing_date": "2026-02-09",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001193125-26-043066__d939743d8k.htm",
+      "bytes": 76651,
+      "sha256": "b77bf71118c59832979670f9aad833442a93eec76237a209f2788cfef5976832",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000119312526043066/d939743d8k.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-035140",
+      "form": "8-K",
+      "filing_date": "2026-03-27",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001213900-26-035140__ea028374701-8k_clear.htm",
+      "bytes": 36753,
+      "sha256": "9a9aee40deb3096c269905d0d990843dad8c754d2b82ce78bdfca1e591d97869",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000121390026035140/ea028374701-8k_clear.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-040144",
+      "form": "8-K",
+      "filing_date": "2026-04-06",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001213900-26-040144__ea0285093-8k_clear.htm",
+      "bytes": 41908,
+      "sha256": "0765fb00d1d7d0b2b0548708c9828d8df8d121fda2c264811b8666ba8245a05a",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000121390026040144/ea0285093-8k_clear.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-042767",
+      "form": "8-K",
+      "filing_date": "2026-04-13",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001213900-26-042767__ea0285692-8k_clear.htm",
+      "bytes": 42616,
+      "sha256": "1f61cf49f021f2b41342b3c6c7e21fc3bf817f4f8cdb93b8a38f71e6dd26f8c6",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000121390026042767/ea0285692-8k_clear.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-055090",
+      "form": "8-K",
+      "filing_date": "2026-05-12",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001213900-26-055090__ea0290250-8k_clear.htm",
+      "bytes": 34951,
+      "sha256": "823b211c871a0633a4f8fa43a77d5bb104edd3b8eadb6689d14f6c42bb55f0f1",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000121390026055090/ea0290250-8k_clear.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-058449",
+      "form": "8-K",
+      "filing_date": "2026-05-18",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001213900-26-058449__ea0291061-8k_clear.htm",
+      "bytes": 35224,
+      "sha256": "8a74afbf9727a70dbff1e49b5e5ab0bee1e4ca4e994e1767a426b539dd505141",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000121390026058449/ea0291061-8k_clear.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000006",
+      "form": "8-K",
+      "filing_date": "2026-02-26",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000006__cco-20260226.htm",
+      "bytes": 26444,
+      "sha256": "a0e1e1fa529e015208d6fce2c4334e5922f87d9faf59a3c2c7bb93e1e3a6545a",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000006/cco-20260226.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000010",
+      "form": "10-K",
+      "filing_date": "2026-02-26",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000010__cco-20251231.htm",
+      "bytes": 2278389,
+      "sha256": "858486a096610671db5df9dc587f40656d202ad8caccec7037920b6033939cbd",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000010/cco-20251231.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000017",
+      "form": "8-K",
+      "filing_date": "2026-05-06",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000017__cco-20260506.htm",
+      "bytes": 26776,
+      "sha256": "22c6d7f2189e6fbcc592c58fa909eb60ed80ca55476ae20af6e55d0b8d8b03cd",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000017/cco-20260506.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000018",
+      "form": "10-Q",
+      "filing_date": "2026-05-06",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000018__cco-20260331.htm",
+      "bytes": 955713,
+      "sha256": "6dde479371b4506af40b169834ae240cd68fabfe150a5c0b04a4de1506b0050a",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000018/cco-20260331.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000023",
+      "form": "8-K",
+      "filing_date": "2026-08-05",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000023__cco-20260805.htm",
+      "bytes": 26441,
+      "sha256": "0575898fd78079477d93362ae96933423733967042f9f711dd1967d672e21570",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000023/cco-20260805.htm"
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000025",
+      "form": "10-Q",
+      "filing_date": "2026-08-05",
+      "cik": "0001334978",
+      "path": "rescreen-raw/docs/CCO__0001334978-26-000025__cco-20260630.htm",
+      "bytes": 1267609,
+      "sha256": "f386fe014dd869ca734985cdef84f5bd111dd09624664e7eb05e22b470fa8898",
+      "official_url": "https://www.sec.gov/Archives/edgar/data/1334978/000133497826000025/cco-20260630.htm"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+New miss candidates beyond BUG-114 / PR #68 (from xfail probes; Codex flagged before audit md/PR):
+
+1. test_concurrent_genesis_should_retry_not_report_tamper
+   reason: healthy concurrent genesis is mislabeled tamper
+
+2. test_rollback_after_in_transaction_verification_should_not_poison_floor
+   reason: verification promotes uncommitted rows into erasure floor
+
+3. test_committed_append_in_should_detect_total_erasure
+   reason: append_in commits do not advance erasure floor
+
+4. test_valid_older_caller_snapshot_should_not_be_labeled_erasure
+   reason: caller-owned older snapshot compared with newer process floor
+
+5. test_atomic_state_commit_should_never_appear_uncovered
+   reason: completeness reads coverage and model rows from different snapshots
+
+6. test_anchor_must_publish_the_verified_snapshot_head
+   reason: post_head_anchor samples a different unverified head after verification
+
+7. test_first_boot_key_creation_should_return_one_shared_key
+   reason: concurrent key get-or-create returns different keys
+
+8. test_real_poll_completion_rollback_should_not_poison_shared_audit
+   reason: multi-CIK completion rollback poisons shared verifier floor
+
+9. test_total_erase_then_refill_must_never_regreen_in_same_process
+   reason: total erase plus ordinary refill can replace observed history
+
+10. test_concurrent_watch_only_transitions_should_restore_without_semantic_fork
+   reason: recovery and trip can commit generation history out of order
+
+11. test_breaker_read_must_not_consume_unverified_concurrent_clear
+   reason: active breaker read is not pinned to chain verification
+
+12. test_scheduled_anchor_must_publish_only_the_verified_snapshot
+   reason: scheduled anchor rereads an unverified concurrent head
+
+13. test_concurrent_hwm_tamper_must_not_be_healed_by_bump
+   reason: HWM tamper between preflight and write is silently re-signed
+
+Note: BUG-118 (result() duplicate intent) already in PR #70 — not new vs that line.
+Soak fork still only structural break at seq 13589; hashes unchanged (read-only).
+No fail-closed PR opened (cybersecurity flag aborted final write).

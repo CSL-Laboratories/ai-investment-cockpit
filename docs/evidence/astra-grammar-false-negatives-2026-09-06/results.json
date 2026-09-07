@@ -1,0 +1,2577 @@
+{
+  "scope": "Dated held-filing research; unsigned; no selection authority",
+  "base_main": "c5ef0ad3d9acd3a85aa86228491ea1827bfd529e",
+  "summary": {
+    "filings": 38,
+    "filings_with_asserted_cash": 1,
+    "cash_strategy_eligible_filings": 0,
+    "exact_date_ready_filings": 0,
+    "grammar_branch_justified_under_requested_date_condition": false
+  },
+  "observations": [
+    {
+      "symbol": "SAFT",
+      "accession": "0001104659-26-086331",
+      "normalized_sha256": "88322645b0eab429e4c0de3d69161ae080efbf855183e7ee7f9eb960e712a44a",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 2934,
+          "normalized_end": 3073,
+          "text": " parent and merger subsidiary have agreed to acquire all of the company's outstanding shares of common stock for $105.00 per share, in cash"
+        }
+      ]
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001104659-26-086488",
+      "normalized_sha256": "5b9a1a326a03bfe06ad3639a50cf48b5ebb0b2365376f9d4231a5c947b181e1d",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 3691,
+          "normalized_end": 4255,
+          "text": " at the effective time of the merger (the \u201c effective time \u201d), each share of common stock, par value $0.01 per share, of the company (\u201c company common stock \u201d) outstanding as of immediately prior to the effective time (other than dissenting shares or any shares of company common stock held by the company as treasury stock or owned by parent, merger subsidiary or any other subsidiary of parent or any company subsidiary) will be cancelled and cease to exist and converted into the right to receive $105.00 in cash, without interest (the \u201c merger consideration \u201d)"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 12077,
+          "normalized_end": 13354,
+          "text": " the merger agreement contains customary termination rights, including (a) by mutual written agreement of parent and the company, (b) by either parent or the company if the merger is not consummated by july 23, 2027, subject to an automatic extension to january 23, 2028, under certain circumstances relating to the receipt of required regulatory approvals (the \u201c termination date \u201d), (c) by either parent or the company if the company fails to obtain the requisite approval of its stockholders, (d) by either parent or the company if any legal restraint permanently restraining, enjoining or otherwise prohibiting consummation of the merger becomes final and nonappealable, (e) by either the company or parent if the other party breaches or fails to perform any of its representations, warranties, covenants or agreements contained in the merger agreement in a manner that would cause the related closing conditions not to be satisfied, subject in certain cases to the right of the breaching party to cure the breach, (f) by the company, to enter into an alternative acquisition agreement with respect to a superior proposal, subject to compliance with the terms of the merger agreement, and (g) by parent, if the board effects and does not withdraw a change of recommendation"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 13864,
+          "normalized_end": 14483,
+          "text": " additionally, parent, under specified circumstances, including termination due to the failure to obtain certain regulatory approvals or any legal restraint (solely to the extent such governmental approval or legal restraint relates to any regulatory law) permanently enjoining consummation of the merger or failure to receive certain required regulatory approvals by the termination date (in each case, if all other conditions to closing have been satisfied or waived, other than conditions that by their nature are to be satisfied at the closing), will be required to pay the company a termination fee of $111,755,169"
+        }
+      ]
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000002",
+      "normalized_sha256": "10baae2bde56418685ea19f0b8da33d27626b97b92473aa1a2048f66dcbc26dc",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000005",
+      "normalized_sha256": "79771ac42c52a6113e23bbd8b75aaef7e018bd671de0b1a0170b7dd7a819afcb",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000013",
+      "normalized_sha256": "da573045952acd72efb1da86d95ce4395e5f2a2d62e342b60cb665cef58982b3",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000015",
+      "normalized_sha256": "3b52e7fa5ee5d5c1abbb0cf48fb2a663106b39363a182f6a3b9f5723e8f9b0b9",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [
+        "and december 31, 2025, the company had purchased 3,478,060 shares of common stock",
+        "and december 31, 2025, the company had purchased 3,478,060 shares of common stock"
+      ],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000017",
+      "normalized_sha256": "9a56509b6a761611bf834bdc237a76ca0d6f3939ea0a2bbf8ad66a6c5543559f",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000019",
+      "normalized_sha256": "2751212c91fb1deb54a2d3eec4f048d99cb54a232b8127dc48952445fb8683a4",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000021",
+      "normalized_sha256": "b9894307f0271722a786b4c80a26a4e172a841a140ea5015ad253c87fe1de8cf",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SAFT",
+      "accession": "0001172052-26-000023",
+      "normalized_sha256": "ec451a52601577f66b956e69bc2ac8d06fa7daaeb9c2c7e7498b9364b58dfc11",
+      "cash_raw": [
+        "105.00"
+      ],
+      "cash_asserted": [
+        "105.00"
+      ],
+      "stock_matches": [
+        "and december 31, 2025, the company had purchased 3,478,060 shares of common stock"
+      ],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": {
+        "cash_offer": "105.00",
+        "security_type": "common_equity",
+        "listing_country": "US",
+        "listing_exchange": "nasdaq",
+        "agreement_status": "definitive",
+        "lifecycle_status": "active",
+        "has_cvr": false,
+        "has_earnout": false,
+        "has_stock": true,
+        "uses_options_or_leverage": false,
+        "is_rumor_or_competing_bid": false,
+        "amendment_reviewed": false
+      },
+      "cash_strategy_eligible": false,
+      "refusal": "calibration row is outside the pinned cash-merger strategy universe",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 124331,
+          "normalized_end": 124691,
+          "text": " under the merger agreement, at the effective time of the merger (the \u201ceffective time\u201d), each share of common stock of the company issued and outstanding immediately prior to the effective time (other than certain excluded shares as described in the merger agreement) will be cancelled and converted into the right to receive $ 105.00 in cash, without interest"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 144465,
+          "normalized_end": 144784,
+          "text": " at the effective time of the merger, each issued and outstanding share of the company's common stock (other than certain excluded shares and shares held by stockholders who properly exercise appraisal rights) will be cancelled and converted into the right to receive $105.00 per share in cash, without interest thereon"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 235839,
+          "normalized_end": 236197,
+          "text": " the completion of the merger is subject to certain closing conditions, including stockholder approval and certain regulatory conditions, which may not be satisfied on a timely basis or at all, and the failure to consummate the merger within the expected timeframe or at all could adversely impact our business, financial condition, and results of operations"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 239658,
+          "normalized_end": 240023,
+          "text": " in addition, if the merger is not completed, and there are no other parties willing and able to acquire the company at a price of $105.00 per share or higher, on terms acceptable to us, the share price of the company's common stock may decline to the extent that the current market price of the common stock reflects an assumption that the merger will be completed"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 241535,
+          "normalized_end": 241666,
+          "text": " if the merger is not consummated for any reason, litigation could be filed in connection with the failure to consummate the merger"
+        }
+      ]
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0000943374-26-000392",
+      "normalized_sha256": "cd8af6fb502eeb65dd4012631954972dff4d7bf673efe0630f7676c5f2257569",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-116794",
+      "normalized_sha256": "9b41304415aa3494c2f52f014a45f4a85f74adb2976a956895641d424200964b",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [
+        "and 4,694,149 shares of common stock"
+      ],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 427692,
+          "normalized_end": 427955,
+          "text": " since it was determined that the company lacked sufficient historical closing stock prices, the expected volatility assumption was based upon a combination of actual historical volatility combined with the historical volatility developed for comparable companies"
+        }
+      ]
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-206551",
+      "normalized_sha256": "ec3ba1a2e0f1df5a5f1e97384fb61fc37edc582cda29ddee8976a9e75b8f6e04",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 3211,
+          "normalized_end": 3428,
+          "text": " under the terms of the merger agreement, each share of company common stock outstanding immediately before the effective time of the merger will be converted into the right to receive $17.25 in cash, without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 4108,
+          "normalized_end": 4347,
+          "text": " if the merger is not consummated under specified circumstances, including if the company terminates the merger agreement under certain circumstances, the company has agreed to pay cambridge financial a cash termination fee of $3.5 million"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 4471,
+          "normalized_end": 4529,
+          "text": " closing is expected to occur in the third quarter of 2026"
+        }
+      ]
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-225434",
+      "normalized_sha256": "7f7f0c3d5da0a2a188b1b2fad57ce0240c12ad506f9dc638267c4c04bd64febc",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 124815,
+          "normalized_end": 125078,
+          "text": " since it was determined that the company lacked sufficient historical closing stock prices, the expected volatility assumption was based upon a combination of actual historical volatility combined with the historical volatility developed for comparable companies"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 206098,
+          "normalized_end": 206316,
+          "text": " under the terms of the merger agreement, each share of company common stock outstanding immediately before the effective time of the merger will be converted into the right to receive $ 17.25 in cash, without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 206436,
+          "normalized_end": 206494,
+          "text": " closing is expected to occur in the third quarter of 2026"
+        }
+      ]
+    },
+    {
+      "symbol": "FSEA",
+      "accession": "0001193125-26-339258",
+      "normalized_sha256": "d38fde37f6fe3e972da863726de8f2002aa493b1391f93a0d46d92b17da3e980",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 40526,
+          "normalized_end": 40744,
+          "text": " under the terms of the merger agreement, each share of company common stock outstanding immediately before the effective time of the merger will be converted into the right to receive $ 17.25 in cash, without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 40864,
+          "normalized_end": 40922,
+          "text": " closing is expected to occur in the third quarter of 2026"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 143362,
+          "normalized_end": 143625,
+          "text": " since it was determined that the company lacked sufficient historical closing stock prices, the expected volatility assumption was based upon a combination of actual historical volatility combined with the historical volatility developed for comparable companies"
+        }
+      ]
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000003",
+      "normalized_sha256": "dbc0d1e021c53057b79e92213bc6d147679f33e40d823a98c68fb2840eecf75d",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000006",
+      "normalized_sha256": "c7640d98717f2bae448197e79659e8da3387694533b658d4226e11d536c212e1",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000010",
+      "normalized_sha256": "1fe65333dcae9658472663e491bab342fb3ec8b1238c10becbdd534eaecfa418",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000013",
+      "normalized_sha256": "0678ab264605589d2375871d02a0708e22356e0ea2cfa98e0acd35011370785a",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000016",
+      "normalized_sha256": "0e8724d66bc2a43c0e74a8573e088ff0a22a922a18aefb935ceaf5e27a89e03e",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [
+        "and six months ended february 28, 2026, we issued 7,104 and 15,959 shares of stock",
+        "and during the three and six months ended february 28, 2025, we issued 3,935 and 8,895 shares of stock",
+        "and his spouse entered into a plan, which provides for the potential sale of up to 360,000 shares of company common stock",
+        "and the associated sale of up to 9,400 shares of company common stock"
+      ],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000020",
+      "normalized_sha256": "9d89686acf80900991af670ce1fba564d875778172891173b9ffbe19a9408353",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 7572,
+          "normalized_end": 8179,
+          "text": " any statements contained in this communication that are not statements of historical fact, including statements regarding the proposed merger, including the expected timing and closing of the proposed merger; the company's ability to consummate the proposed merger; the expected benefits of the proposed merger and other considerations taken into account by the company's board of directors in approving the proposed merger; the amounts to be received by stockholders and expectations for the company prior to and following the closing of the proposed merger, may be deemed to be forward-looking statements"
+        }
+      ]
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000024",
+      "normalized_sha256": "01f10172aba1ac22de26b5489a332882bbe06a52b0eba824518315fcf8cdd987",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 4275,
+          "normalized_end": 4902,
+          "text": " subject to the terms and conditions set forth in the merger agreement, at the effective time of the merger (the \u201c effective time \u201d), each share of common stock of the company, par value $0.001 per share (a \u201c company common share \u201d) (excluding (i) company common shares held by the company as treasury shares or owned by parent, merger sub or any other subsidiary of parent immediately prior to the effective time and (ii) dissenting shares), issued and outstanding immediately prior to the effective time will automatically be converted into the right to receive $18.50 in cash, without interest (the \u201c merger consideration \u201d)"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 13217,
+          "normalized_end": 13473,
+          "text": " in addition, either the company or parent may terminate the merger agreement if (i) the merger has not been consummated on or prior to february 10, 2027 (the \u201c end date \u201d), (ii) a final, non-appealable legal restraint permanently enjoining or prohibiting "
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 25479,
+          "normalized_end": 26073,
+          "text": " any statements contained in this communication that are not statements of historical fact, including statements regarding the proposed merger, including the expected timing and closing of the proposed merger; the company's ability to consummate the proposed merger; the expected benefits of the proposed merger and other considerations taken into account by the company's board in approving the proposed merger; the amounts to be received by shareholders and expectations for the company prior to and following the closing of the proposed merger, may be deemed to be forward-looking statements"
+        }
+      ]
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000037",
+      "normalized_sha256": "e4dcf2cf0eb7bb22d9a8bf34452b905aecd5ac78ec5325e995256e3a6f84088c",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000038",
+      "normalized_sha256": "c6ef79cf3b1a62eef6605d21069f7a6be87467064be273e10bc073df3a4b7c97",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [
+        "and nine months ended may 31, 2026, we issued 8,468 and 24,427 shares of stock",
+        "and during the three and nine months ended may 31, 2025, we issued 3,930 and 12,825 shares of stock"
+      ],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 92320,
+          "normalized_end": 92645,
+          "text": " under the terms of the merger agreement, holders of the company's common stock will be entitled to receive cash consideration of $ 18.50 per share, without interest and subject to any applicable withholding taxes, for each share of the company's common stock outstanding immediately prior to the effective time of the merger"
+        }
+      ]
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000054",
+      "normalized_sha256": "1a691cff305094b7d6fcb8e241e14eb0ce20e9893555ad460eb711f1708f818f",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 8129,
+          "normalized_end": 8691,
+          "text": " any statements contained in this communication that are not statements of historical fact, including statements regarding the merger, including the expected timing and closing of the merger; the company's ability to consummate the merger; the expected benefits of the merger and other considerations taken into account by the board of directors of the company in approving the merger; and the amounts to be received by shareholders and expectations for the company prior to and following the closing of the merger, may be deemed to be forward-looking statements"
+        }
+      ]
+    },
+    {
+      "symbol": "SLP",
+      "accession": "0001023459-26-000060",
+      "normalized_sha256": "8daf7988b24baa6aa700ab2e8742345a091dea754edb2b5bc87f328f3f733ba8",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 6511,
+          "normalized_end": 7073,
+          "text": " any statements contained in this communication that are not statements of historical fact, including statements regarding the merger, including the expected timing and closing of the merger; the company's ability to consummate the merger; the expected benefits of the merger and other considerations taken into account by the board of directors of the company in approving the merger; and the amounts to be received by shareholders and expectations for the company prior to and following the closing of the merger, may be deemed to be forward-looking statements"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001193125-26-043066",
+      "normalized_sha256": "778e02435d41436a7c2d2fea58e62fe3c5e058a42493fb3ee4fcc13e49c4b714",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 4610,
+          "normalized_end": 5375,
+          "text": " upon the terms and subject to the conditions set forth in the merger agreement, at the effective time of the merger (the \u201c effective time \u201d), each share of common stock, par value $0.01 per share, of the company (\u201c company common stock \u201d) that is issued and outstanding as of immediately prior to the effective time (other than any shares of company common stock held by the company as treasury stock, owned by parent or any of its subsidiaries (including merger sub), or any shares of company common stock as to which appraisal rights have been properly exercised in accordance with the dgcl) will be automatically cancelled, extinguished and converted into the right to receive cash in an amount equal to $2.43, without interest thereon (the \u201c per share price \u201d)"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 16561,
+          "normalized_end": 17479,
+          "text": " the merger agreement contains certain customary termination rights for the company and parent, including, (i) if the merger is not consummated on or before november 9, 2026, subject to extension to february 9, 2027 if the requisite regulatory approvals are not previously obtained (as extended, if applicable, the \u201c termination date \u201d), (ii) if the requisite stockholder approval is not obtained at a meeting of company stockholders (or any adjournment or postponement thereof) at which a vote is taken on the merger, (iii) if the other party breaches its representations, warranties or covenants in a manner that would cause the conditions to the closing of the transactions to not be satisfied and fails to cure such breach within the applicable cure period, (iv) if any law, order or judgment prohibiting the merger has become final and non-appealable, and (v) by mutual written agreement of parent and the company"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 18461,
+          "normalized_end": 19479,
+          "text": " if (i) the merger agreement is validly terminated after the no-shop period start date due to (x) the effective time not having occurred by the termination date, (y) a failure to obtain the requisite stockholder approval at a meeting of company's stockholders, or (z) the company breaching its representations, warranties or covenants in a manner that causes the conditions to the closing of the transactions to not be satisfied, (ii) prior to such termination, a third party publicly announced or provided to the company board and did not withdraw a proposal for an alternative transaction for the company at least five (5) business days prior to the time of the company stockholder meeting or prior to the time of such breach, as applicable, and (iii) within 12 months following such termination, the company enters into a definitive agreement providing for or consummates an alternative transaction, the company will be required to pay parent a termination fee equal to $39,800,000 (the \u201c company termination fee \u201d)"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 20618,
+          "normalized_end": 21398,
+          "text": " ready, willing, able and prepared to consummate the merger, or (ii) either the company or parent terminates the merger agreement because the merger has not been consummated by the termination date and either (x) the company would have been entitled to terminate the merger agreement due to parent or merger sub breaching certain of its representations, warranties or covenants causing the conditions to the closing of the transactions not to be satisfied or (y) because parent failed to consummate the merger for three business days after receiving irrevocable written confirmation from the company that all conditions to the merger had been satisfied or waived (subject to customary exceptions) and that the company was ready, willing, able and prepared to consummate the merger"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 29421,
+          "normalized_end": 30062,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, stockholder approvals (including the requisite stockholder approval), any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act of 1933 and section 21e of the exchange act"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-035140",
+      "normalized_sha256": "1a0efd910c2221900216fe6cb7bc1342d9e52e04a68810495e53ff89685adb58",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [
+        "indication of interest"
+      ],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 4425,
+          "normalized_end": 5103,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, stockholder approvals (including the requisite stockholder approval (as defined in the merger agreement)), any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act of 1933 and section 21e of the exchange act"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-040144",
+      "normalized_sha256": "e7792aa94ab8b350e1f4ab46bedfb09d55b6d74351998bb7167d5a58a33a0636",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 5386,
+          "normalized_end": 6056,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, stockholder approvals (including the requisite stockholder approval (as defined in the merger agreement)), any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act and section 21e of the exchange act"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-042767",
+      "normalized_sha256": "6e512a5ee169be66cbaa64526169eb4e53eb1c7f77c27cf60c1561f0af26d35e",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 5103,
+          "normalized_end": 5472,
+          "text": " the supplemental indentures became effective immediately upon execution, but each of the proposed indenture amendments will not become operative, among certain other conditions, until immediately prior to the consummation of the merger, and will cease to be effective if the merger agreement is terminated in accordance with its terms and the merger is not consummated"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 6790,
+          "normalized_end": 7156,
+          "text": " the seventh amendment became effective immediately upon its execution, but the proposed credit agreement amendments will not become operative, among certain other conditions, until immediately prior to the consummation of the merger, and will cease to be operative if the merger agreement is terminated in accordance with its terms and the merger is not consummated"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 8746,
+          "normalized_end": 9416,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, stockholder approvals (including the requisite stockholder approval (as defined in the merger agreement)), any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act and section 21e of the exchange act"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-055090",
+      "normalized_sha256": "cac7fbf2485d8859f5ee0735adf224aea3ed49d5644b83e50d18da2070112423",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [
+        "non-binding proposal"
+      ],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 6029,
+          "normalized_end": 6592,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act and section 21e of the exchange act"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001213900-26-058449",
+      "normalized_sha256": "bbad7705cf706a8bc305e8f12cd179a6a106dd8bb0310738cd214aa1d28b8481",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "calendar_context",
+          "normalized_start": 4644,
+          "normalized_end": 4945,
+          "text": " (\u201cmerger sub\u201d), pursuant to which merger sub will be merged with and into the company (the \u201cmerger\u201d), with the company surviving as a wholly-owned subsidiary of parent, and will cease to be operative if the merger agreement is terminated in accordance with its terms and the merger is not consummated"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 5494,
+          "normalized_end": 6097,
+          "text": " certain statements in this current report on form 8-k, including statements regarding the merger, any expected timetable for completing the merger, the expected benefits of the merger and any other statements regarding the company's future expectations, beliefs, plans, objectives, financial conditions, assumptions or future events or performance that are not historical fact constitute \u201cforward-looking statements\u201d within the meaning of the private securities litigation reform act of 1995, section 27a of the securities act of 1933, as amended, and section 21e of the securities exchange act of 1934"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000006",
+      "normalized_sha256": "902539ac9a4475b440fd513cdc30d31e8d079cc0ff9ffbab096345697fd07199",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000010",
+      "normalized_sha256": "19ab2be2f9ddd101ea8beb3109f50667337520d59bd773258bd12d654fcbe82a",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 9641,
+          "normalized_end": 10243,
+          "text": " upon the terms and subject to the conditions set forth in the merger agreement, at the effective time of the merger (the \u201ceffective time\u201d), each share of our common stock that is issued and outstanding as of immediately prior to the effective time (other than shares held by the company as treasury stock, owned by parent or any of its subsidiaries, including merger sub, or as to which appraisal rights have been properly exercised in accordance with delaware law) will be automatically canceled, extinguished and converted into the right to receive cash in an amount equal to $2.43, without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 10248,
+          "normalized_end": 11422,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of certain conditions, including (i) adoption of the merger agreement by the affirmative vote of the holders of a majority of the outstanding shares of our common stock entitled to vote at a special meeting of our stockholders, (ii) expiration or termination of the waiting periods applicable to the transactions under the hart-scott-rodino antitrust improvements act of 1976, as amended, and receipt of certain other regulatory approvals, including approval by the interagency committee on foreign investments in the united states (or any member agency thereof acting in its capacity as such), and (iii) other customary conditions for a transaction of this type, such as the absence of any legal restraint prohibiting the consummation of the transactions, the accuracy of the company's representations and warranties contained in the merger agreement (except, generally, for inaccuracies that have not had a company material adverse effect, as defined in the merger agreement), and the absence of any company material adverse effect since the date of the merger agreement"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 60878,
+          "normalized_end": 61221,
+          "text": " the pendency of the merger, as well as any delays in the expected timeframe, could cause disruption to our ongoing operations and create uncertainties, any of which could have an adverse effect on our business, results of operations, financial condition and the trading price of our common stock, regardless of whether the merger is completed"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 63135,
+          "normalized_end": 63210,
+          "text": " the closing of the merger may not occur on the expected timeline or at all"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 63211,
+          "normalized_end": 64078,
+          "text": " the merger agreement contains certain customary termination rights for us and parent, including, among others: (i) if the merger is not consummated on or before november 9, 2026, subject to extension to february 9, 2027 if the requisite regulatory approvals are not previously obtained; (ii) if the requisite stockholder approval is not obtained at a meeting of company stockholders (or any adjournment or postponement thereof) at which a vote is taken on the merger; (iii) if the other party breaches its representations, warranties or covenants in a manner that would cause the conditions to the closing of the transactions to not be satisfied and fails to cure such breach within the applicable cure period; (iv) if any law, order or judgment prohibiting the merger has become final and non-appealable; or (v) by mutual written agreement of parent and the company"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 64079,
+          "normalized_end": 64509,
+          "text": " if the merger agreement is terminated and the merger is not consummated, the price of our common stock may decline, we may experience negative reactions from the financial markets, including adverse stock price impacts, or from our vendors, customers and other business partners, and you may not recover your investment or receive a price for your shares of common stock similar to what has been offered as a result of the merger"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 75837,
+          "normalized_end": 76096,
+          "text": " however, if the merger is not consummated, we may obtain additional indebtedness, which could increase our leverage and make us more vulnerable to adverse changes in economic or industry conditions and may limit our ability to withstand competitive pressures"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 77702,
+          "normalized_end": 78179,
+          "text": " we have completed, and if the merger is not consummated, we could continue to explore from time to time, a variety of transactions to improve our liquidity and/or to refinance our indebtedness, including issuing new debt to pay off more expensive debt; repurchasing outstanding notes through open market purchases, privately negotiated transactions or other means with available liquidity; and deploying the proceeds from the disposition of our business in spain, if completed"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 108795,
+          "normalized_end": 108998,
+          "text": " if the merger is not consummated, we may pursue other strategic transactions in the future, including recapitalization or other corporate restructurings, such as a reit conversion, sales or acquisitions"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 117700,
+          "normalized_end": 118080,
+          "text": " if the merger is not consummated and we remain a public company, future sales of our common stock in the public market, or the perception that such sales may occur, could lower our stock price, and any additional capital raised by us through the sale of our common stock or other equity-linked instruments, or the issuance of equity awards by us, may dilute ownership percentages"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 118085,
+          "normalized_end": 118420,
+          "text": " if the merger is not consummated and we remain a public company, sales of substantial amounts of our common stock in the public market by our stockholders, or the perception that these sales could occur, could adversely affect the price of our common stock and impair our ability to raise capital through the sale of additional shares"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 119287,
+          "normalized_end": 119600,
+          "text": " if the merger is not consummated and we remain a public company, any failure to meet the continued listing requirements of the new york stock exchange (the \u201cnyse\u201d) could result in the delisting of our common stock, which would have an adverse impact on the trading, liquidity and market price of our common stock"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 119605,
+          "normalized_end": 119840,
+          "text": " if the merger is not consummated and we remain a public company and we fail to satisfy the continued listing requirements of the nyse, such as the minimum $1.00 bid price requirement, the nyse may take steps to delist our common stock"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 124559,
+          "normalized_end": 124939,
+          "text": " if the merger is consummated, then the company is expected to terminate or extinguish certain of its material financing agreements and concurrently repay all advances and other obligations outstanding thereunder and the surviving corporation will assume all remaining debts, liabilities and duties of the company (if any), in each case as may be provided for under applicable law"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 125209,
+          "normalized_end": 125545,
+          "text": " although our debt indentures and credit agreements contain restrictions on the incurrence of additional indebtedness, as does the merger agreement, these restrictions are subject to a number of qualifications and exceptions, and we and our subsidiaries could incur additional indebtedness in the future if the merger is not consummated"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 132312,
+          "normalized_end": 133276,
+          "text": " this report contains various forward-looking statements that represent our expectations or beliefs concerning future events, including, but not limited to: statements regarding the merger, common stockholder approval for the merger, any expected timetable for completing the merger (including whether the merger is consummated in a timely manner or at all) and the expected benefits of the merger; our guidance, outlook, long-term forecast, goals or targets; our business plans and strategies and the expected benefits of business initiatives; the effects of tariffs and views on the macroeconomic environment; expectations regarding the pending sale of our business in spain, including the anticipated proceeds and use of those proceeds; expectations about certain markets and potential improvements; industry, market and demand trends; expectations surrounding our cash flow; our ability to retain new and existing customers and maintain bookings; and liquidity"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 137140,
+          "normalized_end": 137292,
+          "text": " \u2022 our ability to continue to comply with the applicable listing standards of the nyse if the merger is not consummated and we remain a public company; "
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 151926,
+          "normalized_end": 152211,
+          "text": " on february 9, 2026, we entered into the merger agreement with parent and merger sub, pursuant to which the company is expected to be acquired by an investor consortium comprised of affiliates and/or certain investment funds advised by mubadala capital, in partnership with twg global"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 152377,
+          "normalized_end": 152957,
+          "text": " upon the terms and subject to the conditions set forth in the merger agreement, at the effective time of the merger (the \u201ceffective time\u201d), each share of our common stock that is issued and outstanding as of immediately prior to the effective time (other than shares held by the company as treasury stock, by parent or any of its subsidiaries, or for which appraisal rights have been properly exercised in accordance with delaware law) will be automatically canceled, extinguished and converted into the right to receive cash in an amount equal to $2.43, without interest thereon"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 153104,
+          "normalized_end": 153313,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of certain customary closing conditions, including receipt of required stockholder and regulatory approvals"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 153521,
+          "normalized_end": 153664,
+          "text": " there can be no assurance that the required approvals will be obtained or that the merger will be completed on the expected timeline or at all"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 182882,
+          "normalized_end": 183074,
+          "text": " from time to time, we have explored transactions to improve our liquidity and/or refinance our indebtedness and, if the merger is not consummated, we may continue to explore such transactions"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 368330,
+          "normalized_end": 368582,
+          "text": ", a wholly owned subsidiary of parent (\u201cmerger sub\u201d), pursuant to which the company is expected to be acquired by an investor consortium comprised of affiliates and/or certain investment funds advised by mubadala capital, in partnership with twg global"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 368759,
+          "normalized_end": 369150,
+          "text": " at the effective time of the merger, each outstanding share of the company's common stock (other than shares held by the company, parent or any of their respective subsidiaries, or as to which appraisal rights have been properly exercised in accordance with delaware law) will be canceled, extinguished and converted into the right to receive cash consideration of $ 2.43 , without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 369151,
+          "normalized_end": 369311,
+          "text": " upon consummation of the merger, the company is expected to become a privately held company, and its common stock will no longer be listed on any public market"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 369470,
+          "normalized_end": 369671,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of customary closing conditions, including receipt of required stockholder and regulatory approvals"
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000017",
+      "normalized_sha256": "5e463dcc7317845f513367be0ec4f4714be6f80fb8c775e1a8bfa660bfef0d20",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000018",
+      "normalized_sha256": "5193bd611659485c760f0ddfc8d4aab63b01791ae50458fb7b9ad8ff06743836",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 23375,
+          "normalized_end": 24018,
+          "text": " upon the terms and subject to the conditions set forth in the merger agreement, at the effective time of the merger (the \u201ceffective time\u201d), each share of the company's common stock that is issued and outstanding as of immediately prior to the effective time (other than shares held by the company as treasury stock, owned by parent or any wholly owned subsidiary of the company or parent, including merger sub, or as to which appraisal rights have been properly exercised in accordance with delaware law) will be automatically canceled, extinguished and converted into the right to receive cash in an amount equal to $ 2.43 , without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 24186,
+          "normalized_end": 24463,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of customary closing conditions, including receipt of required stockholder and regulatory approvals, such as review by the committee on foreign investment in the united states"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 59495,
+          "normalized_end": 59703,
+          "text": " under the terms of the merger agreement, the consortium will acquire all outstanding shares of our common stock (subject to certain exceptions), with our common stockholders receiving $2.43 per share in cash"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 59704,
+          "normalized_end": 59905,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of customary closing conditions, including receipt of required stockholder and regulatory approvals"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 60180,
+          "normalized_end": 60333,
+          "text": " there can be no assurance that all required closing conditions will be satisfied or that the merger will be completed on the expected timeline or at all"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 79749,
+          "normalized_end": 79840,
+          "text": " if the merger is not consummated, we may seek to pursue similar transactions in the future"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 91101,
+          "normalized_end": 92025,
+          "text": " this quarterly report on form 10-q contains forward-looking statements that reflect our expectations or beliefs regarding future events, including, but not limited to: statements regarding the merger, stockholder approval for the merger, any expected timetable for completing the merger (including whether the merger is consummated in a timely manner or at all), and the expected benefits of the merger; our business plans and strategies and the expected benefits of business initiatives; the effects of geopolitical developments and tariffs on the macroeconomic environment; expectations regarding the pending sale of our business in spain, including the anticipated proceeds and use of those proceeds; expectations about certain markets and potential improvements; industry and market trends; expectations surrounding our cash flow and liquidity; and our ability to retain new and existing customers and maintain bookings"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 95750,
+          "normalized_end": 95921,
+          "text": " \u2022 our ability to continue to comply with the applicable listing standards of the new york stock exchange if the merger is not consummated and we remain a public company; "
+        }
+      ]
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000023",
+      "normalized_sha256": "e5c7d94c15ae04228817807274b0bd8e0300d783a4154edab0152712631c880c",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": []
+    },
+    {
+      "symbol": "CCO",
+      "accession": "0001334978-26-000025",
+      "normalized_sha256": "803c2667cab3f85d96e5e060f42049dbeca1ce8ea71b4017e5b706ad2102036d",
+      "cash_raw": [],
+      "cash_asserted": [],
+      "stock_matches": [],
+      "not_definitive_matches": [],
+      "dates": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      },
+      "label": null,
+      "cash_strategy_eligible": false,
+      "refusal": "SEC source does not state one cash-per-share value",
+      "source_spans": [
+        {
+          "kind": "cash",
+          "normalized_start": 27896,
+          "normalized_end": 28539,
+          "text": " upon the terms and subject to the conditions set forth in the merger agreement, at the effective time of the merger (the \u201ceffective time\u201d), each share of the company's common stock that is issued and outstanding as of immediately prior to the effective time (other than shares held by the company as treasury stock, owned by parent or any wholly owned subsidiary of the company or parent, including merger sub, or as to which appraisal rights have been properly exercised in accordance with delaware law) will be automatically canceled, extinguished and converted into the right to receive cash in an amount equal to $ 2.43 , without interest"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 29144,
+          "normalized_end": 29406,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of remaining customary closing conditions, including receipt of regulatory approvals, such as review by the committee on foreign investment in the united states"
+        },
+        {
+          "kind": "cash",
+          "normalized_start": 71681,
+          "normalized_end": 71889,
+          "text": " under the terms of the merger agreement, the consortium will acquire all outstanding shares of our common stock (subject to certain exceptions), with our common stockholders receiving $2.43 per share in cash"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 71890,
+          "normalized_end": 72085,
+          "text": " the merger is expected to close by the end of the third quarter of 2026, subject to the satisfaction of remaining customary closing conditions, including receipt of required regulatory approvals"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 72360,
+          "normalized_end": 72513,
+          "text": " there can be no assurance that all required closing conditions will be satisfied or that the merger will be completed on the expected timeline or at all"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 98188,
+          "normalized_end": 98279,
+          "text": " if the merger is not consummated, we may seek to pursue similar transactions in the future"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 110818,
+          "normalized_end": 111671,
+          "text": " this quarterly report on form 10-q contains forward-looking statements that reflect our expectations or beliefs regarding future events, including, but not limited to: statements regarding the merger, any expected timetable for completing the merger (including whether the merger is consummated in a timely manner or at all), and the expected benefits of the merger; our business plans and strategies and the expected benefits of business initiatives; the effects of geopolitical developments and tariffs on the macroeconomic environment; expectations regarding the use of net proceeds from the sale of our former business in spain; expectations about certain markets and potential improvements; industry and market trends; expectations surrounding our cash flow and liquidity; and our ability to retain new and existing customers and maintain bookings"
+        },
+        {
+          "kind": "calendar_context",
+          "normalized_start": 115071,
+          "normalized_end": 115242,
+          "text": " \u2022 our ability to continue to comply with the applicable listing standards of the new york stock exchange if the merger is not consummated and we remain a public company; "
+        }
+      ]
+    }
+  ],
+  "diagnostic_ablations": [
+    {
+      "name": "cash_tail_only",
+      "production_safe": false,
+      "cash_regex": "(?:each|every)\\s+(?:issued\\s+and\\s+outstanding\\s+|outstanding\\s+)?share\\s+of\\s+(?:(?:the|our)\\s+)?(?:(?:company|target)(?:'s)?\\s+)?common\\s+stock(?:(?!(?:\\b(?:while|whereas|but)\\b|\\b(?:each|every)\\s+share\\b|\\b(?:employee\\s+)?(?:options?|units?|awards?|warrants?)\\b|\\b(?:notes?|bonds?|debt|preferred\\s+(?:stock|shares?))\\b))(?:[^.]|\\.(?=\\d))){0,700}?(?:(?:will|shall)\\s+(?:receive|(?:be\\s+)?entitled\\s+to\\s+receive)|(?:will|shall)\\s+(?:(?:be\\s+)?cancell?ed\\s+and\\s+)?(?:(?:automatically\\s+)?(?:be\\s+)?converted|(?:be\\s+)?converted\\s+automatically)\\s+into\\s+(?:the\\s+)?right\\s+to\\s+receive)[^.]{0,120}?(?:\\$\\s*|usd\\s+)(\\d+(?:\\.\\d+)?)\\s+(?:in\\s+cash(?=\\s*[,.;])|in\\s+cash\\s+per\\s+(?:each\\s+)?share|per\\s+(?:each\\s+)?share(?:\\s+|,\\s*)(?:net\\s+)?in\\s+cash)",
+      "stock_regex": "stock\\s+consideration|cash\\s+(?:and|plus)\\s+stock\\s+consideration|(?:receive|plus|and)[^.]{0,100}(?:\\d+(?:\\.\\d+)?|\\d+/\\d+|one(?:-|\\s)(?:half|quarter)|one)(?:\\s+of)?\\s+(?:a\\s+)?shares?\\s+of\\s+[^.]{0,80}(?:common\\s+)?stock|\\d+(?:\\.\\d+)?\\s+shares\\s+of\\s+[^.]{0,80}(?:and|plus)\\s+(?:\\$|usd)",
+      "filings_with_asserted_cash": [
+        {
+          "symbol": "SAFT",
+          "accession": "0001172052-26-000023",
+          "cash_raw": [
+            "105.00",
+            "105.00"
+          ],
+          "cash_asserted": [
+            "105.00",
+            "105.00"
+          ],
+          "stock_matches": [
+            "and december 31, 2025, the company had purchased 3,478,060 shares of common stock"
+          ],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "105.00",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": true,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": false,
+          "refusal": "calibration row is outside the pinned cash-merger strategy universe"
+        },
+        {
+          "symbol": "FSEA",
+          "accession": "0001193125-26-206551",
+          "cash_raw": [
+            "17.25"
+          ],
+          "cash_asserted": [
+            "17.25"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "17.25",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001193125-26-206551",
+              "0001193125-26-225434",
+              "0001193125-26-339258",
+              "0000943374-26-000392"
+            ],
+            "cash_raw": [
+              "17.25",
+              "17.25",
+              "17.25"
+            ],
+            "cash_asserted": [
+              "17.25",
+              "17.25",
+              "17.25"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": {
+              "cash_offer": "17.25",
+              "security_type": "common_equity",
+              "listing_country": "US",
+              "listing_exchange": "nasdaq",
+              "agreement_status": "definitive",
+              "lifecycle_status": "active",
+              "has_cvr": false,
+              "has_earnout": false,
+              "has_stock": false,
+              "uses_options_or_leverage": false,
+              "is_rumor_or_competing_bid": false,
+              "amendment_reviewed": false
+            },
+            "cash_strategy_eligible": true
+          }
+        },
+        {
+          "symbol": "FSEA",
+          "accession": "0001193125-26-225434",
+          "cash_raw": [
+            "17.25"
+          ],
+          "cash_asserted": [
+            "17.25"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "17.25",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001193125-26-225434",
+              "0001193125-26-339258",
+              "0000943374-26-000392"
+            ],
+            "cash_raw": [
+              "17.25",
+              "17.25"
+            ],
+            "cash_asserted": [
+              "17.25",
+              "17.25"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": {
+              "cash_offer": "17.25",
+              "security_type": "common_equity",
+              "listing_country": "US",
+              "listing_exchange": "nasdaq",
+              "agreement_status": "definitive",
+              "lifecycle_status": "active",
+              "has_cvr": false,
+              "has_earnout": false,
+              "has_stock": false,
+              "uses_options_or_leverage": false,
+              "is_rumor_or_competing_bid": false,
+              "amendment_reviewed": false
+            },
+            "cash_strategy_eligible": true
+          }
+        },
+        {
+          "symbol": "FSEA",
+          "accession": "0001193125-26-339258",
+          "cash_raw": [
+            "17.25"
+          ],
+          "cash_asserted": [
+            "17.25"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "17.25",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001193125-26-339258",
+              "0000943374-26-000392"
+            ],
+            "cash_raw": [
+              "17.25"
+            ],
+            "cash_asserted": [
+              "17.25"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": {
+              "cash_offer": "17.25",
+              "security_type": "common_equity",
+              "listing_country": "US",
+              "listing_exchange": "nasdaq",
+              "agreement_status": "definitive",
+              "lifecycle_status": "active",
+              "has_cvr": false,
+              "has_earnout": false,
+              "has_stock": false,
+              "uses_options_or_leverage": false,
+              "is_rumor_or_competing_bid": false,
+              "amendment_reviewed": false
+            },
+            "cash_strategy_eligible": true
+          }
+        },
+        {
+          "symbol": "SLP",
+          "accession": "0001023459-26-000024",
+          "cash_raw": [
+            "18.50"
+          ],
+          "cash_asserted": [
+            "18.50"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "18.50",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001023459-26-000024",
+              "0001023459-26-000037",
+              "0001023459-26-000038",
+              "0001023459-26-000054",
+              "0001023459-26-000060"
+            ],
+            "cash_raw": [
+              "18.50"
+            ],
+            "cash_asserted": [
+              "18.50"
+            ],
+            "stock_matches": [
+              "and nine months ended may 31, 2026, we issued 8,468 and 24,427 shares of stock",
+              "and during the three and nine months ended may 31, 2025, we issued 3,930 and 12,825 shares of stock"
+            ],
+            "not_definitive_matches": [],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": {
+              "cash_offer": "18.50",
+              "security_type": "common_equity",
+              "listing_country": "US",
+              "listing_exchange": "nasdaq",
+              "agreement_status": "definitive",
+              "lifecycle_status": "active",
+              "has_cvr": false,
+              "has_earnout": true,
+              "has_stock": true,
+              "uses_options_or_leverage": false,
+              "is_rumor_or_competing_bid": false,
+              "amendment_reviewed": true
+            },
+            "cash_strategy_eligible": false,
+            "refusal": "calibration row is outside the pinned cash-merger strategy universe"
+          }
+        }
+      ],
+      "known_unsafe_synthetic_counterexample": {
+        "text": "The company entered into an agreement and plan of merger. Nasdaq. Each share of common stock will be converted into the right to receive a distribution; employee options receive $17.25 in cash, without interest.",
+        "main_refuses": {
+          "cash_raw": [],
+          "cash_asserted": [],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": null,
+          "cash_strategy_eligible": false,
+          "refusal": "SEC source does not state one cash-per-share value"
+        },
+        "ablation_unsafely_accepts": {
+          "cash_raw": [
+            "17.25"
+          ],
+          "cash_asserted": [
+            "17.25"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "17.25",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true
+        }
+      }
+    },
+    {
+      "name": "cco_observed_conversion_only",
+      "production_safe": false,
+      "cash_regex": "(?:each|every)\\s+(?:issued\\s+and\\s+outstanding\\s+|outstanding\\s+)?share\\s+of\\s+(?:(?:the|our)\\s+)?(?:(?:company|target)(?:'s)?\\s+)?common\\s+stock(?:(?!(?:\\b(?:while|whereas|but)\\b|\\b(?:each|every)\\s+share\\b|\\b(?:employee\\s+)?(?:options?|units?|awards?|warrants?)\\b|\\b(?:notes?|bonds?|debt|preferred\\s+(?:stock|shares?))\\b))(?:[^.]|\\.(?=\\d))){0,700}?(?:will|shall)\\s+be\\s+automatically\\s+cancell?ed,\\s+extinguished\\s+and\\s+converted\\s+into\\s+the\\s+right\\s+to\\s+receive\\s+cash\\s+in\\s+an\\s+amount\\s+equal\\s+to\\s+\\$\\s*(\\d+(?:\\.\\d+)?)(?=\\s*,\\s*without\\s+interest)",
+      "stock_regex": "stock\\s+consideration|cash\\s+(?:and|plus)\\s+stock\\s+consideration|(?:receive|plus|and)[^.]{0,100}(?:\\d+(?:\\.\\d+)?|\\d+/\\d+|one(?:-|\\s)(?:half|quarter)|one)(?:\\s+of)?\\s+(?:a\\s+)?shares?\\s+of\\s+[^.]{0,80}(?:common\\s+)?stock|\\d+(?:\\.\\d+)?\\s+shares\\s+of\\s+[^.]{0,80}(?:and|plus)\\s+(?:\\$|usd)",
+      "filings_with_asserted_cash": [
+        {
+          "symbol": "CCO",
+          "accession": "0001193125-26-043066",
+          "cash_raw": [
+            "2.43"
+          ],
+          "cash_asserted": [
+            "2.43"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "2.43",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nyse",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001193125-26-043066",
+              "0001334978-26-000006",
+              "0001334978-26-000010",
+              "0001213900-26-035140",
+              "0001213900-26-040144",
+              "0001213900-26-042767",
+              "0001334978-26-000017",
+              "0001334978-26-000018",
+              "0001213900-26-055090",
+              "0001213900-26-058449",
+              "0001334978-26-000023",
+              "0001334978-26-000025"
+            ],
+            "cash_raw": [
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43"
+            ],
+            "cash_asserted": [
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [
+              "indication of interest",
+              "non-binding proposal"
+            ],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": null,
+            "cash_strategy_eligible": false,
+            "refusal": "SEC source does not state a definitive merger"
+          }
+        },
+        {
+          "symbol": "CCO",
+          "accession": "0001334978-26-000010",
+          "cash_raw": [
+            "2.43",
+            "2.43"
+          ],
+          "cash_asserted": [
+            "2.43",
+            "2.43"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "2.43",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nyse",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": true,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": false,
+          "refusal": "calibration row is outside the pinned cash-merger strategy universe",
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001334978-26-000010",
+              "0001213900-26-035140",
+              "0001213900-26-040144",
+              "0001213900-26-042767",
+              "0001334978-26-000017",
+              "0001334978-26-000018",
+              "0001213900-26-055090",
+              "0001213900-26-058449",
+              "0001334978-26-000023",
+              "0001334978-26-000025"
+            ],
+            "cash_raw": [
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43"
+            ],
+            "cash_asserted": [
+              "2.43",
+              "2.43",
+              "2.43",
+              "2.43"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [
+              "indication of interest",
+              "non-binding proposal"
+            ],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": null,
+            "cash_strategy_eligible": false,
+            "refusal": "SEC source does not state a definitive merger"
+          }
+        },
+        {
+          "symbol": "CCO",
+          "accession": "0001334978-26-000018",
+          "cash_raw": [
+            "2.43"
+          ],
+          "cash_asserted": [
+            "2.43"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "2.43",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nyse",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001334978-26-000018",
+              "0001213900-26-055090",
+              "0001213900-26-058449",
+              "0001334978-26-000023",
+              "0001334978-26-000025"
+            ],
+            "cash_raw": [
+              "2.43",
+              "2.43"
+            ],
+            "cash_asserted": [
+              "2.43",
+              "2.43"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [
+              "non-binding proposal"
+            ],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": null,
+            "cash_strategy_eligible": false,
+            "refusal": "SEC source does not state a definitive merger"
+          }
+        },
+        {
+          "symbol": "CCO",
+          "accession": "0001334978-26-000025",
+          "cash_raw": [
+            "2.43"
+          ],
+          "cash_asserted": [
+            "2.43"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "2.43",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nyse",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true,
+          "unsigned_source_set_diagnostic": {
+            "source_accessions": [
+              "0001334978-26-000025"
+            ],
+            "cash_raw": [
+              "2.43"
+            ],
+            "cash_asserted": [
+              "2.43"
+            ],
+            "stock_matches": [],
+            "not_definitive_matches": [],
+            "dates": {
+              "expected_resolution_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+              },
+              "outside_date": {
+                "raw_matches": [],
+                "date": null,
+                "refusal": "SEC source does not state one unambiguous outside_date"
+              }
+            },
+            "label": {
+              "cash_offer": "2.43",
+              "security_type": "common_equity",
+              "listing_country": "US",
+              "listing_exchange": "nyse",
+              "agreement_status": "definitive",
+              "lifecycle_status": "active",
+              "has_cvr": false,
+              "has_earnout": false,
+              "has_stock": false,
+              "uses_options_or_leverage": false,
+              "is_rumor_or_competing_bid": false,
+              "amendment_reviewed": true
+            },
+            "cash_strategy_eligible": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "stock_without_bare_and",
+      "production_safe": false,
+      "cash_regex": "(?:each|every)\\s+(?:issued\\s+and\\s+outstanding\\s+|outstanding\\s+)?share\\s+of\\s+(?:(?:the|our)\\s+)?(?:(?:company|target)(?:'s)?\\s+)?common\\s+stock(?:(?!(?:\\b(?:while|whereas|but)\\b|\\b(?:each|every)\\s+share\\b|\\b(?:employee\\s+)?(?:options?|units?|awards?|warrants?)\\b|\\b(?:notes?|bonds?|debt|preferred\\s+(?:stock|shares?))\\b))(?:[^.]|\\.(?=\\d))){0,700}?(?:(?:will|shall)\\s+(?:receive|(?:be\\s+)?entitled\\s+to\\s+receive)|(?:will|shall)\\s+(?:(?:be\\s+)?cancell?ed\\s+and\\s+)?(?:(?:automatically\\s+)?(?:be\\s+)?converted|(?:be\\s+)?converted\\s+automatically)\\s+into\\s+(?:the\\s+)?right\\s+to\\s+receive)[^.]{0,120}?(?:\\$\\s*|usd\\s+)(\\d+(?:\\.\\d+)?)\\s+(?:in\\s+cash\\s+per\\s+(?:each\\s+)?share|per\\s+(?:each\\s+)?share(?:\\s+|,\\s*)(?:net\\s+)?in\\s+cash)",
+      "stock_regex": "stock\\s+consideration|cash\\s+(?:and|plus)\\s+stock\\s+consideration|(?:receive|plus)[^.]{0,100}(?:\\d+(?:\\.\\d+)?|\\d+/\\d+|one(?:-|\\s)(?:half|quarter)|one)(?:\\s+of)?\\s+(?:a\\s+)?shares?\\s+of\\s+[^.]{0,80}(?:common\\s+)?stock|\\d+(?:\\.\\d+)?\\s+shares\\s+of\\s+[^.]{0,80}(?:and|plus)\\s+(?:\\$|usd)",
+      "filings_with_asserted_cash": [
+        {
+          "symbol": "SAFT",
+          "accession": "0001172052-26-000023",
+          "cash_raw": [
+            "105.00"
+          ],
+          "cash_asserted": [
+            "105.00"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "105.00",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true
+        }
+      ],
+      "known_unsafe_synthetic_counterexample": {
+        "text": "The company entered into an agreement and plan of merger. Nasdaq. Each share of common stock will receive $105 in cash per share, without interest and subject to applicable withholding taxes, paid after the transfer agent validates the holder's account, and 0.5 shares of parent common stock.",
+        "main_refuses": {
+          "cash_raw": [
+            "105"
+          ],
+          "cash_asserted": [
+            "105"
+          ],
+          "stock_matches": [
+            "and 0.5 shares of parent common stock"
+          ],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "105",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": true,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": false,
+          "refusal": "calibration row is outside the pinned cash-merger strategy universe"
+        },
+        "ablation_unsafely_accepts": {
+          "cash_raw": [
+            "105"
+          ],
+          "cash_asserted": [
+            "105"
+          ],
+          "stock_matches": [],
+          "not_definitive_matches": [],
+          "dates": {
+            "expected_resolution_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+            },
+            "outside_date": {
+              "raw_matches": [],
+              "date": null,
+              "refusal": "SEC source does not state one unambiguous outside_date"
+            }
+          },
+          "label": {
+            "cash_offer": "105",
+            "security_type": "common_equity",
+            "listing_country": "US",
+            "listing_exchange": "nasdaq",
+            "agreement_status": "definitive",
+            "lifecycle_status": "active",
+            "has_cvr": false,
+            "has_earnout": false,
+            "has_stock": false,
+            "uses_options_or_leverage": false,
+            "is_rumor_or_competing_bid": false,
+            "amendment_reviewed": false
+          },
+          "cash_strategy_eligible": true
+        }
+      }
+    }
+  ],
+  "refusal_controls": [
+    {
+      "name": "existing_bhf_quote",
+      "text": "\u2026 if the Merger has not closed by September 6, 2026, because the remaining insurance regulatory approvals have not yet been obtained, the Merger Agreement will be automatically extended to December 6, 2026. The Merger is expected to close in 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_year",
+      "text": "The merger is expected to close in 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_quarter",
+      "text": "The merger is expected to close by the end of the third quarter of 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_not_closed_by",
+      "text": "If the merger has not closed by September 6, 2026, it may terminate.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_extension",
+      "text": "The merger agreement will be automatically extended to December 6, 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_negation",
+      "text": "It is not true that expected closing date is September 6, 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [
+            "september 6, 2026"
+          ],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_conflicting_dates",
+      "text": "Expected closing date: September 6, 2026. Expected closing date: December 6, 2026. Outside date: December 6, 2026. Outside date: January 6, 2027.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [
+            "september 6, 2026",
+            "december 6, 2026"
+          ],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [
+            "december 6, 2026",
+            "january 6, 2027"
+          ],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    },
+    {
+      "name": "synthetic_may_modal",
+      "text": "The merger may be expected to close by May 1, 2026.",
+      "result": {
+        "expected_resolution_date": {
+          "raw_matches": [
+            "may 1, 2026"
+          ],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous expected_resolution_date"
+        },
+        "outside_date": {
+          "raw_matches": [],
+          "date": null,
+          "refusal": "SEC source does not state one unambiguous outside_date"
+        }
+      }
+    }
+  ],
+  "positive_may_control": {
+    "expected_resolution_date": {
+      "raw_matches": [
+        "may 1, 2026"
+      ],
+      "date": "2026-05-01"
+    },
+    "outside_date": {
+      "raw_matches": [
+        "may 2, 2026"
+      ],
+      "date": "2026-05-02"
+    }
+  }
+}
