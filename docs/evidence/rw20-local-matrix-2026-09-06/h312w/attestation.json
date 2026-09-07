@@ -1,0 +1,47 @@
+{
+  "app_tree": "5125e7edd2489c027364bbbfbd4556d928109817",
+  "archive_sha256": "6f5c6638c1553b61929c62289e03e85461d9f18c53a2f71aadb3c5190f26e949",
+  "artifacts_sha256": {
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "unittest.log": "d5d57e33af9fe792b9d7d67d432d90a98aa6a87a61482c5e6683d76f3a3634c6"
+  },
+  "base_commit": "69a1c9c53c0beeb0f91310ee017b24ba21a592b7",
+  "checks": [
+    {
+      "argv": [
+        "C:\\t\\a26\\env312r\\Scripts\\python.exe",
+        "docs/evidence/rw21-held-excerpts/test_existing_excerpts.py",
+        "-v"
+      ],
+      "duration_seconds": 1.73,
+      "name": "unittest",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env312r\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "docs/evidence/rw21-held-excerpts"
+      ],
+      "duration_seconds": 0.25,
+      "name": "ruff",
+      "returncode": 0
+    }
+  ],
+  "commit": "8fc9c936c6a6c2c25d344a8425ffc5a48c01e879",
+  "executable": "C:\\t\\a26\\env312r\\Scripts\\python.exe",
+  "original_source_changed": [],
+  "original_source_files": 499,
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+  "supplemental_source": {
+    "docs/evidence/rw21-held-excerpts/README.md": "22556b8102bdbb9a351ea0f2758c97af0dd97a778b07d05aff9558dea6dd57a6",
+    "docs/evidence/rw21-held-excerpts/existing-excerpts.json": "a8626387e2de9d5e037f3277e7914d6161eb0f3f9ad3a114aebe385b31678ef1",
+    "docs/evidence/rw21-held-excerpts/existing-excerpts.json.sha256": "bb85e3d1864ae29bfbadd0ec01961b95ed69a211d2d41c24899a33964cc49ed7",
+    "docs/evidence/rw21-held-excerpts/pin_existing_excerpts.py": "54c64ebba4ac7b83d5b196ab3ce1acb6805d73e475f7df53ad2d5099b503f4e4",
+    "docs/evidence/rw21-held-excerpts/test_existing_excerpts.py": "576dd8306bc0fb87c63a811d2a657b1e697064df033177755aa5049778fe80d1"
+  },
+  "supplemental_source_changed": []
+}

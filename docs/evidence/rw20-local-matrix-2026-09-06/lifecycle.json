@@ -1,0 +1,16 @@
+{
+  "stopped_utc": "2026-09-07T00:05:06.4399225Z",
+  "distribution": "Cockpit-Audit-2404",
+  "command": "wsl --terminate Cockpit-Audit-2404",
+  "returncode": 0,
+  "output": [
+    "The operation completed successfully. "
+  ],
+  "distribution_listing": [
+    "  NAME                  STATE           VERSION",
+    "* Cockpit-Audit-2404    Stopped         2"
+  ],
+  "retained_files_and_environments": true,
+  "global_shutdown_used": false,
+  "deployed_soak_accessed": false
+}

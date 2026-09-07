@@ -2,10 +2,23 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-08-24
+last-verified: 2026-09-06
 ---
 
 # Docs index
+
+## Operator gate audit — 2026-09-06
+
+The independent audit was committed on `codex/audit-gates-2026-09-06`; it is review material,
+not a deployment or selection commitment. Start with
+[[evidence/astra-gate-delivery-2026-09-06]] for all requested findings and remaining dependencies;
+then use
+[[evidence/rw20-repair-notes-2026-09-06]],
+[[evidence/rw21-repair-notes-2026-09-06]], and
+[[evidence/rw20-matrix-isolation-2026-09-06]] for exact repair and validation scope.
+The original findings remain in [[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
+The selection-to-order map, independent-witness plan and cohort/value review are linked from
+the repair record. Missing prospective observations and independent labels remain open gates.
 
 **Start here. Two documents matter most:**
 
@@ -17,7 +30,7 @@ last-verified: 2026-08-24
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
 
-## Current repository snapshot — 2026-08-24
+## Repository snapshot recorded 2026-08-24
 
 - `DEC-09` now makes the local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix the
   release-blocking platform gate. All four cells passed on the PR #53 source tree, which is

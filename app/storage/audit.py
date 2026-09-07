@@ -229,7 +229,9 @@ class AuditLog:
         racing callers both pass the guard and append duplicate result rows that neither
         ``unresolved_intents`` nor ``orphan_results`` could ever flag. Cross-process, the
         seq-UNIQUE collision retry re-runs the guard against the fresh state, so the
-        loser of a same-seq race observes the winner's result and raises."""
+        loser of a same-seq race observes the winner's result and raises. BUG-118 also pins
+        the duplicate guard's read snapshot: legacy sqlite3 SELECT alone does not begin a
+        transaction, so a writer could otherwise allocate a new seq after a stale guard."""
         r = dict(refs or {})
         r["intent_seq"] = intent_entry.seq
         p = dict(payload or {})
@@ -238,6 +240,10 @@ class AuditLog:
             with self._lock:
                 try:
                     with self._sf() as s, s.begin():
+                        if s.get_bind().dialect.name == "sqlite":
+                            connection = s.connection()
+                            if not connection.connection.driver_connection.in_transaction:
+                                connection.exec_driver_sql("BEGIN")
                         rows = s.execute(select(AuditEntry)).scalars().all()
                         by_seq = {row.seq: row for row in rows}
                         it = by_seq.get(intent_entry.seq)

@@ -115,6 +115,13 @@ Notable vs 2026-09-03: **USAR** newly supported (fresh 8-K 2026-09-04); **AON, B
 
 ## Exact next operator action
 
+**Calendar correction recorded 2026-09-06:** Monday, September 7 is Labor Day; the next
+regular NYSE session is Tuesday, September 8 ([NYSE calendar](https://www.nyse.com/trade/hours-calendars)).
+The application calendar already includes the holiday. The original plan below is retained
+as historical evidence, not a current scheduler instruction. Its selection/date wording is
+also clarified in [the source map](rw20-selection-order-map-2026-09-06.md): the manifest needs
+30 same-date eligible identities; current-target exact dates are a separate later gate.
+
 Keep soak as awareness on `61ca0af` (already pinned post-#68). Do **not** seed watchlist; do **not** rewrite soak HEAD; no Luna/Composer for this empty/date-not-ready screen. Next market-day plan: **Monday 2026-09-07** natural-head GET-only re-screen (weekend — no Sat/Sun selection claim). Wait for natural absolute heads that are both grammar-pass **and date-ready** until selection-ready ≥30. Optional later packages (not this wake): BHF Form-3 head rotation / date-field audit already frozen; SAFT PREM14A vs 10-Q cash extract; USAR cash-phrasing probe if FTS/cash grammar warrants.
 
 ## Evidence paths

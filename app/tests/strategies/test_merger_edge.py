@@ -17,6 +17,7 @@ from filings.raw_store import RawStore
 from config.settings import DecisionRuntime, Mode, Settings
 from core.clock import FrozenClock
 from core.ids import new_id
+from core.proposal_authority import proposal_payload_hash
 from ingest.market_data import MarketDataService, MarketMetrics
 from orchestrator.breakers import BreakerEngine
 from orchestrator.state import (
@@ -427,6 +428,9 @@ def _composed_paper_service(merger):
             "job_id": job.id,
             "risk_decision_id": scenario.risk_decision.id,
             "order_id": scenario.order.id,
+            "side": proposal.side, "flagged": proposal.flagged,
+            "proposal_payload_hash": proposal_payload_hash(proposal.payload),
+            "order_tuple_hash": scenario.order.order_tuple_hash,
         },
     )
     service = PaperExecutionService(

@@ -117,12 +117,78 @@ def _inspect_codex_decision_argv(tokens: list[str]) -> None:
         raise ToolStarvationError(
             f"Codex decision argv leaves capability features enabled: {missing_features}"
         )
+    # BUG-119: checking only the first sandbox value and a subset of switches does not
+    # prove the actual argv closed. Reject duplicates, aliases and unknown future flags.
+    seen = set()
+    seen_features = set()
+    value_flags = {"--sandbox", "-c", "--model", "--output-schema", "--disable"}
+    i = 2
+    while i < len(tokens) - 1:
+        flag = tokens[i]
+        if flag not in _CODEX_REQUIRED_FLAGS | value_flags:
+            raise ToolStarvationError(f"unknown Codex decision flag {flag!r} (SEC-06)")
+        if flag != "--disable" and flag in seen:
+            raise ToolStarvationError(f"duplicate Codex decision flag {flag!r} (SEC-06)")
+        seen.add(flag)
+        i += 1
+        if flag in value_flags:
+            if i >= len(tokens) - 1:
+                raise ToolStarvationError(f"Codex decision flag {flag!r} lacks a value")
+            value = tokens[i]
+            i += 1
+            if not value or value.startswith("-"):
+                raise ToolStarvationError(f"invalid Codex decision value for {flag!r}")
+            if flag == "--disable":
+                if value not in CODEX_DECISION_DISABLED_FEATURES or value in seen_features:
+                    raise ToolStarvationError("unknown/duplicate Codex capability denial")
+                seen_features.add(value)
+    if not {"--sandbox", "-c", "--model"} <= seen:
+        raise ToolStarvationError("Codex decision profile is incomplete (SEC-06)")
 
 
 def _tool_entries(value: str) -> list[str]:
     """Split an ``--allowedTools`` value into non-sentinel tool names (comma- or space-separated)."""
     parts = re.split(r"[,\s]+", value.strip())
     return [p for p in parts if p and p.lower() not in _EMPTY_TOOL_SENTINELS]
+
+
+def _inspect_claude_decision_argv(tokens: list[str]) -> None:
+    """Require the complete closed grammar, including explicit removal of built-ins.
+
+    No positional prompts, resumed sessions, duplicate overrides or future switches can
+    silently broaden this profile. Values are individual argv elements, never shell text.
+    """
+    switches = {
+        "-p", "--strict-mcp-config", "--safe-mode", "--restricted",
+        "--disable-slash-commands", "--no-session-persistence", "--no-chrome",
+    }
+    values = {
+        "--output-format": "json", "--tools": "", "--disallowedTools": "*",
+        "--setting-sources": "", "--allowedTools": "none",
+        "--model": None, "--max-turns": None,
+    }
+    seen = set()
+    i = 1
+    while i < len(tokens):
+        flag = tokens[i]
+        if flag in seen or flag not in switches | values.keys():
+            raise ToolStarvationError("Claude decision argv is not tool-starved: unknown/duplicate flag")
+        seen.add(flag)
+        i += 1
+        if flag in values:
+            if i == len(tokens):
+                raise ToolStarvationError("Claude tool-starved profile has a missing value")
+            value = tokens[i]
+            i += 1
+            expected = values[flag]
+            if expected is not None and value != expected:
+                raise ToolStarvationError(f"Claude tool-starved profile requires {flag}={expected!r}")
+            if flag == "--model" and (not value or value.startswith("-")):
+                raise ToolStarvationError("Claude tool-starved profile requires a model")
+            if flag == "--max-turns" and (not value.isdecimal() or int(value) < 1):
+                raise ToolStarvationError("Claude tool-starved profile requires a positive turn bound")
+    if seen != switches | values.keys():
+        raise ToolStarvationError("Claude tool-starved profile is missing required safety flags")
 
 
 def inspect_argv(argv, *, decision_stage: bool = True) -> None:
@@ -157,6 +223,12 @@ def inspect_argv(argv, *, decision_stage: bool = True) -> None:
                 raise ToolStarvationError(
                     f"decision-stage agent must be tool-starved (SEC-06); argv grants {granted}"
                 )
+    if decision_stage:
+        runtime = Path(tokens[0]).name.lower() if tokens else ""
+        if runtime == "claude":
+            _inspect_claude_decision_argv(tokens)
+        elif runtime != "codex":
+            raise ToolStarvationError("unknown decision runtime cannot prove tool starvation")
 
 
 def assert_decision_cwd(cwd, *, pinned_cwd) -> None:

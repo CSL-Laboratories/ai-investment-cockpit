@@ -18,10 +18,11 @@ from sqlalchemy import select
 
 from bridge.approval import Rejection, record_decision, token_nonce_for_approval
 from bridge.operators import is_authorized
-from brokers.order_tuple import canonical_order_tuple
+from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.order_state_machine import transition
 from brokers.paper_performance import EASTERN, reconstruct_paper_performance
 from config.models import configured_decision_runtime
+from core.proposal_authority import proposal_payload_hash
 from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThresholds
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
@@ -55,6 +56,7 @@ class _Bundle:
     analysis_vendor: str | None = None
     analysis_generation: int | None = None
     analysis_authority_error: str | None = None
+    order_authority_error: str | None = None
 
 
 class PaperExecutionService:
@@ -108,10 +110,9 @@ class PaperExecutionService:
 
     def sample_performance(self) -> dict:
         """Persist equity, reconstruct signed P&L signals, and evaluate breakers."""
-        engine = BreakerEngine(self.state)
         try:
             self._broker.get_positions(st=self.state, clock=self.state.clock)
-            performance = reconstruct_paper_performance(self.state)
+            return self._refresh_performance()
         except Exception as exc:  # noqa: BLE001 - missing broker evidence disables orders
             from brokers.paper_performance import PaperPerformance
 
@@ -120,6 +121,13 @@ class PaperExecutionService:
                 self.state.clock.now().astimezone(EASTERN).date().isoformat(),
                 reason=f"paper performance unavailable: {type(exc).__name__}",
             )
+            return self._refresh_performance(performance)
+
+    def _refresh_performance(self, performance=None) -> dict:
+        """Consume the just-signed account observation at every authority boundary."""
+        engine = BreakerEngine(self.state)
+        if performance is None:
+            performance = reconstruct_paper_performance(self.state)
         self.state.paper_performance = performance
         events = []
         if not performance.ok:
@@ -195,7 +203,7 @@ class PaperExecutionService:
         return self._quote_fn(symbol)
 
     def _load_bundle(self, order_id: str) -> _Bundle:
-        with self.state.session_factory() as session:
+        with self.state.session_factory() as session, session.begin():
             verified = self.state.audit.verify_session(session)
             if not verified.ok:
                 raise PaperExecutionError(
@@ -229,6 +237,7 @@ class PaperExecutionService:
         authority_error: str | None = None
         vendor: str | None = None
         generation: int | None = None
+        order_authority_error = None
         proposal_entries = [
             entry for entry in authority_entries
             if entry.event_type == EVENT_PROPOSAL
@@ -249,6 +258,20 @@ class PaperExecutionService:
             vendor = job_payload.get("runtime")
             generation = job_payload.get("generation")
             row_generation = (agent_job.input_refs or {}).get("_generation")
+            try:
+                bound = (
+                    proposal_payload.get("proposal_payload_hash") == proposal_payload_hash(proposal.payload)
+                    and proposal_payload.get("order_tuple_hash") == order_tuple_hash(self._resolved(order))
+                    and proposal_payload.get("order_tuple_hash") == order.order_tuple_hash
+                    and proposal_payload.get("status") == proposal.status
+                    and proposal_payload.get("flagged") is proposal.flagged
+                    and proposal_payload.get("symbol") == proposal.symbol == order.symbol
+                    and proposal_payload.get("side") == proposal.side == order.side
+                )
+            except (TypeError, ValueError):
+                bound = False
+            if not bound:
+                order_authority_error = "proposal body or resolved order lacks its original signed binding"
             if (
                 proposal_payload.get("proposal_id") != proposal.id
                 or proposal_payload.get("job_id") != proposal.job_id
@@ -279,9 +302,14 @@ class PaperExecutionService:
             analysis_vendor=vendor,
             analysis_generation=generation,
             analysis_authority_error=authority_error,
+            order_authority_error=order_authority_error,
         )
 
     def _assert_fresh_analysis(self, bundle: _Bundle) -> None:
+        if bundle.order_authority_error is not None:
+            raise PaperExecutionError(
+                "order_authority_unavailable", bundle.order_authority_error,
+            )
         if bundle.analysis_authority_error is not None:
             raise PaperExecutionError(
                 "analysis_authority_unavailable",
@@ -335,14 +363,31 @@ class PaperExecutionService:
         }
 
     def _fresh_risk(self, proposal_payload: dict, symbol: str, *, order_qty=None,
-                    require_w21: bool = False):
+                    require_w21: bool = False, resolved_order=None):
         try:
             snapshot = self._broker.get_positions(st=self.state, clock=self.state.clock)
+            if (getattr(self.state, "paper_performance_required", False)
+                    or getattr(self.state, "paper_performance", None) is not None):
+                if not self._refresh_performance()["ok"]:
+                    raise ValueError("fresh signed performance unavailable")
+                engine = BreakerEngine(self.state)
+                if engine.is_watch_only() or engine.active_trips():
+                    raise ValueError("fresh performance raised an active safety breaker")
             market_data = self.market_data
             observation = market_data.observation(symbol) if market_data is not None else None
             quote = dict(observation.quote) if observation is not None else self._quote_fn(symbol)
+            # BUG-116: both gates price the exact immutable order the human will sign.
+            # Proposal sizing instructions are not a second sizing authority at approval.
+            evaluated = dict(proposal_payload)
+            if resolved_order is not None:
+                evaluated.update({
+                    "symbol": resolved_order["symbol"], "side": resolved_order["side"],
+                    "order_type": resolved_order["order_type"],
+                    "quantity": resolved_order["qty"], "notional": None,
+                })
+                order_qty = resolved_order["qty"]
             verdict, book_seq, _resolved_qty, _reasons = build_execution_verdict(
-                proposal_payload,
+                evaluated,
                 quote_price=Decimal(str((quote or {}).get("price", 0))),
                 clock=self.state.clock,
                 book_fn=(market_data.book if market_data is not None else None),
@@ -363,8 +408,12 @@ class PaperExecutionService:
                 quant_verdict=verdict, quant_book_seq=book_seq,
                 require_quant_verdict=require_composed,
                 require_net_edge=require_composed,
+                snapshot=snapshot,
             )
-            return evaluate(proposal_payload, ctx), snapshot
+            if resolved_order is not None:
+                price = max(ctx.quote_price, Decimal(str(resolved_order.get("limit_price") or 0)))
+                evaluated["notional"] = str(Decimal(str(order_qty)) * price)
+            return evaluate(evaluated, ctx), snapshot
         except Exception:  # noqa: BLE001 - any vendor/data fault means no order authority
             return {
                 "decision": "rejected",
@@ -447,6 +496,7 @@ class PaperExecutionService:
                 proposal.payload,
                 order.symbol,
                 order_qty=order.qty,
+                resolved_order=resolved,
                 require_w21=risk_decision.execution_verdict is not None,
             )
             if fresh.get("decision") != "approved":
@@ -503,6 +553,7 @@ class PaperExecutionService:
                 proposal.payload,
                 order.symbol,
                 order_qty=order.qty,
+                resolved_order=resolved,
                 require_w21=risk_decision.execution_verdict is not None,
             )
             return result
