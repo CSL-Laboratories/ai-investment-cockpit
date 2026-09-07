@@ -7,25 +7,32 @@ last-verified: 2026-09-07
 
 # Watch-only durability D1–D4 — claim shape, September 6 PT
 
-**RESULT: real-miss-found; research complete; production claim NOT opened.** Queue this
-single fail-closed package behind **BUG-125 / PR #74**. D1–D4 remain unfixed: an isolated
-replay on main commit `a57e8cf` reproduced **8 failed safety assertions / 9 passing controls
-or characterizations**. This document specifies the next repair; it does not certify it.
+**RESULT: real-miss-found; research complete; production claim NOT opened.** This is the
+single fail-closed package queued behind **BUG-125 / PR #74**. During this session, shared
+local history advanced to #74's merge `ce62cf2`. D1–D4 remain open: isolated replays on
+`a57e8cf` and `ce62cf2` both report **8 failed / 9 passed**. On the latter, D4 fails in the
+new FSM check after broker entry, rather than reaching its original safety assertion.
+This document specifies the next repair; it does not certify it or #74's platform gates.
 
 The live soak remains the operator-pinned **`c5ef0ad` on port `8787`**. No service, soak
 file, selection input, date parser, watchlist, model boundary, Git ref, or production claim
-was changed. No PR, commit, external message, live feed call, or real broker call was made.
+was changed **by this task**. This task made no PR, commit, external message, live feed call,
+or real broker call. Shared-workspace commits made by another actor are recorded below.
 
 ## Evidence and source boundary
 
 | Item | Exact basis and limitation |
 |---|---|
-| Original diagnosis | [Durability report](/workspace/w24-evidence/astra-drain-2026-09-06/astra-watchonly-durability-2026-09-06.md), original `test_durability_diagnosis.py`, and `data-watchonly/` logs under the same external root. All **18** original manifest entries were checked after resolving their relocated paths; size and SHA-256 match. |
+| Original diagnosis | [Durability report](/workspace/w24-evidence/astra-drain-2026-09-06/astra-watchonly-durability-2026-09-06.md), original `test_durability_diagnosis.py`, and `data-watchonly/` logs under the same external root. All **18** original manifest entries were checked after resolving their relocated paths; size and SHA-256 match. [Verification record](astra-watchonly-claim-shape-2026-09-06/source-and-evidence-verification.json). |
 | Original app | Report used remote `d0a58367ab4c7f9cdb1a3c8d1db98d0b90d3e97f`, local `892e2dbaab0093e91857cea373dc188d638d8d80`, app tree `5125e7edd2489c027364bbbfbd4556d928109817`. Historical baseline: **148 passed**; diagnosis: **8 failed / 9 passed**. |
-| Workspace inspected | Docs freeze branch `work/astra-drain-freeze-2026-09-06`, HEAD `d7b7087fbf5329baa230f90451eb2cb89053b5da`; its committed app tree equals the original app. This checkout must not be described as main at `a57e8cf`. |
+| Initial workspace | Docs freeze branch `work/astra-drain-freeze-2026-09-06`, HEAD `d7b7087fbf5329baa230f90451eb2cb89053b5da`; its committed app tree equals the original app. This initial checkout must not be described as main at `a57e8cf`. |
 | Requested main lineage | `a57e8cf20a81b0802a117a403316f6992f159ab1`, app tree `1118bd363ee0b1aedf44a7e68bbc7241b1623f3e`. Compared with the original app, only `storage/audit.py` and the added HWM-signing-refusal tests differ: merged BUG-124 / #73. |
 | Fresh replay | A `git archive` of `a57e8cf:app` in `/tmp`, original fixture copied byte-for-byte (SHA-256 `da52eb32ff6c876750ded3afcd5b4d36cd18ad9a9e8bef62e4744ffc8ce7e8fa`), project `.venv`, temporary SQLite, frozen clock, FakeAlpaca/FakeTransport, isolated configuration and keyring. [Raw log](astra-watchonly-claim-shape-2026-09-06/a57e8cf-durability-replay.log), [argv/result](astra-watchonly-claim-shape-2026-09-06/a57e8cf-durability-replay.json). Exit **1**, **8 failed / 9 passed**, pytest 5.03 s. No failure was made xfail or recast as PASS. |
-| Dependency #74 | Separate worktree `/workspace/cockpit-order-fsm-f1f2`, observed HEAD `2167006`; [retained BUG-125 evidence](/workspace/w24-evidence/astra-drain-2026-09-06/bug125-order-fsm-freshness-2026-09-07.md) says PR open and platform acceptance pending. Its F1/F2 changes expressly exclude D1–D4. No fresh remote merge-status claim is made here. |
+| Bounded baseline on `a57e8cf` | Original 148-case selection plus #73 HWM tests: **173 passed**, exit 0, pytest 15.28 s. [Log](astra-watchonly-claim-shape-2026-09-06/a57e8cf-baseline.log), [argv/result](astra-watchonly-claim-shape-2026-09-06/a57e8cf-baseline.json). Linux Python 3.13 diagnostic; no full-suite or four-cell acceptance claim. |
+| Dependency #74, updated locally | Local merge `ce62cf2b0567899019a446e693e95512fe96a3cf`, app tree `2045e2c74010a49a8c9a67b4a5ef50f55b0b644a`, now in workspace history. Separate F1/F2 worktree remains `2167006`. [Retained BUG-125 evidence](/workspace/w24-evidence/astra-drain-2026-09-06/bug125-order-fsm-freshness-2026-09-07.md) predates that merge and explicitly lacks full-suite/four-cell acceptance; no new attestation was found. Its old “open” text is historical, not current merge status. |
+| Post-#74 replay | Exact `ce62cf2` archived application and byte-identical original fixture: **8 failed / 9 passed**, exit 1, pytest 5.02 s. [Log](astra-watchonly-claim-shape-2026-09-06/ce62cf2-durability-replay.log), [argv/result](astra-watchonly-claim-shape-2026-09-06/ce62cf2-durability-replay.json). D1–D3 remain red; D4 raises `AuditIntegrityError` at the post-broker FSM transition, so its original counter assertion is not reached. This is not a prevention PASS. |
+| Supplemental post-#74 D4 observation | [New research fixture](astra-watchonly-claim-shape-2026-09-06/test_ce62cf2_d4_observation.py) catches only the late integrity exception to observe side effects, retaining the zero-submit assertion. [Log](astra-watchonly-claim-shape-2026-09-06/ce62cf2-d4-observation.log), [metadata](astra-watchonly-claim-shape-2026-09-06/ce62cf2-d4-observation.json): **1 failed**, `broker_entries=1`, `fake_submissions=1`, audit invalid at broker entry, outcome `AuditIntegrityError`. The original fixture remains untouched. |
+| Shared-workspace handoff | Another actor advanced the checkout through #74 and #72, committed a partial draft at `183f72e`, then local history recorded docs PR #75 merge `ea13241` and evidence amendment `222626f`. The application tree still equals `ce62cf2`. This research task continued only docs/evidence work and did not create those commits/branches or any PR. |
 
 These fake orders isolate the named guard through `PaperExecutionService → OrderGateway`.
 They do not establish a real W-24 candidate, complete composed selection authority, live
@@ -80,7 +87,10 @@ persistence after the runner trip, and a repeated failed EDGAR poll that skips p
    response and degraded envelope, admits a **global order denial before audit/AgentJob
    I/O**. No later exception or caller omission may undo it. The runner uses an injected
    transition facade/callback; it gains no broker capability or orchestrator credentials.
-2. Serialize generation allocation from committed vendor state. One observation has one
+2. Serialize generation allocation from **durable** vendor history, including a committed
+   recovery not yet published in memory. A newer trip after such a recovery must allocate
+   above its generation, not reuse that generation with a contradictory exhausted state.
+   Pending reservations and retries must have one serial order. One observation has one
    transition identity and one candidate generation; retries reuse it. Sign vendor, refs,
    target state, generation and transition identity coherently. Publish committed state
    only after commit. A second caller may coalesce the same open episode; it may not infer
@@ -98,20 +108,32 @@ persistence after the runner trip, and a repeated failed EDGAR poll that skips p
    trip/recovery. Neither future generations nor bool/string/negative/missing stamps pass.
 
 **Chosen bounded restart shape: a signed process safety-session envelope.** Before a
-production graph admits orders or starts health-producing work, commit a versioned
+production graph admits orders or health work capable of granting authority, commit a versioned
 `session_open` event binding a unique session/process ID to verified predecessor session
-authority. No open-marker commit means no order admission or health-job dispatch. A clean
+authority. No open-marker commit means no order admission or authority-producing dispatch.
+Existing observation/ingest/status work may continue while a global hold is enforced;
+its successful output cannot release that hold or produce order permission. This is an
+admission restriction on existing paths, not a second execution path. A clean
 `session_close` is allowed only after closing admission, quiescing/joining producers and
 in-flight submissions, verifying the chain and committed vendor view, and proving there
 are no pending/failed transitions or unresolved submit intents. Any inability to prove
 those conditions leaves the session open. Never close from an unconditional `finally`.
+Production shutdown must fence HTTP/Discord/scheduler dispatch, retain producer handles,
+and use bounded stop/join checks. Existing `IngestRunner.stop()` cannot interrupt an
+in-flight consumer, and current `run()` discards the scheduler handle and starts daemon
+workers. A finite fake-only close test cannot prove those workers quiesce. If a configured
+stream/bot cannot be proven stopped, leave the marker open and disclose that its normal
+restart remains held; do not quietly call that a clean shutdown.
 
 Restore the session protocol and vendor events from one verified snapshot, using the
 existing anchor policy. Missing/malformed/unknown protocol, unmatched or contradictory
 events, concurrent ownership, and an earlier unclosed session mean **startup hold**.
 An open session followed by an unrelated valid event is still unclosed. Opening a second
-session cannot discharge it. Acquire/check session ownership in one suitable transaction;
-a verify-then-independent-append race may not authorize two process owners.
+session cannot discharge it. Verified predecessor/session/vendor restoration **and** new
+session ownership must use one suitable transaction, or bind an exact verified audit head
+and reconstruct all authority on a head change. Restoring generation 0, then accepting a
+new predecessor that completed recovery at generation 2, must never leave generation 0
+active. A verify-then-independent-append race may not authorize two process owners.
 
 Genuine empty-store initialization is distinct from a non-empty legacy ledger lacking
 session history. The latter starts held; do not fabricate a historical clean-close event.
@@ -151,7 +173,8 @@ its write. Same-host session events do not solve complete valid-snapshot rollbac
 ### D3 — an admitted denial wins before broker-entry authorization
 
 1. Pending/global watch-only or changed producing-runtime generation observed after the
-   initial precheck must veto entry. Check again after capability consumption, pending
+   initial precheck and **by final authorization** must veto entry. Check again after
+   capability consumption, pending
    exposure and **the real committed order intent**, immediately before authorization.
 2. Serialize denial admission and final authorization with a short admission lock/version
    check. Publish pending denial before the transition waits for `st.lock` or SQLite. A
@@ -203,7 +226,7 @@ only a generic exception or an unrelated edge rejection.
 | Refusal before token consumption | No broker call or new submit intent; do not burn a token solely to test refusal. |
 | Refusal after token consumption | Nonce remains consumed; no automatic remint, free retry, fabricated submitted state or fill. Fresh approval is required after valid recovery and fresh applicable lineage. |
 | Final refusal after real intent, valid writable audit | Exactly one covering `order_submit` abort result bound to the actual `intent_seq`, plus refusal. Use safety-specific abort reason (`watch_only`, `analysis_freshness`, `audit_integrity`), distinct from `broker_error`. |
-| Invalid/unreadable ledger or abort/result write failure | Zero broker calls takes priority. Leave unresolved intent and sticky denial visible; no ledger healing, manufactured pairing PASS, authority re-sign, or automatic submit retry. |
+| Invalid/unreadable ledger or abort/result write failure | Zero broker calls takes priority; keep sticky denial and the actual durable state. Uncommitted/unknown completion remains unresolved/uncertain until verified same-intent reconciliation. A committed result with lost acknowledgement, or a later refusal-log failure, must not be deleted or duplicated. No healing, manufactured pairing PASS, re-sign, or automatic submit retry. |
 | Broker already entered | Preserve existing ambiguous broker-error/reconciliation semantics and stable client order ID. Never mislabel it a definite pre-entry safety abort. |
 
 Status must show **committed** vendor state/generation separately from effective denial,
@@ -264,13 +287,15 @@ selection, soak, witness or platform bars.
   final-snapshot tamper/read/anchor failures; zero fake broker calls when refusal wins;
   after-entry ordering control; burned nonce and exact abort/unresolved-intent accounting.
   D4 PASS must carry the final-snapshot limitation, never an unrestricted atomicity claim.
-- **Preserved refusals:** signed-blackout restoration; malformed/gapped/contradictory
-  authority; transient-read sticky sentinel; mutable `UsageWindow` non-authority; old/future/
+- **Preserved refusals:** signed-blackout restoration; malformed/contradictory authority;
+  chain-sequence gaps; transient-read sticky sentinel; mutable `UsageWindow` non-authority; old/future/
   missing lineage stamps; HALT; runtime-mode pin; risk/approval/capability/pending exposure.
   Preserve #68/#70/#73 and #74 regressions. Healthy concurrent append is a required control.
 - **Adversarial review:** fresh independent order-path attack→fix→regression round against
-  the unmerged candidate. One reproduced fail-open blocks PASS. Review the startup rollout
-  hold and the exact D4 residual explicitly; neither can disappear from the PR description.
+  the unmerged candidate. One reproduced fail-open within these declared refusal contracts
+  blocks PASS. Any excluded residual must remain recorded with its impact and may not be
+  reported closed. Review the startup rollout hold and the exact D4 residual explicitly;
+  neither can disappear from the PR description.
 - **Acceptance evidence:** targeted tests, full app suite and Ruff; native Windows and
   Ubuntu/WSL2, each Python **3.11 and 3.12**, on the operator workstation per DEC-09. Record
   source/dependency versions, commands, exits, skips and artifacts for all four cells.
@@ -298,7 +323,7 @@ reopening #59/#68/#70/#73 or repeating #74; broker/approval redesign; grammar/da
 prospective-population/window changes; watchlist seed; selection/edge activation; model
 runtime expansion; service management; deployment; soak mutation; commit/push/PR creation.
 
-This claim restores **refusal** guarantees. It does not create missing prospective evidence,
+The proposed repair is intended to restore the specified **refusal** guarantees. It does not create missing prospective evidence,
 turn a surviving valid ledger into proof of transition completeness, or grant paper/live
 capital authority.
 
@@ -314,3 +339,15 @@ This is an output-location limitation, not a pending production claim or permiss
 ## Late amend
 
 - `ce62cf2-durability-replay.json` / `.log` — post-#74 durability replay on merged main tip
+
+The shared-workspace amendment above is incorporated into the source table, including the
+supplemental D4 counter observation. Independent review of this **draft contract** corrected
+session restore/ownership snapshot races, committed-but-unpublished recovery generations,
+shutdown reachability, observation continuity during startup holds, and abort-result
+acknowledgement-loss accounting. Those reviews are research input, not the future production
+branch's required adversarial attestation.
+
+Research frozen at **2026-09-07 02:52 UTC / September 6 19:52 PDT**, before the requested
+**20:15 PDT / 03:15 UTC** stop. No production row was claimed by this task. Final checks
+and file hashes are retained in [final-verification.json](astra-watchonly-claim-shape-2026-09-06/final-verification.json)
+and [PACKAGE-MANIFEST.json](astra-watchonly-claim-shape-2026-09-06/PACKAGE-MANIFEST.json).
