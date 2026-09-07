@@ -1,7 +1,7 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-08-28
+last-verified: 2026-09-06
 ---
 
 # The register
@@ -21,7 +21,7 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## Current delivery position — 2026-08-24
+## Delivery position recorded 2026-08-24
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
@@ -100,6 +100,15 @@ date, witness, paper-activation or live gate is waived. Scope and acceptance are
 [[runbooks/rw20-gate-repair-plan-2026-09-06]]. The original audit is preserved in
 [[evidence/astra-audit-2026-09-05/AUDIT-2026-09-05]].
 
+Implementation and independent review of BUG-115 through BUG-122 are complete on
+this branch (`be1ff13`, then `69a1c9c`). All four real DEC-09 cells passed:
+Windows 3.11/3.12 each 2,648 passed / 5 skipped; Ubuntu/WSL2 3.11/3.12 each
+2,646 passed / 7 skipped, with Ruff and dependency checks clean. Exact source
+scope and the separately passing 10-test scorer / 7-test excerpt supplements are in
+[[evidence/rw20-matrix-isolation-2026-09-06]].
+The [delivery record](evidence/astra-gate-delivery-2026-09-06.md) maps every operator
+request to its result and remaining evidence. None of these unmerged fixes is closed.
+
 | ID | What | Sev | Status | Where |
 |---|---|---|---|---|
 | `BUG-115` | Claude decision argv mistakes `--allowedTools none` for tool disablement; inherited tools/MCP are not explicitly excluded | high | claimed — RW-20 | `agent_runner/runner.py`, `agent_runner/tool_inspector.py`; original A7 |
@@ -110,11 +119,13 @@ date, witness, paper-activation or live gate is waived. Scope and acceptance are
 | `BUG-120` | Semantic text extraction admits non-displayed script/style/hidden/comment/attribute text as filing authority | high semantic | claimed — RW-21 | `strategies/merger_semantics.py::_text`; original A3 |
 | `BUG-121` | Positive semantic regexes can accept negated outcome, definitive-agreement and explicit-date assertions | high semantic | claimed — RW-21 | `strategies/merger_semantics.py`; original A4 plus independent negation probes |
 | `BUG-122` | Current-deal verification mistakes an ordinary later accession for an amendment and rejects the complete source set | medium | claimed — RW-21 | `strategies/merger_semantics.py::_verify_deal`; original A6 |
+| `BUG-123` | Positively identified live intents are excluded from paper performance, but their generic fill transitions still invalidate reconstruction | medium, future live integration | open — scoped repair required before live integration | `brokers/paper_performance.py`; original A5, still reproduced after RW-20/21; no current live activation |
 
 Historical status correction: BUG-113 is merged through PR #59 (`1e2d4e3`), and
-BUG-114 through PR #68 (`61ca0af`, repair `3035d83`). Older ledger rows below retain
-their original pre-merge evidence wording; this note does not claim new matrix or
-soak acceptance for either repair.
+BUG-114 through PR #68 (`61ca0af`, repair `3035d83`). The rows below now reflect
+that merged status while retaining their historical test counts. Subsequent post-#68
+application validation is separately bound in [[evidence/rw20-matrix-isolation-2026-09-06]];
+it does not heal the original fork or certify the current remote soak.
 
 Found by the 2026-08-09 audit. Every closed row below shipped with a regression test; blocked
 rows retain their named prerequisite.
@@ -135,8 +146,8 @@ rows retain their named prerequisite.
 | `BUG-110` | W-25's S3 trust read re-downloads and rechecks every retained version; production append invokes that full read twice, and every gate/mode/gateway/performance/budget consult adds another. The weekday 30-minute cadence therefore creates unbounded request and latency growth and can turn the fail-closed witness into an availability/cost hazard. | high pre-live | closed — PR #48; current local matrix green | Schema-v2 fixed-width reverse-sequence keys plus one 128-entry candidate page make the trust read independent of retained-history length. Incomplete candidate groups, delete/shadow/conflict, malformed binding, retention faults, API ambiguity, and concurrent fork/higher-head writes fail closed; no mutable pointer or local cache contributes authority. Windows: 2,321 passed / 1 skipped; Ruff clean. All six PR #48 jobs executed zero steps under GitHub's payment restriction; `DEC-09` supersedes that hosted gap as a blocker, while real Object Lock evidence remains open; [[evidence/bug110-bounded-witness-read-2026-08-18]]. |
 | `BUG-111` | Plan-bound RW-19 news subscription-ack validation used order-identical list equality (`message.get("news") != list(symbols)`), so a correct Alpaca reordered acknowledgement failed closed as `socket_subscribe` and produced Attempt 2's `FAILED_CAPTURE` | high paper | closed — PR #56 merged 2026-08-28 (main `38eab5a2`); `DEC-09` four-cell matrix green 2026-08-27 (Windows 3.11/3.12: 2,427 passed / 5 skipped; WSL2 3.11/3.12: 2,421 passed / 6 skipped; Ruff clean; all skips environmental) | `tools/rw19_news_reconnect_plan_bound.py` — `_subscription_ack_error` now applies order-independent exact-unique-set validation with ordered guards (list shape, all-string entries before any set construction, duplicate rejection, exact set equality); raw journal retains vendor order; [[evidence/rw19-ack-order-defect-2026-08-27]] |
 | `BUG-112` | Mid-stream subscription control frames after the handshake were journaled but never re-validated, so a mid-capture universe change would be silently accepted | high paper | closed — PR #56 merged 2026-08-28 (main `38eab5a2`); `DEC-09` four-cell matrix green 2026-08-27 (Windows 3.11/3.12: 2,427 passed / 5 skipped; WSL2 3.11/3.12: 2,421 passed / 6 skipped; Ruff clean; all skips environmental) | `tools/rw19_news_reconnect_plan_bound.py` — same `_subscription_ack_error` path: journal-first, then fail closed as `socket_subscribe`; found during the 2026-08-27 audit of `BUG-111`; [[evidence/rw19-ack-order-defect-2026-08-27]] |
-| `BUG-113` | L8 vendor `watch_only` state and its monotonic analysis generation live only in `UsageTracker` memory; restart therefore clears the blackout, resets generation to zero, and no production order-authority path calls `assert_fresh_analysis`, so a pre-exhaustion proposal can outlive the fail-closed boundary | high paper | claimed — implementation complete on `work/bug113-durable-watch-only-generation`; uncommitted, not merged | Signed-ledger, snapshot-pinned restart restoration; malformed/unverifiable authority becomes a visible global watch-only sentinel; signed Proposal→AgentJob generation binding; exact freshness at paper approval plus gateway review/submit. Fresh adversarial round closes restart loss, malformed state, future-generation skip, mutable job swap, and post-approval generation race. `DEC-09` green: Windows 3.11/3.12 each 2,521 passed / 3 skipped; WSL2 3.11/3.12 each 2,514 passed / 5 skipped; Ruff and dependency checks clean in all four cells. Legacy drafts without the new signed binding require re-draft; close only after merge. |
-| `BUG-114` | Concurrent `append_in` and standalone audit writers can read the ledger head before another transaction commits, then read its newer signed high-water and allocate a non-colliding sequence linked to the stale head; the resulting valid-HMAC fork makes the live audit chain fail closed | high paper | claimed — live soak reproduction at seq 13589; implementation complete on `work/sol-w24-pipeline-audit-2026-09-03`; PR/matrix pending | Allocation now observes the signed high-water before the row head, so a commit between reads is either incorporated into the head link or fails on the unique sequence instead of creating a fork. The deterministic WAL interleaving regression fails on the old order and passes with the repair; targeted audit + merger gates: 56 passed; remaining non-ASGI Python 3.13.5 suite: 2,413 passed / 7 skipped with one sandbox-denied socket test; Ruff clean. Required `DEC-09` Python 3.11/3.12 matrix remains pending. |
+| `BUG-113` | L8 vendor `watch_only` state and its monotonic analysis generation live only in `UsageTracker` memory; restart therefore clears the blackout, resets generation to zero, and no production order-authority path calls `assert_fresh_analysis`, so a pre-exhaustion proposal can outlive the fail-closed boundary | high paper | merged — PR #59 (`1e2d4e3`); current audit regression evidence linked above | Signed-ledger, snapshot-pinned restart restoration; malformed/unverifiable authority becomes a visible global watch-only sentinel; signed Proposal→AgentJob generation binding; exact freshness at paper approval plus gateway review/submit. Fresh adversarial round closes restart loss, malformed state, future-generation skip, mutable job swap, and post-approval generation race. `DEC-09` green: Windows 3.11/3.12 each 2,521 passed / 3 skipped; WSL2 3.11/3.12 each 2,514 passed / 5 skipped; Ruff and dependency checks clean in all four cells. Legacy drafts without the new signed binding require re-draft. These are the historical repair results; subsequent RW-20 restart/authority review is recorded separately. |
+| `BUG-114` | Concurrent `append_in` and standalone audit writers can read the ledger head before another transaction commits, then read its newer signed high-water and allocate a non-colliding sequence linked to the stale head; the resulting valid-HMAC fork makes the live audit chain fail closed | high paper | merged — PR #68 (`61ca0af`, repair `3035d83`); historical soak fork at seq 13589 preserved | Allocation now observes the signed high-water before the row head, so a commit between reads is either incorporated into the head link or fails on the unique sequence instead of creating a fork. The deterministic WAL interleaving regression fails on the old order and passes with the repair; targeted audit + merger gates: 56 passed; remaining non-ASGI Python 3.13.5 suite: 2,413 passed / 7 skipped with one sandbox-denied socket test; Ruff clean. Those are historical diagnostics. The full post-#68 application matrix is separately recorded in [[evidence/rw20-matrix-isolation-2026-09-06]]; it does not replace failed soak evidence. |
 | `BUG-040` | `verify_proposal`'s `max_staleness_ns` was inert because `now_ns` had no caller | med | closed — PR #31 | `quant/verify.py`, `workflows/proposals.py` |
 | `BUG-041` | `Runner` uses one `PnLTracker` across all symbols; pairs attribution is noise | med | closed | PR #21 |
 | `BUG-042` | `Pairs` exit/stop keyed only on `position_y`; a half-filled entry leaves a naked leg | med | closed | PR #22 |

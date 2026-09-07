@@ -1,0 +1,17 @@
+{
+  "authority": "research_only_no_gate_change",
+  "calculator_sha256": "8b6d48b7ec9f41ff183f1d2179f379f5068fcd4d480d0d3b8913142f08eba530",
+  "input_sha256": {},
+  "extraction": {
+    "status": "unmeasured",
+    "reason": "separate predictions and labels required"
+  },
+  "time": {
+    "status": "unmeasured",
+    "pairs": 0
+  },
+  "strategy": {
+    "status": "unmeasured",
+    "days": 0
+  }
+}
