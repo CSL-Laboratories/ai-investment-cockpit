@@ -9,11 +9,12 @@ import threading
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, event, select
+from sqlalchemy.orm.exc import DetachedInstanceError
 
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.mode_state import ModeState
-from storage.audit import AuditLog, _canonical
+from storage.audit import AuditLog, _canonical, audit_meta
 from storage.engine import create_all, make_engine, make_session_factory
 from storage.repositories import Repo
 
@@ -232,6 +233,134 @@ def test_completeness_catches_unaudited_state(env):
     assert audit.verify_completeness(ModeState) == []       # atomic write is covered
     Repo(sf, ModeState).add(id="m2", mode="paper", created_at=now)   # bare write, no audit
     assert audit.verify_completeness(ModeState) == ["m2"]   # uncovered state row is flagged
+
+
+class InterruptedStateWrite(BaseException):
+    """Unwind a transaction as an interruption would, without killing the test process."""
+
+
+def _state_change_snapshot(sf):
+    """Exact durable state, including every signed field and the watermark signature."""
+    with sf() as session:
+        return (
+            session.execute(select(ModeState.__table__).order_by(ModeState.id)).all(),
+            session.execute(select(AuditEntry.__table__).order_by(AuditEntry.seq)).all(),
+            session.execute(select(audit_meta).order_by(audit_meta.c.k)).all(),
+        )
+
+
+def _interrupt_state_change(sf, audit, monkeypatch, point, failure):
+    # Promoted from Astra's 2026-09-06 append-hardening research interruption fixtures;
+    # preserve BUG-124's explicit established-watermark context in wrapped calls.
+    def stop(*args, **kwargs):
+        raise failure(f"isolated {point} interruption")
+
+    if point == "state_flushed":
+        monkeypatch.setattr(audit, "append_in", stop)
+        return lambda: None
+    if point == "audit_flushed":
+        monkeypatch.setattr(audit, "_bump_hwm", stop)
+        return lambda: None
+    if point in {"signed_watermark", "before_commit", "after_commit"}:
+        original = audit._bump_hwm
+
+        def bump_and_mark(session, seq, *, established=False):
+            original(session, seq, established=established)
+            if point == "signed_watermark":
+                stop()
+            session.info["fixture_has_state_audit_write"] = True
+
+        monkeypatch.setattr(audit, "_bump_hwm", bump_and_mark)
+        if point == "signed_watermark":
+            return lambda: None
+
+        def interrupt_commit(session):
+            if session.info.get("fixture_has_state_audit_write"):
+                stop()
+
+        event.listen(sf.class_, point, interrupt_commit)
+        return lambda: event.remove(sf.class_, point, interrupt_commit)
+
+    assert point in {"watermark_deleted", "watermark_unsigned"}
+    engine = sf.kw["bind"]
+
+    def interrupt_watermark(conn, cursor, statement, parameters, context, executemany):
+        if (point == "watermark_deleted" and statement.startswith("DELETE FROM audit_meta")) or (
+            point == "watermark_unsigned" and statement.startswith("INSERT INTO audit_meta")
+            and parameters[0] == "head_seq"
+        ):
+            stop()
+
+    event.listen(engine, "after_cursor_execute", interrupt_watermark)
+    return lambda: event.remove(engine, "after_cursor_execute", interrupt_watermark)
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, InterruptedStateWrite])
+@pytest.mark.parametrize("point", [
+    "state_flushed", "audit_flushed", "watermark_deleted", "watermark_unsigned",
+    "signed_watermark", "before_commit",
+])
+def test_record_state_change_failure_keeps_detached_caller_behind_commit(
+    env, monkeypatch, point, failure,
+):
+    """BUG-125 / F2: rollback must not leave a usable caller publishing unsaved state."""
+    audit, sf = env
+    audit.record_state_change(
+        ModeState(id="mode", mode="read_only", reason="initial", created_at=datetime.now(timezone.utc)),
+        "mode_change", payload={"to": "read_only"},
+    )
+    with sf() as session:
+        row = session.get(ModeState, "mode")
+        session.expunge(row)
+    before = _state_change_snapshot(sf)
+    row.mode, row.reason = "paper", "attempted"
+
+    with monkeypatch.context() as patch:
+        remove = _interrupt_state_change(sf, audit, patch, point, failure)
+        try:
+            with pytest.raises(failure, match=f"isolated {point}"):
+                audit.record_state_change(row, "mode_change", payload={"to": "paper"})
+        finally:
+            remove()
+
+    assert _state_change_snapshot(sf) == before
+    assert audit.verify_chain().ok
+    try:
+        caller_state = row.mode, row.reason
+    except DetachedInstanceError:
+        pass  # Expired and unusable requires an explicit fresh durable read before reuse.
+    else:
+        assert caller_state == ("read_only", "initial")
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, InterruptedStateWrite])
+def test_record_state_change_after_commit_failure_preserves_matched_durable_state(
+    env, monkeypatch, failure,
+):
+    """An acknowledgement failure after actual COMMIT must not imply durable rollback."""
+    audit, sf = env
+    row, _ = audit.record_state_change(
+        ModeState(id="mode", mode="read_only", created_at=datetime.now(timezone.utc)),
+        "mode_change", payload={"to": "read_only"},
+    )
+    row.mode = "paper"
+    with monkeypatch.context() as patch:
+        remove = _interrupt_state_change(sf, audit, patch, "after_commit", failure)
+        try:
+            with pytest.raises(failure, match="isolated after_commit"):
+                audit.record_state_change(row, "mode_change", payload={"to": "paper"})
+        finally:
+            remove()
+
+    with sf() as session:
+        durable = session.get(ModeState, "mode")
+        entries = session.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
+        assert durable.mode == "paper"
+        assert len(entries) == 2
+        assert entries[-1].refs == {"model": "mode_state", "row_id": "mode"}
+        assert entries[-1].payload["to"] == durable.mode
+    assert audit.verify_chain().ok
+    assert audit.head()[0] == 2
 
 
 def test_completeness_is_model_scoped_no_cross_table_mask(env):
