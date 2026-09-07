@@ -14,7 +14,8 @@ merged main `c231dc249eb74461f5504845cf6f89ffe57ef209`, application tree
 passes and covers that exact application tree. New fixes require new validation.
 
 1. **Operator change:** denied merger terms refuse; health faults survive restart; sells cannot
-   exceed owned shares; all persisted model prose is scrubbed; news raw bodies remain replayable;
+   exceed owned shares; proposal prose is scrubbed before each persistence branch;
+   news raw bodies remain replayable;
    persistence failures are visible and safely retryable; gate/budget counts use correct evidence;
    simulations honor exchange and notification chronology.
 2. **Existing paths:** `strategies/semantic_text.py`, `agent_runner/runner.py`,
@@ -89,7 +90,11 @@ repairs, rather than expanding this correctness package.
 
 # Remaining gates
 
-Independent authority review has passed. The final DEC-09 matrix is pending for the
-combined RW-23 and separately scoped RW-24 source.
+Independent authority review has passed. The DEC-09 matrix against combined source
+`6d7d7df` exposed a replay helper that overwrites the content hash without changing
+the original payload. The new BUG-150 integrity check correctly refuses it. Seven
+replay setup errors and one direct replay failure have the same reproduced cause.
+The fixture repair and a complete green matrix remain required; work pauses at the
+operator's request. See [[rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
 Existing independent witness, cohort, prospective observations, paper-day and pre-live gates
 remain unchanged. A locally committed repair is not a merged/closed register item.

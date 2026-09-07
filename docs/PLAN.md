@@ -7,18 +7,22 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-28
+last-verified: 2026-09-07
 ---
 
 # The plan
 
-### RW-24 reliability follow-up — scoped next, 2026-09-07
+### RW-24 reliability follow-up — implemented, 2026-09-07
 
-After RW-23 implementation and review, repair BUG-157/158 and apply only measured,
-bounded triage/validation improvements. Intake: [[evidence/rw24-reliability-2026-09-07]].
-The final archived source, including both packages, runs the full DEC-09 matrix.
+RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization and
+Discord validation coverage are committed on `codex/audit-reliability-2026-09-07`.
+Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
+The archived source at `6d7d7df` exposed a replay-fixture hash mismatch in the DEC-09
+matrix. Work pauses at the operator's request after the active Python 3.11 runs;
+[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]] owns the restart steps.
+The fixture repair and a complete green matrix remain required before acceptance.
 
-### RW-23 audit repair intake — 2026-09-07
+### RW-23 audit repair delivery — 2026-09-07
 
 The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from
 merged main `c231dc2`. This is one bounded correctness package extending existing authority,

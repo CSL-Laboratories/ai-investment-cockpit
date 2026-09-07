@@ -7,11 +7,18 @@ last-verified: 2026-09-07
 
 # Docs index
 
-## RW-23 post-merge audit repairs — 2026-09-07
+## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
 
-The operator authorized documenting and repairing BUG-146 through BUG-156 in local
-commit slices. See [[evidence/rw23-audit-repair-2026-09-07]] for intake and validation,
-and [[evidence/astra-audit-2026-09-07/AUDIT]] for the frozen baseline findings.
+BUG-146 through BUG-158 are fixed in local commit slices, alongside a measured triage
+optimization and full Discord validation coverage. Independent authority review passed;
+the DEC-09 matrix exposed a replay-fixture hash mismatch against source `6d7d7df`.
+The operator requested a pause for travel. See
+[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]] for the exact restart point;
+the package is not yet fully validated.
+See [[evidence/rw23-audit-repair-2026-09-07]],
+[[evidence/rw24-reliability-2026-09-07]], and
+[[evidence/rw23-rw24-local-matrix-2026-09-07/README]] for changes and evidence.
+The frozen baseline findings remain in [[evidence/astra-audit-2026-09-07/AUDIT]].
 
 ## RW-22 review remediation — 2026-09-07
 
