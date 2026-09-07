@@ -192,12 +192,10 @@ def record_decision(
     # (the reproduced duplicate-execution race). The UNIQUE constraint on ApprovalRecord.
     # interaction_id is the cross-process backstop (caught below).
     with st.lock:
-        # (ii) idempotency FIRST: a replayed interaction_id returns the same record, no 2nd effect.
-        existing = _existing_by_interaction(st, interaction_id)
-        if existing is not None:
-            return existing
-
-        # (i) actor authentication: a foreign user is refused and audited, never minting a record.
+        # (i) actor authentication FIRST: a foreign user is refused and audited, never
+        # minting a record. BUG-133: the idempotency lookup used to run before this
+        # check, so replaying a KNOWN interaction_id disclosed the stored record to an
+        # unauthorized actor with no EVENT_UNAUTHORIZED audit (existence oracle).
         from bridge.operators import is_authorized
         if not is_authorized(actor_user_id, st.settings):
             st.audit.append(
@@ -215,8 +213,32 @@ def record_decision(
 
         # The resolved order's canonical hash — computed for every decision so the audit payload
         # and the approval binding record exactly which order was adjudicated. Fail-closed on a
-        # bad order.
+        # bad order. Computed BEFORE the idempotency lookup so a replay can be checked
+        # against the binding it claims (BUG-133).
         oth = order_tuple_hash(resolved_order)
+
+        # (ii) idempotency: a replayed interaction_id returns the same record, no 2nd effect.
+        # BUG-133: the replay must CLAIM the same adjudication it replays. A replay whose
+        # proposal/risk/decision/tuple binding differs is refused as interaction_conflict
+        # (audited) instead of returning the mismatched record — an approve replayed as a
+        # veto (or across proposals) previously returned the approve and silently lost the
+        # veto. Same-binding replays keep the exact old behavior (same record, no 2nd effect).
+        existing = _existing_by_interaction(st, interaction_id)
+        if existing is not None:
+            if (existing.proposal_id != proposal_id
+                    or existing.risk_decision_id != getattr(risk_decision, "id", None)
+                    or existing.order_tuple_hash != oth
+                    or str(existing.user_decision) != decision):
+                st.audit.append(
+                    EVENT_UNAUTHORIZED, actor=str(actor_user_id),
+                    refs={"proposal_id": proposal_id},
+                    payload={"proposal_id": proposal_id, "interaction_id": interaction_id,
+                             "attempted_decision": user_decision, "surface": surface,
+                             "reason": "interaction_conflict"},
+                )
+                return Rejection("interaction id is already bound to a different adjudication",
+                                 "interaction_conflict", proposal_id, interaction_id)
+            return existing
 
         if decision == "approve":
             # (iv) modal double-confirm for a live order above threshold. BUG-060: the gate

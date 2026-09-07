@@ -164,6 +164,14 @@ _CONDITIONAL_OUTCOME = re.compile(
 _NEGATED_ASSERTION = re.compile(
     r"\b(?:not|never|no|neither|nor|false|falsely|incorrectly|untrue|denied|denies|deny|refuted)\b"
 )
+# BUG-140 / RW-22: exempt only these complete settlement clauses. The short
+# participial form requires "with": bare "no fractional shares issued ..." can
+# instead be a subject whose payment is denied. Never erase "not" or "may"
+# inside an apparent issuance clause, or accept unfamiliar clause continuations.
+_CASH_BENIGN_NO = re.compile(
+    r"\b(?:with\s+no\s+fractional\s+shares\s+issued|"
+    r"no\s+fractional\s+shares\s+will\s+be\s+issued)(?=\s*(?:[,;]|$))"
+)
 _MERGER_AMENDMENT = re.compile(
     r"(?:amend(?:ed|ment|ments|ing)?[^.]{0,80}(?:merger|transaction)|"
     r"(?:merger|transaction)[^.]{0,80}amend(?:ed|ment|ments|ing)?)"
@@ -216,10 +224,12 @@ def _assertion_matches(pattern: re.Pattern, text: str):
             continue
         for match in pattern.finditer(sentence):
             context = sentence[:match.start()] + " " + sentence[match.end():]
-            # A month named May in the matched date is not a modal assertion. Cash's
-            # wide subject-to-verb span, however, is not exempt from negation checks.
+            # BUG-140 / RW-22: cash's wide subject-to-verb span is not exempt from
+            # qualification checks. A denial or condition can govern the payment
+            # from anywhere in its sentence, including after a long parenthetical.
+            # Retain the whole sentence, removing only pinned settlement boilerplate.
             if pattern is _CASH:
-                context = sentence
+                context = _CASH_BENIGN_NO.sub(" ", sentence)
             if not (_NEGATED_ASSERTION.search(context) or _CONDITIONAL_OUTCOME.search(context)):
                 yield match
 

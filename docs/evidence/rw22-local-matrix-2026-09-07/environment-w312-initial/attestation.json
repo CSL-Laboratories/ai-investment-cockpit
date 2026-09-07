@@ -1,0 +1,78 @@
+{
+  "archive_sha256": "754f4198066a4b4efcb5361f6de6eb94fd437c244dbe47e530748d5254c39f8e",
+  "artifacts_sha256": {
+    "dependencies.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pip-check.log": "672aec65a45bed50e70229c70934a7eebf0462595c459b83023027645d57cccf",
+    "pytest.log": "0bfd82fa5e12560026d7430a665c8a827e616b82620a3f4a807c2db360674954",
+    "ruff.log": "e3d765d5e67da55cd49ce2602350063def322d2621a28b45c1371eec87ba07f4",
+    "source-manifest.json": "9c542bfc91c580794c89afe8e90358739b94bc5d85844c484db87c8fd0efa69d",
+    "version.log": "5121fbc50e5ec70f01f8b2f792a98dad7371da89f6b3faef0ac750cbe5096c1e"
+  },
+  "checks": [
+    {
+      "argv": [
+        "C:\\t\\a26\\env312\\Scripts\\python.exe",
+        "-VV"
+      ],
+      "duration_seconds": 0.06,
+      "name": "version",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env312\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "freeze"
+      ],
+      "duration_seconds": 2.03,
+      "name": "dependencies",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env312\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "check"
+      ],
+      "duration_seconds": 0.89,
+      "name": "pip-check",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env312\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "duration_seconds": 0.09,
+      "name": "ruff",
+      "returncode": 1
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env312\\Scripts\\python.exe",
+        "-m",
+        "pytest",
+        "-q",
+        "-ra",
+        "--junitxml=C:\\t\\r22\\w312\\pytest.xml"
+      ],
+      "duration_seconds": 0.09,
+      "name": "pytest",
+      "returncode": 1
+    }
+  ],
+  "commit": "cacaff4f88753227a2d59a4bc51c82e39bfb5eef",
+  "completed_utc": "2026-09-07T21:21:22Z",
+  "executable": "C:\\t\\a26\\env312\\Scripts\\python.exe",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Sep  1 2026, 14:17:39) [MSC v.1944 64 bit (AMD64)]",
+  "source_file_count": 657,
+  "started_utc": "2026-09-07T21:21:08Z",
+  "tracked_source_changed": [],
+  "tree": "2207c2cc83783f82701e7b39669491c9a5cb5eaa"
+}

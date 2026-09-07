@@ -101,35 +101,27 @@ def hard_bounds(settings) -> dict:
 
 
 def current_limits(state) -> dict:
-    """The effective runtime limits: Settings defaults overlaid with the most recent
-    HMAC-VERIFIED ``EVENT_LIMITS_CHANGE`` audit payload (SEC-15 / SEC-21 audited source of
-    truth). A keyless DB-writer can forge or mutate a ``limits_change`` row to inflate the
-    deep budget or drop the triage threshold, so every candidate row must pass
-    ``verify_entry`` before it may take effect. We walk rows newest-first and apply the FIRST
-    that verifies; an unverified latest row is SKIPPED (never allowed to loosen the effective
-    limits) in favour of the most recent verified row, else the conservative Settings default
-    baseline (budget 5 / threshold 60). Fail closed: a tampered row can only tighten by being
-    ignored, never loosen."""
-    with state.session_factory() as s:
-        rows = s.execute(
+    """Read the latest committed limits from one verified snapshot (SEC-15 / SEC-21).
+
+    BUG-126 / RW-22: verifying only through a surviving candidate misses a later erased
+    tightening. Verify the complete committed prefix through its signed high-water,
+    then select from that SAME snapshot. Only forged rows appended above an intact
+    committed history may be ignored; any damage within it yields the tightest floor.
+    """
+    with state.session_factory() as s, s.begin():
+        verified = state.audit.verify_committed_prefix_session(s)
+        if not verified.ok:
+            return fail_closed_limits(state.settings)
+        candidate = s.execute(
             select(AuditEntry)
-            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE)
+            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE,
+                   AuditEntry.seq <= verified.head_seq)
             .order_by(AuditEntry.seq.desc())
-        ).scalars().all()
-    limits = default_limits(state.settings)
-    for row in rows:
-        if not state.audit.verify_entry(row):
-            continue   # forged/mutated row -> ignore (fail closed); do not loosen
-        if (row.payload or {}).get("limits"):
-            limits.update(row.payload["limits"])
-        return limits  # first verified row (newest-first) is the audited source of truth
-    # SEC-21 round-3: NO verified EVENT_LIMITS_CHANGE row. If the chain verifies, the operator
-    # genuinely never tightened -> the Settings defaults are authoritative. But a keyless writer
-    # can DELETE (seq gap) or byte-flip (HMAC break) a genuine SUB-DEFAULT tightening; the
-    # per-row skip above then silently reverts to the LOOSER default (deep budget 5->2 erased ->
-    # back to 5), a loosening. A full-chain scan catches that tamper regardless of the
-    # event_type filter, so if the chain does not verify we FAIL CLOSED to the tightest floor —
-    # an erased tightening can only tighten, never loosen.
-    if not state.audit.verify_chain().ok:
-        return fail_closed_limits(state.settings)
-    return limits
+            .limit(1)
+        ).scalar_one_or_none()
+        if candidate is None and verified.ignored_forged_tail:
+            return fail_closed_limits(state.settings)
+        limits = default_limits(state.settings)
+        if candidate is not None and (candidate.payload or {}).get("limits"):
+            limits.update(candidate.payload["limits"])
+        return limits

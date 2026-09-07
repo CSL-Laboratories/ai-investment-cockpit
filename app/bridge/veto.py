@@ -33,6 +33,17 @@ from orchestrator.state import EVENT_ADJUDICATION
 DEFAULT_VETO_WINDOW_SECONDS = 300.0
 
 
+def _halt_active() -> bool:
+    """BUG-138: fail-closed HALT probe for the veto path. The gateway wraps every probe
+    so a probe fault reads as SET; resolve() called halt_is_set directly, so a probe
+    fault (a relative halt-path pin, a monkeypatched seam) propagated instead of
+    failing closed. Any fault here refuses the mint."""
+    try:
+        return halt_is_set(default_halt_path())
+    except Exception:   # noqa: BLE001 - fail closed: any probe fault => HALT treated as SET
+        return True
+
+
 @dataclass
 class VetoTicket:
     proposal_id: str
@@ -236,7 +247,11 @@ class AutoVetoCoordinator:
                 return VetoResolution(False, "vetoed", proposal_id)
 
             # SEC-01 / mode re-check, atomic: HALT, live mode, injection breaker.
-            if halt_is_set(default_halt_path()):
+            # BUG-138: the HALT file never takes st.lock, so an out-of-band --set landing
+            # between this probe and the mint below minted an auto-exec token DURING halt
+            # (the token then survived to execute after the halt cleared with no fresh
+            # consent). Re-probe immediately before minting so no token is born under HALT.
+            if _halt_active():
                 ticket.resolved = True
                 return VetoResolution(False, "halt", proposal_id)
 
@@ -252,14 +267,38 @@ class AutoVetoCoordinator:
                 ticket.resolved = True
                 return VetoResolution(False, "breaker", proposal_id)
 
+            # Final fail-closed re-probe: HALT set during the mode/breaker checks above
+            # must still cancel the mint (same TOCTOU discipline as the gateway's
+            # pre-broker re-probes).
+            if _halt_active():
+                ticket.resolved = True
+                return VetoResolution(False, "halt", proposal_id)
+
             # Clean: mint the single-use submit token (the auto_veto equivalent of an approval)
             # and audit the adjudication so the gate counts it (decision='approve', auto=True).
-            nonce = f"vetotok_{proposal_id}_{int(ticket.delivered_at_monotonic)}"
-            token = self.token_registry.mint(
-                nonce=nonce, proposal_id=proposal_id,
-                risk_decision_id=ticket.risk_decision_id,
-                order_tuple_hash=ticket.order_tuple_hash,
-            )
+            # BUG-138b: full-precision delivery instant in the nonce (int() truncation made
+            # two tickets delivered in the same second collide), and the mint is guarded:
+            # a duplicate-nonce raise previously escaped out of the lock with the ticket
+            # left unresolved and no audit row. A failed mint now fails closed with cover.
+            nonce = f"vetotok_{proposal_id}_{ticket.delivered_at_monotonic!r}"
+            try:
+                token = self.token_registry.mint(
+                    nonce=nonce, proposal_id=proposal_id,
+                    risk_decision_id=ticket.risk_decision_id,
+                    order_tuple_hash=ticket.order_tuple_hash,
+                )
+            except Exception as exc:   # noqa: BLE001 - a failed mint must not execute
+                self.st.audit.append(
+                    EVENT_ADJUDICATION, actor="auto_veto",
+                    refs={"proposal_id": proposal_id},
+                    payload={"decision": "veto", "proposal_id": proposal_id,
+                             "risk_decision_id": ticket.risk_decision_id,
+                             "order_tuple_hash": ticket.order_tuple_hash,
+                             "actor": "auto_veto", "auto": True,
+                             "reason": f"veto-token mint failed: {exc}"},
+                )
+                ticket.resolved = True
+                return VetoResolution(False, "token_mint_failed", proposal_id)
             self.st.audit.append(
                 EVENT_ADJUDICATION, actor="auto_veto",
                 refs={"proposal_id": proposal_id},

@@ -21,17 +21,33 @@ def _frame_id(msg: dict):
     return msg.get("id", msg.get("ID"))
 
 
+def _synthetic_id(msg: dict) -> str:
+    """Distinct stable id for an id-less frame. BUG-137: every id-less frame shared
+    article_id="synthetic", so distinct stories in one persist batch shared one
+    {source}:{article_id} identity and persist_events dropped all but the first as
+    duplicates. Binding the content hash keeps distinct payloads distinct while
+    identical redeliveries still dedupe."""
+    return "synthetic:" + content_hash([
+        msg.get("headline"), msg.get("created_at"), msg.get("summary"),
+        msg.get("content"), msg.get("symbols"),
+    ])
+
+
 def _dedup_key(msg: dict, aid) -> str:
     if aid is not None:
         return f"alpaca:benzinga:{aid}"
-    return "alpaca:benzinga:syn:" + content_hash([msg.get("headline"), msg.get("created_at")])
+    # BUG-137b: the consumer key bound headline+timestamp only, so two DIFFERENT
+    # id-less stories under one headline/ts shared a key and the second never
+    # emitted. Same content binding as the synthetic id: distinct payloads stay
+    # distinct, identical redeliveries still dedupe.
+    return f"alpaca:benzinga:{_synthetic_id(msg)}"
 
 
 def _to_event(msg: dict) -> dict:
     aid = _frame_id(msg)
     return to_market_event(
         source="alpaca:benzinga",
-        article_id=aid if aid is not None else "synthetic",
+        article_id=aid if aid is not None else _synthetic_id(msg),
         symbols=msg.get("symbols", []),
         headline=msg.get("headline", ""),
         summary=msg.get("summary") or msg.get("content", ""),

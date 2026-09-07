@@ -23,6 +23,7 @@ from brokers.order_state_machine import transition
 from brokers.paper_performance import EASTERN, reconstruct_paper_performance
 from config.models import configured_decision_runtime
 from core.proposal_authority import proposal_payload_hash
+from quant.events import to_ns
 from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThresholds
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
@@ -138,13 +139,14 @@ class PaperExecutionService:
                     actor="paper_performance",
                 ))
         else:
-            if engine.is_watch_only("paper_performance"):
+            if engine.can_recover_watch_only("paper_performance"):
                 event, _mode = engine.recover_from_watch_only(
                     "paper_performance",
                     ModeLadder(self.state).current(),
                     actor="paper_performance",
                 )
-                events.append(event)
+                if event is not None:
+                    events.append(event)
             thresholds = BreakerThresholds(
                 daily_equity_drawdown_limit=Decimal(str(
                     current_limits(self.state)["daily_loss_limit"]
@@ -403,9 +405,12 @@ class PaperExecutionService:
             # path. Losing the service's market-data attachment later must not silently turn
             # approval-time risk back into the legacy additive posture.
             require_composed = market_data is not None or require_w21
+            # BUG-128: arm the verdict-age ceiling with the approval-time clock, same as
+            # the drafting composition in workflows/proposals.py.
             ctx = build_risk_context(
                 self.state, quote=quote, watchlist=self._watchlist(),
                 quant_verdict=verdict, quant_book_seq=book_seq,
+                quant_verdict_now_ns=to_ns(self.state.clock.now()),
                 require_quant_verdict=require_composed,
                 require_net_edge=require_composed,
                 snapshot=snapshot,

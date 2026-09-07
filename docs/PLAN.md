@@ -183,6 +183,32 @@ remains blocked until the M1–M4.5 gates actually pass.
 
 ## 1. What we are building
 
+### RW-22 review remediation — 2026-09-07
+
+The operator authorized fixes, subagent review, documentation and commits for the five
+findings against local `work/bugfix-audit-2026-09-07` at `0809a61`. This bounded follow-up
+uses that reviewed branch as its explicit unmerged predecessor (base `cf2bcec`), preserving
+the work being reviewed rather than claiming it is already merged or production-ready.
+
+1. **Operator change:** denied cash claims cannot produce a verified edge; inconsistent
+   simulated fills stop with an audited failure; damaged limit history stays conservative;
+   equivalent persisted monetary facts render correctly; global integrity faults cannot
+   repeatedly manufacture vendor recoveries.
+2. **Existing paths:** merger semantics, contained AutoLoop, audited limits, bridge risk
+   rendering and watch-only recovery. No additional execution path or authority is created.
+3. **Retirement:** remove the cash qualifier window and blanket fill-error suppression;
+   replace the limits fallback's partial-history proof and ambiguous recovery predicate use.
+4. **Reachability:** signed-source edge-provider refusal, full simulated event sequence,
+   ledger mutation/deletion with a surviving later entry, persisted rendering round trip,
+   and healthy scheduler polls under a restored integrity fault.
+5. **Claim:** `RW-22`; retain the original BUG-126/131/136/139/140 identifiers for traceability.
+6. **Platforms:** full native Windows and Ubuntu/WSL2 Python 3.11/3.12 matrix, isolated
+   project environments and short temporary paths; fresh independent adversarial review.
+7. **Bound:** five reviewed defects and their direct integration consequences, regression
+   tests and evidence. No soak, source capture, witness provisioning or live activation.
+
+Implementation and validation are recorded in [[evidence/rw22-review-remediation-2026-09-07]].
+
 **A human-gated, paper-first investing copilot with two engines**, per [[CLAUDE]]:
 
 1. **Awareness + discipline** — the reliable value. Time saved, things not missed, discipline

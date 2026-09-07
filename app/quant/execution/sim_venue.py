@@ -133,6 +133,11 @@ class SimVenue:
     cancelled: int = field(default=0, init=False)
     expired_in_flight: int = field(default=0, init=False)
     cancel_misses: int = field(default=0, init=False)
+    # Cancels the venue CONFIRMED since the last drain (BUG-139). A traveling cancel is
+    # only a request until it arrives; the loop marks its OMS order cancelled when it
+    # drains the confirmation, so a fill that lands first is a legitimate fill of a
+    # live order — not a crash and not a silently dropped fill.
+    _confirmed_cancels: list[str] = field(default_factory=list, init=False, repr=False)
 
     _HISTORY_LEVELS = 10
 
@@ -168,6 +173,11 @@ class SimVenue:
         it can genuinely arrive after the order has traded (a miss, counted). ``ts=0``
         (the pre-existing instant path used by direct/unit callers) keeps the old
         semantics, as does an instant latency model.
+
+        A traveling cancel for an id the venue holds nowhere stays "accepted for
+        transmission" and counts a miss at arrival (pinned by
+        test_cancel_that_arrives_too_late_is_a_counted_miss) — the arrival-time
+        accounting, not the send-time return, is the miss signal.
         """
         if self.latency.cancel_ns and ts:
             self._seq += 1
@@ -204,6 +214,14 @@ class SimVenue:
             return True
         for pending in self._pending:
             if pending.intent.client_id == client_id:
+                # BUG-139: the resting branch validates; the pending branch did not — a
+                # reprice-to-zero staged a poisoned intent that crashed advance() with
+                # "aggressive order must have positive qty". Refuse it here so the
+                # caller counts a miss instead of killing the run.
+                if new_qty is not None and new_qty <= 0:
+                    return False
+                if new_price_ticks is not None and new_price_ticks <= 0:
+                    return False
                 pending.intent = replace(
                     pending.intent,
                     qty=new_qty if new_qty is not None else pending.intent.qty,
@@ -249,10 +267,25 @@ class SimVenue:
                 self._pending.remove(payload)
                 outcomes.append(self._apply(payload, ts))
             else:
-                if not self._cancel_now(payload):
+                if self._cancel_now(payload):
+                    # BUG-139: the cancel genuinely arrived and withdrew a live order —
+                    # confirm it so the loop can retire its OMS view. A miss (already
+                    # traded away) is counted, as before.
+                    self._confirmed_cancels.append(payload)
+                else:
                     self.cancel_misses += 1     # the race, lost: it filled before the cancel
             self._record_state(arrive)          # BUG-079: history at each mutation instant
         return outcomes
+
+    def drain_confirmed_cancels(self) -> list[str]:
+        """Take-and-clear the cancel confirmations since the last drain (BUG-139).
+
+        The loop calls this after every ``advance`` and retires its OMS view of each
+        confirmed id. Confirmations are venue truth — the cancel ARRIVED — so they are
+        the only thing that may move a live simulated order to cancelled.
+        """
+        confirmed, self._confirmed_cancels = self._confirmed_cancels, []
+        return confirmed
 
     def _apply(self, pending: _Pending, ts: int) -> VenueOutcome:
         intent = pending.intent

@@ -382,7 +382,7 @@ class IngestRunner:
                     FEED_EDGAR, reason, clock=self._clock, actor="edgar-pipeline"
                 )
             return
-        if engine.is_watch_only(FEED_EDGAR):
+        if engine.can_recover_watch_only(FEED_EDGAR):
             engine.recover_from_watch_only(
                 FEED_EDGAR,
                 ModeLadder(self._state).current(),

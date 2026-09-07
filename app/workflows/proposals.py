@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 from sqlalchemy import select
 
@@ -99,6 +99,7 @@ on a finer grid and a verdict computed on the wrong scale misreads every price."
 
 def build_risk_context(state, *, quote, watchlist: frozenset[str],
                        quant_verdict=None, quant_book_seq=None,
+                       quant_verdict_now_ns: int | None = None,
                        require_quant_verdict: bool = False,
                        require_net_edge: bool = False, snapshot=None) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
@@ -159,6 +160,9 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
         # market-data seams and arms both W-21 requirements at the call site below.
         quant_verdict=quant_verdict,
         quant_book_seq=quant_book_seq,
+        # BUG-128: arm the verdict-age ceiling with the composition clock. A verdict
+        # priced minutes ago against an unmoved book must read stale, not fresh.
+        quant_verdict_now_ns=quant_verdict_now_ns,
         require_quant_verdict=require_quant_verdict,
         require_net_edge=require_net_edge,
     )
@@ -460,6 +464,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     ctx = build_risk_context(
         state, quote=quote, watchlist=watchlist,
         quant_verdict=verdict, quant_book_seq=book_seq,
+        quant_verdict_now_ns=to_ns(clock.now()),
         require_quant_verdict=(
             book_fn is not None or observation_fn is not None or metrics_fn is not None
         ),
@@ -470,7 +475,11 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     rd_row = RiskDecision(
         id=new_id("rd"), proposal_id=pid, decision=rd["decision"], checks=rd["checks"],
         failed_checks=rd["failed_checks"], warnings=rd["warnings"],
-        max_allowed_notional=_dec(rd["max_allowed_notional"]),
+        # BUG-136: sign and persist identical cents; a rounded-up display must never
+        # advertise more headroom than the deterministic risk calculation allowed.
+        max_allowed_notional=_dec(rd["max_allowed_notional"]).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        ),
         human_required=bool(rd["human_required"]), evaluated_at=now, created_at=now,
         # Stored on the ROW, not only in the audit payload — see the column's docstring. This
         # is what lets the operator embed show execution quality at all under SEC-17: the
@@ -481,7 +490,21 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # why a decision went the way it did. Serialised via ``as_dict`` (JSON-native only) —
     # the audit chain's canonical encoder has no ``default=`` and fails closed on anything
     # it cannot encode rather than guessing.
-    rd_payload = {"proposal_id": pid, "decision": rd["decision"]}
+    # BUG-136: the payload ALSO carries the full rendered risk-fact set (checks, failed
+    # checks, warnings, ceiling, human flag). The operator embed renders from the mutable
+    # RiskDecision ROW, so without a signed copy of those facts a keyless DB writer could
+    # repaint the row and the operator would see forged risk facts. bridge/embeds
+    # reconciles the row against this signed copy at render time and refuses to display
+    # on mismatch.
+    rd_payload = {
+        "proposal_id": pid,
+        "decision": rd["decision"],
+        "checks": rd["checks"],
+        "failed_checks": rd["failed_checks"],
+        "warnings": rd["warnings"],
+        "max_allowed_notional": str(rd_row.max_allowed_notional),
+        "human_required": bool(rd["human_required"]),
+    }
     if verdict is not None:
         rd_payload["execution_verdict"] = verdict.as_dict()
     state.audit.record_state_change(rd_row, "risk_decision", actor="risk", payload=rd_payload)
@@ -516,7 +539,11 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         item = resolve_raw(parquet_root, str(ref), state=state)
         return escape_untrusted(str(item.get("headline", "")))[:200]
 
-    embed = render_proposal_embed(record.payload, rd_row, raw_excerpt_fn=_excerpt)
+    embed = render_proposal_embed(record.payload, rd_row, raw_excerpt_fn=_excerpt,
+                                    # BUG-136: same-tick signed copy (just written above);
+                                    # the later Discord read in bridge/bot.py reconciles
+                                    # against the verified chain copy instead.
+                                    audit_facts=rd_payload)
     # Server-derived id consumed by the authenticated Discord /paper surface. The model
     # cannot select, omit, or rewrite this binding.
     embed["order_id"] = order_row.id if order_row is not None else None

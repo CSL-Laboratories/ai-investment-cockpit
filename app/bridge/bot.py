@@ -18,7 +18,7 @@ import json
 from typing import Any, Callable
 
 from bridge import approval as _approval
-from bridge.embeds import render_proposal_embed
+from bridge.embeds import render_proposal_embed, verified_risk_facts
 from bridge.operators import is_authorized
 
 try:  # discord.py is optional at import time (SEC/testability: core has no discord dependency).
@@ -65,7 +65,12 @@ class ProposalControls:
 
     def render(self, proposal: dict) -> dict:
         risk = self._resolve_risk(proposal["proposal_id"])
-        return render_proposal_embed(proposal, risk, self._raw_excerpt_fn)
+        # BUG-136: reconcile the mutable row against its HMAC-verified signed copy.
+        # A None copy (no verified entry covers the row) renders UNVERIFIED, not the
+        # row's facts — a keyless repaint of the row cannot reach the operator's eyes.
+        facts = verified_risk_facts(self.st, getattr(risk, "id", None))
+        return render_proposal_embed(proposal, risk, self._raw_excerpt_fn,
+                                     audit_facts=facts if facts is not None else {})
 
     def on_decision(self, interaction: Any, proposal_id: str, decision: str, *,
                     modal_confirmed: bool = False, notional=None):

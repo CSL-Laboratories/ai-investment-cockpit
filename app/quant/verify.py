@@ -333,6 +333,22 @@ def _empty_verdict(*, symbol: str, side: str, effect: PositionEffect | None, qty
 
 
 def _validate_params(params: VerifyParams) -> str | None:
+    # BUG-134: NaN thresholds used to raise InvalidOperation out of the comparisons
+    # below (a misconfiguration crashing the verifier) and an inverted
+    # marginal/uneconomic pair silently made MARGINAL unreachable. Both fail closed to
+    # an insufficient-data verdict now.
+    def _ok_decimal(value) -> bool:
+        return isinstance(value, Decimal) and value.is_finite()
+
+    if not all((
+        _ok_decimal(params.max_adv_participation),
+        _ok_decimal(params.impact_coefficient_y),
+        _ok_decimal(params.sensitivity_low_y),
+        _ok_decimal(params.min_net_cost_multiple),
+        _ok_decimal(params.marginal_cost_bps),
+        _ok_decimal(params.uneconomic_cost_bps),
+    )):
+        return "execution-verification thresholds must be finite decimals"
     checks = (
         (params.max_adv_participation > 0
          and params.max_adv_participation <= Decimal("0.10"),
@@ -346,6 +362,8 @@ def _validate_params(params: VerifyParams) -> str | None:
          and params.min_net_cost_multiple <= Decimal("3.0"),
          "net-to-cost multiple must be in [2.0, 3.0]"),
         (params.max_metrics_age_days >= 0, "metrics age limit must be non-negative"),
+        (params.marginal_cost_bps < params.uneconomic_cost_bps,
+         "marginal cost threshold must be below the uneconomic threshold"),
     )
     return next((reason for passed, reason in checks if not passed), None)
 
@@ -550,10 +568,23 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
                     expected_edge: EdgeEstimate | None = None,
                     borrow_quote: BorrowQuote | None = None,
                     now_ns: int | None = None) -> QuantVerdict:
-    """Price one proposal from injected L1/ADV/volatility/edge/borrow inputs."""
+    """Price one proposal from injected L1/ADV/volatility/edge/borrow inputs.
+
+    BUG-135: ``now_ns`` is the evaluation clock and is REQUIRED. It used to default to
+    the book's own timestamp, which made every staleness check self-referential and
+    vacuous — any caller omitting the clock priced arbitrarily old books as fresh.
+    Callers without a clock get INSUFFICIENT_DATA, never a priced verdict.
+    """
     symbol = str(proposal.get("symbol", book.symbol))
     side_raw = str(proposal.get("side", ""))
-    ts = now_ns if now_ns is not None else book.ts
+    if now_ns is None:
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=_effect_for(proposal, position_effect),
+            qty=0, book_seq=book.seq, ts=book.ts,
+            reason="evaluation clock (now_ns) is required; refusing to price a book "
+                   "with no staleness bound",
+        )
+    ts = now_ns
     effect = _effect_for(proposal, position_effect)
     if side_raw not in {"buy", "sell"} or effect is None:
         return _empty_verdict(
@@ -586,18 +617,17 @@ def verify_proposal(proposal: dict, book: BookSnapshot, params: VerifyParams, *,
             symbol=symbol, side=side_raw, effect=effect, qty=0,
             book_seq=book.seq, ts=ts, reason="one-sided or empty L1 book",
         )
-    if now_ns is not None:
-        if book.ts > now_ns:
-            return _empty_verdict(
-                symbol=symbol, side=side_raw, effect=effect, qty=0,
-                book_seq=book.seq, ts=ts, reason="book snapshot is future-dated",
-            )
-        if now_ns - book.ts > params.max_staleness_ns:
-            return _empty_verdict(
-                symbol=symbol, side=side_raw, effect=effect, qty=0,
-                book_seq=book.seq, ts=ts,
-                reason=f"book snapshot is {(now_ns - book.ts) / 1e9:.1f}s stale",
-            )
+    if book.ts > now_ns:
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=effect, qty=0,
+            book_seq=book.seq, ts=ts, reason="book snapshot is future-dated",
+        )
+    if now_ns - book.ts > params.max_staleness_ns:
+        return _empty_verdict(
+            symbol=symbol, side=side_raw, effect=effect, qty=0,
+            book_seq=book.seq, ts=ts,
+            reason=f"book snapshot is {(now_ns - book.ts) / 1e9:.1f}s stale",
+        )
 
     bid_ticks = book.bids[0].price_ticks
     ask_ticks = book.asks[0].price_ticks

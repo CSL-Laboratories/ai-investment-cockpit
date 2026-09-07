@@ -19,6 +19,7 @@ refused (``assert_fresh_analysis``, SEC-23). Recovery from watch-only is fail-cl
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -94,7 +95,21 @@ class BreakerSignals:
 
 
 # ---- pure predicates (deterministic; no I/O) ------------------------------------------
+# BUG-130: non-finite signals fail CLOSED (trip). A NaN drawdown is "cannot prove the
+# loss is within limits", not "no loss"; a NaN data age is "cannot prove freshness",
+# not "fresh". (Decimal NaN `>` would otherwise raise InvalidOperation out of the
+# triage tick; float NaN `>` would silently read healthy.)
+def _breach_unreadable(value) -> bool:
+    try:
+        d = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return True
+    return not d.is_finite()
+
+
 def breach_daily_equity_drawdown(drawdown, limit) -> bool:
+    if _breach_unreadable(drawdown) or _breach_unreadable(limit):
+        return True
     return _dec(drawdown) > _dec(limit)
 
 
@@ -107,7 +122,16 @@ def breach_schema_failures(failures: int, total: int, rate: float, min_sample: i
 
 
 def breach_stale_data(age_s: float, limit_s: float) -> bool:
-    return age_s > limit_s
+    # BUG-130: float NaN comparisons never raise but always read False (healthy) — an
+    # unreadable age must trip, not pass. The at-limit boundary stays strict `>`
+    # (age exactly 120.0s is fresh; pinned by test_core).
+    try:
+        age, lim = float(age_s), float(limit_s)
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(age) or not math.isfinite(lim):
+        return True
+    return age > lim
 
 
 def breach_broker_errors(errors: int, limit: int) -> bool:
@@ -283,7 +307,15 @@ class BreakerEngine:
 
         ``degraded`` already prevents the runner from dispatching.  Treating it as order-safe
         would let a restored health fault block fresh analysis while old analysis kept trading.
+
+        BUG-131: a set ``integrity_error`` (contradictory/unverifiable watch-only ledger at
+        startup) disables EVERY vendor view, not just the global one. Otherwise a
+        per-vendor ``is_watch_only("claude")`` read False over a ledger the composer
+        already proved untrustworthy, and ``_assert_fresh_analysis`` minted approval
+        authority underneath it.
         """
+        if getattr(self.st.usage, "integrity_error", None):
+            return True
         if vendor is not None:
             return self.st.usage.window(vendor).state != "ok"
         return any(w.state != "ok" for w in self.st.usage._w.values())
@@ -291,13 +323,32 @@ class BreakerEngine:
     def current_generation(self, vendor: str) -> int:
         return self.st.usage.window(vendor).generation
 
+    def can_recover_watch_only(self, vendor: str) -> bool:
+        """A healthy vendor can recover only its own trustworthy non-ok window.
+
+        BUG-131 / RW-22: global integrity failure disables every vendor's order view,
+        but fresh quotes or a healthy EDGAR poll cannot repair that failed authority.
+        Keep this transition predicate separate from ``is_watch_only``.
+        """
+        return (not getattr(self.st.usage, "integrity_error", None)
+                and self.st.usage.window(vendor).state != "ok")
+
     def assert_fresh_analysis(self, vendor: str, analysis_generation: int) -> None:
         """SEC-23 — require an exact current generation.
 
         Older analysis predates a blackout/reset.  A future or malformed integer is not
         authority either: accepting ``>=`` would let a mutable/forged caller skip ahead of the
         signed ledger and make the real next generation look stale.
+
+        BUG-131: refuse outright when the usage ledger failed integrity restoration, even
+        if this vendor's window happens to read current. A contradictory ledger means no
+        per-vendor generation value is trustworthy.
         """
+        if getattr(self.st.usage, "integrity_error", None):
+            raise StaleAnalysisError(
+                f"watch-only ledger integrity failure for {vendor}: "
+                f"{self.st.usage.integrity_error} (SEC-23)"
+            )
         cur = self.current_generation(vendor)
         if (isinstance(analysis_generation, bool)
                 or not isinstance(analysis_generation, int)
@@ -308,19 +359,29 @@ class BreakerEngine:
             )
 
     def recover_from_watch_only(self, vendor: str, prev_state, *, clock=None,
-                                actor="system") -> tuple[SystemEvent, Mode]:
+                                actor="system") -> tuple[SystemEvent | None, Mode]:
         """Exit watch-only: replenish the window (new generation, so anything minted during
         the blackout is also invalidated) and recover FAIL-CLOSED to ``review_live`` — never
-        the prior auto mode (SEC-23)."""
+        the prior auto mode (SEC-23). Return no event for a healthy window or unresolved
+        global integrity failure; neither condition is a vendor recovery."""
         clock = clock or self.st.clock
-        w = self.st.usage.window(vendor)
-        w.state = "ok"
-        w.generation += 1
-        mode_after = self._ladder.recover(prev_state, clock=clock, actor=actor)
-        self.st.audit.append(
-            EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
-            payload={"vendor": vendor, "state": "ok", "generation": w.generation,
-                     "recovered": True, "mode_after": mode_after.value},
-        )
-        event = SystemEvent("#system", "watch_only", None, "recovered", mode_after.value, clock.now())
-        return event, mode_after
+        with self.st.lock:
+            # Recheck centrally: callers may race another successful recovery after
+            # deciding to recover. Only one transition may advance the generation.
+            if not self.can_recover_watch_only(vendor):
+                return None, self._ladder.current()
+            w = self.st.usage.window(vendor)
+            recovered_generation = w.generation + 1
+            mode_after = self._ladder.recover(prev_state, clock=clock, actor=actor)
+            self.st.audit.append(
+                EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
+                payload={"vendor": vendor, "state": "ok", "generation": recovered_generation,
+                         "recovered": True, "mode_after": mode_after.value},
+            )
+            # Publication follows the signed transition. If either the ladder or audit
+            # write fails, the exhausted window remains recoverable on the next attempt.
+            w.state = "ok"
+            w.generation = recovered_generation
+            event = SystemEvent("#system", "watch_only", None, "recovered",
+                                mode_after.value, clock.now())
+            return event, mode_after

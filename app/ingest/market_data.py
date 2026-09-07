@@ -12,6 +12,7 @@ poll; the last good price is retained for operator inspection but cannot authori
 from __future__ import annotations
 
 import math
+import re
 import statistics
 import threading
 from dataclasses import dataclass
@@ -34,6 +35,21 @@ from storage.parquet_store import (
 ANNUAL_TRADING_DAYS = 252
 DEFAULT_BAR_LIMIT = 60
 DEFAULT_TICK_SIZE = Decimal("0.01")
+
+# BUG-141: the symbol universe reaches filesystem paths (parquet snapshot keys) and quote
+# identities with only strip().upper() normalization. A malformed holding/discovery
+# symbol ("../x", "a/b") would escape the raw root on read AND write. Same shape as the
+# operator watchlist gate (config.settings._WATCHLIST_SYMBOL), enforced at both universe
+# entries: constructor (fail closed) and discovery refresh (drop + fault, fail closed).
+_TICKER = re.compile(r"^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*$")
+
+
+def _check_ticker(symbol: str) -> str:
+    """Normalize + validate one universe symbol. Raises MarketDataError (fail closed)."""
+    clean = str(symbol).strip().upper()
+    if len(clean) > 10 or not _TICKER.fullmatch(clean):
+        raise MarketDataError(f"invalid universe symbol {symbol!r}")
+    return clean
 
 
 class MarketDataError(RuntimeError):
@@ -143,7 +159,7 @@ class MarketDataService:
                  max_age_s: float = 120.0,
                  tick_size: Decimal = DEFAULT_TICK_SIZE) -> None:
         normalized = tuple(sorted({
-            str(s).strip().upper() for s in symbols if str(s).strip()
+            _check_ticker(s) for s in symbols if str(s).strip()
         }))
         if not normalized and additional_symbols_fn is None:
             raise MarketDataError("market data requires an explicit or discoverable symbol universe")
@@ -206,14 +222,19 @@ class MarketDataService:
         if self._additional_symbols_fn is None:
             return self.symbols
         try:
-            extra = tuple(sorted({
-                str(symbol).strip().upper()
-                for symbol in self._additional_symbols_fn()
-                if str(symbol).strip()
-            }))
+            raw_extra = tuple(self._additional_symbols_fn())
         except Exception:  # noqa: BLE001 - unknown holdings cannot grant order authority
             with self._lock:
                 self._universe_fault = "additional_symbol_discovery_unavailable"
+                return self._symbols
+        # BUG-141: discovery output is the less-trusted symbol source — validate each
+        # entry. An invalid entry faults the universe (fail closed) rather than joining
+        # a path traversal to the raw store.
+        try:
+            extra = tuple(sorted({_check_ticker(s) for s in raw_extra if str(s).strip()}))
+        except MarketDataError:
+            with self._lock:
+                self._universe_fault = "additional_symbol_discovery_invalid"
                 return self._symbols
 
         combined = tuple(dict.fromkeys((*self._base_symbols, *extra)))
@@ -254,6 +275,10 @@ class MarketDataService:
 
     @staticmethod
     def _raw_quote(quote: dict, book: BookSnapshot) -> dict:
+        # BUG-142: sizes were re-coerced from the RAW wire value with int(...), so a
+        # vendor spelling a whole-share size as a decimal STRING ("10.0", which
+        # _positive_size accepts via Decimal equality) raised ValueError here and faulted
+        # the symbol. Coerce through Decimal like the validator does.
         return {
             "symbol": book.symbol,
             "exchange_ts": str(quote["ts"]),
@@ -263,8 +288,8 @@ class MarketDataService:
             "spread_pct": str(quote["spread_pct"]),
             "bid": str(quote["bid"]),
             "ask": str(quote["ask"]),
-            "bid_size": int(quote["bid_size"]),
-            "ask_size": int(quote["ask_size"]),
+            "bid_size": int(Decimal(str(quote["bid_size"]))),
+            "ask_size": int(Decimal(str(quote["ask_size"]))),
             "feed": str(quote.get("feed") or "iex"),
         }
 

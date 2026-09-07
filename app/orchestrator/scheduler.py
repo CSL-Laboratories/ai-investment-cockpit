@@ -192,12 +192,12 @@ def run_market_quote_poll(state, clock=None, *, market_data=None):
         BreakerSignals(max_data_age_s=age), thresholds, clock=clock, actor="market_data"
     )
     recovered = False
-    if age <= thresholds.data_staleness_s and engine.is_watch_only("market_data"):
+    if age <= thresholds.data_staleness_s and engine.can_recover_watch_only("market_data"):
         previous = ModeLadder(state).current()
-        engine.recover_from_watch_only(
+        event, _mode = engine.recover_from_watch_only(
             "market_data", previous, clock=clock, actor="market_data"
         )
-        recovered = True
+        recovered = event is not None
     return {**result, "max_data_age_s": age, "system_events": events,
             "recovered": recovered}
 
