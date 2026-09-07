@@ -49,7 +49,8 @@ def _unlink_staged(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
-def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[Path, str]:
+def write_snapshot(root, date: str, symbol: str, records: list[dict], *,
+                   before_publish=None) -> tuple[Path, str]:
     p = snapshot_path(root, date, symbol)
     p.parent.mkdir(parents=True, exist_ok=True)
     fd, staged_name = tempfile.mkstemp(prefix=f".{p.stem}-", suffix=".parquet", dir=p.parent)
@@ -58,6 +59,8 @@ def write_snapshot(root, date: str, symbol: str, records: list[dict]) -> tuple[P
     try:
         pq.write_table(pa.Table.from_pylist(records), staged)
         staged_digest = content_hash(_read_records(staged))
+        if before_publish is not None:
+            before_publish(staged_digest)
         # A same-filesystem hard link is an atomic create-if-absent on Ubuntu, Windows,
         # and macOS.  Unlike an exists-check followed by pq.write_table, it can never
         # overwrite or bless a file raced into the authority-bearing cache path.

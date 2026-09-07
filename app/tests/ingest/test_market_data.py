@@ -287,12 +287,17 @@ def test_symbol_discovery_failure_is_visible_and_globally_fail_closed(tmp_path):
 
 
 def test_raw_snapshots_are_bound_to_the_audit_seam(tmp_path):
+    from types import SimpleNamespace
+
     class Audit:
         def __init__(self):
             self.entries = []
 
         def append(self, event_type, **kwargs):
             self.entries.append((event_type, kwargs))
+
+        def verified_events(self, event_type):
+            return [SimpleNamespace(**data) for kind, data in self.entries if kind == event_type]
 
     clock = FrozenClock(NOW)
     client = Client(clock)

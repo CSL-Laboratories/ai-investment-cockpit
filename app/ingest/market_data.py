@@ -28,6 +28,7 @@ from quant.verify import VerifyParams
 from storage.parquet_store import (
     content_hash,
     read_snapshot,
+    read_verified_snapshot,
     snapshot_path,
     write_snapshot,
 )
@@ -181,7 +182,7 @@ class MarketDataService:
         self._metrics: dict[str, MarketMetrics] = {}
         self._seq: dict[str, int] = {symbol: 0 for symbol in normalized}
         self._bars_loaded_for: date | None = None
-        self._audited_raw: set[tuple[str, str]] = set()
+        self._audited_raw: dict[tuple[str, str], str] = {}
         self._lock = threading.RLock()
 
     @property
@@ -297,29 +298,34 @@ class MarketDataService:
         identity = (day, key)
         with self._lock:
             if identity in self._audited_raw:
+                if self._audited_raw[identity] != digest:
+                    raise MarketDataError("raw identity already binds different content")
                 return
-        if self._audit is not None:
-            self._audit.append(
-                EVENT_MARKET_DATA_RAW,
-                actor="market_data",
-                refs={"raw_ref": f"market-data://{day}/{key}"},
-                payload={
-                    "kind": kind,
-                    "date": day,
-                    "raw_key": key,
-                    "content_hash": digest,
-                    "count": count,
-                },
-            )
-        with self._lock:
-            self._audited_raw.add(identity)
+            if self._audit is not None:
+                # Publication may have failed AFTER signing on an earlier process.
+                # Reuse that identity only for the exact same signed bytes.
+                if kind == "daily_bars":
+                    bindings = self._raw_bindings(day=day, key=key)
+                    if bindings:
+                        if bindings != {(kind, day, key, digest, count)}:
+                            raise MarketDataError("raw identity already binds different content")
+                        self._audited_raw[identity] = digest
+                        return
+                self._audit.append(
+                    EVENT_MARKET_DATA_RAW,
+                    actor="market_data",
+                    refs={"raw_ref": f"market-data://{day}/{key}"},
+                    payload={
+                        "kind": kind,
+                        "date": day,
+                        "raw_key": key,
+                        "content_hash": digest,
+                        "count": count,
+                    },
+                )
+            self._audited_raw[identity] = digest
 
-    def _require_raw_binding(
-        self, *, kind: str, day: str, key: str, digest: str, count: int
-    ) -> None:
-        """Accept a pre-existing cache only when it was signed before this read."""
-        if self._audit is None:
-            return
+    def _raw_bindings(self, *, day: str, key: str) -> set:
         verified_events = getattr(self._audit, "verified_events", None)
         if verified_events is None:
             raise MarketDataError("audit log cannot verify pre-existing raw snapshots")
@@ -328,8 +334,7 @@ class MarketDataService:
             event for event in verified_events(EVENT_MARKET_DATA_RAW)
             if (event.refs or {}).get("raw_ref") == raw_ref
         ]
-        expected = (kind, day, key, digest, count)
-        bindings = {
+        return {
             (
                 (event.payload or {}).get("kind"),
                 (event.payload or {}).get("date"),
@@ -339,10 +344,19 @@ class MarketDataService:
             )
             for event in matches
         }
+
+    def _require_raw_binding(
+        self, *, kind: str, day: str, key: str, digest: str, count: int
+    ) -> None:
+        """Accept a cache only when its exact returned records have a signed binding."""
+        if self._audit is None:
+            return
+        bindings = self._raw_bindings(day=day, key=key)
+        expected = (kind, day, key, digest, count)
         if bindings != {expected}:
             raise MarketDataError("pre-existing raw snapshot lacks one unambiguous signed binding")
         with self._lock:
-            self._audited_raw.add((day, key))
+            self._audited_raw[(day, key)] = digest
 
     def _persist_quote(self, quote: dict, book: BookSnapshot) -> tuple[str, str]:
         root = self._raw_root / "quotes"
@@ -524,16 +538,21 @@ class MarketDataService:
                         self._client.daily_bars(symbol, limit=DEFAULT_BAR_LIMIT), today
                     )
                     calculate_daily_metrics(symbol, rows)
-                    _, digest = write_snapshot(root, today.isoformat(), symbol, rows)
-                    rows = read_snapshot(root, today.isoformat(), symbol)
-                    disposition = updated
-                    self._bind_raw(
-                        kind="daily_bars",
-                        day=today.isoformat(),
-                        key=symbol,
-                        digest=digest,
-                        count=len(rows),
+                    # BUG-152: bind the staged bytes before publishing the fixed
+                    # pathname. A failed audit append leaves no unsigned final cache.
+                    _, digest = write_snapshot(
+                        root, today.isoformat(), symbol, rows,
+                        before_publish=lambda digest: self._bind_raw(
+                            kind="daily_bars", day=today.isoformat(), key=symbol,
+                            digest=digest, count=len(rows),
+                        ),
                     )
+                    rows = read_verified_snapshot(root, today.isoformat(), symbol, digest)
+                    self._require_raw_binding(
+                        kind="daily_bars", day=today.isoformat(), key=symbol,
+                        digest=digest, count=len(rows),
+                    )
+                    disposition = updated
                 metric = calculate_daily_metrics(symbol, rows)
                 with self._lock:
                     self._metrics[symbol] = metric
