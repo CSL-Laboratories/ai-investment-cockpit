@@ -362,6 +362,43 @@ def _validate(body, schema) -> str | None:
         return str(e.message)
 
 
+def _checked_response(spec, proc, usage, *, repaired: bool = False):
+    """One health gate for initial and repair responses (BUG-147 / CLN-01).
+
+    A health fault always has a status that call_agent persists as watch-only. Schema
+    rejection stays separate: it can quarantine output without opening a vendor window.
+    Return the decoded response alongside any fault so the caller never parses it twice.
+    """
+    parsed, session_id, body = None, spec.session_id, None
+    status, state = LIMIT_HIT, "exhausted"
+    if getattr(proc, "timed_out", False):
+        status, error = TIMEOUT, "timeout"
+    elif proc.returncode != 0 or _limit_signal(
+        proc.stdout or "", proc.stderr or "", spec.prompt
+    ):
+        # SEC-25: only the CLI's own channels determine vendor health.
+        error = "limit_or_error"
+    elif not (proc.stdout or "").strip():
+        error, state = "empty_output", "degraded"
+    else:
+        parsed, session_id, body = _parse_output(
+            proc.stdout, runtime=spec.runtime, fallback_session_id=spec.session_id
+        )
+        if not (isinstance(parsed, dict) and (
+            parsed.get("is_error") or str(parsed.get("subtype", "")).startswith("error")
+        )):
+            usage.record(spec.runtime)
+            return None, parsed, session_id, body
+        error, state = "vendor_error_envelope", "degraded"
+    if repaired:
+        # Preserve the existing fixed audit tokens; health status is shared across rounds.
+        error = "repair_" + ("vendor_error" if error == "vendor_error_envelope" else error)
+    window = usage.trip(spec.runtime, state)
+    fault = AgentResult(status=status, raw=proc.stdout, error=error,
+                        usage_state=window.state, repaired=repaired)
+    return fault, parsed, session_id, body
+
+
 def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
               resume: bool = False, pinned_cwd: str | None = None,
               decision_agent_account: str | None = None) -> AgentResult:
@@ -398,33 +435,9 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     _assert_no_secret(argv, spec.prompt, secret_values)
 
     proc = transport.run(argv, spec.prompt, spec.timeout_s, spec.cwd)
-
-    if getattr(proc, "timed_out", False):
-        w = usage.trip(spec.runtime, "exhausted")            # a timeout opens the breaker
-        return AgentResult(status=TIMEOUT, raw=proc.stdout, error="timeout", usage_state=w.state)
-
-    # SEC-25: the model's payload never decides vendor health, but raw CLI text on stdout does.
-    # See _limit_signal — stderr-only went blind to a limit printed on stdout with exit 0.
-    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or "", spec.prompt):
-        w = usage.trip(spec.runtime, "exhausted")
-        return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="limit_or_error", usage_state=w.state)
-
-    if not (proc.stdout or "").strip():
-        # SEC-23: an empty/truncated decision response is a health fault -> fail closed.
-        w = usage.trip(spec.runtime, "degraded")
-        return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="empty_output", usage_state=w.state)
-
-    parsed, session_id, body = _parse_output(
-        proc.stdout, runtime=spec.runtime, fallback_session_id=spec.session_id
-    )
-
-    # A claude JSON envelope can flag an errored/truncated turn (is_error / subtype
-    # error_*) while still exiting 0 — treat it as a health fault (SEC-23).
-    if isinstance(parsed, dict) and (parsed.get("is_error") or str(parsed.get("subtype", "")).startswith("error")):
-        w = usage.trip(spec.runtime, "degraded")
-        return AgentResult(status=LIMIT_HIT, raw=proc.stdout, error="vendor_error_envelope", usage_state=w.state)
-
-    usage.record(spec.runtime)
+    fault, parsed, session_id, body = _checked_response(spec, proc, usage)
+    if fault is not None:
+        return fault
 
     if spec.schema is None:
         if parsed is None:
@@ -470,35 +483,9 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
-
-    # BUG-065: a limit/timeout on the REPAIR round used to return NEEDS_HUMAN after
-    # tripping the window — so call_agent labeled it "quarantined" (a schema problem),
-    # never entered the audited watch-only path, and the exhaustion was invisible unless a
-    # LATER call happened to observe the open breaker. A vendor limit is a vendor limit on
-    # either round: return the limit statuses so the caller's EVENT_WATCH_ONLY audit fires.
-    if getattr(proc, "timed_out", False):
-        w = usage.trip(spec.runtime, "exhausted")
-        return AgentResult(status=TIMEOUT, raw=proc.stdout, repaired=True,
-                           error="repair_timeout", usage_state=w.state)
-    if proc.returncode != 0 or _limit_signal(proc.stdout or "", proc.stderr or "", rspec.prompt):
-        w = usage.trip(spec.runtime, "exhausted")
-        return AgentResult(status=LIMIT_HIT, raw=proc.stdout, repaired=True,
-                           error="repair_limit_or_error", usage_state=w.state)
-
-    if not (proc.stdout or "").strip():
-        # SEC-23: the repair path is fail-closed on a degraded/empty response too.
-        w = usage.trip(spec.runtime, "degraded")
-        return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
-                           error="repair_empty_output", usage_state=w.state)
-
-    usage.record(spec.runtime)
-    parsed, sid2, body2 = _parse_output(
-        proc.stdout, runtime=spec.runtime, fallback_session_id=rspec.session_id
-    )
-    if isinstance(parsed, dict) and (parsed.get("is_error") or str(parsed.get("subtype", "")).startswith("error")):
-        w = usage.trip(spec.runtime, "degraded")
-        return AgentResult(status=NEEDS_HUMAN, raw=proc.stdout, repaired=True,
-                           error="repair_vendor_error", usage_state=w.state)
+    fault, parsed, sid2, body2 = _checked_response(rspec, proc, usage, repaired=True)
+    if fault is not None:
+        return fault
     reason2 = "output was not valid JSON" if parsed is None else _validate(body2, spec.schema)
     if reason2 is None:
         return AgentResult(
