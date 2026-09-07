@@ -161,9 +161,25 @@ def compute_gate(st: OrchestratorState, target, *, now: datetime | None = None,
                           [f"external anchor rollback/truncation detected: {av.error}"],
                           {"chain_ok": True, "anchor_ok": False, "anchor_seq": anchor[0]})
 
-    adjudications = [r for r in rows if r.event_type == EVENT_ADJUDICATION]
-    decisions = [(r.payload or {}).get("decision") for r in adjudications]
-    adjudicated = len(adjudications)
+    # BUG-153: consumption is an approval lifecycle write, not another operator
+    # decision. Count each identified proposal once, using its latest decision.
+    # Legacy unidentified entries cannot prove a distinct adjudicated population.
+    adjudications = {}
+    for row in rows:
+        if row.event_type != EVENT_ADJUDICATION:
+            continue
+        payload = row.payload or {}
+        proposal_id, decision = payload.get("proposal_id"), payload.get("decision")
+        if (payload.get("approval_consumed") is True
+                or payload.get("kind") == "approval_consumed"
+                or not isinstance(proposal_id, str) or not proposal_id.strip()):
+            continue
+        if not isinstance(decision, str) or decision not in {"approve", "reject", "modify", "veto"}:
+            adjudications.pop(proposal_id, None)
+            continue
+        adjudications[proposal_id] = decision
+    decisions = list(adjudications.values())
+    adjudicated = len(decisions)
     approvals = sum(1 for d in decisions if d == "approve")
     vetoes = sum(1 for d in decisions if d == "veto")
     approval_rate = (approvals / adjudicated) if adjudicated else 0.0
