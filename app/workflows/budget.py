@@ -13,13 +13,18 @@ limits (EVENT_LIMITS_CHANGE, SEC-15), never raw Settings.
 """
 from __future__ import annotations
 
+import time
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from typing import Sequence
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError, OperationalError
 
+from orchestrator.limits import current_limits, limits_from_verified_session
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
+from storage.audit import AuditIntegrityError
 from workflows.constants import EVENT_DEEP_ESCALATION, EVENT_INGEST_BATCH
 
 _CALENDAR_WINDOW = timedelta(hours=36)
@@ -27,7 +32,7 @@ _QUOTE_MOVE_PCT = 3.0
 _HARD_EVENT_TYPES = frozenset({"halt", "filing"})
 
 
-def signed_event_type(state, event_id: str) -> str | None:
+def signed_event_type(state, event_id: str, *, session=None) -> str | None:
     """SEC-11 (W10) domain-row binding read-side: the ``event_type`` bound into the covering,
     HMAC-VERIFIED ``EVENT_INGEST_BATCH`` entry for ``event_id`` (events.py binds it at persist).
     Returns the SIGNED value, or ``None`` when no verified entry binds this id — the caller
@@ -37,7 +42,7 @@ def signed_event_type(state, event_id: str) -> str | None:
     -> ``None``), so a forged flip yields no deterministic corroboration and spends no budget."""
     if not event_id:
         return None
-    with state.session_factory() as s:
+    with (nullcontext(session) if session is not None else state.session_factory()) as s:
         entries = s.execute(
             select(AuditEntry).where(AuditEntry.event_type == EVENT_INGEST_BATCH)
         ).scalars().all()
@@ -73,7 +78,7 @@ class BudgetIntegrityError(Exception):
     cap (mirrors events.py::RawIntegrityError)."""
 
 
-def _assert_budget_chain_ok(state) -> None:
+def _assert_budget_chain_ok(state, session):
     """FAIL CLOSED on the budget-read path (SEC-21 round-3). ``DeepBudget.spent`` scopes its
     per-row ``verify_entry`` to rows surviving ``where(event_type == EVENT_DEEP_ESCALATION)`` —
     but ``event_type`` is itself an HMAC-COVERED column, so a keyless writer that UPDATEs a
@@ -83,12 +88,6 @@ def _assert_budget_chain_ok(state) -> None:
     filter — a tampered ``event_type`` breaks that row's HMAC and a non-healed deletion is a
     seq gap — so run it before trusting the count and RAISE if it (or the external anchor, when
     wired) does not verify. Mirrors the gate's chain-first posture (SEC-20/SEC-11)."""
-    v = state.audit.verify_chain()
-    if not v.ok:
-        raise BudgetIntegrityError(
-            f"audit chain failed verification ({v.error}) — deep budget cannot be trusted "
-            "(fail closed)"
-        )
     anchor_store = getattr(state, "anchor_store", None)
     if anchor_store is not None:
         # SEC-11 (W10, G10 fix 2026-07-08): a WIRED store whose ``latest()`` is None (no genuine
@@ -98,21 +97,20 @@ def _assert_budget_chain_ok(state) -> None:
         # skipped the consult and only the replay-defeatable verify_chain() ran (the budget was
         # the sole outlier of the four consuming paths).
         anchor = anchor_store.latest()
-        if anchor is None or not state.audit.verify_against_anchor(*anchor).ok:
+        if anchor is None:
             raise BudgetIntegrityError(
                 "external audit anchor absent or rollback/truncation detected — deep budget "
                 "cannot be trusted (fail closed)"
             )
-
-
-def _effective_limit(state) -> int:
-    """The audited ``deep_model_daily_budget`` via the limits reader (SEC-15: effective
-    values come from the latest EVENT_LIMITS_CHANGE, falling back to Settings defaults)."""
-    try:
-        from orchestrator.limits import current_limits
-    except ImportError:   # pre-extraction fallback: the reader still lives in app.py
-        from orchestrator.app import _current_limits as current_limits
-    return int(current_limits(state)["deep_model_daily_budget"])
+        verified = state.audit.verify_session_against_anchor(session, *anchor)
+    else:
+        verified = state.audit.verify_session(session)
+    if not verified.ok:
+        raise BudgetIntegrityError(
+            f"audit chain or anchor failed verification ({verified.error}) — deep budget "
+            "cannot be trusted (fail closed)"
+        )
+    return verified
 
 
 class DeepBudget:
@@ -126,17 +124,14 @@ class DeepBudget:
 
     @property
     def limit(self) -> int:
-        return self._limit if self._limit is not None else _effective_limit(self._state)
+        return (self._limit if self._limit is not None
+                else int(current_limits(self._state)["deep_model_daily_budget"]))
 
-    def spent(self, day: date) -> int:
-        # SEC-21 round-3: a full-chain integrity check FIRST — a keyless writer that moves a
-        # consumed row OUT of the event_type filter (or deletes it) understates the per-row
-        # count below; verify_chain scans ALL rows unfiltered and catches it. Fail closed.
-        _assert_budget_chain_ok(self._state)
-        with self._state.session_factory() as s:
-            entries = s.execute(
-                select(AuditEntry).where(AuditEntry.event_type == EVENT_DEEP_ESCALATION)
-            ).scalars().all()
+    def _spent_in(self, session, day: date) -> int:
+        """Count only after the caller verifies this pinned transaction."""
+        entries = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == EVENT_DEEP_ESCALATION)
+        ).scalars().all()
         count = 0
         for e in entries:
             # FAIL CLOSED (SEC-21): verify EVERY selected consumption row. A keyless writer
@@ -152,8 +147,21 @@ class DeepBudget:
                 count += 1
         return count
 
+    def spent(self, day: date) -> int:
+        with self._state.session_factory() as session, session.begin():
+            _assert_budget_chain_ok(self._state, session)
+            return self._spent_in(session, day)
+
+    def _remaining_in(self, session, day: date) -> int:
+        verified = _assert_budget_chain_ok(self._state, session)
+        limit = (self._limit if self._limit is not None else int(
+            limits_from_verified_session(self._state, session, verified)["deep_model_daily_budget"]
+        ))
+        return max(0, limit - self._spent_in(session, day))
+
     def remaining(self, day: date) -> int:
-        return max(0, self.limit - self.spent(day))
+        with self._state.session_factory() as session, session.begin():
+            return self._remaining_in(session, day)
 
     def try_consume(self, *, day: date, event_id: str, symbol: str, reason: str,
                     corroborated: bool) -> bool:
@@ -175,26 +183,36 @@ class DeepBudget:
         claimed type)."""
         if not corroborated:
             return False
-        if reason.startswith("event_type:"):
-            claimed = reason.split(":", 1)[1]
-            signed = signed_event_type(self._state, event_id)
-            if signed is None or signed != claimed or signed not in _HARD_EVENT_TYPES:
-                return False           # forged/unbound event_type corroboration -> fail closed
-        with self._state.lock:
-            if self.remaining(day) <= 0:
-                return False
-            self._state.audit.append(
-                EVENT_DEEP_ESCALATION, actor="budget",
-                refs={"event_id": event_id},
-                payload={
-                    "date": day.isoformat(),
-                    "event_id": event_id,
-                    "symbol": symbol,
-                    "reason": reason,
-                    "corroborated": bool(corroborated),
-                },
-            )
-            return True
+        # BUG-154: verify, read limits/count/corroboration and append in ONE transaction.
+        # A stale SQLite read snapshot cannot upgrade to a writer after another commit;
+        # rollback and recheck all authority on retry, including a newly tightened limit.
+        for attempt in range(1, 7):
+            try:
+                with self._state.lock:
+                    with self._state.session_factory() as session, session.begin():
+                        if self._remaining_in(session, day) <= 0:
+                            return False
+                        if reason.startswith("event_type:"):
+                            claimed = reason.split(":", 1)[1]
+                            signed = signed_event_type(self._state, event_id, session=session)
+                            if signed != claimed or signed not in _HARD_EVENT_TYPES:
+                                return False
+                        entry = self._state.audit.append_in(
+                            session, EVENT_DEEP_ESCALATION, actor="budget",
+                            refs={"event_id": event_id},
+                            payload={"date": day.isoformat(), "event_id": event_id,
+                                     "symbol": symbol, "reason": reason,
+                                     "corroborated": bool(corroborated)},
+                        )
+                    self._state.audit.observe_committed(entry)
+                return True
+            except AuditIntegrityError as exc:
+                raise BudgetIntegrityError(str(exc)) from exc
+            except (IntegrityError, OperationalError):
+                if attempt == 6:
+                    raise
+                time.sleep(0.02 * attempt)
+        raise RuntimeError("deep budget: exhausted transaction retries")
 
 
 def _aware(dt: datetime) -> datetime:

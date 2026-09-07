@@ -110,18 +110,28 @@ def current_limits(state) -> dict:
     """
     with state.session_factory() as s, s.begin():
         verified = state.audit.verify_committed_prefix_session(s)
-        if not verified.ok:
-            return fail_closed_limits(state.settings)
-        candidate = s.execute(
-            select(AuditEntry)
-            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE,
-                   AuditEntry.seq <= verified.head_seq)
-            .order_by(AuditEntry.seq.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        if candidate is None and verified.ignored_forged_tail:
-            return fail_closed_limits(state.settings)
-        limits = default_limits(state.settings)
-        if candidate is not None and (candidate.payload or {}).get("limits"):
-            limits.update(candidate.payload["limits"])
-        return limits
+        return limits_from_verified_session(state, s, verified)
+
+
+def limits_from_verified_session(state, session, verified) -> dict:
+    """Select limits using a verification from this SAME active session (BUG-154).
+
+    This lets budget verification, effective limits, count and consumption share one
+    snapshot. A second verification could observe a newer in-process head after a
+    concurrent append even though the caller's already-verified snapshot is consistent.
+    """
+    if not verified.ok:
+        return fail_closed_limits(state.settings)
+    candidate = session.execute(
+        select(AuditEntry)
+        .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE,
+               AuditEntry.seq <= verified.head_seq)
+        .order_by(AuditEntry.seq.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if candidate is None and verified.ignored_forged_tail:
+        return fail_closed_limits(state.settings)
+    limits = default_limits(state.settings)
+    if candidate is not None and (candidate.payload or {}).get("limits"):
+        limits.update(candidate.payload["limits"])
+    return limits

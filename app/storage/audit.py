@@ -231,6 +231,15 @@ class AuditLog:
         with self._lock:
             return self._insert(session, event_type, actor, refs, payload)
 
+    def observe_committed(self, entry: AuditEntry) -> None:
+        """Publish an append_in entry's erasure floor AFTER its caller commits (BUG-154).
+
+        A rolled-back append must never advance this floor. Callers managing their own
+        transaction use this after successful commit, matching append's existing policy.
+        """
+        with self._lock:
+            self._observed_head = max(self._observed_head, entry.seq)
+
     def record_state_change(self, model_row, event_type, actor=None, payload=None, *, prepare=None):
         """Persist a load-bearing state row AND its AuditEntry in ONE transaction — the only
         sanctioned way to mutate RiskDecision / ApprovalRecord / order-state rows (never a
