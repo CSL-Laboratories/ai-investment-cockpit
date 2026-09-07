@@ -40,3 +40,5 @@ No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge;
 - 2026-09-06 ~19:40 PT: BUG-125/#74 MERGED (`ce62cf2`). Drain freeze closing; post-wall no new Codex/Astra until Lucas reopens. watch_only claim-shape mid-flight left out of this freeze if unfinished.
 
 - 2026-09-06 ~19:45 PT: watch_only D1–D4 claim-shape mid-flight land (docs PR); not a production claim. Residual Astra dies at 8:15 hard stop.
+
+- 2026-09-06 PT: [watch_only D1–D4 claim shape](../astra-watchonly-claim-shape-2026-09-06.md) completed: exact refusals, fixture map and Monitor criteria; no production claim or PR by this task. #74 merged in local history; D1–D4 remain open, soak `c5ef0ad:8787` unchanged.
