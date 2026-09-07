@@ -91,6 +91,7 @@ class VerifyResult:
     head_seq: int
     head_hash: str | None
     error: str | None = None
+    ignored_forged_tail: bool = False
 
 
 class AuditLog:
@@ -389,6 +390,20 @@ class AuditLog:
         session leaves a check/use window in which a keyless writer can repoint mutable
         rows after verification.
         """
+        return self._verify_session(s)
+
+    def verify_committed_prefix_session(self, s) -> VerifyResult:
+        """Verify committed history for the audited-limits fallback (BUG-126 / RW-22).
+
+        A forged append above the signed high-water cannot erase a genuine tightening.
+        Every row through that watermark must still verify, and a HMAC-valid row above
+        it is evidence of replayed authority, not an ignorable forgery. This does not
+        make a damaged ledger valid for orders: ordinary verification remains strict.
+        Read limits from this same transaction, bounded by the returned ``head_seq``.
+        """
+        return self._verify_session(s, allow_forged_tail=True)
+
+    def _verify_session(self, s, *, allow_forged_tail: bool = False) -> VerifyResult:
         # Linearize the in-process erasure floor at the start of verification.  A legitimate
         # append may commit after this point while the read snapshot below still represents
         # the immediately preceding valid head; that must not be mistaken for rollback merely
@@ -407,6 +422,14 @@ class AuditLog:
                 connection.exec_driver_sql("BEGIN")
         rows = s.execute(select(AuditEntry).order_by(AuditEntry.seq)).scalars().all()
         wm = self._read_hwm(s)
+        ignored_forged_tail = False
+        if allow_forged_tail and wm is not None and wm >= 0:
+            tail = [r for r in rows if r.seq > wm]
+            if any(self.verify_entry(r) for r in tail):
+                return VerifyResult(False, wm, None,
+                                    "signed audit row above high-water (rollback/tamper)")
+            ignored_forged_tail = bool(tail)
+            rows = [r for r in rows if r.seq <= wm]
         prev, expected = None, 1
         for r in rows:
             if r.seq != expected:
@@ -444,7 +467,8 @@ class AuditLog:
                                     f"erasure/rollback: head seq {head_seq} below previously "
                                     f"observed head {observed_floor}")
             self._observed_head = max(self._observed_head, head_seq)
-        return VerifyResult(True, head_seq, prev)
+        return VerifyResult(True, head_seq, prev,
+                            ignored_forged_tail=ignored_forged_tail)
 
     def verify_session_against_anchor(
         self, s, anchored_seq: int, anchored_hash: str

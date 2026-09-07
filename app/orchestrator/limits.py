@@ -101,65 +101,27 @@ def hard_bounds(settings) -> dict:
 
 
 def current_limits(state) -> dict:
-    """The effective runtime limits: Settings defaults overlaid with the most recent
-    HMAC-VERIFIED ``EVENT_LIMITS_CHANGE`` audit payload (SEC-15 / SEC-21 audited source of
-    truth). A keyless DB-writer can forge or mutate a ``limits_change`` row to inflate the
-    deep budget or drop the triage threshold, so every candidate row must pass
-    ``verify_entry`` before it may take effect. We walk rows newest-first and apply the FIRST
-    that verifies; an unverified latest row is SKIPPED (never allowed to loosen the effective
-    limits) in favour of the most recent verified row, else the conservative Settings default
-    baseline (budget 5 / threshold 60). Fail closed: a tampered row can only tighten by being
-    ignored, never loosen.
+    """Read the latest committed limits from one verified snapshot (SEC-15 / SEC-21).
 
-    BUG-126: the walk above is not enough on a BROKEN chain. A keyless writer that DELETES
-    a genuine SUB-DEFAULT tightening (deep budget 5->2 erased) leaves an older, LOOSER
-    verified row (or no row) behind, and returning it reverts to the looser cap — a
-    loosening. So on a chain that does NOT verify, a surviving verified row is honored
-    ONLY when the break is provably a forged APPEND above it: the verified prefix
-    1..candidate.seq is contiguous/linked/HMAC-valid AND the signed high-water does not
-    exceed the live head (a head below the high-water is a deleted genuine tail, even
-    when the surviving prefix looks clean). Anything else fails closed to the tightest
-    floor — an erased tightening can only tighten, never loosen."""
-    with state.session_factory() as s:
-        rows = s.execute(
+    BUG-126 / RW-22: verifying only through a surviving candidate misses a later erased
+    tightening. Verify the complete committed prefix through its signed high-water,
+    then select from that SAME snapshot. Only forged rows appended above an intact
+    committed history may be ignored; any damage within it yields the tightest floor.
+    """
+    with state.session_factory() as s, s.begin():
+        verified = state.audit.verify_committed_prefix_session(s)
+        if not verified.ok:
+            return fail_closed_limits(state.settings)
+        candidate = s.execute(
             select(AuditEntry)
-            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE)
+            .where(AuditEntry.event_type == EVENT_LIMITS_CHANGE,
+                   AuditEntry.seq <= verified.head_seq)
             .order_by(AuditEntry.seq.desc())
-        ).scalars().all()
-    candidate = None
-    for row in rows:
-        if not state.audit.verify_entry(row):
-            continue   # forged/mutated row -> ignore (fail closed); do not loosen
-        candidate = row
-        break          # first verified row (newest-first) is the audited source of truth
-    if state.audit.verify_chain().ok:
+            .limit(1)
+        ).scalar_one_or_none()
+        if candidate is None and verified.ignored_forged_tail:
+            return fail_closed_limits(state.settings)
         limits = default_limits(state.settings)
         if candidate is not None and (candidate.payload or {}).get("limits"):
             limits.update(candidate.payload["limits"])
         return limits
-    # Chain is broken: fall back to the candidate ONLY for a forged append above an
-    # intact verified prefix. A deleted genuine tail (head below the signed high-water),
-    # a break at/below the candidate, or no surviving candidate all fail closed.
-    hwm = state.audit.high_water_mark()
-    with state.session_factory() as s:
-        chain_rows = s.execute(
-            select(AuditEntry).order_by(AuditEntry.seq)
-        ).scalars().all()
-    head_seq = chain_rows[-1].seq if chain_rows else 0
-    if hwm == -1 or (hwm is not None and head_seq < hwm):
-        # Watermark tamper, or a deleted genuine tail: the surviving rows cannot prove
-        # what the operator last set -> tightest floor (SEC-21 round-3).
-        return fail_closed_limits(state.settings)
-    if candidate is None:
-        return fail_closed_limits(state.settings)
-    by_seq = {r.seq: r for r in chain_rows}
-    prev = None
-    for seq in range(1, candidate.seq + 1):
-        r = by_seq.get(seq)
-        if r is None or r.prev_hash != prev or not state.audit.verify_entry(r):
-            return fail_closed_limits(state.settings)
-        prev = r.entry_hash
-    limits = default_limits(state.settings)
-    if (candidate.payload or {}).get("limits"):
-        limits.update(candidate.payload["limits"])
-    return limits

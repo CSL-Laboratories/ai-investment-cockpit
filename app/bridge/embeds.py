@@ -20,6 +20,7 @@ unit-testable; ``bridge/bot.py`` turns it into a ``discord.Embed``.
 """
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 from sqlalchemy import select
@@ -66,9 +67,18 @@ def _check_names(checks) -> list[str]:
     return []
 
 
+def _money_value(value) -> Decimal | None:
+    """Compare finite money by value, without rounding away a real difference."""
+    if value is None:
+        return None
+    amount = Decimal(str(value))
+    if not amount.is_finite():
+        raise ValueError("non-finite risk ceiling")
+    return amount
+
+
 def _canonical_facts(risk_decision) -> dict:
-    """The rendered risk facts in JSON-native canonical form — the comparison basis for
-    the signed-audit reconcile (BUG-136). Mirrors exactly what the render functions show."""
+    """Comparison-only facts, with money as Decimal to ignore persisted scale changes."""
     checks = getattr(risk_decision, "checks", {}) or {}
     failed = getattr(risk_decision, "failed_checks", []) or []
     warnings = getattr(risk_decision, "warnings", []) or []
@@ -79,7 +89,7 @@ def _canonical_facts(risk_decision) -> dict:
         "checks": _check_status(_check_names(checks), failed),
         "failed_checks": list(failed),
         "warnings": list(warnings),
-        "max_allowed_notional": None if ceil is None else str(ceil),
+        "max_allowed_notional": _money_value(ceil),
         "human_required": bool(getattr(risk_decision, "human_required", False)),
         "execution_verdict": verdict if isinstance(verdict, dict) else None,
     }
@@ -109,7 +119,7 @@ def _canonical_audit(audit_payload: dict) -> dict:
         "checks": check_rows,
         "failed_checks": failed,
         "warnings": list(payload.get("warnings") or []),
-        "max_allowed_notional": None if ceil is None else str(ceil),
+        "max_allowed_notional": _money_value(ceil),
         "human_required": bool(payload.get("human_required", False)),
         "execution_verdict": verdict if isinstance(verdict, dict) else None,
     }
@@ -151,10 +161,14 @@ def render_risk_section(risk_decision, *, audit_facts: dict | None = None) -> di
     any mismatch renders an UNVERIFIED refusal block instead of risk facts. ``None``
     keeps the legacy direct render (tests, same-tick paths) and is marked as such.
     """
-    if audit_facts is not None and (
-        "decision" not in (audit_facts or {})
-        or _canonical_facts(risk_decision) != _canonical_audit(audit_facts)
-    ):
+    matches = True
+    if audit_facts is not None:
+        try:
+            matches = ("decision" in audit_facts
+                       and _canonical_facts(risk_decision) == _canonical_audit(audit_facts))
+        except (InvalidOperation, TypeError, ValueError):
+            matches = False
+    if not matches:
         return {
             "decision": None,
             "checks": [],

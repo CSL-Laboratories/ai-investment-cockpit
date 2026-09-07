@@ -164,12 +164,14 @@ _CONDITIONAL_OUTCOME = re.compile(
 _NEGATED_ASSERTION = re.compile(
     r"\b(?:not|never|no|neither|nor|false|falsely|incorrectly|untrue|denied|denies|deny|refuted)\b"
 )
-# BUG-140: boilerplate that contains a negation word but never negates the payment.
-# "No fractional shares will be issued" is mechanical settlement language (fractional
-# entitlements are paid in cash) — it must not void an otherwise affirmative cash
-# sentence. Kept deliberately narrow: only this phrase is exempt, everything else
-# still refuses.
-_CASH_BENIGN_NO = re.compile(r"no\s+fractional\s+shares?(?:\s+\w+){0,4}?\s+issued|no\s+fractional\s+shares?")
+# BUG-140 / RW-22: exempt only these complete settlement clauses. The short
+# participial form requires "with": bare "no fractional shares issued ..." can
+# instead be a subject whose payment is denied. Never erase "not" or "may"
+# inside an apparent issuance clause, or accept unfamiliar clause continuations.
+_CASH_BENIGN_NO = re.compile(
+    r"\b(?:with\s+no\s+fractional\s+shares\s+issued|"
+    r"no\s+fractional\s+shares\s+will\s+be\s+issued)(?=\s*(?:[,;]|$))"
+)
 _MERGER_AMENDMENT = re.compile(
     r"(?:amend(?:ed|ment|ments|ing)?[^.]{0,80}(?:merger|transaction)|"
     r"(?:merger|transaction)[^.]{0,80}amend(?:ed|ment|ments|ing)?)"
@@ -222,19 +224,12 @@ def _assertion_matches(pattern: re.Pattern, text: str):
             continue
         for match in pattern.finditer(sentence):
             context = sentence[:match.start()] + " " + sentence[match.end():]
-            # BUG-140: cash used the WHOLE sentence as negation context, so any "no"
-            # anywhere — e.g. the "no fractional shares issued" settlement boilerplate
-            # AFTER the payment clause — voided a real cash sentence (fail-safe but
-            # wrong: real mergers refused). A negation that negates the PAYMENT sits at
-            # or just before the payment verb ("will not receive", "it is not true
-            # that each share will receive"), so scope the check to a bounded window
-            # around the match (150 chars before through 60 after, match span included)
-            # with the benign fractional-shares boilerplate stripped. A leading "not"
-            # ("it is not true that ...") is still inside the window and still refuses.
+            # BUG-140 / RW-22: cash's wide subject-to-verb span is not exempt from
+            # qualification checks. A denial or condition can govern the payment
+            # from anywhere in its sentence, including after a long parenthetical.
+            # Retain the whole sentence, removing only pinned settlement boilerplate.
             if pattern is _CASH:
-                start = max(0, match.start() - 150)
-                end = min(len(sentence), match.end() + 60)
-                context = _CASH_BENIGN_NO.sub(" ", sentence[start:end])
+                context = _CASH_BENIGN_NO.sub(" ", sentence)
             if not (_NEGATED_ASSERTION.search(context) or _CONDITIONAL_OUTCOME.search(context)):
                 yield match
 

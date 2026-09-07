@@ -139,13 +139,14 @@ class PaperExecutionService:
                     actor="paper_performance",
                 ))
         else:
-            if engine.is_watch_only("paper_performance"):
+            if engine.can_recover_watch_only("paper_performance"):
                 event, _mode = engine.recover_from_watch_only(
                     "paper_performance",
                     ModeLadder(self.state).current(),
                     actor="paper_performance",
                 )
-                events.append(event)
+                if event is not None:
+                    events.append(event)
             thresholds = BreakerThresholds(
                 daily_equity_drawdown_limit=Decimal(str(
                     current_limits(self.state)["daily_loss_limit"]

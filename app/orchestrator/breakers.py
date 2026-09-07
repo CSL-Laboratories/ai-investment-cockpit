@@ -323,6 +323,16 @@ class BreakerEngine:
     def current_generation(self, vendor: str) -> int:
         return self.st.usage.window(vendor).generation
 
+    def can_recover_watch_only(self, vendor: str) -> bool:
+        """A healthy vendor can recover only its own trustworthy non-ok window.
+
+        BUG-131 / RW-22: global integrity failure disables every vendor's order view,
+        but fresh quotes or a healthy EDGAR poll cannot repair that failed authority.
+        Keep this transition predicate separate from ``is_watch_only``.
+        """
+        return (not getattr(self.st.usage, "integrity_error", None)
+                and self.st.usage.window(vendor).state != "ok")
+
     def assert_fresh_analysis(self, vendor: str, analysis_generation: int) -> None:
         """SEC-23 — require an exact current generation.
 
@@ -349,19 +359,29 @@ class BreakerEngine:
             )
 
     def recover_from_watch_only(self, vendor: str, prev_state, *, clock=None,
-                                actor="system") -> tuple[SystemEvent, Mode]:
+                                actor="system") -> tuple[SystemEvent | None, Mode]:
         """Exit watch-only: replenish the window (new generation, so anything minted during
         the blackout is also invalidated) and recover FAIL-CLOSED to ``review_live`` — never
-        the prior auto mode (SEC-23)."""
+        the prior auto mode (SEC-23). Return no event for a healthy window or unresolved
+        global integrity failure; neither condition is a vendor recovery."""
         clock = clock or self.st.clock
-        w = self.st.usage.window(vendor)
-        w.state = "ok"
-        w.generation += 1
-        mode_after = self._ladder.recover(prev_state, clock=clock, actor=actor)
-        self.st.audit.append(
-            EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
-            payload={"vendor": vendor, "state": "ok", "generation": w.generation,
-                     "recovered": True, "mode_after": mode_after.value},
-        )
-        event = SystemEvent("#system", "watch_only", None, "recovered", mode_after.value, clock.now())
-        return event, mode_after
+        with self.st.lock:
+            # Recheck centrally: callers may race another successful recovery after
+            # deciding to recover. Only one transition may advance the generation.
+            if not self.can_recover_watch_only(vendor):
+                return None, self._ladder.current()
+            w = self.st.usage.window(vendor)
+            recovered_generation = w.generation + 1
+            mode_after = self._ladder.recover(prev_state, clock=clock, actor=actor)
+            self.st.audit.append(
+                EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
+                payload={"vendor": vendor, "state": "ok", "generation": recovered_generation,
+                         "recovered": True, "mode_after": mode_after.value},
+            )
+            # Publication follows the signed transition. If either the ladder or audit
+            # write fails, the exhausted window remains recoverable on the next attempt.
+            w.state = "ok"
+            w.generation = recovered_generation
+            event = SystemEvent("#system", "watch_only", None, "recovered",
+                                mode_after.value, clock.now())
+            return event, mode_after

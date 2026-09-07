@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 from sqlalchemy import select
 
@@ -475,7 +475,11 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     rd_row = RiskDecision(
         id=new_id("rd"), proposal_id=pid, decision=rd["decision"], checks=rd["checks"],
         failed_checks=rd["failed_checks"], warnings=rd["warnings"],
-        max_allowed_notional=_dec(rd["max_allowed_notional"]),
+        # BUG-136: sign and persist identical cents; a rounded-up display must never
+        # advertise more headroom than the deterministic risk calculation allowed.
+        max_allowed_notional=_dec(rd["max_allowed_notional"]).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        ),
         human_required=bool(rd["human_required"]), evaluated_at=now, created_at=now,
         # Stored on the ROW, not only in the audit payload — see the column's docstring. This
         # is what lets the operator embed show execution quality at all under SEC-17: the
@@ -498,7 +502,7 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         "checks": rd["checks"],
         "failed_checks": rd["failed_checks"],
         "warnings": rd["warnings"],
-        "max_allowed_notional": str(rd["max_allowed_notional"]),
+        "max_allowed_notional": str(rd_row.max_allowed_notional),
         "human_required": bool(rd["human_required"]),
     }
     if verdict is not None:

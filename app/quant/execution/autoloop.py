@@ -23,7 +23,7 @@ reading this because you want to point it at real execution, see
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from typing import Callable, Iterable, Sequence
 
@@ -66,10 +66,14 @@ class AutoLoopResult:
     """Feed events naming an order the venue's book did not hold. See ``runner.RunResult``
     for why this is a reported number rather than an exception or a silence."""
     desync_fills: int = 0
-    """Fills for orders the OMS already holds terminal (BUG-139 belt-and-braces). The
-    venue-confirmed cancel flow above should make these unreachable in-loop; if one ever
-    lands, the run reports it instead of dying on an IllegalTransition — an unattended
-    loop must not turn a bookkeeping race into an outage."""
+    """Fill reconciliation failures. Any failure invalidates accounting and stops the run."""
+    accounting_valid: bool = True
+    unreconciled_fills: list[Fill] = field(default_factory=list)
+    """The refused fill and any later fills already produced in that venue batch.
+
+    They remain evidence, never position or PnL authority. When accounting is invalid,
+    final_position is only the last reconciled position and attribution is unavailable.
+    """
     blocked_reasons: dict[str, int] = field(default_factory=dict)
     final_position: int = 0
     attribution: dict | None = None
@@ -132,7 +136,8 @@ class AutoLoop:
                 break
 
             self.result.events += 1
-            self._absorb_outcomes(self.venue.advance(event.ingest_ts))
+            if not self._absorb_outcomes(self.venue.advance(event.ingest_ts)):
+                break
             # BUG-139: retire OMS orders whose traveling cancels the venue CONFIRMED.
             # A fill that landed before the cancel arrived is a legitimate fill of a
             # live order (absorbed above); only a still-live order may be retired here —
@@ -143,7 +148,8 @@ class AutoLoop:
                     self.oms.on_cancelled(client_id, ts=event.ingest_ts,
                                           reason="venue_confirmed_cancel")
             try:
-                self._absorb(self.venue.apply_market_event(event))
+                if not self._absorb(self.venue.apply_market_event(event)):
+                    break
             except OrderNotFound:
                 # Counted, never fatal — the same split as ``Runner``. The BOOK refuses to
                 # hide a desync; the LOOP decides what to do about one. An unattended loop
@@ -165,7 +171,9 @@ class AutoLoop:
             self._maybe_timer(event.ingest_ts)
 
         self.result.final_position = self.oms.position(self.venue.symbol)
-        self.result.attribution = self.pnl.snapshot().as_dict()
+        self.result.attribution = (
+            self.pnl.snapshot().as_dict() if self.result.accounting_valid else None
+        )
         # Orders resting on the book at the end are legitimately live; ones the book does not
         # hold are the stranded kind this counts.
         self.result.stranded_orders = sum(
@@ -175,6 +183,9 @@ class AutoLoop:
             "phase": "end", "events": self.result.events,
             "fills": len(self.result.fills), "blocked": self.result.intents_blocked,
             "halted": self.result.halted, "halt_reason": self.result.halt_reason,
+            "accounting_valid": self.result.accounting_valid,
+            "desync_fills": self.result.desync_fills,
+            "unreconciled_fills": [_fill_evidence(f) for f in self.result.unreconciled_fills],
             "attribution": self.result.attribution,
         })
         return self.result
@@ -182,6 +193,8 @@ class AutoLoop:
     def _stop_reason(self) -> str | None:
         """The cockpit's own controls, not a private one. An operator's kill switch stops
         this loop the same way it stops everything else."""
+        if not self.result.accounting_valid:
+            return self.result.halt_reason
         if self.guards.tripped:
             return f"kill switch: {self.guards.trip_reason}"
         if self.guards.halt_fn is not None and self.guards.halt_fn():
@@ -216,6 +229,8 @@ class AutoLoop:
     # ---- routing ---------------------------------------------------------------------------
 
     def _route(self, strategy: Strategy, intents: list[Intent], ts: int) -> None:
+        if not self.result.accounting_valid:
+            return
         for intent in intents:
             verdict = self.guards.check(intent, strategy=strategy, oms=self.oms,
                                         books={self.venue.symbol: self.venue.book}, ts=ts)
@@ -265,7 +280,7 @@ class AutoLoop:
                         reasons = self.result.blocked_reasons
                         reasons["replace_missed"] = reasons.get("replace_missed", 0) + 1
 
-    def _absorb_outcomes(self, outcomes: list) -> None:
+    def _absorb_outcomes(self, outcomes: list) -> bool:
         """Fold in what the venue did, and keep the OMS honest about it.
 
         THE SAME THREE STEPS ``Runner._place`` DOES, IN THE SAME ORDER. The loop used to do
@@ -284,6 +299,11 @@ class AutoLoop:
              nobody watching, that silence is the whole failure.
         """
         for outcome in outcomes:
+            if not self.result.accounting_valid:
+                # advance() has already matched the entire batch. Preserve its remaining
+                # fills, but do not acknowledge orders or run callbacks using a broken OMS.
+                self.result.unreconciled_fills.extend(outcome.fills)
+                continue
             # BUG-048: acceptance only puts an order on the simulated wire. The venue ACK is
             # the released outcome, so PENDING_NEW must survive until this point. Ack before
             # fills/cancellation so every later transition describes a venue-known order.
@@ -299,25 +319,43 @@ class AutoLoop:
             # fill, rest its remainder, and then be STP-cancelled by a later release in this
             # same advance() batch. The old global cancellation pass cancelled that remainder
             # before absorbing the earlier fill, producing CANCELLED -> PARTIALLY_FILLED.
-            self._absorb(outcome.fills)
+            if not self._absorb(outcome.fills):
+                continue
 
             order = self.oms.get(outcome.client_id)
             if order is not None and order.is_live and not outcome.rested:
                 self.oms.on_cancelled(outcome.client_id, ts=outcome.ts,
                                       reason=outcome.result.status.value)
+        return self.result.accounting_valid
 
-    def _absorb(self, fills: list[Fill]) -> None:
+    def _absorb(self, fills: list[Fill]) -> bool:
         for fill in fills:
+            if not self.result.accounting_valid:
+                self.result.unreconciled_fills.append(fill)
+                continue
             order = self.oms.get(fill.order_id)
             if order is None:
                 continue
             try:
                 self.oms.on_fill(fill)
-            except IllegalTransition:
-                # BUG-139: a fill for a terminal order (e.g. a cancel confirmation and
-                # a fill crossing in one batch). Counted, never fatal — same split as
-                # the OrderNotFound desync above.
+            except IllegalTransition as exc:
+                # RW-22 / BUG-139: an overfill or a terminal-order fill means accounting
+                # is incomplete. Keep the venue evidence and stop, including callbacks
+                # later in this batch; a plausible partial PnL is not a valid run result.
                 self.result.desync_fills += 1
+                self.result.unreconciled_fills.append(fill)
+                self.result.accounting_valid = False
+                self.result.halted = True
+                self.result.halt_reason = f"invalid fill accounting: {exc}"
+                self.result.attribution = None
+                self.guards.trip(self.result.halt_reason)
+                self._audit(EVENT_QUANT_SIM_BREACH, {
+                    "reason": self.result.halt_reason,
+                    "at_event": self.result.events,
+                    "accounting_valid": False,
+                    "desync_fills": self.result.desync_fills,
+                    "fill": _fill_evidence(fill),
+                })
                 continue
             self.result.fills.append(fill)
             self.pnl.on_fill(fill)
@@ -325,6 +363,7 @@ class AutoLoop:
             for strategy in self.strategies:
                 if strategy.name == order.strategy:
                     self._route(strategy, list(strategy.on_fill(fill, ctx)), fill.ingest_ts)
+        return self.result.accounting_valid
 
     def _audit(self, event_type: str, payload: dict) -> None:
         """Write to the cockpit's hash-chained log when a sink is injected.
@@ -335,6 +374,11 @@ class AutoLoop:
         """
         if self.audit_sink is not None:
             self.audit_sink(event_type, payload)
+
+
+def _fill_evidence(fill: Fill) -> dict:
+    """JSON-native venue evidence for the audited failure and final session record."""
+    return {**asdict(fill), "side": fill.side.value, "liquidity": fill.liquidity.value}
 
 
 def total_from_attribution(attribution: dict | None) -> Decimal:
