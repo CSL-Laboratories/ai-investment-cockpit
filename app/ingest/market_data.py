@@ -181,7 +181,7 @@ class MarketDataService:
         self._faults: dict[str, str] = {symbol: "not_polled" for symbol in normalized}
         self._metrics: dict[str, MarketMetrics] = {}
         self._seq: dict[str, int] = {symbol: 0 for symbol in normalized}
-        self._bars_loaded_for: date | None = None
+        self._bars_loaded_for: dict[str, date] = {}
         self._audited_raw: dict[tuple[str, str], str] = {}
         self._lock = threading.RLock()
 
@@ -245,6 +245,7 @@ class MarketDataService:
                 self._slots.pop(symbol, None)
                 self._faults.pop(symbol, None)
                 self._metrics.pop(symbol, None)
+                self._bars_loaded_for.pop(symbol, None)
                 self._seq.pop(symbol, None)
             for symbol in combined:
                 if symbol not in self._seq:
@@ -506,17 +507,18 @@ class MarketDataService:
         return completed
 
     def refresh_daily_bars(self) -> dict:
-        """Refresh once per UTC day, reusing the write-once raw cache across restarts."""
+        """Refresh each current symbol once per UTC day, including new holdings."""
         today = self._now().date()
         symbols = self._refresh_symbols()
-        with self._lock:
-            if self._bars_loaded_for == today:
-                return {"updated": [], "cached": list(self._metrics), "at": today.isoformat()}
         updated: list[str] = []
         cached: list[str] = []
         failed: list[str] = []
         root = self._raw_root / "daily-bars"
         for symbol in symbols:
+            with self._lock:
+                if self._bars_loaded_for.get(symbol) == today and symbol in self._metrics:
+                    cached.append(symbol)
+                    continue
             path = snapshot_path(root, today.isoformat(), symbol)
             try:
                 if path.exists():
@@ -555,13 +557,13 @@ class MarketDataService:
                     disposition = updated
                 metric = calculate_daily_metrics(symbol, rows)
                 with self._lock:
+                    if symbol not in self._symbols:
+                        continue
                     self._metrics[symbol] = metric
+                    self._bars_loaded_for[symbol] = today
                 disposition.append(symbol)
             except Exception:  # noqa: BLE001 - one symbol cannot hide the others' metrics
                 failed.append(symbol)
-        if not failed:
-            with self._lock:
-                self._bars_loaded_for = today
         return {"updated": updated, "cached": cached, "failed": failed,
                 "at": today.isoformat()}
 
