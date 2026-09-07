@@ -10,6 +10,11 @@ _HIDDEN = {"script", "style", "ix:hidden", "template"}
 _BLOCK = {"p", "div", "section", "article", "table", "tr", "td", "th", "li", "ul", "ol",
           "h1", "h2", "h3", "h4", "h5", "h6", "br", "hr", "header", "footer"}
 _HIDDEN_STYLE = re.compile(r"(?:^|;)(?:display:none|visibility:hidden)(?:!important)?(?:;|$)")
+# BUG-146: a removed island or block boundary forbids joining assertion fragments,
+# but it is not sentence punctuation. A literal period used to sever a preceding
+# denial from its cash/outcome/date claim. The matcher preserves the surrounding
+# sentence for qualification checks and refuses assertions spanning this marker.
+MARKUP_BOUNDARY = "\ufffc"
 
 
 class _DisplayedText(HTMLParser):
@@ -31,7 +36,7 @@ class _DisplayedText(HTMLParser):
             or bool(_HIDDEN_STYLE.search(style))
             or str(attributes.get("aria-hidden", "")).lower() == "true"
         )
-        self.parts.append(" . " if hidden or tag in _BLOCK else " ")
+        self.parts.append(f" {MARKUP_BOUNDARY} " if hidden or tag in _BLOCK else " ")
         if tag not in _VOID:
             self.stack.append((tag, hidden))
 
@@ -45,16 +50,18 @@ class _DisplayedText(HTMLParser):
             if self.stack[index][0] == tag:
                 hidden = any(value for _name, value in self.stack[index:])
                 del self.stack[index:]
-                self.parts.append(" . " if hidden or tag in _BLOCK else " ")
+                self.parts.append(f" {MARKUP_BOUNDARY} " if hidden or tag in _BLOCK else " ")
                 break
 
     def handle_data(self, data):
+        if MARKUP_BOUNDARY in data:
+            raise ValueError("source text contains the reserved markup boundary")
         if not any(hidden for _tag, hidden in self.stack):
             self.parts.append(data)
 
     def handle_comment(self, data):
         # Removing a hidden island must not concatenate two incomplete authority clauses.
-        self.parts.append(" . ")
+        self.parts.append(f" {MARKUP_BOUNDARY} ")
 
 
 def displayed_text(decoded: str) -> str:
