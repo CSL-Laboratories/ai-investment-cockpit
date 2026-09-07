@@ -1,16 +1,16 @@
 ---
 title: BUG-125 — Order FSM freshness and rollback (Astra F1/F2)
 type: evidence
-status: prepared
+status: claimed
 last-verified: 2026-09-07
 ---
 
 # BUG-125 — Order FSM freshness and rollback
 
-RESULT: F1/F2 refusal contracts pass; publication blocked by tool approval policy.
-GitHub branch creation required approval while this session uses policy `never`; no remote
-branch or PR was created. The prepared change also remains pending platform acceptance.
-Branch `fix/bug125-order-fsm-freshness` starts at current main
+RESULT: F1/F2 refusal contracts pass; production PR opened as
+https://github.com/NotSkittlz/ai-investment-cockpit/pull/74 on branch
+`fix/bug125-order-fsm-freshness` (commit after Codex push-block recovery). Remains
+pending platform acceptance / matrix. Branch starts at current main
 `a57e8cf20a81b0802a117a403316f6992f159ab1` (merged PR #73).
 
 Claim source: [Astra audit append hardening, F1/F2](https://github.com/NotSkittlz/ai-investment-cockpit/blob/9a2e3a9cb8a857a814fa880734b31b6705e92658/docs/evidence/astra-audit-append-hardening-2026-09-06.md).
