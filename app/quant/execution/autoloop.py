@@ -23,14 +23,18 @@ reading this because you want to point it at real execution, see
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from copy import copy
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal
+from heapq import heappop, heappush
 from typing import Callable, Iterable, Sequence
 
 from quant.book.lob import OrderNotFound
 from quant.costs import FeeSchedule
 from quant.events import Event, Fill, PriceScale, Trade
-from quant.execution.sim_venue import SimVenue
+from quant.execution.sim_venue import (
+    SimVenue, VenueCancelOutcome, VenueOutcome, VenueReplaceOutcome, VenueReport,
+)
 from quant.guards import Guards
 from quant.oms import OMS, CancelOrder, IllegalTransition, Intent, NewOrder, ReplaceOrder
 from quant.pnl import PnLTracker
@@ -77,6 +81,13 @@ class AutoLoopResult:
     blocked_reasons: dict[str, int] = field(default_factory=dict)
     final_position: int = 0
     attribution: dict | None = None
+    pending_reports: int = 0
+    undelivered_fills: list[Fill] = field(default_factory=list)
+    """Venue facts whose notifications have not arrived at the feed's final ingest time.
+
+    These do not update observer position or strategy state. PnL is unavailable while
+    known fills remain undelivered, and the ending audit retains their exact evidence.
+    """
     stranded_orders: int = 0
     """Orders still live in the OMS when the run ended.
 
@@ -107,6 +118,15 @@ class AutoLoop:
     pnl: PnLTracker = field(init=False)
     result: AutoLoopResult = field(default_factory=AutoLoopResult, init=False)
     _next_timer: int = field(default=0, init=False, repr=False)
+    _last_exchange_ts: int = field(default=-1, init=False, repr=False)
+    _last_ingest_ts: int = field(default=-1, init=False, repr=False)
+    _report_seq: int = field(default=0, init=False, repr=False)
+    _pending_reports: list[tuple[int, int, VenueReport | list[Fill]]] = field(
+        default_factory=list, init=False, repr=False,
+    )
+    _awaiting_replacements: dict[str, list[ReplaceOrder]] = field(
+        default_factory=dict, init=False, repr=False,
+    )
 
     def __post_init__(self) -> None:
         # CONTAINMENT #2. Before anything else, and unconditional.
@@ -136,26 +156,38 @@ class AutoLoop:
                 break
 
             self.result.events += 1
-            if not self._absorb_outcomes(self.venue.advance(event.ingest_ts)):
+            if (event.exchange_ts < self._last_exchange_ts
+                    or event.ingest_ts < self._last_ingest_ts
+                    or event.exchange_ts > event.ingest_ts
+                    or event.recv_ts > event.ingest_ts):
+                self._invalidate_accounting("invalid event chronology: exchange/ingest clock regression")
                 break
-            # BUG-139: retire OMS orders whose traveling cancels the venue CONFIRMED.
-            # A fill that landed before the cancel arrived is a legitimate fill of a
-            # live order (absorbed above); only a still-live order may be retired here —
-            # a terminal one already reconciled the race the other way.
-            for client_id in self.venue.drain_confirmed_cancels():
-                order = self.oms.get(client_id)
-                if order is not None and order.is_live:
-                    self.oms.on_cancelled(client_id, ts=event.ingest_ts,
-                                          reason="venue_confirmed_cancel")
+            self._last_exchange_ts, self._last_ingest_ts = event.exchange_ts, event.ingest_ts
+            # BUG-155: a cancellation at exchange time 120 must precede our order
+            # arriving at 150, even when we do not ingest that cancellation until 200.
+            # Never advance the venue beyond the next known exchange mutation.
+            for report in self.venue.advance_reports(event.exchange_ts):
+                self._queue_report(report.ts, report)
+            if not self._deliver_reports(event.ingest_ts):
+                break
             try:
-                if not self._absorb(self.venue.apply_market_event(event)):
-                    break
+                fills = self.venue.apply_market_event(event)
+                if fills:
+                    received = max(event.recv_ts,
+                                   event.exchange_ts + self.venue.latency.market_data_ns)
+                    delivery = max(event.ingest_ts, received)
+                    self._queue_report(delivery, [
+                        replace(fill, recv_ts=received, ingest_ts=delivery)
+                        for fill in fills
+                    ])
             except OrderNotFound:
                 # Counted, never fatal — the same split as ``Runner``. The BOOK refuses to
                 # hide a desync; the LOOP decides what to do about one. An unattended loop
                 # that died on the first dropped message would turn a data-quality blip into
                 # an outage, and one that hid it would report a run it cannot support.
                 self.result.desync_cancels += 1
+            if not self._deliver_reports(event.ingest_ts):
+                break
 
             book = self.venue.visible_book(event.ingest_ts)
             self.pnl.mark(book.mid_ticks, event.ingest_ts)
@@ -171,13 +203,20 @@ class AutoLoop:
             self._maybe_timer(event.ingest_ts)
 
         self.result.final_position = self.oms.position(self.venue.symbol)
+        pending = [report for _ts, _seq, report in sorted(self._pending_reports)]
+        self.result.pending_reports = len(pending)
+        self.result.undelivered_fills = [fill for report in pending for fill in _report_fills(report)]
         self.result.attribution = (
-            self.pnl.snapshot().as_dict() if self.result.accounting_valid else None
+            self.pnl.snapshot().as_dict()
+            if self.result.accounting_valid and not self.result.undelivered_fills else None
         )
         # Orders resting on the book at the end are legitimately live; ones the book does not
         # hold are the stranded kind this counts.
+        reporting_ids = {fill.order_id for fill in self.result.undelivered_fills}
+        reporting_ids.update(report.client_id for report in pending if not isinstance(report, list))
         self.result.stranded_orders = sum(
-            1 for order in self.oms.live_orders() if order.client_id not in self.venue.book
+            1 for order in self.oms.live_orders()
+            if order.client_id not in self.venue.book and order.client_id not in reporting_ids
         )
         self._audit(EVENT_QUANT_SIM_SESSION, {
             "phase": "end", "events": self.result.events,
@@ -186,9 +225,57 @@ class AutoLoop:
             "accounting_valid": self.result.accounting_valid,
             "desync_fills": self.result.desync_fills,
             "unreconciled_fills": [_fill_evidence(f) for f in self.result.unreconciled_fills],
+            "pending_reports": self.result.pending_reports,
+            "undelivered_fills": [_fill_evidence(f) for f in self.result.undelivered_fills],
             "attribution": self.result.attribution,
         })
         return self.result
+
+    def _queue_report(self, ts: int, report: VenueReport | list[Fill]) -> None:
+        self._report_seq += 1
+        heappush(self._pending_reports, (ts, self._report_seq, report))
+
+    def _deliver_reports(self, ts: int) -> bool:
+        # BUG-156: reports are handled only once their receive time has arrived.
+        # This is an event-step simulation: a report between feed events is processed
+        # at the next ingest tick, never by moving observer time ahead of that tick.
+        while self._pending_reports and self._pending_reports[0][0] <= ts:
+            _due, _seq, report = heappop(self._pending_reports)
+            if isinstance(report, VenueOutcome):
+                outcome = replace(report, ts=ts, result=replace(
+                    report.result, fills=[replace(fill, ingest_ts=ts) for fill in report.fills],
+                ))
+                self._absorb_outcomes([outcome])
+            elif isinstance(report, list):
+                self._absorb([replace(fill, ingest_ts=ts) for fill in report])
+            elif isinstance(report, VenueCancelOutcome):
+                order = self.oms.get(report.client_id)
+                if order is not None and order.is_live:
+                    self.oms.on_cancelled(report.client_id, ts=ts, reason="venue_confirmed_cancel")
+            elif isinstance(report, VenueReplaceOutcome):
+                requests = self._awaiting_replacements.get(report.client_id)
+                if requests:
+                    requests.pop(0)
+                    if not requests:
+                        del self._awaiting_replacements[report.client_id]
+                order = self.oms.get(report.client_id)
+                if report.replaced and order is not None and order.is_live:
+                    try:
+                        self.oms.on_replaced(report.client_id, new_qty=report.new_qty,
+                                             new_price_ticks=report.new_price_ticks, ts=ts)
+                    except IllegalTransition as exc:
+                        self._invalidate_accounting(f"invalid replacement accounting: {exc}")
+                elif not report.replaced:
+                    reasons = self.result.blocked_reasons
+                    reasons["replace_missed"] = reasons.get("replace_missed", 0) + 1
+            if not self.result.accounting_valid:
+                # These venue facts already exist, even if their reports are still
+                # traveling. Preserve the whole known suffix without further callbacks.
+                for _due, _seq, remaining in sorted(self._pending_reports):
+                    self.result.unreconciled_fills.extend(_report_fills(remaining))
+                self._pending_reports.clear()
+                break
+        return self.result.accounting_valid
 
     def _stop_reason(self) -> str | None:
         """The cockpit's own controls, not a private one. An operator's kill switch stops
@@ -222,17 +309,52 @@ class AutoLoop:
         while ts >= self._next_timer:
             fire_at = self._next_timer
             self._next_timer += self.timer_interval_ns
-            ctx = self._context(fire_at)
+            # A late timer carries its scheduled time separately; observations and
+            # outgoing intents belong to the current processing time.
+            ctx = self._context(ts)
             for strategy in self.strategies:
-                self._route(strategy, list(strategy.on_timer(fire_at, ctx)), fire_at)
+                self._route(strategy, list(strategy.on_timer(fire_at, ctx)), ts)
 
     # ---- routing ---------------------------------------------------------------------------
+
+    def _guard_view(self) -> OMS:
+        """Reserve worst-case pending replacement terms without changing observer state.
+
+        A growing order can be live before its ACK reaches the OMS. Its increased
+        size/price cannot fund a second order during that gap; a pending shrink also
+        cannot release any of the existing reservation before acknowledgement.
+        """
+        if not self._awaiting_replacements:
+            return self.oms
+        view = copy(self.oms)
+        view._orders = dict(self.oms._orders)
+        for client_id, requests in self._awaiting_replacements.items():
+            order = self.oms.get(client_id)
+            if order is not None and order.is_live:
+                view._orders[client_id] = replace(
+                    order,
+                    qty=max([order.qty] + [r.new_qty for r in requests if r.new_qty is not None]),
+                    price_ticks=max([order.price_ticks or 0] + [
+                        r.new_price_ticks for r in requests if r.new_price_ticks is not None
+                    ]),
+                )
+        return view
 
     def _route(self, strategy: Strategy, intents: list[Intent], ts: int) -> None:
         if not self.result.accounting_valid:
             return
         for intent in intents:
-            verdict = self.guards.check(intent, strategy=strategy, oms=self.oms,
+            guard_view, guarded_intent = self._guard_view(), intent
+            if (isinstance(intent, ReplaceOrder)
+                    and intent.client_id in self._awaiting_replacements
+                    and (intent.new_qty is None or intent.new_qty > 0)):
+                order = guard_view.get(intent.client_id)
+                if order is not None:
+                    guarded_intent = replace(
+                        intent, new_qty=max(order.qty, intent.new_qty or order.qty),
+                        new_price_ticks=max(order.price_ticks or 0, intent.new_price_ticks or 0),
+                    )
+            verdict = self.guards.check(guarded_intent, strategy=strategy, oms=guard_view,
                                         books={self.venue.symbol: self.venue.book}, ts=ts)
             if not verdict.allowed:
                 self.result.intents_blocked += 1
@@ -252,12 +374,8 @@ class AutoLoop:
                     # time — the cancel can lose the withdraw-vs-fill race, and marking
                     # CANCELLED up front turned the later legitimate fill into an
                     # IllegalTransition that killed the run. The venue confirms on
-                    # arrival (drained in run()); only the instant path retires here.
-                    if self.venue.latency.cancel_ns and ts:
-                        self.venue.cancel_order(intent.client_id, ts=ts)
-                    elif self.venue.cancel_order(intent.client_id, ts=ts):
-                        self.oms.on_cancelled(intent.client_id, ts=ts,
-                                              reason="strategy_cancel")
+                    # arrival; zero-latency cancels also wait for the exchange frontier.
+                    self.venue.cancel_order(intent.client_id, ts=ts, defer=True)
             elif isinstance(intent, ReplaceOrder):
                 order = self.oms.get(intent.client_id)
                 if order is not None and order.is_live:
@@ -271,11 +389,11 @@ class AutoLoop:
                     if self.venue.replace_order(intent.client_id,
                                                 new_qty=intent.new_qty,
                                                 new_price_ticks=intent.new_price_ticks,
-                                                ts=ts):
-                        # Same reason as Runner._replace: the book and the OMS must not
-                        # describe different orders. See OMS.on_replaced.
-                        self.oms.on_replaced(intent.client_id, new_qty=intent.new_qty,
-                                             new_price_ticks=intent.new_price_ticks, ts=ts)
+                                                ts=ts, defer=True):
+                        # Submission is a request. OMS terms change only with the
+                        # delivered venue acknowledgement, after any preceding fills.
+                        self._awaiting_replacements.setdefault(intent.client_id, []).append(intent)
+                        continue
                     else:
                         reasons = self.result.blocked_reasons
                         reasons["replace_missed"] = reasons.get("replace_missed", 0) + 1
@@ -342,20 +460,8 @@ class AutoLoop:
                 # RW-22 / BUG-139: an overfill or a terminal-order fill means accounting
                 # is incomplete. Keep the venue evidence and stop, including callbacks
                 # later in this batch; a plausible partial PnL is not a valid run result.
-                self.result.desync_fills += 1
                 self.result.unreconciled_fills.append(fill)
-                self.result.accounting_valid = False
-                self.result.halted = True
-                self.result.halt_reason = f"invalid fill accounting: {exc}"
-                self.result.attribution = None
-                self.guards.trip(self.result.halt_reason)
-                self._audit(EVENT_QUANT_SIM_BREACH, {
-                    "reason": self.result.halt_reason,
-                    "at_event": self.result.events,
-                    "accounting_valid": False,
-                    "desync_fills": self.result.desync_fills,
-                    "fill": _fill_evidence(fill),
-                })
+                self._invalidate_accounting(f"invalid fill accounting: {exc}", fill=fill)
                 continue
             self.result.fills.append(fill)
             self.pnl.on_fill(fill)
@@ -364,6 +470,21 @@ class AutoLoop:
                 if strategy.name == order.strategy:
                     self._route(strategy, list(strategy.on_fill(fill, ctx)), fill.ingest_ts)
         return self.result.accounting_valid
+
+    def _invalidate_accounting(self, reason: str, *, fill: Fill | None = None) -> None:
+        self.result.desync_fills += int(fill is not None)
+        self.result.accounting_valid = False
+        self.result.halted = True
+        self.result.halt_reason = reason
+        self.result.attribution = None
+        self.guards.trip(reason)
+        payload = {
+            "reason": reason, "at_event": self.result.events,
+            "accounting_valid": False, "desync_fills": self.result.desync_fills,
+        }
+        if fill is not None:
+            payload["fill"] = _fill_evidence(fill)
+        self._audit(EVENT_QUANT_SIM_BREACH, payload)
 
     def _audit(self, event_type: str, payload: dict) -> None:
         """Write to the cockpit's hash-chained log when a sink is injected.
@@ -379,6 +500,12 @@ class AutoLoop:
 def _fill_evidence(fill: Fill) -> dict:
     """JSON-native venue evidence for the audited failure and final session record."""
     return {**asdict(fill), "side": fill.side.value, "liquidity": fill.liquidity.value}
+
+
+def _report_fills(report: VenueReport | list[Fill]) -> list[Fill]:
+    if isinstance(report, list):
+        return report
+    return report.fills if isinstance(report, VenueOutcome) else []
 
 
 def total_from_attribution(attribution: dict | None) -> Decimal:

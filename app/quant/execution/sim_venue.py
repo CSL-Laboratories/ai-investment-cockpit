@@ -84,6 +84,13 @@ class _Pending:
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingReplace:
+    client_id: str
+    new_qty: int | None
+    new_price_ticks: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class VenueOutcome:
     """What the venue did with one released order.
 
@@ -106,6 +113,24 @@ class VenueOutcome:
         return self.result.resting_order_id is not None
 
 
+@dataclass(frozen=True, slots=True)
+class VenueCancelOutcome:
+    client_id: str
+    ts: int
+
+
+@dataclass(frozen=True, slots=True)
+class VenueReplaceOutcome:
+    client_id: str
+    new_qty: int | None
+    new_price_ticks: int | None
+    replaced: bool
+    ts: int
+
+
+VenueReport = VenueOutcome | VenueCancelOutcome | VenueReplaceOutcome
+
+
 @dataclass(slots=True)
 class SimVenue:
     """An in-process matching venue. NOT a broker, and structurally unable to become one.
@@ -124,6 +149,9 @@ class SimVenue:
     # withdraw-vs-fill race instead of always winning it instantly.
     _pending_cancels: list[tuple[int, int, str]] = field(default_factory=list, init=False,
                                                          repr=False)
+    _pending_replaces: list[tuple[int, int, _PendingReplace]] = field(
+        default_factory=list, init=False, repr=False,
+    )
     # Bounded book history for the DELAYED view (BUG-079); populated only when
     # market_data_ns is nonzero.
     _history: deque = field(default_factory=lambda: deque(maxlen=8192), init=False,
@@ -163,7 +191,7 @@ class SimVenue:
         self._pending.append(_Pending(arrive_ts=arrive, intent=intent, owner=owner, seq=self._seq))
         return arrive
 
-    def cancel_order(self, client_id: str, *, ts: int = 0) -> bool:
+    def cancel_order(self, client_id: str, *, ts: int = 0, defer: bool = False) -> bool:
         """Withdraw a resting order, or drop one still in flight.
 
         BUG-090: ``cancel_ns`` was declared, read by ``is_instant``, and never applied —
@@ -178,8 +206,12 @@ class SimVenue:
         transmission" and counts a miss at arrival (pinned by
         test_cancel_that_arrives_too_late_is_a_counted_miss) — the arrival-time
         accounting, not the send-time return, is the miss signal.
+        ``defer=True`` also queues the zero-latency path so AutoLoop cannot alter an
+        exchange book whose frontier is still earlier than the observer's send time.
         """
-        if self.latency.cancel_ns and ts:
+        # AutoLoop's observer can be ahead of the exchange frontier. Even a zero-
+        # latency cancel must wait for that frontier to reach its send timestamp.
+        if defer or (self.latency.cancel_ns and ts):
             self._seq += 1
             self._pending_cancels.append((ts + self.latency.cancel_ns, self._seq, client_id))
             return True                     # accepted for transmission; it may lose the race
@@ -198,7 +230,8 @@ class SimVenue:
         return False
 
     def replace_order(self, client_id: str, *, new_qty: int | None = None,
-                      new_price_ticks: int | None = None, ts: int = 0) -> bool:
+                      new_price_ticks: int | None = None, ts: int = 0,
+                      defer: bool = False) -> bool:
         """Apply a reprice/resize to a RESTING order — or to one still IN FLIGHT.
 
         BUG-078: ``AutoLoop`` only replaced orders already in the book, so a reprice of an
@@ -207,7 +240,19 @@ class SimVenue:
         it had replaced. An in-flight replace rewrites the pending intent itself. Returns
         False when the order exists nowhere (e.g. it just fully filled) so the caller can
         count the miss instead of swallowing it.
+
+        ``defer=True`` queues the request at its send timestamp. This model has no
+        separate replacement wire delay; its eventual success/terms arrive as a report.
         """
+        if defer:
+            if ((new_qty is not None and new_qty <= 0)
+                    or (new_price_ticks is not None and new_price_ticks <= 0)):
+                return False
+            self._seq += 1
+            self._pending_replaces.append((
+                ts, self._seq, _PendingReplace(client_id, new_qty, new_price_ticks),
+            ))
+            return True
         if client_id in self.book:
             self.book.replace(client_id, new_price_ticks=new_price_ticks,
                               new_qty=new_qty, ts=ts)
@@ -245,17 +290,33 @@ class SimVenue:
         object in hand and reads them directly; ``AutoLoop`` goes through this venue and so
         could not, which is exactly how it ended up stranding orders.
         """
+        reports = self.advance_reports(ts)
+        self._confirmed_cancels.extend(
+            report.client_id for report in reports if isinstance(report, VenueCancelOutcome)
+        )
+        return [report for report in reports if isinstance(report, VenueOutcome)]
+
+    def advance_reports(self, ts: int) -> list[VenueReport]:
+        """Apply wire actions through exchange time; return reports with delivery times.
+
+        BUG-155/156: physical mutation and observer notification are separate clocks.
+        AutoLoop queues these reports until its ingest frontier reaches their timestamp.
+        The legacy advance/drain helpers remain available to direct venue callers.
+        """
         ready = [p for p in self._pending if p.arrive_ts <= ts]
         due_cancels = [c for c in self._pending_cancels if c[0] <= ts]
-        if not ready and not due_cancels:
+        due_replaces = [r for r in self._pending_replaces if r[0] <= ts]
+        if not ready and not due_cancels and not due_replaces:
             return []
         self._pending_cancels = [c for c in self._pending_cancels if c[0] > ts]
+        self._pending_replaces = [r for r in self._pending_replaces if r[0] > ts]
         # One arrival stream: orders and cancels land in wire order (BUG-090), so a cancel
         # can arrive after the order it targets has already traded — and miss.
         actions: list[tuple[int, int, object]] = [(p.arrive_ts, p.seq, p) for p in ready]
         actions += [(apply_ts, seq, client_id) for apply_ts, seq, client_id in due_cancels]
+        actions += due_replaces
         actions.sort(key=lambda a: (a[0], a[1]))
-        outcomes: list[VenueOutcome] = []
+        outcomes: list[VenueReport] = []
         for arrive, _seq, payload in actions:
             if isinstance(payload, _Pending):
                 # BUG-098: do not remove every ready order before replaying this merged
@@ -265,13 +326,24 @@ class SimVenue:
                 if not any(p is payload for p in self._pending):
                     continue
                 self._pending.remove(payload)
-                outcomes.append(self._apply(payload, ts))
+                outcomes.append(self._apply(payload, arrive))
+            elif isinstance(payload, _PendingReplace):
+                replaced = self.replace_order(
+                    payload.client_id, new_qty=payload.new_qty,
+                    new_price_ticks=payload.new_price_ticks, ts=arrive,
+                )
+                outcomes.append(VenueReplaceOutcome(
+                    payload.client_id, payload.new_qty, payload.new_price_ticks,
+                    replaced, arrive + self.latency.market_data_ns,
+                ))
             else:
                 if self._cancel_now(payload):
                     # BUG-139: the cancel genuinely arrived and withdrew a live order —
                     # confirm it so the loop can retire its OMS view. A miss (already
                     # traded away) is counted, as before.
-                    self._confirmed_cancels.append(payload)
+                    outcomes.append(VenueCancelOutcome(
+                        payload, arrive + self.latency.market_data_ns,
+                    ))
                 else:
                     self.cancel_misses += 1     # the race, lost: it filled before the cancel
             self._record_state(arrive)          # BUG-079: history at each mutation instant
