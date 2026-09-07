@@ -29,6 +29,7 @@ from orchestrator.halt import default_halt_path, set_halt
 from schemas.models.approval_record import ApprovalRecord
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
+from schemas.models.risk_decision import RiskDecision
 from core.ids import new_id
 
 from tests.brokers.conftest import build_scenario
@@ -338,9 +339,13 @@ def test_e_expired_approval_voided(scenario):
     sc = build_scenario(scenario.st, gateway=gw, broker=broker)
     # Age the PERSISTED approval row past the 10s TTL — the gateway trusts the DB row, not a
     # mutated in-memory object (SEC-03 hardening: caller-supplied fields are never trusted).
+    # BUG-132: the TTL is anchored at the RiskDecision EVAL, so the eval must age too — a
+    # fresh approval minted over a stale eval is exactly what the gate now refuses.
     with sc.st.session_factory() as s, s.begin():
         row = s.get(ApprovalRecord, sc.approval.id)
         row.decided_at = sc.clock.now() - timedelta(seconds=100)
+        rd = s.get(RiskDecision, sc.risk_decision.id)
+        rd.evaluated_at = sc.clock.now() - timedelta(seconds=100)
     out = sc.gateway.submit(sc.order, **sc.submit_kwargs())
     assert not out.ok and out.stage == "approval" and "expired" in (out.reason or "")
     assert broker.calls == 0
