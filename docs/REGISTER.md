@@ -121,12 +121,14 @@ request to its result and remaining evidence. None of these unmerged fixes is cl
 | `BUG-121` | Positive semantic regexes can accept negated outcome, definitive-agreement and explicit-date assertions | high semantic | in review — PR #70; RW-21 | `strategies/merger_semantics.py`; original A4 plus independent negation probes |
 | `BUG-122` | Current-deal verification mistakes an ordinary later accession for an amendment and rejects the complete source set | medium | in review — PR #70; RW-21 | `strategies/merger_semantics.py::_verify_deal`; original A6 |
 | `BUG-123` | Positively identified live intents are excluded from paper performance, but their generic fill transitions still invalidate reconstruction | medium, future live integration | open — scoped repair required before live integration | `brokers/paper_performance.py`; original A5, still reproduced after RW-20/21; no current live activation |
+| `BUG-124` | After an append observes an established signed high-water, `_bump_hwm` treats a missing or invalid reread as a replacement watermark to sign (`seq if cur is None or cur < 0 else max(cur, seq)`), so late metadata damage is healed instead of refused | high paper | claimed — SEC-11 audit-spine signing-boundary refusal; distinct from merged BUG-114 / PR #68 (allocation HWM-before-head) and merged BUG-118 / PR #70 (`result()` snapshot pin); BUG-114 remains fixed | `storage/audit.py` (`_bump_hwm` + `_insert` initialization context); Astra miss 13; [[evidence/astra-hwm-resign-claim-shape-2026-09-06]]; [[evidence/bug124-hwm-signing-refusal-2026-09-07]] |
 
 Historical status correction: BUG-113 is merged through PR #59 (`1e2d4e3`), and
 BUG-114 through PR #68 (`61ca0af`, repair `3035d83`). The rows below now reflect
 that merged status while retaining their historical test counts. Subsequent post-#68
 application validation is separately bound in [[evidence/rw20-matrix-isolation-2026-09-06]];
-it does not heal the original fork or certify the current remote soak.
+it does not heal the original fork or certify the current remote soak. `BUG-124` is a
+new linked SEC-11 audit-spine claim on that same watermark, not a reopen of BUG-114.
 
 Found by the 2026-08-09 audit. Every closed row below shipped with a regression test; blocked
 rows retain their named prerequisite.
