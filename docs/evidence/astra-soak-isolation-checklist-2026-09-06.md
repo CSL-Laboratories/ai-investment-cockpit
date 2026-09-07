@@ -385,10 +385,15 @@ For example, another byte observation can be made without importing Cockpit or c
 to SQLite (choose a new label; the collector refuses to overwrite an existing result):
 
 ```bash
-/workspace/ai-investment-cockpit/.venv/bin/python \
+/workspace/ai-investment-cockpit/.venv/bin/python -I -S \
   /workspace/ai-investment-cockpit/data/astra-soak-isolation-2026-09-06/snapshot.py \
   admin-before-rebase
 ```
+
+`-I -S` excludes inherited Python import-path settings, user site packages and automatic
+`site`/`.pth` startup processing; this standard-library collector needs none of them.
+That invocation was checked with the project interpreter. It does not freeze the
+interpreter binary itself. [Python command-line options](https://docs.python.org/3.13/using/cmdline.html).
 
 Inspect the collector and current Git configuration before reuse on a different host. Its
 path constants identify this host; a redirected/missing/unexpected tree must be investigated,

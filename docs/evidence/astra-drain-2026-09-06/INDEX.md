@@ -15,8 +15,9 @@ Noble claim priority if packages contend: (1) audit append/HWM beyond #114, (2) 
 | W-25 / SEC-11 witness | docs-only; no WORM configured; no provider spend | `../astra-w25-sec11-witness-plan-2026-09-06.md` |
 | Cohort honesty schedule | recommend filing-triggered + weekday 05:30 backstop; Mon 05:30 stays armed | `../astra-cohort-honesty-schedule-2026-09-06.md` |
 | Soak isolation checklist | reference; linked worktrees + read-only mount notes | `../astra-soak-isolation-checklist-2026-09-06.md` |
-| Audit concurrency beyond #114 | cyber-flag aborted md; 13 probe candidates in `misses-beyond-68.txt`; harden relaunch | `misses-beyond-68.txt` + `../astra-audit-append-hardening-2026-09-06/` |
-| DEC-09 / HWM claim-shape | in flight / partial fixtures under sibling dirs | `../astra-dec09-matrix-gaps-2026-09-06/`, `../astra-hwm-resign-claim-shape-2026-09-06/` |
+| Audit append hardening | **real-miss-found**; Order FSM freshness/rollback (F1/F2); HWM late damage deferred to HWM report; no PR yet | `../astra-audit-append-hardening-2026-09-06.md` |
+| HWM re-sign claim-shape | **real-miss-found**; claim refuse invalid HWM at signing (miss #13); distinct from #68/#70; no PR yet | `../astra-hwm-resign-claim-shape-2026-09-06.md` |
+| DEC-09 matrix gaps | in flight / partial fixtures | `../astra-dec09-matrix-gaps-2026-09-06/` |
 
 ## Prompts
 
@@ -29,3 +30,6 @@ No soak rewrite; no watchlist seed; no selection PASS claimed; no Discord forge;
 ## Amend log
 
 - 2026-09-06 ~18:18 PT: mid-flight fixture refresh (audit-harden contracts, DEC-09 matrix helper, isolation checklist polish) while final reports still landing.
+
+- 2026-09-06 ~18:23 PT: added HWM re-sign claim-shape report (real-miss-found).
+- 2026-09-06 ~18:23 PT: added audit-append-hardening report (real-miss-found; Order FSM claim shape).

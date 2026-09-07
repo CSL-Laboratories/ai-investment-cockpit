@@ -1,0 +1,14 @@
+{
+  "checked_utc": "2026-09-07T01:22:01.599283+00:00",
+  "local_head": "20978607ed9efad7d62c4a1cb2ae201f7ca8b113",
+  "local_branch": "work/astra-drain-freeze-2026-09-06",
+  "app_tree": "5125e7edd2489c027364bbbfbd4556d928109817",
+  "app_matches_post70": true,
+  "local_blobs": {
+    "app/storage/audit.py": "df9baf0c35787aea2c0cef840f6f18ed897a7eda",
+    "app/storage/engine.py": "081d30f7a0ed2a308758faca7c359c700c0ec010",
+    "app/ingest/edgar_pipeline.py": "9d8eebc07cb3ceff1c424a2c220cd16adafcd2a7"
+  },
+  "task_git_mutations": false,
+  "incident_database_opened": false
+}
