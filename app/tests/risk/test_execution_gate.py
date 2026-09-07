@@ -200,7 +200,7 @@ def test_closing_trade_marks_relative_edge_not_applicable_without_weakening_othe
     result = evaluate(
         _proposal(side="sell", quantity=10),
         _ctx(
-            holdings={"AAPL": {"market_value": Decimal("5000")}},
+            holdings={"AAPL": {"market_value": Decimal("5000"), "qty": Decimal("50")}},
             quant_verdict=FakeVerdict("ok", net_edge_state="not_applicable"),
             require_quant_verdict=True,
             require_net_edge=True,

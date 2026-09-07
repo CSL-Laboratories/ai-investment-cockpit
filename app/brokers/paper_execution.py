@@ -28,7 +28,7 @@ from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThreshol
 from orchestrator.limits import current_limits
 from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_PAPER_NOTIFICATION
-from risk.engine import evaluate
+from risk.engine import available_sell_quantity, evaluate
 from schemas.models.agent_job import AgentJob
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
@@ -365,7 +365,7 @@ class PaperExecutionService:
         }
 
     def _fresh_risk(self, proposal_payload: dict, symbol: str, *, order_qty=None,
-                    require_w21: bool = False, resolved_order=None):
+                    require_w21: bool = False, resolved_order=None, order_id=None):
         try:
             snapshot = self._broker.get_positions(st=self.state, clock=self.state.clock)
             if (getattr(self.state, "paper_performance_required", False)
@@ -388,6 +388,12 @@ class PaperExecutionService:
                     "quantity": resolved_order["qty"], "notional": None,
                 })
                 order_qty = resolved_order["qty"]
+            require_composed = market_data is not None or require_w21
+            ctx = build_risk_context(
+                self.state, quote=quote, watchlist=self._watchlist(),
+                require_quant_verdict=require_composed, require_net_edge=require_composed,
+                snapshot=snapshot, exclude_order_id=order_id,
+            )
             verdict, book_seq, _resolved_qty, _reasons = build_execution_verdict(
                 evaluated,
                 quote_price=Decimal(str((quote or {}).get("price", 0))),
@@ -400,21 +406,17 @@ class PaperExecutionService:
                 edge_provider=self._edge_provider,
                 quote=quote,
                 quantity_override=order_qty,
+                sell_available_qty=available_sell_quantity(ctx, symbol),
             )
             # A persisted W-21 verdict proves this order was drafted on the composed cost
             # path. Losing the service's market-data attachment later must not silently turn
             # approval-time risk back into the legacy additive posture.
-            require_composed = market_data is not None or require_w21
             # BUG-128: arm the verdict-age ceiling with the approval-time clock, same as
             # the drafting composition in workflows/proposals.py.
-            ctx = build_risk_context(
-                self.state, quote=quote, watchlist=self._watchlist(),
-                quant_verdict=verdict, quant_book_seq=book_seq,
-                quant_verdict_now_ns=to_ns(self.state.clock.now()),
-                require_quant_verdict=require_composed,
-                require_net_edge=require_composed,
-                snapshot=snapshot,
-            )
+            ctx.quant_verdict = verdict
+            ctx.quant_book_seq = book_seq
+            ctx.quant_verdict_now_ns = to_ns(self.state.clock.now())
+            evaluated["quantity"] = _resolved_qty
             if resolved_order is not None:
                 price = max(ctx.quote_price, Decimal(str(resolved_order.get("limit_price") or 0)))
                 evaluated["notional"] = str(Decimal(str(order_qty)) * price)
@@ -501,6 +503,7 @@ class PaperExecutionService:
                 proposal.payload,
                 order.symbol,
                 order_qty=order.qty,
+                order_id=order.id,
                 resolved_order=resolved,
                 require_w21=risk_decision.execution_verdict is not None,
             )
@@ -538,15 +541,23 @@ class PaperExecutionService:
                 409,
             )
         if choice in {"reject", "veto"}:
-            order.approval_id = adjudication.id
-            transition(
-                self.state,
-                order,
-                "rejected",
-                actor=f"{surface}:{actor}",
-                reason=f"operator {choice}",
-                clock=self.state.clock,
-            )
+            with self.state.lock:
+                intents = self.state.audit.verified_events("intent:order_submit")
+                if any((entry.refs or {}).get("order_id") == order.id for entry in intents):
+                    raise PaperExecutionError(
+                        "broker_reconciliation_required",
+                        "a submitted order requires broker reconciliation; a local veto "
+                        "cannot confirm its cancellation",
+                    )
+                order.approval_id = adjudication.id
+                transition(
+                    self.state,
+                    order,
+                    "rejected",
+                    actor=f"{surface}:{actor}",
+                    reason=f"operator {choice}",
+                    clock=self.state.clock,
+                )
             return {
                 "status": "vetoed" if choice == "veto" else "rejected",
                 "order_id": order.id,
@@ -558,6 +569,7 @@ class PaperExecutionService:
                 proposal.payload,
                 order.symbol,
                 order_qty=order.qty,
+                order_id=order.id,
                 resolved_order=resolved,
                 require_w21=risk_decision.execution_verdict is not None,
             )

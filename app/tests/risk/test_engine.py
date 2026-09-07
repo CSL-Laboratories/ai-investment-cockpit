@@ -17,7 +17,7 @@ def clean_ctx(**over) -> RiskContext:
         max_notional=D("10000"), max_positions=10, concentration_pct=D("0.5"),
         daily_loss_limit=D("1000"), quote_staleness_s=30.0, max_spread_pct=D("0.02"),
         pending_exposure_cap=D("50000"), cash=D("50000"), buying_power=D("50000"),
-        holdings={"AAPL": {"market_value": D("5000")}}, open_positions=1,
+        holdings={"AAPL": {"market_value": D("5000"), "qty": D("25")}}, open_positions=1,
         realized_loss_today=D("0"), pending_notional=D("0"), watchlist={"MSFT"},
         quote_price=D("190"), quote_age_s=2.0, quote_spread_pct=D("0.001"), mode="paper",
     )
@@ -114,7 +114,7 @@ def test_oversized_sell_rejected():
 
 
 def test_backed_sell_approves():
-    d = evaluate(clean_proposal(symbol="AAPL", side="sell", notional="3000"), clean_ctx())
+    d = evaluate(clean_proposal(symbol="AAPL", side="sell", quantity=15, notional="3000"), clean_ctx())
     assert d["decision"] == "approved"
 
 
