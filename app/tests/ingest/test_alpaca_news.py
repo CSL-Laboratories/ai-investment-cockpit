@@ -106,3 +106,27 @@ def test_a_structurally_bad_frame_is_counted_and_commits_nothing():
     assert consumer.run(lambda e: None, max_frames=1) == 0
     assert consumer.counters["frame_error"] == 1
     assert consumer.counters["emit_error"] == 0
+
+
+def test_malformed_frames_reach_limit_without_requesting_another_frame():
+    requested = []
+
+    def frames():
+        for index in range(3):
+            requested.append(index)
+            yield "not-a-dict-frame"
+        raise AssertionError("frame limit must stop before the next socket read")
+
+    consumer = AlpacaNewsConsumer(frames, max_reconnects=0)
+    assert consumer.run(lambda event: None, max_frames=3) == 0
+    assert requested == [0, 1, 2]
+    assert consumer.counters == {"frame_error": 3, "emit_error": 0}
+
+
+def test_malformed_and_duplicate_frames_share_the_same_total_frame_limit():
+    frames = [_frame(1), _frame(1), None, _frame(2)]
+    out = []
+    consumer = AlpacaNewsConsumer(lambda: iter(frames), max_reconnects=0)
+    assert consumer.run(out.append, max_frames=3) == 1
+    assert [event["article_id"] for event in out] == ["1"]
+    assert consumer.counters == {"frame_error": 1, "emit_error": 0}

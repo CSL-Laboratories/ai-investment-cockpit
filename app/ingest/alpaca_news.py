@@ -80,6 +80,8 @@ class AlpacaNewsConsumer:
                         event = _to_event(msg)
                     except Exception:
                         self.counters["frame_error"] += 1  # structural: nothing was committed
+                        if max_frames is not None and seen >= max_frames:
+                            return emitted                 # bad frames consume the same bound
                         continue
                     if self._dedup.add(key):
                         try:
