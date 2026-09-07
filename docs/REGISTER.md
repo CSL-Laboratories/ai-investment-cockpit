@@ -91,9 +91,10 @@ stopped-system preflight and historical handoff in
 
 ### Operator-authorized gate review — 2026-09-06
 
-`RW-20` is claimed by Codex/Astra on `codex/audit-gates-2026-09-06`: repair the
-three priority authority defects below, with separately authored adversarial tests,
-then record concurrency/restart, isolation and DEC-09 evidence. The operator also
+`RW-20` and `RW-21` are in review in [draft PR #70](https://github.com/NotSkittlz/ai-investment-cockpit/pull/70)
+on `codex/audit-gates-2026-09-06`. Codex/Astra repaired the priority authority defects
+with separately authored adversarial tests and recorded concurrency/restart, isolation
+and DEC-09 evidence. The operator also
 authorized the subsequent held semantic-miss package (`RW-21`) and research/measurement
 review. Production packages are implemented sequentially. No selection, watchlist,
 date, witness, paper-activation or live gate is waived. Scope and acceptance are in
@@ -111,14 +112,14 @@ request to its result and remaining evidence. None of these unmerged fixes is cl
 
 | ID | What | Sev | Status | Where |
 |---|---|---|---|---|
-| `BUG-115` | Claude decision argv mistakes `--allowedTools none` for tool disablement; inherited tools/MCP are not explicitly excluded | high | claimed — RW-20 | `agent_runner/runner.py`, `agent_runner/tool_inspector.py`; original A7 |
-| `BUG-116` | Fresh risk evaluates mutable proposal economics instead of the fixed authorized order, permitting an unsigned size edit to bypass tightened limits | high | claimed — RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A1 |
-| `BUG-117` | Fresh broker equity is signed but approval consumes cached loss metrics until the scheduled sampler runs | high | claimed — RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A2 |
-| `BUG-118` | Independent writers can both resolve one audit intent because the duplicate-result read is not pinned before allocating a fresh sequence | high | claimed — RW-20 concurrency pressure | `storage/audit.py::result`; independently reproduced with a valid chain |
-| `BUG-119` | Codex decision argv inspector accepts duplicate sandbox overrides and unknown switches | high boundary | claimed — RW-20 authority pressure | `agent_runner/tool_inspector.py`; inspector acceptance reproduced, no model-controlled injection claimed |
-| `BUG-120` | Semantic text extraction admits non-displayed script/style/hidden/comment/attribute text as filing authority | high semantic | claimed — RW-21 | `strategies/merger_semantics.py::_text`; original A3 |
-| `BUG-121` | Positive semantic regexes can accept negated outcome, definitive-agreement and explicit-date assertions | high semantic | claimed — RW-21 | `strategies/merger_semantics.py`; original A4 plus independent negation probes |
-| `BUG-122` | Current-deal verification mistakes an ordinary later accession for an amendment and rejects the complete source set | medium | claimed — RW-21 | `strategies/merger_semantics.py::_verify_deal`; original A6 |
+| `BUG-115` | Claude decision argv mistakes `--allowedTools none` for tool disablement; inherited tools/MCP are not explicitly excluded | high | in review — PR #70; RW-20 | `agent_runner/runner.py`, `agent_runner/tool_inspector.py`; original A7 |
+| `BUG-116` | Fresh risk evaluates mutable proposal economics instead of the fixed authorized order, permitting an unsigned size edit to bypass tightened limits | high | in review — PR #70; RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A1 |
+| `BUG-117` | Fresh broker equity is signed but approval consumes cached loss metrics until the scheduled sampler runs | high | in review — PR #70; RW-20 | `brokers/paper_execution.py`, `workflows/proposals.py`; original A2 |
+| `BUG-118` | Independent writers can both resolve one audit intent because the duplicate-result read is not pinned before allocating a fresh sequence | high | in review — PR #70; RW-20 | `storage/audit.py::result`; independently reproduced with a valid chain |
+| `BUG-119` | Codex decision argv inspector accepts duplicate sandbox overrides and unknown switches | high boundary | in review — PR #70; RW-20 | `agent_runner/tool_inspector.py`; inspector acceptance reproduced, no model-controlled injection claimed |
+| `BUG-120` | Semantic text extraction admits non-displayed script/style/hidden/comment/attribute text as filing authority | high semantic | in review — PR #70; RW-21 | `strategies/merger_semantics.py::_text`; original A3 |
+| `BUG-121` | Positive semantic regexes can accept negated outcome, definitive-agreement and explicit-date assertions | high semantic | in review — PR #70; RW-21 | `strategies/merger_semantics.py`; original A4 plus independent negation probes |
+| `BUG-122` | Current-deal verification mistakes an ordinary later accession for an amendment and rejects the complete source set | medium | in review — PR #70; RW-21 | `strategies/merger_semantics.py::_verify_deal`; original A6 |
 | `BUG-123` | Positively identified live intents are excluded from paper performance, but their generic fill transitions still invalidate reconstruction | medium, future live integration | open — scoped repair required before live integration | `brokers/paper_performance.py`; original A5, still reproduced after RW-20/21; no current live activation |
 
 Historical status correction: BUG-113 is merged through PR #59 (`1e2d4e3`), and

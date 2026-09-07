@@ -2,6 +2,7 @@
 
 Branch: `codex/audit-gates-2026-09-06`, based on private main
 `b4a199ff41ed84d78f21602a84d9665c1072ec6a` (after PR #68).
+Review: [draft PR #70](https://github.com/NotSkittlz/ai-investment-cockpit/pull/70).
 This is reviewable source and evidence. It does not activate paper execution, change a running
 process, or confer a selection, witness, or live-capital PASS.
 
