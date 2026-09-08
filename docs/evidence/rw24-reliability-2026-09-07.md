@@ -93,6 +93,14 @@ hashes that payload. A new control failed before the repair and proves valid bin
 day distinction, preserved caller payloads and repeat-call idempotence. All nine replay
 cases and four original-news integrity cases pass (13 total); targeted Ruff passes.
 
+The quantity repair assigns the human-review status whenever quantity is unresolved,
+while preserving a grounding flag and every risk refusal. All 34 proposal/execution
+tests pass. Independent adversarial review added four cases covering flagged unresolved
+quantities under approved/rejected risk and resolvable quantities under rejected risk.
+Those four plus the three primary quantity cases pass; signed status, displayed risk
+and the absence of an Order row agree. The independent replay identity check also
+passes. No review blocker remains; full application Ruff passes before source freeze.
+
 All implementation slices and independent authority review are complete. The combined
 RW-23/RW-24 source at `6d7d7df` exposed a replay-fixture hash mismatch in the Python
 3.11 DEC-09 runs. The helper changes only the hash; BUG-150 correctly requires that

@@ -26,8 +26,8 @@ and the claim board, not the specification.
 ### RW-24 measured reliability follow-up — implemented, 2026-09-07
 
 Owner: Codex/Astra, same isolated branch. Implementation and independent review passed;
-the archived-source DEC-09 matrix found a replay-fixture hash mismatch. Work is paused
-at the operator's request; the fixture repair and complete green matrix remain required.
+the archived-source DEC-09 matrix found two regressions. The resumed fixture/status
+repairs and independent review pass; a fresh complete green matrix remains required.
 Both packages remain unmerged. Restart: [[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
 Intake, reproducible baselines and validation: [[evidence/rw24-reliability-2026-09-07]].
 

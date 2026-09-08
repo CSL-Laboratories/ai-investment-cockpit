@@ -18,9 +18,10 @@ RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization a
 Discord validation coverage are committed on `codex/audit-reliability-2026-09-07`.
 Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
 The archived source at `6d7d7df` exposed a replay-fixture hash mismatch in the DEC-09
-matrix. Work pauses at the operator's request after the active Python 3.11 runs;
-[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]] owns the restart steps.
-The fixture repair and a complete green matrix remain required before acceptance.
+matrix. The operator resumed; the replay fixture and fractional-quantity status
+regressions are repaired and independently reviewed. A complete green matrix remains
+required before acceptance. The historical restart record is
+[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
 
 ### RW-23 audit repair delivery — 2026-09-07
 

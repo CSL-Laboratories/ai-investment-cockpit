@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from config.settings import Mode
 from ingest.market_data import MarketMetrics, MarketObservation
 from orchestrator.mode_ladder import ModeLadder
@@ -27,6 +29,7 @@ from tests.workflows.test_proposals import (
     _quote_fn,
     _seed_snapshot,
 )
+from workflows.constants import EVENT_PROPOSAL
 from workflows.packets import build_packet
 from workflows.proposals import draft_proposal
 
@@ -133,12 +136,21 @@ def test_rw14_quote_cache_fault_degrades_to_risk_rejection_without_aborting(st, 
     assert any("market quote unavailable" in reason for reason in outcome.reasons)
 
 
-def test_fractional_explicit_quantity_fails_to_human_without_an_order(st, clock, tmp_path):
-    outcome = _draft(st, clock, tmp_path, quantity=5.7, book_fn=None)
+@pytest.mark.parametrize("quantity,notional", [(5.7, None), (0.5, None), (5.7, 500)])
+def test_fractional_explicit_quantity_fails_to_human_without_an_order(
+    st, clock, tmp_path, quantity, notional,
+):
+    outcome = _draft(st, clock, tmp_path, quantity=quantity, notional=notional, book_fn=None)
 
     assert outcome.status == "needs_human"
     assert outcome.order is None
+    assert outcome.record.status == "needs_human"
+    assert outcome.record.order_id is None
     assert any("quantity unresolvable" in reason for reason in outcome.reasons)
+    if notional is None:
+        assert outcome.risk_decision.decision == "rejected"
+    assert _payloads(st, EVENT_PROPOSAL)[-1]["status"] == "needs_human"
+    assert st.audit.verify_chain().ok
 
 
 # ---- ADV replaces displayed-depth participation -----------------------------------------------

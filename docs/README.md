@@ -12,9 +12,9 @@ last-verified: 2026-09-07
 BUG-146 through BUG-158 are fixed in local commit slices, alongside a measured triage
 optimization and full Discord validation coverage. Independent authority review passed;
 the DEC-09 matrix exposed a replay-fixture hash mismatch against source `6d7d7df`.
-The operator requested a pause for travel. See
-[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]] for the exact restart point;
-the package is not yet fully validated.
+The operator resumed after travel. Both matrix regressions are repaired and independently
+reviewed; a fresh complete matrix remains required. The historical pause checkpoint is
+[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
 See [[evidence/rw23-audit-repair-2026-09-07]],
 [[evidence/rw24-reliability-2026-09-07]], and
 [[evidence/rw23-rw24-local-matrix-2026-09-07/README]] for changes and evidence.

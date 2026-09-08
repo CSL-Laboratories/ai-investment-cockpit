@@ -540,7 +540,11 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # deterministic risk gate approved it. 'flagged => no Order row' is enforced here.
     status = "flagged" if flagged else "drafted"
     order_row: Order | None = None
-    if rd["decision"] == "approved" and not flagged:
+    if resolved_qty is None:
+        reasons.append("order quantity unresolvable (needs human)")
+        if not flagged:
+            status = "needs_human"
+    elif rd["decision"] == "approved" and not flagged:
         if halt_is_set(default_halt_path()):
             status = "needs_human"
             reasons.append("HALT sentinel set (SEC-04); order not created")
