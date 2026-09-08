@@ -1,7 +1,7 @@
 ---
 title: RW-23 post-merge audit repair and reliability follow-up
 type: evidence
-status: implemented-pending-final-matrix
+status: implemented-and-locally-validated
 last-verified: 2026-09-07
 ---
 
@@ -90,11 +90,11 @@ repairs, rather than expanding this correctness package.
 
 # Remaining gates
 
-Independent authority review has passed. The DEC-09 matrix against combined source
-`6d7d7df` exposed a replay helper that overwrites the content hash without changing
-the original payload. The new BUG-150 integrity check correctly refuses it. Seven
-replay setup errors and one direct replay failure have the same reproduced cause.
-The fixture repair and a complete green matrix remain required; work pauses at the
-operator's request. See [[rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
+Independent authority review and the complete DEC-09 matrix pass against combined
+implementation `fa3cc1c`. The replay source/hash and fractional-quantity status
+regressions from the earlier run are fixed in separate slices. Windows 3.11/3.12:
+3,107 passed / 4 skipped each; Ubuntu WSL2 3.11/3.12: 3,105 passed / 6 skipped each.
+All 233 required cases pass in every cell; Ruff and dependency checks pass.
+See [[rw23-rw24-local-matrix-2026-09-08/README]] for frozen source and complete evidence.
 Existing independent witness, cohort, prospective observations, paper-day and pre-live gates
 remain unchanged. A locally committed repair is not a merged/closed register item.

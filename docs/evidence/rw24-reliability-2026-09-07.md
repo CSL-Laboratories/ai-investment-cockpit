@@ -1,6 +1,6 @@
 ---
 title: RW-24 measured reliability follow-up
-status: implemented-pending-final-matrix
+status: implemented-and-locally-validated
 last-verified: 2026-09-07
 ---
 
@@ -101,11 +101,10 @@ Those four plus the three primary quantity cases pass; signed status, displayed 
 and the absence of an Order row agree. The independent replay identity check also
 passes. No review blocker remains; full application Ruff passes before source freeze.
 
-All implementation slices and independent authority review are complete. The combined
-RW-23/RW-24 source at `6d7d7df` exposed a replay-fixture hash mismatch in the Python
-3.11 DEC-09 runs. The helper changes only the hash; BUG-150 correctly requires that
-the hash match the separately retained original input. The fixture repair and a new
-complete matrix remain required. The operator requested a pause before the next batch.
-Evidence, benchmark results and exact source binding:
-[[rw23-rw24-local-matrix-2026-09-07/README]]; restart details:
-[[rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
+All implementation slices, independent authority review and the four-cell DEC-09 matrix
+are complete against `fa3cc1c`. Windows 3.11/3.12 each pass 3,107 tests with 4 skips;
+Ubuntu WSL2 3.11/3.12 each pass 3,105 with 6 skips. All 233 required regression cases
+pass in every cell, along with Ruff and dependency checks. The final evidence verifier
+confirms source identity, artifact hashes, gate commands and XML/log counts.
+Final source binding and evidence: [[rw23-rw24-local-matrix-2026-09-08/README]].
+The failed `6d7d7df` attempts and pause remain documented in the previous evidence folder.

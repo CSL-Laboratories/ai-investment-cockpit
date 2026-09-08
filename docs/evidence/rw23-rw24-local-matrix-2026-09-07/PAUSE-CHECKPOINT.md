@@ -1,5 +1,9 @@
 # Operator-requested pause — 2026-09-07
 
+Historical checkpoint: the operator resumed, both remaining regressions were repaired,
+and the full matrix passed. See the
+[final evidence](../rw23-rw24-local-matrix-2026-09-08/README.md) for current status.
+
 The operator requested a pause after the current work to travel and change working
 environments. Finish only the two active Python 3.11 runs, preserve the results, and
 stop. Do not start Python 3.12, another repair batch, or any new background work until

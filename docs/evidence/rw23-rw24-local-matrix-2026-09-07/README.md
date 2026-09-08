@@ -1,5 +1,9 @@
 # RW-23 / RW-24 local validation
 
+Historical attempts, superseded by the successful
+[final matrix](../rw23-rw24-local-matrix-2026-09-08/README.md) against `fa3cc1c`.
+The original source pins and failed/incomplete evidence below remain unchanged.
+
 Attempted implementation commit: `6d7d7df73b4f480818c64a3a2b8fa8df39c6fdf9`.
 Application tree: `c1c9e935b9dc99b548aefbdd2bdce6b78c617c3a`.
 All four cells were configured for the same Git archive; [source-binding.json](source-binding.json)

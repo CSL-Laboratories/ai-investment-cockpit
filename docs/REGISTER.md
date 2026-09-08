@@ -25,17 +25,18 @@ and the claim board, not the specification.
 
 ### RW-24 measured reliability follow-up — implemented, 2026-09-07
 
-Owner: Codex/Astra, same isolated branch. Implementation and independent review passed;
-the archived-source DEC-09 matrix found two regressions. The resumed fixture/status
-repairs and independent review pass; a fresh complete green matrix remains required.
-Both packages remain unmerged. Restart: [[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
+Owner: Codex/Astra, same isolated branch. Implementation, independent review and the
+full DEC-09 matrix pass against `fa3cc1c`, including the two resumed integration repairs.
+Windows 3.11/3.12: 3,107 passed / 4 skipped each; Ubuntu WSL2 3.11/3.12: 3,105 passed /
+6 skipped each. All 233 required cases pass in every cell. Both packages remain unmerged.
+Evidence: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
 Intake, reproducible baselines and validation: [[evidence/rw24-reliability-2026-09-07]].
 
 | ID | Defect/improvement | Priority | Status |
 |---|---|---|---|
 | `BUG-157` | Intraday discovered holding is excluded by daily-bars readiness latch | P2 | implemented — `6d2a747` |
 | `BUG-158` | Malformed frames bypass the stream diagnostic frame limit | P3 | implemented — `5c37e69` |
-| `RW-24` | Bounded fixes, measured triage scans, installed/fallback Discord validation | — | implemented — `b9374ec`, `98bd5e5`; matrix pending |
+| `RW-24` | Bounded fixes, measured triage scans, installed/fallback Discord validation | — | implemented and locally validated — `fa3cc1c`; unmerged |
 
 ### RW-23 post-merge audit repair — claimed 2026-09-07
 
@@ -45,8 +46,8 @@ The existing autonomous evidence runs keep their original checkout and configura
 The package gate is focused regressions, fresh independent authority review and the full
 local DEC-09 matrix. IDs remain claimed until merge; no empirical gate is closed here.
 All 11 defects below are implemented in individual slices (155/156 share a chronology
-slice); independent authority review passed. Final matrix evidence is pending at
-[[evidence/rw23-rw24-local-matrix-2026-09-07/README]].
+slice); independent authority review and the final four-cell matrix pass. Evidence:
+[[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
 
 | ID | Defect | Priority | Status |
 |---|---|---|---|

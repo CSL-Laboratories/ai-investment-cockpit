@@ -17,11 +17,11 @@ last-verified: 2026-09-07
 RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization and
 Discord validation coverage are committed on `codex/audit-reliability-2026-09-07`.
 Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
-The archived source at `6d7d7df` exposed a replay-fixture hash mismatch in the DEC-09
-matrix. The operator resumed; the replay fixture and fractional-quantity status
-regressions are repaired and independently reviewed. A complete green matrix remains
-required before acceptance. The historical restart record is
-[[evidence/rw23-rw24-local-matrix-2026-09-07/PAUSE-CHECKPOINT]].
+The replay fixture and fractional-quantity status regressions found in the first
+completed matrix are repaired and independently reviewed. All four DEC-09 cells pass
+against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
+3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
+Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
 
 ### RW-23 audit repair delivery — 2026-09-07
 
