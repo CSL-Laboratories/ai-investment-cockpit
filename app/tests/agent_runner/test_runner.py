@@ -292,5 +292,5 @@ def test_repair_empty_output_fails_closed():
     u = UsageTracker()
     t = FakeTransport([bad, ProcResult(0, "   ", "", False)])
     r = run_agent(spec(), transport=t, usage=u)
-    assert r.status == NEEDS_HUMAN
+    assert r.status == LIMIT_HIT
     assert u.window("claude").state == "degraded"

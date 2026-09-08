@@ -50,7 +50,10 @@ provisioned.
 2. Keep changes to one work package and add tests with the change.
 3. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
-   then install the dependency set CI installs (see `.github/workflows/ci.yml`).
+   then install the full runtime and validation dependency set CI installs (see
+   `.github/workflows/ci.yml` and the command in `CLAUDE.md`), including `discord.py`.
+   Every matrix cell must run the real offline Discord command-tree tests; the absent
+   dependency fallback is covered separately in an isolated subprocess.
    Run the gates from `app/`:
    - Windows: `..\.venv\Scripts\python.exe -m pytest -q` and `..\.venv\Scripts\ruff.exe check .`
    - Ubuntu / WSL2: `../.venv/bin/python -m pytest -q` and `../.venv/bin/ruff check .`

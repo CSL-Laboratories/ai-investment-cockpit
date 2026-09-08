@@ -8,8 +8,8 @@ input can yield an approved decision with a failed hard check (Invariant 1, prop
 
 Hardened after adversarial review (wf_dee65078): order size must be a **finite, positive**
 Decimal (a negative/zero/absent size, or a non-positive quote, would otherwise make every
-one-sided `<=` cap vacuously true); a SELL must be backed by a reconciled holding and bounded
-by its market value (no naked shorts); asset_type/order_type are validated (market orders ->
+one-sided `<=` cap vacuously true); a SELL must be bounded by reconciled available shares
+after outstanding sells (no naked shorts); asset_type/order_type are validated (market orders ->
 human review since notional is only advisory); the gate sizes on the LARGER of divergent
 notional/quantity fields; max_allowed_notional folds in concentration/positions/Reg-T; and
 matched_rule (SEC-19) is advisory ONLY on an approved decision.
@@ -20,7 +20,7 @@ trust anchor.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 REG_T_MIN_EQUITY = Decimal("2000")
@@ -111,6 +111,34 @@ class RiskContext:
     """W-21 production posture.  When armed, an unavailable trusted edge forces human review
     (and therefore no Order row), while a present estimate below the relative threshold is a
     distinct HARD failure.  Off keeps legacy/uncomposed callers additive."""
+
+    pending_sell_quantities: dict | None = field(default_factory=dict)
+    """Verified unfilled sell shares by symbol; None means reservation authority failed."""
+    pending_unsubmitted_sell_quantities: dict | None = None
+    """Unsubmitted or unconfirmed local shares; None conservatively means all reservations."""
+
+
+def available_sell_quantity(ctx: RiskContext, symbol: str) -> Decimal | None:
+    """Quantity backing for a close, independent of the broker's valuation price."""
+    holding = ctx.holdings.get(symbol, {})
+    qty = _finite(holding.get("qty"))
+    pending = ctx.pending_sell_quantities
+    if qty is None or qty < 0 or pending is None or holding.get("side") not in (None, "long"):
+        return None
+    reserved = _finite(pending.get(symbol, 0))
+    if reserved is None or reserved < 0:
+        return None
+    # A broker may also reserve shares for orders placed outside this process.
+    if "qty_available" in holding:
+        broker_available = _finite(holding["qty_available"])
+        if broker_available is None or not 0 <= broker_available <= qty:
+            return None
+        unsent = ctx.pending_unsubmitted_sell_quantities
+        unsent_qty = _finite((pending if unsent is None else unsent).get(symbol, 0))
+        if unsent_qty is None or not 0 <= unsent_qty <= reserved:
+            return None
+        return max(Decimal("0"), min(qty - reserved, broker_available - unsent_qty))
+    return max(Decimal("0"), qty - reserved)
 
 
 def _verdict_state(ctx: RiskContext) -> tuple[str, str]:
@@ -256,6 +284,12 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
     quote_age = _finite(ctx.quote_age_s)
     quote_stale_after = _finite(ctx.quote_staleness_s)
     exec_ceiling = _finite(ctx.max_execution_cost_bps)
+    sell_available = available_sell_quantity(ctx, symbol) if is_sell else None
+    sell_qty = _finite(proposal.get("quantity"))
+    sell_backed = (
+        sell_available is not None and sell_qty is not None
+        and 0 < sell_qty <= sell_available
+    )
 
     concentration_ok = (
         (not is_buy) or port <= 0
@@ -328,9 +362,8 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
         CheckResult("buying_power", (not is_buy)
                     or (buying_power is not None and notional <= buying_power), True,
                     f"buy notional {notional} <= buying_power {ctx.buying_power}"),
-        # no naked shorts: a sell must be a reconciled holding, bounded by its value (SEC-15)
-        CheckResult("sell_backed", (not is_sell) or (symbol in ctx.holdings and notional <= held_val), True,
-                    "sell must be held and <= held market value"),
+        CheckResult("sell_backed", (not is_sell) or sell_backed, True,
+                    "sell quantity must not exceed reconciled shares after outstanding sells"),
         CheckResult("max_positions", (not opening_new) or (ctx.open_positions + 1 <= ctx.max_positions), True,
                     f"open positions {ctx.open_positions}(+1) <= {ctx.max_positions}"),
         CheckResult("concentration", concentration_ok, True,
@@ -394,6 +427,8 @@ def evaluate(proposal: dict, ctx: RiskContext, rules=None) -> dict:
             caps.append(Decimal("0"))
     if is_sell:
         caps.append(held_val)
+        caps.append(sell_available * quote_price if sell_available is not None
+                    and quote_price is not None and quote_price > 0 else Decimal("0"))
     if port < REG_T_MIN_EQUITY:
         caps.append(Decimal("0"))
     if not caps:

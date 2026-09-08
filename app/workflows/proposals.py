@@ -27,6 +27,7 @@ from sqlalchemy import select
 from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
+from brokers.sell_reservations import pending_sell_reservations
 from bridge.embeds import render_proposal_embed
 from core.ids import new_id
 from core.proposal_authority import proposal_payload_hash
@@ -45,7 +46,7 @@ from quant.verify import (
     proposal_quantity,
     verify_proposal,
 )
-from risk.engine import RiskContext, evaluate, order_notional
+from risk.engine import RiskContext, available_sell_quantity, evaluate, order_notional
 from schemas.models.market_event import MarketEvent
 from schemas.models.order import Order
 from schemas.models.portfolio_snapshot import PortfolioSnapshot
@@ -101,7 +102,8 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
                        quant_verdict=None, quant_book_seq=None,
                        quant_verdict_now_ns: int | None = None,
                        require_quant_verdict: bool = False,
-                       require_net_edge: bool = False, snapshot=None) -> RiskContext:
+                       require_net_edge: bool = False, snapshot=None,
+                       exclude_order_id=None) -> RiskContext:
     """RiskContext from the AUDITED limits (SEC-15) + the latest PortfolioSnapshot row
     (absent -> zeros -> risk fails conservatively) + the injected quote (None ->
     quote_age_s=inf, price 0 -> quote_sane hard-fails)."""
@@ -112,7 +114,24 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
     holdings: dict = {}
     for h in (snap.holdings if snap is not None else []) or []:
         if isinstance(h, dict) and h.get("symbol"):
-            holdings[str(h["symbol"]).upper()] = {"market_value": _dec(h.get("market_value", 0))}
+            symbol = str(h["symbol"]).upper()
+            if symbol in holdings:
+                # Duplicate position identities cannot prove a sale's share backing.
+                holdings[symbol]["qty"] = Decimal("NaN")
+                continue
+            holdings[symbol] = {
+                "market_value": _dec(h.get("market_value", 0)), "qty": _dec(h.get("qty")),
+                "side": h.get("side"),
+            }
+            if "qty_available" in h:
+                holdings[symbol]["qty_available"] = _dec(h["qty_available"])
+    try:
+        reserved_sells, unsubmitted_sells = pending_sell_reservations(
+            state, exclude_order_id=exclude_order_id,
+        )
+    except Exception:  # noqa: BLE001 - unavailable reservation evidence never backs a sell
+        reserved_sells = None
+        unsubmitted_sells = None
     q = quote or {}
     quote_price = _dec(q.get("price")) if q.get("price") is not None else Decimal("0")
     quote_age_s = float(q["age_s"]) if q.get("age_s") is not None else float("inf")
@@ -146,6 +165,8 @@ def build_risk_context(state, *, quote, watchlist: frozenset[str],
         cash=cash,
         buying_power=buying_power,
         holdings=holdings,
+        pending_sell_quantities=reserved_sells,
+        pending_unsubmitted_sell_quantities=unsubmitted_sells,
         open_positions=len(holdings),
         # RiskContext retains its historical field name; W-22 supplies the one canonical
         # daily-loss measure (intraday equity drawdown), not a second P&L calculation.
@@ -204,6 +225,7 @@ def build_execution_verdict(
     borrow_quote: BorrowQuote | None = None,
     position_effect: PositionEffect | None = None,
     quantity_override=None,
+    sell_available_qty=None,
 ) -> tuple[QuantVerdict | None, int | None, int | None, tuple[str, ...]]:
     """Build the W-21 verdict from injected leaves for draft and approval-time risk.
 
@@ -256,12 +278,14 @@ def build_execution_verdict(
         now = clock.now()
         inputs = _market_impact_inputs(metric, symbol=symbol, now=now)
         effect = position_effect
+        if proposal.get("side") == "sell" and effect in (None, PositionEffect.CLOSE_LONG):
+            available = _dec(sell_available_qty)
+            if (resolved_qty is None or not available.is_finite()
+                    or not 0 < resolved_qty <= available):
+                return None, book.seq, resolved_qty, ("sell quantity lacks reconciled backing",)
+            effect = PositionEffect.CLOSE_LONG
         if effect is None:
-            effect = (
-                PositionEffect.OPEN_LONG
-                if proposal.get("side") == "buy"
-                else PositionEffect.CLOSE_LONG
-            )
+            effect = PositionEffect.OPEN_LONG if proposal.get("side") == "buy" else None
         candidate = verify_proposal(
             verification_proposal,
             book,
@@ -389,13 +413,6 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     proposal = dict(result.validated)
     pid = _resolve_proposal_id(state, proposal)        # BUG-093: final id before any row uses it
 
-    # ---- guard: an order-shaped proposal needs a size -----------------------------------
-    if proposal.get("quantity") is None and proposal.get("notional") is None:
-        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
-                                 flagged=False, job_id=job.id)
-        return ProposalOutcome("needs_human", proposal, record, None, None, None,
-                               ("neither quantity nor notional present",))
-
     # ---- SEC-09: scrub model prose BEFORE store/audit/post -------------------------------
     # ``generated_by`` is a model-authored free-text object (runtime/model/session_id strings
     # are unconstrained — additionalProperties:false bounds KEYS, not string CONTENTS), so it
@@ -410,6 +427,13 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                                  flagged=True, job_id=job.id)
         return ProposalOutcome("quarantined", proposal, record, None, None, None,
                                ("outbound scrub blocked (SEC-09)",))
+
+    # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
+    if proposal.get("quantity") is None and proposal.get("notional") is None:
+        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
+                                 flagged=False, job_id=job.id)
+        return ProposalOutcome("needs_human", proposal, record, None, None, None,
+                               ("neither quantity nor notional present",))
 
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------
     def _resolver(ref: str) -> dict:
@@ -443,6 +467,13 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
             reasons.append("market quote unavailable; deterministic risk fails closed")
     raw_quote_price = _dec((quote or {}).get("price"))
     quote_price = raw_quote_price if raw_quote_price.is_finite() else Decimal("0")
+    ctx = build_risk_context(
+        state, quote=quote, watchlist=watchlist,
+        require_quant_verdict=(
+            book_fn is not None or observation_fn is not None or metrics_fn is not None
+        ),
+        require_net_edge=metrics_fn is not None,
+    )
     # BUG-044 + W-21: one shared builder resolves quantity once and supplies the identical
     # verdict path to proposal drafting and approval-time fresh risk.
     verdict, book_seq, resolved_qty, verification_reasons = build_execution_verdict(
@@ -458,19 +489,14 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         edge_provider=edge_provider,
         quote=quote,
         borrow_quote=borrow_quote,
+        sell_available_qty=available_sell_quantity(ctx, symbol),
     )
     reasons.extend(verification_reasons)
 
-    ctx = build_risk_context(
-        state, quote=quote, watchlist=watchlist,
-        quant_verdict=verdict, quant_book_seq=book_seq,
-        quant_verdict_now_ns=to_ns(clock.now()),
-        require_quant_verdict=(
-            book_fn is not None or observation_fn is not None or metrics_fn is not None
-        ),
-        require_net_edge=metrics_fn is not None,
-    )
-    rd = evaluate(proposal, ctx)
+    ctx.quant_verdict = verdict
+    ctx.quant_book_seq = book_seq
+    ctx.quant_verdict_now_ns = to_ns(clock.now())
+    rd = evaluate({**proposal, "quantity": resolved_qty}, ctx)
     now = clock.now()
     rd_row = RiskDecision(
         id=new_id("rd"), proposal_id=pid, decision=rd["decision"], checks=rd["checks"],
@@ -514,7 +540,11 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # deterministic risk gate approved it. 'flagged => no Order row' is enforced here.
     status = "flagged" if flagged else "drafted"
     order_row: Order | None = None
-    if rd["decision"] == "approved" and not flagged:
+    if resolved_qty is None:
+        reasons.append("order quantity unresolvable (needs human)")
+        if not flagged:
+            status = "needs_human"
+    elif rd["decision"] == "approved" and not flagged:
         if halt_is_set(default_halt_path()):
             status = "needs_human"
             reasons.append("HALT sentinel set (SEC-04); order not created")

@@ -1,0 +1,55 @@
+{
+  "archive_sha256": "8247c677f1f055321bce2ee7d8132d0b28949aa0085e7ddbe995062ee3a670ab",
+  "checks": [
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-VV"
+      ],
+      "duration_seconds": 0.14,
+      "name": "version",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "freeze"
+      ],
+      "duration_seconds": 1.58,
+      "name": "dependencies",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "pip",
+        "check"
+      ],
+      "duration_seconds": 1.89,
+      "name": "pip-check",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "C:\\t\\a26\\env311\\Scripts\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "."
+      ],
+      "duration_seconds": 1.05,
+      "name": "ruff",
+      "returncode": 0
+    }
+  ],
+  "commit": "6d7d7df73b4f480818c64a3a2b8fa8df39c6fdf9",
+  "executable": "C:\\t\\a26\\env311\\Scripts\\python.exe",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "python": "3.11.16 (main, Sep  1 2026, 14:15:24) [MSC v.1944 64 bit (AMD64)]",
+  "source_file_count": 735,
+  "started_utc": "2026-09-07T22:59:09Z",
+  "tree": "5a9b5b5439a3a4bfb4e4203ddb37597fdc313449"
+}

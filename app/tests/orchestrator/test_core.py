@@ -338,7 +338,9 @@ def test_killswitch_sets_halt_and_disarms(st, tmp_path):
 # ---- gate (SEC-20) --------------------------------------------------------------------
 def _adjudicate(st, decision, n=1):
     for _ in range(n):
-        st.audit.append(EVENT_ADJUDICATION, actor="lucas", payload={"decision": decision})
+        st.audit.append(EVENT_ADJUDICATION, actor="lucas", payload={
+            "decision": decision, "proposal_id": f"proposal-{st.audit.head()[0]}",
+        })
 
 
 def test_gate_fails_closed_on_broken_chain(st):

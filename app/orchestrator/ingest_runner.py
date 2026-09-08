@@ -48,6 +48,8 @@ layer is built to avoid. It is also why nothing here consults ``ModeLadder``.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 import time
@@ -67,6 +69,17 @@ FEED_FINRA = "finra"
 # budget. The consumer (``ingest/alpaca_news.py``) already does fine-grained exponential backoff
 # INSIDE one ``run``; this is the coarse outer retry after it gives up entirely.
 STREAM_RESTART_SECONDS = 30.0
+MAX_PENDING_DELIVERY_GAPS = 1024
+
+
+def _delivery_identity(event) -> bytes | None:
+    """Bounded token for one exact source image; never retain payloads in health state."""
+    if not isinstance(event, dict):
+        return None
+    fields = [event.get(name) for name in ("source", "article_id", "content_hash")]
+    if any(not isinstance(value, str) or not value or len(value) > 4096 for value in fields):
+        return None
+    return hashlib.sha256(json.dumps(fields, separators=(",", ":")).encode()).digest()
 
 
 class PersistSink:
@@ -84,13 +97,22 @@ class PersistSink:
     producing duplicates is visible as such and not as throughput.
     """
 
-    def __init__(self, state, *, feed: str, parquet_root, persist_fn=None, clock=None) -> None:
+    def __init__(self, state, *, feed: str, parquet_root, persist_fn=None, clock=None,
+                 max_pending_gaps: int = MAX_PENDING_DELIVERY_GAPS) -> None:
+        if type(max_pending_gaps) is not int or max_pending_gaps < 1:
+            raise ValueError("pending delivery gap capacity must be a positive integer")
         self._state = state
         self._parquet_root = parquet_root
         self._clock = clock
         self.feed = feed
         self.persisted = 0
         self.duplicates = 0
+        self.persist_errors = 0
+        self._lock = threading.Lock()
+        self._pending_gaps: set[bytes] = set()
+        self._gap_capacity = max_pending_gaps
+        self._gap_overflow = False
+        self._unidentified_gap = False
         if persist_fn is not None:
             self._persist = persist_fn
         else:
@@ -101,13 +123,63 @@ class PersistSink:
             self._persist = persist_events
 
     def __call__(self, event: dict) -> None:
-        result = self._persist(self._state, [event], parquet_root=self._parquet_root,
-                               clock=self._clock)
-        self.persisted += len(result.stored)
-        self.duplicates += result.duplicates
+        identity = _delivery_identity(event)
+        try:
+            result = self._persist(self._state, [event], parquet_root=self._parquet_root,
+                                   clock=self._clock)
+            stored, duplicates = len(result.stored), result.duplicates
+        except Exception:
+            # BUG-151: consumers may catch this raise and continue receiving. Keep the
+            # missed identity visible independently of the consumer's worker lifetime.
+            with self._lock:
+                self.persist_errors += 1
+                if identity is None:
+                    self._unidentified_gap = True
+                elif identity in self._pending_gaps or len(self._pending_gaps) < self._gap_capacity:
+                    self._pending_gaps.add(identity)
+                else:
+                    self._gap_overflow = True
+            raise  # pollers still roll back their dedup/cursor on this exact callback
+        with self._lock:
+            self.persisted += stored
+            self.duplicates += duplicates
+            pending = identity in self._pending_gaps
+        # A same-id legacy duplicate can refer to DIFFERENT content. Resolve a pending
+        # gap only after exact storage success or a verified matching raw duplicate.
+        resolved = stored > 0 or (pending and duplicates > 0 and self._verified_duplicate(event))
+        if pending and resolved:
+            with self._lock:
+                self._pending_gaps.discard(identity)
+
+    def _verified_duplicate(self, event: dict) -> bool:
+        """Rare recovery path: prove a duplicate really contains the failed source image."""
+        from sqlalchemy import select
+
+        from schemas.models.market_event import MarketEvent
+        from workflows.events import resolve_raw
+
+        try:
+            with self._state.session_factory() as session:
+                row = session.execute(select(MarketEvent).where(
+                    MarketEvent.source == event["source"],
+                    MarketEvent.content_hash == event["content_hash"],
+                ).limit(1)).scalar_one_or_none()
+                if row is None:
+                    return False
+                session.expunge(row)
+            item = resolve_raw(self._parquet_root, row.raw_ref, state=self._state, row=row)
+            return _delivery_identity(item) == _delivery_identity(event)
+        except Exception:
+            return False  # unavailable/unverified storage cannot clear an existing gap
 
     def counters(self) -> dict:
-        return {"persisted": self.persisted, "duplicates": self.duplicates}
+        with self._lock:
+            gap = bool(self._pending_gaps or self._gap_overflow or self._unidentified_gap)
+            return {"persisted": self.persisted, "duplicates": self.duplicates,
+                    "persist_errors": self.persist_errors, "delivery_gap": gap,
+                    "unresolved_events": len(self._pending_gaps),
+                    "delivery_gap_overflow": self._gap_overflow,
+                    "unidentified_delivery_gap": self._unidentified_gap}
 
 
 @dataclass
@@ -139,6 +211,7 @@ class StreamFeed:
     emitted: int = 0
     errors: int = 0
     last_error: str | None = None
+    failed_at_deliveries: int | None = None
     thread: threading.Thread | None = field(default=None, repr=False)
 
 
@@ -220,11 +293,12 @@ class IngestRunner:
                         name, feed.consecutive_errors, exc)
             if name == FEED_EDGAR:
                 self._sync_edgar_watch_only(False, f"EDGAR poll failed: {exc!r}")
-            return {"feed": name, "status": "error", "error": repr(exc),
+            return {"feed": name, **self._poll_health(feed), "error": repr(exc),
                     "consecutive_errors": feed.consecutive_errors}
         feed.consecutive_errors = 0
         feed.emitted += emitted
-        result = {"feed": name, "status": "ok", "emitted": emitted, **self._signals(feed)}
+        result = {"feed": name, "emitted": emitted, **self._poll_health(feed),
+                  **self._signals(feed)}
         if name == FEED_EDGAR:
             feed_status = (
                 self._read_status(feed, self._today())
@@ -245,6 +319,14 @@ class IngestRunner:
     def poll_all(self, *, now=None) -> dict:
         """One tick of EVERY registered poll feed (the dry-run / manual-catch-up drive)."""
         return {name: self.poll(name, now=now) for name in sorted(self.polls)}
+
+    @staticmethod
+    def _poll_health(feed: PollFeed) -> dict:
+        stats = feed.sink.counters()
+        degraded = stats["delivery_gap"]
+        return {**stats, "degraded": degraded,
+                "status": ("error" if feed.consecutive_errors else
+                           "degraded" if degraded else "ok")}
 
     @staticmethod
     def _signals(feed: PollFeed) -> dict:
@@ -271,6 +353,26 @@ class IngestRunner:
         return out
 
     # ---- drive: the blocking stream -----------------------------------------------------
+    @staticmethod
+    def _stream_health(feed: StreamFeed) -> dict:
+        counters = getattr(feed.consumer, "counters", {})
+        consumer_counts = {
+            name: counters.get(name, 0) for name in ("frame_error", "emit_error")
+        } if isinstance(counters, dict) else {}
+        stats = feed.sink.counters()
+        # Frame failures have no successfully normalized identity to prove recovered.
+        # Historical emit errors alone do not prevent an exact successful redelivery
+        # from clearing its gap; unidentified callback failures remain conservative.
+        degraded = (stats["delivery_gap"] or bool(consumer_counts.get("frame_error"))
+                    or consumer_counts.get("emit_error", 0) > stats["persist_errors"])
+        connection_failed = (feed.failed_at_deliveries is not None
+                             and stats["persisted"] + stats["duplicates"]
+                             <= feed.failed_at_deliveries)
+        degraded = degraded or connection_failed
+        return {**stats, "counters": consumer_counts,
+                "degraded": degraded,
+                "status": "error" if connection_failed else "degraded" if degraded else "ok"}
+
     def run_stream(self, name: str, *, max_frames: int | None = None) -> dict:
         """Drive a push feed ONCE. Blocks until the consumer returns (clean end of stream, or
         ``max_frames`` reached) or raises. Used directly by tests; production goes through
@@ -284,10 +386,14 @@ class IngestRunner:
         except Exception as exc:        # noqa: BLE001 - reported, then retried by the supervisor
             feed.errors += 1
             feed.last_error = repr(exc)
+            stats = feed.sink.counters()
+            feed.failed_at_deliveries = stats["persisted"] + stats["duplicates"]
             log.warning("ingest stream %s FAILED: %r", name, exc)
-            return {"feed": name, "status": "error", "error": repr(exc)}
+            return {"feed": name, **self._stream_health(feed),
+                    "status": "error", "error": repr(exc)}
         feed.emitted += emitted
-        return {"feed": name, "status": "ok", "emitted": emitted}
+        feed.failed_at_deliveries = None
+        return {"feed": name, "emitted": emitted, **self._stream_health(feed)}
 
     def _supervise(self, name: str) -> None:
         """Restart a stream reader after it returns or gives up (daemon-thread body).
@@ -342,7 +448,7 @@ class IngestRunner:
             entry = {
                 "kind": "poll", "polls": feed.polls, "emitted": feed.emitted,
                 "errors": feed.errors, "consecutive_errors": feed.consecutive_errors,
-                "last_error": feed.last_error, **feed.sink.counters(), **self._signals(feed),
+                "last_error": feed.last_error, **self._poll_health(feed), **self._signals(feed),
             }
             if feed.status_fn is not None:
                 entry["feed_status"] = self._read_status(feed, day)
@@ -352,7 +458,7 @@ class IngestRunner:
                 "kind": "stream", "runs": feed.runs, "emitted": feed.emitted,
                 "errors": feed.errors, "last_error": feed.last_error,
                 "alive": bool(feed.thread is not None and feed.thread.is_alive()),
-                **feed.sink.counters(),
+                **self._stream_health(feed),
             }
         return {"day": day, "feeds": feeds}
 

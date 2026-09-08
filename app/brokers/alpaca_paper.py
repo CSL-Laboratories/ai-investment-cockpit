@@ -236,6 +236,7 @@ class AlpacaPaperHTTPClient:
             {
                 "symbol": str(row.get("symbol", "")).upper(),
                 "qty": row.get("qty", "0"),
+                **({"qty_available": row["qty_available"]} if "qty_available" in row else {}),
                 "market_value": row.get("market_value", "0"),
                 "avg_entry_price": row.get("avg_entry_price"),
                 "side": row.get("side"),

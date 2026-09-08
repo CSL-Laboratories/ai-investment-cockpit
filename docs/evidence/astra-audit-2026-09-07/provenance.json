@@ -1,0 +1,63 @@
+{
+  "audit_date": "2026-09-07",
+  "repository": "https://github.com/NotSkittlz/ai-investment-cockpit",
+  "commit": "c231dc249eb74461f5504845cf6f89ffe57ef209",
+  "application_tree": "267799acdccec6e5dbf97f730a17121c1e7a1120",
+  "existing_matrix_source": "cacaff4f88753227a2d59a4bc51c82e39bfb5eef",
+  "matrix_evidence_verifier_passed": true,
+  "new_probe_python": "3.13.14",
+  "probe_runtime": ".venv/Scripts/python.exe",
+  "full_suite_rerun": false,
+  "repository_changes": [],
+  "findings": {
+    "P1": 3,
+    "P2": 8
+  },
+  "artifacts": [
+    {
+      "name": "AUDIT.md",
+      "bytes": 16046,
+      "sha256": "214c156fc558df9f9cae13283b13473bff5b4f5cc29d5f1404a04461e56c5396"
+    },
+    {
+      "name": "model_probe-results.json",
+      "bytes": 1006,
+      "sha256": "b9aae2d8c5a1757ee1c07e0783a04e1429b24a0e7bd3e32f520aeeca8426fb61"
+    },
+    {
+      "name": "model_probe.py",
+      "bytes": 5017,
+      "sha256": "d98464babedcf82e877728a9b14b301ef8b64f24e3f264907bd54ca74280ce21"
+    },
+    {
+      "name": "order-safety-probe-output.txt",
+      "bytes": 845,
+      "sha256": "b4483811c81cf8c4ec13528ffceca135058e3898fd8f2f4609312cc8e3e06c4c"
+    },
+    {
+      "name": "order-safety-probe.py",
+      "bytes": 3990,
+      "sha256": "cf1f838a5af64c9ce384ce01941968b8940fcceb2633b32354f96ea612d72a31"
+    },
+    {
+      "name": "probe_ingest.json",
+      "bytes": 1858,
+      "sha256": "9766dc3fad6cc91745d271ea5e0a25cb7c2068fdbef92dffa27167d708d9373c"
+    },
+    {
+      "name": "probe_ingest.py",
+      "bytes": 5444,
+      "sha256": "c00c596f709aa31ab8559b6a6e774eaf637cd419c0ab6522576a3477c5006f0f"
+    },
+    {
+      "name": "quant_repro.log",
+      "bytes": 679,
+      "sha256": "d7d832fa0a9148f34e95108f71a44f3c29486d5b08d253920154f2bfeef49bfe"
+    },
+    {
+      "name": "quant_repro.py",
+      "bytes": 3877,
+      "sha256": "33af82b9c537743062c8678fdea5bd72f56867b66fc9cad392d61ff81c4375fc"
+    }
+  ]
+}

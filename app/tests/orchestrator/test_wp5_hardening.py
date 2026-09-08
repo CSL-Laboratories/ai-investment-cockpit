@@ -117,7 +117,9 @@ def _seed_unlockable(st, start):
     lad.set_mode(Mode.paper, actor="op", clock=FrozenClock(start))
     lad.set_mode(Mode.review_live, actor="op", clock=FrozenClock(start))
     for _ in range(30):
-        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={"decision": "approve"})
+        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={
+            "decision": "approve", "proposal_id": f"proposal-{st.audit.head()[0]}",
+        })
     return lad
 
 

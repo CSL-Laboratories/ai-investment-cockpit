@@ -7,6 +7,20 @@ last-verified: 2026-09-07
 
 # Docs index
 
+## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
+
+BUG-146 through BUG-158 are fixed in commit slices, alongside a measured triage
+optimization and full Discord validation coverage. Independent authority review and
+all four DEC-09 cells pass against implementation `fa3cc1c`, including repairs for the
+two integration regressions found by the first completed matrix. Windows 3.11/3.12:
+3,107 passed / 4 skipped each; Ubuntu WSL2 3.11/3.12: 3,105 passed / 6 skipped each.
+All 233 required regression cases pass in every cell. Final evidence:
+[[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+See [[evidence/rw23-audit-repair-2026-09-07]],
+[[evidence/rw24-reliability-2026-09-07]], and
+[[evidence/rw23-rw24-local-matrix-2026-09-08/README]] for changes and evidence.
+The frozen baseline findings remain in [[evidence/astra-audit-2026-09-07/AUDIT]].
+
 ## RW-22 review remediation — 2026-09-07
 
 The operator-authorized follow-up to local `work/bugfix-audit-2026-09-07` repairs five
@@ -14,7 +28,7 @@ independently reproduced review findings. See [[evidence/rw22-review-remediation
 for the exact changes, regression and adversarial evidence, and local platform results.
 All four DEC-09 cells passed against implementation commit `cacaff4`, including all
 89 new regression cases in each cell.
-The branch remains unmerged; no selection, witness, paper or live gate is satisfied by this work.
+Merged in PR #80 at `c231dc2`; no selection, witness, paper or live gate is satisfied by this work.
 
 ## Operator gate audit — 2026-09-06
 

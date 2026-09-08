@@ -204,9 +204,13 @@ def _seed_lower_history(st, start, *, approvals, rejects=0):
     lad.set_mode(Mode.paper, actor="op", clock=FrozenClock(start))
     lad.set_mode(Mode.review_live, actor="op", clock=FrozenClock(start))
     for _ in range(approvals):
-        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={"decision": "approve"})
+        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={
+            "decision": "approve", "proposal_id": f"proposal-{st.audit.head()[0]}",
+        })
     for _ in range(rejects):
-        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={"decision": "reject"})
+        st.audit.append(EVENT_ADJUDICATION, actor="op", payload={
+            "decision": "reject", "proposal_id": f"proposal-{st.audit.head()[0]}",
+        })
     return lad
 
 

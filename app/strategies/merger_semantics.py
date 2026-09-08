@@ -44,7 +44,7 @@ from strategies.merger_edge import (
     _verify_price_source_in,
 )
 from orchestrator.state import EVENT_EDGAR_POLL_COMPLETED
-from strategies.semantic_text import displayed_text
+from strategies.semantic_text import MARKUP_BOUNDARY, displayed_text
 
 
 SELECTION_SCHEMA = "merger_selection_manifest.v2"
@@ -223,6 +223,10 @@ def _assertion_matches(pattern: re.Pattern, text: str):
         if index + 1 < len(sentences) and sentences[index + 1] == "?":
             continue
         for match in pattern.finditer(sentence):
+            # Markup cannot synthesize an assertion from disconnected fragments,
+            # nor end the scope of a same-sentence denial/condition (BUG-146).
+            if MARKUP_BOUNDARY in match.group(0):
+                continue
             context = sentence[:match.start()] + " " + sentence[match.end():]
             # BUG-140 / RW-22: cash's wide subject-to-verb span is not exempt from
             # qualification checks. A denial or condition can govern the payment

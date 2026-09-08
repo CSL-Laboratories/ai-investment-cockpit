@@ -1,8 +1,13 @@
-"""WP6 — the discord.py adapter imports + guards without discord.py present."""
+"""WP6 — Discord adapter guards, including an isolated dependency-import failure."""
 from __future__ import annotations
 
 import ast
 import inspect
+import os
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
 
 from bridge import bot
 from bridge.approval import Rejection
@@ -50,13 +55,47 @@ def test_controls_forward_to_core_and_verify_operator(st):
     assert reg.live_count() == 1
 
 
-def test_build_bot_raises_when_discord_absent():
-    if bot.bot_available():
-        import pytest
-        pytest.skip("discord.py is installed in this environment")
-    import pytest
-    with pytest.raises(RuntimeError):
-        bot.build_bot(None, TokenRegistry())
+def test_build_bot_raises_when_discord_absent(tmp_path):
+    # Exercise the actual guarded import even when the full validation dependency set
+    # includes discord.py. A fresh isolated interpreter cannot repaint the parent module.
+    script = textwrap.dedent("""
+        import sys
+        assert sys.flags.isolated
+        sys.path.insert(0, sys.argv[1])
+
+        attempted = []
+
+        class MissingDiscord:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "discord" or fullname.startswith("discord."):
+                    attempted.append(fullname)
+                    raise ModuleNotFoundError("synthetic missing discord dependency")
+
+        sys.meta_path.insert(0, MissingDiscord())
+        from bridge import bot
+        from brokers.capability import TokenRegistry
+
+        assert attempted == ["discord"], attempted
+        assert not bot.bot_available()
+        assert bot.discord is None and bot.app_commands is None
+        assert hasattr(bot, "ProposalControls")
+        try:
+            bot.build_bot(None, TokenRegistry())
+        except RuntimeError as exc:
+            assert "discord.py" in str(exc), str(exc)
+        else:
+            raise AssertionError("missing dependency did not refuse bot construction")
+        print("discord import blocked; fallback verified")
+    """)
+    environment = {name: value for name, value in os.environ.items()
+                   if not name.startswith("COCKPIT_")}
+    environment["COCKPIT_ENV_FILE"] = str(tmp_path / "absent.env")
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script, str(Path(bot.__file__).resolve().parents[1])],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "discord import blocked; fallback verified"
 
 
 def test_quant_simulation_is_offloaded_from_the_discord_event_loop():

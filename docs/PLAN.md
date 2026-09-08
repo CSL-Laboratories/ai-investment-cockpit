@@ -7,10 +7,30 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-08-28
+last-verified: 2026-09-07
 ---
 
 # The plan
+
+### RW-24 reliability follow-up — implemented, 2026-09-07
+
+RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization and
+Discord validation coverage are committed on `codex/audit-reliability-2026-09-07`.
+Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
+The replay fixture and fractional-quantity status regressions found in the first
+completed matrix are repaired and independently reviewed. All four DEC-09 cells pass
+against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
+3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
+Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
+
+### RW-23 audit repair delivery — 2026-09-07
+
+The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from
+merged main `c231dc2`. This is one bounded correctness package extending existing authority,
+workflow, ingest and simulation paths; its seven intake answers and validation record are in
+[[evidence/rw23-audit-repair-2026-09-07]]. No new capability or empirical gate is introduced.
+Further reliability/performance work follows a measured review and its own scope entry.
+RW-22 has merged in PR #80; older branch-status text below records its pre-merge state.
 
 > **This is the only document that defines what we are building next and in what order.**
 > Everything else is either a live register ([[REGISTER]], [[security-hardening-backlog]]),

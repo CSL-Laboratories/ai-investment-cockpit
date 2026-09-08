@@ -1,0 +1,48 @@
+[
+  {
+    "probe": "empty",
+    "result": "needs_human_review",
+    "error": "repair_empty_output",
+    "job": "quarantined",
+    "watch_rows": 0,
+    "before": {
+      "state": "degraded",
+      "generation": 1
+    },
+    "restart": {
+      "state": "ok",
+      "generation": 0
+    },
+    "chain_ok": true
+  },
+  {
+    "probe": "vendor_error",
+    "result": "needs_human_review",
+    "error": "repair_vendor_error",
+    "job": "quarantined",
+    "watch_rows": 0,
+    "before": {
+      "state": "degraded",
+      "generation": 1
+    },
+    "restart": {
+      "state": "ok",
+      "generation": 0
+    },
+    "chain_ok": true
+  },
+  {
+    "probe": "budget_verify_read_race",
+    "cap": 1,
+    "first_spend": true,
+    "second_spend": true,
+    "after_chain_ok": false
+  },
+  {
+    "probe": "sizeless_scrub",
+    "status": "needs_human",
+    "flagged": false,
+    "persisted_thesis": "Synthetic account 123456789 and TSLA 500 shares",
+    "scrub_rows": 0
+  }
+]
