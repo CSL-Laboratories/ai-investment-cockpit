@@ -30,6 +30,7 @@ from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from config.settings import Mode
 from core.ids import new_id
+from ingest.normalize import content_hash
 from orchestrator.gate import GateResult
 from orchestrator.killswitch import killswitch
 from schemas.models.audit_entry import AuditEntry
@@ -42,12 +43,29 @@ from tests.system.replay import (
     INTENT_ORDER_SUBMIT,
     RESULT_ORDER_SUBMIT,
     ReplayReport,
+    _make_day_distinct,
     approve_and_place,
     run_paper_replay,
 )
 
 OPERATOR = "123456789012345678"
 DAYS = 10
+
+
+def test_replay_day_identity_binds_original_source_and_is_idempotent():
+    days = market_days(2)
+    hashes = []
+    for day in days:
+        originals = [event["raw_input"] for event in day.events]
+        _make_day_distinct(day)
+        first = [event["content_hash"] for event in day.events]
+        assert all(event["content_hash"] == content_hash(event["raw_input"])
+                   for event in day.events)
+        assert all("replay_day" not in original for original in originals)
+        _make_day_distinct(day)
+        assert [event["content_hash"] for event in day.events] == first
+        hashes.extend(first)
+    assert len(set(hashes)) == len(hashes)
 
 
 @pytest.fixture(autouse=True)

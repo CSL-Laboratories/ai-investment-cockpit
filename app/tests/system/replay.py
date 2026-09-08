@@ -255,11 +255,12 @@ def _make_day_distinct(day) -> None:
     headline/summary every day (only ``article_id`` carries the day), so their ``content_hash``
     collides and day-2+ filings would be dropped as duplicates on the ONE accumulating replay
     system — an artifact of fixture reuse, NOT an app bug (two real trading days' 8-Ks are
-    distinct articles with distinct content). Rebind each event's ingest ``content_hash`` to a
-    day-distinct value so every trading day persists its own filings. Done here in the runner;
+    distinct articles with distinct content). Give each synthetic original payload a day
+    identity and hash that actual payload so BUG-150's source binding stays valid. Done here;
     the frozen harness is never touched. Idempotent per fixture (fresh each ``market_days`` call)."""
     for ev in day.events:
-        ev["content_hash"] = content_hash({"ingest": ev.get("content_hash"), "day": day.index})
+        ev["raw_input"] = {**ev["raw_input"], "replay_day": day.index}
+        ev["content_hash"] = content_hash(ev["raw_input"])
 
 
 def replay_day(system, day, *, operator: str, orders: int, arm_auto: bool) -> DayReplay:

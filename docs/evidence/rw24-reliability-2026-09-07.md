@@ -80,6 +80,19 @@ RW-23 repairs and independent reviews are complete; RW-24 is now the active pack
 
 # Validation status
 
+Resumed on 2026-09-07 (2026-09-08 UTC), with operator authorization to finish the
+campaign, commit repairs in slices and open the private repository PR. The next
+bounded work is the two failures from the completed 3.11 matrix: preserve actual
+source/hash binding in the synthetic replay, and preserve the human-review status
+for unresolved proposal quantities after risk rejection. Production integrity and
+order refusal gates remain unchanged. Focused regressions and adversarial review
+precede a newly frozen four-cell matrix. GitHub main remains `c231dc2` after fetch.
+
+The replay fixture now adds the synthetic day to a detached original payload and
+hashes that payload. A new control failed before the repair and proves valid binding,
+day distinction, preserved caller payloads and repeat-call idempotence. All nine replay
+cases and four original-news integrity cases pass (13 total); targeted Ruff passes.
+
 All implementation slices and independent authority review are complete. The combined
 RW-23/RW-24 source at `6d7d7df` exposed a replay-fixture hash mismatch in the Python
 3.11 DEC-09 runs. The helper changes only the hash; BUG-150 correctly requires that
