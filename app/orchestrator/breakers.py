@@ -29,6 +29,7 @@ from config.settings import Mode
 from core.ids import new_id
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.breaker_state import BreakerState
+from storage.audit import AuditIntegrityError
 
 from .mode_ladder import ModeLadder
 from .state import (
@@ -267,7 +268,7 @@ class BreakerEngine:
         events = []
         for name in evaluate(signals, th):
             if name == BRK_STALE_DATA:
-                if not self.is_watch_only("market_data"):
+                if self.needs_watch_only_transition("market_data"):
                     events.append(self.enter_watch_only(
                         "market_data", "stale market-data threshold breached",
                         clock=clock, actor=actor,
@@ -289,18 +290,145 @@ class BreakerEngine:
         return self.trip(BRK_INJECTION, reason, clock=clock, actor=actor)
 
     # ---- L8 usage-window exhaustion -> WATCH-ONLY (separate from L6) --------------------
-    def enter_watch_only(self, vendor: str, reason: str, *, clock=None, actor="system") -> SystemEvent:
-        """Degrade to watch-only on usage-window exhaustion: order path disabled, events
-        queued+expired (never dropped), monotonic generation bumped so pre-exhaustion
-        analysis is refused (SEC-23). Does NOT drop the mode to review_live (L8, not L6)."""
-        clock = clock or self.st.clock
-        w = self.st.usage.trip(vendor, "exhausted")   # bumps generation
+    def _committed_transition(self, transition) -> bool:
+        """Reconcile one exact identity from a fresh verified authority snapshot."""
+        with self.st.session_factory() as session, session.begin():
+            anchor = self.st.anchor_store.latest() if self.st.anchor_store is not None else None
+            verified = (
+                self.st.audit.verify_session_against_anchor(session, anchor[0], anchor[1])
+                if anchor is not None
+                else self.st.audit.verify_session(session)
+            )
+            if not verified.ok:
+                raise AuditIntegrityError(verified.error or "watch-only authority is invalid")
+            matches = [
+                row for row in session.execute(
+                    select(AuditEntry).where(AuditEntry.event_type == EVENT_WATCH_ONLY)
+                ).scalars().all()
+                if ((row.refs or {}).get("transition_id") == transition.transition_id
+                    or (row.payload or {}).get("transition_id") == transition.transition_id)
+            ]
+            if not matches:
+                return False
+            if len(matches) != 1:
+                raise AuditIntegrityError("duplicate watch-only transition identity")
+            row = matches[0]
+            payload, refs = row.payload or {}, row.refs or {}
+            expected = {
+                "vendor": transition.vendor,
+                "state": transition.target_state,
+                "generation": transition.generation,
+                "transition_id": transition.transition_id,
+                "transition_kind": transition.kind,
+            }
+            if (
+                any(payload.get(key) != value for key, value in expected.items())
+                or refs.get("vendor") != transition.vendor
+                or refs.get("transition_id") != transition.transition_id
+                or row.actor != transition.actor
+            ):
+                raise AuditIntegrityError("conflicting watch-only transition identity")
+            return True
+
+    def _append_transition(self, transition, *, mode_after=None) -> None:
+        if self._committed_transition(transition):
+            return
+        payload = {
+            "vendor": transition.vendor,
+            "state": transition.target_state,
+            "generation": transition.generation,
+            "transition_id": transition.transition_id,
+            "transition_kind": transition.kind,
+            "watch_only": transition.target_state != "ok",
+        }
+        if transition.kind == "trip":
+            payload["reason"] = transition.reason
+        else:
+            payload.update({"recovered": True, "mode_after": mode_after.value})
         self.st.audit.append(
-            EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
-            payload={"vendor": vendor, "state": w.state, "generation": w.generation,
-                     "reason": reason, "watch_only": True},
+            EVENT_WATCH_ONLY,
+            actor=transition.actor,
+            refs={
+                "vendor": transition.vendor,
+                "transition_id": transition.transition_id,
+            },
+            payload=payload,
         )
-        return SystemEvent("#system", "watch_only", None, reason, self._mode_str(), clock.now())
+
+    def _publish_or_fail(self, transition, error: BaseException | None = None) -> bool:
+        """Resolve lost acknowledgement; otherwise retain the admitted failed denial."""
+        try:
+            committed = self._committed_transition(transition)
+        except BaseException as reconcile_error:  # noqa: BLE001 - denial remains sticky
+            with self.st.safety_admission_lock:
+                self.st.usage.mark_failed(
+                    transition,
+                    f"{type(reconcile_error).__name__}: {reconcile_error}",
+                )
+                if isinstance(reconcile_error, AuditIntegrityError):
+                    self.st.usage.fail_closed(
+                        f"watch-only reconciliation failed: {reconcile_error}"
+                    )
+            return False
+        if not committed:
+            with self.st.safety_admission_lock:
+                self.st.usage.mark_failed(
+                    transition,
+                    f"{type(error).__name__}: {error}" if error is not None else "uncommitted",
+                )
+            return False
+        try:
+            with self.st.safety_admission_lock:
+                self.st.usage.mark_committed(transition)
+        except Exception as exc:
+            self.st.admit_integrity_failure(
+                f"watch-only committed publication conflict: {exc}"
+            )
+            return False
+        return True
+
+    def needs_watch_only_transition(self, vendor: str) -> bool:
+        """Whether a caller must create/retry a denial rather than suppressing it in memory."""
+        pending = self.st.usage.pending_transition(vendor)
+        if pending is not None:
+            return pending.kind == "recovery" or pending.phase == "failed"
+        return self.st.usage.window(vendor).state == "ok"
+
+    def enter_watch_only(
+        self, vendor: str, reason: str, *, clock=None, actor="system", state="exhausted"
+    ) -> SystemEvent:
+        """Admit denial first, then persist and publish one coherent signed transition."""
+        clock = clock or self.st.clock
+        with self.st.safety_admission_lock:
+            transition, persist = self.st.usage.admit_trip(
+                vendor,
+                state=state,
+                transition_id=new_id("watch"),
+                reason=reason,
+                actor=actor,
+            )
+        if transition is None or not persist:
+            return SystemEvent(
+                "#system", "watch_only", None, reason, self._mode_str(), clock.now()
+            )
+        try:
+            with self.st.safety_transition_lock:
+                with self.st.safety_admission_lock:
+                    current = self.st.usage.mark_persisting(transition)
+                if not current:
+                    return SystemEvent(
+                        "#system", "watch_only", None, reason,
+                        self._mode_str(), clock.now(),
+                    )
+                self._append_transition(transition)
+        except BaseException as exc:  # noqa: BLE001 - admitted denial survives every exit path
+            self._publish_or_fail(transition, exc)
+            raise
+        if not self._publish_or_fail(transition):
+            raise AuditIntegrityError("watch-only commit could not be reconciled")
+        return SystemEvent(
+            "#system", "watch_only", None, reason, self._mode_str(), clock.now()
+        )
 
     def is_watch_only(self, vendor: str | None = None) -> bool:
         """True iff a (or the given) vendor window is non-ok.
@@ -314,11 +442,10 @@ class BreakerEngine:
         already proved untrustworthy, and ``_assert_fresh_analysis`` minted approval
         authority underneath it.
         """
-        if getattr(self.st.usage, "integrity_error", None):
-            return True
-        if vendor is not None:
-            return self.st.usage.window(vendor).state != "ok"
-        return any(w.state != "ok" for w in self.st.usage._w.values())
+        return self.st.effective_watch_only_reason(vendor) is not None
+
+    def watch_only_reason(self, vendor: str | None = None) -> str | None:
+        return self.st.effective_watch_only_reason(vendor)
 
     def current_generation(self, vendor: str) -> int:
         return self.st.usage.window(vendor).generation
@@ -330,8 +457,19 @@ class BreakerEngine:
         but fresh quotes or a healthy EDGAR poll cannot repair that failed authority.
         Keep this transition predicate separate from ``is_watch_only``.
         """
-        return (not getattr(self.st.usage, "integrity_error", None)
-                and self.st.usage.window(vendor).state != "ok")
+        safety = self.st.safety_session
+        pending = self.st.usage.pending_transition(vendor)
+        return (
+            not getattr(self.st.usage, "integrity_error", None)
+            and not (safety.required and (
+                safety.startup_hold or not safety.opened or not safety.accepting
+            ))
+            and (
+                pending is None
+                or (pending.kind == "recovery" and pending.phase == "failed")
+            )
+            and self.st.usage.window(vendor).state != "ok"
+        )
 
     def assert_fresh_analysis(self, vendor: str, analysis_generation: int) -> None:
         """SEC-23 — require an exact current generation.
@@ -365,23 +503,37 @@ class BreakerEngine:
         the prior auto mode (SEC-23). Return no event for a healthy window or unresolved
         global integrity failure; neither condition is a vendor recovery."""
         clock = clock or self.st.clock
-        with self.st.lock:
-            # Recheck centrally: callers may race another successful recovery after
-            # deciding to recover. Only one transition may advance the generation.
+        with self.st.safety_admission_lock:
             if not self.can_recover_watch_only(vendor):
-                return None, self._ladder.current()
-            w = self.st.usage.window(vendor)
-            recovered_generation = w.generation + 1
-            mode_after = self._ladder.recover(prev_state, clock=clock, actor=actor)
-            self.st.audit.append(
-                EVENT_WATCH_ONLY, actor=actor, refs={"vendor": vendor},
-                payload={"vendor": vendor, "state": "ok", "generation": recovered_generation,
-                         "recovered": True, "mode_after": mode_after.value},
-            )
-            # Publication follows the signed transition. If either the ladder or audit
-            # write fails, the exhausted window remains recoverable on the next attempt.
-            w.state = "ok"
-            w.generation = recovered_generation
-            event = SystemEvent("#system", "watch_only", None, "recovered",
-                                mode_after.value, clock.now())
-            return event, mode_after
+                transition, persist = None, False
+            else:
+                transition, persist = self.st.usage.admit_recovery(
+                    vendor,
+                    transition_id=new_id("watch"),
+                    actor=actor,
+                )
+        if transition is None or not persist:
+            return None, self._ladder.current()
+        try:
+            with self.st.safety_transition_lock:
+                with self.st.safety_admission_lock:
+                    if not self.st.usage.transition_is_current(transition):
+                        return None, self._ladder.current()
+                    self.st.usage.mark_persisting(transition)
+                # Admission lock is deliberately released before waiting for st.lock.
+                with self.st.lock:
+                    if not self.st.usage.transition_is_current(transition):
+                        return None, self._ladder.current()
+                    mode_after = self._ladder.recover(
+                        prev_state, clock=clock, actor=actor
+                    )
+                    self._append_transition(transition, mode_after=mode_after)
+        except BaseException as exc:  # noqa: BLE001 - never publish ok on uncertain commit
+            self._publish_or_fail(transition, exc)
+            raise
+        if not self._publish_or_fail(transition):
+            raise AuditIntegrityError("watch-only recovery commit could not be reconciled")
+        event = SystemEvent(
+            "#system", "watch_only", None, "recovered", mode_after.value, clock.now()
+        )
+        return event, mode_after

@@ -301,6 +301,7 @@ def test_composed_restart_restores_watch_only_generation(tmp_path):
     breaker1 = BreakerEngine(state1)
     breaker1.enter_watch_only("claude", "test vendor exhaustion", actor="test")
     exhausted_generation = breaker1.current_generation("claude")
+    assert state1.close_safety_session(producers_quiesced=True)
 
     state2, _app2, _services2, _http2 = _compose(
         tmp_path,
@@ -309,12 +310,14 @@ def test_composed_restart_restores_watch_only_generation(tmp_path):
     )
     breaker2 = BreakerEngine(state2)
     assert state2.usage.integrity_error is None
+    assert state2.safety_session.startup_hold is None
     assert breaker2.is_watch_only("claude") is True
     assert breaker2.current_generation("claude") == exhausted_generation
 
     breaker2.recover_from_watch_only("claude", Mode.paper, actor="test")
     recovered_generation = breaker2.current_generation("claude")
     assert recovered_generation == exhausted_generation + 1
+    assert state2.close_safety_session(producers_quiesced=True)
 
     state3, _app3, _services3, _http3 = _compose(
         tmp_path,
@@ -323,8 +326,24 @@ def test_composed_restart_restores_watch_only_generation(tmp_path):
     )
     breaker3 = BreakerEngine(state3)
     assert state3.usage.integrity_error is None
+    assert state3.safety_session.startup_hold is None
     assert breaker3.is_watch_only("claude") is False
     assert breaker3.current_generation("claude") == recovered_generation
+
+
+def test_composed_unclean_restart_installs_watch_only_startup_hold(tmp_path):
+    """BUG-159 reachability: removing compose's session admission reopens crash authority."""
+    state1, _app1, _services1, _http1 = _compose(
+        tmp_path, transport=FakeTransport([]), deliver=None
+    )
+    assert state1.safety_session.opened
+
+    state2, _app2, _services2, _http2 = _compose(
+        tmp_path, transport=FakeTransport([]), deliver=None
+    )
+    assert state2.safety_session.opened is False
+    assert state2.safety_session.startup_hold
+    assert BreakerEngine(state2).watch_only_reason() == "watch_only_startup_hold"
 
 
 # =======================================================================================
@@ -654,6 +673,10 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
         def start(self):
             order.append("scheduler.start")
 
+        def shutdown(self, *, wait):
+            assert wait is True
+            order.append("scheduler.shutdown")
+
     real_build_scheduler = sched_mod.build_scheduler
 
     def fake_build_scheduler(
@@ -706,12 +729,16 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
         "orchestrator.ingest_runner.IngestRunner.start_streams",
         lambda self: (order.append("start_streams"), started.append(sorted(self.streams)))[0],
     )
+    monkeypatch.setattr(
+        "orchestrator.ingest_runner.IngestRunner.join_streams",
+        lambda self, timeout_s: order.append("join_streams") or True,
+    )
 
     main_mod.run()
 
     assert order == [
         "configure_logging:INFO", "compose", "market_bars.refresh", "scheduler.start",
-        "start_streams", "serve",
+        "start_streams", "serve", "scheduler.shutdown", "join_streams",
     ], \
         "serve() blocks forever — anything after it never runs"
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
@@ -721,6 +748,8 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
     assert seen["paper"] is graph[1].state.paper
     assert started == [[FEED_ALPACA_NEWS]]
     assert seen["bound_host"] == "127.0.0.1", "the API must stay loopback-only"
+    assert graph[0].safety_session.opened is False
+    assert graph[0].safety_session.close_error is None
 
 
 def test_startup_daily_bar_hydration_fails_closed_without_blocking_awareness(caplog):

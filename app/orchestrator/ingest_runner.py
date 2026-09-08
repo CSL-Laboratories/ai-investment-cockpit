@@ -433,6 +433,24 @@ class IngestRunner:
         interrupted (the threads are daemons; process exit reaps them)."""
         self._stop.set()
 
+    def join_streams(self, *, timeout_s: float = 5.0) -> bool:
+        """Boundedly prove every configured stream supervisor stopped.
+
+        A blocked consumer is intentionally not declared clean merely because its thread is
+        a daemon. The caller leaves the safety-session marker open when this returns False.
+        """
+        self.stop()
+        deadline = time.monotonic() + max(0.0, float(timeout_s))
+        for feed in self.streams.values():
+            thread = feed.thread
+            if thread is None:
+                continue
+            thread.join(max(0.0, deadline - time.monotonic()))
+        return all(
+            feed.thread is None or not feed.thread.is_alive()
+            for feed in self.streams.values()
+        )
+
     # ---- observability ------------------------------------------------------------------
     def status(self, *, day=None) -> dict:
         """Per-feed health for ``GET /status`` and the live-smoke runbook.
@@ -483,7 +501,7 @@ class IngestRunner:
 
         engine = BreakerEngine(self._state)
         if not trustworthy:
-            if not engine.is_watch_only(FEED_EDGAR):
+            if engine.needs_watch_only_transition(FEED_EDGAR):
                 engine.enter_watch_only(
                     FEED_EDGAR, reason, clock=self._clock, actor="edgar-pipeline"
                 )

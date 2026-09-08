@@ -362,7 +362,7 @@ def _validate(body, schema) -> str | None:
         return str(e.message)
 
 
-def _checked_response(spec, proc, usage, *, repaired: bool = False):
+def _checked_response(spec, proc, usage, *, repaired: bool = False, health_fault=None):
     """One health gate for initial and repair responses (BUG-147 / CLN-01).
 
     A health fault always has a status that call_agent persists as watch-only. Schema
@@ -393,7 +393,13 @@ def _checked_response(spec, proc, usage, *, repaired: bool = False):
     if repaired:
         # Preserve the existing fixed audit tokens; health status is shared across rounds.
         error = "repair_" + ("vendor_error" if error == "vendor_error_envelope" else error)
-    window = usage.trip(spec.runtime, state)
+    if health_fault is None:
+        # Dependency-free runner tests retain the local facade. Production injects the
+        # signed transition callback below; no production health mutation uses this path.
+        window = usage.trip(spec.runtime, state)
+    else:
+        health_fault(spec.runtime, state, error)
+        window = usage.window(spec.runtime)
     fault = AgentResult(status=status, raw=proc.stdout, error=error,
                         usage_state=window.state, repaired=repaired)
     return fault, parsed, session_id, body
@@ -401,7 +407,7 @@ def _checked_response(spec, proc, usage, *, repaired: bool = False):
 
 def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
               resume: bool = False, pinned_cwd: str | None = None,
-              decision_agent_account: str | None = None) -> AgentResult:
+              decision_agent_account: str | None = None, health_fault=None) -> AgentResult:
     transport = transport or SubprocessTransport()
     usage = usage or UsageTracker()
 
@@ -435,7 +441,9 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     _assert_no_secret(argv, spec.prompt, secret_values)
 
     proc = transport.run(argv, spec.prompt, spec.timeout_s, spec.cwd)
-    fault, parsed, session_id, body = _checked_response(spec, proc, usage)
+    fault, parsed, session_id, body = _checked_response(
+        spec, proc, usage, health_fault=health_fault
+    )
     if fault is not None:
         return fault
 
@@ -458,11 +466,14 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
                 spec.job_id, spec.schema_path or "<inline>", _REASON_TAIL, str(reason))
 
     # one repair attempt, then quarantine (Inv 3)
-    return _repair(spec, reason, transport, usage, session_id, secret_values, pinned_cwd)
+    return _repair(
+        spec, reason, transport, usage, session_id, secret_values, pinned_cwd,
+        health_fault=health_fault,
+    )
 
 
 def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values,
-            pinned_cwd: str | None = None) -> AgentResult:
+            pinned_cwd: str | None = None, health_fault=None) -> AgentResult:
     repair_prompt = (
         spec.prompt
         + "\n\nYour previous output was rejected: " + str(reason)[:500]
@@ -483,7 +494,9 @@ def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values
         assert_decision_cwd(rspec.cwd, pinned_cwd=pinned_cwd)
     _assert_no_secret(argv, rspec.prompt, secret_values)
     proc = transport.run(argv, rspec.prompt, rspec.timeout_s, rspec.cwd)
-    fault, parsed, sid2, body2 = _checked_response(rspec, proc, usage, repaired=True)
+    fault, parsed, sid2, body2 = _checked_response(
+        rspec, proc, usage, repaired=True, health_fault=health_fault
+    )
     if fault is not None:
         return fault
     reason2 = "output was not valid JSON" if parsed is None else _validate(body2, spec.schema)
