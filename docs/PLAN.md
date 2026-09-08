@@ -12,6 +12,45 @@ last-verified: 2026-09-07
 
 # The plan
 
+### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
+
+The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`
+from merged main `abbaf3f` (PR #82). Its primary contract is
+[[evidence/astra-watchonly-claim-shape-2026-09-06]] and its fixture ownership map
+is [[evidence/astra-watchonly-claim-shape-2026-09-06/fixture-contracts]].
+
+1. **Operator change:** pending or failed safety persistence, interrupted/legacy
+   sessions, and safety or integrity changes admitted before final authorization
+   visibly refuse approval and paper submission. Recovery grants permission only
+   after the signed recovery commits.
+2. **Existing paths extended:** centralize committed/effective watch-only authority
+   across `agent_runner/usage.py`, `orchestrator/breakers.py` and signed restoration;
+   compose session admission/lifecycle in `main.py`; enforce it through paper approval
+   and the existing single `OrderGateway` broker boundary.
+3. **Retirement:** this package removes raw production `VendorWindow` safety mutation,
+   runner/workflow double allocation, and memory-only duplicate guards. Request counts
+   remain session-local; mutable `UsageWindow` SQL rows remain non-authoritative.
+4. **Production reachability:** promoted D1–D4 regressions plus
+   `tests/system/test_rw01_market_day.py::test_composed_restart_restores_watch_only_generation`
+   use real composition with fake leaves. Removal of session admission, transition
+   wiring, or final gateway verification must fail a distinct composed test, each with
+   a healthy positive control.
+5. **Claimed ID:** `BUG-159` only. BUG-113/#59, BUG-114/#68, BUG-118/#70,
+   BUG-124/#73 and BUG-125/#74 remain historical, closed dependencies.
+6. **Platforms:** signed SQLite/session state and bounded child-process interruption use
+   `sys.executable`, explicit temporary paths and common synchronization semantics on
+   native Windows and Ubuntu/WSL2 Python 3.11/3.12. No platform credential branch or
+   physical power-loss guarantee is added; macOS remains best effort.
+7. **Size:** one coordinator and existing callers/status/order boundary, capped at roughly
+   1,000 production LOC plus owned tests and short evidence. If complete D1–D4 lifecycle
+   obligations exceed that cap, stop and split before implementation rather than omit one.
+
+The D4 claim is intentionally narrow: a new snapshot-pinned full-chain verification after
+the real intent vetoes corruption already committed before that snapshot. This package does
+not claim atomicity against an unrestricted concurrent SQL writer committing afterward.
+Crash, legacy, integrity, or unproven shutdown startup holds have no automatic release in
+this package; clean genesis and provably closed-session restarts remain required controls.
+
 ### RW-24 reliability follow-up — implemented, 2026-09-07
 
 RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization and
@@ -237,7 +276,7 @@ Implementation and validation are recorded in [[evidence/rw22-review-remediation
 
 Engine 1 makes Engine 2 safer and better-informed. It never makes it *profitable*.
 
-### BUG-113 durable watch-only generation — claimed 2026-08-31
+### BUG-113 durable watch-only generation — merged in PR #59
 
 The bounded hardening package is claimed on
 `work/bug113-durable-watch-only-generation` from clean merged main `987842b8`. It closes a
@@ -281,7 +320,8 @@ approval mint but before gateway review. All now refuse or restore fail-closed. 
 `DEC-09` matrix is green on the uncommitted branch: Windows 3.11.9 and 3.12.10 each report
 2,521 passed / 3 environmental skips / 5 warnings; Ubuntu/WSL2 3.11.16 and 3.12.3 each report
 2,514 passed / 5 environmental skips / 4 warnings. Ruff and dependency consistency are clean in
-all four cells. This is local implementation evidence only; `BUG-113` stays claimed until merge.
+all four cells. This paragraph records the pre-merge acceptance run; `BUG-113` subsequently
+merged through PR #59 (`1e2d4e3`) and remains a closed dependency of BUG-159.
 
 ### The MVP, concretely
 

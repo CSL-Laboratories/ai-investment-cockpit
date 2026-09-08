@@ -480,23 +480,38 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
     def get_status():
         ladder = ModeLadder(state)
         breaker_engine = BreakerEngine(state)
-        usage = {
-            v: {"state": w.state, "used": w.used, "generation": w.generation}
-            for v, w in state.usage._w.items()
-        }
-        with state.session_factory() as s:
-            brk_rows = s.execute(
-                select(BreakerState).order_by(BreakerState.created_at)
-            ).scalars().all()
-            market_events = s.execute(
-                select(MarketEvent).order_by(MarketEvent.ingested_at.desc()).limit(1)
-            ).scalar_one_or_none()
-            event_count = len(s.execute(select(MarketEvent.id)).all())
-            notification_rows = s.execute(
-                select(AuditEntry).where(
-                    AuditEntry.event_type == EVENT_PAPER_NOTIFICATION
-                ).order_by(AuditEntry.seq)
-            ).scalars().all()
+        usage_authority = state.usage.status_snapshot()
+        usage = usage_authority["committed"]
+        try:
+            with state.session_factory() as s:
+                brk_rows = s.execute(
+                    select(BreakerState).order_by(BreakerState.created_at)
+                ).scalars().all()
+                market_events = s.execute(
+                    select(MarketEvent).order_by(MarketEvent.ingested_at.desc()).limit(1)
+                ).scalar_one_or_none()
+                event_count = len(s.execute(select(MarketEvent.id)).all())
+                notification_rows = s.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.event_type == EVENT_PAPER_NOTIFICATION
+                    ).order_by(AuditEntry.seq)
+                ).scalars().all()
+        except Exception as exc:  # noqa: BLE001 - an unreadable status cannot report all-clear
+            state.admit_integrity_failure(
+                f"status database read failed: {type(exc).__name__}: {exc}"
+            )
+            return {
+                "status": "unavailable",
+                "watch_only": True,
+                "watch_only_reason": breaker_engine.watch_only_reason(),
+                "watch_only_authority": state.usage.status_snapshot(),
+                "safety_session": state.safety_session.status(),
+                "audit_chain": {
+                    "ok": False,
+                    "head_seq": None,
+                    "error": "status_database_unavailable",
+                },
+            }
         breakers: dict = {}
         for r in brk_rows:                       # last row per name wins (created_at asc)
             breakers[r.breaker_name] = {
@@ -524,7 +539,29 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                 ),
             }
         )
-        chain = state.audit.verify_chain()
+        try:
+            chain = state.audit.verify_chain()
+        except Exception as exc:  # noqa: BLE001 - unreadable verification is not healthy
+            state.admit_integrity_failure(
+                f"status audit read failed: {type(exc).__name__}: {exc}"
+            )
+            return {
+                "status": "unavailable",
+                "watch_only": True,
+                "watch_only_reason": breaker_engine.watch_only_reason(),
+                "watch_only_authority": state.usage.status_snapshot(),
+                "safety_session": state.safety_session.status(),
+                "audit_chain": {
+                    "ok": False,
+                    "head_seq": None,
+                    "error": "status_audit_unavailable",
+                },
+            }
+        if not chain.ok:
+            state.admit_integrity_failure(
+                f"status audit verification failed: {chain.error or 'unknown error'}"
+            )
+            usage_authority = state.usage.status_snapshot()
         verified_notifications = (
             [row for row in notification_rows if state.audit.verify_entry(row)]
             if chain.ok else []
@@ -538,6 +575,9 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
             "usage": usage,
             "usage_integrity_error": state.usage.integrity_error,
             "watch_only": breaker_engine.is_watch_only(),
+            "watch_only_reason": breaker_engine.watch_only_reason(),
+            "watch_only_authority": usage_authority,
+            "safety_session": state.safety_session.status(),
             "breakers": breakers,
             "paper_performance": performance_status,
             "audit_chain": {

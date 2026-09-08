@@ -1459,7 +1459,7 @@ class CashMergerEdgeProvider:
                 from orchestrator.breakers import BreakerEngine
 
                 engine = BreakerEngine(self.state)
-                if not engine.is_watch_only("sec:edgar"):
+                if engine.needs_watch_only_transition("sec:edgar"):
                     engine.enter_watch_only(
                         "sec:edgar", str(exc), actor="cash_merger_edge"
                     )

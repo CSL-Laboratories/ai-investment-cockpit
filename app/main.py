@@ -855,7 +855,8 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     session_factory = make_session_factory(engine)
     state = OrchestratorState.build(session_factory, hmac_key=_hmac_key(), settings=settings,
                                     clock=clock,
-                                    anchor_store=_build_anchor_store(settings))
+                                    anchor_store=_build_anchor_store(settings),
+                                    require_safety_session=True)
     # RW-01: the operator surface. Without this the brew was computed, stored, audited — and
     # then delivered nowhere, because compose passed no `deliver` at all.
     deliver = deliver if deliver is not None else build_operator_deliver(settings)
@@ -942,6 +943,23 @@ def compose(*, db_url: str = "sqlite:///cockpit.db", parquet_root: str = "data/r
     return state, app, services
 
 
+def _bounded_scheduler_shutdown(scheduler, *, timeout_s: float = 5.0) -> bool:
+    """Wait boundedly for scheduled jobs; uncertainty must leave the session open."""
+    outcome = {"ok": False}
+
+    def shutdown():
+        try:
+            scheduler.shutdown(wait=True)
+        except Exception:  # noqa: BLE001 - an unproven stop is not a clean close
+            return
+        outcome["ok"] = True
+
+    thread = threading.Thread(target=shutdown, name="scheduler-shutdown", daemon=True)
+    thread.start()
+    thread.join(max(0.0, float(timeout_s)))
+    return bool(outcome["ok"] and not thread.is_alive())
+
+
 def run() -> None:  # pragma: no cover - production entrypoint; the composed graph IS under test
     """Start the cockpit: ingest + scheduler jobs + the loopback-only API.
 
@@ -969,14 +987,15 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     state, app, services = compose()
     ingest = app.state.ingest
     _startup_market_data(market_data=app.state.market_data)
-    build_scheduler(
+    scheduler = build_scheduler(
         state,
         services=services,
         ingest=ingest,
         market_data=app.state.market_data,
         paper=app.state.paper,
-    ).start()
-    ingest.start_streams()
+    )
+    scheduler.start()
+    app.state.stream_threads = ingest.start_streams()
 
     # QT-09: the Discord command surface. A DAEMON thread, for the same reason the stream
     # readers are: ``client.run`` blocks forever and so does ``serve``, so whichever ran
@@ -986,8 +1005,10 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
     start_bot = build_operator_bot(
         state, paper=app.state.paper, ask=services.get("ask")
     )
+    bot_thread = None
     if start_bot is not None:
-        threading.Thread(target=start_bot, name="discord-bot", daemon=True).start()
+        bot_thread = threading.Thread(target=start_bot, name="discord-bot", daemon=True)
+        bot_thread.start()
 
     log.info(
         "cockpit up: mode=%s api=http://%s:%s feeds=%s",
@@ -997,6 +1018,25 @@ def run() -> None:  # pragma: no cover - production entrypoint; the composed gra
         ingest.feed_names or "NONE",
     )
     serve(app, state.settings)
+
+    # This is intentionally after a normal ``serve`` return, not in an unconditional finally.
+    # Fence order/recovery admission first, then prove each producer stopped within a bound.
+    # The current Discord runner has no stop/join contract; when configured it therefore keeps
+    # the marker open rather than manufacturing a clean shutdown claim.
+    state.begin_safety_shutdown()
+    scheduler_stopped = _bounded_scheduler_shutdown(scheduler)
+    streams_stopped = ingest.join_streams(timeout_s=5.0)
+    bot_stopped = bot_thread is None or not bot_thread.is_alive()
+    if not state.close_safety_session(
+        producers_quiesced=scheduler_stopped and streams_stopped and bot_stopped
+    ):
+        log.warning(
+            "safety session remains open: scheduler=%s streams=%s bot=%s reason=%s",
+            scheduler_stopped,
+            streams_stopped,
+            bot_stopped,
+            state.safety_session.close_error,
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -132,7 +132,7 @@ class PaperExecutionService:
         self.state.paper_performance = performance
         events = []
         if not performance.ok:
-            if not engine.is_watch_only("paper_performance"):
+            if engine.needs_watch_only_transition("paper_performance"):
                 events.append(engine.enter_watch_only(
                     "paper_performance",
                     performance.reason or "paper performance unavailable",
@@ -461,6 +461,17 @@ class PaperExecutionService:
                 raise PaperExecutionError(adjudication.code, adjudication.reason, 403)
             raise PaperExecutionError("unauthorized", "actor is not authorized", 403)
         if choice == "approve":
+            denial = BreakerEngine(self.state).watch_only_reason()
+            if denial in {
+                "watch_only_pending",
+                "watch_only_persistence_failed",
+                "watch_only_startup_hold",
+                "final_audit_unverified",
+            }:
+                raise PaperExecutionError(
+                    "watch_only",
+                    f"paper approval refused by effective safety authority: {denial}",
+                )
             # BUG-113: verify the HMAC-bound proposal -> AgentJob generation before any
             # approval capability is minted. Reject/veto remains available to terminalize an
             # old proposal safely; only order authority requires freshness.

@@ -329,6 +329,58 @@ class OrderGateway:
                         payload=payload)
 
     @staticmethod
+    def _final_audit_authority(st) -> tuple[bool, str | None]:
+        """Fresh snapshot-pinned full verification after the real submit intent."""
+        try:
+            with st.session_factory() as session, session.begin():
+                anchor_store = getattr(st, "anchor_store", None)
+                anchor = anchor_store.latest() if anchor_store is not None else None
+                if anchor_store is not None and anchor is None:
+                    return False, "required external anchor is unavailable"
+                verified = (
+                    st.audit.verify_session_against_anchor(session, anchor[0], anchor[1])
+                    if anchor is not None
+                    else st.audit.verify_session(session)
+                )
+                if not verified.ok:
+                    return False, verified.error or "audit chain is invalid"
+        except BaseException as exc:  # noqa: BLE001 - unreadable authority is a veto
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, None
+
+    def _abort_after_intent(
+        self, st, order, intent, *, stage, reason, actor, resolved_hash
+    ) -> GateOutcome:
+        """Conservatively cover a post-intent safety refusal when the ledger permits it."""
+        try:
+            st.audit.result(
+                intent,
+                "order_submit",
+                refs={"order_id": order.id, "aborted": stage},
+                payload={"aborted": reason, "safety_reason": stage},
+            )
+        except BaseException as exc:  # noqa: BLE001 - never trade to make logging succeed
+            st.admit_integrity_failure(
+                f"final safety abort result failed: {type(exc).__name__}: {exc}"
+            )
+            return GateOutcome(False, stage, reason, order_tuple_hash=resolved_hash)
+        try:
+            self._record_refusal(
+                st,
+                order,
+                event=EVENT_ORDER_REFUSED,
+                stage=stage,
+                reason=reason,
+                actor=actor,
+                extra={"intent_seq": intent.seq},
+            )
+        except BaseException as exc:  # noqa: BLE001 - covering result remains authoritative
+            st.admit_integrity_failure(
+                f"final safety refusal log failed: {type(exc).__name__}: {exc}"
+            )
+        return GateOutcome(False, stage, reason, order_tuple_hash=resolved_hash)
+
+    @staticmethod
     def _load_row(st, model, row_id):
         """Re-load a persisted row by id and detach it. The gateway trusts the DB row, NEVER a
         caller-supplied in-memory object (a caller holding the gateway could forge one)."""
@@ -444,15 +496,16 @@ class OrderGateway:
                     market_open = is_market_open(now)
                 except Exception:  # noqa: BLE001 - broken calendar/clock must refuse cleanly
                     return ("market_data", None, "market-hours freshness guard unavailable")
-                if market_open and not breaker_engine.is_watch_only("market_data"):
+                if market_open and breaker_engine.needs_watch_only_transition("market_data"):
                     breaker_engine.enter_watch_only(
                         "market_data", reason, clock=clock, actor="order_gateway"
                     )
                 return ("market_data", None, reason)
 
         # (b) mode / watch-only.
-        if breaker_engine.is_watch_only():
-            return ("mode", None, "watch-only condition is active; order path disabled")
+        denial = breaker_engine.watch_only_reason()
+        if denial is not None:
+            return ("mode", None, denial)
         mode = ladder.current()
         mode_v = mode.value if hasattr(mode, "value") else str(mode)
         if mode_v not in self._allowed_modes:
@@ -834,31 +887,75 @@ class OrderGateway:
                          "execution_scope": self._execution_scope,
                          "producing_runtime": producing_runtime},
             )
-            # SEC-04 (R3-S1) FINAL fail-closed HALT re-check — AFTER the intent is written and
-            # IMMEDIATELY before the broker call. The pre-broker re-check above runs BEFORE the
-            # two-phase intent write; an out-of-band `python -m orchestrator.halt --set` (which never
-            # takes st.lock) landing DURING the intent append is a fresh TOCTOU window that would
-            # still fire the broker submit. Re-probe the SAME default_halt_path() here so the
-            # sentinel is honored right up to the call. On trip: COMPLETE the two-phase pair (a
-            # covering result so this intent does NOT dangle — SEC-13's 1:1 pairing and
-            # unresolved_intents() stay intact), record the refusal, and return WITHOUT calling the
-            # broker. An UNREADABLE flag counts as SET (fail closed).
-            if _halt_active(default_halt_path()):
-                reason = "HALT set immediately before broker call (SEC-04)"
-                st.audit.result(
-                    intent, "order_submit",
-                    refs={"order_id": order.id, "aborted": "halt"},
-                    payload={"aborted": reason},
-                )
-                self._record_refusal(st, order, event=EVENT_ORDER_REFUSED,
-                                     stage="halt", reason=reason, actor=producing_runtime)
-                return GateOutcome(False, "halt", reason, order_tuple_hash=resolved_hash)
-            # The private broker call (SEC-03: never a module global / string dispatch).
-            # ``client_order_id`` is a broker-side idempotency backstop derived from the durable
-            # local order id. It is transport metadata, deliberately outside the operator-approved
-            # canonical tuple/hash, and cannot change symbol/side/size/price/TIF.
             broker_request = dict(canonical)
             broker_request["client_order_id"] = f"cockpit-{order.id}"[:128]
+
+            # BUG-159 / D4: the pending-exposure read happened before the intent and cannot
+            # authorize the later transport entry. Verify the complete chain again from one
+            # new pinned snapshot. Invalid/unreadable authority is sticky and no attempt to
+            # log the refusal may force the broker call.
+            audit_ok, audit_error = self._final_audit_authority(st)
+            if not audit_ok:
+                reason = "final_audit_unverified"
+                st.admit_integrity_failure(
+                    f"final audit verification failed: {audit_error or 'unknown error'}"
+                )
+                return GateOutcome(
+                    False, "audit_integrity", reason, order_tuple_hash=resolved_hash
+                )
+
+            # Probe HALT after the potentially blocking audit read and before the serialized
+            # admission decision. A refusal after token consumption retains the burned nonce
+            # and resolves the exact intent when the verified ledger remains writable.
+            if _halt_active(default_halt_path()):
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="halt",
+                    reason="HALT set immediately before broker call (SEC-04)",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
+
+            # D3 linearization point. A denial admitted first wins. Authorization first permits
+            # this already-authorized call to enter and later admissions bar subsequent calls.
+            # The short lock is released before broker I/O; nothing fallible or user-controlled
+            # occurs between that release and the private transport entry.
+            final_stage = None
+            final_reason = None
+            with st.safety_admission_lock:
+                final_reason = breaker_engine.watch_only_reason()
+                if final_reason is not None:
+                    final_stage = "mode"
+                elif (
+                    self._require_analysis_generation
+                    or analysis_vendor is not None
+                    or analysis_generation is not None
+                ):
+                    try:
+                        if analysis_vendor != producing_runtime:
+                            raise StaleAnalysisError("analysis vendor mismatch")
+                        breaker_engine.assert_fresh_analysis(
+                            analysis_vendor, analysis_generation
+                        )
+                    except (StaleAnalysisError, TypeError, ValueError):
+                        final_stage = "analysis_freshness"
+                        final_reason = "stale_analysis"
+            if final_stage is not None:
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage=final_stage,
+                    reason=final_reason,
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
+
+            # The private broker call (SEC-03: never a module global / string dispatch).
+            # ``client_order_id`` is stable transport metadata and cannot change the approved
+            # symbol/side/size/price/TIF tuple.
             try:
                 # F1: the response-shape contract is validated INSIDE the protected region,
                 # so a broker that RETURNS garbage (None/str/non-JSON-native fields) takes

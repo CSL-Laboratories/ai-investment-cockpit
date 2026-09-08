@@ -15,7 +15,7 @@ to here so tests inject a FakeTransport (never a real subprocess).
 """
 from __future__ import annotations
 
-from agent_runner.result import LIMIT_HIT, NEEDS_HUMAN, OK, TIMEOUT
+from agent_runner.result import NEEDS_HUMAN, OK
 from agent_runner.runner import run_agent
 from agent_runner.spec import AgentSpec
 from config.models import (
@@ -76,7 +76,6 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             "Codex is limited to human-gated read_only/paper work"
         )
     engine = BreakerEngine(state)
-    was_watch_only = engine.is_watch_only(runtime)
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
     generation = state.usage.window(runtime).generation
     job_id = new_id("job")
@@ -98,10 +97,19 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd, and — SEC-05 —
     # refuses to spawn a decision job under the orchestrator's privileged token when a low-priv
     # account is configured (the transport must launch the child under it). All fail-closed.
+    def admit_health_fault(vendor, health_state, error):
+        engine.enter_watch_only(
+            vendor,
+            f"{alias} agent health fault: {error}",
+            actor="agent_calls",
+            state=health_state,
+        )
+
     result = run_agent(spec, transport=transport, usage=state.usage,
                        secret_values=_provisioned_secret_values(),   # BUG-092: Inv 4 check armed
                        pinned_cwd=pinned_cwd,
-                       decision_agent_account=getattr(state.settings, "decision_agent_account", None))
+                       decision_agent_account=getattr(state.settings, "decision_agent_account", None),
+                       health_fault=admit_health_fault)
     completed = state.clock.now()
 
     refs = dict(input_refs or {})
@@ -136,10 +144,4 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         },
     )
 
-    if result.status in (LIMIT_HIT, TIMEOUT) and not was_watch_only:
-        # L8 (Inv 7 / SEC-23): degrade to watch-only ONCE — mode is NOT changed, events
-        # are deferred by the calling workflow, never dropped.
-        engine.enter_watch_only(
-            runtime, f"{alias} agent {result.status}: {result.error or 'usage exhausted'}"
-        )
     return result, job

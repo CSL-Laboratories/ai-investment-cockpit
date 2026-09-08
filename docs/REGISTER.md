@@ -23,6 +23,18 @@ and the claim board, not the specification.
 
 ## Delivery position recorded 2026-08-24
 
+### BUG-159 watch-only durability — claimed 2026-09-08
+
+`BUG-159` is claimed by Codex on `fix/bug159-watchonly-durability`, from merged
+main `abbaf3f` (PR #82). This is one fail-closed production package, sequentially
+after BUG-125 / PR #74. It does not reopen BUG-113, BUG-114, BUG-118, BUG-124, or
+BUG-125 and does not change selection, dates, watchlists, model authority, broker
+adapters, or the live soak.
+
+| ID | Defect | Priority | Status |
+|---|---|---|---|
+| `BUG-159` | Interrupted watch-only transitions can lose denial across restart; recovery can publish permission before its signed event commits; admitted late safety changes and final audit corruption can be missed before paper broker entry (D1–D4) | P1 high paper | implemented on `fix/bug159-watchonly-durability`; [[evidence/astra-watchonly-claim-shape-2026-09-06]]; [[evidence/bug159-watchonly-durability-2026-09-08]] |
+
 ### RW-24 measured reliability follow-up — implemented, 2026-09-07
 
 Owner: Codex/Astra, same isolated branch. Implementation, independent review and the
