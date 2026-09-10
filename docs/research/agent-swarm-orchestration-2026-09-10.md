@@ -192,7 +192,71 @@ separate from inference).
   authority change, and any external upload beyond redacted facts each need
   their own explicit owner go-ahead and REGISTER claim first.
 
-## 7. Doc disposition
+## 7. Permission tiers — expand reads, keep writes gated
+
+Short answer: broaden leaf *reads* inside containment, keep *writes and
+authority* with the mains/Head. A sandbox is not a permission: it stops writes
+but still permits reads/egress by default — `app/agent_runner/tool_inspector.py:71`
+states this explicitly, which is why the cockpit pairs
+`codex exec --sandbox read-only` (`app/agent_runner/runner.py:99`) with
+deny-by-default argv inspection (SEC-06, hardened by BUG-119). Every swarm tier
+needs both halves: containment plus an explicit capability/disclosure grant in
+its brief.
+
+Note on "Sentry's sandbox": a repo-wide search finds zero Sentry references —
+no such sandbox exists in this tree. The available containment is
+harness-native plus the SEC-05 OS account:
+
+| Tier | Role | Read | Write |
+|---|---|---|---|
+| L0 Head | human + OpenCode/Codex planning | full via normal surfaces | merges, REGISTER claims, releases — owner approval only |
+| L1 Mains (sub-orchestrators) | dispatch ≤8 leaves, dedupe, per-domain synthesis | tracked repo + brief inputs | own domain-synthesis JSON only; never `app/risk/`, gateway/order FSM, mode/approval, `storage/audit.py`, secrets, or eligibility policy |
+| L2 Leaves | one brief → one JSON filing | tracked repo files (secret-free by Inv 4) + explicitly listed inputs only — never credential stores, private docs, or network beyond the brief's acquisition allowlist | own filing path only; NO EDITS elsewhere (pilot profile: `--permission-mode auto` + explicit NO-EDITS; any edit attempt is a refusal) |
+
+L0-write-only parts: `app/risk/`, `brokers/gateway.py` + order state machine,
+`orchestrator/mode_ladder.py`, `storage/audit.py`, secrets/identity config,
+eligibility policy. On "direct access to everything it needs": tracked files
+plus named inputs *are* everything research needs — credentials and private
+documents are deliberately not needed, per PD-047's minimum-necessary rule.
+Briefs carry a disclosure class: `public-tracked` (default leaf),
+`redacted-facts` (owner-scoped minimum), `local-only` (never leaves the host;
+leaves receive a refusal stub, not the content).
+
+Containment matrix (verified 2026-09-10):
+
+- Codex: `--sandbox read-only` on all OSes, plus argv inspection
+  (`tool_inspector.py`: deny duplicates/aliases/unknown flags).
+- Devin `--sandbox`: Research Preview, macOS seatbelt / Linux bwrap+seccomp
+  only. On native Windows it refuses ("requires running Devin inside WSL 2").
+  Native-Windows leaves therefore use `--permission-mode auto` (read-only tools
+  auto-approved) + NO-EDITS brief + the SEC-05 low-priv `cockpit-agent` account
+  (`docs/setup/low-priv-agent-account.md`, enforced at startup by
+  `account_guard.py`), ideally in a separate worktree. For full Devin
+  sandboxing, run the leaf from the WSL2 Ubuntu distribution.
+- OpenCode: `opencode run --agent <name> -m <provider/model> --format json
+  --dir <worktree>`. Treat `--auto` as dangerous (auto-approves anything not
+  explicitly denied) — never set it on leaves or middles.
+
+## 8. Agentic depth — verified, capped at 3
+
+Depth is nested headless CLI re-invocation (each level its own OS process and
+session), not a harness-native "spawn subagent" primitive:
+
+| Level | Runs as | May spawn children? | Evidence |
+|---|---|---|---|
+| Head | human + `opencode` session / Codex planning | yes, via shell | `opencode run --agent --model --format json --dir` flags verified in `--help` |
+| Middle | headless `devin -p` / `opencode run` with domain brief | yes, via orchestrator shell only | Devin CLI supports `-p` / `--prompt-file` / `--model` / `--export` / `-r` / `--resume` |
+| Leaf | headless single-shot with task brief | NO — no spawn authority; a leaf attempting to fan out is a refusal | depth probe 2026-09-10: leaf under `auto` executed bounded `echo depth-probe-ok` via exec and returned JSON — exec works, so the no-spawn rule lives in the brief text, enforced by review, not by machinery |
+
+Rules: maximum depth is Head → middle → leaf (3). No leaf-spawned
+grandchildren — each extra hop multiplies prompt-telephone drift and unaccounted
+quota fan-out. Every hop re-pins `brief_rev`/`input_rev`/`policy_rev` with its
+REGISTER `claim_id`, and settles usage once per attempt. CLI note: pass
+headless Devin prompts after `--` (`devin … -p -- "…"`) — the bare
+`-p "…"` form misparses against `[PATH]...` on some inputs (observed
+2026-09-10).
+
+## 9. Doc disposition
 
 New reference research input. It supersedes nothing; PLAN still owns order,
 PRODUCT still owns scope/acceptance, REGISTER still owns claims. A future
