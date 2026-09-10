@@ -69,6 +69,10 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-030 | decided — Round 7a Q22 | Agents investigate, implement and test isolated revisions; Lucas approves installing software releases. Routine operation stays on the approved version. Automatic maintenance deployment is not selected; strategy activation and hard-cap increases retain separate approval. |
 | PD-031 | decided — Round 7a Q23 | Automatic recovery under an approved policy after health, freshness, resource-limit and paper-reconciliation checks pass. Explicit human halts and integrity/authority holds require authorized human release; unresolved conditions stay suspended. Detailed durable recovery and audit contracts remain to be specified. |
 | PD-032 | decided — Round 7a Q24 | When required inputs are unavailable, block new or increased exposure for affected actions, monitor existing paper positions and allow only preapproved protective actions whose own requirements pass. Detailed handling of orders, partial fills, uncertain submissions and reconciliation remains to be specified. |
+| PD-033 | decided — Round 7b Q25 | Launch with two or three distinct strategies, selected through bounded feasibility comparison including the existing cash-merger strategy and approved by Lucas. Each requires its own evidence/evaluation; parameter variants do not satisfy the count. |
+| PD-034 | decided requirement — Round 7b Q25 | Expand the strategy suite after launch and retain explicit reminders/roadmap follow-up. Two or three is not a permanent ceiling. Reminder cadence and candidate-review mechanics remain open; additions still require evaluation and owner activation. |
+| PD-035 | owner economic objective — Round 7b Q25 | Eventually achieve profitable growth exceeding expenses estimated at about $210/month. This is a target to evaluate, not a verified cost total, spending authorization, return promise or replacement of PD-024's MVP completion criterion. Capital baseline and expense components remain open. |
+| PD-036 | decided — Round 7b Q26 | The engine decides holding horizons within approved strategy evidence, data/execution capabilities and policy. No universal days-to-months restriction is selected; exact supported horizons follow feasibility and strategy contracts. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -86,6 +90,9 @@ releases. Checked automatic recovery handles transient dependency failures under
 while human halts and integrity/authority holds require authorized human release.
 During failures, monitor positions and permit only qualifying preapproved protective
 actions while affected new/increased exposure is blocked.
+Launch with two or three strategies, keep future expansion and reminders explicit,
+and let the engine select supported holding horizons. Evaluate progress toward
+profitable growth beyond the owner's approximate $210/month expense benchmark.
 Detailed strategy, autonomy,
 identity/permission, intake, escalation, interaction and evaluation
 contracts remain open. Earlier assistant recommendations are not owner decisions
@@ -118,7 +125,8 @@ unless explicitly accepted.
 | 6a | Initial trading scope and deployment | complete through PD-027 | Cash-funded long-only US stocks/ETFs; Windows and Linux support with Lucas's Linux box primary |
 | 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
 | 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts pending | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
-| 7b | Initial strategy-suite contract | Q25–Q26 presented; awaiting owner | Initial suite breadth, feasibility selection and supported holding horizons |
+| 7b | Initial strategy-suite contract | complete through PD-036 | Two or three launch strategies, expansion reminders, economic objective and engine-selected horizons |
+| 7c | Economic evaluation baseline | Q27 presented; awaiting owner | Starting paper balance and scope of the approximate monthly expense benchmark |
 | 8 | Release contract and progression | pending | Concrete acceptance and remaining policy contracts, bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
@@ -778,7 +786,27 @@ no required count can be met by inventing evidence or weakening a gate. Evaluati
 does not itself establish profitability. The product supports expansion after release
 under the selected development, evaluation and owner-activation process.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Go with two or three, but please make sure to make reminders
+that the strategies need to be expanded in the future. The more strategies, the higher
+the trading plane and potential ROI. We are trying to make a margin of profit that
+succeeds so that it outweighs my expenses in growth eventually (around $210/month)”
+
+**Recorded decisions:** PD-033 selects two or three launch strategies under the
+proposed feasibility/evaluation/owner-approval process. PD-034 makes future expansion
+and reminders explicit, rather than treating the launch count as a permanent limit.
+PD-035 records eventual profitable growth beyond approximately $210/month in expenses
+as an economic objective. The exact expense components and starting capital are not
+yet established. The owner's expectation that more strategies improve opportunity/ROI
+is a hypothesis to evaluate, not evidence of a monotonic return increase.
+
+**Recommended specification detail, not separately ratified:** maintain an expansion
+candidate queue and include its progress in periodic operator reports, with separate
+alerts for activation-ready candidates. Specify reminder cadence and measure each
+addition's incremental opportunity, costs and portfolio overlap. Report net trading
+P&L against the expense benchmark, retaining uncertainty, losses and realized versus
+unrealized components. Do not silently discount shared subscription expenses or count
+the same cost twice. PD-024's honest-evaluation MVP criterion remains; paper results
+do not pay actual expenses or grant live-capital authority.
 
 ### Q26. Which holding horizons must the first release support?
 
@@ -790,6 +818,27 @@ and multi-day strategies at first release, or focus the initial suite on intrada
 strategies. Intraday scope adds data-timeliness, fill and execution evaluation demands.
 Exact schedules and per-strategy horizons remain in the strategy contracts. This is
 a product capability choice, not a recommendation to buy, sell or hold any asset.
+
+**Answer (2026-09-09):** “I think this should be decided by the engine.”
+
+**Recorded decision:** PD-036. Delegate holding-horizon decisions to the engine
+within activated strategy evidence, supported data/execution capabilities and approved
+policy. Do not impose the suggested universal days-to-months scope. The feasibility
+comparison and strategy contracts still need to establish supported horizons; the
+answer does not itself require or certify all intraday/high-frequency capabilities.
+
+## Round 7c — economic evaluation baseline
+
+### Q27. What capital and expense baseline should the economic evaluation use?
+
+Question presented: “To evaluate your goal of eventually covering roughly $210/month
+and growing beyond it, what starting paper balance should we model, and what expenses
+does the $210 include (for example, subscriptions, hosting, or data)? Approximate figures
+are enough; these are evaluation assumptions, not a commitment of real capital.”
+
+Use owner-provided assumptions to make the economic target measurable. Keep the
+expense-coverage goal distinct from hard spending limits and the live-capital gates;
+do not invent a starting balance or assume the figure includes every engine cost.
 
 **Answer:** pending.
 
@@ -834,6 +883,16 @@ a product capability choice, not a recommendation to buy, sell or hold any asset
 - PD-022's tax-aware scope has no selected jurisdiction, account context, transaction
   population or verified calculation rules. Resolve the intended feature and inputs
   before researching or implementing a tax model; do not invent a flat tax haircut.
+- PD-035's approximate $210/month figure is owner-stated, not a verified account or
+  pricing observation. Q27 requests starting paper capital and expense components.
+  The economic target cannot establish expected returns, payback or required percentage
+  performance without those assumptions and observed strategy evidence.
+- General financial reference checked for Q25: the SEC explains that
+  [fees and expenses reduce investment returns](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/updated)
+  and that an [ETF is not necessarily diversified](https://www.investor.gov/introduction-investing/getting-started/asset-allocation).
+  These support attention to costs and underlying exposures. The inference for this
+  product is to evaluate strategy additions on their incremental contribution and
+  overlap; neither source establishes this engine's profitability or an optimal count.
 
 ## Resume here
 
@@ -846,7 +905,10 @@ Round 6b is complete through PD-029: persistent cockpit plus integrations; stand
 MVP, with Recursion when qualified. Round 7a Q22–Q23 are recorded through PD-031:
 owner-approved software releases and checked automatic recovery with human-released
 holds. Q24 completes Round 7a through PD-032 with monitoring and permitted protective
-actions. Round 7b Q25–Q26 are presented on initial suite breadth and holding horizons.
+actions. Round 7b is complete through PD-036: two or three launch strategies, explicit
+expansion/reminders, an approximate $210/month expense-coverage objective and engine-
+selected holding horizons. Round 7c Q27 is presented and pending on paper capital and
+expense components; do not infer either from the monthly target.
 Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
 contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,

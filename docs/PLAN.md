@@ -78,6 +78,15 @@ Q24 allows monitoring and preapproved protective actions whose requirements rema
 satisfied, while affected new/increased exposure is blocked (PD-032). Define the
 action matrix and reconcile the existing fail-closed order boundary before implementation.
 
+Round 7b selects two or three launch strategies through feasibility and owner approval
+(PD-033), with explicit future expansion and reminders (PD-034). Keep expansion in the
+post-MVP roadmap; the launch count is not a permanent ceiling. PD-035 adds eventual
+profitable growth beyond approximately $210/month of owner expenses as an economic
+evaluation target, without changing the honest-results MVP criterion. PD-036 delegates
+holding horizons to the engine within qualified strategy/data/execution contracts;
+no universal days-to-months restriction is selected. Starting paper capital, expense
+scope and the exact supported strategy horizons remain to be established.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

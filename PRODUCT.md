@@ -82,9 +82,18 @@ permission during the documentation-only grill.
 
 The MVP should support a suite of strategies that model reasoning can evaluate and
 employ through an escalation architecture (PD-012, Round 3 Q7). This supersedes the
-assistant's proposed one-strategy first-release target. The strategy roster, trading
-horizons, selection and activation criteria, and interactions among strategies remain
+assistant's proposed one-strategy first-release target. Launch with two or three
+distinct strategies, selected through a bounded feasibility comparison including the
+existing cash-merger strategy, then approved by Lucas (PD-033, Round 7b Q25). Each
+needs its own evidence and evaluation; parameter variants do not count as additional
+strategies. The exact roster, activation criteria and portfolio interactions remain
 to be specified.
+
+The engine decides holding horizons (PD-036, Round 7b Q26). No universal days-to-months
+restriction is selected. Horizon decisions must fit the activated strategy's evidence,
+data/execution capabilities and approved risk policy. The feasibility comparison and
+strategy contracts establish which horizons the initial suite can support; this answer
+neither excludes intraday strategies nor certifies every possible trading horizon.
 
 The initial executable scope is cash-funded, long-only US stocks and ETFs (PD-026,
 Round 6a Q18). The suite can contain multiple strategies within that scope. Short
@@ -111,6 +120,20 @@ enforce eligibility and aggregate portfolio constraints through the existing ord
 boundary. Strategy-development scope, activation evidence, capital allocation,
 conflict handling and retirement require explicit policies rather than being inferred
 from model confidence.
+
+### Expansion after the first release
+
+Two or three strategies is the launch scope, not a permanent ceiling. Lucas explicitly
+requires future expansion and reminders to keep it visible (PD-034). Keep expansion
+in the roadmap and product review requirements. A continuing candidate queue should
+record new strategy opportunities, missing evidence and the next evaluation step;
+activation still follows the owner-approved process and existing resource/risk caps.
+
+Recommended reminder mechanism: include expansion status in periodic operator reports
+and surface candidates ready for activation review. Exact cadence and notification
+rules remain to be specified; no external reminder is scheduled during this grill.
+Evaluate additions for incremental opportunity, results after costs and overlap with
+the existing portfolio. A larger strategy count alone is not evidence of higher ROI.
 
 ## Identity and authorized access — decided direction
 
@@ -332,6 +355,21 @@ unfavorable outcomes and failures. This completion criterion does not waive exis
 strategy-evidence, platform, activation or pre-live gates, and a working product is
 not itself evidence of financial advantage. Exact evaluation thresholds, observation
 windows and evaluator responsibilities remain to be specified.
+
+### Economic objective beyond MVP completion
+
+Lucas wants eventual profitable growth that exceeds his expenses, currently estimated
+at roughly $210/month (PD-035, Round 7b Q25). Record this as an explicit economic
+objective and track progress toward it. It does not replace PD-024's working-product
+and honest-evaluation completion criterion, establish a spending cap, or promise a
+return. Paper P&L is evaluation evidence, not cash available to pay actual bills.
+
+Recommended reporting: show trading P&L after trading costs, the owner expense-coverage
+benchmark, and the resulting surplus or shortfall without subtracting the same cost
+twice. Preserve realized and unrealized components, losses, capital employed and the
+observation period. The starting paper balance, components of the approximate $210,
+cost allocation and tax treatment remain to be established; no required percentage
+return or verified break-even result is asserted from the monthly figure alone.
 
 ## Automated quality evaluation — decided target
 
