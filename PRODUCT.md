@@ -283,6 +283,45 @@ known coverage limitations. These are proposed ways to meet the inspection requi
 the exact fields and interface are not yet ratified. Existing raw-input separation
 and secret-handling requirements continue to apply.
 
+## First-release success — decided direction
+
+The paper MVP is complete when the integrated product is useful and reliable and
+its strategy results are credibly evaluated with honest reporting (PD-024, Round 5
+Q16). Positive returns or demonstrated profitability are not required for product
+completion. The workflow must deliver the agreed research and input experience,
+operate its approved strategy suite and complete the real paper-position lifecycle,
+including reconciliation and failure handling.
+
+Evaluation uses predeclared baselines and cost assumptions and preserves uncertainty,
+unfavorable outcomes and failures. This completion criterion does not waive existing
+strategy-evidence, platform, activation or pre-live gates, and a working product is
+not itself evidence of financial advantage. Exact evaluation thresholds, observation
+windows and evaluator responsibilities remain to be specified.
+
+## Automated quality evaluation — decided target
+
+Aim for fully automated research-quality and model-routing evaluation (PD-025,
+Round 5 Q17). Routine quality assessment should not require Lucas or another human
+to review a sample of every evaluation cycle. This replaces the assistant's proposed
+routine human sample review. Optional operator usefulness feedback remains possible;
+owner approval of strategy activation is a separate decision under PD-016.
+
+Recommended design, subject to specification: combine deterministic checks and
+production-path replays with source-grounded reference cases and separately evaluated
+model judges. Assess accepted, rejected, low-tier-dismissed and escalated cases so
+cheap early filtering cannot hide missed opportunities or unsupported conclusions.
+Keep evaluation cases separate from tuning examples, test the evaluator's own error
+modes, and report coverage, quality, latency, cost and quota use. Model agreement is
+not sufficient evidence of correctness. Return an explicit unverified result when
+the evaluator lacks adequate evidence; do not silently treat it as a passing score.
+
+The automation target is not an established capability or a waiver of existing
+independent evidence requirements. In particular, current human-source labelling and
+held-out evidence gates need an explicit disposition during contract reconciliation.
+The evaluation design must state what can be automated, how reference judgments are
+established, and which claims remain unverified. No daily human QA obligation is added
+to the selected autonomous product experience.
+
 ## Sections to resolve through the grill
 
 1. Product purpose, initial user, and first complete experience.

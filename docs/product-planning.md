@@ -60,13 +60,16 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-021 | decided — Round 4b Q14 | Owner-approved hard caps with autonomous engine allocation inside them; increases require owner approval. Applies to inference/subscription resources and paper capital/risk; numeric values and accounting remain open. |
 | PD-022 | owner-proposed policy/evaluation consideration — Round 4b Q14 | Consider trading taxes and other restrictions within the broader limits/allocation design. Exact tax-aware functionality, account/jurisdiction context and calculation rules remain open; no full tax engine or filing service is selected. |
 | PD-023 | decided — Round 4b Q15 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. Existing-position failure policy and recovery conditions remain to be specified. |
+| PD-024 | decided — Round 5 Q16 | First-release success is a working, useful and reliable integrated paper product plus credible evaluation with honest results. Positive profitability is not a completion requirement; existing evidence/activation gates remain. |
+| PD-025 | decided target — Round 5 Q17 | Aim for fully automated research-quality and model-routing evaluation. Replaces the assistant's recommended routine human sample review; owner strategy-activation approval remains separate. The automated evaluator and reference evidence need validation; existing independent-evidence requirements require explicit reconciliation, not silent waiver. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
 categories, a strategy suite, tiered model reasoning, monitored unresolved cases and
 complete paper-position management, owner-approved strategy activation, identifiable
 authorized users, dynamic subscription/capability/diversity-aware routing, owner-approved
-hard limits, and approved fallback with safe suspension. Recursion
+hard limits, approved fallback with safe suspension, honest product/evaluation success,
+and a fully automated quality-evaluation target. Recursion
 remains a candidate integration; service/plugin/host ownership is explicitly unresolved.
 Detailed strategy, autonomy,
 identity/permission, intake, escalation, interaction and evaluation
@@ -96,8 +99,9 @@ unless explicitly accepted.
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
 | 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
 | 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts pending | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
-| 5 | Evaluation and feedback | questions prepared; awaiting owner | Release success criteria, research-quality evaluation and independent review |
-| 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
+| 5 | Evaluation and feedback | complete through PD-025; evaluation mechanics pending | Working product with credible honest results; fully automated quality-evaluation target |
+| 6a | Initial trading scope and deployment | Q18–Q19 presented; awaiting owner | Executable instrument scope and first unattended deployment target |
+| 6b | Architecture and release contract | pending | Architecture comparison and disposition, remaining policy contracts, bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -545,7 +549,13 @@ or activation gates. The alternative is requiring a predeclared positive cost-ad
 paper-performance result against selected baselines before calling the first release
 complete; that ties completion to empirical outcomes beyond implementing the workflow.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Working product + credible evaluation, with honest results (Recommended)”
+
+**Recorded decision:** PD-024. The full integrated paper workflow and a credible,
+honest evaluation establish product completion. Positive financial results are not
+required for that declaration. Preserve agreed functionality and applicable evidence
+and activation gates; do not interpret this as permission to call an incomplete
+workflow finished or to describe unproven strategy advantage as established.
 
 ### Q17. How should research quality and routing decisions be evaluated?
 
@@ -557,6 +567,50 @@ separate, and do not treat model agreement as ground truth. Alternatives are own
 of every evaluation case, or a fully automated quality-evaluation target. The latter
 cannot silently replace existing independent label/review requirements. Reviewer roles,
 sampling cadence, thresholds, and measurable operator effort remain to be specified.
+
+**Answer (2026-09-09):** “Aim for fully automated quality evaluation”
+
+**Recorded decision:** PD-025. Target fully automated research-quality and routing
+evaluation, replacing the recommended routine human sample review. Owner strategy
+activation under PD-016 remains distinct from quality evaluation. Optional operator
+feedback is useful but not a required daily task. Do not label the automation target
+as an already validated evaluator or silently discard existing evidence requirements.
+
+**Recommended specification detail, not separately ratified:** combine deterministic
+checks, replays through the real workflow, source-grounded reference cases, and model
+judges whose own errors are evaluated. Include early dismissals and rejections as well
+as escalations; preserve failures, abstentions and empty runs. Separate tuning from
+held-out evaluation. Report unverified results when the evidence is insufficient;
+agreement among models alone cannot establish a passing result. Define reference-set
+creation, independence, evaluator validation, thresholds and regression handling in
+the concrete contract. Current human-source labelling requirements are a named
+reconciliation item, not a newly imposed routine operator workload.
+
+## Round 6a — initial trading scope and deployment
+
+### Q18. Which instruments and position types should the initial strategy suite trade?
+
+Recommendation: cash-funded, long-only US stocks and ETFs for the first paper release.
+Multiple strategies can operate within that scope; research may cover broader events
+and markets without making every instrument executable. Alternatives add shorting or
+margin in US equities, or include options and other asset classes from the start.
+Broader scope requires corresponding data, strategy evaluation, risk, broker and
+position-lifecycle contracts. This is a proposed product boundary, not a strategy
+selection or an investment recommendation. Current eligibility and risk rules remain
+until an explicitly reviewed implementation changes them.
+
+**Answer:** pending.
+
+### Q19. Where should the first unattended pilot run?
+
+Recommendation: one Linux VPS deployment as the initial unattended target, with the
+Windows workstation retained for development and local operation. Alternatives are
+an always-on Windows host first, or full unattended deployment support for both in
+the first release. This choice determines packaging, credential provisioning,
+supervision and recovery acceptance; it does not select Recursion or require separate
+copies of investing state. The existing native Windows/WSL2 × Python 3.11/3.12 test
+matrix remains required regardless of the pilot host. No hosting purchase, deployment,
+credential change or service operation is authorized by answering this question.
 
 **Answer:** pending.
 
@@ -603,9 +657,11 @@ sampling cadence, thresholds, and measurable operator effort remain to be specif
 
 Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
 the hosting/plugin architecture is explicitly deferred for comparison and later owner
-disposition. Round 4b is recorded through PD-023. Present Round 5 Q16/Q17 on release
-success criteria and research-quality evaluation. Detailed role/revocation, limit,
-tax-scope and failure/recovery contracts remain to be resolved in specification review.
+disposition. Round 4b is recorded through PD-023 and Round 5 through PD-025.
+Round 6a Q18–Q19 are presented and awaiting answers on executable scope and pilot hosting.
+Use those answers to inform the concrete architecture comparison; do not infer them.
+Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
+contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
 owner strategy activation and complete position lifecycle forward. Do not assume
 Recursion-primary or a plugin-only architecture has been selected.

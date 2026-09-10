@@ -44,6 +44,14 @@ product target beyond the current single-operator identity configuration. The ev
 implementation needs a scoped identity/authorization and audit design; this documentation
 claim does not provision users, credentials or permissions.
 
+Round 5 selects a working integrated paper product with credible, honest evaluation
+as release success, without requiring positive returns (PD-024). PD-025 targets fully
+automated research-quality and routing evaluation; routine human sample review is
+not selected. Final RW-25 reconciliation must explicitly address existing independent
+human-label requirements and the validity of automated reference/judge evidence.
+Owner strategy activation remains separate; no empirical gate is passed or removed
+by recording these targets.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`
