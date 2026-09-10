@@ -68,6 +68,16 @@ common execution contract now. The [architecture comparison](product-architectur
 records the selection and remaining technical proposals; no runtime or order-authority
 change follows from this documentation checkpoint.
 
+Round 7a Q22 reserves software-release installation approval to Lucas after agents
+develop/test isolated revisions (PD-030). Q23 selects policy-governed automatic recovery
+after dependency, freshness, resource and paper-reconciliation checks, while explicit
+human halts and integrity/authority holds require authorized human release (PD-031).
+The implementation needs a scoped durable recovery/release contract and the applicable
+review; current safety transitions and deployment authority are unchanged.
+Q24 allows monitoring and preapproved protective actions whose requirements remain
+satisfied, while affected new/increased exposure is blocked (PD-032). Define the
+action matrix and reconcile the existing fail-closed order boundary before implementation.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

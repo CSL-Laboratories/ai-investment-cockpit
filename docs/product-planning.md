@@ -59,13 +59,16 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-020 | decided — Round 4b Q13 | The owner defines roles with explicit per-action permissions, enforced consistently across control surfaces. Strategy activation remains owner-reserved unless explicitly delegated. Exact roles, action grants and revocation mechanics remain open. |
 | PD-021 | decided — Round 4b Q14 | Owner-approved hard caps with autonomous engine allocation inside them; increases require owner approval. Applies to inference/subscription resources and paper capital/risk; numeric values and accounting remain open. |
 | PD-022 | owner-proposed policy/evaluation consideration — Round 4b Q14 | Consider trading taxes and other restrictions within the broader limits/allocation design. Exact tax-aware functionality, account/jurisdiction context and calculation rules remain open; no full tax engine or filing service is selected. |
-| PD-023 | decided — Round 4b Q15 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. Existing-position failure policy and recovery conditions remain to be specified. |
+| PD-023 | decided — Round 4b Q15; refined by PD-031/PD-032 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. PD-031 defines recovery and PD-032 defines existing-position failure behavior; detailed contracts remain open. |
 | PD-024 | decided — Round 5 Q16 | First-release success is a working, useful and reliable integrated paper product plus credible evaluation with honest results. Positive profitability is not a completion requirement; existing evidence/activation gates remain. |
 | PD-025 | decided target — Round 5 Q17 | Aim for fully automated research-quality and model-routing evaluation. Replaces the assistant's recommended routine human sample review; owner strategy-activation approval remains separate. The automated evaluator and reference evidence need validation; existing independent-evidence requirements require explicit reconciliation, not silent waiver. |
 | PD-026 | decided — Round 6a Q18 | The MVP strategy suite trades cash-funded, long-only US stocks and ETFs on paper. Broader research remains possible; shorting, margin borrowing, options and other asset classes are outside initial execution scope. Strategy roster, specific instrument eligibility and cash/settlement contracts remain open. |
 | PD-027 | decided — Round 6a Q19 | Support Windows and Linux in the first release, emphasizing Lucas's Linux box as the primary deployment target. Supersedes the Linux-first/Windows-development-only recommendation; no specific VPS/provider or Recursion dependency is selected. |
 | PD-028 | decided — Round 6b Q20 | Persistent cockpit service plus integrations. Cockpit owns research, paper positions, schedules and controls; Discord and host/plugin/MCP integrations use the same application services. Recursion may execute bounded model jobs without owning the investing application. Resolves PD-019's ownership question. |
 | PD-029 | decided — Round 6b Q21 | Deliver a working standalone MVP; integrate Recursion when real conformance is demonstrated. Design the shared execution contract now. Recursion readiness is not a first-release gate, and standalone operation must provide the selected product capabilities. |
+| PD-030 | decided — Round 7a Q22 | Agents investigate, implement and test isolated revisions; Lucas approves installing software releases. Routine operation stays on the approved version. Automatic maintenance deployment is not selected; strategy activation and hard-cap increases retain separate approval. |
+| PD-031 | decided — Round 7a Q23 | Automatic recovery under an approved policy after health, freshness, resource-limit and paper-reconciliation checks pass. Explicit human halts and integrity/authority holds require authorized human release; unresolved conditions stay suspended. Detailed durable recovery and audit contracts remain to be specified. |
+| PD-032 | decided — Round 7a Q24 | When required inputs are unavailable, block new or increased exposure for affected actions, monitor existing paper positions and allow only preapproved protective actions whose own requirements pass. Detailed handling of orders, partial fills, uncertain submissions and reconciliation remains to be specified. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -78,7 +81,11 @@ cash-funded, long-only US stocks and ETFs. A persistent cockpit service owns the
 investing application; integrations share its services. The MVP works standalone,
 with Recursion integration added when qualified rather than required for first release.
 Both Windows and Linux are supported at first release, with Lucas's Linux box primary
-for deployment.
+for deployment. Agents develop and test isolated software revisions; Lucas approves
+releases. Checked automatic recovery handles transient dependency failures under policy,
+while human halts and integrity/authority holds require authorized human release.
+During failures, monitor positions and permit only qualifying preapproved protective
+actions while affected new/increased exposure is blocked.
 Detailed strategy, autonomy,
 identity/permission, intake, escalation, interaction and evaluation
 contracts remain open. Earlier assistant recommendations are not owner decisions
@@ -110,8 +117,9 @@ unless explicitly accepted.
 | 5 | Evaluation and feedback | complete through PD-025; evaluation mechanics pending | Working product with credible honest results; fully automated quality-evaluation target |
 | 6a | Initial trading scope and deployment | complete through PD-027 | Cash-funded long-only US stocks/ETFs; Windows and Linux support with Lucas's Linux box primary |
 | 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
-| 7a | Engine releases and failure recovery | Q22–Q24 presented; awaiting owner | Software-release authority, recovery conditions and existing-position failure behavior |
-| 7b | Release contract and progression | pending | Remaining policy contracts, acceptance and bounded delivery packages, final owner review |
+| 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts pending | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
+| 7b | Initial strategy-suite contract | Q25–Q26 presented; awaiting owner | Initial suite breadth, feasibility selection and supported holding horizons |
+| 8 | Release contract and progression | pending | Concrete acceptance and remaining policy contracts, bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -705,7 +713,15 @@ contract. Neither option relaxes owner strategy activation or approval for highe
 hard caps. This asks about the future product's development/release authority, not
 permission to modify or deploy runtime code during this documentation session.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Agents develop/test; I approve releases (Recommended)”
+
+**Recorded decision:** PD-030. Agents investigate, implement and test isolated
+revisions; Lucas approves installing a new software release. Routine operation stays
+on the approved version while improvements are prepared. Automatic maintenance
+deployment is not selected. Strategy activation and increases to hard caps retain
+separate approvals. Release evidence, installation, rollback and audit details remain
+to be specified; this is a future product boundary, not runtime deployment permission
+for the current documentation session.
 
 ### Q23. When may suspended work resume after a transient dependency failure?
 
@@ -717,7 +733,15 @@ the affected actions remain suspended. The alternative is human approval for eve
 resume. Automatic recovery must never silently promote a mode or override another
 hold; its implementation requires reconciliation with current durable safety controls.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Automatic checked recovery; human release for holds (Recommended)”
+
+**Recorded decision:** PD-031. Under an approved policy, recover automatically from
+transient dependency failures only after health, evidence freshness, resource limits
+and paper reconciliation pass. Explicit human halts and integrity/authority holds
+require authorized human release; unresolved conditions remain suspended. Recovery
+cannot override another hold or exceed the approved operating authority. Detailed
+checks and durable/audited transitions need specification against the existing safety
+controls before implementation. Existing-position behavior is recorded separately in Q24.
 
 ### Q24. What should happen to existing paper positions while required inputs are unavailable?
 
@@ -729,6 +753,43 @@ missing data. Alternatives require operator direction for every position action,
 use a preapproved orderly close-out policy when its required inputs permit it. The
 exact action matrix must address open orders, partial fills, uncertain submissions
 and reconciliation; the general autonomy answer does not specify those mechanics.
+
+**Answer (2026-09-09):** “Monitor + permitted protective actions (Recommended)”
+
+**Recorded decision:** PD-032. During missing-required-input conditions, block new
+or increased exposure for affected actions, monitor existing paper positions and
+allow only previously approved protective actions whose own requirements pass.
+Do not infer an automatic liquidation or bypass of evidence/order controls. The
+specific action matrix must cover open orders, partial fills, uncertain submissions,
+protective-action eligibility and reconciliation before implementation.
+
+## Round 7b — initial strategy-suite contract
+
+### Q25. How broad should the initial activated strategy suite be?
+
+Recommendation: two or three distinct, independently specified and evaluated strategies
+for the first release. Agents conduct a bounded feasibility comparison, including the
+existing cash-merger strategy, before proposing the roster for owner approval. Evidence
+availability, data costs, testability and portfolio interactions inform the comparison;
+minor parameter variants do not count as distinct strategies. Alternatives are a
+larger four-to-six-strategy first release or an exact roster supplied by Lucas.
+Every activated strategy must satisfy its applicable evidence and activation contract;
+no required count can be met by inventing evidence or weakening a gate. Evaluation
+does not itself establish profitability. The product supports expansion after release
+under the selected development, evaluation and owner-activation process.
+
+**Answer:** pending.
+
+### Q26. Which holding horizons must the first release support?
+
+Recommendation: positions ordinarily held for days to months, with prompt event-driven
+research and policy-permitted protective actions. This keeps sub-day trading mechanics
+outside the initial strategy requirement without delaying relevant news handling or
+forbidding a justified same-day protective exit. Alternatively, require both intraday
+and multi-day strategies at first release, or focus the initial suite on intraday
+strategies. Intraday scope adds data-timeliness, fill and execution evaluation demands.
+Exact schedules and per-strategy horizons remain in the strategy contracts. This is
+a product capability choice, not a recommendation to buy, sell or hold any asset.
 
 **Answer:** pending.
 
@@ -782,8 +843,10 @@ and Round 5 through PD-025.
 Round 6a is complete through PD-027: cash-funded, long-only US stocks and ETFs;
 Windows and Linux support with Lucas's Linux box as primary deployment.
 Round 6b is complete through PD-029: persistent cockpit plus integrations; standalone
-MVP, with Recursion when qualified. Round 7a Q22–Q24 are presented for answers on
-software-release authority, failure recovery and existing-position behavior.
+MVP, with Recursion when qualified. Round 7a Q22–Q23 are recorded through PD-031:
+owner-approved software releases and checked automatic recovery with human-released
+holds. Q24 completes Round 7a through PD-032 with monitoring and permitted protective
+actions. Round 7b Q25–Q26 are presented on initial suite breadth and holding horizons.
 Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
 contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,

@@ -60,8 +60,23 @@ The paper-autonomy policy, exception escalation, and recovery behavior remain to
 specified. This is a product design target, not a change to current mode or approval
 authority. Replacing existing individual approval requires a separately scoped and
 adversarially reviewed design consistent with the canonical safety constraints;
-the current runtime remains unchanged. Observing possible engine tweaks
-does not by itself authorize autonomous changes to code, strategy, or risk policy.
+the current runtime remains unchanged. Engine improvements follow the development
+and release boundary below; strategy activation and hard-limit changes retain their
+separate owner approvals.
+
+## Engine development and software releases — decided direction
+
+Agents investigate, implement and test improvements in isolated revisions; Lucas
+approves installing a new software release (PD-030, Round 7a Q22). Routine operation
+continues on the approved version while changes are prepared. Automatic deployment
+of maintenance changes is not selected. Software-release approval does not replace
+the separate approvals for strategy activation or increases to hard caps.
+
+The release contract must define the reviewable artifact, validation evidence,
+installation, rollback and audit behavior. Exact development permissions and change
+scope remain to be specified; isolated development cannot mutate the running engine's
+policy or state. This product direction grants no runtime implementation or deployment
+permission during the documentation-only grill.
 
 ## Strategy suite — decided direction
 
@@ -147,10 +162,24 @@ actual tax liability, tax-filing service or complete tax engine is selected by t
 When a required model/feed fails or quota is exhausted, try only approved, sufficiently
 capable fallback routes within budget. If requirements still cannot be met, suspend
 affected unsafe actions, continue safe monitoring, and report the reason (PD-023,
-Round 4b Q15). Fallback preserves permissions and task requirements. Handling existing
-paper positions requires an explicit failure policy. Automatic-versus-human recovery,
-durable holds, freshness rechecks and resumed work remain to be specified against
-the current fail-closed controls; the answer does not authorize automatic mode promotion.
+Round 4b Q15). Fallback preserves permissions and task requirements.
+
+When required inputs are unavailable, block new or increased exposure for affected
+actions, retain monitoring of existing paper positions, and permit only preapproved
+protective actions whose own requirements still pass (PD-032, Round 7a Q24). This
+does not authorize an exit based on missing data or bypass the order controls. The
+action matrix must specify treatment of unfilled entries, partial fills, uncertain
+submissions, supported risk-reducing actions and reconciliation. Exact protective
+actions and their evidence conditions remain specification work.
+
+After a transient dependency failure, automatic recovery is permitted under an approved
+policy once dependency health, evidence freshness, resource limits and paper
+reconciliation pass the required checks (PD-031, Round 7a Q23). Explicit human halts
+and integrity or authority holds require authorized human release. Unresolved causes
+or reconciliation results keep affected actions suspended. Recovery must respect all
+remaining holds and cannot elevate authority beyond the approved operating policy.
+Detailed checks, durable transitions and audit evidence need a scoped design reconciled
+with the current fail-closed controls; this decision does not alter runtime recovery.
 
 ## Model escalation — decided direction
 
