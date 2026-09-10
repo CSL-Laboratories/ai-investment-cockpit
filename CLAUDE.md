@@ -3,7 +3,15 @@
 > Auto-loaded each session. Keep it tight and high-signal. The detailed playbooks
 > and the full design corpus live in `docs/` — start at `docs/README.md`.
 
-## What this is
+## Product target and current implementation
+
+The ratified [PRODUCT.md](PRODUCT.md) owns purpose, scope and acceptance for the
+integrated autonomous research-to-paper product. [PLAN](docs/PLAN.md) owns delivery
+order and the reviewed migration from the current implementation described below.
+The nine invariants and runtime rules here remain in force until their separately
+scoped, reviewed implementation amendments; ratification alone grants no new authority.
+
+Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
 as **two engines**:
@@ -48,9 +56,10 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 
 ## Session workflow
-1. Read `docs/README.md`, then the canonical `docs/PLAN.md` and
-   `docs/REGISTER.md`. Subsystem/reference documents add detail but never define
-   current development order.
+1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
+   `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   The adopted product contracts supply required behavior; subsystem/reference
+   documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
    scope and its deterministic gate before writing code.
 3. Implement. Preserve the invariants. Add tests alongside.

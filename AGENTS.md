@@ -4,6 +4,12 @@ This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in
 `docs/security-hardening-backlog.md` are satisfied.
 
+The ratified [PRODUCT.md](PRODUCT.md) owns the autonomous paper-product target and
+acceptance; [docs/PLAN.md](docs/PLAN.md) owns delivery order. The current human-gated
+implementation and the boundaries below remain authoritative until their separately
+scoped, reviewed implementation amendments. Product ratification grants no runtime
+permission or empirical PASS.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,

@@ -7,10 +7,57 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-07
+last-verified: 2026-09-09
 ---
 
 # The plan
+
+### RW-25 product contract — ratified 2026-09-09
+
+Lucas authorized the product grill, a WIP branch and local documentation commits,
+with publication/merge after the rounds finish. RW-25 is claimed on
+`work/rw25-product-grill` from `db354a2`. PD-048 records final adoption after the
+47 scope/process decisions through Round 9; the grill rounds are complete.
+Documentation delivery: [PR #85](https://github.com/NotSkittlz/ai-investment-cockpit/pull/85).
+
+[PRODUCT](../PRODUCT.md) now defines the adopted integrated autonomous paper
+product. The [decision record](product-planning.md) preserves exact answers and
+amendments. The [operating contracts](product-operating-contracts.md),
+[tax contract](product-tax-contract.md), [acceptance contract](product-acceptance.md)
+and [delivery plan](product-delivery.md) define the adopted behavior,
+qualification requirements and implementation order under this PLAN.
+
+The selected scope includes useful cited research, all agreed human input categories,
+two or three launch strategies with future expansion, dynamic subscription-aware model
+routing, a full autonomous paper-position lifecycle, owner-defined access/limits and
+owner-approved strategy activation/software releases. It works standalone on Windows
+and Linux, primarily on Lucas's Linux box; Recursion integrates when qualified.
+Full federal/California tax calculations cover taxable brokerage, Traditional/Roth IRAs
+and the selected workplace plans. Explicit paper scenarios can continue with missing
+personal context, while unverified required tax restrictions remain blocking; private
+documents stay local by default with only minimum approved facts sent externally.
+
+Current implementation order: bounded feasibility/evaluator qualification; useful
+research through the real composition; shared authority/executor/recovery contracts;
+integrated strategy-to-paper lifecycle; full tax/economic workflow; then complete
+release qualification and at least 20 Linux market days plus required coverage.
+These are delivery slices to split and claim in REGISTER before code, not new package
+IDs, permission to start operational runs or a claim that evidence already exists.
+
+The delivery plan explicitly maps the old MVP and DEC-03 selection to the adopted
+product, retains applicable W-23/W-24 and independent-label gates, and requires a
+separately scoped adversarial paper-autonomy/model-role/eligibility redesign before
+authority implementation changes. It also calls for account/settlement applicability
+review of current risk assumptions. The DEC-09 matrix and pre-live gates remain.
+
+**Current precedence:** PRODUCT owns product scope/acceptance; this PLAN owns delivery
+order and adopts the linked delivery slices; REGISTER owns claims. The older MVP
+definition, single-strategy scope and serial delivery order below are superseded where
+they conflict with this section and PRODUCT. Their applicable subsystem/evidence gates
+remain under the explicit dispositions in the delivery plan. Existing runtime invariants
+remain until their own reviewed implementation amendments. Historical milestone text
+and evidence below are retained as the implementation record, not acceptance of the
+new product. Begin the next implementation work with a bounded claim from slice A.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

@@ -2,10 +2,27 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-09-07
+last-verified: 2026-09-09
 ---
 
 # Docs index
+
+## Product contract ratified — 2026-09-09
+
+Lucas adopted [PRODUCT.md](../PRODUCT.md) and its supporting contracts under PD-048,
+completing the RW-25 grill on `work/rw25-product-grill`.
+[The planning record](product-planning.md) preserves exact answers and ratification.
+PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order and
+REGISTER owns claims. Current runtime invariants and applicable empirical gates retain
+their authority until their separately reviewed amendments or required evidence.
+
+Read the [operating contracts](product-operating-contracts.md) for the shared workflow,
+permissions, input limits, routing and recovery. The [tax contract](product-tax-contract.md)
+defines selected coverage and sourced calculation/validation requirements.
+The [acceptance contract](product-acceptance.md) and [delivery plan](product-delivery.md)
+connect useful research and real paper operation to release evidence and bounded work,
+including explicit reconciliation with older scope and current gates. These adopted
+contracts define required work; they do not claim implementation or a passed gate.
 
 ## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
 
@@ -43,11 +60,12 @@ The original findings remain in [[evidence/astra-audit-2026-09-05/AUDIT-2026-09-
 The selection-to-order map, independent-witness plan and cohort/value review are linked from
 the repair record. Missing prospective observations and independent labels remain open gates.
 
-**Start here. Two documents matter most:**
+**Start here. Document ownership:**
 
 | | |
 |---|---|
-| **[[PLAN]]** | What we are building, the MVP definition, milestone/development order, package delivery loop, and how new scope gets in. If another doc disagrees with it, that doc is stale. |
+| **[PRODUCT](../PRODUCT.md)** | Product purpose, scope and acceptance, with its adopted operating, tax and acceptance contracts. |
+| **[[PLAN]]** | Current delivery order, package lifecycle and scope reconciliation. Its RW-25 section supersedes conflicting older MVP/strategy/order text while retaining applicable evidence gates. |
 | **[[REGISTER]]** | One ID space, one claim board. **Claim work here before writing code.** |
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
