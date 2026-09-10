@@ -76,7 +76,9 @@ Gaps to close before scaling past a pilot:
 
 Keep OpenCode/Codex as the planning/head layer; use domain sub-orchestrators
 as the fan-out/synthesis layer; use headless Devin (`devin.exe -p` /
-`--prompt-file`) as leaves. Two steps, not one flat fan-out.
+`--prompt-file`) as leaves. Two steps, not one flat fan-out. (All three named
+runtimes are subject to the §4 amendment rule — until an amendment names them,
+every tier below is Codex/Claude-only.)
 
 ```text
 Head Orchestrator (human + OpenCode/Codex planning)
@@ -109,7 +111,10 @@ Rules:
 - Domain fan-out maps to delivery slices so C/D authority boundaries are never
   crossed by a research leaf. Any brief touching `app/risk/`, `OrderGateway`,
   mode/approval, credentials, or eligibility policy is rejected at Head review
-  unless it is a separately claimed C/D package with adversarial review.
+  outright. The slice-C sub-orchestrator may draft contract text only;
+  implementation proceeds solely through separately claimed C/D work packages
+  that pass adversarial review — a swarm artifact is never itself the review
+  or the authority change.
 
 Why 2-step beats flat at ~30-way: head prompt/narrative stays small; each
 middle holds ≤8 leaves plus its own synthesis window; failures/quota retries
@@ -155,12 +160,12 @@ shell/web/MCP disabled, argv inspected before spawn. Any Devin leaf handling
 cockpit material gets an equivalently explicit profile in its brief
 (capabilities allowlist, disclosure class, deadline, no-broker-tools) — an
 implicit "agent can do anything" default is a refusal reason. Explicit note:
-AGENTS.md's boundary text names Codex and Claude only; Devin as a leaf runtime
-is an extension, not a covered party. NO Devin leaf may handle cockpit material
-— pilot included — before a scoped, reviewed boundary amendment names Devin a
-permitted analysis-job runtime with its profile. Owner go-ahead gates
-execution; only the amendment gates authority. Until it exists, pilot leaves
-are Codex/Claude-only.
+AGENTS.md's boundary text names Codex and Claude only. Devin AND OpenCode (and
+any other harness) are extensions, not covered parties. NO tier under an
+unnamed runtime — leaf, middle, or head — may handle cockpit material before a
+scoped, reviewed boundary amendment names that runtime with its profile. Owner
+go-ahead gates execution; only the amendment gates authority. Until it exists,
+every swarm tier is Codex/Claude-only.
 
 ## 5. Brief / JSON / synthesis pattern (reuse, don't reinvent)
 
@@ -169,14 +174,18 @@ Brief file (checked in, e.g. `docs/research/swarm-briefs/<slice>-<nn>.md`):
 - `job_id`, delivery-slice + REGISTER claim, input refs/revisions (hashes),
   policy/schema versions, disclosure class, capability allowlist, deadline,
   reservation, acceptance target, stop conditions, forbidden actions.
-- Verbatim leaf-spawn argv manifest (exact command/ethos, e.g. mandatory
+- Verbatim leaf-spawn argv manifest (exact command, e.g. mandatory
   `--prompt-file <checked-in brief>` so a middle cannot paraphrase the
-  question, plus forbidden flags such as OpenCode `--auto`). There is no
-  deny-by-default argv inspector for `devin`/`opencode` spawns comparable to
-  `tool_inspector.py` for Codex/Claude decision argv — the frozen manifest plus
-  review is the control. Swarm spawning never transits cockpit
-  `run_agent`/orchestrator code paths. A middle spawning another middle or a
-  head is a refusal, not just leaf fan-out.
+  question, plus forbidden flags such as OpenCode `--auto` and Devin
+  `-r`/`--resume`/session-persistence flags, which would defeat attempt
+  isolation by bleeding prior untrusted context into a fresh bounded job).
+  Inline `-p` prompt text is permitted only as the fixed literal wrapper
+  "execute the brief file at <path>". There is no deny-by-default argv
+  inspector for `devin`/`opencode` spawns comparable to `tool_inspector.py`
+  for Codex/Claude decision argv — the frozen manifest plus review is the
+  control. Swarm spawning never transits cockpit `run_agent`/orchestrator code
+  paths. A middle spawning another middle or a head is a refusal, not just
+  leaf fan-out.
 
 Leaf JSON filing (one per attempt, immutable path `f(job_id, claim_id, attempt)`):
 
@@ -194,10 +203,16 @@ Leaf JSON filing (one per attempt, immutable path `f(job_id, claim_id, attempt)`
 
 Synthesis brief: frozen leaf-revision manifest in, domain rollup JSON out with
 per-leaf citations, dissent section, coverage/unverified remainder, and an
-explicit "no empirical PASS claimed" footer. Leaf filings are UNTRUSTED input
-at this boundary: wrap them in `<untrusted-content>` delimiters, instruct that
-filing text is data and never commands (SEC-02 threat model), and canary-scan
-fetched inputs before they reach a filing — schema conformance does not
+explicit "no empirical PASS claimed" footer. Leaf JSON is validated by a
+deterministic `jsonschema` step at collection (same contract as `run_agent`),
+never by any model; the frozen manifest (paths + SHA-256) is generated by
+script BEFORE the synthesis brief is dispatched, and the synthesizer receives
+it read-only, citing from it only. Leaf filings are UNTRUSTED input at this
+boundary: wrap them in `<untrusted-content>` delimiters, instruct that filing
+text is data and never commands (SEC-02 threat model) — and the canary scan
+over fetched inputs is a deterministic check run at filing intake by the
+middle/head, never delegated to the leaf that fetched the content, since the
+fetching leaf is itself an injectable party. Schema conformance does not
 neutralize instructions smuggled through an acquisition allowlist. Head merge
 reads domain rollups plus a cited-filing spot check against the frozen leaf
 manifest; uncited or mismatched claims are dropped, not repaired. Then record
@@ -206,23 +221,26 @@ inference).
 
 ## 6. Safe pilot shape (requires owner go-ahead AND the §4 boundary amendment; this doc alone authorizes nothing)
 
-- Pilot is read-only review of this proposal itself: 1–2 headless leaves.
+- Pilot task scope is review-only (no edits outside its filing path — a
+  task limit, not a sandbox limit): 1–2 headless leaves.
   Correction to an earlier draft: `--permission-mode auto` does NOT mean
   read-only — the 2026-09-10 depth probe proved a leaf under `auto` executes
   shell commands. Treat `auto` as non-interactive convenience only: exec,
   writes, and spawn attempts are all mechanically possible, so on native
-  Windows (where Devin `--sandbox` refuses) the ONLY containment is the
-  `cockpit-agent` NTFS ACLs plus a mandatory separate worktree plus post-hoc
-  review of every filing. Prefer WSL2 leaves (real bwrap+seccomp) whenever a
-  leaf can exec — which is always, until a tighter profile exists. Briefs +
-  schemas in git, JSON filings in the run-scoped evidence dir (§5), no code
-  edits, no secrets, no private docs, no broker touch, no push without owner
-  sign-off. Planning labels here are not permission to run a pilot (per
-  `docs/product-delivery.md`).
+  Windows (where Devin `--sandbox` refuses) a native-Windows exec-capable leaf
+  NOT spawned under the SEC-05 account by a mechanical launcher is a REFUSAL,
+  not a degraded mode — operator procedure plus review is insufficient when
+  the failure mode is operator-context credential access (OS credential store,
+  CLI bearer stores, stored git credentials, unrestricted egress). Until such
+  a launcher exists, native-Windows Devin/OpenCode leaves are PROHIBITED;
+  WSL2 is required, not preferred. Briefs + schemas in git, JSON filings in
+  the run-scoped evidence dir (§5), no secrets, no private docs, no broker
+  touch, no push without owner sign-off. Planning labels here are not
+  permission to run a pilot (per `docs/product-delivery.md`).
 - Expand to ≤8 leaves in one domain only after owner go-ahead AND a REGISTER
   claim covering the expanded run AND pilot filings validate against their
   schemas with dissent preserved.
-- Thirty-way concurrent writing, any `app/` code edit by the swarm, any C/D
+- Thirty-way concurrent leaf fan-out, any `app/` code edit by the swarm, any C/D
   authority change, and any external upload beyond redacted facts each need
   their own explicit owner go-ahead and REGISTER claim first.
 
@@ -243,7 +261,7 @@ harness-native plus the SEC-05 OS account:
 
 | Tier | Role | Read | Write |
 |---|---|---|---|
-| L0 Head | human + OpenCode/Codex planning | full via normal surfaces | merges, REGISTER claims, releases — owner approval only |
+| L0 Head | human + OpenCode/Codex planning | full via normal surfaces | merges + REGISTER claims — owner approval only; releases remain a PRODUCT/PLAN-gated owner act, not a swarm tier capability |
 | L1 Mains (sub-orchestrators) | dispatch ≤8 leaves, dedupe, per-domain synthesis | tracked repo + brief inputs | own domain-synthesis JSON only; never `app/risk/`, gateway/order FSM, mode/approval, `storage/audit.py`, secrets, or eligibility policy |
 | L2 Leaves | one brief → one JSON filing | tracked repo files (secret-free by Inv 4) + explicitly listed inputs only — never credential stores, private docs, or network beyond the brief's acquisition allowlist | own run-scoped filing path only (§5); brief text forbids edits/spawns but nothing mechanical enforces that on an exec-capable leaf — containment is sandbox/ACLs + review, never the instruction alone |
 
@@ -271,17 +289,21 @@ inspection — no remote state changed, running pilot untouched):
   probe — treat Codex leaves there as prompt-only contained.
 - Devin `--sandbox`: Research Preview, macOS seatbelt / Linux bwrap+seccomp
   only. On native Windows it refuses ("requires running Devin inside WSL 2").
-  And `--permission-mode auto` is NOT a read-only profile (depth probe
-  2026-09-10: exec works under `auto`). Native-Windows leaves are therefore
-  contained ONLY by the SEC-05 low-priv `cockpit-agent` NTFS ACLs
-  (`docs/setup/low-priv-agent-account.md`) plus a mandatory separate worktree
-  plus post-hoc review — with two explicit limits: `account_guard.py` merely
-  audits those ACLs at cockpit startup and covers credential-store reads only
-  (it does not run per-leaf, denies no repo writes, and cannot evaluate inside
-  WSL2), and nothing mechanical forces a hand/middle-spawned `devin.exe -p`
-  leaf to run under `cockpit-agent` at all — that is operator procedure plus
-  review, and swarm spawning never transits `run_agent`. For real containment,
-  run the leaf from the WSL2 Ubuntu distribution.
+   And `--permission-mode auto` is NOT a read-only profile (depth probe
+   2026-09-10: exec works under `auto`). A native-Windows exec-capable leaf NOT
+   spawned under the SEC-05 account by a mechanical launcher is therefore a
+   REFUSAL, not a degraded mode — and until such a launcher exists,
+   native-Windows Devin/OpenCode leaves are PROHIBITED. Note precisely what the
+   provisioned ACLs do: `account_guard.py` audits read ACLs on the
+   Codex/Claude bearer-store paths for the configured account at cockpit
+   startup — it denies nothing itself, evaluates nothing else, never runs
+   per-leaf, and cannot evaluate inside WSL2. WSL2 is required, not preferred —
+   with the explicit caveat that bwrap+seccomp *presence* is verified but its
+   filesystem scope and egress confinement are UNVERIFIED: confirm whether
+   Devin's WSL2 sandbox bind-hides `/mnt/c`, unshares network, and hides the
+   operator's WSL home before claiming containment. Until measured, treat WSL2
+   leaves as able to read anything the WSL user can and to egress over the
+   network.
 - OpenCode: `opencode run --agent <name> -m <provider/model> --format json
   --dir <worktree>`. Treat `--auto` as dangerous (auto-approves anything not
   explicitly denied) — never set it on leaves or middles.
@@ -310,15 +332,19 @@ laptop-uptime dependency. Placement and preconditions:
   the swarm. Monitoring is `ssh sentry` (`devin list`, session `--export`
   files, leaf JSON under the sentry checkout) plus Remote Desktop as needed.
 
-## 8. Agentic depth — verified, capped at 3
+## 8. Agentic depth — verified, policy-capped at 3 (review-enforced, not mechanical)
 
 Depth is nested headless CLI re-invocation (each level its own OS process and
-session), not a harness-native "spawn subagent" primitive:
+session), not a harness-native "spawn subagent" primitive. Every depth/fan-out
+limit below (3 levels, ≤8 leaves per middle, no grandchildren) is brief-text +
+review only — exec-capable runtimes can mechanically spawn, so quota burn
+beyond caps is bounded solely by the reservation accounting that §2 lists as
+still-missing cockpit-side discipline for the swarm:
 
 | Level | Runs as | May spawn children? | Evidence |
 |---|---|---|---|
 | Head | human + `opencode` session / Codex planning | yes, via shell | `opencode run --agent --model --format json --dir` flags verified in `--help` |
-| Middle | headless `devin -p` / `opencode run` with domain brief | yes, via orchestrator shell only | Devin CLI supports `-p` / `--prompt-file` / `--model` / `--export` / `-r` / `--resume` |
+| Middle | headless `devin -p` / `opencode run` with domain brief | yes, via head-dispatched OS shell, outside all cockpit `run_agent`/`orchestrator` code paths — any proposal to spawn from inside `app/orchestrator` is an order-path-adjacent change requiring adversarial review | Devin CLI supports `--prompt-file` / `--model` / `--export`; `-r`/`--resume`/session-persistence flags are FORBIDDEN on leaf/middle spawns (attempt isolation) |
 | Leaf | headless single-shot with task brief | NO — no spawn authority; a leaf attempting to fan out is a refusal | depth probe 2026-09-10: leaf under `auto` executed bounded `echo depth-probe-ok` via exec and returned JSON — exec works, so the no-spawn rule lives in the brief text, enforced by review, not by machinery |
 
 Rules: maximum depth is Head → middle → leaf (3). No leaf-spawned
