@@ -44,10 +44,12 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-005 | decided — Round 1 Q2, clarified by PD-007 | The initial paper-testing MVP should run autonomously; Lucas checks Discord at his discretion for performance, news, and possible engine tweaks. No mandatory daily review session. |
 | PD-006 | decided direction — Round 1 Q3 | Initial research combines core coverage, bounded candidate discovery, and human ingestion. Exact human-input formats and handling remain to be specified. |
 | PD-007 | decided — Round 1 autonomy clarification | The system runs autonomously while remaining interactive through Discord or its supervisor/host. In the initial paper-MVP context, the product target includes routine autonomous paper execution rather than individual paper-trade approval. GrokBot and Hetzner are examples, not selected integrations or deployment authorization. |
+| PD-008 | decided — Round 2 Q4 | Short updates plus detailed research cases, including citations that let Lucas inspect the sources and data-ingestion methods used. Exact provenance fields and presentation remain to be specified. |
 
 The integrated autonomous paper-MVP direction, optional operator interaction, and
-initial research breadth are decided. The precise autonomous policy, intake and
-interaction contracts, and acceptance criteria remain open. Earlier assistant
+initial research breadth and layered, source-inspectable research output are decided.
+The precise autonomous policy, intake and interaction contracts, provenance presentation,
+and acceptance criteria remain open. Earlier assistant
 recommendations are not owner decisions unless explicitly accepted.
 
 ## Working recommendations — not ratified
@@ -66,7 +68,7 @@ recommendations are not owner decisions unless explicitly accepted.
 | Round | Theme | State | Expected output |
 |---|---|---|---|
 | 1 | Purpose and first usable daily experience | complete — PD-004 through PD-007 | Integrated autonomous paper MVP, optional Discord/supervisor interaction, core/discovery/human inputs |
-| 2 | Research behavior and evidence | questions prepared; awaiting owner | Research questions, source/coverage policy, uncertainty and useful output |
+| 2 | Research behavior and evidence | Q4 answered; Q5/Q6 awaiting owner | Research questions, source/coverage policy, uncertainty and useful output |
 | 3 | Strategy and candidate lifecycle | pending | Candidate stages, refusal/waiting states, transition contracts |
 | 4 | Autonomy and control | pending | Explicit authority for development, research, and investment operations |
 | 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
@@ -177,7 +179,20 @@ would change the assessment. Alternatives are brief updates only or a full repor
 every investigated item. Layering offers detail on demand while keeping routine monitoring
 manageable; exact storage and interaction surfaces remain design work.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “I'd love short updates plus detailed research cases. I'd
+also love for it to include citations so I could look into the sources and data
+ingestion methods it's using as well.”
+
+**Recorded decision:** PD-008. Layered output is selected, with explicit source
+citations and inspectable ingestion methods. The investigation should be understandable
+at a glance and its supporting material available for closer examination.
+
+**Recommended specification detail, not separately ratified:** associate important
+claims with their supporting evidence; identify source/acquisition route, publication
+and retrieval times, retained input references, relevant parsing/transformation steps,
+and coverage limitations. Distinguish source assertions from the cockpit's conclusions.
+Use existing provenance and raw-storage contracts where possible. Neither a new UI nor
+a particular citation schema is selected by this answer.
 
 ### Q5. What should human ingestion accept in the first release?
 
@@ -213,8 +228,8 @@ implement RW-13 or bypass its current dependencies.
 
 ## Resume here
 
-Round 1 is complete through PD-007. Round 2 Q4/Q5/Q6 are prepared above: the content
-of a useful research result, human-ingestion inputs, and when research should revisit a case.
+Round 1 is complete through PD-007. Round 2 Q4 is answered as PD-008. Q5 (human-ingestion
+inputs) and Q6 (research cadence) are already presented and remain pending.
 Carry the autonomous paper-MVP target forward; resolve detailed authority in Round 4.
 Record each incoming answer, update PRODUCT.md, validate the diff and commit the
 checkpoint. Do not interpret silence or recommendation selection defaults as answers.

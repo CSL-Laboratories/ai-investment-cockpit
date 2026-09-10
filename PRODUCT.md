@@ -73,6 +73,24 @@ enters the evidence workflow; submission does not certify its claims or grant
 execution eligibility. Research inclusion remains separate from the existing
 operator-controlled execution allowlist.
 
+## Research output and source inspection — decided direction
+
+Research produces short Discord updates backed by detailed, inspectable research
+cases (PD-008, Round 2 Q4). Cases include citations so Lucas can examine the sources
+and the data-ingestion methods used to support the analysis.
+
+Source inspection is part of the product experience. The operator should be able
+to follow the important claims back to their supporting evidence and understand
+how that evidence entered the cockpit. Detailed case layout, citation granularity,
+and ingestion-method presentation remain to be specified.
+
+Recommended provenance detail for the later specification: identify the source and
+acquisition route, distinguish publication time from retrieval time, link the retained
+input where available, and describe relevant extraction or transformation steps and
+known coverage limitations. These are proposed ways to meet the inspection requirement;
+the exact fields and interface are not yet ratified. Existing raw-input separation
+and secret-handling requirements continue to apply.
+
 ## Sections to resolve through the grill
 
 1. Product purpose, initial user, and first complete experience.
