@@ -76,9 +76,9 @@ Gaps to close before scaling past a pilot:
 
 Keep OpenCode/Codex as the planning/head layer; use domain sub-orchestrators
 as the fan-out/synthesis layer; use headless Devin (`devin.exe -p` /
-`--prompt-file`) as leaves. Two steps, not one flat fan-out. (All three named
-runtimes are subject to the §4 amendment rule — until an amendment names them,
-every tier below is Codex/Claude-only.)
+`--prompt-file`) as leaves. Two steps, not one flat fan-out. (Devin and
+OpenCode, and any other harness, are subject to the §4 amendment rule — until
+an amendment names them, every tier below is Codex/Claude-only.)
 
 ```text
 Head Orchestrator (human + OpenCode/Codex planning)
@@ -174,8 +174,8 @@ Brief file (checked in, e.g. `docs/research/swarm-briefs/<slice>-<nn>.md`):
 - `job_id`, delivery-slice + REGISTER claim, input refs/revisions (hashes),
   policy/schema versions, disclosure class, capability allowlist, deadline,
   reservation, acceptance target, stop conditions, forbidden actions.
-- Verbatim leaf-spawn argv manifest (exact command, e.g. mandatory
-  `--prompt-file <checked-in brief>` so a middle cannot paraphrase the
+- Verbatim leaf-spawn argv manifest (exact command; `--prompt-file
+  <checked-in brief>` is mandatory so a middle cannot paraphrase the
   question, plus forbidden flags such as OpenCode `--auto` and Devin
   `-r`/`--resume`/session-persistence flags, which would defeat attempt
   isolation by bleeding prior untrusted context into a fresh bounded job).
@@ -318,15 +318,18 @@ sentry rather than the laptop: always-on, Remote-Desktop-checkable, no
 laptop-uptime dependency. Placement and preconditions:
 
 - Clone the cockpit to a NEW sentry directory (never into the pilot's
-  `Chiron`/`Chiron-brain` trees); prefer the WSL2 Ubuntu side
-  (`~/ai-investment-cockpit`) for leaf execution so Devin `--sandbox`
-  (bwrap+seccomp) actually applies — native-Windows leaves cannot use it.
+  `Chiron`/`Chiron-brain` trees); leaf execution requires the WSL2 Ubuntu side
+  (`~/ai-investment-cockpit`) — native execution is prohibited per §6 — so
+  that Devin `--sandbox` (bwrap+seccomp) can actually apply.
 - Starting the stopped Ubuntu-24.04 distro is a state change: owner starts it
   or explicitly authorizes it; restore with `wsl --shutdown` when done if it
   was stopped before.
 - Provision the SEC-05 low-priv account on sentry first
   (`docs/setup/low-priv-agent-account.md` is written exactly for a Windows
-  host profile) so `account_guard.py` passes before any leaf runs there.
+  host profile), so the provisioned account is the one `account_guard.py`
+  attests at cockpit startup. Note: the guard is not a leaf control — it never
+  runs per-leaf and only matters where the cockpit itself starts with that
+  account configured.
 - Head may stay thin on the laptop (briefs + merge via `ssh sentry`) or move
   to sentry outright; prefer Head-on-sentry so a closed laptop lid cannot stall
   the swarm. Monitoring is `ssh sentry` (`devin list`, session `--export`
@@ -343,15 +346,16 @@ still-missing cockpit-side discipline for the swarm:
 
 | Level | Runs as | May spawn children? | Evidence |
 |---|---|---|---|
-| Head | human + `opencode` session / Codex planning | yes, via shell | `opencode run --agent --model --format json --dir` flags verified in `--help` |
-| Middle | headless `devin -p` / `opencode run` with domain brief | yes, via head-dispatched OS shell, outside all cockpit `run_agent`/`orchestrator` code paths — any proposal to spawn from inside `app/orchestrator` is an order-path-adjacent change requiring adversarial review | Devin CLI supports `--prompt-file` / `--model` / `--export`; `-r`/`--resume`/session-persistence flags are FORBIDDEN on leaf/middle spawns (attempt isolation) |
-| Leaf | headless single-shot with task brief | NO — no spawn authority; a leaf attempting to fan out is a refusal | depth probe 2026-09-10: leaf under `auto` executed bounded `echo depth-probe-ok` via exec and returned JSON — exec works, so the no-spawn rule lives in the brief text, enforced by review, not by machinery |
+| Head | human + `opencode` session / Codex planning (Codex/Claude-only until a §4 amendment names the runtime) | yes, via shell | `opencode run --agent --model --format json --dir` flags verified in `--help` |
+| Middle | headless single-shot with domain brief (Codex/Claude-only until a §4 amendment names the runtime) | yes, via head-dispatched OS shell, outside all cockpit `run_agent`/`orchestrator` code paths — any proposal to spawn from inside `app/orchestrator` is an order-path-adjacent change requiring adversarial review | `--prompt-file` / `--model` / `--export` supported; `-r`/`--resume`/session-persistence flags are FORBIDDEN on leaf/middle spawns (attempt isolation) |
+| Leaf | headless single-shot with task brief (Codex/Claude-only until a §4 amendment names the runtime) | NO — no spawn authority; a leaf attempting to fan out is a refusal | depth probe 2026-09-10: leaf under `auto` executed bounded `echo depth-probe-ok` via exec and returned JSON — exec works, so the no-spawn rule lives in the brief text, enforced by review, not by machinery |
 
 Rules: maximum depth is Head → middle → leaf (3). No leaf-spawned
 grandchildren — each extra hop multiplies prompt-telephone drift and unaccounted
 quota fan-out. Every hop re-pins `brief_rev`/`input_rev`/`policy_rev` with its
 REGISTER `claim_id`, and settles usage once per attempt. CLI note: pass
-headless Devin prompts after `--` (`devin … -p -- "…"`) — the bare
+headless Devin prompts after `--` (`devin … -p -- "…"`, subject to the §5
+wrapper-only rule for inline `-p`) — the bare
 `-p "…"` form misparses against `[PATH]...` on some inputs (observed
 2026-09-10).
 
