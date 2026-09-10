@@ -79,6 +79,11 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-040 | decided — Round 8a Q29 | Monthly expansion summaries plus notifications when candidates are ready for owner activation review. Include progress, missing evidence and next steps. No daily review obligation, automatic activation or budget increase follows from the cadence. |
 | PD-041 | decided — Round 8b Q30 | Newly researched stocks/ETFs enter paper-execution eligibility automatically within owner-approved rules after required evidence, instrument, strategy and risk checks. Submission/research alone grants no eligibility. Requires a scoped reviewed replacement of the current static allowlist, preserving the single order path. |
 | PD-042 | decided — Round 8b Q31 | Full investment-tax calculations are MVP scope, replacing the recommendation to defer the tax engine. Jurisdiction, account type, tax-year coverage, complete inputs and verified rules need specification; a full personal-return preparation/filing service is not selected. |
+| PD-043 | decided — Round 8c Q32 | Tax support must be configurable and cover taxable brokerage and retirement accounts. Lucas identifies Fremont, California, United States as his residence; other taxpayer facts are not inferred. |
+| PD-044 | decided — Round 8c Q33 | Validated US federal and California calculations at launch, with an extensible jurisdiction interface for additional verified rule sets. Unsupported jurisdictions remain explicit. |
+| PD-045 | decided — Round 8c Q34 | Traditional/Roth IRAs plus 401(k), 403(b) and governmental 457(b) accounts at launch, with account-specific rules. SEP/SIMPLE and inherited cases were not selected for launch coverage. Tax-calculation capability is separate from broker account-trading support. |
+| PD-046 | decided — Round 9 Q35 | Missing personal tax context permits continued paper operation using an explicitly configured scenario, with missing personal inputs visible. Actions requiring an unverified tax restriction remain blocked. Full tax-engine release coverage is still required. |
+| PD-047 | decided — Round 9 Q36 | Raw private account/tax documents stay local by default; external models receive only minimum approved, redacted facts. The owner can authorize broader access for a particular document or provider. Public research uses normal approved routes. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -135,8 +140,9 @@ unless explicitly accepted.
 | 7c | Economic evaluation baseline | answered through PD-038; contribution rate unset | Owner-stated subscription expense, provisional $2,000 paper balance and contribution context |
 | 8a | Release evidence and expansion review | complete through PD-040 | At least 20 market days plus coverage; monthly expansion summaries and candidate-ready notifications |
 | 8b | Final scope boundaries | complete through PD-042 | Automatic eligibility under approved rules; full investment-tax calculations in MVP |
-| 8c | Tax coverage | Q32 presented; awaiting owner | Initial jurisdiction/account context for the full tax-calculation contract |
-| 8d | Contract reconciliation and final review | pending | Concrete acceptance, remaining policy contracts, bounded delivery packages and final owner review |
+| 8c | Tax coverage | complete through PD-045 | US federal and California first; taxable brokerage, Traditional/Roth IRAs and common workplace plans; extensible verified rules |
+| 9 | Tax context and private data | complete through PD-047 | Explicit paper scenarios with incomplete personal context; private documents local by default and minimal approved facts on external routes |
+| Final | Contract reconciliation and final review | pending | Concrete acceptance, remaining policy contracts, bounded delivery packages and final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -975,7 +981,94 @@ This information determines the applicable rules and required inputs for PD-042.
 Research official sources after the owner identifies the intended coverage. The
 workstation timezone and use of US stocks do not establish personal tax jurisdiction.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “It should be configurable, but I reside in Fremont,
+California in the United States. It should support brokerage accounts and retirement
+accounts”
+
+**Recorded decision:** PD-043. Support configurable tax contexts and both taxable
+brokerage and retirement accounts. The stated residence establishes the initial
+jurisdiction discussion; it does not establish full-year tax residency, filing status,
+income classification, citizenship or the owner's actual account inventory.
+
+### Q33. Which configurable jurisdictions must have validated calculations at launch?
+
+Recommendation: validated US federal and California calculations first, with a
+configurable jurisdiction interface for adding further verified rule sets. Unsupported
+jurisdictions remain explicit. Alternatively, name additional jurisdictions that must
+already be supported in the MVP.
+
+**Answer (2026-09-09):** “US federal + California first; extensible rules (Recommended)”
+
+**Recorded decision:** PD-044. US federal and California are the initial validated
+coverage; additional jurisdictions use extensible verified rules. Configurability
+does not imply that an arbitrary jurisdiction already has a correct calculation.
+
+### Q34. Which retirement-account families must the MVP calculate taxes for?
+
+Recommendation: Traditional/Roth IRAs plus 401(k), 403(b) and governmental 457(b)
+accounts, with their account-specific rules. SEP/SIMPLE and inherited-account cases
+add further coverage. Tax support is tracked separately from whether a broker adapter
+can trade that account. Alternatives offered were IRAs first, or the larger set
+including SEP/SIMPLE and inherited cases.
+
+**Answer (2026-09-09):** “IRAs + common workplace plans (Recommended)”
+
+**Recorded decision:** PD-045. Include the recommended IRA and workplace-plan families
+at launch, preserving their applicable pre-tax, after-tax and Roth distinctions.
+SEP/SIMPLE and inherited-account cases were not selected for launch; do not silently
+apply a supported account's rules to an unsupported family or special case.
+
+**Specification work:** the [tax contract](product-tax-contract.md) maps the selected
+coverage to required inputs, deterministic calculations, source/version provenance,
+explicit incomplete results and independent reference validation. Official IRS/FTB
+sources were inspected on 2026-09-09; their published examples are a source inventory,
+not implementation evidence or blanket validation of a 2026 rule set. Q35–Q36 address
+two consequential operating/data-policy choices before final consolidation.
+
+## Round 9 — tax context and private data
+
+### Q35. What happens when personal tax context is incomplete?
+
+Question presented: “Full calculations need information beyond the cockpit's trades,
+such as filing status, other income, account basis and relevant outside-account
+activity. I recommend allowing paper operation with an explicitly configured scenario
+while showing which personal-tax inputs are missing; any action requiring an
+unverified tax restriction stays blocked. Should missing personal context instead
+suspend all new paper exposure in that account?”
+
+Options: continue with explicit paper scenarios (recommended), or suspend new exposure
+until tax context is complete. Neither permits invented personal liability or a
+missing tax-dependent condition to pass. Full tax-engine launch coverage remains
+required whichever operating policy is selected.
+
+**Answer (2026-09-09):** “Continue with explicit paper scenarios (Recommended)”
+
+**Recorded decision:** PD-046. Continue paper operation using an explicit configured
+scenario when personal context is missing. Show the missing facts and separate the
+scenario from an actual personal-liability claim. Tax-dependent actions remain blocked
+when their required restrictions cannot be verified; other required controls still
+apply. This does not defer the full tax engine or make incomplete results a release PASS.
+
+### Q36. What private financial data may external model providers receive?
+
+Question presented: “What may the cockpit send to external model providers? I recommend
+keeping raw private account/tax documents local by default and sharing only the minimum
+approved, redacted facts; you can authorize broader access for a particular document or
+provider. Public research material can use the normal approved routes.”
+
+Options: local private documents with minimal approved facts (recommended); private
+documents allowed on owner-approved provider routes; or all private financial data
+kept local. This chooses the future product's disclosure policy, not permission to
+upload any present account/tax document during the documentation work.
+
+**Answer (2026-09-09):** “Local private documents; minimal approved facts (Recommended)”
+
+**Recorded decision:** PD-047. Keep raw private account/tax documents local by default
+and send only minimum approved, redacted facts to external models. Broader access
+requires owner authorization scoped to a document or provider. Public research uses
+normal approved routes. Apply disclosure rules before dispatch, including extraction,
+OCR, model handoffs, retries and fallback providers; a cheaper route cannot expand
+data access. Credentials remain excluded under the existing secret invariant.
 
 ## Evidence dependencies
 
@@ -1015,11 +1108,12 @@ workstation timezone and use of US stocks do not establish personal tax jurisdic
 - PD-028/PD-029 resolve PD-019: persistent cockpit ownership and a standalone MVP,
   with Recursion integrated when qualified. The comparison records inspected source;
   actual job-adapter conformance remains empirical work, not a first-release dependency.
-- PD-042 selects full investment-tax calculations in the MVP. Q32 requests the initial
-  jurisdiction/account context; transaction inputs, tax years and verified calculation
-  rules remain to be specified. Do not infer jurisdiction or substitute a flat tax
-  haircut for the selected engine. Official rule research and reference validation
-  must precede implementation claims.
+- PD-042 through PD-045 select full US federal/California investment-tax calculations
+  for taxable brokerage, Traditional/Roth IRAs and 401(k), 403(b), governmental 457(b)
+  accounts, with extensible verified coverage. The [tax contract](product-tax-contract.md)
+  records official IRS/FTB source findings and proposed input/calculation/validation
+  requirements. Current-year qualification, implementation and reference evidence are
+  still required; reviewed publications are not a working or validated tax engine.
 - PD-037 scopes the owner-stated $210/month to subscriptions; PD-038 supplies a likely
   minimum transfer from which $2,000 is used provisionally for paper evaluation. These
   are not independently verified pricing/account observations or transfer authority.
@@ -1055,11 +1149,15 @@ The contribution percentage remains unset. Round 8a is complete through PD-040:
 at least 20 market days plus coverage, monthly expansion summaries and candidate-ready
 notifications. The release-evidence proposal is drafted. Round 8b is complete through
 PD-042: automatic symbol eligibility under approved rules and full investment-tax
-calculations in the MVP. Q32 is presented and pending on tax jurisdiction/account type.
-Then research applicable rules and assemble the concrete remaining contracts and
-document reconciliation for final owner review.
-Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
-contracts remain to be resolved in specification review.
+calculations in the MVP. Round 8c is complete through PD-045: configurable US federal
+and California coverage first, taxable brokerage, Traditional/Roth IRAs and 401(k),
+403(b), governmental 457(b) accounts. The cited tax contract is drafted. Round 9 is
+complete through PD-047: explicit paper scenarios with missing personal context, and
+private documents local by default with minimal approved facts sent externally. No
+questions are pending. Assemble the remaining contracts and document reconciliation
+for final owner review. Detailed role/revocation, limit, intake,
+failure/recovery and automated-evaluation contracts need concrete specification;
+do not reopen the settled product choices while doing that work.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
 owner strategy activation and complete position lifecycle forward. Do not assume
 Recursion-primary or a plugin-only architecture has been selected.

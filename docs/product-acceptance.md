@@ -119,10 +119,12 @@ without assumed future contributions and preserve losses and periods below the t
 ## Full investment-tax calculation scope
 
 PD-042 makes the calculation engine a first-release requirement. A ledger and assumed
-tax haircut alone cannot satisfy it. The jurisdiction/account question Q32 is pending;
-do not infer coverage from the investing universe or workstation settings. Determine
-the applicable tax years, required transaction and outside-account data, rule sources,
-calculation and reporting boundaries, and independent reference cases after that answer.
+tax haircut alone cannot satisfy it. PD-043 through PD-045 select US federal and
+California first, with extensible verified rules, for taxable brokerage, Traditional/
+Roth IRAs and 401(k), 403(b), governmental 457(b) accounts. Tax support is independent
+of broker account-trading support. The [tax contract](product-tax-contract.md) maps
+this coverage to sources, required transaction/outside-account context, calculation
+results and reference validation. Qualify the applicable pilot tax year explicitly.
 
 Recommended design uses deterministic calculations with versioned official rules,
 source citations and inspectable intermediate values. Distinguish an input-complete
@@ -130,6 +132,13 @@ calculation from a paper scenario estimate, and surface unsupported years, missi
 data or ambiguous treatment explicitly. Tax-derived restrictions need their own
 validated applicability and authority. Calculation completeness does not imply full
 personal-return preparation, filing or submission authority.
+
+PD-046 permits explicit paper scenarios with missing personal context, while blocking
+actions whose required tax restrictions remain unverified. PD-047 keeps private
+documents local by default and allows only minimum approved, redacted facts on external
+model routes unless the owner grants broader scoped access. Acceptance must verify
+these policies through intake, extraction, handoffs and fallbacks, including a refusal
+when the only available provider lacks the required disclosure permission.
 
 ## Selected pilot and expansion cadence
 

@@ -103,9 +103,20 @@ to be specified. Current runs do not gain acceptance merely from these new requi
 Round 8b selects automatic paper-symbol admission under owner-approved rules (PD-041)
 and full investment-tax calculations in the MVP (PD-042). The static allowlist needs
 a scoped reviewed replacement; the tax engine needs explicit jurisdiction/account/year
-coverage, verified rules and reference validation. Q32 requests the initial tax context.
+coverage, verified rules and reference validation.
 The ledger-and-assumptions-only proposal is superseded; no current eligibility or tax
 calculation behavior changes during RW-25.
+
+Round 8c selects configurable US federal and California calculations first, for taxable
+brokerage, Traditional/Roth IRAs, 401(k), 403(b) and governmental 457(b) accounts
+(PD-043 through PD-045). Tax support is distinct from broker account capability. The
+[tax contract](product-tax-contract.md) records official sources and proposed input,
+calculation and validation requirements; actual-year qualification remains required.
+Round 9 permits explicit paper scenarios with incomplete personal tax context, while
+actions requiring unverified tax restrictions remain blocked (PD-046). Private financial
+documents stay local by default; only minimum approved, redacted facts go to external
+models unless the owner grants broader document/provider access (PD-047). These product
+selections do not authorize present private-data uploads or financial actions.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

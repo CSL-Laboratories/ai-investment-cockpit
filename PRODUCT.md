@@ -185,9 +185,11 @@ jobs and strategies, not only evaluate each allocation in isolation.
 Full investment-tax calculations are required in the MVP (PD-042, Round 8b Q31),
 expanding PD-022's earlier tax consideration. This replaces the proposal to provide
 only a ledger and configurable assumptions while deferring the calculation engine.
-Supported jurisdictions, account types and tax years must be explicit; Round 8c Q32
-requests the initial jurisdiction/account context. No universal rate or jurisdiction
-is inferred, and preparing or filing a complete personal return is not selected.
+Launch with validated US federal and California calculations, with extensible verified
+jurisdiction rules (PD-043/PD-044). Support taxable brokerage, Traditional/Roth IRAs,
+401(k), 403(b) and governmental 457(b) accounts with their specific rules (PD-045).
+Tax capability is separate from broker account-trading support. Unsupported contexts
+remain explicit; preparing or filing a complete personal return is not selected.
 
 Recommended calculation contract: use complete applicable transaction/account inputs,
 verified versioned rules and deterministic calculations, with inspectable rule/source
@@ -195,6 +197,15 @@ citations, intermediate results and known uncertainties. Required outside-accoun
 inputs must be explicit. Missing context cannot become a zero-tax assumption or an
 unsupported claim of complete liability. Tax-aware execution constraints and financial
 estimates remain distinct; rule changes follow the selected software/policy approvals.
+The [tax contract](docs/product-tax-contract.md) specifies proposed coverage, required
+context, source/version tracking and reference validation. Qualification for the actual
+pilot tax year is required; earlier-year examples do not certify current-year rules.
+Missing personal context permits continued paper operation with an explicit configured
+scenario and visible missing inputs; actions requiring unverified tax restrictions stay
+blocked (PD-046). Raw private financial documents stay local by default; external
+providers receive only minimum approved, redacted facts unless the owner authorizes
+broader document/provider access (PD-047). Apply disclosure limits to extraction/OCR,
+handoffs, retries and fallbacks as well as final reasoning jobs.
 
 When a required model/feed fails or quota is exhausted, try only approved, sufficiently
 capable fallback routes within budget. If requirements still cannot be met, suspend

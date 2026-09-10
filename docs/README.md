@@ -16,6 +16,11 @@ candidate, not yet ratified; PLAN remains current development authority. Documen
 checkpoints are committed locally as rounds are answered; publication/merge follows
 completion of the rounds.
 
+The [tax contract](product-tax-contract.md) records the selected US federal/California
+and account-family coverage, with cited sources and proposed calculation/validation
+requirements. The [release-evidence proposal](product-acceptance.md) connects useful
+research and real paper operation to acceptance. Both remain candidate specifications.
+
 ## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
 
 BUG-146 through BUG-158 are fixed in commit slices, alongside a measured triage
