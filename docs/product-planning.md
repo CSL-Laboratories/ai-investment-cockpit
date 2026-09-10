@@ -42,13 +42,17 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-003 | authorized | Branch and commit documentation checkpoints as grill questions are answered; publish and merge after the rounds finish. |
 | PD-004 | integrated scope retained; individual-approval assumption superseded by PD-007 | Initial Q1 answer selected integrated research-to-approved-paper trading. Later clarification establishes autonomy across the routine paper workflow. |
 | PD-005 | decided — Round 1 Q2, clarified by PD-007 | The initial paper-testing MVP should run autonomously; Lucas checks Discord at his discretion for performance, news, and possible engine tweaks. No mandatory daily review session. |
-| PD-006 | decided direction — Round 1 Q3 | Initial research combines core coverage, bounded candidate discovery, and human ingestion. Exact human-input formats and handling remain to be specified. |
+| PD-006 | decided direction — Round 1 Q3; input categories refined by PD-009 | Initial research combines core coverage, bounded candidate discovery, and human ingestion. Exact formats and handling remain to be specified. |
 | PD-007 | decided — Round 1 autonomy clarification | The system runs autonomously while remaining interactive through Discord or its supervisor/host. In the initial paper-MVP context, the product target includes routine autonomous paper execution rather than individual paper-trade approval. GrokBot and Hetzner are examples, not selected integrations or deployment authorization. |
 | PD-008 | decided — Round 2 Q4 | Short updates plus detailed research cases, including citations that let Lucas inspect the sources and data-ingestion methods used. Exact provenance fields and presentation remain to be specified. |
+| PD-009 | decided — Round 2 Q5 | First-release human inputs include tickers, links, ideas, questions, documents, screenshots, and images. Document and visual inputs are MVP scope; exact formats, limits, and handling remain to be specified. |
+| PD-010 | owner-proposed integration candidate — Round 2 Q5 | The cockpit works with other agents; Project Recursion may be a suitable harness if its architecture supports configured CLIs and credentials. Evaluate that possibility; no host selection, verified capability claim, or hard dependency is established. |
+| PD-011 | decided — Round 2 Q6 | Relevant new evidence, Lucas's requests, and bounded scheduled checks trigger investigation or case revisits. Exact schedules, relevance rules, and budgets remain to be specified. |
 
 The integrated autonomous paper-MVP direction, optional operator interaction, and
-initial research breadth and layered, source-inspectable research output are decided.
-The precise autonomous policy, intake and interaction contracts, provenance presentation,
+initial research breadth, layered source-inspectable research output, and input categories
+and research cadence are decided. Recursion is a candidate harness. The precise autonomous policy, intake
+and interaction contracts, harness responsibilities, provenance presentation,
 and acceptance criteria remain open. Earlier assistant
 recommendations are not owner decisions unless explicitly accepted.
 
@@ -62,15 +66,18 @@ recommendations are not owner decisions unless explicitly accepted.
 - Investigate the candidate-selection population and rejected sources before assuming
   repeated empty screens will eventually unlock the existing strategy contract.
 - Treat development autonomy and investment autonomy as separately specified authority.
+- Define a harness adapter around bounded jobs while keeping the cockpit's evidence,
+  policy, and deterministic execution boundaries explicit. Evaluate Recursion against
+  that contract rather than assuming its current capabilities or making it a dependency.
 
 ## Grill rounds
 
 | Round | Theme | State | Expected output |
 |---|---|---|---|
 | 1 | Purpose and first usable daily experience | complete — PD-004 through PD-007 | Integrated autonomous paper MVP, optional Discord/supervisor interaction, core/discovery/human inputs |
-| 2 | Research behavior and evidence | Q4 answered; Q5/Q6 awaiting owner | Research questions, source/coverage policy, uncertainty and useful output |
-| 3 | Strategy and candidate lifecycle | pending | Candidate stages, refusal/waiting states, transition contracts |
-| 4 | Autonomy and control | pending | Explicit authority for development, research, and investment operations |
+| 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
+| 3 | Strategy and candidate lifecycle | questions prepared; awaiting owner | Strategy selection approach, unresolved-case handling, paper-position lifecycle |
+| 4 | Autonomy and control | pending | Explicit authority for development, research, and investment operations; cockpit/harness ownership and Recursion suitability |
 | 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
 | 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
 
@@ -196,13 +203,35 @@ a particular citation schema is selected by this answer.
 
 ### Q5. What should human ingestion accept in the first release?
 
-Recommendation: tickers, links and free-text ideas/questions first. Alternatives add
+Original recommendation (narrower than the selected scope): tickers, links and free-text ideas/questions first. Alternatives add
 documents such as PDFs, or include screenshots/images as well from the first release.
 Richer inputs improve flexibility but introduce extraction, provenance, attachment,
 privacy and validation obligations. A submitted link is an input to the research policy;
 it does not authorize arbitrary authenticated browsing or unsupported connectors.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “It should be tickers, links, ideas, and questions in addition
+to documents, screenshots, and images. It's going to take a lot of work but the point
+is that the engine is being run with other agents. And, if we establish a good
+architecture for Project Recursion, it's possible that the best harness to run the
+cockpit on would be something like Recursion (because of it's ability to autonomously
+integrate configured CLIs and Keys)”
+
+**Recorded decisions:** PD-009 selects the complete list of human-input categories
+for the initial release. PD-010 records the agent-supported operating context and
+conditional Recursion integration candidate. Do not demote document/visual inputs to
+a later release merely because they require additional implementation work.
+
+**Recommended specification detail, not separately ratified:** preserve originals,
+bind extracted observations to the input and extraction method, and expose uncertainty
+or unsupported content. Size/type limits, attachment handling, image understanding,
+source verification, and model/tool selection need explicit contracts. Additional
+agents do not themselves establish extraction accuracy or provenance.
+
+**Harness follow-up:** in Round 4, resolve which responsibilities belong to the cockpit
+and which may be supplied by Recursion or another harness. Inspect actual capabilities
+before claiming compatibility. Keep job execution and credential access distinct from
+deterministic risk/order authority. No cross-repository implementation, key provisioning,
+or new runtime capability is authorized by this planning answer.
 
 ### Q6. What should cause a research case to be revisited?
 
@@ -212,6 +241,56 @@ or research initiated only by explicit user requests. Changed-evidence revisits 
 reduce repetitive reports; the backstop must expose gaps rather than treat silence
 as proof nothing changed. This is desired product behavior, not authorization to
 implement RW-13 or bypass its current dependencies.
+
+**Answer (2026-09-09):** “New evidence + my requests + scheduled checks (Recommended)”
+
+**Recorded decision:** PD-011. Adopt the three trigger classes and bounded scheduled
+backstop. Actual intervals, priority, material-change criteria, work budgets, and
+deduplication semantics remain implementation/specification questions.
+
+## Round 3 — strategy and candidate lifecycle
+
+### Q7. How should the first paper strategy be selected for this product target?
+
+The current DEC-03 selects constrained cash-only, long-target merger arbitrage.
+Its evidence machinery exists, but feasibility of the qualifying population remains
+unproven under the current source/selection rules. The product grill has not changed
+that selection or its execution gates.
+
+Recommendation: conduct a bounded feasibility comparison that includes the existing
+strategy, then explicitly choose one initial paper strategy using predeclared data,
+testability, evidence, operating-cost and risk criteria. This recommends a selection
+method, not a particular investment or a profitability claim. Alternatives are retaining
+the existing merger strategy as the first release's fixed target, or requiring multiple
+independently specified and validated paper strategies in the first release.
+
+A changed strategy requires an explicit amendment to DEC-03 and affected contracts.
+No strategy becomes executable from winning a comparison; it still needs its applicable
+validation and activation evidence. Any research comparison or redesign is a later
+scoped package, not automatically performed during this documentation grill.
+
+**Answer:** pending.
+
+### Q8. What should happen to a potentially interesting case with insufficient evidence?
+
+Recommendation: conduct a bounded investigation, then retain the case in a visible
+watching/awaiting-evidence state with the missing fact and a specific revisit condition.
+Hard disqualifications remain distinct from missing information. Alternatives are
+closing unresolved cases until Lucas resubmits them, or asking Lucas to adjudicate
+each unresolved case. The recommended behavior supports unattended operation and
+avoids an endless research loop; retention and revisit budgets remain to be defined.
+
+**Answer:** pending.
+
+### Q9. How much of a paper position should the first release manage autonomously?
+
+Recommendation: the complete policy-defined lifecycle, including entry, monitoring,
+permitted adjustment/cancellation, exit and reconciliation, with outcomes recorded
+for later evaluation. Alternatives are autonomous entry with Lucas managing exits,
+or research/simulation followed by manually managed broker-paper positions. Complete
+lifecycle scope best matches PD-007 but requires explicit policies for each action,
+partial fills, stale evidence, interruptions and operator interventions. This does
+not authorize improvised trading rules, live capital, or model access to the broker.
 
 **Answer:** pending.
 
@@ -225,11 +304,14 @@ implement RW-13 or bypass its current dependencies.
 - The existing canonical safety constraints remain in [CLAUDE.md](../CLAUDE.md) and
   [AGENTS.md](../AGENTS.md); detailed empirical and pre-live gates remain in PLAN and
   the existing subsystem documents.
+- Recursion's current CLI/credential integrations, job lifecycle, and compatibility
+  with the cockpit's hardened agent boundary have not been established in this round.
+  Treat them as a future interface/suitability investigation, not a completed dependency.
 
 ## Resume here
 
-Round 1 is complete through PD-007. Round 2 Q4 is answered as PD-008. Q5 (human-ingestion
-inputs) and Q6 (research cadence) are already presented and remain pending.
-Carry the autonomous paper-MVP target forward; resolve detailed authority in Round 4.
+Rounds 1 and 2 are complete through PD-011. Round 3 Q7/Q8/Q9 are prepared above.
+Carry the autonomous paper-MVP target and full input scope forward; resolve detailed
+authority and the Recursion/harness integration candidate in Round 4.
 Record each incoming answer, update PRODUCT.md, validate the diff and commit the
 checkpoint. Do not interpret silence or recommendation selection defaults as answers.

@@ -66,12 +66,48 @@ does not by itself authorize autonomous changes to code, strategy, or risk polic
 The MVP combines an operator-selected core coverage list, a bounded candidate-discovery
 queue, and human ingestion (PD-006, Round 1 Q3).
 
-Working interpretation to refine in the research round: Lucas can submit ideas or
-source material for investigation. Submission formats, intake surface, priority,
+The first release accepts tickers, links, ideas, questions, documents, screenshots,
+and images (PD-009, Round 2 Q5). Document and visual inputs are part of the selected
+MVP scope. The exact supported file formats and size limits, intake surfaces, priority,
 duplicate handling, and provenance requirements remain open. User-submitted material
 enters the evidence workflow; submission does not certify its claims or grant
 execution eligibility. Research inclusion remains separate from the existing
 operator-controlled execution allowlist.
+
+Recommended acceptance detail for the later specification: retain the submitted input
+separately from extracted text or observations; show what was extracted and where it
+came from; expose unreadable, ambiguous, or unsupported content. A citation to a
+submitted screenshot identifies the evidence received, not proof of its original
+publisher or the truth of its contents. Exact extraction and verification mechanisms
+remain design work.
+
+## Research cadence — decided direction
+
+The cockpit investigates or revisits cases in response to relevant new evidence,
+Lucas's requests, and bounded scheduled checks (PD-011, Round 2 Q6). Scheduled checks
+cover freshness and gaps; the product should avoid repeatedly redoing unchanged
+research without a reason. Exact relevance rules, priority, schedules, and work
+budgets remain to be specified. This target does not change the current scheduler
+or satisfy the prerequisites of the existing event-driven implementation packages.
+
+## Agent harness — candidate direction
+
+Lucas expects the cockpit to work with other agents and identified Project Recursion
+as a possible suitable harness if its architecture can support configured CLIs and
+credentials (PD-010). This is a candidate integration to evaluate, not a selected
+deployment dependency or a verified claim about Recursion's current capabilities.
+
+Recommended architectural boundary, subject to the autonomy round: the cockpit owns
+research cases, input/evidence contracts, policy decisions, and the existing deterministic
+risk/order controls; a harness supplies bounded agent-job execution and lifecycle services
+through an explicit adapter. Job inputs, permitted capabilities, output schemas, provenance,
+usage limits, cancellation, retries, and restart behavior need a tested contract. Credentials
+remain in the OS credential store and outside model context; harness integration does not
+give a model broker credentials or create an additional order route.
+
+Evaluate Recursion's suitability against those requirements before choosing reuse,
+adapting the existing runner, or introducing a new dependency. Whether standalone operation
+must remain supported and how responsibilities divide across repositories are open decisions.
 
 ## Research output and source inspection — decided direction
 
@@ -97,7 +133,7 @@ and secret-handling requirements continue to apply.
 2. Daily operator journey and acceptable review effort.
 3. Awareness and research coverage, evidence, and output contracts.
 4. Candidate lifecycle and transitions into controlled paper execution.
-5. Separate development, research, and investment autonomy permissions.
+5. Separate development, research, and investment autonomy permissions and harness responsibilities.
 6. Quality, usefulness, operational, and strategy evaluation.
 7. First-release acceptance, exclusions, and progression criteria.
 
