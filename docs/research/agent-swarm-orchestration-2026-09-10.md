@@ -313,7 +313,18 @@ Swarm host: `sentry` (Remote Desktop, key auth over SSH). Snapshot 2026-09-10
 `opencode` + `codex` installed, and an active Codex/opencode pilot running on
 unrelated trees — do not disturb it; sentry had no `ai-investment-cockpit`
 checkout before this test run. (Live PIDs/session dates intentionally omitted;
-this is a snapshot, not operational state.) Long-running swarm work belongs on
+this is a snapshot, not operational state.) Distro registration detail for
+operators: manually-imported layout, VHDX at
+`C:\Users\Lucas\AppData\Local\wsl\{452bd7e9-ff46-478d-8aca-e29631bc6793}\ext4.vhdx`
+(~13 GB at snapshot); WSL 2.7.3 supports in-place
+`wsl --manage Ubuntu-24.04 --move <NTFS path>` (preserves registration and
+default user). D: is a second healthy Samsung 990 PRO 2TB, NTFS, ~1.86 TB
+free: moving the distro there is approved direction for spreading sustained
+agent/sandbox I/O off the OS drive — exactly one session owns the move
+(`wsl -l -v` quiescent → `wsl --shutdown` → `--export` backup to D: first →
+`--manage --move` → boot-verify clone + `devin --version` + `bwrap`), and the
+export tar is retained until the moved distro passes smoke checks.
+Long-running swarm work belongs on
 sentry rather than the laptop: always-on, Remote-Desktop-checkable, no
 laptop-uptime dependency. Placement and preconditions:
 
