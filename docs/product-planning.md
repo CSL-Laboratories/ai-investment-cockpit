@@ -48,13 +48,18 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-009 | decided — Round 2 Q5 | First-release human inputs include tickers, links, ideas, questions, documents, screenshots, and images. Document and visual inputs are MVP scope; exact formats, limits, and handling remain to be specified. |
 | PD-010 | owner-proposed integration candidate — Round 2 Q5 | The cockpit works with other agents; Project Recursion may be a suitable harness if its architecture supports configured CLIs and credentials. Evaluate that possibility; no host selection, verified capability claim, or hard dependency is established. |
 | PD-011 | decided — Round 2 Q6 | Relevant new evidence, Lucas's requests, and bounded scheduled checks trigger investigation or case revisits. Exact schedules, relevance rules, and budgets remain to be specified. |
+| PD-012 | decided direction — Round 3 Q7 | The initial product should offer a suite of strategies that model reasoning can evaluate and employ through escalation. Supersedes the assistant's single-strategy recommendation; roster, activation, allocation and validation contracts remain open. |
+| PD-013 | decided architecture direction; example mapping — Round 3 Q7 | Use cost-conscious high-volume model processing with escalation to more capable reasoning as needed. Owner example: GPT 5.6 Luna → Muse 1.3 Spark Contributor → GPT 5.6 Sol → GPT 6 Astra. Exact routes, role contracts, measured cost/quota savings, and authority remain to be specified. |
+| PD-014 | decided — Round 3 Q8 | Investigate uncertain candidates within bounds, then monitor for specified evidence. Lucas reinforces early consideration of cross-model architecture and the Recursion harness under development. |
+| PD-015 | decided — Round 3 Q9 | Manage the complete paper-position lifecycle, including entry, monitoring, policy-permitted adjustment/cancellation, exit, reconciliation and recorded outcomes. |
 
-The integrated autonomous paper-MVP direction, optional operator interaction, and
-initial research breadth, layered source-inspectable research output, and input categories
-and research cadence are decided. Recursion is a candidate harness. The precise autonomous policy, intake
-and interaction contracts, harness responsibilities, provenance presentation,
-and acceptance criteria remain open. Earlier assistant
-recommendations are not owner decisions unless explicitly accepted.
+Decided directions include the integrated autonomous paper MVP, optional operator
+interaction, research breadth and cadence, layered cited output, full human-input
+categories, a strategy suite, tiered model reasoning, monitored unresolved cases and
+complete paper-position management. Recursion remains a candidate
+harness. Detailed strategy, autonomy, intake, escalation, interaction and evaluation
+contracts remain open. Earlier assistant recommendations are not owner decisions
+unless explicitly accepted.
 
 ## Working recommendations — not ratified
 
@@ -76,8 +81,9 @@ recommendations are not owner decisions unless explicitly accepted.
 |---|---|---|---|
 | 1 | Purpose and first usable daily experience | complete — PD-004 through PD-007 | Integrated autonomous paper MVP, optional Discord/supervisor interaction, core/discovery/human inputs |
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
-| 3 | Strategy and candidate lifecycle | questions prepared; awaiting owner | Strategy selection approach, unresolved-case handling, paper-position lifecycle |
-| 4 | Autonomy and control | pending | Explicit authority for development, research, and investment operations; cockpit/harness ownership and Recursion suitability |
+| 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
+| 4a | Autonomy ownership and architecture | questions prepared; awaiting owner | Strategy activation/change authority, model-routing policy, Recursion relationship |
+| 4b | Autonomy limits and intervention | pending | Budget/risk envelopes, provider/fault behavior, operator commands and recovery |
 | 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
 | 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
 
@@ -257,7 +263,7 @@ Its evidence machinery exists, but feasibility of the qualifying population rema
 unproven under the current source/selection rules. The product grill has not changed
 that selection or its execution gates.
 
-Recommendation: conduct a bounded feasibility comparison that includes the existing
+Original recommendation (single-strategy target not selected): conduct a bounded feasibility comparison that includes the existing
 strategy, then explicitly choose one initial paper strategy using predeclared data,
 testability, evidence, operating-cost and risk criteria. This recommends a selection
 method, not a particular investment or a profitability claim. Alternatives are retaining
@@ -269,7 +275,35 @@ No strategy becomes executable from winning a comparison; it still needs its app
 validation and activation evidence. Any research comparison or redesign is a later
 scoped package, not automatically performed during this documentation grill.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “I think there should be a suite of strategies that the model
+can employ. It's going to be the engine that follows escalation architecture to make
+decisions regardless. For example, for all the data and normalization we are going
+to be using that can work with high-volumes of data for a cheap price (like gpt 5.6
+luna), and then decisions are marked and flagged for more capable models to come and
+make decisions. For example, it would go GPT 5.6 Luna -> Muse 1.3 Spark Contributor ->
+GPT 5.6 Sol -> GPT 6 Astra if needed. This saves us the most amount of money and
+subscription quota as possible, while genuinely having a stable model architecture
+and reasoning for the future.”
+
+**Recorded decisions:** PD-012 selects a strategy suite for the product. PD-013 selects
+tiered model reasoning and preserves the owner's example escalation chain. Cost/quota
+efficiency and stability are design objectives; no benchmark establishes an optimal
+route or measured savings here. Do not silently reduce the suite to a single-strategy
+release or turn the example model order into a mandatory all-tier pipeline.
+
+**Recommended specification detail, not separately ratified:** define per-strategy
+evidence/action/evaluation contracts and portfolio-wide checks. Separate mechanical
+normalization from semantic interpretation. Define routing around task roles, explicit
+escalation triggers, source-preserving handoffs, budgets and stop conditions. Evaluate
+false negatives among cases that a cheap tier does not escalate; higher-tier review
+alone cannot detect everything filtered out before it. Exact strategy/model allocation,
+activation permissions, provider fallbacks and capital budgets belong in Round 4 and
+the evaluation contract.
+
+**Reconciliation dependency:** DEC-03 remains the current implementation baseline;
+RW-25 must explicitly reconcile its single-strategy scope with PD-012. Existing model
+and order boundaries remain effective until separately scoped reviewed changes land.
+This answer does not give a model broker tools or authorize self-modifying risk policy.
 
 ### Q8. What should happen to a potentially interesting case with insufficient evidence?
 
@@ -280,7 +314,16 @@ closing unresolved cases until Lucas resubmits them, or asking Lucas to adjudica
 each unresolved case. The recommended behavior supports unattended operation and
 avoids an endless research loop; retention and revisit budgets remain to be defined.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Absolutely, investigate, then monitor for specified evidence.
+Again, I think the cross-model and model architecture that we are going to use for
+the engine is genuinely valuable. And, since Recursion is the harness that we are
+working on developing, it's worth thinking about in advance.”
+
+**Recorded decision:** PD-014. Bounded investigation followed by monitoring for explicit
+evidence is selected. Model escalation and Recursion compatibility must be addressed
+early in architecture discovery; do not postpone them as incidental integration work.
+The answer does not establish Recursion's implemented capabilities or require an
+immediate cross-repository change.
 
 ### Q9. How much of a paper position should the first release manage autonomously?
 
@@ -291,6 +334,54 @@ or research/simulation followed by manually managed broker-paper positions. Comp
 lifecycle scope best matches PD-007 but requires explicit policies for each action,
 partial fills, stale evidence, interruptions and operator interventions. This does
 not authorize improvised trading rules, live capital, or model access to the broker.
+
+**Answer (2026-09-09):** “Manage the complete paper-position lifecycle (Recommended)”
+
+**Recorded decision:** PD-015. The first release must cover the full position lifecycle
+under its explicit paper policy, rather than leaving routine exits or reconciliation
+to Lucas. Failure, interruption and operator-intervention contracts remain design work.
+
+## Round 4a — autonomy ownership and architecture
+
+Round 4 is split into two small groups because the accepted strategy suite, model
+escalation and harness direction introduce consequential ownership decisions. First
+resolve the following architecture choices; then address budgets, faults and intervention
+in 4b. This is a planning subdivision, not an additional implementation package.
+
+### Q10. Who may activate a new strategy or a material strategy revision?
+
+Recommendation: agents research, implement and test candidate strategies in an isolated
+evaluation environment, then Lucas approves activation or a material change to the active
+suite. Once active, the cockpit selects and runs strategies within their standing policy.
+This separates unattended operation from changes to what the engine is permitted to do.
+Alternatives are automatic paper-only activation after predeclared independent validation,
+or a fixed MVP suite with expansion performed outside the runtime. Exact activation
+evidence, review independence and the meaning of a material change remain to be defined.
+
+**Answer:** pending.
+
+### Q11. Should the model route follow a fixed ladder or adapt to the task?
+
+Recommendation: configurable routing by task, with the owner's tier order as a starting
+profile and permission to skip unnecessary tiers under a tested policy. Escalation may
+depend on ambiguity, conflicting sources, validation failures or consequence; self-reported
+confidence alone is insufficient. Alternatives are a strict Luna → Spark → Sol → Astra
+sequence for escalation, or mandatory senior review of every paper decision. All options
+retain bounded cost/quota use, provenance and deterministic execution controls; those
+limits and exact role mappings remain for specification and measurement.
+
+**Answer:** pending.
+
+### Q12. What relationship should the MVP have with Recursion?
+
+Recommendation: target Recursion as the primary production harness while retaining a
+minimal local/test runner for the same cockpit contracts. Keep evidence and strategy/risk
+semantics in the cockpit; avoid duplicating a general supervisor inside it. Alternatives
+are requiring Recursion for all operation, or shipping a standalone cockpit first with
+Recursion integration later. The recommended direction requires verifying Recursion's
+actual interfaces early and testing the composed Recursion/cockpit flow; a local fake
+adapter cannot certify the real integration. Recursion may therefore become a release
+dependency, whose readiness must be tracked explicitly.
 
 **Answer:** pending.
 
@@ -307,11 +398,23 @@ not authorize improvised trading rules, live capital, or model access to the bro
 - Recursion's current CLI/credential integrations, job lifecycle, and compatibility
   with the cockpit's hardened agent boundary have not been established in this round.
   Treat them as a future interface/suitability investigation, not a completed dependency.
+- Model-route evidence checked 2026-09-09: official OpenAI pages describe
+  [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) for
+  cost-sensitive high-volume work,
+  [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) as a
+  flagship for complex professional work, and
+  [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) as its
+  most capable model. These support the broad role hypothesis, not this application's
+  routing quality or the account's subscription/CLI entitlement. Muse 1.3 Spark
+  Contributor's integration and the complete route's cost/quota behavior remain
+  unverified. API list prices do not establish subscription quota savings.
 
 ## Resume here
 
-Rounds 1 and 2 are complete through PD-011. Round 3 Q7/Q8/Q9 are prepared above.
-Carry the autonomous paper-MVP target and full input scope forward; resolve detailed
-authority and the Recursion/harness integration candidate in Round 4.
+Rounds 1–3 are complete through PD-015. Round 4a Q10/Q11/Q12 are prepared above;
+4b will cover operating limits and intervention. Carry the autonomous paper MVP,
+strategy suite, tiered reasoning, full input scope and complete position lifecycle
+forward. Treat Recursion as an early architecture consideration whose precise role
+is being decided in Q12.
 Record each incoming answer, update PRODUCT.md, validate the diff and commit the
 checkpoint. Do not interpret silence or recommendation selection defaults as answers.

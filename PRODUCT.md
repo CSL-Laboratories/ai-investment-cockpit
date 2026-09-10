@@ -61,6 +61,65 @@ adversarially reviewed design consistent with the canonical safety constraints;
 the current runtime remains unchanged. Observing possible engine tweaks
 does not by itself authorize autonomous changes to code, strategy, or risk policy.
 
+## Strategy suite — decided direction
+
+The MVP should support a suite of strategies that model reasoning can evaluate and
+employ through an escalation architecture (PD-012, Round 3 Q7). This supersedes the
+assistant's proposed one-strategy first-release target. The strategy roster, supported
+instruments/horizons, selection and activation criteria, and interactions among
+strategies remain to be specified.
+
+The current DEC-03 cash-merger selection remains the existing implementation baseline.
+The suite target requires explicit reconciliation of DEC-03 and affected contracts
+before product ratification and subsequent scoped implementation. It does not silently
+make additional strategies executable or grant a model direct order authority.
+
+Recommended design: give each strategy a versioned contract for required evidence,
+applicability, permitted actions, risk limits and evaluation. Model reasoning can assess
+which validated strategy fits a case and draft its decision; deterministic checks
+enforce eligibility and aggregate portfolio constraints through the existing order
+boundary. Strategy creation, activation, capital allocation, conflict handling and
+retirement require explicit policies rather than being inferred from model confidence.
+
+## Model escalation — decided direction
+
+Use less expensive model capacity for high-volume interpretation and triage, with
+flagged decisions escalated to more capable reasoning when needed (PD-013). Lucas's
+example sequence is **GPT 5.6 Luna → Muse 1.3 Spark Contributor → GPT 5.6 Sol →
+GPT 6 Astra, if needed**. The objective is to conserve money and subscription quota
+while sustaining reliable reasoning. The example does not establish exact provider
+identifiers, availability on a chosen CLI/account, or measured savings.
+
+Recommended architecture: separate configurable task roles from provider/model pins;
+keep mechanical parsing, deduplication, timestamp/unit normalization and schema checks
+deterministic where possible, and use models for semantic extraction, interpretation,
+strategy reasoning and review. Define escalation triggers, permitted routes, termination,
+usage ceilings, unavailable-provider behavior and evidence-bearing handoffs explicitly.
+Do not require every item to traverse every tier unless the evaluation justifies it.
+
+Higher-tier review should retain access to supporting original evidence and unresolved
+contradictions, not only the previous model's conclusion. Sample ordinary low-tier
+decisions as well as escalations to measure confidently missed cases. Evaluate end-to-end
+quality, latency, repeated context, retries, cost and quota consumption; the optimal
+route and stability are empirical questions, not consequences of model count.
+
+The model-role allocation and runtime authority require reconciliation with AGENTS.md,
+the current Codex/Claude boundaries and the paper-autonomy design. The selected product
+direction changes none of those permissions in the running application.
+
+## Candidate and paper-position lifecycle — decided direction
+
+Potentially interesting cases with insufficient evidence receive a bounded investigation,
+then enter a visible monitoring state that names the missing evidence and the condition
+for another investigation (PD-014, Round 3 Q8). Keep hard disqualifications distinct from
+awaiting evidence. Escalating to another model does not itself supply a missing fact.
+
+The MVP manages the complete paper-position lifecycle: entry, monitoring, policy-permitted
+adjustments or cancellations, exit, reconciliation and recorded outcomes (PD-015,
+Round 3 Q9). Individual policy limits, interrupted/partial execution behavior, exception
+handling and operator interventions remain to be specified. This scope preserves the
+autonomous operating target while requiring explicit controls for every lifecycle action.
+
 ## Research inputs — decided direction
 
 The MVP combines an operator-selected core coverage list, a bounded candidate-discovery
@@ -96,6 +155,9 @@ Lucas expects the cockpit to work with other agents and identified Project Recur
 as a possible suitable harness if its architecture can support configured CLIs and
 credentials (PD-010). This is a candidate integration to evaluate, not a selected
 deployment dependency or a verified claim about Recursion's current capabilities.
+Lucas reinforced during Q8 that Recursion and the cross-model architecture should be
+considered early, while Recursion is being developed; harness compatibility must be
+part of product architecture discovery rather than deferred until after implementation.
 
 Recommended architectural boundary, subject to the autonomy round: the cockpit owns
 research cases, input/evidence contracts, policy decisions, and the existing deterministic

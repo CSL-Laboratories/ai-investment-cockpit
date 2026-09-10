@@ -32,6 +32,12 @@ A later scoped paper-autonomy design must reconcile approval/mode/model boundari
 and pass the applicable adversarial and evidence gates before implementation can
 deliver that target. See PD-004 through PD-007 in the planning record.
 
+Round 3 Q7 adds a strategy suite and tiered model reasoning as product targets
+(PD-012/PD-013). The owner did not select the proposed one-strategy MVP. Final RW-25
+ratification must explicitly reconcile DEC-03 and the model-role boundaries with
+these targets; current strategy eligibility and runtime permissions remain unchanged.
+Exact strategies, routing policies and measured cost/quota benefits remain open.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`
