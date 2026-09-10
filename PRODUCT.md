@@ -117,6 +117,31 @@ provide this multi-user identity contract. Extend them through a scoped, adversa
 reviewed authority design; do not implement this requirement by merely widening the
 operator list or sharing one credential among users.
 
+## Operating limits and failure behavior — decided direction
+
+The owner approves hard outer limits for inference spending/subscription use and
+paper capital/risk. The engine allocates work and selects active strategies within
+those limits; increasing a hard limit requires owner approval (PD-021, Round 4b Q14).
+Exact ceilings, accounting periods, reservations and allocation rules remain to be
+specified. The selected mechanism must enforce aggregate limits across simultaneous
+jobs and strategies, not only evaluate each allocation in isolation.
+
+Lucas also raised taxes from trading and other restrictions as considerations for
+the policy/evaluation design (PD-022). Their detailed scope remains open. Recommended
+distinction: enforce hard eligibility/resource limits separately from estimated costs
+used to compare choices. Any tax-aware evaluation needs an explicitly configured
+jurisdiction, account/tax context, relevant transaction history and verified versioned
+rules. Paper estimates must identify assumptions and unknowns; no universal tax rate,
+actual tax liability, tax-filing service or complete tax engine is selected by this answer.
+
+When a required model/feed fails or quota is exhausted, try only approved, sufficiently
+capable fallback routes within budget. If requirements still cannot be met, suspend
+affected unsafe actions, continue safe monitoring, and report the reason (PD-023,
+Round 4b Q15). Fallback preserves permissions and task requirements. Handling existing
+paper positions requires an explicit failure policy. Automatic-versus-human recovery,
+durable holds, freshness rechecks and resumed work remain to be specified against
+the current fail-closed controls; the answer does not authorize automatic mode promotion.
+
 ## Model escalation — decided direction
 
 Use less expensive model capacity for high-volume interpretation and triage, with

@@ -57,12 +57,16 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-018 | decided — Round 4a Q11 | Dynamic task/model escalation informed by subscription quota, model diversity, and capabilities/intelligence. Lucas plans ChatGPT Pro + OpenCode Go next month; the earlier tier chain is illustrative, not fixed. Exact access, quotas, adapters and ranking policy remain to be verified/specified. |
 | PD-019 | architecture disposition deferred — Round 4a Q12 | Lucas wants the cockpit's complete architecture to determine standalone/plugin/MCP/Recursion deployment. He considers plugin/MCP integration plausible and notes Discord/lifecycle needs. Recursion-primary is not selected; compare the arrangements before final ratification. |
 | PD-020 | decided — Round 4b Q13 | The owner defines roles with explicit per-action permissions, enforced consistently across control surfaces. Strategy activation remains owner-reserved unless explicitly delegated. Exact roles, action grants and revocation mechanics remain open. |
+| PD-021 | decided — Round 4b Q14 | Owner-approved hard caps with autonomous engine allocation inside them; increases require owner approval. Applies to inference/subscription resources and paper capital/risk; numeric values and accounting remain open. |
+| PD-022 | owner-proposed policy/evaluation consideration — Round 4b Q14 | Consider trading taxes and other restrictions within the broader limits/allocation design. Exact tax-aware functionality, account/jurisdiction context and calculation rules remain open; no full tax engine or filing service is selected. |
+| PD-023 | decided — Round 4b Q15 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. Existing-position failure policy and recovery conditions remain to be specified. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
 categories, a strategy suite, tiered model reasoning, monitored unresolved cases and
 complete paper-position management, owner-approved strategy activation, identifiable
-authorized users, and dynamic subscription/capability/diversity-aware routing. Recursion
+authorized users, dynamic subscription/capability/diversity-aware routing, owner-approved
+hard limits, and approved fallback with safe suspension. Recursion
 remains a candidate integration; service/plugin/host ownership is explicitly unresolved.
 Detailed strategy, autonomy,
 identity/permission, intake, escalation, interaction and evaluation
@@ -91,8 +95,8 @@ unless explicitly accepted.
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
 | 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
-| 4b | Autonomy limits and intervention | Q13 answered; Q14/Q15 awaiting owner | Owner-defined per-action permissions, budget/risk envelopes, provider/fault behavior; later detailed revocation/recovery contracts |
-| 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
+| 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts pending | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
+| 5 | Evaluation and feedback | questions prepared; awaiting owner | Release success criteria, research-quality evaluation and independent review |
 | 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
@@ -493,7 +497,20 @@ ceilings, accounting periods, reservations and the distinction between available
 unknown quota remain specification work. This asks who controls the envelope, not
 for real-money trading parameters or permission to spend now.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “That's smart, the hard caps and engine allocation could
+then also fit in other restrictions (such as taxes from trading) and other things”
+
+**Recorded decisions:** PD-021 accepts hard owner-approved caps with autonomous
+allocation inside them. PD-022 records taxes and other restrictions as considerations
+for the broader policy/evaluation architecture. Do not interpret this as approval of
+a particular tax formula or commitment to a complete tax-compliance product.
+
+**Recommended specification detail, not separately ratified:** enforce aggregate
+caps and reservations across concurrent work; keep hard constraints distinct from
+estimated costs. Define any tax-aware research assumptions using explicit jurisdiction,
+account context, transaction history and verified rules with version dates. Missing
+context is unknown, not zero cost. No actual tax advice or calculation is provided
+by this planning record; scope and rules need later evidence and design.
 
 ### Q15. What should happen when a required feed/model fails or quota runs out?
 
@@ -505,6 +522,41 @@ on every dependency failure, or requiring operator intervention before any fallb
 Fallback must preserve capability/authority requirements. Recovery of the affected
 actions, durable safety holds and automatic-versus-human resume require a specific
 contract compatible with the current fail-closed boundary.
+
+**Answer (2026-09-09):** “Approved fallback, then safe suspension and monitoring (Recommended)”
+
+**Recorded decision:** PD-023. Use qualifying approved fallback routes within budget;
+otherwise suspend affected unsafe actions, retain safe monitoring, and explain the
+condition. Preserve capability/authority requirements and the existing fail-closed
+boundary. Define existing-position behavior and automatic-versus-human recovery before
+implementation; no automatic mode promotion follows from a provider returning.
+
+## Round 5 — evaluation and acceptance
+
+### Q16. What should count as success for the first complete paper release?
+
+Recommendation: a demonstrably useful and reliable integrated workflow plus a credible
+evaluation of strategy results, even if a financial advantage remains unproven. The
+workflow must deliver cited research, handle the agreed input types, operate its approved
+strategy suite, and manage paper positions through reconciliation and failures. Evaluate
+strategy outcomes against predeclared baselines and costs, and report uncertainty and
+unfavorable results honestly. This is not permission to waive existing financial-evidence
+or activation gates. The alternative is requiring a predeclared positive cost-adjusted
+paper-performance result against selected baselines before calling the first release
+complete; that ties completion to empirical outcomes beyond implementing the workflow.
+
+**Answer:** pending.
+
+### Q17. How should research quality and routing decisions be evaluated?
+
+Recommendation: automated scoring and replay against a maintained evidence set, combined
+with independent review of a bounded sample and Lucas's feedback on usefulness. Include
+accepted, rejected, low-tier-dismissed and escalated cases; retain failures and empty
+sessions. Use source-grounded reference judgments, keep tuning and held-out examples
+separate, and do not treat model agreement as ground truth. Alternatives are owner review
+of every evaluation case, or a fully automated quality-evaluation target. The latter
+cannot silently replace existing independent label/review requirements. Reviewer roles,
+sampling cadence, thresholds, and measurable operator effort remain to be specified.
 
 **Answer:** pending.
 
@@ -543,13 +595,17 @@ contract compatible with the current fail-closed boundary.
 - PD-019 leaves the deployment architecture unresolved. Prepare the lifecycle/state/
   permission/interface comparison above and evaluate actual Recursion compatibility;
   do not treat an unselected primary-harness proposal as an implementation prerequisite.
+- PD-022's tax-aware scope has no selected jurisdiction, account context, transaction
+  population or verified calculation rules. Resolve the intended feature and inputs
+  before researching or implementing a tax model; do not invent a flat tax haircut.
 
 ## Resume here
 
 Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
 the hosting/plugin architecture is explicitly deferred for comparison and later owner
-disposition. Round 4b Q13 is recorded as PD-020; Q14 (operating limits) and Q15
-(failure behavior) are already presented and remain pending.
+disposition. Round 4b is recorded through PD-023. Present Round 5 Q16/Q17 on release
+success criteria and research-quality evaluation. Detailed role/revocation, limit,
+tax-scope and failure/recovery contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
 owner strategy activation and complete position lifecycle forward. Do not assume
 Recursion-primary or a plugin-only architecture has been selected.
