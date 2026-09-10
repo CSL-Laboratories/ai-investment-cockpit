@@ -84,8 +84,28 @@ post-MVP roadmap; the launch count is not a permanent ceiling. PD-035 adds event
 profitable growth beyond approximately $210/month of owner expenses as an economic
 evaluation target, without changing the honest-results MVP criterion. PD-036 delegates
 holding horizons to the engine within qualified strategy/data/execution contracts;
-no universal days-to-months restriction is selected. Starting paper capital, expense
-scope and the exact supported strategy horizons remain to be established.
+no universal days-to-months restriction is selected. Exact supported strategy horizons
+remain to be established.
+
+Round 7c identifies approximately $210/month as the owner's two subscriptions (PD-037).
+Use $2,000 provisionally for paper evaluation from the likely minimum-transfer intention
+(PD-038); contributions remain owner-configured and distinct from returns. The resulting
+10.5% monthly subscription-coverage hurdle is arithmetic, not an expected outcome or
+live allocation. The [release-evidence proposal](product-acceptance.md) connects production
+composition, real adapters, deployment and outcome checks for the next contract round.
+
+Round 8a requires at least 20 market days of unattended paper observation plus required
+coverage and existing strategy-evidence gates (PD-039). PD-040 selects monthly expansion
+summaries and candidate-ready notifications. The pilot is an operational minimum, not
+financial-advantage evidence; exact revision/coverage and reminder delivery rules remain
+to be specified. Current runs do not gain acceptance merely from these new requirements.
+
+Round 8b selects automatic paper-symbol admission under owner-approved rules (PD-041)
+and full investment-tax calculations in the MVP (PD-042). The static allowlist needs
+a scoped reviewed replacement; the tax engine needs explicit jurisdiction/account/year
+coverage, verified rules and reference validation. Q32 requests the initial tax context.
+The ledger-and-assumptions-only proposal is superseded; no current eligibility or tax
+calculation behavior changes during RW-25.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

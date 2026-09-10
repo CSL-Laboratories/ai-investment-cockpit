@@ -58,7 +58,7 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-019 | deferred in Round 4a Q12; resolved by PD-028/PD-029 | Lucas asked for the complete architecture to determine standalone/plugin/MCP/Recursion deployment. Round 6b selects persistent cockpit ownership and a standalone MVP, with Recursion integrated when qualified. |
 | PD-020 | decided — Round 4b Q13 | The owner defines roles with explicit per-action permissions, enforced consistently across control surfaces. Strategy activation remains owner-reserved unless explicitly delegated. Exact roles, action grants and revocation mechanics remain open. |
 | PD-021 | decided — Round 4b Q14 | Owner-approved hard caps with autonomous engine allocation inside them; increases require owner approval. Applies to inference/subscription resources and paper capital/risk; numeric values and accounting remain open. |
-| PD-022 | owner-proposed policy/evaluation consideration — Round 4b Q14 | Consider trading taxes and other restrictions within the broader limits/allocation design. Exact tax-aware functionality, account/jurisdiction context and calculation rules remain open; no full tax engine or filing service is selected. |
+| PD-022 | initial tax consideration — Round 4b Q14; expanded by PD-042 | Consider trading taxes and other restrictions within the broader limits/allocation design. PD-042 subsequently requires full investment-tax calculations in the MVP; jurisdiction/account coverage and rules remain to be specified. |
 | PD-023 | decided — Round 4b Q15; refined by PD-031/PD-032 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. PD-031 defines recovery and PD-032 defines existing-position failure behavior; detailed contracts remain open. |
 | PD-024 | decided — Round 5 Q16 | First-release success is a working, useful and reliable integrated paper product plus credible evaluation with honest results. Positive profitability is not a completion requirement; existing evidence/activation gates remain. |
 | PD-025 | decided target — Round 5 Q17 | Aim for fully automated research-quality and model-routing evaluation. Replaces the assistant's recommended routine human sample review; owner strategy-activation approval remains separate. The automated evaluator and reference evidence need validation; existing independent-evidence requirements require explicit reconciliation, not silent waiver. |
@@ -73,6 +73,12 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-034 | decided requirement — Round 7b Q25 | Expand the strategy suite after launch and retain explicit reminders/roadmap follow-up. Two or three is not a permanent ceiling. Reminder cadence and candidate-review mechanics remain open; additions still require evaluation and owner activation. |
 | PD-035 | owner economic objective — Round 7b Q25 | Eventually achieve profitable growth exceeding expenses estimated at about $210/month. This is a target to evaluate, not a verified cost total, spending authorization, return promise or replacement of PD-024's MVP completion criterion. Capital baseline and expense components remain open. |
 | PD-036 | decided — Round 7b Q26 | The engine decides holding horizons within approved strategy evidence, data/execution capabilities and policy. No universal days-to-months restriction is selected; exact supported horizons follow feasibility and strategy contracts. |
+| PD-037 | owner-stated expense scope — Round 7c Q27 | Approximately $210/month covers ChatGPT Pro plus OpenCode Go subscriptions. This is the owner's expense assumption, not independently verified pricing or an all-inclusive engine-cost estimate. |
+| PD-038 | owner funding/capital context; provisional paper assumption — Round 7c Q27 | Lucas receives $500/month of student funding for the coming year, wants to contribute a percentage of monthly income, and is likely to transfer a minimum of $2,000. Use $2,000 provisionally for paper evaluation; exact deposit and contribution rate remain unset. No live allocation/transfer is authorized and the entire funding stream is not assumed investable. |
+| PD-039 | decided — Round 8a Q28 | At least 20 market days of unattended paper observation on the primary Linux deployment, plus required workflow coverage and applicable strategy-evidence gates. Longer lifecycles or incomplete evidence may extend it; the minimum is not proof of profitability. |
+| PD-040 | decided — Round 8a Q29 | Monthly expansion summaries plus notifications when candidates are ready for owner activation review. Include progress, missing evidence and next steps. No daily review obligation, automatic activation or budget increase follows from the cadence. |
+| PD-041 | decided — Round 8b Q30 | Newly researched stocks/ETFs enter paper-execution eligibility automatically within owner-approved rules after required evidence, instrument, strategy and risk checks. Submission/research alone grants no eligibility. Requires a scoped reviewed replacement of the current static allowlist, preserving the single order path. |
+| PD-042 | decided — Round 8b Q31 | Full investment-tax calculations are MVP scope, replacing the recommendation to defer the tax engine. Jurisdiction, account type, tax-year coverage, complete inputs and verified rules need specification; a full personal-return preparation/filing service is not selected. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -126,8 +132,11 @@ unless explicitly accepted.
 | 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
 | 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts pending | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
 | 7b | Initial strategy-suite contract | complete through PD-036 | Two or three launch strategies, expansion reminders, economic objective and engine-selected horizons |
-| 7c | Economic evaluation baseline | Q27 presented; awaiting owner | Starting paper balance and scope of the approximate monthly expense benchmark |
-| 8 | Release contract and progression | pending | Concrete acceptance and remaining policy contracts, bounded delivery packages, final owner review |
+| 7c | Economic evaluation baseline | answered through PD-038; contribution rate unset | Owner-stated subscription expense, provisional $2,000 paper balance and contribution context |
+| 8a | Release evidence and expansion review | complete through PD-040 | At least 20 market days plus coverage; monthly expansion summaries and candidate-ready notifications |
+| 8b | Final scope boundaries | complete through PD-042 | Automatic eligibility under approved rules; full investment-tax calculations in MVP |
+| 8c | Tax coverage | Q32 presented; awaiting owner | Initial jurisdiction/account context for the full tax-calculation contract |
+| 8d | Contract reconciliation and final review | pending | Concrete acceptance, remaining policy contracts, bounded delivery packages and final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -840,6 +849,132 @@ Use owner-provided assumptions to make the economic target measurable. Keep the
 expense-coverage goal distinct from hard spending limits and the live-capital gates;
 do not invent a starting balance or assume the figure includes every engine cost.
 
+**Answer (2026-09-09):** “the $210 pays for the ChatGPT Pro subscription + Opencode Go
+subscription. I'm currently receiving $500/month for the next year in student funding.
+I'm trying to develop and make something for myself where I can pour a percentage of
+my monthly income in and grow the money simultaneously. I'm likely going to transfer
+a minimum of 2k.”
+
+**Recorded decisions/context:** PD-037 identifies the $210/month expense as the two
+subscriptions. PD-038 records the funding and contribution intention and the likely
+minimum transfer. A $2,000 paper starting balance is a provisional evaluation assumption
+derived from that answer, not a definitive deposit instruction. No contribution
+percentage or schedule was supplied. Do not assume $500/month is entirely available
+for investment, infer other income/expenses, or extend the stated funding indefinitely.
+
+**Derived arithmetic, not a return forecast:** $210 / $2,000 = 10.5% per month to
+cover the stated subscriptions at a static $2,000 balance after trading costs, before
+additional growth, other costs and taxes. This was checked with decimal arithmetic.
+Do not present the target as demonstrated or routinely attainable. The selected
+MVP remains paper-first and does not authorize the intended future transfer.
+
+**Recommended evaluation detail:** distinguish external contributions/withdrawals from
+P&L and compare portfolios using the same external cash flows. Retain a no-contribution
+reference scenario until a contribution amount is configured; this is a comparison,
+not a recommendation about how much of the funding Lucas should invest. Preserve the
+full owner expense-coverage benchmark alongside any separately labelled shared-cost
+allocation. Unknown additional costs or tax treatment remain visible.
+
+## Round 8a — release evidence and expansion review
+
+The [release-evidence proposal](product-acceptance.md) specifies the workflow evidence
+to collect. Owner decisions below set two remaining operating expectations; passing
+an observation window alone does not establish product acceptance or strategy advantage.
+
+### Q28. What minimum unattended observation period should the first paper pilot have?
+
+Recommendation: at least 20 market days on the primary Linux deployment, plus the
+required scenario coverage and existing strategy-evidence gates. This is a proposed
+operational observation minimum, not a statistically justified profitability window.
+Longer strategy lifecycles or incomplete evidence can require more time. Alternatives
+are at least 60 market days or a coverage-driven pilot whose minimum duration is
+selected and frozen during the feasibility work. Do not force trades to finish a
+calendar milestone, count offline replays as deployed observations, or count a material
+unqualified revision as part of one unchanged candidate. Predeclare continuation/reset
+rules and report the exact builds observed.
+
+**Answer (2026-09-09):** “20 market days + required coverage (Recommended)”
+
+**Recorded decision:** PD-039. Require at least 20 market days of unattended paper
+observation on the primary Linux deployment plus required workflow coverage and
+existing strategy-evidence gates. The minimum is operational; longer lifecycles or
+evidence gaps can extend the pilot. Freeze its observation and revision rules before
+running; elapsed days, fake adapters or manufactured trades do not establish acceptance.
+
+### Q29. How should reminders about strategy expansion appear after launch?
+
+Recommendation: a monthly expansion summary plus a notification when a candidate is
+ready for owner activation review. Include queue progress, missing evidence and the
+next research step so expansion remains visible without requiring a daily review.
+Alternatives are a weekly summary with candidate-ready notifications, or candidate-ready
+notifications alone. Readiness does not activate a strategy, and summary cadence does
+not authorize additional research spending beyond the existing caps. This chooses a
+future cockpit reporting behavior; no external messages are sent by the grill.
+
+**Answer (2026-09-09):** “Monthly summary + ready notifications (Recommended)”
+
+**Recorded decision:** PD-040. Use monthly expansion summaries and candidate-ready
+notifications, showing queue progress, missing evidence and next steps. Activation
+still requires owner approval. The cadence adds neither a daily review obligation
+nor authority to increase research budgets. Detailed scheduling, duplicate suppression
+and delivery/retry behavior remain specification work.
+
+## Round 8b — final scope boundaries
+
+### Q30. How does a newly discovered symbol become eligible for paper trading?
+
+Recommendation: automatic admission under owner-approved eligibility rules after
+required evidence, instrument, strategy and risk checks pass. Research or a human
+submission alone grants no execution eligibility. Alternatively, require owner approval
+of every new executable symbol. The automatic option requires a scoped, reviewed
+replacement for the current static-allowlist design and remains subject to the single
+deterministic order path, strategy activation and owner limits.
+
+**Answer (2026-09-09):** “Automatic within approved eligibility rules (Recommended)”
+
+**Recorded decision:** PD-041. Permit automatic admission of researched stocks/ETFs
+within owner-approved eligibility rules after all required checks pass; individual
+symbol approval is not the product target. Research and submissions alone cannot
+change eligibility. The implementation must replace the current static-allowlist
+design through a scoped review and retain deterministic admission and the single
+order path. Detailed evidence binding, expiry and rechecks remain specification work.
+
+### Q31. How much tax-aware functionality belongs in the MVP?
+
+Recommendation: an exportable trade/cash-flow ledger and explicit configurable tax
+assumptions in economic reports, deferring a full jurisdiction-specific tax engine.
+Any enforceable tax-related restriction requires verified applicable rules and context.
+Alternatively, require full tax calculations in the MVP, adding account/jurisdiction,
+rule-coverage and validation work. The recommendation does not select a tax rate or
+claim tax compliance; unknown assumptions remain visible and no tax filing is implied.
+
+**Answer (2026-09-09):** “Full tax calculations in the MVP”
+
+**Recorded decision:** PD-042. Include full investment-tax calculations in the MVP.
+The ledger-and-assumptions-only recommendation is not selected. Scope calculations
+to explicitly supported tax jurisdictions, account types and years with the necessary
+transaction and external context. Do not silently defer the engine, assume a flat
+rate, or equate a paper estimate with a filed/verified tax liability. Preparing or
+filing a complete personal return is not implied by the investment-tax scope.
+
+**Recommended specification detail:** verified, versioned rule sources; deterministic
+calculation with auditable intermediate values; explicit required outside-account
+inputs; missing-context outcomes; independent reference cases; source/rule updates
+under the existing release and policy approvals. Q32 requests the context needed to
+research the actual tax coverage rather than guessing it from the workstation locale.
+
+## Round 8c — tax coverage
+
+### Q32. Which jurisdictions and account types should the full tax calculations support?
+
+Question presented: “Which country and state/province tax jurisdictions, and which
+account type, should the MVP's full investment-tax calculations support—for example,
+a taxable brokerage account or a retirement account?”
+
+This information determines the applicable rules and required inputs for PD-042.
+Research official sources after the owner identifies the intended coverage. The
+workstation timezone and use of US stocks do not establish personal tax jurisdiction.
+
 **Answer:** pending.
 
 ## Evidence dependencies
@@ -880,19 +1015,26 @@ do not invent a starting balance or assume the figure includes every engine cost
 - PD-028/PD-029 resolve PD-019: persistent cockpit ownership and a standalone MVP,
   with Recursion integrated when qualified. The comparison records inspected source;
   actual job-adapter conformance remains empirical work, not a first-release dependency.
-- PD-022's tax-aware scope has no selected jurisdiction, account context, transaction
-  population or verified calculation rules. Resolve the intended feature and inputs
-  before researching or implementing a tax model; do not invent a flat tax haircut.
-- PD-035's approximate $210/month figure is owner-stated, not a verified account or
-  pricing observation. Q27 requests starting paper capital and expense components.
-  The economic target cannot establish expected returns, payback or required percentage
-  performance without those assumptions and observed strategy evidence.
+- PD-042 selects full investment-tax calculations in the MVP. Q32 requests the initial
+  jurisdiction/account context; transaction inputs, tax years and verified calculation
+  rules remain to be specified. Do not infer jurisdiction or substitute a flat tax
+  haircut for the selected engine. Official rule research and reference validation
+  must precede implementation claims.
+- PD-037 scopes the owner-stated $210/month to subscriptions; PD-038 supplies a likely
+  minimum transfer from which $2,000 is used provisionally for paper evaluation. These
+  are not independently verified pricing/account observations or transfer authority.
+  Contribution rate, other operating costs and tax treatment remain open. The 10.5%
+  monthly subscription-coverage hurdle is arithmetic, not expected strategy performance.
 - General financial reference checked for Q25: the SEC explains that
   [fees and expenses reduce investment returns](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/updated)
   and that an [ETF is not necessarily diversified](https://www.investor.gov/introduction-investing/getting-started/asset-allocation).
   These support attention to costs and underlying exposures. The inference for this
   product is to evaluate strategy additions on their incremental contribution and
   overlap; neither source establishes this engine's profitability or an optimal count.
+- Financial context checked for Q27: the SEC describes
+  [investment risk as uncertainty and potential loss](https://www.investor.gov/introduction-investing/investing-basics/what-risk).
+  It does not supply a return forecast for this product. The pilot/economic evaluation
+  must preserve losses and uncertainty rather than assume the expense target is attainable.
 
 ## Resume here
 
@@ -907,8 +1049,15 @@ owner-approved software releases and checked automatic recovery with human-relea
 holds. Q24 completes Round 7a through PD-032 with monitoring and permitted protective
 actions. Round 7b is complete through PD-036: two or three launch strategies, explicit
 expansion/reminders, an approximate $210/month expense-coverage objective and engine-
-selected holding horizons. Round 7c Q27 is presented and pending on paper capital and
-expense components; do not infer either from the monthly target.
+selected holding horizons. Q27 is answered through PD-038: subscription expense scope,
+provisional $2,000 paper capital, and the owner's funding/contribution intention.
+The contribution percentage remains unset. Round 8a is complete through PD-040:
+at least 20 market days plus coverage, monthly expansion summaries and candidate-ready
+notifications. The release-evidence proposal is drafted. Round 8b is complete through
+PD-042: automatic symbol eligibility under approved rules and full investment-tax
+calculations in the MVP. Q32 is presented and pending on tax jurisdiction/account type.
+Then research applicable rules and assemble the concrete remaining contracts and
+document reconciliation for final owner review.
 Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
 contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,

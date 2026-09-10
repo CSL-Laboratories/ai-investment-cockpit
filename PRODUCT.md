@@ -103,6 +103,13 @@ Specific instrument/ETF eligibility, cash and settlement handling, and portfolio
 exposure rules remain specification work. Coverage or discovery alone does not grant
 an instrument execution eligibility.
 
+Newly researched stocks and ETFs may enter paper-execution eligibility automatically
+under owner-approved rules once evidence, instrument, strategy and risk checks pass
+(PD-041, Round 8b Q30). Individual symbol approval is not required by the product
+target. Admission must be attributable and validated; eligibility rechecks and expiry
+remain part of the execution contract. Implementing this requires a separately scoped,
+reviewed replacement for the current static allowlist, preserving the single order path.
+
 Agents develop and test candidate strategies; Lucas, as owner, approves activation
 of a new strategy or a material revision (PD-016, Round 4a Q10). Routine selection
 and paper operation within the active suite remain autonomous under its standing
@@ -129,9 +136,10 @@ in the roadmap and product review requirements. A continuing candidate queue sho
 record new strategy opportunities, missing evidence and the next evaluation step;
 activation still follows the owner-approved process and existing resource/risk caps.
 
-Recommended reminder mechanism: include expansion status in periodic operator reports
-and surface candidates ready for activation review. Exact cadence and notification
-rules remain to be specified; no external reminder is scheduled during this grill.
+Send a monthly expansion summary plus candidate-ready notifications for owner
+activation review (PD-040, Round 8a Q29). Include queue progress, missing evidence
+and next steps. Exact scheduling, duplicate suppression and delivery/retry rules
+remain to be specified; no external reminder is scheduled during this grill.
 Evaluate additions for incremental opportunity, results after costs and overlap with
 the existing portfolio. A larger strategy count alone is not evidence of higher ROI.
 
@@ -174,13 +182,19 @@ Exact ceilings, accounting periods, reservations and allocation rules remain to 
 specified. The selected mechanism must enforce aggregate limits across simultaneous
 jobs and strategies, not only evaluate each allocation in isolation.
 
-Lucas also raised taxes from trading and other restrictions as considerations for
-the policy/evaluation design (PD-022). Their detailed scope remains open. Recommended
-distinction: enforce hard eligibility/resource limits separately from estimated costs
-used to compare choices. Any tax-aware evaluation needs an explicitly configured
-jurisdiction, account/tax context, relevant transaction history and verified versioned
-rules. Paper estimates must identify assumptions and unknowns; no universal tax rate,
-actual tax liability, tax-filing service or complete tax engine is selected by this answer.
+Full investment-tax calculations are required in the MVP (PD-042, Round 8b Q31),
+expanding PD-022's earlier tax consideration. This replaces the proposal to provide
+only a ledger and configurable assumptions while deferring the calculation engine.
+Supported jurisdictions, account types and tax years must be explicit; Round 8c Q32
+requests the initial jurisdiction/account context. No universal rate or jurisdiction
+is inferred, and preparing or filing a complete personal return is not selected.
+
+Recommended calculation contract: use complete applicable transaction/account inputs,
+verified versioned rules and deterministic calculations, with inspectable rule/source
+citations, intermediate results and known uncertainties. Required outside-account
+inputs must be explicit. Missing context cannot become a zero-tax assumption or an
+unsupported claim of complete liability. Tax-aware execution constraints and financial
+estimates remain distinct; rule changes follow the selected software/policy approvals.
 
 When a required model/feed fails or quota is exhausted, try only approved, sufficiently
 capable fallback routes within budget. If requirements still cannot be met, suspend
@@ -348,13 +362,21 @@ its strategy results are credibly evaluated with honest reporting (PD-024, Round
 Q16). Positive returns or demonstrated profitability are not required for product
 completion. The workflow must deliver the agreed research and input experience,
 operate its approved strategy suite and complete the real paper-position lifecycle,
-including reconciliation and failure handling.
+including reconciliation and failure handling. It also delivers the selected full
+investment-tax calculations for the configured, explicitly supported tax context.
 
 Evaluation uses predeclared baselines and cost assumptions and preserves uncertainty,
 unfavorable outcomes and failures. This completion criterion does not waive existing
 strategy-evidence, platform, activation or pre-live gates, and a working product is
 not itself evidence of financial advantage. Exact evaluation thresholds, observation
 windows and evaluator responsibilities remain to be specified.
+
+The primary Linux deployment must complete at least 20 market days of unattended
+paper observation plus the required workflow coverage and applicable strategy-evidence
+gates (PD-039, Round 8a Q28). This is an operational minimum, not proof of profitability.
+Longer holding horizons or missing evidence can require more time. Predeclare build
+identity and observation continuation/reset rules; neither elapsed time nor forced
+trades can substitute for missing acceptance evidence.
 
 ### Economic objective beyond MVP completion
 
@@ -367,9 +389,24 @@ return. Paper P&L is evaluation evidence, not cash available to pay actual bills
 Recommended reporting: show trading P&L after trading costs, the owner expense-coverage
 benchmark, and the resulting surplus or shortfall without subtracting the same cost
 twice. Preserve realized and unrealized components, losses, capital employed and the
-observation period. The starting paper balance, components of the approximate $210,
-cost allocation and tax treatment remain to be established; no required percentage
-return or verified break-even result is asserted from the monthly figure alone.
+observation period. Lucas identifies the approximately $210/month as the combined
+ChatGPT Pro and OpenCode Go subscriptions (PD-037), not an all-inclusive operating
+cost estimate or independently verified current pricing.
+
+Lucas reports $500/month in student funding for the coming year and wants to contribute
+an unspecified percentage of monthly income while growing the balance. He is likely
+to transfer at least $2,000 (PD-038). Use $2,000 as a provisional paper baseline drawn
+from that intention, not as an approved live allocation or final deposit amount. The
+contribution percentage, timing and continuation after the funding period remain unset;
+the full funding stream is not assumed available to invest. These are owner-specific
+evaluation assumptions, not hardcoded application defaults.
+
+At a static $2,000 starting balance, $210 / $2,000 = 10.5% per month is the arithmetic
+subscription-coverage hurdle after trading costs, before additional growth and any
+other costs or taxes. It is not an expected or demonstrated return. Additional costs
+and tax treatment remain to be specified. Report deposits and withdrawals separately
+from strategy P&L so contributions cannot be counted as investment performance. Use
+the same external cash flows when comparing strategy and baseline portfolios.
 
 ## Automated quality evaluation — decided target
 
@@ -394,6 +431,11 @@ held-out evidence gates need an explicit disposition during contract reconciliat
 The evaluation design must state what can be automated, how reference judgments are
 established, and which claims remain unverified. No daily human QA obligation is added
 to the selected autonomous product experience.
+
+The [release-evidence proposal](docs/product-acceptance.md) translates the selected
+workflow into application, adapter, deployment and outcome checks. It records the
+selected pilot/reminder cadence and distinguishes proposed technical evaluation
+contracts that still need final review.
 
 ## Sections to resolve through the grill
 
