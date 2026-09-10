@@ -28,13 +28,50 @@ completion with a useful investing workflow.
 
 The discussion considers three connected functions: awareness, strategy research,
 and controlled execution, with observed outcomes feeding subsequent evaluation.
-Lucas selected an integrated research-to-human-approved-paper-trading workflow as
-the first complete release (PD-004, Round 1 Q1). Useful analysis may be delivered
-along the way; an awareness-only result does not fulfill that release goal.
+The first complete release is an integrated autonomous research-to-paper-trading
+workflow, with optional operator interaction through Discord or the supervisor/host
+(PD-007, clarifying PD-004/PD-005). Useful analysis may be delivered along the way;
+an awareness-only result does not fulfill that release goal.
 
-The detailed module responsibilities, operator workload, research breadth, and
-acceptance criteria remain open. This product target does not satisfy or relax
-the existing strategy-evidence and execution gates.
+Round 1 establishes unattended routine operation with discretionary inspection and
+interaction (PD-005/PD-007). Individual paper-trade approval is no longer the selected
+product target; the bounded paper-autonomy policy remains to be designed and reviewed.
+Initial research breadth is a core coverage list plus bounded candidate discovery
+and human ingestion (PD-006). Detailed module responsibilities and acceptance criteria
+remain open. This product target does not satisfy or relax the existing
+strategy-evidence and execution gates.
+
+## Daily operator experience — decided direction
+
+For the initial paper-testing MVP, Lucas wants the cockpit to operate autonomously
+and to check Discord at his discretion for bot performance, news, and possible
+engine improvements. A mandatory 10–20-minute daily review is not the selected
+design target.
+
+Routine operation should not depend on Lucas opening Discord, starting a daily
+research session, or individually approving each routine paper trade. Lucas can
+also inspect, question, and direct the system through Discord or its supervisor/host.
+GrokBot and a Hetzner VPS are owner-provided examples; the exact supervisor integration,
+deployment host, interaction commands, and permission boundaries remain to be selected.
+
+The paper-autonomy policy, exception escalation, and recovery behavior remain to be
+specified. This is a product design target, not a change to current mode or approval
+authority. Replacing existing individual approval requires a separately scoped and
+adversarially reviewed design consistent with the canonical safety constraints;
+the current runtime remains unchanged. Observing possible engine tweaks
+does not by itself authorize autonomous changes to code, strategy, or risk policy.
+
+## Research inputs — decided direction
+
+The MVP combines an operator-selected core coverage list, a bounded candidate-discovery
+queue, and human ingestion (PD-006, Round 1 Q3).
+
+Working interpretation to refine in the research round: Lucas can submit ideas or
+source material for investigation. Submission formats, intake surface, priority,
+duplicate handling, and provenance requirements remain open. User-submitted material
+enters the evidence workflow; submission does not certify its claims or grant
+execution eligibility. Research inclusion remains separate from the existing
+operator-controlled execution allowlist.
 
 ## Sections to resolve through the grill
 

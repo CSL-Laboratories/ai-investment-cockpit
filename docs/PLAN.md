@@ -25,6 +25,13 @@ The final documentation package must reconcile product ownership and implementat
 order explicitly. This claim changes no application, operational run, safety invariant,
 empirical gate, or execution permission.
 
+Round 1 establishes an integrated autonomous paper-testing product with optional
+Discord/supervisor interaction and core coverage plus bounded discovery and human
+ingestion. The current human-gated runtime is not changed by this product target.
+A later scoped paper-autonomy design must reconcile approval/mode/model boundaries
+and pass the applicable adversarial and evidence gates before implementation can
+deliver that target. See PD-004 through PD-007 in the planning record.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

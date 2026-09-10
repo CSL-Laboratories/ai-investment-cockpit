@@ -25,7 +25,7 @@ and the claim board, not the specification.
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 1 Q1 decided, Q2/Q3 pending | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
+| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 1 complete, Round 2 awaiting answers | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
 
 See [product-planning](product-planning.md) for the recovery record and
 [candidate product contract](../PRODUCT.md). No runtime package, empirical gate,
