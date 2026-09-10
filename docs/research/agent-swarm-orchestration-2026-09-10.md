@@ -222,7 +222,8 @@ Briefs carry a disclosure class: `public-tracked` (default leaf),
 `redacted-facts` (owner-scoped minimum), `local-only` (never leaves the host;
 leaves receive a refusal stub, not the content).
 
-Containment matrix (verified 2026-09-10):
+Containment matrix (verified 2026-09-10; laptop probes plus read-only `ssh sentry`
+inspection — no remote state changed, running pilot untouched):
 
 - Codex: `--sandbox read-only` on all OSes, plus argv inspection
   (`tool_inspector.py`: deny duplicates/aliases/unknown flags).
@@ -236,6 +237,30 @@ Containment matrix (verified 2026-09-10):
 - OpenCode: `opencode run --agent <name> -m <provider/model> --format json
   --dir <worktree>`. Treat `--auto` as dangerous (auto-approves anything not
   explicitly denied) — never set it on leaves or middles.
+
+Swarm host: `sentry` (Remote Desktop, `Lucas@sentry:22`, key auth). Verified
+read-only 2026-09-10: Windows host, WSL2 Ubuntu-24.04 installed (currently
+Stopped), `devin.exe` + `opencode` + `codex` installed, and an active Codex /
+opencode pilot running (codex since 9/9, opencode sessions 9/10 — do not touch
+those PIDs; that work is rooted outside any cockpit checkout, and sentry has no
+`ai-investment-cockpit` checkout yet). Long-running swarm work belongs on
+sentry rather than the laptop: always-on, Remote-Desktop-checkable, no
+laptop-uptime dependency. Placement and preconditions:
+
+- Clone the cockpit to a NEW sentry directory (never into the pilot's
+  `Chiron`/`Chiron-brain` trees); prefer the WSL2 Ubuntu side
+  (`~/ai-investment-cockpit`) for leaf execution so Devin `--sandbox`
+  (bwrap+seccomp) actually applies — native-Windows leaves cannot use it.
+- Starting the stopped Ubuntu-24.04 distro is a state change: owner starts it
+  or explicitly authorizes it; restore with `wsl --shutdown` when done if it
+  was stopped before.
+- Provision the SEC-05 low-priv account on sentry first
+  (`docs/setup/low-priv-agent-account.md` is written exactly for a Windows
+  host profile) so `account_guard.py` passes before any leaf runs there.
+- Head may stay thin on the laptop (briefs + merge via `ssh sentry`) or move
+  to sentry outright; prefer Head-on-sentry so a closed laptop lid cannot stall
+  the swarm. Monitoring is `ssh sentry` (`devin list`, session `--export`
+  files, leaf JSON under the sentry checkout) plus Remote Desktop as needed.
 
 ## 8. Agentic depth — verified, capped at 3
 
