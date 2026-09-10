@@ -12,6 +12,19 @@ last-verified: 2026-09-07
 
 # The plan
 
+### RW-25 product discovery — documentation in progress, 2026-09-09
+
+Lucas authorized an interactive product grill, a WIP branch, and local documentation
+commits as questions are answered. Publication and merge follow completion of the rounds.
+The claim is `RW-25` on `work/rw25-product-grill`, based on `db354a2`.
+
+[PRODUCT.md](../PRODUCT.md) is a candidate product contract; the
+[planning record](product-planning.md) separates owner decisions from recommendations
+and evidence questions. This PLAN remains development authority during discovery.
+The final documentation package must reconcile product ownership and implementation
+order explicitly. This claim changes no application, operational run, safety invariant,
+empirical gate, or execution permission.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

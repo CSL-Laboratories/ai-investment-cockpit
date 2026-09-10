@@ -21,6 +21,16 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
+## RW-25 product contract and grill — claimed 2026-09-09
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 1 pending | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
+
+See [product-planning](product-planning.md) for the recovery record and
+[candidate product contract](../PRODUCT.md). No runtime package, empirical gate,
+watchlist, mode, or execution authority is changed by this claim.
+
 ## Delivery position recorded 2026-08-24
 
 ### BUG-159 watch-only durability — claimed 2026-09-08

@@ -7,6 +7,15 @@ last-verified: 2026-09-07
 
 # Docs index
 
+## Product discovery in progress — 2026-09-09
+
+`RW-25` is the owner-led product grill on `work/rw25-product-grill`. Start with
+[the planning record](product-planning.md) to resume questions and distinguish
+confirmed decisions from recommendations. [PRODUCT.md](../PRODUCT.md) is a working
+candidate, not yet ratified; PLAN remains current development authority. Documentation
+checkpoints are committed locally as rounds are answered; publication/merge follows
+completion of the rounds.
+
 ## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
 
 BUG-146 through BUG-158 are fixed in commit slices, alongside a measured triage
