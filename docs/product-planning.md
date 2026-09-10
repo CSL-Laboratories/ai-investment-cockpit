@@ -56,6 +56,7 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-017 | decided requirement — Round 4a Q10 | Identify users and decision-makers across Discord and other surfaces; support an owner plus explicitly authorized users and credential setup. Actual credentials and deployment-specific identity/access configuration stay out of tracked GitHub content. Roles and exact identity mechanics remain open. |
 | PD-018 | decided — Round 4a Q11 | Dynamic task/model escalation informed by subscription quota, model diversity, and capabilities/intelligence. Lucas plans ChatGPT Pro + OpenCode Go next month; the earlier tier chain is illustrative, not fixed. Exact access, quotas, adapters and ranking policy remain to be verified/specified. |
 | PD-019 | architecture disposition deferred — Round 4a Q12 | Lucas wants the cockpit's complete architecture to determine standalone/plugin/MCP/Recursion deployment. He considers plugin/MCP integration plausible and notes Discord/lifecycle needs. Recursion-primary is not selected; compare the arrangements before final ratification. |
+| PD-020 | decided — Round 4b Q13 | The owner defines roles with explicit per-action permissions, enforced consistently across control surfaces. Strategy activation remains owner-reserved unless explicitly delegated. Exact roles, action grants and revocation mechanics remain open. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -90,7 +91,7 @@ unless explicitly accepted.
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
 | 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
-| 4b | Autonomy limits and intervention | questions prepared; awaiting owner | Authorized-user roles, budget/risk envelopes, provider/fault behavior; later detailed revocation/recovery contracts |
+| 4b | Autonomy limits and intervention | Q13 answered; Q14/Q15 awaiting owner | Owner-defined per-action permissions, budget/risk envelopes, provider/fault behavior; later detailed revocation/recovery contracts |
 | 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
 | 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
 
@@ -475,7 +476,12 @@ PD-016's owner strategy-activation gate remains until an explicit delegation dec
 Role names, revocation timing, session handling and exact command permissions need a
 later concrete matrix; private user bindings remain outside tracked repository content.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Owner-defined roles and per-action permissions (Recommended)”
+
+**Recorded decision:** PD-020. Use owner-defined roles and action-scoped permissions
+across interfaces. This does not grant any particular user a role or delegate strategy
+activation now. The later permission matrix must identify who can view, submit research,
+operate controls, change policy or administer access, including revocation behavior.
 
 ### Q14. How should the engine use resources and paper capital autonomously?
 
@@ -542,7 +548,8 @@ contract compatible with the current fail-closed boundary.
 
 Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
 the hosting/plugin architecture is explicitly deferred for comparison and later owner
-disposition. Present Round 4b Q13/Q14/Q15 on authorized users, limits and failures.
+disposition. Round 4b Q13 is recorded as PD-020; Q14 (operating limits) and Q15
+(failure behavior) are already presented and remain pending.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
 owner strategy activation and complete position lifecycle forward. Do not assume
 Recursion-primary or a plugin-only architecture has been selected.

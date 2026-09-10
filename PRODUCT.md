@@ -98,8 +98,10 @@ use placeholders. Secrets remain in the OS credential store under the existing c
 
 Authentication establishes the caller's identity; authorization determines which
 actions that identity may perform. PD-016 reserves strategy activation to the owner.
-Additional users' viewing, research, intervention and administrative permissions,
-onboarding, revocation, and Discord-server scoping remain to be specified. The request
+Additional users receive owner-defined roles with explicit per-action permissions,
+enforced consistently across Discord and other surfaces (PD-020, Round 4b Q13).
+Strategy activation remains owner-reserved unless explicitly delegated. The concrete
+role/action matrix, onboarding, revocation, and Discord-server scoping remain to be specified. The request
 does not select a public account service or multi-tenant SaaS architecture.
 
 Recommended design: bind each supported external identity to a stable cockpit principal
