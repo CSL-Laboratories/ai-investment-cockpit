@@ -1,10 +1,10 @@
 ---
 title: RW-25 investment-tax product contract
-status: reference
+status: live
 last-verified: 2026-09-09
 ---
 
-# Investment-tax calculation contract — candidate
+# Investment-tax calculation contract
 
 PD-042 through PD-045 select full investment-tax calculations for the MVP, US federal
 and California coverage first, and taxable brokerage accounts plus Traditional/Roth
@@ -13,8 +13,8 @@ and further verified rule sets can be added. Lucas identifies Fremont, Californi
 United States as his residence; that statement does not establish filing status,
 tax residency for an entire year, income classification or any account's actual type.
 
-The selected scope above is an owner decision. The calculation, input and validation
-contracts below are proposed specification detail for final review. This document
+The selected scope and calculation, input and validation contracts were adopted
+together by Lucas under PD-048 on 2026-09-09. This document
 does not implement, validate or activate a tax engine. Follow the
 [decision record](product-planning.md) and [release evidence contract](product-acceptance.md).
 

@@ -11,12 +11,12 @@ last-verified: 2026-09-09
 **Baseline:** `db354a246828a2f09e3245e30d66a1190943450a` (PR #84).
 **Scope:** documentation-only product discovery and contract reconciliation.
 
-This is the durable continuation point for the grill. The existing PLAN remains
-current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
-Round 9 is complete through PD-047. PRODUCT and the operating, tax, acceptance and
-delivery contracts are now consolidated for final review. Earlier question sections
-preserve their then-current recommendations and follow-ups; use **Resume here** for
-the present state rather than treating historical follow-ups as unanswered questions.
+This is the durable record of the completed grill. Lucas adopted [PRODUCT.md](../PRODUCT.md)
+and its operating, tax, acceptance and delivery contracts under PD-048 on 2026-09-09.
+PRODUCT owns product scope/acceptance and PLAN delivery order. Earlier question sections
+preserve their then-current recommendations and follow-ups; they are history, not a
+second current contract. Use **Resume here** for delivery status. Required implementation,
+runtime review and empirical qualification remain separate from ratification.
 
 ## Session protocol
 
@@ -88,6 +88,7 @@ the present state rather than treating historical follow-ups as unanswered quest
 | PD-045 | decided — Round 8c Q34 | Traditional/Roth IRAs plus 401(k), 403(b) and governmental 457(b) accounts at launch, with account-specific rules. SEP/SIMPLE and inherited cases were not selected for launch coverage. Tax-calculation capability is separate from broker account-trading support. |
 | PD-046 | decided — Round 9 Q35 | Missing personal tax context permits continued paper operation using an explicitly configured scenario, with missing personal inputs visible. Actions requiring an unverified tax restriction remain blocked. Full tax-engine release coverage is still required. |
 | PD-047 | decided — Round 9 Q36 | Raw private account/tax documents stay local by default; external models receive only minimum approved, redacted facts. The owner can authorize broader access for a particular document or provider. Public research uses normal approved routes. |
+| PD-048 | ratified — final review Q37, 2026-09-09 | “Adopt contract; finish docs branch (Recommended)”. Lucas adopts consolidated PRODUCT and its operating, tax, acceptance and delivery contracts, including technical defaults and explicit scope/gate dispositions. Product rounds are complete; finish publication/merge under PD-003. This does not qualify software/strategies/tax rules or alter runtime authority. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -108,12 +109,15 @@ actions while affected new/increased exposure is blocked.
 Launch with two or three strategies, keep future expansion and reminders explicit,
 and let the engine select supported holding horizons. Evaluate progress toward
 profitable growth beyond the owner's approximate $210/month expense benchmark.
-Detailed strategy, autonomy,
-identity/permission, intake, escalation, interaction and evaluation
-contracts remain open. Earlier assistant recommendations are not owner decisions
-unless explicitly accepted.
+PD-048 adopts the detailed operating, tax, acceptance and delivery contracts. Specific
+strategy qualification, owner deployment configuration and reviewed runtime amendments
+remain required implementation work. Historical recommendations below retain their
+then-current status; the adopted contracts define the present requirements.
 
-## Working recommendations — not ratified
+## Early working recommendations — historical
+
+This section records the initial recommendations. PD-048 subsequently adopts the
+consolidated contracts; unresolved empirical questions still require evidence.
 
 - Connect awareness, strategy research, and controlled execution through explicit
   input/output and refusal contracts, with outcome feedback into evaluation.
@@ -135,18 +139,18 @@ unless explicitly accepted.
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
 | 4a | Autonomy ownership and architecture | answers recorded through PD-019; architecture resolved in Round 6b | Owner-approved strategy activation, identity/access and dynamic routing; PD-028/PD-029 own architecture disposition |
-| 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts pending | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
-| 5 | Evaluation and feedback | complete through PD-025; evaluation mechanics pending | Working product with credible honest results; fully automated quality-evaluation target |
+| 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts adopted under PD-048 | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
+| 5 | Evaluation and feedback | complete through PD-025; evaluation contract adopted under PD-048 | Working product with credible honest results; fully automated quality-evaluation target |
 | 6a | Initial trading scope and deployment | complete through PD-027 | Cash-funded long-only US stocks/ETFs; Windows and Linux support with Lucas's Linux box primary |
 | 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
-| 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts pending | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
+| 7a | Engine releases and failure recovery | complete through PD-032; detailed contracts adopted under PD-048 | Owner-approved software releases, checked automatic recovery, human-released holds and permitted protective actions |
 | 7b | Initial strategy-suite contract | complete through PD-036 | Two or three launch strategies, expansion reminders, economic objective and engine-selected horizons |
 | 7c | Economic evaluation baseline | answered through PD-038; contribution rate unset | Owner-stated subscription expense, provisional $2,000 paper balance and contribution context |
 | 8a | Release evidence and expansion review | complete through PD-040 | At least 20 market days plus coverage; monthly expansion summaries and candidate-ready notifications |
 | 8b | Final scope boundaries | complete through PD-042 | Automatic eligibility under approved rules; full investment-tax calculations in MVP |
 | 8c | Tax coverage | complete through PD-045 | US federal and California first; taxable brokerage, Traditional/Roth IRAs and common workplace plans; extensible verified rules |
 | 9 | Tax context and private data | complete through PD-047 | Explicit paper scenarios with incomplete personal context; private documents local by default and minimal approved facts on external routes |
-| Final | Contract reconciliation and final review | consolidated package ready; owner disposition pending | Product/operating/tax/acceptance/delivery contracts and explicit scope/gate reconciliation |
+| Final | Contract reconciliation and final review | adopted — PD-048 | Product/operating/tax/acceptance/delivery contracts and explicit scope/gate reconciliation; finish authorized publication/merge |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -1081,12 +1085,12 @@ Prepared after Round 9: a rewritten [PRODUCT](../PRODUCT.md), concrete
 [tax contract](product-tax-contract.md), [acceptance contract](product-acceptance.md)
 and [delivery plan](product-delivery.md). The original answers remain intact above.
 
-The package proposes specific shared artifacts, user permissions/revocation, supported
+The package prepared for review specified shared artifacts, user permissions/revocation, supported
 file types and technical size limits, route/resource accounting, failure/recovery and
 isolated improvement behavior. It defines bounded implementation slices and explicit
 dispositions for DEC-03, current paper approval/model boundaries, static eligibility,
 independent labels, risk applicability and existing evidence/platform/pre-live gates.
-These details are reviewable specification proposals, not invented PD decisions.
+These details were proposed for this final review and then adopted under PD-048.
 
 ### Q37. Adopt the consolidated product and delivery contract, or revise it first?
 
@@ -1097,7 +1101,13 @@ are included in this review. Ratification establishes product direction and work
 dependencies, not a claim that the software, strategies or tax rules are qualified.
 Alternatively, identify changes before finishing the documentation rounds.
 
-**Owner disposition:** pending. No publication or merge has occurred.
+**Answer (2026-09-09):** “Adopt contract; finish docs branch (Recommended)”
+
+**Recorded decision:** PD-048. Adopt the consolidated product and supporting operating,
+tax, acceptance and delivery contracts, including the proposed technical defaults and
+explicit authority/evidence dispositions. Finish the documentation branch under the
+existing publication/merge instruction. This completes the product rounds; no further
+product approval is pending and no runtime or empirical PASS is implied.
 
 ## Evidence dependencies
 
@@ -1161,30 +1171,21 @@ Alternatively, identify changes before finishing the documentation rounds.
 
 ## Resume here
 
-Rounds 1–9 are complete through PD-047; all 36 scope questions have answers.
-The product target is an autonomous, standalone research-to-paper application on
-Windows and Linux, with cited rich-input research, two or three qualified launch
-strategies, dynamic routing, full position management, owner-defined permissions and
-hard limits, owner-approved strategy activation/software releases, and the selected
-failure/recovery rules. Recursion integrates when qualified.
+The grill is complete. PD-048 records Lucas's adoption of PRODUCT and its operating,
+tax, acceptance and delivery contracts on 2026-09-09. All 37 questions have answers
+and 48 decisions are recorded. No further approval is needed to finish the already
+authorized documentation publication and merge.
 
-Tax scope is US federal and California first, with taxable brokerage, Traditional/Roth
-IRAs, 401(k), 403(b) and governmental 457(b) accounts. Missing personal context permits
-explicit paper scenarios while unverified required tax restrictions remain blocking.
-Private documents stay local by default; only minimum approved, redacted facts go to
-external models unless the owner grants broader scoped access. Contribution amounts
-and actual hard caps remain deployment inputs, not assumptions from financial context.
+Ratification updates PRODUCT's live status, PLAN's product/delivery precedence,
+REGISTER's RW-25 and DEC-03 dispositions, the docs index and repository/agent entry
+points. Current runtime invariants remain unchanged; new paper authority requires
+its separately scoped reviewed implementation. No runtime tests, operational pilot
+or strategy/tax evidence are claimed by this documentation package.
 
-The consolidated PRODUCT and operating/tax/acceptance/delivery contracts are ready
-for Q37 final owner disposition. Read them as a connected review package. Proposed
-technical defaults are identified; existing independent evidence and runtime controls
-have explicit retained/reviewed-migration dispositions. No code or pilot evidence is
-claimed by this documentation work.
-
-If the owner requests changes, record them and update/commit the affected contracts.
-If the owner adopts the contract, ratify document ownership and scope notices together
-in PRODUCT, PLAN, REGISTER (including DEC-03) and README, complete documentation checks,
-then publish and merge the branch under PD-003's existing authorization. Do not ask
-again for permission to perform the already authorized publication/merge. Preserve
-runtime invariants until their separately scoped reviewed implementation changes.
-Keep the repository private and inspect remote/PR state before publication.
+Publication/merge is being completed on `work/rw25-product-grill`. Verify the private
+repository and exact PR head, publish the ratified docs, merge without bypassing
+required checks, and record the PR delivery reference. Keep history of all interview
+checkpoints. After merge, the next development step is a bounded REGISTER claim for
+delivery slice A: strategy feasibility and evaluator/reference qualification, informed
+by actual delivered/empty run artifacts. Later slices provide connected implementation
+and the required release evidence; do not restart the product grill.

@@ -7,12 +7,12 @@ last-verified: 2026-09-09
 # Cockpit architecture comparison
 
 **Disposition:** Lucas selected arrangement C under PD-028 and a standalone MVP with
-Recursion when qualified under PD-029. Technical contract and acceptance details below
-remain proposals. These product decisions do not establish implementation readiness.
-Owner decisions remain in [product-planning](product-planning.md); the candidate
-[product contract](../PRODUCT.md) is consolidated for final review. The
+Recursion when qualified under PD-029. PD-048 adopts the product and its detailed
+contracts. These decisions do not establish implementation readiness. Owner decisions
+remain in [product-planning](product-planning.md); the ratified
+[product contract](../PRODUCT.md),
 [operating contracts](product-operating-contracts.md) and
-[delivery plan](product-delivery.md) now supply concrete proposed details and
+[delivery plan](product-delivery.md) supply the adopted details and
 qualification work; the comparison below preserves the inspected baseline and rationale.
 
 ## Selected architecture direction

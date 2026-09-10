@@ -1,15 +1,15 @@
 ---
-title: RW-25 release evidence and acceptance proposal
-status: reference
+title: RW-25 release evidence and acceptance contract
+status: live
 last-verified: 2026-09-09
 ---
 
-# Release evidence and acceptance proposal
+# Release evidence and acceptance contract
 
-**Disposition:** proposed technical contract for Round 8. The 20-market-day pilot
-minimum and monthly expansion reporting are selected under PD-039/PD-040. Other
-details below remain proposals for final review. Owner directions are recorded in
-[product-planning](product-planning.md); [PRODUCT.md](../PRODUCT.md) is still a candidate.
+**Disposition:** adopted by Lucas under PD-048 on 2026-09-09 with
+[PRODUCT.md](../PRODUCT.md). The 20-market-day pilot minimum and monthly expansion
+reporting were selected under PD-039/PD-040. Owner directions and ratification are
+recorded in [product-planning](product-planning.md).
 This document specifies evidence to obtain, not tests or deployment trials already run.
 
 ## What completion must demonstrate
@@ -22,9 +22,9 @@ It supports Windows and Linux, with the primary pilot on Lucas's Linux box. Rese
 quality evaluation targets full automation. Results can be unfavorable and must remain
 visible; profitability is not required for the working-product completion declaration.
 
-The [operating contracts](product-operating-contracts.md) define the proposed shared
+The [operating contracts](product-operating-contracts.md) define the shared
 workflow, permissions, input manifest and recovery behavior. The
-[delivery plan](product-delivery.md) owns proposed implementation slices and explicit
+[delivery plan](product-delivery.md) defines implementation slices and explicit
 dispositions for current evidence and authority requirements.
 
 The following evidence must connect to the actual application and its release revision.
@@ -166,10 +166,10 @@ for unchanged candidate readiness. Exact scheduling and retry rules need specifi
 
 ## Review and implementation qualification
 
-The operating, tax and delivery contracts now supply the proposed permission/revocation
+The operating, tax and delivery contracts supply the adopted permission/revocation
 matrix, supported intake formats/limits, configuration requirements, tax coverage,
-bounded feasibility/evaluator work and delivery slices. Their technical defaults and
-reconciliation dispositions await final owner review alongside PRODUCT. Numeric
+bounded feasibility/evaluator work and delivery slices. PD-048 adopts their technical
+defaults and reconciliation dispositions alongside PRODUCT. Numeric
 operating caps must be owner-configured before autonomous operation. Feasibility work
 must establish and freeze new strategy/evaluator thresholds before measuring outcomes.
 These are explicit prerequisites to implementation/pilot acceptance; this documentation

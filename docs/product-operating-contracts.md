@@ -1,14 +1,14 @@
 ---
 title: RW-25 shared workflow and operating contracts
-status: reference
+status: live
 last-verified: 2026-09-09
 ---
 
-# Shared workflow and operating contracts — candidate
+# Shared workflow and operating contracts
 
-This document turns the decisions in [PRODUCT](../PRODUCT.md) into proposed application
-contracts for final owner review. The [planning record](product-planning.md) preserves
-the exact answers; proposed fields and defaults below are not additional owner decisions.
+This document turns the decisions in [PRODUCT](../PRODUCT.md) into application
+contracts adopted by Lucas under PD-048 on 2026-09-09. The
+[planning record](product-planning.md) preserves the answers and final ratification.
 Current safety and execution authority remains unchanged until the separately reviewed
 implementation packages in [the delivery plan](product-delivery.md) qualify it.
 
@@ -40,10 +40,10 @@ work budget, deadline and revisit condition; escalation consumes that same budge
 
 ## Intake and citations
 
-Proposed launch format manifest: text tickers, URLs and free text; PDF, DOCX, TXT/MD,
-CSV/TSV and XLSX documents; PNG, JPEG and WebP images, including screenshots. Suggested
-configurable technical limits are 20 MiB per file, 100 document pages, 50,000 populated
-spreadsheet cells and 25 megapixels per image. These are reviewable product defaults,
+Launch format manifest: text tickers, URLs and free text; PDF, DOCX, TXT/MD,
+CSV/TSV and XLSX documents; PNG, JPEG and WebP images, including screenshots. The
+configurable technical defaults are 20 MiB per file, 100 document pages, 50,000 populated
+spreadsheet cells and 25 megapixels per image. These are adopted product defaults,
 not provider entitlements or spending authority. Each surface advertises any smaller
 transport limit and offers the authenticated host intake when its transport cannot
 carry an otherwise supported file. Never silently truncate a submitted research case.
@@ -91,7 +91,7 @@ Display names, membership, a shared API key or a model's identity assertion cann
 establish per-user authority. Enforce permissions in shared application services so
 Discord, host and plugin callers cannot obtain different authority for the same action.
 
-The owner defines roles by individual action grants. The following are proposed
+The owner defines roles by individual action grants. The following are adopted
 starting role templates; assigning them is private deployment configuration.
 
 | Action family | Default authority |

@@ -1,8 +1,13 @@
 # Local AI Investment Cockpit
 
-A solo-developer, subscription-powered, **human-gated** AI investing copilot: a
-morning-brew daily briefing plus human-approved short/long-term trade decisions, run
-from one always-on Windows workstation and operated from anywhere over Discord.
+A subscription-powered investing application connecting cited research, qualified
+strategies and controlled paper positions, with Discord and host interaction.
+
+**Product contract adopted 2026-09-09:** [PRODUCT.md](PRODUCT.md) defines the autonomous
+paper MVP, Windows/Linux support, full selected tax calculations and release acceptance.
+The [delivery plan](docs/product-delivery.md) maps the integrated work and required
+reviews. The current runtime remains human-gated while that target is implemented;
+adopting the contract does not enable autonomous paper or live trading.
 
 > **Status (2026-08-24): foundation and quant engine built; paper-reliability MVP not yet
 > complete; no live trading.** On PR #53's source tree, byte-identical to clean merged main

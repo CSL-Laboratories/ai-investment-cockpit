@@ -1,16 +1,17 @@
 ---
 title: RW-25 integrated product delivery and reconciliation
-status: reference
+status: live
 last-verified: 2026-09-09
 ---
 
-# Integrated product delivery — candidate for owner review
+# Integrated product delivery
 
 The first complete release is the product in [PRODUCT](../PRODUCT.md), with the
 [operating contracts](product-operating-contracts.md),
 [tax contract](product-tax-contract.md) and [acceptance contract](product-acceptance.md).
-This proposal supplies implementation order and explicit dispositions for conflicting
-older scope. RW-25 remains documentation only. The slice names below are planning
+Adopted by Lucas under PD-048 on 2026-09-09, this plan supplies implementation order
+under PLAN and explicit dispositions for conflicting older scope. RW-25 remains
+documentation only. The slice names below are planning
 labels, not unclaimed work-package IDs or permission to deploy/spend/run a pilot.
 
 ## Deliver connected behavior
@@ -39,7 +40,7 @@ engine. Early useful research is a delivered increment, not a redefinition of th
 ## A — bounded feasibility and trustworthy evaluation
 
 At claim time freeze the shortlist, work/time/resource allowance, source acquisition
-permissions, comparison criteria and stopping conditions. Proposed first comparison:
+permissions, comparison criteria and stopping conditions. Initial comparison:
 the current cash-merger strategy plus at most five materially distinct alternatives
 within cash-funded, long-only US stocks/ETFs. Compare evidence attainability, as-of
 integrity, data coverage/cost, execution and tax requirements, supported horizons,
@@ -115,7 +116,7 @@ required scenarios, metrics/thresholds, baseline and cost assumptions, operating
 observation window and continuation/reset rules. Configuration and credentials remain
 private; the manifest uses redacted identifiers/hashes where appropriate.
 
-Proposed reset rule: a material change to decisions, execution, safety, required tax
+Pilot reset rule: a material change to decisions, execution, safety, required tax
 calculations or evaluated behavior starts a new candidate observation window. A
 nonbehavioral correction may continue only with recorded impact evidence under the
 predeclared policy. Retain previous observations with their original revisions. A
@@ -137,9 +138,10 @@ software release; its installation does not grant new strategy, cap or live auth
 
 ## Explicit reconciliation with existing authority
 
-These are proposed final-review dispositions. Until ratified, PLAN and current
-invariants retain authority. Ratification adopts the target and delivery dependencies;
-it does not claim implementation, empirical evidence or permission to bypass a gate.
+These dispositions were adopted under PD-048. PRODUCT owns product scope/acceptance
+and PLAN delivery order; current runtime invariants retain authority until their own
+reviewed implementation amendments. Ratification establishes the target and delivery
+dependencies, not implementation, empirical evidence or permission to bypass a gate.
 
 | Existing authority or gate | Product disposition and required migration |
 |---|---|
@@ -154,10 +156,10 @@ it does not claim implementation, empirical evidence or permission to bypass a g
 | DEC-09 local four-cell matrix | Retain unchanged; add product operating acceptance on both Windows and Linux and the primary Linux pilot. Hosted CI, Hetzner and working Recursion are not new release dependencies. |
 | Existing pre-live/security gates | Retain unchanged. Paper success, broader research, full tax support or owner financial aspirations grant no live trading authority. |
 
-The canonical invariant numbering remains only in CLAUDE. At product ratification,
-update PRODUCT's status, PLAN's current-target/precedence notice, REGISTER's RW-25 and
-DEC-03 dispositions, and README's reading order together. Keep older evidence dated and
-link it; do not rewrite historical outcomes as if they measured the new product.
+The canonical invariant numbering remains only in CLAUDE. PD-048's ratification updates
+PRODUCT's status, PLAN's precedence notice, REGISTER's RW-25/DEC-03 dispositions and
+the entry-point reading order together. Keep older evidence dated and linked; do not
+rewrite historical outcomes as if they measured the new product.
 Later authority implementation claims must update their own canonical contracts
 alongside reviewed code, not create a contradictory second invariant list here.
 

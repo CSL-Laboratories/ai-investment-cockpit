@@ -1,7 +1,7 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-09-07
+last-verified: 2026-09-09
 ---
 
 # The register
@@ -21,21 +21,21 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## RW-25 product contract and grill — claimed 2026-09-09
+## RW-25 product contract and grill — ratified 2026-09-09
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 9 complete through PD-047; consolidated product/operating/tax/acceptance/delivery contracts ready for final review | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
+| `RW-25` | Documentation-only product contract, grill decision record and authority/delivery reconciliation | ratified by Lucas under PD-048; rounds complete, documentation checks passed; publication/merge in progress on `work/rw25-product-grill` from `db354a2` | Lucas + Codex/Astra | Owner adopted PRODUCT and operating/tax/acceptance/delivery contracts; complete authorized publication/merge; no runtime or empirical PASS implied |
 
 See [product-planning](product-planning.md) for the recovery record and
-[candidate product contract](../PRODUCT.md). No runtime package, empirical gate,
+[ratified product contract](../PRODUCT.md). No runtime package, empirical gate,
 watchlist, mode, or execution authority is changed by this claim.
 
-The [delivery plan](product-delivery.md) names proposed scope/gate dispositions,
+The [delivery plan](product-delivery.md) owns the adopted scope/gate dispositions,
 including DEC-03's transition from sole MVP strategy to a feasibility candidate in
-the selected launch suite. Until final ratification and the applicable implementation
-reviews, the existing DEC-03 and runtime/evidence entries below retain their authority.
-Proposed delivery slice labels are not newly claimed work IDs.
+the selected launch suite. DEC-03's selection-policy amendment is recorded below;
+current runtime and applicable evidence contracts remain until their own reviewed
+implementation amendments. Delivery slice labels are not newly claimed work IDs.
 
 ## Delivery position recorded 2026-08-24
 
@@ -314,7 +314,7 @@ Not bugs. Work that cannot start until someone chooses.
 |---|---|---|
 | `DEC-01` | Is `BookSnapshot.ts` epoch or feed-relative? *(Answered by `RW-14`: polled quotes make it epoch.)* | `BUG-040` |
 | `DEC-02` | Ubuntu keyring backend: require `gnome-keyring`+dbus, accept `keyrings.alt`, or declare Ubuntu dev-only? Tests use an in-memory backend, so even a green Linux CI job would not prove that a real headless Ubuntu deploy can store a secret. | any Linux deployment |
-| `DEC-03` | **Resolved 2026-08-14:** operator selected the constrained cash-only, long-target merger-arbitrage research slice under the point-in-time calibration and safety contract in [[research/dec03-strategy-selection-2026-08-14]]. | `W-23` claimed; opening paper Orders remain fail-closed until implementation + calibration evidence + review |
+| `DEC-03` | **Selection policy amended 2026-09-09 by PD-048:** launch two or three distinct strategies selected through bounded feasibility including cash-merger, then owner activation; see [PRODUCT](../PRODUCT.md) and [delivery](product-delivery.md). The 2026-08-14 cash-merger selection remains that implementation's technical/evidence contract in [[research/dec03-strategy-selection-2026-08-14]], not the sole MVP strategy requirement. | No additional strategy is activated. Existing W-23/W-24 source, calibration, prospective cohort/current-target and witness gates remain for that implementation; other strategies require their own qualified evidence and reviewed controls. |
 | `DEC-04` | Partial-fill notional: `_pending_ok` takes the MAX signed notional across an order's history precisely to defeat laundering, so counting only the REMAINING notional after a partial needs a **new** signed payload field (`remaining_notional`), never a semantics change to `notional`. Decide the field contract before RW-15 implements the refinement. | the partial-fill cap refinement inside `RW-15` |
 | `DEC-05` | Robinhood Agentic can write only to its dedicated account but its credential can read every Robinhood account, including account numbers, balances, positions, and order history. Before any connection: accept that authority, use an identity with no other assets/data, or select a broker with narrower scope. Redaction after retrieval does not reduce token authority. | `RW-18`, `W17` |
 | `DEC-06` | Robinhood MCP version/authentication profile: use `RW-18` to discover whether the server supports the 2026-07-28 stateless core and optional OAuth Client Credentials extension or requires delegated interactive OAuth/reauthentication. Do not assume unattended machine auth. | resolved by `RW-18`; blocks `W17` |

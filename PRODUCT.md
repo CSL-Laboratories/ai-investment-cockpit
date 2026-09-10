@@ -1,16 +1,16 @@
 ---
-title: Cockpit product contract — candidate for final review
-status: reference
+title: Cockpit product contract
+status: live
 last-verified: 2026-09-09
 ---
 
 # Cockpit product contract
 
 **Owner:** Lucas. **Planning package:** RW-25.
-**Stage:** product choices recorded through PD-047; consolidated contract awaiting review.
+**Stage:** ratified by Lucas on 2026-09-09 under PD-048 (final review Q37).
 
-This is the proposed product contract. [PLAN](docs/PLAN.md) remains development
-authority until ratification. The canonical invariants in [CLAUDE](CLAUDE.md) and
+This contract owns product purpose, scope and acceptance. [PLAN](docs/PLAN.md) owns
+implementation order. The canonical invariants in [CLAUDE](CLAUDE.md) and
 the runtime boundary in [AGENTS](AGENTS.md) remain current; a product decision does
 not by itself change execution permissions or pass an empirical gate.
 
@@ -18,8 +18,8 @@ The [decision record](docs/product-planning.md) preserves owner answers and thei
 history. The [operating contracts](docs/product-operating-contracts.md),
 [tax contract](docs/product-tax-contract.md),
 [acceptance contract](docs/product-acceptance.md) and
-[delivery plan](docs/product-delivery.md) supply concrete proposed details for review.
-They distinguish selected scope from implementation proposals and unverified capability.
+[delivery plan](docs/product-delivery.md) were adopted together under PD-048.
+They define required behavior and qualification work, not already verified capability.
 
 ## Purpose and first release
 
@@ -247,7 +247,7 @@ installation of an immutable release with validation, migration/recovery and rol
 or forward-repair evidence. The running engine stays on its approved version.
 Installation does not itself activate strategies, increase limits or grant live mode.
 
-On ratification, PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery
+PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery
 order; REGISTER owns work claims; canonical subsystem contracts and evidence own
 technical controls and measured gates. The delivery plan identifies the required
 amendments to older MVP, DEC-03, approval/model, eligibility and evidence policies.
