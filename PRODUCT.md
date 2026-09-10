@@ -69,6 +69,11 @@ assistant's proposed one-strategy first-release target. The strategy roster, sup
 instruments/horizons, selection and activation criteria, and interactions among
 strategies remain to be specified.
 
+Agents develop and test candidate strategies; Lucas, as owner, approves activation
+of a new strategy or a material revision (PD-016, Round 4a Q10). Routine selection
+and paper operation within the active suite remain autonomous under its standing
+policy. The exact review evidence and definition of a material revision remain open.
+
 The current DEC-03 cash-merger selection remains the existing implementation baseline.
 The suite target requires explicit reconciliation of DEC-03 and affected contracts
 before product ratification and subsequent scoped implementation. It does not silently
@@ -78,8 +83,37 @@ Recommended design: give each strategy a versioned contract for required evidenc
 applicability, permitted actions, risk limits and evaluation. Model reasoning can assess
 which validated strategy fits a case and draft its decision; deterministic checks
 enforce eligibility and aggregate portfolio constraints through the existing order
-boundary. Strategy creation, activation, capital allocation, conflict handling and
-retirement require explicit policies rather than being inferred from model confidence.
+boundary. Strategy-development scope, activation evidence, capital allocation,
+conflict handling and retirement require explicit policies rather than being inferred
+from model confidence.
+
+## Identity and authorized access — decided direction
+
+The MVP identifies who is using the program and making decisions across Discord
+and other control surfaces. It supports an owner and explicitly authorized users,
+with setup for the identities and credentials needed to control access (PD-017).
+Actual credentials and deployment-specific identity/access configuration stay out
+of tracked GitHub content; tracked documentation and examples describe schemas and
+use placeholders. Secrets remain in the OS credential store under the existing contract.
+
+Authentication establishes the caller's identity; authorization determines which
+actions that identity may perform. PD-016 reserves strategy activation to the owner.
+Additional users' viewing, research, intervention and administrative permissions,
+onboarding, revocation, and Discord-server scoping remain to be specified. The request
+does not select a public account service or multi-tenant SaaS architecture.
+
+Recommended design: bind each supported external identity to a stable cockpit principal
+and enforce a common permission policy at the application action boundary. Record the
+human requester, executing service/agent, surface, action, outcome, and applicable policy
+or approval reference in the audit trail. Autonomous actions identify the agent/job and
+standing authorization; they must not fabricate a contemporaneous human approval.
+Discord display names, channel membership, or a model's claimed identity are not sufficient
+authorization. Exact identity bindings and audit fields remain specification work.
+
+The current single-operator setting and shared loopback API credential do not themselves
+provide this multi-user identity contract. Extend them through a scoped, adversarially
+reviewed authority design; do not implement this requirement by merely widening the
+operator list or sharing one credential among users.
 
 ## Model escalation — decided direction
 
@@ -90,18 +124,31 @@ GPT 6 Astra, if needed**. The objective is to conserve money and subscription qu
 while sustaining reliable reasoning. The example does not establish exact provider
 identifiers, availability on a chosen CLI/account, or measured savings.
 
+Routing and escalation are dynamic, based on subscription quota, model diversity,
+and model capabilities/intelligence (PD-018, Round 4a Q11). Lucas plans to use ChatGPT
+Pro plus OpenCode Go next month. This is the intended subscription context, not a
+verified entitlement or a decision to hardcode the earlier model ladder. The exact
+available models, adapters, usage signals and plan limits require verification before
+implementation; the route policy must support configuration changes over time.
+
 Recommended architecture: separate configurable task roles from provider/model pins;
 keep mechanical parsing, deduplication, timestamp/unit normalization and schema checks
 deterministic where possible, and use models for semantic extraction, interpretation,
 strategy reasoning and review. Define escalation triggers, permitted routes, termination,
 usage ceilings, unavailable-provider behavior and evidence-bearing handoffs explicitly.
-Do not require every item to traverse every tier unless the evaluation justifies it.
+Use the available qualifying routes rather than requiring every item to traverse every
+tier. Record which quota observations are known, estimated or unavailable and how fresh
+they are. Filter routes by required capability, permissions and quality constraints
+before optimizing quota/cost; uncertainty or quota exhaustion must not silently relax
+those requirements or switch to an unapproved paid route.
 
 Higher-tier review should retain access to supporting original evidence and unresolved
 contradictions, not only the previous model's conclusion. Sample ordinary low-tier
 decisions as well as escalations to measure confidently missed cases. Evaluate end-to-end
 quality, latency, repeated context, retries, cost and quota consumption; the optimal
-route and stability are empirical questions, not consequences of model count.
+route and stability are empirical questions, not consequences of model count. Model
+diversity is a routing objective; whether it improves an independent review must be
+measured rather than inferred from different model or provider names.
 
 The model-role allocation and runtime authority require reconciliation with AGENTS.md,
 the current Codex/Claude boundaries and the paper-autonomy design. The selected product
@@ -149,7 +196,7 @@ research without a reason. Exact relevance rules, priority, schedules, and work
 budgets remain to be specified. This target does not change the current scheduler
 or satisfy the prerequisites of the existing event-driven implementation packages.
 
-## Agent harness — candidate direction
+## Hosting, plugin access and agent execution — open architecture decision
 
 Lucas expects the cockpit to work with other agents and identified Project Recursion
 as a possible suitable harness if its architecture can support configured CLIs and
@@ -167,9 +214,29 @@ usage limits, cancellation, retries, and restart behavior need a tested contract
 remain in the OS credential store and outside model context; harness integration does not
 give a model broker credentials or create an additional order route.
 
-Evaluate Recursion's suitability against those requirements before choosing reuse,
-adapting the existing runner, or introducing a new dependency. Whether standalone operation
-must remain supported and how responsibilities divide across repositories are open decisions.
+Lucas has not selected Recursion as a mandatory or primary host (PD-019, Round 4a Q12).
+He describes the cockpit as a program using existing subscriptions to pursue profitable
+financial decisions, considers a plugin/MCP design plausible, and wants its relationship
+to standalone operation and Discord access resolved from the complete architecture.
+Profitability is an objective for evaluation, not an established property of the system.
+
+Compare three arrangements: a standalone cockpit with its own bounded model runner;
+a plugin loaded by a host such as Recursion; and a persistent cockpit service with
+Discord plus plugin/MCP access and an optional external agent-execution adapter.
+For each, identify ownership of state, ingest/research schedules, model jobs, credentials,
+permissions, recovery, deployment, testing and the deterministic order path.
+
+Working recommendation, not ratified: keep durable investing state and domain controls
+in a cockpit service, make Discord and plugin/MCP access adapters to the same services,
+and define model-job delegation separately. A plugin is a packaging/integration choice;
+the API/protocol surface, running process and owner of long-lived work are distinct
+decisions. Recursion may supply compatible job execution or supervision without needing
+to duplicate the investing core. Any exposed tools must respect the same permissions
+and existing order boundary; an MCP adapter must not create a model-to-broker shortcut.
+
+Evaluate Recursion's actual interfaces and the existing cockpit composition before
+selecting this recommendation. The deployment/lifecycle comparison remains open; its
+resolution must be explicit before final product ratification and implementation planning.
 
 ## Research output and source inspection — decided direction
 

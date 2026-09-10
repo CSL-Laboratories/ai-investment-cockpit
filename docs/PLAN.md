@@ -38,6 +38,12 @@ ratification must explicitly reconcile DEC-03 and the model-role boundaries with
 these targets; current strategy eligibility and runtime permissions remain unchanged.
 Exact strategies, routing policies and measured cost/quota benefits remain open.
 
+Round 4a Q10 establishes owner-approved strategy activation plus identifiable owner
+and authorized-user access across control surfaces (PD-016/PD-017). This expands the
+product target beyond the current single-operator identity configuration. The eventual
+implementation needs a scoped identity/authorization and audit design; this documentation
+claim does not provision users, credentials or permissions.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

@@ -52,12 +52,19 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-013 | decided architecture direction; example mapping — Round 3 Q7 | Use cost-conscious high-volume model processing with escalation to more capable reasoning as needed. Owner example: GPT 5.6 Luna → Muse 1.3 Spark Contributor → GPT 5.6 Sol → GPT 6 Astra. Exact routes, role contracts, measured cost/quota savings, and authority remain to be specified. |
 | PD-014 | decided — Round 3 Q8 | Investigate uncertain candidates within bounds, then monitor for specified evidence. Lucas reinforces early consideration of cross-model architecture and the Recursion harness under development. |
 | PD-015 | decided — Round 3 Q9 | Manage the complete paper-position lifecycle, including entry, monitoring, policy-permitted adjustment/cancellation, exit, reconciliation and recorded outcomes. |
+| PD-016 | decided — Round 4a Q10 | Agents develop and test candidate strategies; Lucas approves activation of a new strategy or material revision. Routine operation of activated strategies remains autonomous under standing policy. |
+| PD-017 | decided requirement — Round 4a Q10 | Identify users and decision-makers across Discord and other surfaces; support an owner plus explicitly authorized users and credential setup. Actual credentials and deployment-specific identity/access configuration stay out of tracked GitHub content. Roles and exact identity mechanics remain open. |
+| PD-018 | decided — Round 4a Q11 | Dynamic task/model escalation informed by subscription quota, model diversity, and capabilities/intelligence. Lucas plans ChatGPT Pro + OpenCode Go next month; the earlier tier chain is illustrative, not fixed. Exact access, quotas, adapters and ranking policy remain to be verified/specified. |
+| PD-019 | architecture disposition deferred — Round 4a Q12 | Lucas wants the cockpit's complete architecture to determine standalone/plugin/MCP/Recursion deployment. He considers plugin/MCP integration plausible and notes Discord/lifecycle needs. Recursion-primary is not selected; compare the arrangements before final ratification. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
 categories, a strategy suite, tiered model reasoning, monitored unresolved cases and
-complete paper-position management. Recursion remains a candidate
-harness. Detailed strategy, autonomy, intake, escalation, interaction and evaluation
+complete paper-position management, owner-approved strategy activation, identifiable
+authorized users, and dynamic subscription/capability/diversity-aware routing. Recursion
+remains a candidate integration; service/plugin/host ownership is explicitly unresolved.
+Detailed strategy, autonomy,
+identity/permission, intake, escalation, interaction and evaluation
 contracts remain open. Earlier assistant recommendations are not owner decisions
 unless explicitly accepted.
 
@@ -82,8 +89,8 @@ unless explicitly accepted.
 | 1 | Purpose and first usable daily experience | complete — PD-004 through PD-007 | Integrated autonomous paper MVP, optional Discord/supervisor interaction, core/discovery/human inputs |
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
-| 4a | Autonomy ownership and architecture | questions prepared; awaiting owner | Strategy activation/change authority, model-routing policy, Recursion relationship |
-| 4b | Autonomy limits and intervention | pending | Budget/risk envelopes, provider/fault behavior, operator commands and recovery |
+| 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
+| 4b | Autonomy limits and intervention | questions prepared; awaiting owner | Authorized-user roles, budget/risk envelopes, provider/fault behavior; later detailed revocation/recovery contracts |
 | 5 | Evaluation and feedback | pending | Outcome measures, independent checks, failure learning, acceptance examples |
 | 6 | First release and progression | pending | Reconciled contract, bounded delivery packages, final owner review |
 
@@ -358,7 +365,28 @@ Alternatives are automatic paper-only activation after predeclared independent v
 or a fixed MVP suite with expansion performed outside the runtime. Exact activation
 evidence, review independence and the meaning of a material change remain to be defined.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Agents develop/test; I approve activation. Make sure though,
+since this is both being run to be controlled to discord servers and otherwise, that
+there is a way to identify who is using the program and making decisions. There should
+be ways to setup authorized credentials (owner + authorized users). Obviously don't
+publish it in the GitHub, but use it otherwise.”
+
+**Recorded decisions:** PD-016 selects owner approval for new-strategy activation and
+material revisions, while retaining autonomous routine operation. PD-017 adds identifiable
+owner/authorized-user access across control surfaces and excludes actual credential and
+deployment identity/access data from tracked repository content. Supporting configuration
+schemas, setup code and placeholder examples remain legitimate repository material.
+
+**Recommended specification detail, not separately ratified:** a stable internal user
+identity with explicit external identity bindings and action-scoped permissions. Preserve
+both requester and executing agent/service in audit provenance. For autonomous work,
+record the standing authorization instead of impersonating a human. Define owner setup,
+user enrolment, role grants, revocation and surface/server scoping. Preserve OS-vault
+secret storage and avoid shared credentials that erase individual attribution.
+
+**Open follow-up:** Round 4b must define which actions authorized users may take.
+Their presence does not delegate strategy activation or owner administration automatically.
+Multi-server wording does not by itself select multi-tenancy or a public account system.
 
 ### Q11. Should the model route follow a fixed ladder or adapt to the task?
 
@@ -370,11 +398,31 @@ sequence for escalation, or mandatory senior review of every paper decision. All
 retain bounded cost/quota use, provenance and deterministic execution controls; those
 limits and exact role mappings remain for specification and measurement.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Since next month I'm going to be driving ChatGPT Pro +
+Opencode Go subscription we should configure the task and model escalation to be
+dynamic depending on subscription quota, model diversity, and model capabilities/intelligence.”
+
+**Recorded decision:** PD-018. Dynamic routing uses subscription quota, model diversity
+and capability/intelligence as selection factors. The intended next-month subscription
+mix is ChatGPT Pro plus OpenCode Go. The earlier Luna → Spark → Sol → Astra sequence
+remains an example profile; it is not the mandatory routing order.
+
+**Recommended specification detail, not separately ratified:** qualify routes by task
+modality, tool/permission scope and demonstrated quality, then optimize among qualifying
+routes using current quota/cost/latency and review-diversity needs. Distinguish observed,
+estimated and unavailable quota signals; retain their source and freshness. Record route
+choice, escalation reason and actual use. Provider diversity does not by itself prove
+independent error detection. Unknown/exhausted quota must not silently weaken validation
+or move work to a route with unapproved spending or authority.
+
+**Evidence dependency:** verify the actual models, supported CLI/API access, quota
+signals and plan limits for the selected subscriptions when specifying the adapters.
+This answer does not establish that either plan includes any particular named model,
+grant new credentials or authorize subscription purchases/API spending.
 
 ### Q12. What relationship should the MVP have with Recursion?
 
-Recommendation: target Recursion as the primary production harness while retaining a
+Original recommendation (not selected; architecture comparison requested): target Recursion as the primary production harness while retaining a
 minimal local/test runner for the same cockpit contracts. Keep evidence and strategy/risk
 semantics in the cockpit; avoid duplicating a general supervisor inside it. Alternatives
 are requiring Recursion for all operation, or shipping a standalone cockpit first with
@@ -382,6 +430,75 @@ Recursion integration later. The recommended direction requires verifying Recurs
 actual interfaces early and testing the composed Recursion/cockpit flow; a local fake
 adapter cannot certify the real integration. Recursion may therefore become a release
 dependency, whose readiness must be tracked explicitly.
+
+**Answer (2026-09-09):** “I think it really depends on the architecture of the cockpit
+as a whole. Since it's basically a standalone program that \"harnesses\" the capabilities
+of your existing subscriptions to try and make profitable financial decisions, it feels
+more like a plugin/mcp design than a harness. However, the other aspects such as the
+Discord communication makes it increasingly dependent on being its standalone program.
+It's a difficult decision that is worth ironing out”
+
+**Recorded disposition:** PD-019. Recursion-primary is not selected. Compare deployment
+and integration arrangements based on the full architecture and operating needs, then
+return the concrete recommendation for owner disposition before final ratification.
+Other permission and budget questions can proceed independently.
+
+**Architecture distinction:** packaging as a plugin, exposing an MCP/API surface,
+running a persistent service, and delegating model work are different choices. A
+persistent application can have both Discord and MCP access. Discord does not alone
+determine where its state, scheduler or model-job lifecycle must live.
+
+**Comparison to prepare within product architecture planning:**
+
+| Arrangement | Benefit to investigate | Obligation/tradeoff to resolve |
+|---|---|---|
+| Standalone cockpit and runner | Independent operation and direct ownership of lifecycle | Potential duplication of subscription routing/supervision being built in Recursion |
+| Host-loaded plugin | Reuse host execution, identity and configured routes where compatible | Host coupling; durability, scheduling and recovery if the host stops or changes |
+| Persistent cockpit service with Discord and plugin/MCP adapters | One investing core, multiple interaction surfaces, optional external job execution | Explicit service/adapter lifecycle, authentication and integration acceptance |
+
+**Working recommendation, not ratified:** investigate the service-plus-adapters
+arrangement first. Keep investing state/evidence and deterministic controls under one
+domain owner; define job delegation independently. A thin integration should reuse the
+same application actions and authorization rather than duplicating workflows. Tools
+exposed to agents must remain within existing authority; plugin/MCP packaging grants
+no direct model access to a broker or permission to change risk policy.
+
+## Round 4b — permissions, limits and failure behavior
+
+### Q13. How should permissions for additional authorized users be assigned?
+
+Recommendation: owner-defined roles with explicit per-action permissions, applied
+consistently across Discord and other surfaces. This allows a viewer, research contributor
+or delegated operator without making all users administrators. Alternatives are limiting
+every additional user to viewing/research, or granting all authorized users full control.
+PD-016's owner strategy-activation gate remains until an explicit delegation decision.
+Role names, revocation timing, session handling and exact command permissions need a
+later concrete matrix; private user bindings remain outside tracked repository content.
+
+**Answer:** pending.
+
+### Q14. How should the engine use resources and paper capital autonomously?
+
+Recommendation: the owner sets hard outer limits for inference spending/subscription
+use and paper risk/capital; agents allocate work and choose among active strategies
+within those limits. Increasing a hard limit requires owner approval. Alternatives are
+fixed per-model/per-strategy budgets, or human approval for each resource grant. Numeric
+ceilings, accounting periods, reservations and the distinction between available and
+unknown quota remain specification work. This asks who controls the envelope, not
+for real-money trading parameters or permission to spend now.
+
+**Answer:** pending.
+
+### Q15. What should happen when a required feed/model fails or quota runs out?
+
+Recommendation: use only already-approved qualifying fallback routes within budget;
+if required evidence or capability is still unavailable, suspend affected unsafe actions,
+continue safe monitoring, and report the reason. Existing positions follow an explicit
+failure policy rather than invented exits. Alternatives are halting the entire service
+on every dependency failure, or requiring operator intervention before any fallback.
+Fallback must preserve capability/authority requirements. Recovery of the affected
+actions, durable safety holds and automatic-versus-human resume require a specific
+contract compatible with the current fail-closed boundary.
 
 **Answer:** pending.
 
@@ -398,6 +515,12 @@ dependency, whose readiness must be tracked explicitly.
 - Recursion's current CLI/credential integrations, job lifecycle, and compatibility
   with the cockpit's hardened agent boundary have not been established in this round.
   Treat them as a future interface/suitability investigation, not a completed dependency.
+- Identity baseline inspected for Q10: `app/config/settings.py` limits the configured
+  operator list to one entry; `app/orchestrator/auth.py::ApiKeyAuth` validates one
+  shared keyring-backed API credential and does not return an individual user principal.
+  Supporting multiple authorized humans requires an explicit identity/permission design,
+  not a claim that the existing key already provides user attribution. No actual keys,
+  user IDs, account bindings or live access configuration were inspected or printed.
 - Model-route evidence checked 2026-09-09: official OpenAI pages describe
   [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) for
   cost-sensitive high-volume work,
@@ -408,13 +531,20 @@ dependency, whose readiness must be tracked explicitly.
   routing quality or the account's subscription/CLI entitlement. Muse 1.3 Spark
   Contributor's integration and the complete route's cost/quota behavior remain
   unverified. API list prices do not establish subscription quota savings.
+- PD-018's planned ChatGPT Pro + OpenCode Go subscription mix is owner-stated intent.
+  Account-specific entitlement and quota telemetry have not been inspected; published
+  API model descriptions cannot certify availability through a subscription or CLI.
+- PD-019 leaves the deployment architecture unresolved. Prepare the lifecycle/state/
+  permission/interface comparison above and evaluate actual Recursion compatibility;
+  do not treat an unselected primary-harness proposal as an implementation prerequisite.
 
 ## Resume here
 
-Rounds 1–3 are complete through PD-015. Round 4a Q10/Q11/Q12 are prepared above;
-4b will cover operating limits and intervention. Carry the autonomous paper MVP,
-strategy suite, tiered reasoning, full input scope and complete position lifecycle
-forward. Treat Recursion as an early architecture consideration whose precise role
-is being decided in Q12.
+Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
+the hosting/plugin architecture is explicitly deferred for comparison and later owner
+disposition. Present Round 4b Q13/Q14/Q15 on authorized users, limits and failures.
+Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
+owner strategy activation and complete position lifecycle forward. Do not assume
+Recursion-primary or a plugin-only architecture has been selected.
 Record each incoming answer, update PRODUCT.md, validate the diff and commit the
 checkpoint. Do not interpret silence or recommendation selection defaults as answers.
