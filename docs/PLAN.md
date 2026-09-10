@@ -52,6 +52,17 @@ human-label requirements and the validity of automated reference/judge evidence.
 Owner strategy activation remains separate; no empirical gate is passed or removed
 by recording these targets.
 
+Round 6a Q18 bounds the initial paper strategy suite to cash-funded, long-only US
+stocks and ETFs (PD-026). Reconcile the selected instrument scope with DEC-03,
+eligibility, cash/settlement and broker contracts during specification. Multiple
+strategies remain in scope; this decision does not activate instruments or strategies.
+
+Round 6a Q19 requires Windows and Linux support at first release, with Lucas's Linux
+box as the primary deployment target (PD-027). Both need operating/deployment acceptance
+alongside the existing DEC-09 matrix. A particular hosting provider and the role of
+Recursion remain unselected; see the [architecture comparison](product-architecture-options.md)
+before resolving PD-019 or adding integration dependencies to delivery packages.
+
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 
 The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`

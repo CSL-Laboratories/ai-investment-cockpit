@@ -62,6 +62,8 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-023 | decided — Round 4b Q15 | Approved qualifying fallback routes within budget, then suspension of affected unsafe actions with safe monitoring and reporting. Existing-position failure policy and recovery conditions remain to be specified. |
 | PD-024 | decided — Round 5 Q16 | First-release success is a working, useful and reliable integrated paper product plus credible evaluation with honest results. Positive profitability is not a completion requirement; existing evidence/activation gates remain. |
 | PD-025 | decided target — Round 5 Q17 | Aim for fully automated research-quality and model-routing evaluation. Replaces the assistant's recommended routine human sample review; owner strategy-activation approval remains separate. The automated evaluator and reference evidence need validation; existing independent-evidence requirements require explicit reconciliation, not silent waiver. |
+| PD-026 | decided — Round 6a Q18 | The MVP strategy suite trades cash-funded, long-only US stocks and ETFs on paper. Broader research remains possible; shorting, margin borrowing, options and other asset classes are outside initial execution scope. Strategy roster, specific instrument eligibility and cash/settlement contracts remain open. |
+| PD-027 | decided — Round 6a Q19 | Support Windows and Linux in the first release, emphasizing Lucas's Linux box as the primary deployment target. Supersedes the Linux-first/Windows-development-only recommendation; no specific VPS/provider or Recursion dependency is selected. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -69,8 +71,11 @@ categories, a strategy suite, tiered model reasoning, monitored unresolved cases
 complete paper-position management, owner-approved strategy activation, identifiable
 authorized users, dynamic subscription/capability/diversity-aware routing, owner-approved
 hard limits, approved fallback with safe suspension, honest product/evaluation success,
-and a fully automated quality-evaluation target. Recursion
+and a fully automated quality-evaluation target. Initial paper execution covers
+cash-funded, long-only US stocks and ETFs. Recursion
 remains a candidate integration; service/plugin/host ownership is explicitly unresolved.
+Both Windows and Linux are supported at first release, with Lucas's Linux box primary
+for deployment.
 Detailed strategy, autonomy,
 identity/permission, intake, escalation, interaction and evaluation
 contracts remain open. Earlier assistant recommendations are not owner decisions
@@ -100,8 +105,9 @@ unless explicitly accepted.
 | 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
 | 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts pending | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
 | 5 | Evaluation and feedback | complete through PD-025; evaluation mechanics pending | Working product with credible honest results; fully automated quality-evaluation target |
-| 6a | Initial trading scope and deployment | Q18–Q19 presented; awaiting owner | Executable instrument scope and first unattended deployment target |
-| 6b | Architecture and release contract | pending | Architecture comparison and disposition, remaining policy contracts, bounded delivery packages, final owner review |
+| 6a | Initial trading scope and deployment | complete through PD-027 | Cash-funded long-only US stocks/ETFs; Windows and Linux support with Lucas's Linux box primary |
+| 6b | Architecture and integration dependency | Q20–Q21 presented; awaiting owner | Disposition of concrete service/plugin/host comparison and Recursion release dependency |
+| 7 | Release contract and progression | pending | Remaining policy contracts, acceptance and bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -599,7 +605,15 @@ position-lifecycle contracts. This is a proposed product boundary, not a strateg
 selection or an investment recommendation. Current eligibility and risk rules remain
 until an explicitly reviewed implementation changes them.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Long-only US stocks and ETFs (Recommended)”
+
+**Recorded decision:** PD-026. Accept the recommended cash-funded, long-only US
+stock/ETF scope for the paper MVP's strategy suite. This selects an instrument and
+position boundary, not a single strategy. Broader research remains possible. Shorting,
+margin borrowing, options and other asset classes are outside initial execution
+scope. Specific instrument/ETF eligibility, trading horizons, cash/settlement handling
+and portfolio exposure rules remain to be specified; no current allowlist, strategy
+activation or broker capability changes merely by recording the product decision.
 
 ### Q19. Where should the first unattended pilot run?
 
@@ -611,6 +625,48 @@ supervision and recovery acceptance; it does not select Recursion or require sep
 copies of investing state. The existing native Windows/WSL2 × Python 3.11/3.12 test
 matrix remains required regardless of the pilot host. No hosting purchase, deployment,
 credential change or service operation is authorized by answering this question.
+
+**Answer (2026-09-09):** “I think we should support Windows and Linux for the first
+release, but it should be emphasized that we are going to be using my linux box for
+deployment”
+
+**Recorded decision:** PD-027. Both Windows and Linux are first-release supported
+operating platforms; Lucas's Linux box is the primary deployment target. Supersedes
+the recommendation to prioritize Linux deployment while retaining Windows mainly
+for development/local use. Do not infer a particular VPS/provider, simultaneous active
+replicas, or a Recursion dependency. Both platforms need operational acceptance in
+addition to the unchanged four-cell DEC-09 test matrix. Host configuration and Linux
+distribution remain to be established before deployment implementation.
+
+## Round 6b — architecture and integration dependency
+
+The [architecture comparison](product-architecture-options.md) is the reviewable
+proposal for PD-019's deferred decision. It distinguishes inspected source from
+required integration evidence and preserves the selected platform scope.
+
+### Q20. Which component should own the running investing application?
+
+Recommendation: a persistent cockpit service owns research, strategies, paper state,
+investing schedules and deterministic controls. Discord and host/plugin/MCP adapters
+call the same application services; a bounded executor supplies model jobs. Recursion
+can provide that execution when qualified. Alternatives are a host-owned cockpit
+plugin, coupling investing availability/recovery to the host, or a fully self-contained
+cockpit that also builds the general agent-platform capabilities. The recommendation
+extends the existing composition and avoids duplicating Recursion's general platform
+work. Process packaging and adapter protocols remain implementation design choices;
+an integration must preserve attribution and the existing order boundary.
+
+**Answer:** pending.
+
+### Q21. Must a working Recursion integration be demonstrated before the paper MVP releases?
+
+Recommendation: release a working standalone cockpit with the shared model-job contract
+and integrate Recursion when it passes that contract's real integration checks. Keep
+the contract and compatibility investigation in current design; a fake executor is
+not evidence that Recursion works. Alternatively, require both standalone operation
+and demonstrated Recursion integration for the first release, accepting a dependency
+on Recursion readiness. This decides release dependency, not permission to silently
+remove previously selected product capabilities or to claim an untested integration.
 
 **Answer:** pending.
 
@@ -624,9 +680,12 @@ credential change or service operation is authorized by answering this question.
 - The existing canonical safety constraints remain in [CLAUDE.md](../CLAUDE.md) and
   [AGENTS.md](../AGENTS.md); detailed empirical and pre-live gates remain in PLAN and
   the existing subsystem documents.
-- Recursion's current CLI/credential integrations, job lifecycle, and compatibility
-  with the cockpit's hardened agent boundary have not been established in this round.
-  Treat them as a future interface/suitability investigation, not a completed dependency.
+- The local Recursion tracking snapshot `origin/master` at `f197669` was inspected
+  read-only for the architecture comparison, including v3 product, route, migration
+  and M1B execution contracts. It supplies relevant design and bounded fixture evidence,
+  not cockpit integration or live subscription/host conformance. The cockpit runner's
+  subprocess contract is not already a generic Recursion job adapter. See the comparison
+  for exact source paths and remaining compatibility checks.
 - Identity baseline inspected for Q10: `app/config/settings.py` limits the configured
   operator list to one entry; `app/orchestrator/auth.py::ApiKeyAuth` validates one
   shared keyring-backed API credential and does not return an individual user principal.
@@ -658,8 +717,10 @@ credential change or service operation is authorized by answering this question.
 Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
 the hosting/plugin architecture is explicitly deferred for comparison and later owner
 disposition. Round 4b is recorded through PD-023 and Round 5 through PD-025.
-Round 6a Q18–Q19 are presented and awaiting answers on executable scope and pilot hosting.
-Use those answers to inform the concrete architecture comparison; do not infer them.
+Round 6a is complete through PD-027: cash-funded, long-only US stocks and ETFs;
+Windows and Linux support with Lucas's Linux box as primary deployment.
+Round 6b Q20–Q21 are presented alongside the architecture comparison. Record the
+owner's architecture and Recursion-dependency choices; neither is selected yet.
 Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
 contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,

@@ -51,8 +51,10 @@ design target.
 Routine operation should not depend on Lucas opening Discord, starting a daily
 research session, or individually approving each routine paper trade. Lucas can
 also inspect, question, and direct the system through Discord or its supervisor/host.
-GrokBot and a Hetzner VPS are owner-provided examples; the exact supervisor integration,
-deployment host, interaction commands, and permission boundaries remain to be selected.
+GrokBot and a Hetzner VPS are owner-provided examples. The first release supports
+Windows and Linux, with Lucas's Linux box as the primary deployment target (PD-027).
+Exact supervisor integration, interaction commands and permission boundaries remain
+to be specified.
 
 The paper-autonomy policy, exception escalation, and recovery behavior remain to be
 specified. This is a product design target, not a change to current mode or approval
@@ -65,9 +67,17 @@ does not by itself authorize autonomous changes to code, strategy, or risk polic
 
 The MVP should support a suite of strategies that model reasoning can evaluate and
 employ through an escalation architecture (PD-012, Round 3 Q7). This supersedes the
-assistant's proposed one-strategy first-release target. The strategy roster, supported
-instruments/horizons, selection and activation criteria, and interactions among
-strategies remain to be specified.
+assistant's proposed one-strategy first-release target. The strategy roster, trading
+horizons, selection and activation criteria, and interactions among strategies remain
+to be specified.
+
+The initial executable scope is cash-funded, long-only US stocks and ETFs (PD-026,
+Round 6a Q18). The suite can contain multiple strategies within that scope. Short
+positions, margin borrowing, options and other asset classes are outside the first
+paper release's trading scope; research can examine broader markets and events.
+Specific instrument/ETF eligibility, cash and settlement handling, and portfolio
+exposure rules remain specification work. Coverage or discovery alone does not grant
+an instrument execution eligibility.
 
 Agents develop and test candidate strategies; Lucas, as owner, approves activation
 of a new strategy or a material revision (PD-016, Round 4a Q10). Routine selection
@@ -225,6 +235,15 @@ or satisfy the prerequisites of the existing event-driven implementation package
 
 ## Hosting, plugin access and agent execution — open architecture decision
 
+The first release supports operation on both Windows and Linux, with deployment
+focused on Lucas's Linux box (PD-027, Round 6a Q19). Windows support is release scope,
+not just a development convenience. The Linux box is not assumed to be a VPS or a
+particular provider. Installation, credential provisioning, unattended startup,
+shutdown/restart, recovery and diagnostics need acceptance on both supported systems;
+the existing four-cell DEC-09 test matrix remains required. Exact Linux distribution
+and host configuration remain deployment details. Supporting both platforms does not
+select simultaneous active replicas of one portfolio.
+
 Lucas expects the cockpit to work with other agents and identified Project Recursion
 as a possible suitable harness if its architecture can support configured CLIs and
 credentials (PD-010). This is a candidate integration to evaluate, not a selected
@@ -264,6 +283,9 @@ and existing order boundary; an MCP adapter must not create a model-to-broker sh
 Evaluate Recursion's actual interfaces and the existing cockpit composition before
 selecting this recommendation. The deployment/lifecycle comparison remains open; its
 resolution must be explicit before final product ratification and implementation planning.
+The [architecture comparison](docs/product-architecture-options.md) records the
+inspected source baseline, three arrangements, proposed ownership and integration
+acceptance, and the remaining owner choices. Its recommendation is not yet selected.
 
 ## Research output and source inspection — decided direction
 
