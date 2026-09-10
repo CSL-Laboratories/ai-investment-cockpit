@@ -18,6 +18,7 @@ Lucas authorized the product grill, a WIP branch and local documentation commits
 with publication/merge after the rounds finish. RW-25 is claimed on
 `work/rw25-product-grill` from `db354a2`. PD-048 records final adoption after the
 47 scope/process decisions through Round 9; the grill rounds are complete.
+Documentation delivery: [PR #85](https://github.com/NotSkittlz/ai-investment-cockpit/pull/85).
 
 [PRODUCT](../PRODUCT.md) now defines the adopted integrated autonomous paper
 product. The [decision record](product-planning.md) preserves exact answers and

@@ -25,7 +25,7 @@ and the claim board, not the specification.
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-25` | Documentation-only product contract, grill decision record and authority/delivery reconciliation | ratified by Lucas under PD-048; rounds complete, documentation checks passed; publication/merge in progress on `work/rw25-product-grill` from `db354a2` | Lucas + Codex/Astra | Owner adopted PRODUCT and operating/tax/acceptance/delivery contracts; complete authorized publication/merge; no runtime or empirical PASS implied |
+| `RW-25` | Documentation-only product contract, grill decision record and authority/delivery reconciliation | delivered in [PR #85](https://github.com/NotSkittlz/ai-investment-cockpit/pull/85) from `work/rw25-product-grill` / baseline `db354a2`; ratified by Lucas under PD-048 | Lucas + Codex/Astra | All 37 questions answered, 48 decisions recorded, contracts adopted and documentation checks passed; PR records merge disposition; no runtime or empirical PASS implied |
 
 See [product-planning](product-planning.md) for the recovery record and
 [ratified product contract](../PRODUCT.md). No runtime package, empirical gate,

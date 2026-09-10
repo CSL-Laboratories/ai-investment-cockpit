@@ -1182,10 +1182,15 @@ points. Current runtime invariants remain unchanged; new paper authority require
 its separately scoped reviewed implementation. No runtime tests, operational pilot
 or strategy/tax evidence are claimed by this documentation package.
 
-Publication/merge is being completed on `work/rw25-product-grill`. Verify the private
-repository and exact PR head, publish the ratified docs, merge without bypassing
-required checks, and record the PR delivery reference. Keep history of all interview
-checkpoints. After merge, the next development step is a bounded REGISTER claim for
-delivery slice A: strategy feasibility and evaluator/reference qualification, informed
-by actual delivered/empty run artifacts. Later slices provide connected implementation
-and the required release evidence; do not restart the product grill.
+Documentation is published in [PR #85](https://github.com/NotSkittlz/ai-investment-cockpit/pull/85)
+from `work/rw25-product-grill`; that PR records the merge disposition. The repository
+was verified private. Local document links, whitespace and decision-sequence checks
+pass; the canonical nine-invariant block and Codex boundary are unchanged, and the
+application/CI diff is empty. The runtime matrix was not rerun for documentation-only
+changes. Interview checkpoints remain in branch history.
+
+After the PR merges, the next development step is a bounded REGISTER claim for delivery
+slice A: strategy feasibility and evaluator/reference qualification, informed by actual
+delivered/empty run artifacts. Later slices provide connected implementation and the
+required release evidence; do not restart the product grill. If resuming before merge,
+finish the already authorized merge after verifying the PR head and required checks.
