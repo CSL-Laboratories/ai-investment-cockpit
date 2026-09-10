@@ -28,9 +28,13 @@ completion with a useful investing workflow.
 
 The discussion considers three connected functions: awareness, strategy research,
 and controlled execution, with observed outcomes feeding subsequent evaluation.
-Their exact responsibilities, first-release scope, user experience, and acceptance
-criteria remain open. A useful daily briefing is a proposed increment, not an
-owner-selected substitute for the broader product ambition.
+Lucas selected an integrated research-to-human-approved-paper-trading workflow as
+the first complete release (PD-004, Round 1 Q1). Useful analysis may be delivered
+along the way; an awareness-only result does not fulfill that release goal.
+
+The detailed module responsibilities, operator workload, research breadth, and
+acceptance criteria remain open. This product target does not satisfy or relax
+the existing strategy-evidence and execution gates.
 
 ## Sections to resolve through the grill
 

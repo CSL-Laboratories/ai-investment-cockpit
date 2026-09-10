@@ -40,9 +40,11 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-001 | confirmed problem | Completed runs fail to provide useful analysis or paper trades. This is the primary frustration identified in the review. |
 | PD-002 | confirmed process | Use an interactive product grill to develop the product direction and specifications. |
 | PD-003 | authorized | Branch and commit documentation checkpoints as grill questions are answered; publish and merge after the rounds finish. |
+| PD-004 | decided — Round 1 Q1 | The first complete release is an integrated research-to-human-approved-paper-trading workflow, with useful analysis delivered along the way. |
 
-The first-release shape, target daily effort, and initial research breadth are not
-yet decided. Earlier assistant recommendations are not owner decisions.
+The first-release direction is decided. Target daily effort, initial research breadth,
+and detailed acceptance criteria remain open. Earlier assistant recommendations are
+not owner decisions unless explicitly accepted.
 
 ## Working recommendations — not ratified
 
@@ -59,7 +61,7 @@ yet decided. Earlier assistant recommendations are not owner decisions.
 
 | Round | Theme | State | Expected output |
 |---|---|---|---|
-| 1 | Purpose and first usable daily experience | questions prepared; awaiting owner | First-release goal, operator workload, initial research breadth |
+| 1 | Purpose and first usable daily experience | Q1 answered; Q2/Q3 awaiting owner | First-release goal, operator workload, initial research breadth |
 | 2 | Research behavior and evidence | pending | Research questions, source/coverage policy, uncertainty and useful output |
 | 3 | Strategy and candidate lifecycle | pending | Candidate stages, refusal/waiting states, transition contracts |
 | 4 | Autonomy and control | pending | Explicit authority for development, research, and investment operations |
@@ -80,7 +82,12 @@ value. Alternatives are an awareness-only first release or a strategy-feasibilit
 research release. An integrated target is broader; it must not manufacture paper orders
 to satisfy a milestone.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Integrated research → approved paper trading (Recommended)”
+
+**Recorded decision:** PD-004. The first complete release must connect research to
+human-approved paper trading. Useful intermediate analysis does not alone complete
+that release. Detailed trading scenarios, evidence, and acceptance thresholds remain
+for later rounds; this answer does not select the daily workload or research breadth.
 
 ### Q2. What routine workload should remain for Lucas?
 
@@ -116,6 +123,7 @@ eligibility, and this question does not authorize changing the current watchlist
 
 ## Resume here
 
-Present Round 1 and wait for Lucas's answers. Record those answers and their implications,
-update PRODUCT.md, validate the diff and commit the answered-round checkpoint before
-moving to Round 2. Do not interpret silence or recommendation selection defaults as answers.
+Round 1 Q1 is answered and recorded as PD-004. Q2 (daily involvement) and Q3 (research
+breadth) are already presented and remain pending. Record each incoming answer, update
+PRODUCT.md, validate the diff and commit the checkpoint. Complete Round 1 before moving
+to Round 2. Do not interpret silence or recommendation selection defaults as answers.
