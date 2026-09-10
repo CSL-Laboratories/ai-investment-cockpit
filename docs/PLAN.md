@@ -59,9 +59,14 @@ strategies remain in scope; this decision does not activate instruments or strat
 
 Round 6a Q19 requires Windows and Linux support at first release, with Lucas's Linux
 box as the primary deployment target (PD-027). Both need operating/deployment acceptance
-alongside the existing DEC-09 matrix. A particular hosting provider and the role of
-Recursion remain unselected; see the [architecture comparison](product-architecture-options.md)
-before resolving PD-019 or adding integration dependencies to delivery packages.
+alongside the existing DEC-09 matrix. A particular hosting provider remains unselected.
+
+Round 6b resolves PD-019: a persistent cockpit owns the investing application and
+integrations use its shared services (PD-028). The MVP must work standalone; Recursion
+integration follows qualification and is not a release dependency (PD-029). Design the
+common execution contract now. The [architecture comparison](product-architecture-options.md)
+records the selection and remaining technical proposals; no runtime or order-authority
+change follows from this documentation checkpoint.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

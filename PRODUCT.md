@@ -233,7 +233,7 @@ research without a reason. Exact relevance rules, priority, schedules, and work
 budgets remain to be specified. This target does not change the current scheduler
 or satisfy the prerequisites of the existing event-driven implementation packages.
 
-## Hosting, plugin access and agent execution — open architecture decision
+## Hosting, plugin access and agent execution — decided direction
 
 The first release supports operation on both Windows and Linux, with deployment
 focused on Lucas's Linux box (PD-027, Round 6a Q19). Windows support is release scope,
@@ -244,48 +244,32 @@ the existing four-cell DEC-09 test matrix remains required. Exact Linux distribu
 and host configuration remain deployment details. Supporting both platforms does not
 select simultaneous active replicas of one portfolio.
 
-Lucas expects the cockpit to work with other agents and identified Project Recursion
-as a possible suitable harness if its architecture can support configured CLIs and
-credentials (PD-010). This is a candidate integration to evaluate, not a selected
-deployment dependency or a verified claim about Recursion's current capabilities.
-Lucas reinforced during Q8 that Recursion and the cross-model architecture should be
-considered early, while Recursion is being developed; harness compatibility must be
-part of product architecture discovery rather than deferred until after implementation.
+Lucas selects a persistent cockpit service plus integrations (PD-028, Round 6b Q20),
+resolving PD-019's deferred application-ownership decision. The cockpit owns research,
+strategy and paper-position state, investing schedules, policy and deterministic
+controls. Discord and host/plugin/MCP integrations use the same application services
+and permissions. Bounded model-job execution is a separate responsibility; a qualified
+Recursion adapter may provide it without taking ownership of the investing application.
 
-Recommended architectural boundary, subject to the autonomy round: the cockpit owns
-research cases, input/evidence contracts, policy decisions, and the existing deterministic
-risk/order controls; a harness supplies bounded agent-job execution and lifecycle services
-through an explicit adapter. Job inputs, permitted capabilities, output schemas, provenance,
-usage limits, cancellation, retries, and restart behavior need a tested contract. Credentials
-remain in the OS credential store and outside model context; harness integration does not
-give a model broker credentials or create an additional order route.
+The MVP must work standalone. Working Recursion integration is not a first-release
+gate (PD-029, Round 6b Q21). Design the shared execution contract now and integrate
+Recursion when real compatibility checks pass. The standalone executor must deliver
+the selected dynamic model-routing and autonomous workflow capabilities; an inert
+adapter or fake executor cannot complete the product. This preserves PD-010/PD-014's
+early integration design while avoiding a release dependency on Recursion readiness.
 
-Lucas has not selected Recursion as a mandatory or primary host (PD-019, Round 4a Q12).
-He describes the cockpit as a program using existing subscriptions to pursue profitable
-financial decisions, considers a plugin/MCP design plausible, and wants its relationship
-to standalone operation and Discord access resolved from the complete architecture.
-Profitability is an objective for evaluation, not an established property of the system.
+Job inputs, permitted capabilities, output schemas, provenance, usage limits,
+cancellation, retries and restart behavior need a tested contract. Credentials remain
+in the OS credential store and outside model context. Broker credentials and the
+deterministic order path stay cockpit-side; plugin/MCP access grants no direct route
+from a model to the broker. The separately scoped paper-autonomy/model-authority
+design is still required before implementing that product target.
 
-Compare three arrangements: a standalone cockpit with its own bounded model runner;
-a plugin loaded by a host such as Recursion; and a persistent cockpit service with
-Discord plus plugin/MCP access and an optional external agent-execution adapter.
-For each, identify ownership of state, ingest/research schedules, model jobs, credentials,
-permissions, recovery, deployment, testing and the deterministic order path.
-
-Working recommendation, not ratified: keep durable investing state and domain controls
-in a cockpit service, make Discord and plugin/MCP access adapters to the same services,
-and define model-job delegation separately. A plugin is a packaging/integration choice;
-the API/protocol surface, running process and owner of long-lived work are distinct
-decisions. Recursion may supply compatible job execution or supervision without needing
-to duplicate the investing core. Any exposed tools must respect the same permissions
-and existing order boundary; an MCP adapter must not create a model-to-broker shortcut.
-
-Evaluate Recursion's actual interfaces and the existing cockpit composition before
-selecting this recommendation. The deployment/lifecycle comparison remains open; its
-resolution must be explicit before final product ratification and implementation planning.
-The [architecture comparison](docs/product-architecture-options.md) records the
-inspected source baseline, three arrangements, proposed ownership and integration
-acceptance, and the remaining owner choices. Its recommendation is not yet selected.
+A persistent service can expose multiple integrations without requiring multiple
+microservices. Exact process packaging, protocols, job-envelope fields and conformance
+thresholds remain specification work. The [architecture comparison](docs/product-architecture-options.md)
+preserves the inspected source baseline and alternatives, records the selected ownership
+and release dependency, and distinguishes them from proposed technical contract details.
 
 ## Research output and source inspection — decided direction
 

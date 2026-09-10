@@ -55,7 +55,7 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-016 | decided — Round 4a Q10 | Agents develop and test candidate strategies; Lucas approves activation of a new strategy or material revision. Routine operation of activated strategies remains autonomous under standing policy. |
 | PD-017 | decided requirement — Round 4a Q10 | Identify users and decision-makers across Discord and other surfaces; support an owner plus explicitly authorized users and credential setup. Actual credentials and deployment-specific identity/access configuration stay out of tracked GitHub content. Roles and exact identity mechanics remain open. |
 | PD-018 | decided — Round 4a Q11 | Dynamic task/model escalation informed by subscription quota, model diversity, and capabilities/intelligence. Lucas plans ChatGPT Pro + OpenCode Go next month; the earlier tier chain is illustrative, not fixed. Exact access, quotas, adapters and ranking policy remain to be verified/specified. |
-| PD-019 | architecture disposition deferred — Round 4a Q12 | Lucas wants the cockpit's complete architecture to determine standalone/plugin/MCP/Recursion deployment. He considers plugin/MCP integration plausible and notes Discord/lifecycle needs. Recursion-primary is not selected; compare the arrangements before final ratification. |
+| PD-019 | deferred in Round 4a Q12; resolved by PD-028/PD-029 | Lucas asked for the complete architecture to determine standalone/plugin/MCP/Recursion deployment. Round 6b selects persistent cockpit ownership and a standalone MVP, with Recursion integrated when qualified. |
 | PD-020 | decided — Round 4b Q13 | The owner defines roles with explicit per-action permissions, enforced consistently across control surfaces. Strategy activation remains owner-reserved unless explicitly delegated. Exact roles, action grants and revocation mechanics remain open. |
 | PD-021 | decided — Round 4b Q14 | Owner-approved hard caps with autonomous engine allocation inside them; increases require owner approval. Applies to inference/subscription resources and paper capital/risk; numeric values and accounting remain open. |
 | PD-022 | owner-proposed policy/evaluation consideration — Round 4b Q14 | Consider trading taxes and other restrictions within the broader limits/allocation design. Exact tax-aware functionality, account/jurisdiction context and calculation rules remain open; no full tax engine or filing service is selected. |
@@ -64,6 +64,8 @@ current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
 | PD-025 | decided target — Round 5 Q17 | Aim for fully automated research-quality and model-routing evaluation. Replaces the assistant's recommended routine human sample review; owner strategy-activation approval remains separate. The automated evaluator and reference evidence need validation; existing independent-evidence requirements require explicit reconciliation, not silent waiver. |
 | PD-026 | decided — Round 6a Q18 | The MVP strategy suite trades cash-funded, long-only US stocks and ETFs on paper. Broader research remains possible; shorting, margin borrowing, options and other asset classes are outside initial execution scope. Strategy roster, specific instrument eligibility and cash/settlement contracts remain open. |
 | PD-027 | decided — Round 6a Q19 | Support Windows and Linux in the first release, emphasizing Lucas's Linux box as the primary deployment target. Supersedes the Linux-first/Windows-development-only recommendation; no specific VPS/provider or Recursion dependency is selected. |
+| PD-028 | decided — Round 6b Q20 | Persistent cockpit service plus integrations. Cockpit owns research, paper positions, schedules and controls; Discord and host/plugin/MCP integrations use the same application services. Recursion may execute bounded model jobs without owning the investing application. Resolves PD-019's ownership question. |
+| PD-029 | decided — Round 6b Q21 | Deliver a working standalone MVP; integrate Recursion when real conformance is demonstrated. Design the shared execution contract now. Recursion readiness is not a first-release gate, and standalone operation must provide the selected product capabilities. |
 
 Decided directions include the integrated autonomous paper MVP, optional operator
 interaction, research breadth and cadence, layered cited output, full human-input
@@ -72,8 +74,9 @@ complete paper-position management, owner-approved strategy activation, identifi
 authorized users, dynamic subscription/capability/diversity-aware routing, owner-approved
 hard limits, approved fallback with safe suspension, honest product/evaluation success,
 and a fully automated quality-evaluation target. Initial paper execution covers
-cash-funded, long-only US stocks and ETFs. Recursion
-remains a candidate integration; service/plugin/host ownership is explicitly unresolved.
+cash-funded, long-only US stocks and ETFs. A persistent cockpit service owns the
+investing application; integrations share its services. The MVP works standalone,
+with Recursion integration added when qualified rather than required for first release.
 Both Windows and Linux are supported at first release, with Lucas's Linux box primary
 for deployment.
 Detailed strategy, autonomy,
@@ -102,12 +105,13 @@ unless explicitly accepted.
 | 1 | Purpose and first usable daily experience | complete — PD-004 through PD-007 | Integrated autonomous paper MVP, optional Discord/supervisor interaction, core/discovery/human inputs |
 | 2 | Research behavior and evidence | complete — PD-008 through PD-011 | Layered cited research, full human-input categories, new-evidence/user/scheduled cadence, candidate Recursion harness |
 | 3 | Strategy and candidate lifecycle | complete — PD-012 through PD-015 | Strategy suite, model escalation, monitored unresolved cases, complete paper-position lifecycle |
-| 4a | Autonomy ownership and architecture | answers recorded through PD-019; deployment decision deferred | Owner-approved strategy activation, identity/access, dynamic routing; architecture comparison required |
+| 4a | Autonomy ownership and architecture | answers recorded through PD-019; architecture resolved in Round 6b | Owner-approved strategy activation, identity/access and dynamic routing; PD-028/PD-029 own architecture disposition |
 | 4b | Autonomy limits and intervention | complete through PD-023; detailed contracts pending | Owner-defined permissions, hard caps/autonomous allocation, tax consideration, approved fallback and safe suspension |
 | 5 | Evaluation and feedback | complete through PD-025; evaluation mechanics pending | Working product with credible honest results; fully automated quality-evaluation target |
 | 6a | Initial trading scope and deployment | complete through PD-027 | Cash-funded long-only US stocks/ETFs; Windows and Linux support with Lucas's Linux box primary |
-| 6b | Architecture and integration dependency | Q20–Q21 presented; awaiting owner | Disposition of concrete service/plugin/host comparison and Recursion release dependency |
-| 7 | Release contract and progression | pending | Remaining policy contracts, acceptance and bounded delivery packages, final owner review |
+| 6b | Architecture and integration dependency | complete through PD-029 | Persistent cockpit plus integrations; standalone MVP, Recursion when qualified |
+| 7a | Engine releases and failure recovery | Q22–Q24 presented; awaiting owner | Software-release authority, recovery conditions and existing-position failure behavior |
+| 7b | Release contract and progression | pending | Remaining policy contracts, acceptance and bounded delivery packages, final owner review |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -458,6 +462,10 @@ and integration arrangements based on the full architecture and operating needs,
 return the concrete recommendation for owner disposition before final ratification.
 Other permission and budget questions can proceed independently.
 
+**Subsequent resolution:** PD-028 selects persistent cockpit ownership with shared
+integration surfaces; PD-029 selects a standalone MVP with Recursion added when
+qualified. The comparison below preserves the options considered in Round 4a.
+
 **Architecture distinction:** packaging as a plugin, exposing an MCP/API surface,
 running a persistent service, and delegating model work are different choices. A
 persistent application can have both Discord and MCP access. Discord does not alone
@@ -656,7 +664,14 @@ extends the existing composition and avoids duplicating Recursion's general plat
 work. Process packaging and adapter protocols remain implementation design choices;
 an integration must preserve attribution and the existing order boundary.
 
-**Answer:** pending.
+**Answer (2026-09-09):** “Persistent cockpit + integrations (Recommended)”
+
+**Recorded decision:** PD-028. The persistent cockpit service owns the investing
+application and its research, positions, schedules and controls. Discord and
+host/plugin/MCP integrations call the same application services. A qualified external
+executor such as Recursion can supply bounded model jobs. This resolves PD-019's
+ownership question. Exact process packaging, protocols and job-contract fields remain
+specification work; the answer does not itself change current runtime authority.
 
 ### Q21. Must a working Recursion integration be demonstrated before the paper MVP releases?
 
@@ -667,6 +682,53 @@ not evidence that Recursion works. Alternatively, require both standalone operat
 and demonstrated Recursion integration for the first release, accepting a dependency
 on Recursion readiness. This decides release dependency, not permission to silently
 remove previously selected product capabilities or to claim an untested integration.
+
+**Answer (2026-09-09):** “Standalone MVP; Recursion when qualified (Recommended)”
+
+**Recorded decision:** PD-029. Require a working standalone MVP and design the shared
+execution contract now. Recursion integration follows demonstrated compatibility and
+is not a first-release dependency. The standalone path must supply the agreed model
+routing, research and autonomous paper workflow; fake jobs or a placeholder adapter
+cannot satisfy that acceptance. Preserve the early Recursion architecture work without
+claiming its actual integration has passed.
+
+## Round 7a — engine releases and failure recovery
+
+### Q22. Who may deploy changes to the cockpit engine itself?
+
+Recommendation: agents investigate, implement and test improvements in isolated
+revisions; the owner approves installing a new software release. Routine operation
+continues on the approved version. Alternatively, allow automatic deployment of a
+predefined class of maintenance changes after the required automated gates, with
+rollback and audit evidence. That requires a precise change classifier and release
+contract. Neither option relaxes owner strategy activation or approval for higher
+hard caps. This asks about the future product's development/release authority, not
+permission to modify or deploy runtime code during this documentation session.
+
+**Answer:** pending.
+
+### Q23. When may suspended work resume after a transient dependency failure?
+
+Recommendation: allow automatic recovery under a preapproved policy only after
+dependency health, evidence freshness, quota/limits and paper reconciliation pass
+the required checks. Explicit human halts and integrity/authority holds require an
+authorized human release. If a cause or reconciliation result remains uncertain,
+the affected actions remain suspended. The alternative is human approval for every
+resume. Automatic recovery must never silently promote a mode or override another
+hold; its implementation requires reconciliation with current durable safety controls.
+
+**Answer:** pending.
+
+### Q24. What should happen to existing paper positions while required inputs are unavailable?
+
+Recommendation: block new or increased exposure, retain monitoring, and allow only
+previously approved protective actions whose own evidence and execution requirements
+remain satisfied. Examples for the later policy include cancelling unfilled entries
+and risk-reducing exits when sufficiently supported. No model invents an exit from
+missing data. Alternatives require operator direction for every position action, or
+use a preapproved orderly close-out policy when its required inputs permit it. The
+exact action matrix must address open orders, partial fills, uncertain submissions
+and reconciliation; the general autonomy answer does not specify those mechanics.
 
 **Answer:** pending.
 
@@ -705,9 +767,9 @@ remove previously selected product capabilities or to claim an untested integrat
 - PD-018's planned ChatGPT Pro + OpenCode Go subscription mix is owner-stated intent.
   Account-specific entitlement and quota telemetry have not been inspected; published
   API model descriptions cannot certify availability through a subscription or CLI.
-- PD-019 leaves the deployment architecture unresolved. Prepare the lifecycle/state/
-  permission/interface comparison above and evaluate actual Recursion compatibility;
-  do not treat an unselected primary-harness proposal as an implementation prerequisite.
+- PD-028/PD-029 resolve PD-019: persistent cockpit ownership and a standalone MVP,
+  with Recursion integrated when qualified. The comparison records inspected source;
+  actual job-adapter conformance remains empirical work, not a first-release dependency.
 - PD-022's tax-aware scope has no selected jurisdiction, account context, transaction
   population or verified calculation rules. Resolve the intended feature and inputs
   before researching or implementing a tax model; do not invent a flat tax haircut.
@@ -715,12 +777,13 @@ remove previously selected product capabilities or to claim an untested integrat
 ## Resume here
 
 Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
-the hosting/plugin architecture is explicitly deferred for comparison and later owner
-disposition. Round 4b is recorded through PD-023 and Round 5 through PD-025.
+Round 6b now resolves its architecture deferral. Round 4b is recorded through PD-023
+and Round 5 through PD-025.
 Round 6a is complete through PD-027: cash-funded, long-only US stocks and ETFs;
 Windows and Linux support with Lucas's Linux box as primary deployment.
-Round 6b Q20–Q21 are presented alongside the architecture comparison. Record the
-owner's architecture and Recursion-dependency choices; neither is selected yet.
+Round 6b is complete through PD-029: persistent cockpit plus integrations; standalone
+MVP, with Recursion when qualified. Round 7a Q22–Q24 are presented for answers on
+software-release authority, failure recovery and existing-position behavior.
 Detailed role/revocation, limit, tax-scope, failure/recovery and automated-evaluation
 contracts remain to be resolved in specification review.
 Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,

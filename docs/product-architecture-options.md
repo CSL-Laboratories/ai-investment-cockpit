@@ -6,12 +6,13 @@ last-verified: 2026-09-09
 
 # Cockpit architecture comparison
 
-**Disposition:** recommendation awaiting Lucas's Round 6b answers. This resolves a
-product-design question under RW-25, not runtime authority or implementation readiness.
+**Disposition:** Lucas selected arrangement C under PD-028 and a standalone MVP with
+Recursion when qualified under PD-029. Technical contract and acceptance details below
+remain proposals. These product decisions do not establish implementation readiness.
 Owner decisions remain in [product-planning](product-planning.md); the candidate
 [product contract](../PRODUCT.md) retains its working-draft status.
 
-## Recommendation
+## Selected architecture direction
 
 Keep a persistent cockpit application responsible for the investing workflow. Its
 research, strategy, portfolio, audit and policy state survive a Discord disconnect or
@@ -59,7 +60,7 @@ credential isolation, quota attribution, cancellation and recovery remain unveri
 
 ## Three arrangements
 
-| Concern | A. Cockpit plus its own complete agent platform | B. Host-owned cockpit plugin | C. Persistent cockpit plus integrations — recommended |
+| Concern | A. Cockpit plus its own complete agent platform | B. Host-owned cockpit plugin | C. Persistent cockpit plus integrations — selected |
 |---|---|---|---|
 | Investing state and schedules | Cockpit owns both | Host runs plugin lifecycle; durable domain-state ownership must be specified | Cockpit owns both, independent of attached frontends |
 | Model jobs | Cockpit develops general routing, sessions, delegation and supervision | Host owns execution services | Local bounded executor or qualified Recursion adapter |
@@ -119,12 +120,13 @@ These are proposed acceptance obligations to refine in the release contract:
    an executor unavailable, the selected fallback/suspension policy applies. Reconcile
    open positions and uncertain attempts before resuming affected actions.
 
-## Decisions requested
+## Owner disposition
 
-**Q20:** select investing application ownership: A, B or C above.
+**Q20 — PD-028:** “Persistent cockpit + integrations (Recommended)”. Arrangement C
+is selected: cockpit owns the investing application; integrations use shared services.
 
-**Q21:** decide whether demonstrated Recursion integration is a first-release gate.
-Recommendation: require a working standalone cockpit and specify the common job
-contract now; activate Recursion integration when real conformance is demonstrated.
-Requiring standalone plus Recursion at first release is also coherent, but makes
-release depend on both products' readiness. Neither choice is recorded as accepted yet.
+**Q21 — PD-029:** “Standalone MVP; Recursion when qualified (Recommended)”. A working
+standalone cockpit is required for first release. Define the common job contract now;
+Recursion integration follows real conformance and does not block the MVP. The standalone
+executor must deliver the accepted product capabilities. This disposition does not
+ratify every proposed envelope field or certify an untested adapter.
