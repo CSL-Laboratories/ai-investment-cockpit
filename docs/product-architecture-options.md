@@ -10,7 +10,10 @@ last-verified: 2026-09-09
 Recursion when qualified under PD-029. Technical contract and acceptance details below
 remain proposals. These product decisions do not establish implementation readiness.
 Owner decisions remain in [product-planning](product-planning.md); the candidate
-[product contract](../PRODUCT.md) retains its working-draft status.
+[product contract](../PRODUCT.md) is consolidated for final review. The
+[operating contracts](product-operating-contracts.md) and
+[delivery plan](product-delivery.md) now supply concrete proposed details and
+qualification work; the comparison below preserves the inspected baseline and rationale.
 
 ## Selected architecture direction
 
@@ -88,7 +91,8 @@ evidence; missing usage is not zero. Cockpit revalidates outputs before domain u
 Cockpit's owner-approved limits constrain each delegated reservation. If Recursion also
 governs a shared subscription pool, the effective allowance must satisfy both governors.
 Reservations and usage receipts must avoid double spending or counting the same work
-twice. Exact reconciliation, stale-result and retry rules require a technical contract.
+twice. The operating contracts now propose reservation, receipt, stale-result and
+retry behavior; actual executor conformance remains implementation/evidence work.
 
 Discord, CLI/supervisor and plugin/MCP adapters bind the external caller to a cockpit
 principal and request the same authorized application actions. Research access does not
@@ -102,7 +106,7 @@ portfolio replicas; replication is not selected by dual-platform support.
 
 ## What must be demonstrated
 
-These are proposed acceptance obligations to refine in the release contract:
+These obligations are developed in the linked acceptance and delivery contracts:
 
 1. One representative input reaches retained evidence, a cited research case, a
    strategy decision, eligible paper execution and reconciliation through the actual
@@ -115,7 +119,8 @@ These are proposed acceptance obligations to refine in the release contract:
    orders or unaccounted model work.
 4. Installation, OS credential access, start/stop/restart, recovery and diagnostics work
    on Windows and Linux; the primary Linux box runs an observed unattended paper trial.
-   Trial duration and objective thresholds remain to be set. DEC-09 remains required.
+   PD-039 sets at least 20 market days plus required coverage. The delivery manifest
+   freezes applicable evaluation thresholds before observation. DEC-09 remains required.
 5. With Discord disconnected, monitoring and allowed work follow standing policy; with
    an executor unavailable, the selected fallback/suspension policy applies. Reconcile
    open positions and uncertain attempts before resuming affected actions.

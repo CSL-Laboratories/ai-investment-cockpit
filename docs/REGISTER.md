@@ -25,11 +25,17 @@ and the claim board, not the specification.
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 9 complete through PD-047; cited tax contract drafted; preparing consolidated contract review | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
+| `RW-25` | Documentation-only owner-led product discovery, candidate PRODUCT.md, and reconciliation with PLAN/REGISTER | claimed on `work/rw25-product-grill` from `db354a2`; Round 9 complete through PD-047; consolidated product/operating/tax/acceptance/delivery contracts ready for final review | Lucas + Codex/Astra | Explicit decisions recorded per answered round, local documentation commits, final coherent product contract and owner review before publication/merge |
 
 See [product-planning](product-planning.md) for the recovery record and
 [candidate product contract](../PRODUCT.md). No runtime package, empirical gate,
 watchlist, mode, or execution authority is changed by this claim.
+
+The [delivery plan](product-delivery.md) names proposed scope/gate dispositions,
+including DEC-03's transition from sole MVP strategy to a feasibility candidate in
+the selected launch suite. Until final ratification and the applicable implementation
+reviews, the existing DEC-03 and runtime/evidence entries below retain their authority.
+Proposed delivery slice labels are not newly claimed work IDs.
 
 ## Delivery position recorded 2026-08-24
 

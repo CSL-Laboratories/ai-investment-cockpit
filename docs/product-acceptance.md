@@ -22,6 +22,11 @@ It supports Windows and Linux, with the primary pilot on Lucas's Linux box. Rese
 quality evaluation targets full automation. Results can be unfavorable and must remain
 visible; profitability is not required for the working-product completion declaration.
 
+The [operating contracts](product-operating-contracts.md) define the proposed shared
+workflow, permissions, input manifest and recovery behavior. The
+[delivery plan](product-delivery.md) owns proposed implementation slices and explicit
+dispositions for current evidence and authority requirements.
+
 The following evidence must connect to the actual application and its release revision.
 A passing unit suite, successful subprocess exit or empty daily screen cannot substitute
 for useful output and observed paper operation. No minimum order count authorizes
@@ -53,6 +58,7 @@ restart and diagnostics acceptance. Pilot work does not replace the local matrix
 | Autonomous paper lifecycle | Eligible entries, monitoring, permitted changes/cancellations, exits and reconciliation pass through the actual order path; partial fills and uncertain submissions do not create duplicate orders |
 | Failures and recovery | Missing-input scenarios block affected increased exposure, preserve monitoring and permit only qualifying protective actions; checked transient recovery cannot clear human/integrity/authority holds |
 | Identity and releases | Different users receive only granted actions across surfaces; audit binds actor and policy; isolated agent development cannot install a new release without owner approval |
+| Improvement loop | A recorded failure or authorized request produces a bounded isolated engineering job and reviewable tested revision or explained unresolved result; neither the running engine nor a decision job gains development or installation authority |
 | Economics and expansion | Contributions are distinct from P&L; costs and losses remain visible; expansion queue and selected reminders lead to review rather than automatic activation |
 | Full investment-tax calculations | Supported jurisdiction/account/year cases match independent reference results using verified rules and complete inputs; missing context yields an explicit incomplete result rather than invented liability |
 
@@ -89,10 +95,11 @@ Strategy baselines, costs, contribution assumptions and observation rules are fr
 before outcomes are inspected. Material changes require an explicit invalidation or
 new evaluation; do not tune the pass line after seeing results.
 
-Existing human-source label and independent-evidence requirements remain a named
-reconciliation item. The final contract must identify each retained gate and each
-proposed replacement, with the adequacy/independence evidence required for a replacement.
-The selected automation target does not silently remove those gates. Missing reference
+The delivery plan explicitly retains current RW-11 and merger independent-label
+requirements while proposing automated repeat evaluation over qualified references.
+Its first slice must qualify evaluators and any replacement reference method before
+use, with evidence of adequacy and independence for each replaced claim. Existing
+labels and witness gates are not satisfied by model agreement. Missing reference
 quality or an unqualified evaluator means unverified evidence, not an automatic PASS.
 
 ## Economic baseline and reports
@@ -157,12 +164,13 @@ minimum ends before its scheduled delivery; a controlled clock can verify schedu
 while observed delivery remains separately identified. Suppress duplicate notifications
 for unchanged candidate readiness. Exact scheduling and retry rules need specification.
 
-## Remaining contract work before ratification
+## Review and implementation qualification
 
-Prepare a concrete permissions/revocation matrix, supported intake formats and limits,
-policy configuration requirements, full tax-calculation coverage, strategy feasibility
-work contract, evaluator qualification plan and delivery slices. Numeric operating
-caps must be owner-configured before autonomous operation; income figures and economic
-aspirations are not substitutes for those caps. The final package must reconcile
-PRODUCT, PLAN, REGISTER, DEC-03 and the existing approval/model/evidence boundaries.
-No current empirical gate is passed by approving these documentation proposals.
+The operating, tax and delivery contracts now supply the proposed permission/revocation
+matrix, supported intake formats/limits, configuration requirements, tax coverage,
+bounded feasibility/evaluator work and delivery slices. Their technical defaults and
+reconciliation dispositions await final owner review alongside PRODUCT. Numeric
+operating caps must be owner-configured before autonomous operation. Feasibility work
+must establish and freeze new strategy/evaluator thresholds before measuring outcomes.
+These are explicit prerequisites to implementation/pilot acceptance; this documentation
+package claims no current empirical gate has passed.

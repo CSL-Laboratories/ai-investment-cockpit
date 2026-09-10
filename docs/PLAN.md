@@ -12,111 +12,48 @@ last-verified: 2026-09-07
 
 # The plan
 
-### RW-25 product discovery — documentation in progress, 2026-09-09
+### RW-25 product contract — consolidated for final review, 2026-09-09
 
-Lucas authorized an interactive product grill, a WIP branch, and local documentation
-commits as questions are answered. Publication and merge follow completion of the rounds.
-The claim is `RW-25` on `work/rw25-product-grill`, based on `db354a2`.
+Lucas authorized the product grill, a WIP branch and local documentation commits,
+with publication/merge after the rounds finish. RW-25 is claimed on
+`work/rw25-product-grill` from `db354a2`; 47 decisions are recorded through Round 9.
 
-[PRODUCT.md](../PRODUCT.md) is a candidate product contract; the
-[planning record](product-planning.md) separates owner decisions from recommendations
-and evidence questions. This PLAN remains development authority during discovery.
-The final documentation package must reconcile product ownership and implementation
-order explicitly. This claim changes no application, operational run, safety invariant,
-empirical gate, or execution permission.
+[PRODUCT](../PRODUCT.md) now consolidates the proposed integrated autonomous paper
+product. The [decision record](product-planning.md) preserves exact answers and
+amendments. The [operating contracts](product-operating-contracts.md),
+[tax contract](product-tax-contract.md), [acceptance contract](product-acceptance.md)
+and [delivery plan](product-delivery.md) provide concrete proposed behavior,
+qualification requirements and implementation order for final owner review.
 
-Round 1 establishes an integrated autonomous paper-testing product with optional
-Discord/supervisor interaction and core coverage plus bounded discovery and human
-ingestion. The current human-gated runtime is not changed by this product target.
-A later scoped paper-autonomy design must reconcile approval/mode/model boundaries
-and pass the applicable adversarial and evidence gates before implementation can
-deliver that target. See PD-004 through PD-007 in the planning record.
+The selected scope includes useful cited research, all agreed human input categories,
+two or three launch strategies with future expansion, dynamic subscription-aware model
+routing, a full autonomous paper-position lifecycle, owner-defined access/limits and
+owner-approved strategy activation/software releases. It works standalone on Windows
+and Linux, primarily on Lucas's Linux box; Recursion integrates when qualified.
+Full federal/California tax calculations cover taxable brokerage, Traditional/Roth IRAs
+and the selected workplace plans. Explicit paper scenarios can continue with missing
+personal context, while unverified required tax restrictions remain blocking; private
+documents stay local by default with only minimum approved facts sent externally.
 
-Round 3 Q7 adds a strategy suite and tiered model reasoning as product targets
-(PD-012/PD-013). The owner did not select the proposed one-strategy MVP. Final RW-25
-ratification must explicitly reconcile DEC-03 and the model-role boundaries with
-these targets; current strategy eligibility and runtime permissions remain unchanged.
-Exact strategies, routing policies and measured cost/quota benefits remain open.
+Proposed implementation order: bounded feasibility/evaluator qualification; useful
+research through the real composition; shared authority/executor/recovery contracts;
+integrated strategy-to-paper lifecycle; full tax/economic workflow; then complete
+release qualification and at least 20 Linux market days plus required coverage.
+These are delivery slices to split and claim in REGISTER before code, not new package
+IDs, permission to start operational runs or a claim that evidence already exists.
 
-Round 4a Q10 establishes owner-approved strategy activation plus identifiable owner
-and authorized-user access across control surfaces (PD-016/PD-017). This expands the
-product target beyond the current single-operator identity configuration. The eventual
-implementation needs a scoped identity/authorization and audit design; this documentation
-claim does not provision users, credentials or permissions.
+The delivery plan explicitly maps the old MVP and DEC-03 selection to the proposed
+product, retains applicable W-23/W-24 and independent-label gates, and requires a
+separately scoped adversarial paper-autonomy/model-role/eligibility redesign before
+authority implementation changes. It also calls for account/settlement applicability
+review of current risk assumptions. The DEC-09 matrix and pre-live gates remain.
 
-Round 5 selects a working integrated paper product with credible, honest evaluation
-as release success, without requiring positive returns (PD-024). PD-025 targets fully
-automated research-quality and routing evaluation; routine human sample review is
-not selected. Final RW-25 reconciliation must explicitly address existing independent
-human-label requirements and the validity of automated reference/judge evidence.
-Owner strategy activation remains separate; no empirical gate is passed or removed
-by recording these targets.
-
-Round 6a Q18 bounds the initial paper strategy suite to cash-funded, long-only US
-stocks and ETFs (PD-026). Reconcile the selected instrument scope with DEC-03,
-eligibility, cash/settlement and broker contracts during specification. Multiple
-strategies remain in scope; this decision does not activate instruments or strategies.
-
-Round 6a Q19 requires Windows and Linux support at first release, with Lucas's Linux
-box as the primary deployment target (PD-027). Both need operating/deployment acceptance
-alongside the existing DEC-09 matrix. A particular hosting provider remains unselected.
-
-Round 6b resolves PD-019: a persistent cockpit owns the investing application and
-integrations use its shared services (PD-028). The MVP must work standalone; Recursion
-integration follows qualification and is not a release dependency (PD-029). Design the
-common execution contract now. The [architecture comparison](product-architecture-options.md)
-records the selection and remaining technical proposals; no runtime or order-authority
-change follows from this documentation checkpoint.
-
-Round 7a Q22 reserves software-release installation approval to Lucas after agents
-develop/test isolated revisions (PD-030). Q23 selects policy-governed automatic recovery
-after dependency, freshness, resource and paper-reconciliation checks, while explicit
-human halts and integrity/authority holds require authorized human release (PD-031).
-The implementation needs a scoped durable recovery/release contract and the applicable
-review; current safety transitions and deployment authority are unchanged.
-Q24 allows monitoring and preapproved protective actions whose requirements remain
-satisfied, while affected new/increased exposure is blocked (PD-032). Define the
-action matrix and reconcile the existing fail-closed order boundary before implementation.
-
-Round 7b selects two or three launch strategies through feasibility and owner approval
-(PD-033), with explicit future expansion and reminders (PD-034). Keep expansion in the
-post-MVP roadmap; the launch count is not a permanent ceiling. PD-035 adds eventual
-profitable growth beyond approximately $210/month of owner expenses as an economic
-evaluation target, without changing the honest-results MVP criterion. PD-036 delegates
-holding horizons to the engine within qualified strategy/data/execution contracts;
-no universal days-to-months restriction is selected. Exact supported strategy horizons
-remain to be established.
-
-Round 7c identifies approximately $210/month as the owner's two subscriptions (PD-037).
-Use $2,000 provisionally for paper evaluation from the likely minimum-transfer intention
-(PD-038); contributions remain owner-configured and distinct from returns. The resulting
-10.5% monthly subscription-coverage hurdle is arithmetic, not an expected outcome or
-live allocation. The [release-evidence proposal](product-acceptance.md) connects production
-composition, real adapters, deployment and outcome checks for the next contract round.
-
-Round 8a requires at least 20 market days of unattended paper observation plus required
-coverage and existing strategy-evidence gates (PD-039). PD-040 selects monthly expansion
-summaries and candidate-ready notifications. The pilot is an operational minimum, not
-financial-advantage evidence; exact revision/coverage and reminder delivery rules remain
-to be specified. Current runs do not gain acceptance merely from these new requirements.
-
-Round 8b selects automatic paper-symbol admission under owner-approved rules (PD-041)
-and full investment-tax calculations in the MVP (PD-042). The static allowlist needs
-a scoped reviewed replacement; the tax engine needs explicit jurisdiction/account/year
-coverage, verified rules and reference validation.
-The ledger-and-assumptions-only proposal is superseded; no current eligibility or tax
-calculation behavior changes during RW-25.
-
-Round 8c selects configurable US federal and California calculations first, for taxable
-brokerage, Traditional/Roth IRAs, 401(k), 403(b) and governmental 457(b) accounts
-(PD-043 through PD-045). Tax support is distinct from broker account capability. The
-[tax contract](product-tax-contract.md) records official sources and proposed input,
-calculation and validation requirements; actual-year qualification remains required.
-Round 9 permits explicit paper scenarios with incomplete personal tax context, while
-actions requiring unverified tax restrictions remain blocked (PD-046). Private financial
-documents stay local by default; only minimum approved, redacted facts go to external
-models unless the owner grants broader document/provider access (PD-047). These product
-selections do not authorize present private-data uploads or financial actions.
+**Precedence during review:** this PLAN remains current development authority;
+PRODUCT and its new supporting contracts are candidates. On ratification, PRODUCT
+will own product scope/acceptance and PLAN delivery order, with a coordinated
+REGISTER/README disposition. Existing runtime invariants remain until their own
+reviewed implementation amendments. Older milestone text and evidence below have not
+been retroactively reclassified as success against the new product.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

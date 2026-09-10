@@ -7,19 +7,22 @@ last-verified: 2026-09-07
 
 # Docs index
 
-## Product discovery in progress — 2026-09-09
+## Product contract ready for final review — 2026-09-09
 
-`RW-25` is the owner-led product grill on `work/rw25-product-grill`. Start with
-[the planning record](product-planning.md) to resume questions and distinguish
-confirmed decisions from recommendations. [PRODUCT.md](../PRODUCT.md) is a working
-candidate, not yet ratified; PLAN remains current development authority. Documentation
-checkpoints are committed locally as rounds are answered; publication/merge follows
-completion of the rounds.
+`RW-25` is the owner-led product grill on `work/rw25-product-grill`. The consolidated
+[PRODUCT.md](../PRODUCT.md) is ready for review, with decisions through PD-047.
+[The planning record](product-planning.md) preserves exact answers and the resume point.
+The contract is not yet ratified; PLAN remains current development authority.
+Documentation checkpoints are committed locally; publication/merge follows completion
+of the rounds and final contract review.
 
-The [tax contract](product-tax-contract.md) records the selected US federal/California
-and account-family coverage, with cited sources and proposed calculation/validation
-requirements. The [release-evidence proposal](product-acceptance.md) connects useful
-research and real paper operation to acceptance. Both remain candidate specifications.
+Read the [operating contracts](product-operating-contracts.md) for the shared workflow,
+permissions, input limits, routing and recovery. The [tax contract](product-tax-contract.md)
+defines selected coverage and proposed sourced calculation/validation requirements.
+The [acceptance contract](product-acceptance.md) and [delivery plan](product-delivery.md)
+connect useful research and real paper operation to release evidence and bounded work,
+including explicit reconciliation with older scope and current gates. These supporting
+contracts also await review; they do not claim implementation or runtime authority.
 
 ## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
 

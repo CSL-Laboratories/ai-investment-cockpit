@@ -13,6 +13,10 @@ last-verified: 2026-09-09
 
 This is the durable continuation point for the grill. The existing PLAN remains
 current development authority while [PRODUCT.md](../PRODUCT.md) is a candidate.
+Round 9 is complete through PD-047. PRODUCT and the operating, tax, acceptance and
+delivery contracts are now consolidated for final review. Earlier question sections
+preserve their then-current recommendations and follow-ups; use **Resume here** for
+the present state rather than treating historical follow-ups as unanswered questions.
 
 ## Session protocol
 
@@ -142,7 +146,7 @@ unless explicitly accepted.
 | 8b | Final scope boundaries | complete through PD-042 | Automatic eligibility under approved rules; full investment-tax calculations in MVP |
 | 8c | Tax coverage | complete through PD-045 | US federal and California first; taxable brokerage, Traditional/Roth IRAs and common workplace plans; extensible verified rules |
 | 9 | Tax context and private data | complete through PD-047 | Explicit paper scenarios with incomplete personal context; private documents local by default and minimal approved facts on external routes |
-| Final | Contract reconciliation and final review | pending | Concrete acceptance, remaining policy contracts, bounded delivery packages and final owner review |
+| Final | Contract reconciliation and final review | consolidated package ready; owner disposition pending | Product/operating/tax/acceptance/delivery contracts and explicit scope/gate reconciliation |
 
 Round count is provisional. Add a focused round if an unresolved consequential
 decision requires it; do not expand implementation simply because an idea was discussed.
@@ -1070,6 +1074,31 @@ normal approved routes. Apply disclosure rules before dispatch, including extrac
 OCR, model handoffs, retries and fallback providers; a cheaper route cannot expand
 data access. Credentials remain excluded under the existing secret invariant.
 
+## Final review — consolidated contract
+
+Prepared after Round 9: a rewritten [PRODUCT](../PRODUCT.md), concrete
+[operating contracts](product-operating-contracts.md), the cited
+[tax contract](product-tax-contract.md), [acceptance contract](product-acceptance.md)
+and [delivery plan](product-delivery.md). The original answers remain intact above.
+
+The package proposes specific shared artifacts, user permissions/revocation, supported
+file types and technical size limits, route/resource accounting, failure/recovery and
+isolated improvement behavior. It defines bounded implementation slices and explicit
+dispositions for DEC-03, current paper approval/model boundaries, static eligibility,
+independent labels, risk applicability and existing evidence/platform/pre-live gates.
+These details are reviewable specification proposals, not invented PD decisions.
+
+### Q37. Adopt the consolidated product and delivery contract, or revise it first?
+
+Recommendation: adopt the prepared contract and complete the documentation branch
+under the existing publication/merge instruction. The scope includes all selected
+launch requirements; the proposed operating defaults and delivery/evidence contracts
+are included in this review. Ratification establishes product direction and work
+dependencies, not a claim that the software, strategies or tax rules are qualified.
+Alternatively, identify changes before finishing the documentation rounds.
+
+**Owner disposition:** pending. No publication or merge has occurred.
+
 ## Evidence dependencies
 
 - Actual recent delivered briefs and their source packets on the operational host
@@ -1132,34 +1161,30 @@ data access. Credentials remain excluded under the existing secret invariant.
 
 ## Resume here
 
-Rounds 1–3 are complete through PD-015. Round 4a answers are recorded through PD-019;
-Round 6b now resolves its architecture deferral. Round 4b is recorded through PD-023
-and Round 5 through PD-025.
-Round 6a is complete through PD-027: cash-funded, long-only US stocks and ETFs;
-Windows and Linux support with Lucas's Linux box as primary deployment.
-Round 6b is complete through PD-029: persistent cockpit plus integrations; standalone
-MVP, with Recursion when qualified. Round 7a Q22–Q23 are recorded through PD-031:
-owner-approved software releases and checked automatic recovery with human-released
-holds. Q24 completes Round 7a through PD-032 with monitoring and permitted protective
-actions. Round 7b is complete through PD-036: two or three launch strategies, explicit
-expansion/reminders, an approximate $210/month expense-coverage objective and engine-
-selected holding horizons. Q27 is answered through PD-038: subscription expense scope,
-provisional $2,000 paper capital, and the owner's funding/contribution intention.
-The contribution percentage remains unset. Round 8a is complete through PD-040:
-at least 20 market days plus coverage, monthly expansion summaries and candidate-ready
-notifications. The release-evidence proposal is drafted. Round 8b is complete through
-PD-042: automatic symbol eligibility under approved rules and full investment-tax
-calculations in the MVP. Round 8c is complete through PD-045: configurable US federal
-and California coverage first, taxable brokerage, Traditional/Roth IRAs and 401(k),
-403(b), governmental 457(b) accounts. The cited tax contract is drafted. Round 9 is
-complete through PD-047: explicit paper scenarios with missing personal context, and
-private documents local by default with minimal approved facts sent externally. No
-questions are pending. Assemble the remaining contracts and document reconciliation
-for final owner review. Detailed role/revocation, limit, intake,
-failure/recovery and automated-evaluation contracts need concrete specification;
-do not reopen the settled product choices while doing that work.
-Carry the autonomous paper MVP, strategy suite, dynamic routing, full input scope,
-owner strategy activation and complete position lifecycle forward. Do not assume
-Recursion-primary or a plugin-only architecture has been selected.
-Record each incoming answer, update PRODUCT.md, validate the diff and commit the
-checkpoint. Do not interpret silence or recommendation selection defaults as answers.
+Rounds 1–9 are complete through PD-047; all 36 scope questions have answers.
+The product target is an autonomous, standalone research-to-paper application on
+Windows and Linux, with cited rich-input research, two or three qualified launch
+strategies, dynamic routing, full position management, owner-defined permissions and
+hard limits, owner-approved strategy activation/software releases, and the selected
+failure/recovery rules. Recursion integrates when qualified.
+
+Tax scope is US federal and California first, with taxable brokerage, Traditional/Roth
+IRAs, 401(k), 403(b) and governmental 457(b) accounts. Missing personal context permits
+explicit paper scenarios while unverified required tax restrictions remain blocking.
+Private documents stay local by default; only minimum approved, redacted facts go to
+external models unless the owner grants broader scoped access. Contribution amounts
+and actual hard caps remain deployment inputs, not assumptions from financial context.
+
+The consolidated PRODUCT and operating/tax/acceptance/delivery contracts are ready
+for Q37 final owner disposition. Read them as a connected review package. Proposed
+technical defaults are identified; existing independent evidence and runtime controls
+have explicit retained/reviewed-migration dispositions. No code or pilot evidence is
+claimed by this documentation work.
+
+If the owner requests changes, record them and update/commit the affected contracts.
+If the owner adopts the contract, ratify document ownership and scope notices together
+in PRODUCT, PLAN, REGISTER (including DEC-03) and README, complete documentation checks,
+then publish and merge the branch under PD-003's existing authorization. Do not ask
+again for permission to perform the already authorized publication/merge. Preserve
+runtime invariants until their separately scoped reviewed implementation changes.
+Keep the repository private and inspect remote/PR state before publication.
