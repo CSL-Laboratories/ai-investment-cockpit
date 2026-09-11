@@ -100,9 +100,9 @@ Measured 2026-09-11 on CLI 3000.10.21:
 - `--sandbox` wraps `exec` only and cannot be combined with unattended
   writes without `dangerous` (forbidden).
 - Frozen *filing* profile is therefore `accept-edits` **without**
-  `--sandbox`. Exec is not auto-approved in this mode; print mode
-  rejects it. This is not a substitute for `--sandbox` on jobs that
-  must run shell.
+  `--sandbox`. `ls`/`grep` via `exec` can still run in this mode (measured
+  on the RW-26 inventory leaf). A `python3` jsonschema `exec` was rejected.
+  This is not a substitute for `--sandbox` on jobs that must run shell.
 
 Forbidden on Devin: `-r`, `--resume`, `-c`/`--continue`, `--permission-mode
 dangerous`/`bypass`/`yolo`/`smart`/`autonomous`, and `--sandbox` on filing

@@ -16,8 +16,9 @@ from pathlib import Path
 # (sandboxed) and `write` is rejected in print mode. Unattended filing leaves
 # therefore cannot combine `--sandbox` with a filing write unless we take
 # `dangerous` (forbidden). Frozen filing profile: accept-edits, no --sandbox.
-# Exec is not auto-approved in this mode; print mode rejects it. `smart` /
-# `dangerous` / `bypass` / `yolo` remain banned.
+# Measured later on RW-26: `ls`/`grep` via exec can still run; a python3
+# jsonschema exec was rejected. `smart` / `dangerous` / `bypass` / `yolo`
+# remain banned.
 FROZEN_PERMISSION_MODE = "accept-edits"
 
 FORBIDDEN = {

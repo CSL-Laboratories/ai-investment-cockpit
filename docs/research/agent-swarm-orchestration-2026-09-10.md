@@ -246,9 +246,10 @@ order path.
   use `--permission-mode accept-edits` **without** `--sandbox`. Measured
   2026-09-11 on CLI 3000.10.21: `--sandbox always uses the autonomous
   permission mode; ignoring --permission-mode accept-edits`, so writes
-  are rejected in print mode while `exec` still runs. `smart` /
-  `dangerous` / `bypass` / `yolo` remain forbidden. Do not take
-  `dangerous` to “get sandbox and writes.”
+  are rejected in print mode while `exec` still runs. The RW-26 inventory
+  leaf then showed `ls`/`grep` via `exec` also run under `accept-edits`
+  *without* `--sandbox`. `smart` / `dangerous` / `bypass` / `yolo` remain
+  forbidden. Do not take `dangerous` to “get sandbox and writes.”
 - Native-Windows Devin/OpenCode leaves remain PROHIBITED: `--sandbox`
   refuses there, and no SEC-05 mechanical launcher exists. The Cloud host
   is Linux, so WSL2 is not required on that VM; `bwrap`+`socat` presence

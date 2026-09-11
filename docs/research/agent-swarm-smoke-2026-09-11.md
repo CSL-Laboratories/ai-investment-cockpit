@@ -37,7 +37,7 @@ remain forbidden.
 | 1 | `--sandbox --permission-mode autonomous` | `write` rejected in print mode (`Tool execution was rejected by the user`). Exit 0. Empty filings dir. ATIF `1bbecf88edf9408b8e0373417dc1a7a118874188b690d5746992af6c36a77beb`. |
 | 2 | `--sandbox --permission-mode accept-edits` | CLI: `--sandbox always uses the autonomous permission mode; ignoring --permission-mode accept-edits`. `exec` ran (`ls`). `write` still rejected. ATIF `a98f5ea55af0c6c6fce0cd2476cf907352154ade1914cac26bc01c304ea5edfc`. |
 | 3 (leaf) | `accept-edits`, no `--sandbox` | `write` succeeded. No `exec`. Schema-valid leaf. ATIF `4091106da84a501f1ed8e0270819ab70124b90f42d245307ec02e7fc11f32847`. 50221 prompt / 930 completion / 11 steps. |
-| review | same filing argv | `write` succeeded. Later `exec` **rejected** (print mode + accept-edits does not auto-approve shell). ATIF `7168d4ca7e0fac5b47b21d42267476faea630524d24dd497e6144ba76a9e3d84`. 52054 prompt / 1155 completion / 11 steps. |
+| review | same filing argv | `write` succeeded. A later `python3` jsonschema `exec` was rejected. (The RW-26 inventory run later showed `ls`/`grep` via `exec` **do** run under this profile.) ATIF `7168d4ca7e0fac5b47b21d42267476faea630524d24dd497e6144ba76a9e3d84`. 52054 prompt / 1155 completion / 11 steps. |
 
 Working tree stayed clean (filings under `.swarm-runs/`).
 
@@ -79,8 +79,12 @@ Head-owned, not invented by Muse (not in the filings):
 
 - CLI 3000.10.21 cannot combine `--sandbox` with unattended `write` unless
   `dangerous` is used. **Do not take `dangerous`.** Filing leaves stay on
-  `accept-edits` without `--sandbox`. Print-mode `exec` was rejected on
-  the reviewer. Jobs that must `exec` need a separately reviewed profile.
+  `accept-edits` without `--sandbox`. Print-mode `exec` is **not** fully
+  gated: `ls`/`grep` ran on the RW-26 inventory leaf; `python3` jsonschema
+  validation `exec` was rejected on both the smoke reviewer and RW-26.
+  Jobs that must `exec` still need a separately reviewed profile.
+- Intake currently overwrites `manifest.json` when synthesis is added.
+  Freeze a copy (here `manifest-pre-muse.json`) before Muse.
 - Intake currently overwrites `manifest.json` when synthesis is added.
   Freeze a copy (here `manifest-pre-muse.json`) before Muse.
 

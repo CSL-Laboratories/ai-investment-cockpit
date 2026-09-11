@@ -142,8 +142,11 @@ default remains a refusal.
   and `write` is rejected in print mode, so no filing is written.
   `--permission-mode auto` auto-approves read-only tools and remains
   exec-capable; it is not a read-only profile and it is not enough to
-  write a filing. `dangerous` remains forbidden. Jobs that must `exec`
-  are a separately reviewed profile, not this filing argv.
+  write a filing. `dangerous` remains forbidden. The RW-26 inventory leaf
+  showed `ls`/`grep` via `exec` still run under `accept-edits` without
+  `--sandbox`; a `python3` jsonschema `exec` was rejected. Jobs that must
+  `exec` remain a separately reviewed profile, not a reason to take
+  `dangerous`.
 - `--respect-workspace-trust false` is permitted only because non-interactive
   print mode cannot show the trust prompt.
 - No broker tools, no MCP that can reach `OrderGateway`, no secrets, no
