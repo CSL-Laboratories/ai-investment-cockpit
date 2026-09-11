@@ -1,7 +1,7 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-09-09
+last-verified: 2026-09-11
 ---
 
 # The register
@@ -20,6 +20,16 @@ messages and no register at all — which is precisely why that work got duplica
 [[security-hardening-backlog]]. `WP-*` contracts are in [[build-scaffold-ultracode]] (cited by
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
+
+## RW-26 slice A feasibility inventory — claimed 2026-09-11
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-26` | Slice A research inventory only: locate existing cash-merger (W-23/W-24/DEC-03) evidence, runbooks, and strategy modules; cite paths; propose a comparison shortlist of cash-merger plus at most five alternatives already named in-repo. No qualify/watch/reject, no activation, no order-path edit, no soak | claimed on `cursor/swarm-slice-a-inventory-df89` from swarm-host `2785810`; hash note [[research/rw26-slice-a-inventory-2026-09-11]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Schema-valid leaf + first-gate review + Muse synthesis; committed hash note; Lucas merges. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
+
+This is the first bounded REGISTER claim after the 2026-09-11 swarm pipeline smoke.
+It is not permission to implement slice C/D authority, start a paper soak, or
+fan out 30–40 agents. Briefs: `docs/research/swarm-briefs/rw26-*.md`.
 
 ## RW-25 product contract and grill — ratified 2026-09-09
 
