@@ -1,0 +1,151 @@
+{
+  "schema_version": "feasibility.freeze.v1",
+  "claim_id": "RW-27",
+  "empirical_pass_claimed": false,
+  "metrics_schema_version": null,
+  "universe": "cash_funded_long_only_us_equity_etf",
+  "shortlist": [
+    {
+      "id": "cash_merger",
+      "display_name": "Cash-only small merger / cash-merger",
+      "origin": "dec03",
+      "source_paths": [
+        "docs/research/dec03-strategy-selection-2026-08-14.md",
+        "docs/runbooks/w23-cash-merger-edge.md",
+        "docs/evidence/w23-cash-merger-edge-2026-08-14.md",
+        "app/strategies/merger_edge.py"
+      ],
+      "non_claims": [
+        "Does not authorize paper mode, live capital, or activation.",
+        "W-23 provider has no broker import and no route to OrderGateway.",
+        "Must be compared; is not guaranteed a launch place."
+      ],
+      "horizon_note": "DEC-03 / W-23 long horizon of 30 calendar days for edge_estimate.v1."
+    },
+    {
+      "id": "cef_discount",
+      "display_name": "Closed-end-fund discount reversion",
+      "origin": "dec03",
+      "source_paths": [
+        "docs/research/dec03-strategy-selection-2026-08-14.md"
+      ],
+      "non_claims": [
+        "DEC-03 deferred this pending a daily NAV data contract.",
+        "Below-NAV is not expected return.",
+        "No new data feed is authorized by this freeze."
+      ],
+      "horizon_note": "DEC-03 noted compatibility with the existing 30-day horizon if a NAV contract exists."
+    },
+    {
+      "id": "mega_cap_signal",
+      "display_name": "Mega-cap technical/news signal",
+      "origin": "dec03",
+      "source_paths": [
+        "docs/research/dec03-strategy-selection-2026-08-14.md"
+      ],
+      "non_claims": [
+        "DEC-03 rejected this for W-23 (no point-in-time expected-return model).",
+        "Kept on the slice A comparison list only; not selected and not activated."
+      ],
+      "horizon_note": "No frozen expected-return horizon; comparison candidate only."
+    },
+    {
+      "id": "awareness_fallback",
+      "display_name": "Stay strategy-agnostic / awareness-only fallback",
+      "origin": "dec03",
+      "source_paths": [
+        "docs/research/dec03-strategy-selection-2026-08-14.md"
+      ],
+      "non_claims": [
+        "Supplies no edge and cannot exercise a real opening paper Order.",
+        "Safe fallback if the data/calibration bar cannot be met; not a launch strategy."
+      ],
+      "horizon_note": "Awareness/reliability evidence only."
+    },
+    {
+      "id": "momentum",
+      "display_name": "Momentum (quant sim-loop module name)",
+      "origin": "quant_sim_loop",
+      "source_paths": [
+        "app/quant/strategies/momentum.py",
+        "app/quant/strategies/base.py"
+      ],
+      "non_claims": [
+        "QT-02 simulated venue intents; not a product launch strategy until separately claimed.",
+        "quant/ must not import brokers/; this freeze does not change that."
+      ],
+      "horizon_note": "Sim-loop callback horizon is not a product paper-position lifecycle."
+    },
+    {
+      "id": "pairs",
+      "display_name": "Pairs (quant sim-loop module name)",
+      "origin": "quant_sim_loop",
+      "source_paths": [
+        "app/quant/strategies/pairs.py",
+        "app/quant/strategies/base.py"
+      ],
+      "non_claims": [
+        "QT-02 simulated venue intents; not a product launch strategy until separately claimed.",
+        "Name is on the shortlist as an in-repo module, not as an activated strategy."
+      ],
+      "horizon_note": "Sim-loop callback horizon is not a product paper-position lifecycle."
+    }
+  ],
+  "comparison_criteria": [
+    { "id": "evidence_attainability", "threshold_status": "unset" },
+    { "id": "as_of_integrity", "threshold_status": "unset" },
+    { "id": "data_coverage_cost", "threshold_status": "unset" },
+    { "id": "execution_and_tax", "threshold_status": "unset" },
+    { "id": "supported_horizons", "threshold_status": "unset" },
+    { "id": "testability", "threshold_status": "unset" },
+    { "id": "incremental_portfolio_exposure", "threshold_status": "unset" },
+    { "id": "cost_adjusted_evaluation_feasibility", "threshold_status": "unset" }
+  ],
+  "stopping_conditions": [
+    "Cash-merger must be compared and is not guaranteed a launch place.",
+    "Cannot emit qualify, watch, or reject until metrics_schema_version is frozen.",
+    "Do not select winners using outcomes later presented as held-out validation.",
+    "Do not lower a gate to obtain two launch strategies.",
+    "market_maker is not on this freeze; adding it requires dropping another name in a new claim.",
+    "No activation, order-path edit, broker access, new data feed, or soak.",
+    "If fewer than two later qualify, deliver useful research and the missing evidence; do not lower a gate."
+  ],
+  "resource_allowance": {
+    "disclosure_class": "public-tracked",
+    "new_data_feeds": false,
+    "broker_access": false,
+    "soak": false
+  },
+  "results": [
+    {
+      "candidate_id": "cash_merger",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    },
+    {
+      "candidate_id": "cef_discount",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    },
+    {
+      "candidate_id": "mega_cap_signal",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    },
+    {
+      "candidate_id": "awareness_fallback",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    },
+    {
+      "candidate_id": "momentum",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    },
+    {
+      "candidate_id": "pairs",
+      "verdict": "unverified",
+      "reason": "metrics_schema_version is unset; evaluation has not started."
+    }
+  ]
+}

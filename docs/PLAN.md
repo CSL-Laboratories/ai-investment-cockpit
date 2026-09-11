@@ -59,6 +59,20 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
+### RW-27 slice A feasibility freeze — claimed 2026-09-11
+
+First slice A *development* package: `app/feasibility/` freeze + fail-closed
+validation. All six Head-frozen names stay `unverified` until a later package
+freezes metrics. No qualify/watch/reject, no activation, no order-path edit.
+Claim: [[REGISTER]]. Code: `app/feasibility/`. Tests: `app/tests/feasibility/`.
+
+### RW-26 slice A feasibility inventory — claimed 2026-09-11
+
+First bounded slice A package after the swarm pipeline smoke. Research
+inventory only (paths + a proposed in-repo shortlist). Claim:
+[[REGISTER]]. Briefs: `docs/research/swarm-briefs/rw26-*.md`. No
+qualify/reject, no activation, no order-path edit, no empirical PASS.
+
 ### Cloud Devin swarm host — owner direction 2026-09-11
 
 Lucas directed that research, claimed-package development, and adversarial
