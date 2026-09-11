@@ -129,8 +129,10 @@ default remains a refusal.
 
 - Linux Cloud Agent only; `--sandbox` required (fail closed if `bwrap` /
   `socat` / userns are missing).
-- `--prompt-file <checked-in brief>` mandatory. Inline `-p` only as the
-  wrapper "execute the brief file at \<path\>", after `--`.
+- `--prompt-file <checked-in brief>` mandatory. Do not also pass an inline
+  `-p` prompt or `-- "execute the brief…"` wrapper: Devin CLI 3000.10.21
+  rejects `--prompt-file` combined with `[PROMPT]...`. Frozen form is
+  `--prompt-file` plus `-p` (print mode, brief is the prompt).
 - Forbidden: `-r`, `--resume`, `-c` / `--continue`, `--permission-mode
   dangerous` / `bypass` / `yolo`. `autonomous` only together with
   `--sandbox`. `--permission-mode auto` remains exec-capable and is not a

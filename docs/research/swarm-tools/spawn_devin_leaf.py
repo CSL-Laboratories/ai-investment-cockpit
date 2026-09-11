@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -39,7 +38,6 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"missing brief {brief}\n")
         return 2
     rel_brief = os.path.relpath(brief, args.cwd.resolve())
-    wrapper = f"execute the brief file at {rel_brief}"
     argv_cmd = [
         "devin",
         "--sandbox",
@@ -54,8 +52,6 @@ def main(argv: list[str] | None = None) -> int:
         "--export",
         str(args.export.resolve()),
         "-p",
-        "--",
-        wrapper,
     ]
     joined = " ".join(argv_cmd)
     for token in FORBIDDEN:

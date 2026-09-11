@@ -83,8 +83,12 @@ devin --sandbox --permission-mode autonomous --model swe-2-medium
   --respect-workspace-trust false
   --prompt-file <checked-in brief>
   --export <run-scoped export path>
-  -p -- "execute the brief file at <checked-in brief>"
+  -p
 ```
+
+`--prompt-file` cannot be combined with an extra prompt after `--` on Devin
+CLI 3000.10.21 (the CLI errors). Print mode plus `--prompt-file` is the
+frozen form. The brief file *is* the prompt.
 
 Forbidden on Devin: `-r`, `--resume`, `-c`/`--continue`, `--permission-mode
 dangerous`/`bypass`/`yolo`. `autonomous` only with `--sandbox`.

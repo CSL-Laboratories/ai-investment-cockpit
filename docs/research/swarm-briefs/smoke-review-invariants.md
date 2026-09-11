@@ -18,7 +18,7 @@ devin --sandbox --permission-mode autonomous --model swe-2-medium
   --respect-workspace-trust false
   --prompt-file docs/research/swarm-briefs/smoke-review-invariants.md
   --export .swarm-runs/smoke-2026-09-11/export/review.atif.json
-  -p -- "execute the brief file at docs/research/swarm-briefs/smoke-review-invariants.md"
+  -p
 ```
 
 ## Subject
