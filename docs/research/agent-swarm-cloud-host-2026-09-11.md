@@ -134,9 +134,13 @@ default remains a refusal.
   rejects `--prompt-file` combined with `[PROMPT]...`. Frozen form is
   `--prompt-file` plus `-p` (print mode, brief is the prompt).
 - Forbidden: `-r`, `--resume`, `-c` / `--continue`, `--permission-mode
-  dangerous` / `bypass` / `yolo`. `autonomous` only together with
-  `--sandbox`. `--permission-mode auto` remains exec-capable and is not a
-  read-only profile.
+  dangerous` / `bypass` / `yolo` / `smart` / `autonomous`. Unattended
+  print-mode leaves use `--sandbox` plus `--permission-mode accept-edits`.
+  Measured 2026-09-11: `autonomous` still rejects the write/edit tool in
+  print mode, so no filing is written. `--sandbox` wraps `exec` only.
+  `--permission-mode auto` auto-approves read-only tools and remains
+  exec-capable; it is not a read-only profile and it is not enough to
+  write a filing.
 - `--respect-workspace-trust false` is permitted only because non-interactive
   print mode cannot show the trust prompt.
 - No broker tools, no MCP that can reach `OrderGateway`, no secrets, no

@@ -14,7 +14,7 @@
 ## Spawn (frozen)
 
 ```text
-devin --sandbox --permission-mode autonomous --model swe-2-medium
+devin --sandbox --permission-mode accept-edits --model swe-2-medium
   --respect-workspace-trust false
   --prompt-file docs/research/swarm-briefs/smoke-review-invariants.md
   --export .swarm-runs/smoke-2026-09-11/export/review.atif.json

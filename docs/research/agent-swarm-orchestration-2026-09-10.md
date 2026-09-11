@@ -243,8 +243,10 @@ order path.
 - `--permission-mode auto` does NOT mean read-only — the 2026-09-10 depth
   probe proved a leaf under `auto` executes shell commands. Treat `auto` as
   non-interactive convenience only. Unattended Cloud leaves use `--sandbox`
-  (and `autonomous` only together with it). `dangerous` / `bypass` / `yolo`
-  remain forbidden.
+  plus `--permission-mode accept-edits` (workspace writes auto-approved;
+  `exec` still sandboxed). Measured 2026-09-11: `autonomous` still prompts
+  for write/edit in print mode, so the filing is never created. `smart` /
+  `dangerous` / `bypass` / `yolo` remain forbidden.
 - Native-Windows Devin/OpenCode leaves remain PROHIBITED: `--sandbox`
   refuses there, and no SEC-05 mechanical launcher exists. The Cloud host
   is Linux, so WSL2 is not required on that VM; `bwrap`+`socat` presence
