@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-09
+last-verified: 2026-09-11
 ---
 
 # The plan
@@ -58,6 +58,20 @@ remain under the explicit dispositions in the delivery plan. Existing runtime in
 remain until their own reviewed implementation amendments. Historical milestone text
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
+
+### Cloud Devin swarm host — owner direction 2026-09-11
+
+Lucas directed that research, claimed-package development, and adversarial
+review run on the Cursor Cloud Agent Linux VM via Devin (owner-stated SWE-2
+credits, target 30–40 concurrent agents), **not** on `sentry`. Market/live
+testing and paper soaks remain owner-operated (Grok Bot or another service).
+This is a development-process amendment. It does not change PRODUCT
+acceptance, delivery-slice order, the nine invariants, or any empirical gate.
+
+Canonical write-up:
+[research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
+The 2-step shape remains
+[research/agent-swarm-orchestration-2026-09-10.md](research/agent-swarm-orchestration-2026-09-10.md).
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-09-09
+last-verified: 2026-09-11
 ---
 
 # Docs index
@@ -284,6 +284,8 @@ defects got fixed twice on two branches.
 | [[research/rw19-event-source-characterization-2026-08-12]] | RW-19 measurement ledger: dated entitlement probes, IEX/SIP coverage, capture manifests, unresolved stream/replay/load gates, and DEC-07 status |
 | [[research/sec11-zero-cost-witness-feasibility-2026-08-18]] | Same-host/R2 rejection, Rekor/home-device research candidates, AWS cost boundary, and `BUG-110` finding/remediation |
 | [[research/dec03-strategy-selection-2026-08-14]] | Closed DEC-03 comparison, selection, and the fail-closed W-23 edge-source contract |
+| [[research/agent-swarm-orchestration-2026-09-10]] | 2-step research/dev swarm shape (Head → domain middles → Devin leaves). Host/runtime amended 2026-09-11 |
+| [[research/agent-swarm-cloud-host-2026-09-11]] | Owner direction: swarm host is Cursor Cloud (not sentry); Devin SWE-2 at 30–40 agents for research/dev/review; market/live testing stays owner-operated |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

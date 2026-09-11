@@ -1194,3 +1194,19 @@ slice A: strategy feasibility and evaluator/reference qualification, informed by
 delivered/empty run artifacts. Later slices provide connected implementation and the
 required release evidence; do not restart the product grill. If resuming before merge,
 finish the already authorized merge after verifying the PR head and required checks.
+
+## Post-grill owner directions
+
+These do not reopen the grill and do not add PD-049+. Record them here so
+they are not lost in research notes.
+
+### 2026-09-11 — Cloud Devin swarm host
+
+Lucas directed that the research/development/adversarial-review swarm runs
+on the Cursor Cloud Agent Linux VM, not `sentry`, using Devin SWE-2 credits
+at a target of 30–40 concurrent agents. Market/live testing remains
+owner-operated (Grok Bot or another service). Grok Bot is still an operator
+procedure, not a selected product integration (PD-007). Invariants, PLAN
+delivery order, and paper/live gates are unchanged.
+
+Record: [research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).

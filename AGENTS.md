@@ -26,6 +26,32 @@ permission or empirical PASS.
   boundary. Do not relax that pin without a separately scoped, adversarially
   reviewed safety redesign and the pre-live gates.
 
+## Devin / Cursor Cloud swarm boundary (named 2026-09-11)
+
+Owner direction 2026-09-11: research, REGISTER-claimed development, and
+adversarial-review jobs may run on the **Cursor Cloud Agent Linux VM** via
+Devin CLI (SWE-2 and related Devin models). This names Devin **off** the
+order path only. Detail: `docs/research/agent-swarm-cloud-host-2026-09-11.md`.
+
+- Head is the Cloud Agent session. It may install/auth Devin CLI and
+  dispatch Devin leaves or Devin-native subagents on the same VM. Target
+  concurrency is 30–40 Devin agents on owner-stated SWE-2 credits. Prefer
+  subagents, then extra Cloud Agent runs if a pod saturates. **`sentry` is
+  not the swarm host.**
+- Devin may: schema-gated research, implement a claimed package, run
+  attack→fix→regression review jobs, write run-scoped filings and open PRs.
+- Devin may not: enter `app/risk/`, `OrderGateway`, mode/approval, the audit
+  chain, eligibility policy, broker credentials, or any auto rung. Inv 2
+  still pins Claude on the decision/order path in auto modes.
+- Spawn profile: Linux `--sandbox` required; `--prompt-file` briefs; no
+  `-r`/`--resume`/`--continue`; no `dangerous`/`bypass`/`yolo`; `autonomous`
+  only with `--sandbox`. No broker tools. Default disclosure: `public-tracked`.
+- Market/live/paper soaks and DEC-09 operator cells are owner-operated
+  (Grok Bot or another service Lucas chooses). The swarm does not start a
+  cockpit soak and does not hold broker secrets.
+- OpenCode remains unnamed. Do not put an OpenCode `--auto` leaf on cockpit
+  material.
+
 ## Invariants
 
 **`CLAUDE.md` holds the canonical list of 9 invariants — read it there.** This file
