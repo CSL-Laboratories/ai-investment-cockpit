@@ -21,11 +21,19 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
+## RW-27 slice A feasibility freeze — claimed 2026-09-11
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-27` | Slice A development: versioned strategy contracts, frozen six-name shortlist, comparison-criteria names, stopping conditions, and fail-closed validation. `qualify`/`watch`/`reject` are blocked until a later package freezes `metrics_schema_version`. No activation, no order path, no soak | claimed on `cursor/rw27-feasibility-freeze-df89` from `origin/main` | Head (Grok) + Devin SWE-2 review | Green `app/tests/feasibility/`; checked-in freeze validates; Lucas merges. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
+
+`app/feasibility/` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. All six candidates remain `unverified`. Next slice A package freezes metrics, then may emit qualify/watch/reject.
+
 ## RW-26 slice A feasibility inventory — claimed 2026-09-11
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-26` | Slice A research inventory only: locate existing cash-merger (W-23/W-24/DEC-03) evidence, runbooks, and strategy modules; cite paths; propose a comparison shortlist of cash-merger plus at most five alternatives already named in-repo. No qualify/watch/reject, no activation, no order-path edit, no soak | claimed on `cursor/swarm-slice-a-inventory-df89` from swarm-host `2785810`; hash note [[research/rw26-slice-a-inventory-2026-09-11]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Schema-valid leaf + first-gate review + Muse synthesis; committed hash note; Lucas merges. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
+| `RW-26` | Slice A research inventory only: locate existing cash-merger (W-23/W-24/DEC-03) evidence, runbooks, and strategy modules; cite paths; propose a comparison shortlist of cash-merger plus at most five alternatives already named in-repo. No qualify/watch/reject, no activation, no order-path edit, no soak | merged [PR #88](https://github.com/NotSkittlz/ai-investment-cockpit/pull/88) onto swarm-host; landed on main with RW-27; hash note [[research/rw26-slice-a-inventory-2026-09-11]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Schema-valid leaf + first-gate review + Muse synthesis; committed hash note. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
 
 This is the first bounded REGISTER claim after the 2026-09-11 swarm pipeline smoke.
 It is not permission to implement slice C/D authority, start a paper soak, or

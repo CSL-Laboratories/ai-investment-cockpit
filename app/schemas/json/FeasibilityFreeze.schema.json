@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityFreeze",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "metrics_schema_version",
+    "universe",
+    "shortlist",
+    "comparison_criteria",
+    "stopping_conditions",
+    "resource_allowance",
+    "results"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.freeze.v1" },
+    "claim_id": { "type": "string", "const": "RW-27" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "metrics_schema_version": { "type": ["string", "null"], "maxLength": 64 },
+    "universe": {
+      "type": "string",
+      "const": "cash_funded_long_only_us_equity_etf"
+    },
+    "shortlist": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/strategy_contract" }
+    },
+    "comparison_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/criterion" }
+    },
+    "stopping_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    },
+    "resource_allowance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "disclosure_class",
+        "new_data_feeds",
+        "broker_access",
+        "soak"
+      ],
+      "properties": {
+        "disclosure_class": { "type": "string", "const": "public-tracked" },
+        "new_data_feeds": { "type": "boolean", "const": false },
+        "broker_access": { "type": "boolean", "const": false },
+        "soak": { "type": "boolean", "const": false }
+      }
+    },
+    "results": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/result" }
+    }
+  },
+  "$defs": {
+    "strategy_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "display_name",
+        "origin",
+        "source_paths",
+        "non_claims",
+        "horizon_note"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "cash_merger",
+            "cef_discount",
+            "mega_cap_signal",
+            "awareness_fallback",
+            "momentum",
+            "pairs"
+          ]
+        },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "origin": {
+          "type": "string",
+          "enum": ["dec03", "quant_sim_loop"]
+        },
+        "source_paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "non_claims": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 400 }
+        },
+        "horizon_note": { "type": "string", "minLength": 1, "maxLength": 400 }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "threshold_status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "threshold_status": { "type": "string", "const": "unset" },
+        "note": { "type": "string", "maxLength": 400 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "verdict", "reason"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "verdict": {
+          "type": "string",
+          "enum": ["qualify", "watch", "reject", "unverified"]
+        },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    }
+  }
+}
