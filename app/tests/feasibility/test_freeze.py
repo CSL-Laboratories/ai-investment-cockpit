@@ -15,7 +15,7 @@ from feasibility.validate import (
     FREEZE_PATH,
     FROZEN_IDS,
     FeasibilityError,
-    QualifyBlocked,
+    DecisiveVerdictBlocked,
     load_freeze,
     validate_freeze,
 )
@@ -38,7 +38,7 @@ def test_qualify_blocked_while_metrics_unset() -> None:
     payload = copy.deepcopy(load_freeze())
     payload["results"][0]["verdict"] = "qualify"
     payload["results"][0]["reason"] = "attempted qualify with unset metrics"
-    with pytest.raises(QualifyBlocked):
+    with pytest.raises(DecisiveVerdictBlocked):
         validate_freeze(payload)
 
 
@@ -47,7 +47,7 @@ def test_watch_and_reject_blocked_while_metrics_unset(verdict: str) -> None:
     payload = copy.deepcopy(load_freeze())
     payload["results"][1]["verdict"] = verdict
     payload["results"][1]["reason"] = "attempted decisive verdict with unset metrics"
-    with pytest.raises(QualifyBlocked):
+    with pytest.raises(DecisiveVerdictBlocked):
         validate_freeze(payload)
 
 

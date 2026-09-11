@@ -1,4 +1,8 @@
-"""Deterministic slice A freeze validation. No LLM, no broker, no I/O besides the freeze file."""
+"""Deterministic slice A freeze validation.
+
+No LLM, no broker, no orders. Reads the freeze JSON and the JSON Schema
+files only.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ FROZEN_IDS = (
     "momentum",
     "pairs",
 )
-FORBIDDEN_IDS = frozenset({"market_maker"})
+FORBIDDEN_IDS = frozenset({"market_maker"})  # belt-and-suspenders; schema enum also excludes it
 DECISIVE_VERDICTS = frozenset({"qualify", "watch", "reject"})
 
 _HERE = Path(__file__).resolve().parent
@@ -30,8 +34,8 @@ class FeasibilityError(ValueError):
     """Freeze failed closed."""
 
 
-class QualifyBlocked(FeasibilityError):
-    """Decisive verdicts are forbidden until metrics_schema_version is frozen."""
+class DecisiveVerdictBlocked(FeasibilityError):
+    """qualify/watch/reject are forbidden until metrics_schema_version is frozen."""
 
 
 def load_schema() -> dict[str, Any]:
@@ -62,6 +66,6 @@ def validate_freeze(payload: dict[str, Any]) -> None:
     if not metrics:
         for item in payload["results"]:
             if item["verdict"] in DECISIVE_VERDICTS:
-                raise QualifyBlocked(
+                raise DecisiveVerdictBlocked(
                     "qualify/watch/reject blocked until metrics_schema_version is frozen"
                 )

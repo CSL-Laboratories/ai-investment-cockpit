@@ -10,7 +10,7 @@ from feasibility.validate import (
     FROZEN_IDS,
     SCHEMA_VERSION,
     FeasibilityError,
-    QualifyBlocked,
+    DecisiveVerdictBlocked,
     load_freeze,
     validate_freeze,
 )
@@ -21,7 +21,7 @@ __all__ = [
     "FROZEN_IDS",
     "SCHEMA_VERSION",
     "FeasibilityError",
-    "QualifyBlocked",
+    "DecisiveVerdictBlocked",
     "load_freeze",
     "validate_freeze",
 ]
