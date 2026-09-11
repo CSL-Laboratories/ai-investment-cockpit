@@ -13,6 +13,8 @@ last-verified: 2026-09-11
 ## What this package freezes
 
 - The six-name Head shortlist from RW-26 (cash-merger plus five).
+- Checked-in freeze file: `app/feasibility/freeze.v1.json` (not under
+  gitignored `data/`).
 - Comparison-criteria *names* from `docs/product-delivery.md` §A.
   Numeric thresholds stay `unset`.
 - Stopping conditions, including: no `qualify`/`watch`/`reject` until

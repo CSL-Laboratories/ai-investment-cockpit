@@ -22,7 +22,7 @@ FORBIDDEN_IDS = frozenset({"market_maker"})
 DECISIVE_VERDICTS = frozenset({"qualify", "watch", "reject"})
 
 _HERE = Path(__file__).resolve().parent
-FREEZE_PATH = _HERE / "data" / "freeze.v1.json"
+FREEZE_PATH = _HERE / "freeze.v1.json"
 SCHEMA_PATH = _HERE.parent / "schemas" / "json" / "FeasibilityFreeze.schema.json"
 
 
