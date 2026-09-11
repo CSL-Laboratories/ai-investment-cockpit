@@ -128,5 +128,7 @@ committed research note before pod teardown.
 
 ## Doc disposition
 
-Process pin only. Cite with the Cloud-host note and the 2026-09-10 2-step
-shape. Cannot be cited as a passed gate, a live unlock, or a merge.
+Process pin only. Cite with the Cloud-host note, the 2026-09-10 2-step
+shape, and the measured smoke
+[`agent-swarm-smoke-2026-09-11.md`](agent-swarm-smoke-2026-09-11.md).
+Cannot be cited as a passed gate, a live unlock, or a merge.
