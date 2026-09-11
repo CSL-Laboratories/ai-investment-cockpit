@@ -1,0 +1,81 @@
+{
+  "schema_version": "feasibility.metrics.v1",
+  "claim_id": "RW-28",
+  "empirical_pass_claimed": false,
+  "held_out_rule": "This evaluation applies frozen protocol to already-cited corpus facts only. It must not be reused as held-out validation of a later measurement run.",
+  "threshold_kind": "discrete_protocol",
+  "ambiguity_treatment": "fail_closed",
+  "statistical_numeric_thresholds": "not_applicable_until_authorized_measurement_population",
+  "criteria": [
+    { "id": "evidence_attainability", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "as_of_integrity", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "data_coverage_cost", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "execution_and_tax", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "supported_horizons", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "testability", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "incremental_portfolio_exposure", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" },
+    { "id": "cost_adjusted_evaluation_feasibility", "scale": ["insufficient", "present", "unknown"], "qualify_requires": "present" }
+  ],
+  "corpus_facts": [
+    {
+      "candidate_id": "cash_merger",
+      "origin": "dec03",
+      "supplies_edge": true,
+      "expected_return_model": "present",
+      "required_data_contract": "none",
+      "data_contract_authorized": true,
+      "empirical_evidence_gate": "open",
+      "source": "docs/REGISTER.md"
+    },
+    {
+      "candidate_id": "cef_discount",
+      "origin": "dec03",
+      "supplies_edge": true,
+      "expected_return_model": "absent",
+      "required_data_contract": "daily_nav",
+      "data_contract_authorized": false,
+      "empirical_evidence_gate": "open",
+      "source": "docs/research/dec03-strategy-selection-2026-08-14.md"
+    },
+    {
+      "candidate_id": "mega_cap_signal",
+      "origin": "dec03",
+      "supplies_edge": true,
+      "expected_return_model": "absent",
+      "required_data_contract": "none",
+      "data_contract_authorized": true,
+      "empirical_evidence_gate": "open",
+      "source": "docs/research/dec03-strategy-selection-2026-08-14.md"
+    },
+    {
+      "candidate_id": "awareness_fallback",
+      "origin": "dec03",
+      "supplies_edge": false,
+      "expected_return_model": "absent",
+      "required_data_contract": "none",
+      "data_contract_authorized": true,
+      "empirical_evidence_gate": "open",
+      "source": "docs/research/dec03-strategy-selection-2026-08-14.md"
+    },
+    {
+      "candidate_id": "momentum",
+      "origin": "quant_sim_loop",
+      "supplies_edge": false,
+      "expected_return_model": "absent",
+      "required_data_contract": "none",
+      "data_contract_authorized": true,
+      "empirical_evidence_gate": "open",
+      "source": "app/quant/strategies/momentum.py"
+    },
+    {
+      "candidate_id": "pairs",
+      "origin": "quant_sim_loop",
+      "supplies_edge": false,
+      "expected_return_model": "absent",
+      "required_data_contract": "none",
+      "data_contract_authorized": true,
+      "empirical_evidence_gate": "open",
+      "source": "app/quant/strategies/pairs.py"
+    }
+  ]
+}

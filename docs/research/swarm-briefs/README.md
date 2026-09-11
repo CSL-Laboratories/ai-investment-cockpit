@@ -8,3 +8,5 @@ Filings during a run go to gitignored `.swarm-runs/<run_id>/`, not here.
 RW-26 (slice A inventory): `rw26-leaf-inventory.md`,
 `rw26-review-inventory.md`, `rw26-muse-synthesis.md`.
 RW-27 (slice A freeze): `rw27-review-freeze.md`, `rw27-muse-synthesis.md`.
+RW-28 (slice A metrics/evaluation): `rw28-review-evaluation.md`,
+`rw28-muse-synthesis.md`.

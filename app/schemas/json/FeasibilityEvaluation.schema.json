@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityEvaluation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "metrics_schema_version",
+    "freeze_schema_version",
+    "freeze_sha256",
+    "qualify_count",
+    "results",
+    "missing_evidence"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.evaluation.v1" },
+    "claim_id": { "type": "string", "const": "RW-28" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "metrics_schema_version": { "type": "string", "const": "feasibility.metrics.v1" },
+    "freeze_schema_version": { "type": "string", "const": "feasibility.freeze.v1" },
+    "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualify_count": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "results": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "verdict", "reason", "blocking_rule"],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "enum": [
+              "cash_merger",
+              "cef_discount",
+              "mega_cap_signal",
+              "awareness_fallback",
+              "momentum",
+              "pairs"
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["qualify", "watch", "reject"]
+          },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "blocking_rule": {
+            "type": "string",
+            "enum": [
+              "none",
+              "quant_sim_loop",
+              "no_edge",
+              "no_expected_return_model",
+              "data_contract_unauthorized",
+              "empirical_evidence_gate_open"
+            ]
+          }
+        }
+      }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  }
+}

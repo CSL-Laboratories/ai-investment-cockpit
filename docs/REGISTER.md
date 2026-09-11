@@ -21,13 +21,21 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## RW-27 slice A feasibility freeze — claimed 2026-09-11
+## RW-28 slice A metrics freeze and evaluation — claimed 2026-09-11
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-27` | Slice A development: versioned strategy contracts, frozen six-name shortlist, comparison-criteria names, stopping conditions, and fail-closed validation. `qualify`/`watch`/`reject` are blocked until a later package freezes `metrics_schema_version`. No activation, no order path, no soak | claimed on `cursor/rw27-feasibility-freeze-df89` from `origin/main` | Head (Grok) + Devin SWE-2 review | Green `app/tests/feasibility/`; checked-in freeze validates; Lucas merges. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
+| `RW-28` | Slice A development: freeze `feasibility.metrics.v1` discrete protocol and emit `evaluation.v1` qualify/watch/reject against the RW-27 shortlist without mutating `freeze.v1.json`. Protocol-on-cited-corpus only; no invented statistical numeric thresholds. Zero `qualify` is the honest outcome on this corpus. No activation, no order path, no soak, no new data feed | claimed on `cursor/rw28-metrics-eval-df89` from `origin/main` | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in evaluation equals `apply_metrics()` and `qualify_count == 0`; Lucas merges. Does **not** select launch strategies, activate W-23, authorize a NAV feed, or claim empirical PASS |
 
-`app/feasibility/` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. All six candidates remain `unverified`. Next slice A package freezes metrics, then may emit qualify/watch/reject.
+`app/feasibility/evaluate.py` is pure deterministic classification. It does not import `risk/`, brokers, or `OrderGateway`. The RW-27 freeze document stays `unverified` with `metrics_schema_version: null`. Decisive verdicts live only on `evaluation.v1.json`. If fewer than two qualify, do not lower a gate.
+
+## RW-27 slice A feasibility freeze — merged 2026-09-11
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-27` | Slice A development: versioned strategy contracts, frozen six-name shortlist, comparison-criteria names, stopping conditions, and fail-closed validation. `qualify`/`watch`/`reject` are blocked on the freeze document until a later package freezes metrics. No activation, no order path, no soak | merged [PR #89](https://github.com/NotSkittlz/ai-investment-cockpit/pull/89); hash note [[research/rw27-feasibility-freeze-2026-09-11]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in freeze validates. Does **not** select launch strategies, activate W-23, or claim empirical PASS |
+
+`app/feasibility/` freeze validation does not import `risk/`, brokers, or `OrderGateway`. All six freeze-document results remain `unverified`. RW-28 consumes that freeze by SHA-256 and emits a separate evaluation document.
 
 ## RW-26 slice A feasibility inventory — claimed 2026-09-11
 
