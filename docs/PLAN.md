@@ -59,12 +59,23 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
-### RW-27 slice A feasibility freeze — claimed 2026-09-11
+### RW-28 slice A metrics freeze and evaluation — claimed 2026-09-11
+
+Second slice A *development* package: freeze `feasibility.metrics.v1`
+(discrete protocol on cited corpus facts) and emit
+`app/feasibility/evaluation.v1.json`. Do not mutate `freeze.v1.json`.
+Zero `qualify` on this corpus is fail-closed, not a lowered gate.
+No activation, no order-path edit, no empirical PASS.
+Claim: [[REGISTER]]. Code: `app/feasibility/evaluate.py`. Tests:
+`app/tests/feasibility/test_evaluate.py`.
+
+### RW-27 slice A feasibility freeze — merged 2026-09-11
 
 First slice A *development* package: `app/feasibility/` freeze + fail-closed
-validation. All six Head-frozen names stay `unverified` until a later package
-freezes metrics. No qualify/watch/reject, no activation, no order-path edit.
-Claim: [[REGISTER]]. Code: `app/feasibility/`. Tests: `app/tests/feasibility/`.
+validation. All six Head-frozen names stay `unverified` on the freeze
+document. Merged [PR #89](https://github.com/NotSkittlz/ai-investment-cockpit/pull/89).
+No activation, no order-path edit. Claim: [[REGISTER]]. Code:
+`app/feasibility/`. Tests: `app/tests/feasibility/`.
 
 ### RW-26 slice A feasibility inventory — claimed 2026-09-11
 

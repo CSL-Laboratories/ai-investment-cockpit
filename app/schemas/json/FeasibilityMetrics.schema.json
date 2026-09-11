@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityMetrics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "held_out_rule",
+    "threshold_kind",
+    "ambiguity_treatment",
+    "statistical_numeric_thresholds",
+    "criteria",
+    "corpus_facts"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.metrics.v1" },
+    "claim_id": { "type": "string", "const": "RW-28" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "held_out_rule": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "threshold_kind": { "type": "string", "const": "discrete_protocol" },
+    "ambiguity_treatment": { "type": "string", "const": "fail_closed" },
+    "statistical_numeric_thresholds": {
+      "type": "string",
+      "const": "not_applicable_until_authorized_measurement_population"
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scale", "qualify_requires"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "evidence_attainability",
+              "as_of_integrity",
+              "data_coverage_cost",
+              "execution_and_tax",
+              "supported_horizons",
+              "testability",
+              "incremental_portfolio_exposure",
+              "cost_adjusted_evaluation_feasibility"
+            ]
+          },
+          "scale": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": { "type": "string", "enum": ["insufficient", "present", "unknown"] }
+          },
+          "qualify_requires": { "type": "string", "const": "present" }
+        }
+      }
+    },
+    "corpus_facts": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/corpus_fact" }
+    }
+  },
+  "$defs": {
+    "corpus_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "origin",
+        "supplies_edge",
+        "expected_return_model",
+        "required_data_contract",
+        "data_contract_authorized",
+        "empirical_evidence_gate",
+        "source"
+      ],
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "enum": [
+            "cash_merger",
+            "cef_discount",
+            "mega_cap_signal",
+            "awareness_fallback",
+            "momentum",
+            "pairs"
+          ]
+        },
+        "origin": { "type": "string", "enum": ["dec03", "quant_sim_loop"] },
+        "supplies_edge": { "type": "boolean" },
+        "expected_return_model": { "type": "string", "enum": ["present", "absent"] },
+        "required_data_contract": { "type": "string", "enum": ["none", "daily_nav"] },
+        "data_contract_authorized": { "type": "boolean" },
+        "empirical_evidence_gate": { "type": "string", "enum": ["open", "closed"] },
+        "source": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    }
+  }
+}
