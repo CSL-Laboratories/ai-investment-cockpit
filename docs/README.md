@@ -291,6 +291,7 @@ defects got fixed twice on two branches.
 | [[research/rw26-slice-a-inventory-2026-09-11]] | RW-26 slice A inventory swarm run: hashes, Head-frozen proposed shortlist, no activation / no PASS |
 | [[research/rw27-feasibility-freeze-2026-09-11]] | RW-27 freeze: versioned contracts, fail-closed qualify block, no activation / no PASS |
 | [[research/rw28-slice-a-evaluation-2026-09-11]] | RW-28 metrics + evaluation: discrete protocol, 0 qualify, no activation / no PASS |
+| [[research/rw29-case-inspection-2026-09-11]] | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

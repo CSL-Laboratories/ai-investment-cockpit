@@ -1,0 +1,149 @@
+{
+  "schema_version": "feasibility.cases.v1",
+  "claim_id": "RW-29",
+  "empirical_pass_claimed": false,
+  "freeze_sha256": "26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8",
+  "evaluation_sha256": "665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31",
+  "qualify_count": 0,
+  "held_out_rule": "This inspection classifies already-cited operational evidence notes. It is not a measurement run and must not be reused as held-out validation of a later labelled population.",
+  "raw_packet_rule": "Live raw packets live outside git (Inv 8). This packet inspects checked-in evidence notes only and does not ingest data/ or authorize a new source.",
+  "model_routes": {
+    "decision_path": "claude_pinned_in_auto_modes",
+    "analysis_jobs": "schema_gated_read_only_or_paper",
+    "status": "cited_not_measured",
+    "source": "CLAUDE.md"
+  },
+  "cases": [
+    {
+      "case_id": "w24_sep04_identity_unmapped",
+      "source": "docs/evidence/w24-natural-head-rescreen-2026-09-04.md",
+      "as_of": "2026-09-04",
+      "kind": "empty",
+      "failure_class": "acquisition",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "192 discovery names; 50 had no current SEC ticker-map identity. Discovery lists are not authority.",
+      "evidence_that_would_change_it": "A later authorized screen where those names resolve through the current SEC ticker map. This claim does not fetch SEC or expand discovery."
+    },
+    {
+      "case_id": "w24_sep04_selection_empty",
+      "source": "docs/evidence/w24-natural-head-rescreen-2026-09-04.md",
+      "as_of": "2026-09-04",
+      "kind": "empty",
+      "failure_class": "eligibility",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "Selection-ready 0, date-ready 0, cohort 0 of 30. Successful GET-only mechanics did not produce an eligible target.",
+      "evidence_that_would_change_it": "A real prospective cohort of 30 same-date eligible identities and a current date-ready target. Repeating the parser over unchanged bytes cannot close this."
+    },
+    {
+      "case_id": "w24_sep03_bhf_not_date_ready",
+      "source": "docs/evidence/w24-natural-head-rescreen-2026-09-03.md",
+      "as_of": "2026-09-03",
+      "kind": "rejected",
+      "failure_class": "eligibility",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "One grammar/selection-eligible head (BHF) existed; expected and outside dates both refused. Cohort 1 of 30.",
+      "evidence_that_would_change_it": "Exact expected and outside dates in accepted source form on a still-supported head, plus the 30-identity cohort. Conditional extensions stay refused."
+    },
+    {
+      "case_id": "w24_intake_cash_parse_refuse",
+      "source": "docs/evidence/w24-prospective-intake-2026-08-18.md",
+      "as_of": "2026-08-18",
+      "kind": "rejected",
+      "failure_class": "extraction",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "19 current supported filings; 18 refused for no one cash-per-share value; one refused the definitive-merger assertion. Zero passed.",
+      "evidence_that_would_change_it": "An independently labelled extraction population that includes refusals, not only emitted rows. RW-11 text-delta scores cannot substitute."
+    },
+    {
+      "case_id": "w24_bhf_date_saft_refuse",
+      "source": "docs/evidence/w24-bhf-date-saft-audit-2026-09-02.md",
+      "as_of": "2026-09-02",
+      "kind": "rejected",
+      "failure_class": "extraction",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "BHF dates refused (conditional not-closed-by / year-only close). SAFT alternate-cash was a correct refuse under the pin.",
+      "evidence_that_would_change_it": "Exact source-span dates labelled independently, without stretching conditionals into expected/outside dates."
+    },
+    {
+      "case_id": "w22_briefing_edge_unavailable",
+      "source": "docs/evidence/w22-awareness-soak-2026-09-01.md",
+      "as_of": "2026-09-01",
+      "kind": "empty",
+      "failure_class": "delivery",
+      "candidate_ids": ["cash_merger", "awareness_fallback"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "Awareness soak in read_only delivered Discord briefing mechanics; expected_edge_source unavailable because the merger watchlist was empty.",
+      "evidence_that_would_change_it": "An operator-approved non-empty merger watchlist is a later claim. This packet does not seed COCKPIT_MERGER_WATCHLIST."
+    },
+    {
+      "case_id": "w22_wake_never_fired",
+      "source": "docs/evidence/w22-awareness-soak-2026-09-01.md",
+      "as_of": "2026-09-01",
+      "kind": "empty",
+      "failure_class": "scheduling",
+      "candidate_ids": [],
+      "raw_packet_status": "cited_summary_only",
+      "note": "Admin 05:30 one-shot never fired (lastRunAt null); hand-start covered bring-up; routine deleted.",
+      "evidence_that_would_change_it": "A later GET-only wake with retained evidence that it fired. This claim does not rewrite the soak scheduler."
+    },
+    {
+      "case_id": "research_value_unmeasured",
+      "source": "docs/evidence/research-value-status-2026-09-06.json",
+      "as_of": "2026-09-06",
+      "kind": "unverified",
+      "failure_class": "reasoning",
+      "candidate_ids": [],
+      "raw_packet_status": "cited_summary_only",
+      "note": "Offline scorer reports extraction, time, and strategy unmeasured: no independent study inputs were supplied. Different model names are not independent truth.",
+      "evidence_that_would_change_it": "Sealed independent labels and predictions, plus the paired time and strategy inputs, collected under a later authorized protocol. The calculator grants no gate."
+    },
+    {
+      "case_id": "w23_impl_not_empirical",
+      "source": "docs/evidence/w23-cash-merger-edge-2026-08-14.md",
+      "as_of": "2026-08-16",
+      "kind": "useful",
+      "failure_class": "eligibility",
+      "candidate_ids": ["cash_merger"],
+      "raw_packet_status": "cited_summary_only",
+      "note": "W-23 local implementation evidence exists. It does not prove an eligible current deal, prospective cohort, or paper activation. Watchlist remained empty.",
+      "evidence_that_would_change_it": "The still-open W-23 empirical evidence gate: prospective cohort and a current eligible target. Implementation green is not empirical PASS."
+    }
+  ],
+  "missing_decisions": [
+    {
+      "id": "cash_merger_prospective_cohort_and_current_target",
+      "candidate_ids": ["cash_merger"],
+      "authorized_by_this_claim": false,
+      "note": "Needed before cash_merger can leave watch. Identifies the W-23 evidence remainder; does not activate paper or seed a watchlist."
+    },
+    {
+      "id": "cef_discount_daily_nav_contract",
+      "candidate_ids": ["cef_discount"],
+      "authorized_by_this_claim": false,
+      "note": "Needed before cef_discount can leave watch. Below-NAV is not expected return. This claim authorizes no NAV feed."
+    },
+    {
+      "id": "independent_extraction_labels",
+      "candidate_ids": ["cash_merger"],
+      "authorized_by_this_claim": false,
+      "note": "Precision/recall stay unmeasured until an independent labelled population exists. Parser regressions are not that population."
+    },
+    {
+      "id": "authorized_measurement_population",
+      "candidate_ids": [],
+      "authorized_by_this_claim": false,
+      "note": "Statistical numeric thresholds stay not-applicable until a measurement population is separately authorized. Do not invent Sharpe/hit-rate cutoffs here."
+    },
+    {
+      "id": "paired_awareness_time_study",
+      "candidate_ids": ["awareness_fallback"],
+      "authorized_by_this_claim": false,
+      "note": "Net operator time saved is unmeasured. The 20-market-day paired study in the 2026-09-06 feasibility note is not started by this claim."
+    }
+  ]
+}
