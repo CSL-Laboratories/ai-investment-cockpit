@@ -169,6 +169,10 @@ def apply_metrics(
         "metrics_schema_version": METRICS_VERSION,
         "freeze_schema_version": freeze["schema_version"],
         "freeze_sha256": freeze_document_sha256(),
+        "threshold_kind": str(metrics["threshold_kind"]),
+        "ambiguity_treatment": str(metrics["ambiguity_treatment"]),
+        "statistical_numeric_thresholds": str(metrics["statistical_numeric_thresholds"]),
+        "held_out_rule": str(metrics["held_out_rule"]),
         "qualify_count": qualify_count,
         "results": results,
         "missing_evidence": list(MISSING_EVIDENCE),
@@ -189,6 +193,13 @@ def validate_evaluation(payload: dict[str, Any]) -> None:
         raise FeasibilityError("empirical_pass_claimed must be false")
     if payload["freeze_sha256"] != RW27_FREEZE_SHA256:
         raise FeasibilityError("evaluation must pin the RW-27 freeze digest")
+    if payload["threshold_kind"] != THRESHOLD_KIND:
+        raise FeasibilityError("evaluation must carry discrete_protocol")
+    watch_ids = [item["candidate_id"] for item in payload["results"] if item["verdict"] == "watch"]
+    missing_blob = " ".join(payload["missing_evidence"])
+    drifted = [cid for cid in watch_ids if cid not in missing_blob]
+    if drifted:
+        raise FeasibilityError(f"missing_evidence must cite watch candidates {drifted}")
 
 
 def load_evaluation(path: Path | None = None) -> dict[str, Any]:

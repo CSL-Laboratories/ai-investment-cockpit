@@ -10,6 +10,10 @@
     "metrics_schema_version",
     "freeze_schema_version",
     "freeze_sha256",
+    "threshold_kind",
+    "ambiguity_treatment",
+    "statistical_numeric_thresholds",
+    "held_out_rule",
     "qualify_count",
     "results",
     "missing_evidence"
@@ -21,6 +25,13 @@
     "metrics_schema_version": { "type": "string", "const": "feasibility.metrics.v1" },
     "freeze_schema_version": { "type": "string", "const": "feasibility.freeze.v1" },
     "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "threshold_kind": { "type": "string", "const": "discrete_protocol" },
+    "ambiguity_treatment": { "type": "string", "const": "fail_closed" },
+    "statistical_numeric_thresholds": {
+      "type": "string",
+      "const": "not_applicable_until_authorized_measurement_population"
+    },
+    "held_out_rule": { "type": "string", "minLength": 1, "maxLength": 500 },
     "qualify_count": { "type": "integer", "minimum": 0, "maximum": 6 },
     "results": {
       "type": "array",

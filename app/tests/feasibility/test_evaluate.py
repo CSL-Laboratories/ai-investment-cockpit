@@ -32,6 +32,9 @@ def test_checked_in_evaluation_matches_apply() -> None:
     assert payload["empirical_pass_claimed"] is False
     assert payload["qualify_count"] == 0
     assert payload["metrics_schema_version"] == "feasibility.metrics.v1"
+    assert payload["threshold_kind"] == "discrete_protocol"
+    assert payload["ambiguity_treatment"] == "fail_closed"
+    assert payload["held_out_rule"]
     assert payload["freeze_sha256"] == RW27_FREEZE_SHA256
     assert tuple(item["candidate_id"] for item in payload["results"]) == FROZEN_IDS
     by_id = {item["candidate_id"]: item for item in payload["results"]}
@@ -153,6 +156,14 @@ def test_metrics_sources_exist() -> None:
         if not target.is_file() and not target.is_dir():
             missing.append(item["source"])
     assert not missing, missing
+
+
+def test_watch_ids_are_cited_in_missing_evidence() -> None:
+    payload = apply_metrics()
+    blob = " ".join(payload["missing_evidence"])
+    watch_ids = [item["candidate_id"] for item in payload["results"] if item["verdict"] == "watch"]
+    assert watch_ids == ["cash_merger", "cef_discount"]
+    assert all(cid in blob for cid in watch_ids)
 
 
 def test_criteria_match_freeze_and_product_names() -> None:
