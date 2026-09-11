@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SwarmSynthesis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "role",
+    "route_model",
+    "frozen_manifest_path",
+    "empirical_pass_claimed",
+    "leaf_ids",
+    "dissent_count",
+    "coverage",
+    "unverified_remainder",
+    "nuances_for_head",
+    "summary"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "claim_id": { "type": "string", "maxLength": 64 },
+    "role": { "type": "string", "const": "muse-second-gate" },
+    "route_model": { "type": "string", "maxLength": 64 },
+    "frozen_manifest_path": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "leaf_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": { "type": "string", "maxLength": 128 }
+    },
+    "dissent_count": { "type": "integer", "minimum": 0 },
+    "coverage": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "unverified_remainder": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "nuances_for_head": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "maxLength": 500 }
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 }
+  }
+}

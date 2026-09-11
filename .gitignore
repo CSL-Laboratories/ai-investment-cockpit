@@ -40,3 +40,6 @@ secrets.*
 Thumbs.db
 .idea/
 .vscode/
+
+# Swarm run-scoped filings (hashes exported to a committed note)
+.swarm-runs/

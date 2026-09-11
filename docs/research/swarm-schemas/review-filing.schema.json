@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SwarmReviewFiling",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "claim_id",
+    "attempt",
+    "role",
+    "subject_filing_path",
+    "status",
+    "empirical_pass_claimed",
+    "verdict",
+    "result"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "role": { "type": "string", "const": "first-gate-review" },
+    "subject_filing_path": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "brief_path": { "type": "string", "maxLength": 256 },
+    "route_model": { "type": "string", "maxLength": 64 },
+    "status": {
+      "type": "string",
+      "enum": ["success", "refusal", "timeout", "cancelled", "unknown"]
+    },
+    "empirical_pass_claimed": { "type": "boolean" },
+    "verdict": {
+      "type": "string",
+      "enum": ["pass-with-dissent", "fail", "unknown"]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "findings"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "findings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "claim"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 64 },
+              "severity": {
+                "type": "string",
+                "enum": ["blocker", "high", "medium", "low", "note"]
+              },
+              "claim": { "type": "string", "maxLength": 1000 },
+              "source_path": { "type": "string", "maxLength": 256 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

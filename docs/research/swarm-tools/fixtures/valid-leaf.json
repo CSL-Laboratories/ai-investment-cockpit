@@ -1,0 +1,17 @@
+{
+  "job_id": "fixture-leaf",
+  "claim_id": "SMOKE-SWARM-PIPELINE",
+  "attempt": 1,
+  "role": "leaf",
+  "brief_path": "docs/research/swarm-briefs/smoke-leaf-invariants.md",
+  "brief_rev": "fixture",
+  "status": "success",
+  "empirical_pass_claimed": false,
+  "route_model": "swe-2-medium",
+  "result": {
+    "summary": "Fixture only. Nine invariants listed by number.",
+    "findings": [
+      { "id": "inv1", "claim": "1. Single order path", "source_path": "CLAUDE.md" }
+    ]
+  }
+}
