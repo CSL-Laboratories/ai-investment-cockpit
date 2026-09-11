@@ -237,8 +237,8 @@ Devin, and scale toward 30–40 concurrent research/dev/review agents. This
 section is not permission to skip a REGISTER claim, merge, or touch the
 order path.
 
-- First measured Cloud run stays small: 1–2 sandboxed Devin leaves that
-  write only their filing path, to prove auth, `--sandbox`, schema
+- First measured Cloud run stays small: 1–2 Devin filing leaves that
+  write only their filing path, to prove auth, the frozen argv, schema
   validation, and evidence export before pod teardown.
 - `--permission-mode auto` does NOT mean read-only — the 2026-09-10 depth
   probe proved a leaf under `auto` executes shell commands. Treat `auto` as
