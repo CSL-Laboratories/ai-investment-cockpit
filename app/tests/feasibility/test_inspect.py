@@ -62,6 +62,18 @@ def test_case_sources_exist() -> None:
     assert (ROOT / "docs/research/gate-feasibility-and-value-2026-09-06.md").is_file()
 
 
+def test_reject_names_have_named_remainder() -> None:
+    payload = load_cases()
+    remainder = next(
+        item
+        for item in payload["missing_decisions"]
+        if item["id"] == "rejected_candidates_need_new_freeze"
+    )
+    for name in ("mega_cap_signal", "awareness_fallback", "momentum", "pairs"):
+        assert name in remainder["candidate_ids"]
+    assert remainder["authorized_by_this_claim"] is False
+
+
 def test_watch_candidates_have_named_decisions() -> None:
     payload = load_cases()
     decision_candidates = {

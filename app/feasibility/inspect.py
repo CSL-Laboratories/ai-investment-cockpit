@@ -52,6 +52,7 @@ DECISION_IDS = (
     "independent_extraction_labels",
     "authorized_measurement_population",
     "paired_awareness_time_study",
+    "rejected_candidates_need_new_freeze",
 )
 
 _HERE = Path(__file__).resolve().parent

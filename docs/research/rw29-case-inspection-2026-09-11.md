@@ -10,10 +10,26 @@ amends:
 
 **Claim:** `RW-29` on `cursor/rw29-case-inspection-df89` from `origin/main`
 (`8043e38`, merged RW-28 / PR #90).
+**PR:** [#91](https://github.com/NotSkittlz/ai-investment-cockpit/pull/91).
 **Pipeline:** Head implementation → SWE-2 Medium first-gate → jsonschema
 → Muse Spark 1.3 medium → Head steer. Filing bodies gitignored under
 `.swarm-runs/rw29-2026-09-11/`. **No empirical PASS.** No activation.
 No order-path edit. No new data feed.
+
+## Intake hashes
+
+| Kind | Path | SHA-256 |
+|---|---|---|
+| freeze (unchanged) | `app/feasibility/freeze.v1.json` | `26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8` |
+| evaluation (unchanged) | `app/feasibility/evaluation.v1.json` | `665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31` |
+| review filing | `filings/review-inspection.json` | `cd2a153902ca00c983e8212609e0c6cabb7b968a1a858eed51e3b15b0bd7dd0e` |
+| review ATIF | `export/review.atif.json` | `1ec37587a51eaf32f09e18093997706a9c40cc7e30a06ffc0115c13b25bfc9a7` |
+| pre-Muse manifest | `manifest-pre-muse.json` | `2968dcd9488de82f5f43a8c095fd7da61c9d71094219339f4904ddb115219f6a` |
+| synthesis | `filings/synthesis.json` | `cae6e77a1e4174f61ad26ea70fcf1ad7004e31f866238a0f3abe2d4193962bef` |
+
+Review verdict: `pass-with-dissent` (attempt 1). Muse receipt hash matched.
+`empirical_pass_claimed` is false on every filing. Tests: 40 passed in
+`app/tests/feasibility/` after Head steer.
 
 ## Why this packet
 
@@ -24,13 +40,6 @@ This packet inspects a bounded sample of already-cited operational
 evidence notes, classifies the six product failure classes, and names
 the missing decisions. It does not inspect live `data/` packets
 (Inv 8; those need their own source claim).
-
-## Pins (must stay byte-identical)
-
-| Artifact | SHA-256 |
-|---|---|
-| `app/feasibility/freeze.v1.json` | `26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8` |
-| `app/feasibility/evaluation.v1.json` | `665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31` |
 
 ## Sample (cited summaries only)
 
@@ -53,6 +62,18 @@ the missing decisions. It does not inspect live `data/` packets
 3. Independent extraction labels
 4. Authorized measurement population before numeric thresholds
 5. Paired awareness time study
+6. Rejected names stay reject without a new freeze (Head steer of F-03)
+
+## Head steer
+
+- **F-01:** keep. The useful W-23 case's remainder *is* eligibility
+  (implementation is not an eligible current target). That is not a
+  schema stretch.
+- **F-02:** accept as documented Inv 8. Live raw packets need their own
+  source claim; this packet does not ingest `data/`.
+- **F-03:** applied. Ledger now names
+  `rejected_candidates_need_new_freeze` for
+  `mega_cap_signal` / `awareness_fallback` / `momentum` / `pairs`.
 
 ## What this does not do
 
@@ -63,9 +84,3 @@ the missing decisions. It does not inspect live `data/` packets
 - Does not rewrite the soak scheduler
 - Does not claim the DEC-09 matrix or any evidence gate
 - Does not claim empirical PASS
-
-## First-gate / Muse
-
-Pending at first commit. Reviewer must **write** the filing (not `exec`).
-`--sandbox` is forbidden. If a tool is rejected, still write the filing
-from the `read` evidence already in hand.

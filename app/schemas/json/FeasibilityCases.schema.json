@@ -44,8 +44,8 @@
     },
     "missing_decisions": {
       "type": "array",
-      "minItems": 5,
-      "maxItems": 5,
+      "minItems": 6,
+      "maxItems": 6,
       "items": { "$ref": "#/$defs/decision" }
     }
   },
@@ -125,7 +125,8 @@
             "cef_discount_daily_nav_contract",
             "independent_extraction_labels",
             "authorized_measurement_population",
-            "paired_awareness_time_study"
+            "paired_awareness_time_study",
+            "rejected_candidates_need_new_freeze"
           ]
         },
         "candidate_ids": {

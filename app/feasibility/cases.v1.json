@@ -144,6 +144,12 @@
       "candidate_ids": ["awareness_fallback"],
       "authorized_by_this_claim": false,
       "note": "Net operator time saved is unmeasured. The 20-market-day paired study in the 2026-09-06 feasibility note is not started by this claim."
+    },
+    {
+      "id": "rejected_candidates_need_new_freeze",
+      "candidate_ids": ["mega_cap_signal", "awareness_fallback", "momentum", "pairs"],
+      "authorized_by_this_claim": false,
+      "note": "These names stay reject on this freeze. An expected-return model, an edge, or product-launch status for sim-loop modules requires a new freeze claim, not a lowered gate here."
     }
   ]
 }
