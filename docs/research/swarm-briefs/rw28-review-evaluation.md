@@ -2,7 +2,7 @@
 
 - `job_id`: `rw28-2026-09-11-review`
 - `claim_id`: `RW-28`
-- `attempt`: 1
+- `attempt`: 2
 - role: SWE-2 first-gate adversarial review of the checked-in metrics
   protocol and evaluation document
 - disclosure class: `public-tracked`
@@ -38,7 +38,12 @@ must remain byte-identical.
 
 Write **only** `.swarm-runs/rw28-2026-09-11/filings/review-evaluation.json`
 conforming to `docs/research/swarm-schemas/review-filing.schema.json`.
-Use the **write** tool. Do not `exec`. Do not run pytest. Do not git.
+Use the **write** tool. Allowed tools: `read`, `grep`, `write`.
+**Forbidden:** `exec`, `sha256sum`, `ls`, `pytest`, `git`, `python`,
+`run_subagent`. Attempt 1 died because `exec` was rejected and canceled
+sibling `read`s in the same batch. Do not hash files; the freeze digest is
+already pinned in `evaluate.py` as `RW27_FREEZE_SHA256`. If a tool is
+rejected, still write the filing from the `read` evidence you have.
 
 Attack:
 
