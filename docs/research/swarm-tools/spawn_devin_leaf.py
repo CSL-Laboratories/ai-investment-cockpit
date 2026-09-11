@@ -10,10 +10,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Measured 2026-09-11 (Devin CLI 3000.10.21): `autonomous` still prompts for
-# write/edit in print mode, so the filing is never created. `smart` auto-runs
-# actions a fast model judges safe. `dangerous` / bypass / yolo remain banned.
-# `--sandbox` wraps exec only; workspace writes need accept-edits.
+# Measured 2026-09-11, Devin CLI 3000.10.21:
+# `--sandbox always uses the autonomous permission mode; ignoring
+# --permission-mode accept-edits`. Under that forced mode, `exec` runs
+# (sandboxed) and `write` is rejected in print mode. Unattended filing leaves
+# therefore cannot combine `--sandbox` with a filing write unless we take
+# `dangerous` (forbidden). Frozen filing profile: accept-edits, no --sandbox.
+# Exec is not auto-approved in this mode; print mode rejects it. `smart` /
+# `dangerous` / `bypass` / `yolo` remain banned.
 FROZEN_PERMISSION_MODE = "accept-edits"
 
 FORBIDDEN = {
@@ -26,6 +30,7 @@ FORBIDDEN = {
     "yolo",
     "smart",
     "autonomous",
+    "--sandbox",
     "--full-auto",
     "--dangerously-skip-permissions",
 }
@@ -36,7 +41,6 @@ ALLOWED_MODELS = {"swe-2-medium", "swe-2-high", "swe-2-max", "swe"}
 def frozen_argv(*, brief: Path, export: Path, model: str) -> list[str]:
     return [
         "devin",
-        "--sandbox",
         "--permission-mode",
         FROZEN_PERMISSION_MODE,
         "--model",
@@ -68,6 +72,13 @@ def refuse_permission_env() -> str | None:
     return None
 
 
+def refuse_sandbox_env() -> str | None:
+    value = os.environ.get("DEVIN_SANDBOX", "")
+    if value.lower() in {"1", "true", "yes"}:
+        return value
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--brief", required=True, type=Path)
@@ -87,6 +98,13 @@ def main(argv: list[str] | None = None) -> int:
     env_mode = refuse_permission_env()
     if env_mode is not None:
         sys.stderr.write(f"refusing DEVIN_PERMISSION_MODE={env_mode!r}\n")
+        return 2
+    sandbox_env = refuse_sandbox_env()
+    if sandbox_env is not None:
+        sys.stderr.write(
+            f"refusing DEVIN_SANDBOX={sandbox_env!r} "
+            "(CLI forces autonomous and rejects write)\n"
+        )
         return 2
     brief = args.brief.resolve()
     if not brief.is_file():
@@ -110,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     args.export.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["DEVIN_PERMISSION_MODE"] = FROZEN_PERMISSION_MODE
+    env.pop("DEVIN_SANDBOX", None)
     return subprocess.call(argv_cmd, cwd=str(args.cwd), env=env)
 
 

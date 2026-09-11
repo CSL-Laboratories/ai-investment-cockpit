@@ -43,11 +43,11 @@ order path only. Detail: `docs/research/agent-swarm-cloud-host-2026-09-11.md`.
 - Devin may not: enter `app/risk/`, `OrderGateway`, mode/approval, the audit
   chain, eligibility policy, broker credentials, or any auto rung. Inv 2
   still pins Claude on the decision/order path in auto modes.
-- Spawn profile: Linux `--sandbox` required; `--prompt-file` briefs; no
-  `-r`/`--resume`/`--continue`; no `dangerous`/`bypass`/`yolo`/`smart`/
-  `autonomous`; `--permission-mode accept-edits` with `--sandbox`
-  (workspace writes auto-approved; exec still sandboxed). No broker tools.
-  Default disclosure: `public-tracked`.
+- Spawn profile: `--permission-mode accept-edits` in print mode with
+  `--prompt-file` briefs; no `-r`/`--resume`/`--continue`; no `dangerous`/
+  `bypass`/`yolo`/`smart`/`autonomous`. Do **not** pass `--sandbox` on
+  filing leaves (CLI 3000.10.21 forces `autonomous` and rejects `write`).
+  No broker tools. Default disclosure: `public-tracked`.
 - Market/live/paper soaks and DEC-09 operator cells are owner-operated
   (Grok Bot or another service Lucas chooses). The swarm does not start a
   cockpit soak and does not hold broker secrets.

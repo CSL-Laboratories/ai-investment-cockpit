@@ -26,13 +26,13 @@ spawn = _load("spawn_devin_leaf", SPAWN_PATH)
 validate = _load("validate_filings", VALIDATE_PATH)
 
 
-def test_frozen_argv_is_accept_edits_plus_sandbox(tmp_path: Path) -> None:
+def test_frozen_argv_is_accept_edits_without_sandbox(tmp_path: Path) -> None:
     brief = tmp_path / "brief.md"
     brief.write_text("brief\n", encoding="utf-8")
     export = tmp_path / "export" / "leaf.atif.json"
     argv = spawn.frozen_argv(brief=brief, export=export, model="swe-2-medium")
     assert argv[0] == "devin"
-    assert "--sandbox" in argv
+    assert "--sandbox" not in argv
     assert argv[argv.index("--permission-mode") + 1] == "accept-edits"
     assert argv[argv.index("--model") + 1] == "swe-2-medium"
     assert "--prompt-file" in argv
@@ -45,6 +45,7 @@ def test_frozen_argv_is_accept_edits_plus_sandbox(tmp_path: Path) -> None:
 
 def test_dry_run_does_not_require_devin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEVIN_PERMISSION_MODE", raising=False)
+    monkeypatch.delenv("DEVIN_SANDBOX", raising=False)
     brief = tmp_path / "brief.md"
     brief.write_text("brief\n", encoding="utf-8")
     export = tmp_path / "export" / "leaf.atif.json"
@@ -62,6 +63,7 @@ def test_dry_run_does_not_require_devin(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_refuses_unknown_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEVIN_PERMISSION_MODE", raising=False)
+    monkeypatch.delenv("DEVIN_SANDBOX", raising=False)
     brief = tmp_path / "brief.md"
     brief.write_text("brief\n", encoding="utf-8")
     rc = spawn.main(
@@ -82,6 +84,24 @@ def test_refuses_widened_permission_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DEVIN_PERMISSION_MODE", "dangerous")
+    monkeypatch.delenv("DEVIN_SANDBOX", raising=False)
+    brief = tmp_path / "brief.md"
+    brief.write_text("brief\n", encoding="utf-8")
+    rc = spawn.main(
+        [
+            "--brief",
+            str(brief),
+            "--export",
+            str(tmp_path / "out.json"),
+            "--dry-run",
+        ]
+    )
+    assert rc == 2
+
+
+def test_refuses_sandbox_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEVIN_PERMISSION_MODE", raising=False)
+    monkeypatch.setenv("DEVIN_SANDBOX", "1")
     brief = tmp_path / "brief.md"
     brief.write_text("brief\n", encoding="utf-8")
     rc = spawn.main(
@@ -113,7 +133,6 @@ def test_validate_filings_accepts_fixtures(tmp_path: Path) -> None:
     manifest = json.loads((tmp_path / "run" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["empirical_pass_claimed"] is False
     assert len(manifest["filings"]) == 3
-
 
 def test_validate_filings_rejects_pass_claimed_synthesis(tmp_path: Path) -> None:
     bad = tmp_path / "bad-synthesis.json"

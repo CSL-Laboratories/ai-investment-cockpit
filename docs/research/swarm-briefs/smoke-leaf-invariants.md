@@ -2,7 +2,7 @@
 
 - `job_id`: `swarm-smoke-2026-09-11-leaf`
 - `claim_id`: `SMOKE-SWARM-PIPELINE`
-- `attempt`: 2
+- `attempt`: 3
 - delivery slice: process smoke only (not slice A–F implementation)
 - disclosure class: `public-tracked`
 - capability allowlist: read `CLAUDE.md` (invariants section only) and write
@@ -20,7 +20,7 @@
 ## Spawn (frozen)
 
 ```text
-devin --sandbox --permission-mode accept-edits --model swe-2-medium
+devin --permission-mode accept-edits --model swe-2-medium
   --respect-workspace-trust false
   --prompt-file docs/research/swarm-briefs/smoke-leaf-invariants.md
   --export .swarm-runs/smoke-2026-09-11/export/leaf.atif.json

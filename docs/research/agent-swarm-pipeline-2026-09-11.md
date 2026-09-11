@@ -79,7 +79,7 @@ use Composer to raise filings into committed evidence. Cursor Task
 Devin leaf / first-gate reviewer:
 
 ```text
-devin --sandbox --permission-mode accept-edits --model swe-2-medium
+devin --permission-mode accept-edits --model swe-2-medium
   --respect-workspace-trust false
   --prompt-file <checked-in brief>
   --export <run-scoped export path>
@@ -90,16 +90,23 @@ devin --sandbox --permission-mode accept-edits --model swe-2-medium
 CLI 3000.10.21 (the CLI errors). Print mode plus `--prompt-file` is the
 frozen form. The brief file *is* the prompt.
 
-Measured 2026-09-11: `--permission-mode autonomous` still prompts for
-write/edit in print mode (`Tool execution was rejected by the user`), so
-the leaf exits 0 with an empty filings dir. Current CLI help lists
-`auto | accept-edits | smart | dangerous`. `--sandbox` wraps `exec` only;
-workspace writes need `accept-edits`. `smart` auto-runs actions a fast
-model judges safe and is not used.
+Measured 2026-09-11 on CLI 3000.10.21:
+
+- `--permission-mode autonomous` (and `--sandbox`, which *forces*
+  `autonomous` and ignores `accept-edits`) still prompts for write/edit
+  in print mode (`Tool execution was rejected by the user`). `exec`
+  does run. The leaf exits 0 with an empty filings dir.
+- Current CLI help lists `auto | accept-edits | smart | dangerous`.
+- `--sandbox` wraps `exec` only and cannot be combined with unattended
+  writes without `dangerous` (forbidden).
+- Frozen *filing* profile is therefore `accept-edits` **without**
+  `--sandbox`. Exec is not auto-approved in this mode; print mode
+  rejects it. This is not a substitute for `--sandbox` on jobs that
+  must run shell.
 
 Forbidden on Devin: `-r`, `--resume`, `-c`/`--continue`, `--permission-mode
-dangerous`/`bypass`/`yolo`/`smart`/`autonomous`. `accept-edits` only with
-`--sandbox`.
+dangerous`/`bypass`/`yolo`/`smart`/`autonomous`, and `--sandbox` on filing
+leaves (CLI override).
 
 Muse: Cursor Task `generalPurpose` (or `.cursor/agents/muse-synthesizer.md`)
 with `model: muse-spark-1.3-medium` or `muse-spark-1.3-high`. Prompt must

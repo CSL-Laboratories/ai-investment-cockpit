@@ -127,20 +127,23 @@ Named in `AGENTS.md` on this same amendment. Any Devin leaf/middle handling
 cockpit material uses this profile; an implicit "agent can do anything"
 default remains a refusal.
 
-- Linux Cloud Agent only; `--sandbox` required (fail closed if `bwrap` /
-  `socat` / userns are missing).
+- Linux Cloud Agent only. `bwrap` / `socat` / userns were measured present
+  on this host; they are *not* on the frozen filing argv (see below).
 - `--prompt-file <checked-in brief>` mandatory. Do not also pass an inline
   `-p` prompt or `-- "execute the brief…"` wrapper: Devin CLI 3000.10.21
   rejects `--prompt-file` combined with `[PROMPT]...`. Frozen form is
   `--prompt-file` plus `-p` (print mode, brief is the prompt).
 - Forbidden: `-r`, `--resume`, `-c` / `--continue`, `--permission-mode
-  dangerous` / `bypass` / `yolo` / `smart` / `autonomous`. Unattended
-  print-mode leaves use `--sandbox` plus `--permission-mode accept-edits`.
-  Measured 2026-09-11: `autonomous` still rejects the write/edit tool in
-  print mode, so no filing is written. `--sandbox` wraps `exec` only.
+  dangerous` / `bypass` / `yolo` / `smart` / `autonomous`.
+- Unattended *filing* leaves use `--permission-mode accept-edits` and
+  **must not** pass `--sandbox` on CLI 3000.10.21. Measured 2026-09-11:
+  `--sandbox always uses the autonomous permission mode; ignoring
+  --permission-mode accept-edits`. Under that forced mode, `exec` runs
+  and `write` is rejected in print mode, so no filing is written.
   `--permission-mode auto` auto-approves read-only tools and remains
   exec-capable; it is not a read-only profile and it is not enough to
-  write a filing.
+  write a filing. `dangerous` remains forbidden. Jobs that must `exec`
+  are a separately reviewed profile, not this filing argv.
 - `--respect-workspace-trust false` is permitted only because non-interactive
   print mode cannot show the trust prompt.
 - No broker tools, no MCP that can reach `OrderGateway`, no secrets, no
