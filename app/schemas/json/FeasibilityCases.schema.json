@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityCases",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "freeze_sha256",
+    "evaluation_sha256",
+    "qualify_count",
+    "held_out_rule",
+    "raw_packet_rule",
+    "model_routes",
+    "cases",
+    "missing_decisions"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.cases.v1" },
+    "claim_id": { "type": "string", "const": "RW-29" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualify_count": { "type": "integer", "const": 0 },
+    "held_out_rule": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "raw_packet_rule": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "model_routes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decision_path", "analysis_jobs", "status", "source"],
+      "properties": {
+        "decision_path": { "type": "string", "const": "claude_pinned_in_auto_modes" },
+        "analysis_jobs": { "type": "string", "const": "schema_gated_read_only_or_paper" },
+        "status": { "type": "string", "const": "cited_not_measured" },
+        "source": { "type": "string", "const": "CLAUDE.md" }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "missing_decisions": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/decision" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "source",
+        "as_of",
+        "kind",
+        "failure_class",
+        "candidate_ids",
+        "raw_packet_status",
+        "note",
+        "evidence_that_would_change_it"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "enum": [
+            "w24_sep04_identity_unmapped",
+            "w24_sep04_selection_empty",
+            "w24_sep03_bhf_not_date_ready",
+            "w24_intake_cash_parse_refuse",
+            "w24_bhf_date_saft_refuse",
+            "w22_briefing_edge_unavailable",
+            "w22_wake_never_fired",
+            "research_value_unmeasured",
+            "w23_impl_not_empirical"
+          ]
+        },
+        "source": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "as_of": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "kind": { "type": "string", "enum": ["useful", "empty", "rejected", "unverified"] },
+        "failure_class": {
+          "type": "string",
+          "enum": [
+            "acquisition",
+            "extraction",
+            "reasoning",
+            "eligibility",
+            "delivery",
+            "scheduling"
+          ]
+        },
+        "candidate_ids": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "enum": [
+              "cash_merger",
+              "cef_discount",
+              "mega_cap_signal",
+              "awareness_fallback",
+              "momentum",
+              "pairs"
+            ]
+          }
+        },
+        "raw_packet_status": { "type": "string", "const": "cited_summary_only" },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "evidence_that_would_change_it": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "candidate_ids", "authorized_by_this_claim", "note"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "cash_merger_prospective_cohort_and_current_target",
+            "cef_discount_daily_nav_contract",
+            "independent_extraction_labels",
+            "authorized_measurement_population",
+            "paired_awareness_time_study",
+            "rejected_candidates_need_new_freeze"
+          ]
+        },
+        "candidate_ids": {
+          "type": "array",
+          "maxItems": 6,
+          "items": { "type": "string" }
+        },
+        "authorized_by_this_claim": { "type": "boolean", "const": false },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    }
+  }
+}

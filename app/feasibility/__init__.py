@@ -1,8 +1,9 @@
-"""Slice A feasibility freeze and evaluation.
+"""Slice A feasibility freeze, evaluation, and case inspection.
 
 Pure deterministic validation. No LLM, no broker, no OrderGateway, no
-activation. RW-27 froze the shortlist. RW-28 freezes metrics and emits
-watch/reject. No candidate qualifies in this corpus.
+activation. RW-27 froze the shortlist. RW-28 emits watch/reject with
+zero qualify. RW-29 inspects cited operational cases and names missing
+decisions. No candidate qualifies in this corpus.
 """
 
 from feasibility.evaluate import (
@@ -11,6 +12,7 @@ from feasibility.evaluate import (
     load_metrics,
     validate_evaluation,
 )
+from feasibility.inspect import load_cases, validate_cases
 from feasibility.validate import (
     CLAIM_ID,
     FORBIDDEN_IDS,
@@ -35,4 +37,6 @@ __all__ = [
     "load_evaluation",
     "load_metrics",
     "validate_evaluation",
+    "load_cases",
+    "validate_cases",
 ]
