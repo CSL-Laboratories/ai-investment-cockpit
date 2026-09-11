@@ -188,6 +188,10 @@ Head (Cursor Cloud Agent)
 Five domains × ≤8 leaves plus middles is the 30–40 band. Head does not
 become a 40-way flat fan-out. A leaf still must not spawn grandchildren.
 
+Second-gate synthesis is Muse Spark 1.3, not another SWE-2 pass and not
+Composer. See
+[`agent-swarm-pipeline-2026-09-11.md`](agent-swarm-pipeline-2026-09-11.md).
+
 ## Doc disposition
 
 This note amends host, named runtime, target concurrency, and the

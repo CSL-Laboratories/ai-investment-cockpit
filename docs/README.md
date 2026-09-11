@@ -286,6 +286,7 @@ defects got fixed twice on two branches.
 | [[research/dec03-strategy-selection-2026-08-14]] | Closed DEC-03 comparison, selection, and the fail-closed W-23 edge-source contract |
 | [[research/agent-swarm-orchestration-2026-09-10]] | 2-step research/dev swarm shape (Head → domain middles → Devin leaves). Host/runtime amended 2026-09-11 |
 | [[research/agent-swarm-cloud-host-2026-09-11]] | Owner direction: swarm host is Cursor Cloud (not sentry); Devin SWE-2 at 30–40 agents for research/dev/review; market/live testing stays owner-operated |
+| [[research/agent-swarm-pipeline-2026-09-11]] | SWE-2 volume + first-gate review; Muse Spark 1.3 second-gate synthesis; Grok 4.6 xhigh Head; Lucas merges |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

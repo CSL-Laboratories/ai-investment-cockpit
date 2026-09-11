@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SwarmLeafFiling",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "claim_id",
+    "attempt",
+    "role",
+    "brief_path",
+    "status",
+    "empirical_pass_claimed",
+    "result"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "role": { "type": "string", "const": "leaf" },
+    "brief_path": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "brief_rev": { "type": "string", "maxLength": 64 },
+    "input_rev": { "type": "string", "maxLength": 64 },
+    "route_model": { "type": "string", "maxLength": 64 },
+    "status": {
+      "type": "string",
+      "enum": ["success", "refusal", "timeout", "cancelled", "unknown"]
+    },
+    "empirical_pass_claimed": { "type": "boolean" },
+    "refusal_reason": { "type": "string", "maxLength": 2000 },
+    "usage_observed": { "type": "string", "maxLength": 256 },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 256 }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "findings": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "claim"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 64 },
+              "claim": { "type": "string", "maxLength": 1000 },
+              "source_path": { "type": "string", "maxLength": 256 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -51,6 +51,11 @@ order path only. Detail: `docs/research/agent-swarm-cloud-host-2026-09-11.md`.
   cockpit soak and does not hold broker secrets.
 - OpenCode remains unnamed. Do not put an OpenCode `--auto` leaf on cockpit
   material.
+- Volume leaves and first-gate reviewers are Devin **SWE-2**. Second-gate
+  synthesis is **Muse Spark 1.3** (medium default, high on dissent), pinned
+  in `.cursor/agents/muse-synthesizer.md`. Composer is not the synthesizer.
+  Head (Grok 4.6 xhigh) steers Muse and opens PRs; Lucas merges. Pipeline:
+  `docs/research/agent-swarm-pipeline-2026-09-11.md`.
 
 ## Invariants
 

@@ -56,7 +56,10 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev swarm host is the Cursor Cloud Agent Linux VM**, not
   `sentry`. Devin CLI (SWE-2) is named for research, claimed-package
-  development, and adversarial review **off** the order path. Profile:
+  development, and first-gate adversarial review **off** the order path.
+  Second-gate synthesis is Muse Spark 1.3 (not Composer). Head is Grok 4.6
+  xhigh; Lucas reviews and merges. Pipeline:
+  `docs/research/agent-swarm-pipeline-2026-09-11.md`. Host profile:
   `docs/research/agent-swarm-cloud-host-2026-09-11.md`. Market/live/paper
   soaks stay owner-operated (Grok Bot or another service) and are never
   started by the swarm.
@@ -111,4 +114,5 @@ forces its import to fail and covers the fallback without skipping either path.
 - **Operator surfaces:** `app/bridge/` (Discord) and `app/orchestrator/app.py` (loopback API).
   A general `app/surfaces/` abstraction is not merged.
 - **Design corpus:** `docs/` — index at `docs/README.md`. Cloud Devin swarm
-  host/runtime: `docs/research/agent-swarm-cloud-host-2026-09-11.md`.
+  host: `docs/research/agent-swarm-cloud-host-2026-09-11.md`. Pipeline:
+  `docs/research/agent-swarm-pipeline-2026-09-11.md`.

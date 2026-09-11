@@ -1210,3 +1210,4 @@ procedure, not a selected product integration (PD-007). Invariants, PLAN
 delivery order, and paper/live gates are unchanged.
 
 Record: [research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
+Pipeline pin: [research/agent-swarm-pipeline-2026-09-11.md](research/agent-swarm-pipeline-2026-09-11.md).

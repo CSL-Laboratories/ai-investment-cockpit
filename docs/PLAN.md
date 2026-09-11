@@ -72,6 +72,9 @@ Canonical write-up:
 [research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
 The 2-step shape remains
 [research/agent-swarm-orchestration-2026-09-10.md](research/agent-swarm-orchestration-2026-09-10.md).
+SWE-2 volume + Muse Spark second-gate + Grok Head:
+[research/agent-swarm-pipeline-2026-09-11.md](research/agent-swarm-pipeline-2026-09-11.md).
+Lucas is the final reviewer and merger.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

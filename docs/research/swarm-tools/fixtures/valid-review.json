@@ -1,0 +1,21 @@
+{
+  "job_id": "fixture-review",
+  "claim_id": "SMOKE-SWARM-PIPELINE",
+  "attempt": 1,
+  "role": "first-gate-review",
+  "subject_filing_path": "docs/research/swarm-tools/fixtures/valid-leaf.json",
+  "status": "success",
+  "empirical_pass_claimed": false,
+  "verdict": "fail",
+  "result": {
+    "summary": "Fixture: leaf lists only Inv 1, so first-gate fails.",
+    "findings": [
+      {
+        "id": "missing-2-9",
+        "severity": "blocker",
+        "claim": "Leaf omitted invariants 2 through 9.",
+        "source_path": "CLAUDE.md"
+      }
+    ]
+  }
+}
