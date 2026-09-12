@@ -7,7 +7,7 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-11
+last-verified: 2026-09-12
 ---
 
 # The plan
@@ -59,7 +59,18 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
-### RW-30 slice A pre-measurement protocol freeze — claimed 2026-09-12
+### RW-31 slice A screen intake and cohort/label plan — claimed 2026-09-12
+
+Fifth slice A package: record the 2026-09-12 GET-only W-24 board
+(empty / date-not-ready; pool 197, supported 32, cash 0, selection-ready
+0, date-ready 0, cohort 0≪30) plus the checked-in 2026-09-09 note.
+Cohort/label **plan only**. Do not mutate freeze/evaluation/cases/protocol.
+Do not lower the 30-identity gate. No labelling, watchlist seed,
+activation, order-path edit, or empirical PASS.
+Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
+`app/tests/feasibility/test_screens.py`.
+
+### RW-30 slice A pre-measurement protocol freeze — merged 2026-09-12
 
 Fourth slice A package: freeze how a later measurement must be sealed
 (provenance, population, as-of, tuning/held-out, threshold declaration,
