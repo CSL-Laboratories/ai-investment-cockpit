@@ -1,0 +1,74 @@
+{
+  "schema_version": "feasibility.protocol.v1",
+  "claim_id": "RW-30",
+  "empirical_pass_claimed": false,
+  "freeze_sha256": "26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8",
+  "evaluation_sha256": "665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31",
+  "cases_sha256": "1f4f90a8dd03bc0970f8526bc951f425e46d4a0393bb2a6f74ce2f365bf3be41",
+  "qualify_count": 0,
+  "measurement_status": "not_started",
+  "held_out_rule": "This file freezes how a later measurement must be sealed. It is not a measurement, not held-out evidence, and must not be reused as labels or outcomes.",
+  "design_source": "docs/research/gate-feasibility-and-value-2026-09-06.md",
+  "reference_provenance": {
+    "live_packets": "not_in_this_claim",
+    "discovery_lists_are_authority": false,
+    "cited_notes_are_measurement": false
+  },
+  "population_selection": {
+    "cash_merger_cohort_rule": "30_unique_eligible_identities_same_selection_date",
+    "minimum_cohort": 30,
+    "include_rejects_and_dismissals": true,
+    "reuse_issuer_as_new_trial": false,
+    "insert_into_current_w24_manifest": false,
+    "cef_nav_authorized": false
+  },
+  "as_of_boundaries": {
+    "seal_population_before_predictions": true,
+    "eligibility_uses_supported_head_filing_date": true,
+    "outcomes_cannot_retcon_eligibility": true,
+    "right_censoring_required": true
+  },
+  "evaluation_tuning_separation": {
+    "declare_thresholds_on_tuning_before_held_out": true,
+    "rw11_regressions_are_held_out": false,
+    "rw28_evaluation_is_held_out_of_later_run": false,
+    "model_confidence_is_a_threshold": false
+  },
+  "thresholds": {
+    "numeric_values": "unset",
+    "zero_denominator": "unmeasured_never_100",
+    "declaration": "tuning_partition_before_held_out",
+    "infer_from_model_confidence": false,
+    "tune_after_outcomes": false
+  },
+  "ambiguity_treatment": "fail_closed_unverified_or_watch_reject",
+  "coverage_publication": {
+    "per_population_required": true,
+    "unverified_when_references_insufficient": true
+  },
+  "model_judges": {
+    "status": "not_started",
+    "implementer_may_label_held_out": false,
+    "labels_see_predictions": false,
+    "second_reviewer_adjudicates": true,
+    "preserve_original_disagreements": true,
+    "model_name_establishes_independence": false,
+    "rw11_score_is_extraction_recall": false,
+    "fields": [
+      "cash_amount",
+      "target_security",
+      "consideration_mix",
+      "lifecycle",
+      "expected_date",
+      "outside_date"
+    ]
+  },
+  "resource_allowance": {
+    "collection": false,
+    "new_data_feeds": false,
+    "broker_access": false,
+    "soak": false,
+    "labelling": false,
+    "activation": false
+  }
+}
