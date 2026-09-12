@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityScreens",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "freeze_sha256",
+    "evaluation_sha256",
+    "cases_sha256",
+    "protocol_sha256",
+    "qualify_count",
+    "measurement_status",
+    "labelling_authorized",
+    "watchlist_seed_authorized",
+    "activation_authorized",
+    "cef_nav_authorized",
+    "held_out_rule",
+    "latest_screen_id",
+    "meets_cohort_gate",
+    "screens",
+    "cohort_plan",
+    "label_plan",
+    "resource_allowance"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.screens.v1" },
+    "claim_id": { "type": "string", "const": "RW-31" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cases_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "protocol_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualify_count": { "type": "integer", "const": 0 },
+    "measurement_status": { "type": "string", "const": "not_started" },
+    "labelling_authorized": { "type": "boolean", "const": false },
+    "watchlist_seed_authorized": { "type": "boolean", "const": false },
+    "activation_authorized": { "type": "boolean", "const": false },
+    "cef_nav_authorized": { "type": "boolean", "const": false },
+    "held_out_rule": {
+      "type": "string",
+      "const": "This file records GET-only screen counts and a cohort/label plan. It is not a measurement, not labels, not a strategy cohort, and must not be reused as held-out outcomes."
+    },
+    "latest_screen_id": { "type": "string", "const": "w24_2026_09_12" },
+    "meets_cohort_gate": { "type": "boolean", "const": false },
+    "screens": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/screen" }
+    },
+    "cohort_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "minimum_unique_eligible_identities",
+        "same_selection_date",
+        "meets_gate",
+        "latest_selection_ready",
+        "latest_date_ready",
+        "latest_cohort",
+        "next_owner_action",
+        "watchlist_seed_authorized",
+        "discord_selection_authorized",
+        "insert_into_current_w24_manifest",
+        "reuse_issuer_as_new_trial",
+        "supported_heads_are_not_a_strategy_cohort"
+      ],
+      "properties": {
+        "rule": {
+          "type": "string",
+          "const": "30_unique_eligible_identities_same_selection_date"
+        },
+        "minimum_unique_eligible_identities": { "type": "integer", "const": 30 },
+        "same_selection_date": { "type": "boolean", "const": true },
+        "meets_gate": { "type": "boolean", "const": false },
+        "latest_selection_ready": { "type": "integer", "const": 0 },
+        "latest_date_ready": { "type": "integer", "const": 0 },
+        "latest_cohort": { "type": "integer", "const": 0 },
+        "next_owner_action": {
+          "type": "string",
+          "const": "continue_get_only_natural_head_screens"
+        },
+        "watchlist_seed_authorized": { "type": "boolean", "const": false },
+        "discord_selection_authorized": { "type": "boolean", "const": false },
+        "insert_into_current_w24_manifest": { "type": "boolean", "const": false },
+        "reuse_issuer_as_new_trial": { "type": "boolean", "const": false },
+        "supported_heads_are_not_a_strategy_cohort": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    },
+    "label_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "labelling_authorized",
+        "independent_reviewer_required",
+        "parser_author_barred",
+        "predictions_barred",
+        "implementer_may_label_held_out",
+        "rw11_held_out",
+        "rw11_score_is_extraction_recall",
+        "second_reviewer_adjudicates",
+        "seal_hashed_raw_filings_before_label_claim",
+        "zero_cash_parse_is_not_labelled_truth",
+        "supported_heads_are_not_a_strategy_cohort",
+        "candidate_extraction_refusal_n",
+        "candidate_cash_merger_n",
+        "next_claim_that_may_authorize",
+        "fields"
+      ],
+      "properties": {
+        "labelling_authorized": { "type": "boolean", "const": false },
+        "independent_reviewer_required": { "type": "boolean", "const": true },
+        "parser_author_barred": { "type": "boolean", "const": true },
+        "predictions_barred": { "type": "boolean", "const": true },
+        "implementer_may_label_held_out": { "type": "boolean", "const": false },
+        "rw11_held_out": { "type": "boolean", "const": false },
+        "rw11_score_is_extraction_recall": { "type": "boolean", "const": false },
+        "second_reviewer_adjudicates": { "type": "boolean", "const": true },
+        "seal_hashed_raw_filings_before_label_claim": {
+          "type": "boolean",
+          "const": true
+        },
+        "zero_cash_parse_is_not_labelled_truth": {
+          "type": "boolean",
+          "const": true
+        },
+        "supported_heads_are_not_a_strategy_cohort": {
+          "type": "boolean",
+          "const": true
+        },
+        "candidate_extraction_refusal_n": { "type": "integer", "const": 32 },
+        "candidate_cash_merger_n": { "type": "integer", "const": 0 },
+        "next_claim_that_may_authorize": {
+          "type": "string",
+          "const": "later_scoped_claim_after_sealed_raw_packet"
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "enum": [
+              "cash_amount",
+              "target_security",
+              "consideration_mix",
+              "lifecycle",
+              "expected_date",
+              "outside_date"
+            ]
+          }
+        }
+      }
+    },
+    "resource_allowance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection",
+        "new_data_feeds",
+        "broker_access",
+        "soak",
+        "labelling",
+        "activation"
+      ],
+      "properties": {
+        "collection": { "type": "boolean", "const": false },
+        "new_data_feeds": { "type": "boolean", "const": false },
+        "broker_access": { "type": "boolean", "const": false },
+        "soak": { "type": "boolean", "const": false },
+        "labelling": { "type": "boolean", "const": false },
+        "activation": { "type": "boolean", "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "screen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "screen_date",
+        "method",
+        "claimant",
+        "provenance",
+        "raw_packet_status",
+        "identity_list_status",
+        "soak_sha_status",
+        "evidence_note",
+        "evidence_note_sha256",
+        "operator_main_head",
+        "gate_result",
+        "counts",
+        "meets_cohort_gate",
+        "watchlist_seeded",
+        "discord_selection_posted",
+        "soak_head_rewritten",
+        "constraint_source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": ["w24_2026_09_09", "w24_2026_09_12"]
+        },
+        "screen_date": {
+          "type": "string",
+          "pattern": "^2026-09-(09|12)$"
+        },
+        "method": { "type": "string", "const": "w24_get_only_natural_head" },
+        "claimant": {
+          "type": "string",
+          "enum": ["cockpit_admin_automation", "grok_bot_operator_board"]
+        },
+        "provenance": {
+          "type": "string",
+          "enum": ["checked_in_evidence_note", "operator_board"]
+        },
+        "raw_packet_status": {
+          "type": "string",
+          "const": "cited_summary_only"
+        },
+        "identity_list_status": {
+          "type": "string",
+          "enum": ["cited_in_evidence_note", "not_in_board_summary"]
+        },
+        "soak_sha_status": {
+          "type": "string",
+          "enum": ["cited_in_evidence_note", "not_in_board_summary"]
+        },
+        "evidence_note": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "evidence_note_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "operator_main_head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "soak_sha_observed_live": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "gate_result": {
+          "type": "string",
+          "const": "no_pass_empty_date_not_ready"
+        },
+        "counts": { "$ref": "#/$defs/counts" },
+        "meets_cohort_gate": { "type": "boolean", "const": false },
+        "watchlist_seeded": { "type": "boolean", "const": false },
+        "discord_selection_posted": { "type": "boolean", "const": false },
+        "soak_head_rewritten": { "type": "boolean", "const": false },
+        "constraint_source": {
+          "type": "string",
+          "enum": ["checked_in_evidence_note", "operator_board_statement"]
+        },
+        "supported_symbols": {
+          "type": "array",
+          "minItems": 32,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 8 }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pool",
+        "supported_heads",
+        "cash_parse_hits",
+        "selection_ready",
+        "date_ready",
+        "cohort"
+      ],
+      "properties": {
+        "pool": { "type": "integer", "minimum": 0 },
+        "supported_heads": { "type": "integer", "const": 32 },
+        "cash_parse_hits": { "type": "integer", "const": 0 },
+        "selection_ready": { "type": "integer", "const": 0 },
+        "date_ready": { "type": "integer", "const": 0 },
+        "cohort": { "type": "integer", "const": 0 }
+      }
+    }
+  }
+}

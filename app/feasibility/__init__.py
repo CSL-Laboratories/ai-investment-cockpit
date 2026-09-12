@@ -1,9 +1,10 @@
-"""Slice A feasibility freeze, evaluation, case inspection, and protocol.
+"""Slice A feasibility freeze, evaluation, cases, protocol, and screens.
 
 Pure deterministic validation. No LLM, no broker, no OrderGateway, no
 activation. RW-27 froze the shortlist. RW-28 emits watch/reject with
 zero qualify. RW-29 inspects cited operational cases. RW-30 freezes the
 pre-measurement and model-judge protocol without starting measurement.
+RW-31 records GET-only screen counts and a cohort/label plan only.
 """
 
 from feasibility.evaluate import (
@@ -14,6 +15,7 @@ from feasibility.evaluate import (
 )
 from feasibility.inspect import load_cases, validate_cases
 from feasibility.protocol import load_protocol, validate_protocol
+from feasibility.screens import load_screens, validate_screens
 from feasibility.validate import (
     CLAIM_ID,
     FORBIDDEN_IDS,
@@ -42,4 +44,6 @@ __all__ = [
     "validate_cases",
     "load_protocol",
     "validate_protocol",
+    "load_screens",
+    "validate_screens",
 ]

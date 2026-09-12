@@ -14,3 +14,5 @@ RW-29 (slice A case inspection): `rw29-review-inspection.md`,
 `rw29-muse-synthesis.md`.
 RW-30 (slice A pre-measurement protocol): `rw30-review-protocol.md`,
 `rw30-muse-synthesis.md`.
+RW-31 (slice A screen intake / cohort-label plan): `rw31-review-screens.md`,
+`rw31-muse-synthesis.md`.
