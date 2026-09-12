@@ -1,7 +1,7 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-09-11
+last-verified: 2026-09-12
 ---
 
 # The register
