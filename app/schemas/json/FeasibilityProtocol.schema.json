@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FeasibilityProtocol",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "claim_id",
+    "empirical_pass_claimed",
+    "freeze_sha256",
+    "evaluation_sha256",
+    "cases_sha256",
+    "qualify_count",
+    "measurement_status",
+    "held_out_rule",
+    "design_source",
+    "design_source_sha256",
+    "reference_provenance",
+    "population_selection",
+    "as_of_boundaries",
+    "evaluation_tuning_separation",
+    "thresholds",
+    "ambiguity_treatment",
+    "coverage_publication",
+    "model_judges",
+    "resource_allowance"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "feasibility.protocol.v1" },
+    "claim_id": { "type": "string", "const": "RW-30" },
+    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cases_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "qualify_count": { "type": "integer", "const": 0 },
+    "measurement_status": { "type": "string", "const": "not_started" },
+    "held_out_rule": {
+      "type": "string",
+      "const": "This file freezes how a later measurement must be sealed. It is not a measurement, not held-out evidence, and must not be reused as labels or outcomes."
+    },
+    "design_source": {
+      "type": "string",
+      "const": "docs/research/gate-feasibility-and-value-2026-09-06.md"
+    },
+    "design_source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reference_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live_packets", "discovery_lists_are_authority", "cited_notes_are_measurement"],
+      "properties": {
+        "live_packets": { "type": "string", "const": "not_in_this_claim" },
+        "discovery_lists_are_authority": { "type": "boolean", "const": false },
+        "cited_notes_are_measurement": { "type": "boolean", "const": false }
+      }
+    },
+    "population_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cash_merger_cohort_rule",
+        "minimum_cohort",
+        "include_rejects_and_dismissals",
+        "reuse_issuer_as_new_trial",
+        "insert_into_current_w24_manifest",
+        "cef_nav_authorized"
+      ],
+      "properties": {
+        "cash_merger_cohort_rule": {
+          "type": "string",
+          "const": "30_unique_eligible_identities_same_selection_date"
+        },
+        "minimum_cohort": { "type": "integer", "const": 30 },
+        "include_rejects_and_dismissals": { "type": "boolean", "const": true },
+        "reuse_issuer_as_new_trial": { "type": "boolean", "const": false },
+        "insert_into_current_w24_manifest": { "type": "boolean", "const": false },
+        "cef_nav_authorized": { "type": "boolean", "const": false }
+      }
+    },
+    "as_of_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seal_population_before_predictions",
+        "eligibility_uses_supported_head_filing_date",
+        "outcomes_cannot_retcon_eligibility",
+        "right_censoring_required"
+      ],
+      "properties": {
+        "seal_population_before_predictions": { "type": "boolean", "const": true },
+        "eligibility_uses_supported_head_filing_date": { "type": "boolean", "const": true },
+        "outcomes_cannot_retcon_eligibility": { "type": "boolean", "const": true },
+        "right_censoring_required": { "type": "boolean", "const": true }
+      }
+    },
+    "evaluation_tuning_separation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declare_thresholds_on_tuning_before_held_out",
+        "later_held_out_excludes_rw11_regressions",
+        "later_held_out_excludes_rw28_evaluation",
+        "model_confidence_is_a_threshold"
+      ],
+      "properties": {
+        "declare_thresholds_on_tuning_before_held_out": { "type": "boolean", "const": true },
+        "later_held_out_excludes_rw11_regressions": { "type": "boolean", "const": true },
+        "later_held_out_excludes_rw28_evaluation": { "type": "boolean", "const": true },
+        "model_confidence_is_a_threshold": { "type": "boolean", "const": false }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numeric_values",
+        "zero_denominator",
+        "declaration",
+        "infer_from_model_confidence",
+        "tune_after_outcomes"
+      ],
+      "properties": {
+        "numeric_values": { "type": "string", "const": "unset" },
+        "zero_denominator": { "type": "string", "const": "unmeasured_never_100" },
+        "declaration": { "type": "string", "const": "tuning_partition_before_held_out" },
+        "infer_from_model_confidence": { "type": "boolean", "const": false },
+        "tune_after_outcomes": { "type": "boolean", "const": false }
+      }
+    },
+    "ambiguity_treatment": {
+      "type": "string",
+      "const": "fail_closed_unverified_or_watch_reject"
+    },
+    "coverage_publication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["per_population_required", "unverified_when_references_insufficient"],
+      "properties": {
+        "per_population_required": { "type": "boolean", "const": true },
+        "unverified_when_references_insufficient": { "type": "boolean", "const": true }
+      }
+    },
+    "model_judges": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "implementer_may_label_held_out",
+        "labels_see_predictions",
+        "second_reviewer_adjudicates",
+        "preserve_original_disagreements",
+        "model_name_establishes_independence",
+        "rw11_score_is_extraction_recall",
+        "fields"
+      ],
+      "properties": {
+        "status": { "type": "string", "const": "not_started" },
+        "implementer_may_label_held_out": { "type": "boolean", "const": false },
+        "labels_see_predictions": { "type": "boolean", "const": false },
+        "second_reviewer_adjudicates": { "type": "boolean", "const": true },
+        "preserve_original_disagreements": { "type": "boolean", "const": true },
+        "model_name_establishes_independence": { "type": "boolean", "const": false },
+        "rw11_score_is_extraction_recall": { "type": "boolean", "const": false },
+        "fields": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {
+            "type": "string",
+            "enum": [
+              "cash_amount",
+              "target_security",
+              "consideration_mix",
+              "lifecycle",
+              "expected_date",
+              "outside_date"
+            ]
+          }
+        }
+      }
+    },
+    "resource_allowance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection",
+        "new_data_feeds",
+        "broker_access",
+        "soak",
+        "labelling",
+        "activation"
+      ],
+      "properties": {
+        "collection": { "type": "boolean", "const": false },
+        "new_data_feeds": { "type": "boolean", "const": false },
+        "broker_access": { "type": "boolean", "const": false },
+        "soak": { "type": "boolean", "const": false },
+        "labelling": { "type": "boolean", "const": false },
+        "activation": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}
