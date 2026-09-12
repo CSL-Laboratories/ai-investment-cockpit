@@ -60,9 +60,10 @@ delivery and scheduling failures separately. The September evidence screen and t
 [feasibility review](research/gate-feasibility-and-value-2026-09-06.md) already show
 that successful mechanics do not establish an attainable strategy evidence population.
 Empty GET-only screens are recorded in `app/feasibility/screens.v1.json`
-(RW-31) as useful research; they do not lower the 30-identity cohort
-gate or authorize labelling. Further data collection needs its own
-authorized resource/source claim.
+(RW-31/RW-32) as useful research; they do not lower the 30-identity cohort
+gate or authorize labelling. The 2026-09-12 identity list is pinned from
+an operator seal of summary hashes; raw SEC packets remain off-clone.
+Further data collection needs its own authorized resource/source claim.
 
 Freeze reference provenance, population selection, as-of boundaries, evaluation/tuning
 separation, metrics, thresholds and ambiguity treatment before measuring results.

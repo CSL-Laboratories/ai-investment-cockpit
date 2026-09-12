@@ -59,7 +59,18 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
-### RW-31 slice A screen intake and cohort/label plan — claimed 2026-09-12
+### RW-32 slice A 2026-09-12 screen seal pin — claimed 2026-09-12
+
+Sixth slice A package: pin the Grok Bot operator seal for the empty
+2026-09-12 GET-only screen (32 identities, four soak-host summary
+SHA-256s, soak SHA `5d50b251`). Do not mutate freeze/evaluation/cases/protocol.
+Do not lower the 30-identity gate. Seal hashes are not raw filings and
+not labels. No watchlist seed, activation, order-path edit, or empirical
+PASS.
+Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
+`app/tests/feasibility/test_screens.py`.
+
+### RW-31 slice A screen intake and cohort/label plan — merged 2026-09-12
 
 Fifth slice A package: record the 2026-09-12 GET-only W-24 board
 (empty / date-not-ready; pool 197, supported 32, cash 0, selection-ready

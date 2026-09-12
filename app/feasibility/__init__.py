@@ -5,6 +5,7 @@ activation. RW-27 froze the shortlist. RW-28 emits watch/reject with
 zero qualify. RW-29 inspects cited operational cases. RW-30 freezes the
 pre-measurement and model-judge protocol without starting measurement.
 RW-31 records GET-only screen counts and a cohort/label plan only.
+RW-32 pins the 2026-09-12 operator seal without lowering the cohort gate.
 """
 
 from feasibility.evaluate import (

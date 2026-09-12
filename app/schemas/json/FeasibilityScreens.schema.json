@@ -27,7 +27,7 @@
   ],
   "properties": {
     "schema_version": { "type": "string", "const": "feasibility.screens.v1" },
-    "claim_id": { "type": "string", "const": "RW-31" },
+    "claim_id": { "type": "string", "const": "RW-32" },
     "empirical_pass_claimed": { "type": "boolean", "const": false },
     "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -220,19 +220,31 @@
         },
         "provenance": {
           "type": "string",
-          "enum": ["checked_in_evidence_note", "operator_board"]
+          "enum": [
+            "checked_in_evidence_note",
+            "operator_board",
+            "sealed_operator_packet"
+          ]
         },
         "raw_packet_status": {
           "type": "string",
-          "const": "cited_summary_only"
+          "enum": ["cited_summary_only", "sealed_summary_hashes"]
         },
         "identity_list_status": {
           "type": "string",
-          "enum": ["cited_in_evidence_note", "not_in_board_summary"]
+          "enum": [
+            "cited_in_evidence_note",
+            "not_in_board_summary",
+            "cited_in_sealed_packet"
+          ]
         },
         "soak_sha_status": {
           "type": "string",
-          "enum": ["cited_in_evidence_note", "not_in_board_summary"]
+          "enum": [
+            "cited_in_evidence_note",
+            "not_in_board_summary",
+            "cited_in_sealed_packet"
+          ]
         },
         "evidence_note": { "type": "string", "minLength": 1, "maxLength": 256 },
         "evidence_note_sha256": {
@@ -258,7 +270,11 @@
         "soak_head_rewritten": { "type": "boolean", "const": false },
         "constraint_source": {
           "type": "string",
-          "enum": ["checked_in_evidence_note", "operator_board_statement"]
+          "enum": [
+            "checked_in_evidence_note",
+            "operator_board_statement",
+            "sealed_operator_packet"
+          ]
         },
         "supported_symbols": {
           "type": "array",
@@ -266,6 +282,40 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1, "maxLength": 8 }
+        },
+        "seal_file": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "seal_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "packet_sha256": { "$ref": "#/$defs/packet_sha256" },
+        "parser_path": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "parser_blob_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "markdown_hash_caveat": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "packet_sha256": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "w24-prospective-intake-natural-head-rescreen-2026-09-12.json",
+        "discovery-pool-rescreen-2026-09-12.json",
+        "intake-natural-head-rescreen-2026-09-12.log",
+        "w24-natural-head-rescreen-2026-09-12.md"
+      ],
+      "properties": {
+        "w24-prospective-intake-natural-head-rescreen-2026-09-12.json": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "discovery-pool-rescreen-2026-09-12.json": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "intake-natural-head-rescreen-2026-09-12.log": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "w24-natural-head-rescreen-2026-09-12.md": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
         }
       }
     },

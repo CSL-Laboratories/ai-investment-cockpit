@@ -294,6 +294,7 @@ defects got fixed twice on two branches.
 | [[research/rw29-case-inspection-2026-09-11]] | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
 | [[research/rw30-measurement-protocol-2026-09-12]] | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
 | [[research/rw31-screen-intake-2026-09-12]] | RW-31 screen ledger: empty 2026-09-12 board, cohort/label plan only, no PASS |
+| [[research/rw32-screen-seal-2026-09-12]] | RW-32 screen seal: Sep 12 identities + summary hashes, still no PASS |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

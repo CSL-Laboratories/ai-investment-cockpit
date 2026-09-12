@@ -21,13 +21,21 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## RW-31 slice A screen intake and cohort/label plan — claimed 2026-09-12
+## RW-32 slice A 2026-09-12 screen seal pin — claimed 2026-09-12
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-31` | Slice A: ingest the 2026-09-12 GET-only W-24 natural-head board (empty / date-not-ready) into `feasibility.screens.v1` with a versioned screen ledger and cohort/label *plan only*. Pins RW-27/28/29/30 digests. `qualify_count` stays 0. Empty is honest; do not lower the 30-identity gate. 32 supported heads with cash 0 are a candidate extraction-refusal set, not a strategy cohort. No labelling, watchlist seed, NAV, measurement, activation, or order-path edit | claimed on `cursor/rw31-screen-intake-df89` from `origin/main` (`885d33a`) | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in screens validate; freeze/evaluation/cases/protocol SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, seed `COCKPIT_MERGER_WATCHLIST`, authorize labelling or a NAV feed, or claim empirical PASS |
+| `RW-32` | Slice A: pin the operator seal for the empty 2026-09-12 GET-only W-24 screen (32 identities + four soak-host summary SHA-256s) onto `feasibility.screens.v1`. Pins RW-27/28/29/30 digests. `qualify_count` stays 0. Empty stays honest; do not lower the 30-identity gate. Seal is summary hashes, not raw SEC docs and not labels. No watchlist seed, NAV, measurement, activation, or order-path edit | claimed on `cursor/rw32-sep12-seal-df89` from `origin/main` (`f24f9a8`) | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in screens validate against the seal file; freeze/evaluation/cases/protocol SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, seed `COCKPIT_MERGER_WATCHLIST`, authorize labelling or a NAV feed, or claim empirical PASS |
 
-`app/feasibility/screens.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. The 2026-09-12 raw JSON/packets stay on the soak host; this claim records board counts only.
+`app/feasibility/screens.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. The 2026-09-12 raw primary docs stay on the soak host.
+
+## RW-31 slice A screen intake and cohort/label plan — merged 2026-09-12
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-31` | Slice A: ingest the 2026-09-12 GET-only W-24 natural-head board (empty / date-not-ready) into `feasibility.screens.v1` with a versioned screen ledger and cohort/label *plan only*. Pins RW-27/28/29/30 digests. `qualify_count` stays 0. Empty is honest; do not lower the 30-identity gate. 32 supported heads with cash 0 are a candidate extraction-refusal set, not a strategy cohort. No labelling, watchlist seed, NAV, measurement, activation, or order-path edit | merged [PR #94](https://github.com/NotSkittlz/ai-investment-cockpit/pull/94); hash note [[research/rw31-screen-intake-2026-09-12]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in screens validate; freeze/evaluation/cases/protocol SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, seed `COCKPIT_MERGER_WATCHLIST`, authorize labelling or a NAV feed, or claim empirical PASS |
+
+`app/feasibility/screens.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. RW-32 consumes that ledger by pinning the 2026-09-12 seal. Remaining owner work is more GET-only screens until selection-ready ≥30 and date-ready, then independent labels.
 
 ## RW-30 slice A pre-measurement protocol freeze — merged 2026-09-12
 

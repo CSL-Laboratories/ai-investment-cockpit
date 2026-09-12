@@ -16,3 +16,5 @@ RW-30 (slice A pre-measurement protocol): `rw30-review-protocol.md`,
 `rw30-muse-synthesis.md`.
 RW-31 (slice A screen intake / cohort-label plan): `rw31-review-screens.md`,
 `rw31-muse-synthesis.md`.
+RW-32 (slice A 2026-09-12 screen seal): `rw32-review-screens.md`,
+`rw32-muse-synthesis.md`.

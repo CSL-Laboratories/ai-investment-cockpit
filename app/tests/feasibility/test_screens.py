@@ -1,4 +1,4 @@
-"""RW-31 — GET-only screen ledger and cohort/label plan."""
+"""RW-32 — pin the 2026-09-12 operator seal onto the screen ledger."""
 
 from __future__ import annotations
 
@@ -32,6 +32,10 @@ from feasibility.screens import (
     SEP09_SUPPORTED_SYMBOLS,
     SEP12_NOTE,
     SEP12_NOTE_SHA256,
+    SEP12_SEAL,
+    SEP12_SEAL_SHA256,
+    SEP12_SOAK_SHA,
+    SEP12_SUPPORTED_SYMBOLS,
     load_screens,
     sha256_file,
     validate_screens,
@@ -43,7 +47,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_checked_in_screens_load() -> None:
     payload = load_screens()
-    assert payload["claim_id"] == "RW-31"
+    assert payload["claim_id"] == "RW-32"
     assert payload["empirical_pass_claimed"] is False
     assert payload["qualify_count"] == 0
     assert payload["measurement_status"] == "not_started"
@@ -61,10 +65,13 @@ def test_checked_in_screens_load() -> None:
     assert tuple(item["id"] for item in payload["screens"]) == SCREEN_IDS
     latest = payload["screens"][-1]
     assert latest["id"] == "w24_2026_09_12"
-    assert latest["provenance"] == "operator_board"
-    assert latest["raw_packet_status"] == "cited_summary_only"
-    assert latest["identity_list_status"] == "not_in_board_summary"
-    assert "supported_symbols" not in latest
+    assert latest["provenance"] == "sealed_operator_packet"
+    assert latest["raw_packet_status"] == "sealed_summary_hashes"
+    assert latest["identity_list_status"] == "cited_in_sealed_packet"
+    assert latest["supported_symbols"] == list(SEP12_SUPPORTED_SYMBOLS)
+    assert latest["supported_symbols"] != list(SEP09_SUPPORTED_SYMBOLS)
+    assert latest["soak_sha_observed_live"] == SEP12_SOAK_SHA
+    assert latest["seal_sha256"] == SEP12_SEAL_SHA256
     assert latest["counts"] == {
         "pool": 197,
         "supported_heads": 32,
@@ -93,30 +100,43 @@ def test_prior_artifacts_bytes_unchanged() -> None:
     assert load_protocol()["qualify_count"] == 0
 
 
-def test_evidence_notes_exist_and_match_pins() -> None:
+def test_evidence_notes_and_seal_match_pins() -> None:
     sep09 = ROOT / SEP09_NOTE
     sep12 = ROOT / SEP12_NOTE
+    seal = ROOT / SEP12_SEAL
     assert sep09.is_file()
     assert sep12.is_file()
+    assert seal.is_file()
     assert sha256_file(sep09) == SEP09_NOTE_SHA256
     assert sha256_file(sep12) == SEP12_NOTE_SHA256
+    assert sha256_file(seal) == SEP12_SEAL_SHA256
     first = load_screens()["screens"][0]
     assert first["evidence_note"] == SEP09_NOTE
     assert first["supported_symbols"] == list(SEP09_SUPPORTED_SYMBOLS)
     assert len(SEP09_SUPPORTED_SYMBOLS) == 32
+    assert len(SEP12_SUPPORTED_SYMBOLS) == 32
 
 
-def test_sep12_must_not_invent_symbol_list() -> None:
+def test_sep12_must_not_copy_sep09_list() -> None:
     payload = copy.deepcopy(load_screens())
     payload["screens"][1]["supported_symbols"] = list(SEP09_SUPPORTED_SYMBOLS)
-    with pytest.raises(FeasibilityError, match="must not copy or invent"):
+    with pytest.raises(FeasibilityError, match="must match the seal"):
         validate_screens(payload)
 
 
-def test_sep12_must_not_invent_soak_sha() -> None:
+def test_sep12_wrong_soak_sha_rejected() -> None:
     payload = copy.deepcopy(load_screens())
-    payload["screens"][1]["soak_sha_observed_live"] = "5d50b25194c14beaac7bb979dcd559cc21a2fb95"
-    with pytest.raises(FeasibilityError, match="must not invent soak"):
+    payload["screens"][1]["soak_sha_observed_live"] = "0" * 40
+    with pytest.raises(FeasibilityError, match="soak SHA"):
+        validate_screens(payload)
+
+
+def test_sep12_packet_hash_drift_rejected() -> None:
+    payload = copy.deepcopy(load_screens())
+    payload["screens"][1]["packet_sha256"]["intake-natural-head-rescreen-2026-09-12.log"] = (
+        "0" * 64
+    )
+    with pytest.raises(FeasibilityError, match="packet hashes"):
         validate_screens(payload)
 
 
