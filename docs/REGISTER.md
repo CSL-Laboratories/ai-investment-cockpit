@@ -21,13 +21,13 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
-## RW-30 slice A pre-measurement protocol freeze — claimed 2026-09-12
+## RW-30 slice A pre-measurement protocol freeze — merged 2026-09-12
 
 | ID | Scope | Status | Owner | Completion contract |
 |---|---|---|---|---|
-| `RW-30` | Slice A: freeze `feasibility.protocol.v1` (provenance, population selection, as-of bounds, evaluation/tuning split, threshold *declaration* procedure, ambiguity treatment, independent model-judge rules) without starting measurement, inventing numeric thresholds, collecting data, or qualifying a judge. Pins RW-27/28/29 digests. `qualify_count` stays 0. No activation, no order path, no soak, no new data feed | claimed on `cursor/rw30-measurement-protocol-df89` from `origin/main` | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in protocol validates; freeze/evaluation/cases SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, authorize a NAV feed, start labelling, or claim empirical PASS |
+| `RW-30` | Slice A: freeze `feasibility.protocol.v1` (provenance, population selection, as-of bounds, evaluation/tuning split, threshold *declaration* procedure, ambiguity treatment, independent model-judge rules) without starting measurement, inventing numeric thresholds, collecting data, or qualifying a judge. Pins RW-27/28/29 digests. `qualify_count` stays 0. No activation, no order path, no soak, no new data feed | merged [PR #92](https://github.com/NotSkittlz/ai-investment-cockpit/pull/92); hash note [[research/rw30-measurement-protocol-2026-09-12]]; owner blockers [[research/rw30-owner-blockers-2026-09-12]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in protocol validates; freeze/evaluation/cases SHA-256 unchanged. Does **not** select launch strategies, activate W-23, authorize a NAV feed, start labelling, or claim empirical PASS |
 
-`app/feasibility/protocol.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. This is the last in-repo slice A packet that does not require owner collection, labelling, or a feed decision.
+`app/feasibility/protocol.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. Remaining slice A work is owner-operated (screens, labels, feeds, soaks, activation).
 
 ## RW-29 slice A case inspection and missing-evidence ledger — merged 2026-09-11
 

@@ -59,13 +59,13 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
-### RW-30 slice A pre-measurement protocol freeze — claimed 2026-09-12
+### RW-30 slice A pre-measurement protocol freeze — merged 2026-09-12
 
 Fourth slice A package: freeze how a later measurement must be sealed
-(provenance, population, as-of, tuning/held-out, threshold declaration,
-ambiguity, independent judges) without starting it. Do not mutate
-freeze/evaluation/cases. Do not invent numeric cutoffs. No activation,
-no order-path edit, no empirical PASS.
+without starting it. Merged
+[PR #92](https://github.com/NotSkittlz/ai-investment-cockpit/pull/92).
+Owner blockers: [[research/rw30-owner-blockers-2026-09-12]].
+No activation, no order-path edit, no empirical PASS.
 Claim: [[REGISTER]]. Code: `app/feasibility/protocol.py`. Tests:
 `app/tests/feasibility/test_protocol.py`.
 
