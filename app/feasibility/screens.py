@@ -100,12 +100,9 @@ def _validate_screen_row(item: dict[str, Any]) -> None:
     note_digest = sha256_file(note)
     if note_digest != item["evidence_note_sha256"]:
         raise FeasibilityError("evidence_note_sha256 must match the checked-in note")
-    counts = item["counts"]
-    if counts["supported_heads"] < 30 and item["meets_cohort_gate"] is True:
-        raise FeasibilityError("supported heads are not a strategy cohort")
-    if counts["selection_ready"] < 30 or counts["date_ready"] < 30:
-        if item["meets_cohort_gate"] is not False:
-            raise FeasibilityError("cohort gate stays closed while counts are below 30")
+    # Head steer of F-02: this schema version cannot mark any screen cohort-ready.
+    if item["meets_cohort_gate"] is not False:
+        raise FeasibilityError("this ledger cannot mark a screen cohort-ready")
     if item["id"] == "w24_2026_09_09":
         if item["evidence_note"] != SEP09_NOTE or item["evidence_note_sha256"] != SEP09_NOTE_SHA256:
             raise FeasibilityError("2026-09-09 must cite the checked-in evidence note digest")

@@ -26,10 +26,14 @@ Measurement is **not started**.
 | protocol (unchanged) | `app/feasibility/protocol.v1.json` | `a7bb528863b0a43073f1fbfbb91b6145fa6b6d85018a4dd5828c79ef76b6c528` |
 | Sep 9 evidence note | `docs/evidence/w24-natural-head-rescreen-2026-09-09.md` | `427f5b9cf63b8071ad000a77ad59108bec77f7010ee6f8dfb95fa5379abd315b` |
 | Sep 12 board note | `docs/evidence/w24-natural-head-rescreen-2026-09-12.md` | `9007f8bcfab9c8bf901b81e8584bd1174f17ab0fd13c67b88a0bca273ee0ef0c` |
-| review filing | `filings/review-screens.json` | pending first-gate |
-| review ATIF | `export/review.atif.json` | pending first-gate |
-| pre-Muse manifest | `manifest-pre-muse.json` | pending first-gate |
-| synthesis | `filings/synthesis.json` | pending first-gate |
+| review filing | `filings/review-screens.json` | `96bca0803e41bac77859558469facfe825033fc9ae5ae000e1c4063142b56bd7` |
+| review ATIF | `export/review.atif.json` | `814ed7d56cdc071358fcdc12d8a78f32f46a0a9209da8c32f6955c999cf63248` |
+| pre-Muse manifest | `manifest-pre-muse.json` | `651bfb27cfebffdf5afc76ac87800137a77e995facff2acab954207c4b882051` |
+| synthesis | `filings/synthesis.json` | `2fbe11425fc2e9a550b259a84b1206aae221fc1704ea4002f9eedd6321b3a3b0` |
+
+Review verdict: `pass-with-dissent` (attempt 1). Muse receipt hash matched.
+`empirical_pass_claimed` is false on every filing. Tests: 71 passed in
+`app/tests/feasibility/` after Head steer.
 
 ## Why this packet
 
@@ -71,3 +75,15 @@ note. It does not invent a 2026-09-12 symbol list or soak SHA.
 - Does not select launch strategies or activate W-23
 - Does not claim empirical PASS
 - Does not treat 32 supported heads as a passing cohort
+
+## Head steer
+
+- **F-02:** keep. Make the per-row `meets_cohort_gate` guard
+  unconditional (`this ledger cannot mark a screen cohort-ready`)
+  instead of count-conditional. This schema version cannot record a
+  passing cohort.
+- **F-01:** keep as dissent. The 2026-09-12 row is board attestation;
+  raw packets are not in this clone.
+- **F-03:** keep. Hard-coding supported_heads 32 is the freeze of
+  *this* two-row ledger. A later screen with a different count needs a
+  new claim, not a loosened schema.
