@@ -288,6 +288,10 @@
         "packet_sha256": { "$ref": "#/$defs/packet_sha256" },
         "parser_path": { "type": "string", "minLength": 1, "maxLength": 256 },
         "parser_blob_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "parser_reported_object_kind": {
+          "type": "string",
+          "enum": ["commit_in_this_clone"]
+        },
         "markdown_hash_caveat": { "type": "string", "minLength": 1, "maxLength": 200 }
       }
     },

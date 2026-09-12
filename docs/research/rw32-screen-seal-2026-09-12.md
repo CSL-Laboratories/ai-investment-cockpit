@@ -27,10 +27,14 @@ Measurement is **not started**.
 | Sep 9 evidence note | `docs/evidence/w24-natural-head-rescreen-2026-09-09.md` | `427f5b9cf63b8071ad000a77ad59108bec77f7010ee6f8dfb95fa5379abd315b` |
 | Sep 12 evidence note | `docs/evidence/w24-natural-head-rescreen-2026-09-12.md` | `71c1f8b03cd673ced206e8e2c8bcfaca6d8b99985e73b9771d9cd67b05882226` |
 | Sep 12 seal | `docs/evidence/w24-natural-head-rescreen-2026-09-12.seal.json` | `de131f21fa7ed81f0ff258c9f6bc16ab4d35b47eb0ec35c93b133906125821bc` |
-| review filing | `filings/review-screens.json` | pending first-gate |
-| review ATIF | `export/review.atif.json` | pending first-gate |
-| pre-Muse manifest | `manifest-pre-muse.json` | pending first-gate |
-| synthesis | `filings/synthesis.json` | pending first-gate |
+| review filing | `filings/review-screens.json` | `11b1eb6791b09447c867aadbb736e0735a20a6cd7c02284d26e0e220c961648d` |
+| review ATIF | `export/review.atif.json` | `16b08c29348f68fce3a2336096c902ebfbdb749b482a9956cd52c84286c4de4e` |
+| pre-Muse manifest | `manifest-pre-muse.json` | `2c0a84c052783d7174be7be755a969db215144cc71491027895c7aac87659d50` |
+| synthesis | `filings/synthesis.json` | `f8cecb08c09bc0095af66d530a0795f026f455d5eaf1c02d82759e75a74f408a` |
+
+Review verdict: `pass-with-dissent` (attempt 1). Muse receipt hash matched.
+`empirical_pass_claimed` is false on every filing. Tests: 72 passed in
+`app/tests/feasibility/` after Head steer.
 
 ## Why this packet
 
@@ -58,3 +62,12 @@ blob.
 - Does not select launch strategies or activate W-23
 - Does not claim empirical PASS
 - Does not treat 32 supported heads as a passing cohort
+
+## Head steer
+
+- **F-01:** keep. Do not retcon `parser_blob_sha`. Add
+  `parser_reported_object_kind: commit_in_this_clone` so a later reader
+  cannot treat the seal field as a verified merger_semantics blob.
+- **F-02–F-05:** keep as dissent (opaque soak path; schema frozen at 32
+  heads; seal proves summary hashes not pool composition; first-gate
+  could not exec-hash).

@@ -149,6 +149,7 @@
       },
       "parser_path": "/workspace/cockpit-main-tip/app/strategies/merger_semantics.py",
       "parser_blob_sha": "fda5017b1c87cd4d6e18e6f297e2ca291371d44d",
+      "parser_reported_object_kind": "commit_in_this_clone",
       "markdown_hash_caveat": "MD hash computed after removing self-hash line; see seal file for md sha."
     }
   ],

@@ -72,6 +72,7 @@ def test_checked_in_screens_load() -> None:
     assert latest["supported_symbols"] != list(SEP09_SUPPORTED_SYMBOLS)
     assert latest["soak_sha_observed_live"] == SEP12_SOAK_SHA
     assert latest["seal_sha256"] == SEP12_SEAL_SHA256
+    assert latest["parser_reported_object_kind"] == "commit_in_this_clone"
     assert latest["counts"] == {
         "pool": 197,
         "supported_heads": 32,
@@ -121,6 +122,13 @@ def test_sep12_must_not_copy_sep09_list() -> None:
     payload = copy.deepcopy(load_screens())
     payload["screens"][1]["supported_symbols"] = list(SEP09_SUPPORTED_SYMBOLS)
     with pytest.raises(FeasibilityError, match="must match the seal"):
+        validate_screens(payload)
+
+
+def test_sep12_parser_object_kind_required() -> None:
+    payload = copy.deepcopy(load_screens())
+    del payload["screens"][1]["parser_reported_object_kind"]
+    with pytest.raises(FeasibilityError, match="commit in this clone"):
         validate_screens(payload)
 
 

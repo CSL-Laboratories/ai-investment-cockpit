@@ -115,6 +115,7 @@ SEP09_SOAK_SHA = "5d50b25194c14beaac7bb979dcd559cc21a2fb95"
 SEP12_SOAK_SHA = "5d50b25194c14beaac7bb979dcd559cc21a2fb95"
 SEP12_PARSER_PATH = "/workspace/cockpit-main-tip/app/strategies/merger_semantics.py"
 SEP12_PARSER_BLOB_SHA = "fda5017b1c87cd4d6e18e6f297e2ca291371d44d"
+SEP12_PARSER_OBJECT_KIND = "commit_in_this_clone"
 MARKDOWN_HASH_CAVEAT = (
     "MD hash computed after removing self-hash line; see seal file for md sha."
 )
@@ -167,7 +168,7 @@ def _validate_sep09(item: dict[str, Any]) -> None:
         raise FeasibilityError("2026-09-09 constraints come from the evidence note")
     if item["counts"]["pool"] != 195:
         raise FeasibilityError("2026-09-09 pool must stay 195")
-    if "seal_file" in item or "packet_sha256" in item:
+    if "seal_file" in item or "packet_sha256" in item or "parser_reported_object_kind" in item:
         raise FeasibilityError("2026-09-09 must not carry the 2026-09-12 seal fields")
 
 
@@ -214,6 +215,9 @@ def _validate_sep12(item: dict[str, Any]) -> None:
         or item.get("parser_blob_sha") != seal["parser_blob_sha"]
     ):
         raise FeasibilityError("2026-09-12 parser_blob_sha must match the seal")
+    # Head steer of F-01: do not retcon the seal value; name the object kind.
+    if item.get("parser_reported_object_kind") != SEP12_PARSER_OBJECT_KIND:
+        raise FeasibilityError("2026-09-12 parser_blob_sha is a commit in this clone")
     if item.get("markdown_hash_caveat") != MARKDOWN_HASH_CAVEAT:
         raise FeasibilityError("2026-09-12 must keep the soak-markdown hash caveat")
     if seal["board"]["meets_min_30_gate"] is not False:
