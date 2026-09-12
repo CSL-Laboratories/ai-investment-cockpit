@@ -35,6 +35,11 @@ JUDGE_FIELDS = (
     "outside_date",
 )
 DESIGN_SOURCE = "docs/research/gate-feasibility-and-value-2026-09-06.md"
+DESIGN_SOURCE_SHA256 = "8a6484c56ce618282409a51cfc709dc6223724a573b1cc38d21af52f4ad04944"
+HELD_OUT_RULE = (
+    "This file freezes how a later measurement must be sealed. "
+    "It is not a measurement, not held-out evidence, and must not be reused as labels or outcomes."
+)
 
 _HERE = Path(__file__).resolve().parent
 PROTOCOL_PATH = _HERE / "protocol.v1.json"
@@ -89,6 +94,16 @@ def validate_protocol(payload: dict[str, Any]) -> None:
     source = REPO_ROOT / payload["design_source"]
     if not source.is_file():
         raise FeasibilityError("design_source must exist")
+    if sha256_file(source) != DESIGN_SOURCE_SHA256 or payload["design_source_sha256"] != DESIGN_SOURCE_SHA256:
+        raise FeasibilityError("design_source bytes must match the pinned digest")
+    if payload["held_out_rule"] != HELD_OUT_RULE:
+        raise FeasibilityError("held_out_rule must match the frozen sentence")
+    split = payload["evaluation_tuning_separation"]
+    if (
+        split["later_held_out_excludes_rw11_regressions"] is not True
+        or split["later_held_out_excludes_rw28_evaluation"] is not True
+    ):
+        raise FeasibilityError("later held-out must exclude RW-11 regressions and RW-28 evaluation")
 
 
 def load_protocol(path: Path | None = None) -> dict[str, Any]:

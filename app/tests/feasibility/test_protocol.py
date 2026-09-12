@@ -12,6 +12,8 @@ import pytest
 from feasibility.evaluate import EVALUATION_PATH, load_evaluation
 from feasibility.inspect import CASES_PATH, load_cases
 from feasibility.protocol import (
+    DESIGN_SOURCE_SHA256,
+    HELD_OUT_RULE,
     JUDGE_FIELDS,
     PROTOCOL_PATH,
     PROTOCOL_SCHEMA_PATH,
@@ -37,6 +39,10 @@ def test_checked_in_protocol_loads() -> None:
     assert payload["evaluation_sha256"] == RW28_EVALUATION_SHA256
     assert payload["cases_sha256"] == RW29_CASES_SHA256
     assert payload["thresholds"]["numeric_values"] == "unset"
+    assert payload["held_out_rule"] == HELD_OUT_RULE
+    assert payload["design_source_sha256"] == DESIGN_SOURCE_SHA256
+    assert payload["evaluation_tuning_separation"]["later_held_out_excludes_rw11_regressions"] is True
+    assert payload["evaluation_tuning_separation"]["later_held_out_excludes_rw28_evaluation"] is True
     assert payload["model_judges"]["status"] == "not_started"
     assert tuple(payload["model_judges"]["fields"]) == JUDGE_FIELDS
     assert all(value is False for value in payload["resource_allowance"].values())
@@ -52,7 +58,16 @@ def test_prior_artifacts_bytes_unchanged() -> None:
 
 def test_design_source_exists() -> None:
     payload = load_protocol()
-    assert (ROOT / payload["design_source"]).is_file()
+    source = ROOT / payload["design_source"]
+    assert source.is_file()
+    assert sha256_file(source) == DESIGN_SOURCE_SHA256
+
+
+def test_held_out_rule_drift_rejected() -> None:
+    payload = copy.deepcopy(load_protocol())
+    payload["held_out_rule"] = "this evaluation may be reused as held-out labels"
+    with pytest.raises(jsonschema.ValidationError):
+        validate_protocol(payload)
 
 
 def test_starting_measurement_rejected() -> None:

@@ -9,6 +9,7 @@
   "measurement_status": "not_started",
   "held_out_rule": "This file freezes how a later measurement must be sealed. It is not a measurement, not held-out evidence, and must not be reused as labels or outcomes.",
   "design_source": "docs/research/gate-feasibility-and-value-2026-09-06.md",
+  "design_source_sha256": "8a6484c56ce618282409a51cfc709dc6223724a573b1cc38d21af52f4ad04944",
   "reference_provenance": {
     "live_packets": "not_in_this_claim",
     "discovery_lists_are_authority": false,
@@ -30,8 +31,8 @@
   },
   "evaluation_tuning_separation": {
     "declare_thresholds_on_tuning_before_held_out": true,
-    "rw11_regressions_are_held_out": false,
-    "rw28_evaluation_is_held_out_of_later_run": false,
+    "later_held_out_excludes_rw11_regressions": true,
+    "later_held_out_excludes_rw28_evaluation": true,
     "model_confidence_is_a_threshold": false
   },
   "thresholds": {

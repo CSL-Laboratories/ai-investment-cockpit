@@ -14,6 +14,7 @@
     "measurement_status",
     "held_out_rule",
     "design_source",
+    "design_source_sha256",
     "reference_provenance",
     "population_selection",
     "as_of_boundaries",
@@ -33,11 +34,15 @@
     "cases_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "qualify_count": { "type": "integer", "const": 0 },
     "measurement_status": { "type": "string", "const": "not_started" },
-    "held_out_rule": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "held_out_rule": {
+      "type": "string",
+      "const": "This file freezes how a later measurement must be sealed. It is not a measurement, not held-out evidence, and must not be reused as labels or outcomes."
+    },
     "design_source": {
       "type": "string",
       "const": "docs/research/gate-feasibility-and-value-2026-09-06.md"
     },
+    "design_source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "reference_provenance": {
       "type": "object",
       "additionalProperties": false,
@@ -92,14 +97,14 @@
       "additionalProperties": false,
       "required": [
         "declare_thresholds_on_tuning_before_held_out",
-        "rw11_regressions_are_held_out",
-        "rw28_evaluation_is_held_out_of_later_run",
+        "later_held_out_excludes_rw11_regressions",
+        "later_held_out_excludes_rw28_evaluation",
         "model_confidence_is_a_threshold"
       ],
       "properties": {
         "declare_thresholds_on_tuning_before_held_out": { "type": "boolean", "const": true },
-        "rw11_regressions_are_held_out": { "type": "boolean", "const": false },
-        "rw28_evaluation_is_held_out_of_later_run": { "type": "boolean", "const": false },
+        "later_held_out_excludes_rw11_regressions": { "type": "boolean", "const": true },
+        "later_held_out_excludes_rw28_evaluation": { "type": "boolean", "const": true },
         "model_confidence_is_a_threshold": { "type": "boolean", "const": false }
       }
     },
