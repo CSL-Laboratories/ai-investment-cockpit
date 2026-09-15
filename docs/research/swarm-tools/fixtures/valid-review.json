@@ -17,5 +17,6 @@
         "source_path": "CLAUDE.md"
       }
     ]
-  }
+  },
+  "route_family": "fixture-producer"
 }

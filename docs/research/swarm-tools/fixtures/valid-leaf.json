@@ -11,7 +11,12 @@
   "result": {
     "summary": "Fixture only. Nine invariants listed by number.",
     "findings": [
-      { "id": "inv1", "claim": "1. Single order path", "source_path": "CLAUDE.md" }
+      {
+        "id": "inv1",
+        "claim": "1. Single order path",
+        "source_path": "CLAUDE.md"
+      }
     ]
-  }
+  },
+  "route_family": "fixture-producer"
 }

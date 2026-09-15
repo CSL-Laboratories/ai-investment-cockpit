@@ -1,18 +1,16 @@
 # Swarm briefs
 
-Checked-in prompts for the Cloud Devin / Muse pipeline. See
-[`agent-swarm-pipeline-2026-09-11.md`](../agent-swarm-pipeline-2026-09-11.md).
+Current process: [RW-33 rebase](../agent-swarm-rebase-2026-09-14.md).
+Start future work with the [Cloud handoff](../cursor-cloud-rdt-handoff-2026-09-14.md).
 
-Filings during a run go to gitignored `.swarm-runs/<run_id>/`, not here.
+- `ping-template.md`: complete the admission fields, then freeze a fresh brief.
+- `ping-example-cursor.md`: illustrative current-format brief, not an admitted job.
+- `../swarm-tools/spawn_scoped_leaf.py`: preview only; cannot dispatch any runtime.
+- Filings live in gitignored `.swarm-runs/<run>/<job>/<attempt>/`.
 
-RW-26 (slice A inventory): `rw26-leaf-inventory.md`,
-`rw26-review-inventory.md`, `rw26-muse-synthesis.md`.
-RW-27 (slice A freeze): `rw27-review-freeze.md`, `rw27-muse-synthesis.md`.
-RW-28 (slice A metrics/evaluation): `rw28-review-evaluation.md`,
-`rw28-muse-synthesis.md`.
-RW-29 (slice A case inspection): `rw29-review-inspection.md`,
-`rw29-muse-synthesis.md`.
-RW-30 (slice A pre-measurement protocol): `rw30-review-protocol.md`,
-`rw30-muse-synthesis.md`.
-RW-31 (slice A screen intake / cohort-label plan): `rw31-review-screens.md`,
-`rw31-muse-synthesis.md`.
+RW-26 through RW-31 and smoke briefs preserve historical jobs and their original
+runtime/schema assumptions. Never redispatch them unchanged as current work.
+Devin is retired. Current jobs need an available REGISTER claim, qualified route,
+approved disclosure, enforced reservation/deadline, exclusive output and receipt.
+No bulk inherit; no secret inputs; no independent-family claim based on a provider
+name. ChatGPT discussion is manual steering, not a filed synthesis.

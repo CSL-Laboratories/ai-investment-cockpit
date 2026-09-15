@@ -8,6 +8,12 @@ amends:
 
 # Cloud Devin swarm host — owner direction (2026-09-11)
 
+> **Current process amended 2026-09-14:** use
+> [the RW-33 rebase](agent-swarm-rebase-2026-09-14.md). Devin/SWE-2 dispatch,
+> the 30–40 concurrency allowance and vendor-specific argv below are historical.
+> This document preserves the original record; it is not current dispatch permission.
+
+
 **Baseline:** `main` at `5907207` (PR #86 merged; 2-step swarm reference on
 `docs/research/agent-swarm-orchestration-2026-09-10.md`).
 **Scope:** owner process amendment for *how research, claimed-package

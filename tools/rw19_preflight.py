@@ -355,21 +355,71 @@ def _scan_windows_processes(stdout: str) -> int:
     return count
 
 
+def _scan_windows_cim_processes(stdout: str) -> int:
+    """Read structured CIM records without treating command-line text as framing."""
+    try:
+        records = json.loads(stdout)
+    except ValueError:
+        raise PreflightError("process scan returned invalid JSON") from None
+    if not isinstance(records, list):
+        raise PreflightError("process scan returned invalid records")
+    count = readable_pairs = 0
+    seen_pids: set[int] = set()
+    for record in records:
+        if not isinstance(record, dict) or set(record) != {"Name", "CommandLine", "ProcessId"}:
+            raise PreflightError("process scan returned invalid record fields")
+        name, cmdline, pid = record["Name"], record["CommandLine"], record["ProcessId"]
+        if (not isinstance(name, str) or not name.strip()
+                or (cmdline is not None and not isinstance(cmdline, str))
+                or type(pid) is not int or pid < 0 or pid in seen_pids):
+            raise PreflightError("process scan returned invalid record values")
+        seen_pids.add(pid)
+        if not cmdline or not cmdline.strip():
+            if _PYTHON_IMAGE_RE.fullmatch(name.strip()):
+                raise PreflightError("python process has an unreadable command line")
+            continue
+        readable_pairs += 1
+        count += int(_cmdline_is_cockpit_service(cmdline))
+    if not readable_pairs:
+        raise PreflightError("process scan positive control failed: no readable process")
+    return count
+
+
+def _count_windows_service_processes() -> int:
+    options = dict(check=False, capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=30)
+    try:
+        completed = subprocess.run(
+            ["wmic", "process", "get", "ProcessId,Name,CommandLine", "/FORMAT:LIST"],
+            **options,
+        )
+    except FileNotFoundError:
+        # Current Windows releases remove WMIC. Query the same local WMI class;
+        # JSON preserves multiline command lines and null (unreadable) values.
+        script = (
+            "$ErrorActionPreference='Stop'; "
+            "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+            "$rows=@(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | "
+            "Select-Object Name,CommandLine,ProcessId); "
+            "ConvertTo-Json -InputObject $rows -Compress"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+            **options,
+        )
+        if completed.returncode != 0:
+            raise PreflightError("CIM process scan failed")
+        return _scan_windows_cim_processes(completed.stdout)
+    if completed.returncode != 0:
+        raise PreflightError("process scan failed")
+    return _scan_windows_processes(completed.stdout)
+
+
 def default_count_service_processes() -> int:
-    """Count running cockpit service entrypoints (platform-neutral /proc or WMIC)."""
+    """Count running cockpit service entrypoints (/proc or Windows WMI/CIM)."""
     try:
         if os.name == "nt":
-            completed = subprocess.run(
-                ["wmic", "process", "get", "ProcessId,Name,CommandLine", "/FORMAT:LIST"],
-                check=False,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            if completed.returncode != 0:
-                raise PreflightError("process scan failed")
-            return _scan_windows_processes(completed.stdout)
+            return _count_windows_service_processes()
         count = 0
         proc_root = Path("/proc")
         if not proc_root.is_dir():

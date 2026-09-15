@@ -54,15 +54,13 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **The current order universe is a static operator-approved allowlist.** Dynamic discovery is
   future awareness scope only; no model or API may mutate execution eligibility at runtime.
 - **Execution stays model-free.** Models serve awareness/reasoning only.
-- **Research/dev swarm host is the Cursor Cloud Agent Linux VM**, not
-  `sentry`. Devin CLI (SWE-2) is named for research, claimed-package
-  development, and first-gate adversarial review **off** the order path.
-  Second-gate synthesis is Muse Spark 1.3 (not Composer). Head is Grok 4.6
-  xhigh; Lucas reviews and merges. Pipeline:
-  `docs/research/agent-swarm-pipeline-2026-09-11.md`. Host profile:
-  `docs/research/agent-swarm-cloud-host-2026-09-11.md`. Market/live/paper
-  soaks stay owner-operated (Grok Bot or another service) and are never
-  started by the swarm.
+- **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
+  sessions are preferred; Codex/OpenCode development routes require exact-host
+  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  a different model family; OpenRouter/Hive are capped fallback synthesis only.
+  Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
+  Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+  No swarm broker tools, secrets or soak starts. Product authority is unchanged.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
@@ -113,6 +111,5 @@ forces its import to fail and covers the fallback without skipping either path.
 - **Data feeds:** `app/ingest/`. **LLM pipelines:** `app/workflows/`.
 - **Operator surfaces:** `app/bridge/` (Discord) and `app/orchestrator/app.py` (loopback API).
   A general `app/surfaces/` abstraction is not merged.
-- **Design corpus:** `docs/` — index at `docs/README.md`. Cloud Devin swarm
-  host: `docs/research/agent-swarm-cloud-host-2026-09-11.md`. Pipeline:
-  `docs/research/agent-swarm-pipeline-2026-09-11.md`.
+- **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
+  `docs/research/agent-swarm-rebase-2026-09-14.md`.

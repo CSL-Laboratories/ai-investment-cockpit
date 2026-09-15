@@ -9,6 +9,12 @@ amends:
 
 # SWE-2 / Muse Spark / Head pipeline (2026-09-11)
 
+> **Current process amended 2026-09-14:** use
+> [the RW-33 rebase](agent-swarm-rebase-2026-09-14.md). Devin/SWE-2 dispatch,
+> the 30–40 concurrency allowance and vendor-specific argv below are historical.
+> This document preserves the original record; it is not current dispatch permission.
+
+
 **Baseline:** Cloud-host amendment
 [`agent-swarm-cloud-host-2026-09-11.md`](agent-swarm-cloud-host-2026-09-11.md).
 **Scope:** pin *who synthesizes what* on the Cursor Cloud Agent. It does not

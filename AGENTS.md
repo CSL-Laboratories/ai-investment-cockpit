@@ -26,38 +26,37 @@ permission or empirical PASS.
   boundary. Do not relax that pin without a separately scoped, adversarially
   reviewed safety redesign and the pre-live gates.
 
-## Devin / Cursor Cloud swarm boundary (named 2026-09-11)
+## Cursor Cloud research/development boundary (amended 2026-09-14)
 
-Owner direction 2026-09-11: research, REGISTER-claimed development, and
-adversarial-review jobs may run on the **Cursor Cloud Agent Linux VM** via
-Devin CLI (SWE-2 and related Devin models). This names Devin **off** the
-order path only. Detail: `docs/research/agent-swarm-cloud-host-2026-09-11.md`.
+RW-33 replaces the retired Devin/SWE-2 dispatch policy. Head is the Cursor
+Cloud Agent on its Linux VM; Cursor-native fresh sessions are preferred for
+research, REGISTER-claimed development and adversarial review. Codex and
+OpenCode are named for these bounded development roles off the order path.
+Naming and installation alone do not qualify a CLI or grant production authority.
 
-- Head is the Cloud Agent session. It may install/auth Devin CLI and
-  dispatch Devin leaves or Devin-native subagents on the same VM. Target
-  concurrency is 30–40 Devin agents on owner-stated SWE-2 credits. Prefer
-  subagents, then extra Cloud Agent runs if a pod saturates. **`sentry` is
-  not the swarm host.**
-- Devin may: schema-gated research, implement a claimed package, run
-  attack→fix→regression review jobs, write run-scoped filings and open PRs.
-- Devin may not: enter `app/risk/`, `OrderGateway`, mode/approval, the audit
-  chain, eligibility policy, broker credentials, or any auto rung. Inv 2
-  still pins Claude on the decision/order path in auto modes.
-- Spawn profile: `--permission-mode accept-edits` in print mode with
-  `--prompt-file` briefs; no `-r`/`--resume`/`--continue`; no `dangerous`/
-  `bypass`/`yolo`/`smart`/`autonomous`. Do **not** pass `--sandbox` on
-  filing leaves (CLI 3000.10.21 forces `autonomous` and rejects `write`).
-  No broker tools. Default disclosure: `public-tracked`.
-- Market/live/paper soaks and DEC-09 operator cells are owner-operated
-  (Grok Bot or another service Lucas chooses). The swarm does not start a
-  cockpit soak and does not hold broker secrets.
-- OpenCode remains unnamed. Do not put an OpenCode `--auto` leaf on cockpit
-  material.
-- Volume leaves and first-gate reviewers are Devin **SWE-2**. Second-gate
-  synthesis is **Muse Spark 1.3** (medium default, high on dissent), pinned
-  in `.cursor/agents/muse-synthesizer.md`. Composer is not the synthesizer.
-  Head (Grok 4.6 xhigh) steers Muse and opens PRs; Lucas merges. Pipeline:
-  `docs/research/agent-swarm-pipeline-2026-09-11.md`.
+- No new Devin jobs. Keep `spawn_devin_leaf.py` frozen for historical audit.
+- No swarm changes to risk, OrderGateway, mode/approval, audit, eligibility or
+  secrets; no broker tools/credentials, soaks or auto rungs. Current production
+  Codex decision jobs still use the unchanged hardened runner above.
+- Maximum depth: Head → middle → leaf; at most eight leaves per middle within
+  an admitted aggregate budget. Fresh attempts; no bulk inherit or leaf spawning.
+- Verify model/version/capabilities on the actual Cloud host. Unknown profile,
+  missing reservation, deadline or disclosure admission refuses dispatch. No
+  auto/force/trust/permission bypass or automatic MCP approval. The scoped helper
+  is preview-only and cannot launch any CLI until a separately claimed adapter
+  is implemented and qualified; do not add an override to skip qualification.
+- Muse is the preferred second-gate synthesizer only when a verified different
+  family from producers/reviewers. Preserve dissent. OpenRouter/Hive are fallback
+  synthesis only, under enforceable aggregate ceilings of $5/$50; no automatic
+  resets. ChatGPT is manual steering only. Chiron/Recursion remain future PD-029
+  integrations, not a prerequisite or a current routing destination.
+- Head prepares reviewable changes and draft PR material. Existing operator
+  commit/publication instructions apply; Lucas remains the merger. Swarm tests
+  and receipts never satisfy empirical, paper-day or pre-live gates.
+
+Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
+Cloud start: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
+Market/paper soaks and DEC-09 operator cells stay on their designated hosts.
 
 ## Invariants
 

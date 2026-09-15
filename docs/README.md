@@ -7,6 +7,15 @@ last-verified: 2026-09-12
 
 # Docs index
 
+## Cursor Cloud process rebase — 2026-09-14
+
+[RW-33 rebase](research/agent-swarm-rebase-2026-09-14.md) replaces current Devin
+instructions with Cursor Cloud/native work and qualification-gated CLI routes.
+[Start the next Cloud task here](research/cursor-cloud-rdt-handoff-2026-09-14.md)
+for the adopted research, development and testing goals; this is not a new Kernel
+product or a waiver of PRODUCT/PLAN. [Evidence](evidence/rw33-swarm-rebase-2026-09-14.md)
+records offline validation and remaining runtime qualification.
+
 ## Product contract ratified — 2026-09-09
 
 Lucas adopted [PRODUCT.md](../PRODUCT.md) and its supporting contracts under PD-048,
