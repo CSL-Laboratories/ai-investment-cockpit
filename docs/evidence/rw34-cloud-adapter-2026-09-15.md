@@ -57,8 +57,10 @@ it is not the SHA-256 of the written `receipt.json` bytes.
 
 Targeted: `tests/swarm/test_bounded_job.py` and
 `tests/workflows/test_research_update.py` (23 passed) plus Ruff clean on
-`app/`. Full Cloud Linux pytest is recorded on the PR if green; it does
-not replace operator Windows/WSL2 Python 3.11/3.12 DEC-09 cells.
+`app/`. Full Cloud Linux pytest on this candidate: **3292 passed / 6 skipped**
+in 5m52s with project venv Python 3.12.3. That does **not** replace operator
+Windows/WSL2 Python 3.11/3.12 DEC-09 cells. GitHub Actions are optional
+diagnostics.
 
 ## RW-35
 
