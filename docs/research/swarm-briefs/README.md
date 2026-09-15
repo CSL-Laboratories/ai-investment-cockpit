@@ -5,6 +5,9 @@ Start future work with the [Cloud handoff](../cursor-cloud-rdt-handoff-2026-09-1
 
 - `ping-template.md`: complete the admission fields, then freeze a fresh brief.
 - `ping-example-cursor.md`: illustrative current-format brief, not an admitted job.
+- `rw34-json-child-fixture.md`: admitted public-tracked fixture for RW-34.
+- `../swarm-tools/spawn_scoped_leaf.py`: preview only; cannot dispatch any runtime.
+- `../swarm-tools/bounded_job.py`: admitted json-child controller (RW-34).
 - `../swarm-tools/spawn_scoped_leaf.py`: preview only; cannot dispatch any runtime.
 - Filings live in gitignored `.swarm-runs/<run>/<job>/<attempt>/`.
 

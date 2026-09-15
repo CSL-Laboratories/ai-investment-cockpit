@@ -532,7 +532,7 @@ def test_compose_builds_without_any_live_secret_and_feeds_fail_closed(tmp_path, 
     monkeypatch.setenv("COCKPIT_AUDIT_HEAD_FILE", str(tmp_path / "audit-head.json"))
 
     state, app, services, _http = _compose(tmp_path, transport=FakeTransport([]), deliver=None)
-    assert set(services) == {"brew", "intraday", "eod", "ask"}
+    assert set(services) == {"brew", "intraday", "eod", "ask", "research_update"}
     assert app.state.ingest.polls == {}, "an unprovisioned feed registered a poller"
     assert app.state.ingest.streams == {}
     assert state.audit.verify_chain().ok
@@ -743,7 +743,7 @@ def test_run_assembles_the_composed_graph_in_the_load_bearing_order(tmp_path, pr
         "serve() blocks forever — anything after it never runs"
     assert seen["ingest"] is not None, "build_scheduler got no ingest runner: production polls nothing"
     assert set(seen["ingest"].polls) == {FEED_FINNHUB, FEED_EDGAR, FEED_CALENDAR}
-    assert set(seen["services"]) == {"brew", "intraday", "eod", "ask"}
+    assert set(seen["services"]) == {"brew", "intraday", "eod", "ask", "research_update"}
     assert seen["market_data"] is graph[1].state.market_data
     assert seen["paper"] is graph[1].state.paper
     assert started == [[FEED_ALPACA_NEWS]]

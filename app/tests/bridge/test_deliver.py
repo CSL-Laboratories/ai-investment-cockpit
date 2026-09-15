@@ -112,9 +112,18 @@ def test_long_content_is_clamped_under_the_discord_ceiling():
     assert "truncated" in content, "a truncated brief must say so"
 
 
-def test_non_brief_channels_render_losslessly_as_json():
-    text = render_payload(CHANNEL_ALERTS, {"event_id": "evt-1", "symbol": "AAPL"})
-    assert "evt-1" in text and "AAPL" in text
+def test_research_update_renders_on_brief_channel():
+    text = render_payload(CHANNEL_BRIEF, {
+        "kind": "research_update",
+        "as_of": "2026-09-12",
+        "significance": "Latest GET-only board is empty.",
+        "opposing_evidence": "32 supported heads, cash 0.",
+        "next_trigger": "continue_get_only_natural_head_screens",
+        "qualify_count": 0,
+    })
+    assert "Empty-run research update — 2026-09-12" in text
+    assert "32 supported heads" in text
+    assert "Morning brief" not in text
 
 
 # ---------------------------------------------------------------------------------------

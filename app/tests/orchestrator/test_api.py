@@ -222,6 +222,8 @@ def test_create_job_is_audited(client, state):
 def test_not_wired_endpoints_return_501(client):
     assert client.get("/brief/today", headers=AUTH).status_code == 501
     assert client.post("/brief/run", headers=AUTH).status_code == 501
+    assert client.get("/research/empty-run", headers=AUTH).status_code == 501
+    assert client.post("/research/empty-run", headers=AUTH).status_code == 501
     assert client.post("/automations", headers=AUTH).status_code == 501
     body = client.get("/brief/today", headers=AUTH).json()
     assert body["status"] == "not_wired"

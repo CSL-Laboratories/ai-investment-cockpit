@@ -14,6 +14,7 @@ from orchestrator.state import EVENT_DRAWDOWN_MARK
 from workflows.interrogation import fresh_interrogate
 from workflows.morning_brew import morning_brew
 from workflows.proposals import draft_proposal
+from workflows.research_update import empty_run_update
 from workflows.triage_loop import triage_loop
 
 
@@ -25,7 +26,9 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
 
     The scheduled ``brew``/``intraday``/``eod`` callables retain their ``(state, clock)``
     shape. ``ask`` takes an explicit question and proposal/job id and always invokes the
-    existing SEC-18 fresh-context workflow. ``holdings_fn`` /
+    existing SEC-18 fresh-context workflow. ``research_update`` is the RW-35 empty-run
+    research increment: retained slice A evidence becomes a concise delivered update.
+    ``holdings_fn`` /
     ``watchlist_fn`` are re-evaluated per tick (the reconciled sets move intraday).
 
     ``book_fn`` supplies L1 prices and ``metrics_fn`` supplies RW-14 ADV/volatility. They are
@@ -74,7 +77,16 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
             clock=st.clock,
         )
 
-    return {"brew": brew, "intraday": intraday, "eod": eod, "ask": ask}
+    def research_update(st, clock) -> dict:
+        return empty_run_update(st, clock, deliver=deliver)
+
+    return {
+        "brew": brew,
+        "intraday": intraday,
+        "eod": eod,
+        "ask": ask,
+        "research_update": research_update,
+    }
 
 
 def eod_review(state, clock=None, *, drawdown_fn=None) -> dict:

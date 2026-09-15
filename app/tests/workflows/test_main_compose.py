@@ -28,7 +28,7 @@ def test_compose_builds_state_app_and_services(tmp_path):
     state, app, services = compose(db_url=f"sqlite:///{(tmp_path / 'c.db').as_posix()}",
                                    parquet_root=str(tmp_path / "raw"))
     assert isinstance(app, FastAPI)
-    assert set(services) == {"brew", "intraday", "eod", "ask"}
+    assert set(services) == {"brew", "intraday", "eod", "ask", "research_update"}
     assert state.audit.verify_chain().ok
     assert app.state.services is services
     # RW-01: the ingest runner is composed too, and hangs off app.state beside the others (the
@@ -305,11 +305,25 @@ def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clo
     assert client.get("/brief/today", headers=auth).status_code == 404
     run = client.post("/brief/run", headers=auth)
     assert run.status_code == 200 and run.json()["status"] == "no_events"
+    update = client.post("/research/empty-run", headers=auth)
+    assert update.status_code == 200
+    body = update.json()
+    assert body["kind"] == "research_update"
+    assert body["qualify_count"] == 0
+    assert body["empirical_pass_claimed"] is False
+    assert "cash_parse_hits=0" in body["opposing_evidence"]
+    assert body["unknowns"]
+    assert body["next_trigger"] == "continue_get_only_natural_head_screens"
+    stored = client.get("/research/empty-run", headers=auth)
+    assert stored.status_code == 200
+    assert stored.json()["payload"]["latest_screen_id"] == "w24_2026_09_12"
 
     # unwired app keeps the honest 501s (existing WP5 tests unchanged)
     bare = TestClient(create_app(st, auth=ApiKeyAuth(key_provider=lambda: key)))
     assert bare.get("/brief/today", headers=auth).status_code == 501
     assert bare.post("/brief/run", headers=auth).status_code == 501
+    assert bare.get("/research/empty-run", headers=auth).status_code == 501
+    assert bare.post("/research/empty-run", headers=auth).status_code == 501
     assert bare.post("/automations", headers=auth).status_code == 501
 
     # GET /proposals reads ProposalRecord rows (id, symbol, side, status, flagged, created_at)

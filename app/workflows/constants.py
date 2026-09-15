@@ -34,3 +34,6 @@ EVENT_SCRUB = "outbound_scrub"
 EVENT_GROUNDING = "grounding_check"
 # payload: {proposal_id?, job_id?, pattern:"fresh"}  (SEC-18)
 EVENT_INTERROGATION = "interrogation"
+# payload: {claim_id, latest_screen_id, qualify_count, meets_cohort_gate,
+#           next_trigger, delivered, empirical_pass_claimed:false}  (RW-35)
+EVENT_RESEARCH_UPDATE = "research_update"

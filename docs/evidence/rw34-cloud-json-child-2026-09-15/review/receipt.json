@@ -1,0 +1,33 @@
+{
+  "job_id": "rw34-first-gate",
+  "claim_id": "RW-34",
+  "attempt": 1,
+  "status": "success",
+  "route_family": "cursor-cloud-json-child",
+  "route_model": "json-child",
+  "profile_id": "cursor-cloud-json-child",
+  "executable": "/workspace/.venv/bin/python",
+  "argv": [
+    "/workspace/.venv/bin/python",
+    "/workspace/docs/research/swarm-tools/json_child.py",
+    "--role",
+    "first-gate-review",
+    "--output-limit",
+    "32768"
+  ],
+  "raw_sha256": "01ca742d17b23c74e37ec30de306752497a628bc570a012d3cd174cef1a587d2",
+  "filing_sha256": "6aceaabfee12052fea6776a46eb40ef53233e7c2162029785140f82ebe32506b",
+  "receipt_sha256": "f69fb94cf33f54287c99282c42b6e50dc688caa49fb5ee715c02e5071fe3205a",
+  "usage_class": "measured",
+  "reserved_usd": "0",
+  "observed_usd": "0",
+  "hold": false,
+  "empirical_pass_claimed": false,
+  "reason": "ok",
+  "paths": {
+    "raw": "/tmp/rw34-evidence-run/rw34-first-gate/1/raw.jsonl",
+    "filing": "/tmp/rw34-evidence-run/rw34-first-gate/1/filing.json",
+    "receipt": "/tmp/rw34-evidence-run/rw34-first-gate/1/receipt.json",
+    "brief": "/workspace/docs/research/swarm-briefs/rw34-json-child-fixture.md"
+  }
+}
