@@ -311,12 +311,13 @@ def test_brief_endpoints_answer_through_services_and_proposals_read_rows(st, clo
     assert body["kind"] == "research_update"
     assert body["qualify_count"] == 0
     assert body["empirical_pass_claimed"] is False
-    assert "cash_parse_hits=0" in body["opposing_evidence"]
+    assert "cash_parse_hits=1" in body["opposing_evidence"]
+    assert "BOW" in body["opposing_evidence"]
     assert body["unknowns"]
     assert body["next_trigger"] == "continue_get_only_natural_head_screens"
     stored = client.get("/research/empty-run", headers=auth)
     assert stored.status_code == 200
-    assert stored.json()["payload"]["latest_screen_id"] == "w24_2026_09_12"
+    assert stored.json()["payload"]["latest_screen_id"] == "w24_2026_09_15"
 
     # unwired app keeps the honest 501s (existing WP5 tests unchanged)
     bare = TestClient(create_app(st, auth=ApiKeyAuth(key_provider=lambda: key)))

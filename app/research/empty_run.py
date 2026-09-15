@@ -38,11 +38,21 @@ def compose_empty_run_update() -> dict[str, Any]:
         }
         for item in cases["cases"]
     ]
-    opposing = (
-        f"{counts['supported_heads']} supported SEC heads were reachable, but "
-        f"cash_parse_hits={counts['cash_parse_hits']}, so mechanics succeeded "
-        "while eligibility/extraction did not."
-    )
+    cash_hits = counts["cash_parse_hits"]
+    cash_symbols = latest.get("cash_parse_hit_symbols") or ()
+    if cash_hits:
+        hit_list = ", ".join(cash_symbols) if cash_symbols else "cited"
+        opposing = (
+            f"{counts['supported_heads']} supported SEC heads were reachable, and "
+            f"cash_parse_hits={cash_hits} ({hit_list}), but a cash-parse hit is "
+            "not eligibility: selection-ready and date-ready remain 0."
+        )
+    else:
+        opposing = (
+            f"{counts['supported_heads']} supported SEC heads were reachable, but "
+            f"cash_parse_hits={cash_hits}, so mechanics succeeded "
+            "while eligibility/extraction did not."
+        )
     unknowns = [
         item["id"] for item in cases["missing_decisions"]
     ]
@@ -68,7 +78,8 @@ def compose_empty_run_update() -> dict[str, Any]:
         "source": latest["evidence_note"],
         "significance": summary,
         "supporting_evidence": (
-            f"Retained RW-31 screen {latest['id']} and RW-29 cases "
+            f"Cited GET-only screen {latest['id']} (claim {screens['claim_id']}) "
+            f"and RW-29 cases "
             f"({kinds['empty']} empty, {kinds['rejected']} rejected, "
             f"{kinds['useful']} useful, {kinds['unverified']} unverified)."
         ),

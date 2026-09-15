@@ -6,6 +6,14 @@ last-verified: 2026-09-15
 
 # The register
 
+## RW-36 slice A 2026-09-15 GET-only screen intake — claimed 2026-09-15
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-36` | Slice A: append the 2026-09-15 GET-only W-24 natural-head board (NO PASS / empty / date-not-ready; pool 199, supported 31, cash 1 BOW, selection-ready 0, date-ready 0, cohort 0≪30) as a third `feasibility.screens.v1` row. This is a new claim because the counts changed (RW-31 F-03). Pins unchanged RW-27/28/29/30 SHA-256. `qualify_count` stays 0. First cash hit BOW is not eligibility, not a label, and not a watchlist seed. Do not lower the 30-identity gate. Empty-run composition already reads `screens[-1]`. No labelling, watchlist seed, NAV, measurement, activation, or order-path edit | claimed on `cursor/rw36-screen-intake-7968` from `origin/main` (`8beb271`); cited note [[evidence/w24-natural-head-rescreen-2026-09-15]] | Cloud Head (Grok) | Green `app/tests/feasibility/` plus empty-run compose regressions; checked-in screens validate; freeze/evaluation/cases/protocol SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, seed `COCKPIT_MERGER_WATCHLIST`, authorize labelling or a NAV feed, ingest soak JSON, or claim empirical PASS |
+
+`app/feasibility/screens.py` stays pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. Raw JSON/packets stay on the soak host; this claim records the operator seal plus a cited evidence note. Cloud Linux is not a DEC-09 cell.
+
 ## RW-35 slice B empty-run research update — claimed 2026-09-15
 
 | ID | Scope | Status | Owner | Completion contract |
@@ -77,7 +85,7 @@ and the claim board, not the specification.
 |---|---|---|---|---|
 | `RW-30` | Slice A: freeze `feasibility.protocol.v1` (provenance, population selection, as-of bounds, evaluation/tuning split, threshold *declaration* procedure, ambiguity treatment, independent model-judge rules) without starting measurement, inventing numeric thresholds, collecting data, or qualifying a judge. Pins RW-27/28/29 digests. `qualify_count` stays 0. No activation, no order path, no soak, no new data feed | merged [PR #92](https://github.com/NotSkittlz/ai-investment-cockpit/pull/92); hash note [[research/rw30-measurement-protocol-2026-09-12]] | Head (Grok) + Devin SWE-2 + Muse Spark 1.3 | Green `app/tests/feasibility/`; checked-in protocol validates; freeze/evaluation/cases SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, authorize a NAV feed, start labelling, or claim empirical PASS |
 
-`app/feasibility/protocol.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. RW-31 consumes that protocol by SHA-256. Remaining owner work is more GET-only screens until selection-ready ≥30 and date-ready, then independent labels.
+`app/feasibility/protocol.py` is pure deterministic validation. It does not import `risk/`, brokers, or `OrderGateway`. RW-31 and RW-36 consume that protocol by SHA-256. Remaining owner work is more GET-only screens until selection-ready ≥30 and date-ready, then independent labels.
 
 ## RW-29 slice A case inspection and missing-evidence ledger — merged 2026-09-11
 

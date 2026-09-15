@@ -4,7 +4,9 @@ Pure deterministic validation. No LLM, no broker, no OrderGateway, no
 activation. RW-27 froze the shortlist. RW-28 emits watch/reject with
 zero qualify. RW-29 inspects cited operational cases. RW-30 freezes the
 pre-measurement and model-judge protocol without starting measurement.
-RW-31 records GET-only screen counts and a cohort/label plan only.
+RW-31 recorded the first two GET-only boards. RW-36 appends the
+2026-09-15 board (first cash hit BOW, still empty/date-not-ready)
+without lowering the 30-identity gate.
 """
 
 from feasibility.evaluate import (
