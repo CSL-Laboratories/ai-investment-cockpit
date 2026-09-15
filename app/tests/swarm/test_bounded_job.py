@@ -8,7 +8,7 @@ import json
 import sys
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -142,6 +142,38 @@ def test_changed_inputs_refused(tmp_path):
             })
         )
     assert transport.calls == []
+
+
+def test_admission_key_aligns_windows_path_str_with_posix_maps():
+    posix = "docs/research/swarm-briefs/rw34-json-child-fixture.md"
+    windows = str(PureWindowsPath(posix))
+    assert "\\" in windows
+    digest = hashlib.sha256(BRIEF.read_bytes()).hexdigest()
+    assert {windows: digest} != {posix: digest}
+    assert {job.admission_key(windows): digest} == {posix: digest}
+    assert {job.admission_key(PureWindowsPath(posix)): digest} == {posix: digest}
+
+
+def test_backslash_input_sha256_keys_admit_when_content_matches(tmp_path):
+    posix = "docs/research/swarm-briefs/rw34-json-child-fixture.md"
+    digest = hashlib.sha256(BRIEF.read_bytes()).hexdigest()
+    payload = {
+        "job_id": "rw34-json-child-fixture",
+        "claim_id": "RW-34",
+        "attempt": 1,
+        "role": "leaf",
+        "brief_path": posix,
+        "status": "success",
+        "empirical_pass_claimed": False,
+        "route_family": "ignored",
+        "result": {"summary": "ok", "findings": [{"id": "a", "claim": "cited"}]},
+    }
+    transport = FakeTransport(job.ProcResult(0, _final(payload), b"", False, False))
+    receipt = _controller(tmp_path, transport).run(_envelope(
+        input_sha256={str(PureWindowsPath(posix)): digest},
+    ))
+    assert receipt.status == "success"
+    assert transport.calls
 
 
 def test_changed_profile_refused(tmp_path):

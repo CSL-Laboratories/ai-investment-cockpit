@@ -210,6 +210,11 @@ def _within(path: Path, base: Path) -> bool:
     return path != base and path.is_relative_to(base)
 
 
+def admission_key(path: Path | str) -> str:
+    """Frozen admission maps use POSIX keys. Windows Path.__str__ is not that map."""
+    return str(path).replace("\\", "/")
+
+
 def _parse_deadline(value: str) -> datetime:
     stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if stamp.tzinfo is None:
@@ -352,7 +357,7 @@ def load_envelope(payload: dict[str, Any], *, now: datetime) -> Envelope:
         raise AdmissionRefused("admission expired")
     brief = Path(payload["brief_path"])
     inputs = tuple(Path(item) for item in payload["input_paths"])
-    digest_map = {str(k): str(v) for k, v in dict(payload["input_sha256"]).items()}
+    digest_map = {admission_key(k): str(v) for k, v in dict(payload["input_sha256"]).items()}
     subject = payload.get("subject_filing_path")
     schema_kind = payload["schema_kind"]
     if schema_kind != ALLOWED_ROLES[role]:
@@ -384,7 +389,7 @@ def load_envelope(payload: dict[str, Any], *, now: datetime) -> Envelope:
 
 
 def freeze_inputs(paths: list[Path]) -> dict[str, str]:
-    return {str(path): sha256_file(path) for path in paths}
+    return {admission_key(path): sha256_file(path) for path in paths}
 
 
 class Ledger:
@@ -492,8 +497,8 @@ def resolve_and_hash(envelope: Envelope) -> tuple[Path, list[tuple[Path, bytes]]
     if not raw or len(raw) > MAX_BRIEF_BYTES:
         raise AdmissionRefused("empty or oversized brief")
     files: list[tuple[Path, bytes]] = [(brief, raw)]
-    expected = dict(envelope.input_sha256)
-    observed = {str(envelope.brief_path): sha256_bytes(raw)}
+    expected = {admission_key(key): value for key, value in envelope.input_sha256.items()}
+    observed = {admission_key(envelope.brief_path): sha256_bytes(raw)}
     for item in envelope.input_paths:
         path = item if item.is_absolute() else (ROOT / item)
         path = path.resolve()
@@ -505,7 +510,7 @@ def resolve_and_hash(envelope: Envelope) -> tuple[Path, list[tuple[Path, bytes]]
         if len(data) > MAX_EXCERPT_BYTES:
             raise AdmissionRefused("excerpt exceeds admitted size")
         files.append((path, data))
-        observed[str(item)] = sha256_bytes(data)
+        observed[admission_key(item)] = sha256_bytes(data)
     if observed != expected:
         raise AdmissionRefused("input hashes do not match the frozen admission")
     if envelope.policy_hash != profile_digest():
@@ -535,9 +540,9 @@ def bind_filing(role: str, envelope: Envelope, payload: dict[str, Any]) -> dict[
     bound["route_model"] = ROUTE_MODEL
     bound["empirical_pass_claimed"] = False
     if role == "leaf":
-        bound["brief_path"] = str(envelope.brief_path).replace("\\", "/")
+        bound["brief_path"] = admission_key(envelope.brief_path)
     if role == "first-gate-review" and envelope.subject_filing_path is not None:
-        bound["subject_filing_path"] = str(envelope.subject_filing_path).replace("\\", "/")
+        bound["subject_filing_path"] = admission_key(envelope.subject_filing_path)
     return bound
 
 
@@ -630,7 +635,11 @@ class Controller:
         brief, files = resolve_and_hash(envelope)
         excerpts = []
         for path, data in files:
-            rel = str(path.relative_to(ROOT)).replace("\\", "/") if _within(path, ROOT) else str(path)
+            rel = (
+                admission_key(path.relative_to(ROOT))
+                if _within(path, ROOT)
+                else admission_key(path)
+            )
             excerpts.append({
                 "path": rel,
                 "sha256": sha256_bytes(data),
@@ -640,11 +649,11 @@ class Controller:
             "job_id": envelope.job_id,
             "claim_id": envelope.claim_id,
             "attempt": envelope.attempt,
-            "brief_path": str(envelope.brief_path).replace("\\", "/"),
+            "brief_path": admission_key(envelope.brief_path),
             "excerpts": excerpts,
         }
         if envelope.subject_filing_path is not None:
-            stdin_obj["subject_filing_path"] = str(envelope.subject_filing_path).replace("\\", "/")
+            stdin_obj["subject_filing_path"] = admission_key(envelope.subject_filing_path)
         stdin_bytes = json.dumps(stdin_obj).encode("utf-8")
         try:
             result = self.transport.run(

@@ -35,7 +35,7 @@ docs/research/swarm-tools/json_child.py
 | Object | SHA-256 |
 |---|---|
 | `json_child.py` (policy / profile digest) | `ecbf584b60f46c18b2c3905e91431c76ddb24d8c4ae79ad94d277864a9def37a` |
-| `bounded_job.py` | `2d87278ddb07c908b959f53f9fd6dfa7b3e4874fd4d9768732f8c51de6c7dd3b` |
+| `bounded_job.py` | `e503d6b362e806e53c7e6d72dae63bd5c09edeb47740d8ceaa914cb7332d5f8d` |
 | fixture brief | `4bdcc8efaf09b1f8c551dcbddf2686458fb7181095675e00e7df045752493121` |
 | leaf raw.jsonl | `8efd54b7c5c30d2db9c1a1ba340a9e99a1d3f14d59ed1d37bb4b79856e2b85c1` |
 | leaf filing.json | `f5d394529518ca0b00745c3c0a23d762e84accaa9c73be3729b67d0a81175708` |
@@ -45,6 +45,8 @@ docs/research/swarm-tools/json_child.py
 | first-gate receipt_sha256 (pre-hash object) | `f69fb94cf33f54287c99282c42b6e50dc688caa49fb5ee715c02e5071fe3205a` |
 
 Copies: [rw34-cloud-json-child-2026-09-15](rw34-cloud-json-child-2026-09-15/).
+`bounded_job.py` hash is the POSIX admission-key repair. Fixture copies are
+from the earlier Cloud Linux json-child run; `json_child.py` is unchanged.
 Admitted/observed usage: `$0` / `$0`, class `measured`. No broker secrets.
 Same-family first-gate verdict `pass-with-dissent`. Muse/OpenRouter/Hive
 second-gate roles are admission-refused (no distinct qualified family;
@@ -73,9 +75,31 @@ Retained freeze/evaluation/cases/protocol SHA-256 unchanged:
 
 `qualify_count` stays 0. Cohort gate stays 30. No soak, no order-path edit.
 
+## DEC-09 (operator, sentry) — 2026-09-15
+
+Operator cells on `87d2024348b8cfe70fdddcc038b1482b2867d44d`. Cloud is not a
+witness. PR #97 was not merged. No empirical PASS. Local write-up:
+`C:\t\dec09-rw34\README.md`.
+
+| Cell | Result |
+|---|---|
+| Windows 3.11.9 | 3285 passed / 3 skipped / **10 failed** |
+| Windows 3.12.10 | 3285 passed / 3 skipped / **10 failed** |
+| Ubuntu WSL2 3.11.15 | 3294 passed / 4 skipped / 0 failed |
+| Ubuntu WSL2 3.12.3 | 3294 passed / 4 skipped / 0 failed |
+
+The 10 Windows failures were `tests/swarm/test_bounded_job.py`:
+`resolve_and_hash` compared frozen POSIX `input_sha256` keys to
+`str(Path(...))`, which is `docs\research\...` on Windows. Content hashes
+matched. This host cannot reproduce that comparison.
+
+Repair: `admission_key()` POSIX-normalizes both sides. That does **not**
+turn the failed Windows cells green until the operator re-runs them.
+
 ## Remaining
 
-- Operator DEC-09 matrix
+- Operator re-run of native Windows 3.11/3.12 DEC-09 cells after the
+  admission-key repair
 - Distinct-family synthesizer once a qualified non-Task route exists
 - Paid provider fallback until budget can be enforced
 - Slice C/D authority packages remain separately claimed
