@@ -29,7 +29,8 @@ CLIs were inventoried and remain unqualified where they cannot pin
 capabilities or enforce budget. The admitted development route is a no-tools
 JSON child with a controller in `docs/research/swarm-tools/bounded_job.py`.
 Tests: `app/tests/swarm/test_bounded_job.py`. Preview helper stays disabled.
-No production authority change.
+No production authority change. Native Windows 3.11/3.12 are green on
+`d1c58c6`; that is not a four-cell DEC-09 attestation. No empirical PASS.
 
 ### RW-25 product contract — ratified 2026-09-09
 

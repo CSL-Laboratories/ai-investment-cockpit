@@ -96,10 +96,26 @@ matched. This host cannot reproduce that comparison.
 Repair: `admission_key()` POSIX-normalizes both sides. That does **not**
 turn the failed Windows cells green until the operator re-runs them.
 
+### Native Windows re-run on `d1c58c63fd4c5547d01805f7452a52878018b875`
+
+Operator sentry cells after the admission-key repair. Smoke:
+`tests/swarm/test_bounded_job.py` **22 passed**. The 10 POSIX-key refusals
+from `87d2024` are gone. Logs: `C:\t\dec09-rw34-d1c58c6\README.md`.
+WSL2 was **not** re-run. This is **not** a four-cell DEC-09 attestation
+and not empirical PASS. PR #97 was not merged.
+
+| Cell | Python | pip check | Ruff | Passed | Skipped | Failed |
+|---|---|---|---|---:|---:|---:|
+| Windows 3.11.9 | 3.11.9 | clean | clean | 3297 | 3 | 0 |
+| Windows 3.12.10 | 3.12.10 | clean | clean | 3297 | 3 | 0 |
+
+Windows skips remain symlink-privilege only.
+
 ## Remaining
 
-- Operator re-run of native Windows 3.11/3.12 DEC-09 cells after the
-  admission-key repair
+- Four-cell DEC-09 on one SHA if WSL2 is re-run on `d1c58c6` (prior WSL2
+  greens were on `87d2024`, not this repair)
 - Distinct-family synthesizer once a qualified non-Task route exists
 - Paid provider fallback until budget can be enforced
 - Slice C/D authority packages remain separately claimed
+- Merge remains an operator action
