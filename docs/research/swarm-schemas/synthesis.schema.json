@@ -14,29 +14,97 @@
     "coverage",
     "unverified_remainder",
     "nuances_for_head",
-    "summary"
+    "summary",
+    "route_family",
+    "attempt",
+    "source_families"
   ],
   "properties": {
-    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "claim_id": { "type": "string", "maxLength": 64 },
-    "role": { "type": "string", "const": "muse-second-gate" },
-    "route_model": { "type": "string", "maxLength": 64 },
-    "frozen_manifest_path": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "empirical_pass_claimed": { "type": "boolean", "const": false },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "claim_id": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "muse-second-gate",
+        "openrouter-second-gate",
+        "hive-second-gate"
+      ]
+    },
+    "route_model": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "frozen_manifest_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "empirical_pass_claimed": {
+      "type": "boolean",
+      "const": false
+    },
     "leaf_ids": {
       "type": "array",
       "minItems": 1,
       "maxItems": 40,
-      "items": { "type": "string", "maxLength": 128 }
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
     },
-    "dissent_count": { "type": "integer", "minimum": 0 },
-    "coverage": { "type": "string", "minLength": 1, "maxLength": 2000 },
-    "unverified_remainder": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "dissent_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "coverage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "unverified_remainder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
     "nuances_for_head": {
       "type": "array",
       "maxItems": 16,
-      "items": { "type": "string", "maxLength": 500 }
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      }
     },
-    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 }
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "route_family": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_families": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      }
+    }
   }
 }

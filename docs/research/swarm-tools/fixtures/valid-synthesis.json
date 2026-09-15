@@ -5,12 +5,19 @@
   "route_model": "muse-spark-1.3-medium",
   "frozen_manifest_path": ".swarm-runs/fixture/manifest.json",
   "empirical_pass_claimed": false,
-  "leaf_ids": ["fixture-leaf"],
+  "leaf_ids": [
+    "fixture-leaf"
+  ],
   "dissent_count": 1,
   "coverage": "Fixture only: one leaf and one first-gate review.",
   "unverified_remainder": "Fixture: leaf listed only Inv 1.",
   "nuances_for_head": [
     "Fixture nuance: first-gate failed because invariants 2-9 were omitted."
   ],
-  "summary": "Fixture synthesis. No empirical PASS."
+  "summary": "Fixture synthesis. No empirical PASS.",
+  "route_family": "fixture-synthesizer",
+  "attempt": 1,
+  "source_families": [
+    "fixture-producer"
+  ]
 }

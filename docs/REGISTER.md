@@ -6,6 +6,32 @@ last-verified: 2026-09-12
 
 # The register
 
+## RW-33 Cursor swarm process rebase — claimed 2026-09-14
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-33` | Retire Devin dispatch; reconcile Cursor Cloud research/dev instructions; make unqualified CLI routes mechanically unavailable; repair filing contracts and provide a Cloud qualification/research-development-testing handoff | locally implemented and DEC-09 validated; publication authorized on `codex/swarm-rebase-2026-09-14` from `f24f9a8` | Codex, operator-directed | Offline refusal/intake regressions, fixture validation, full DEC-09 matrix and evidence note; no production authority change, paid dispatch, soak or empirical PASS |
+
+RW-32 belongs to the existing remote seal package and is not reused here. This
+process package does not implement the product executor or qualify any installed
+CLI. See [[research/agent-swarm-rebase-2026-09-14]].
+
+The first full matrix also exposed an existing stale watch-only message assertion
+in `tests/system/test_usage_limit_midloop.py`. RW-33 updates only that test's exact
+returned/audited denial-code assertions; refusal, no-broker and recovery controls
+remain intact. Production gateway/coordinator code is unchanged.
+
+The completed diagnostic Windows cells also exposed removal of WMIC on the
+operator's Windows build. RW-33 adds a read-only CIM fallback to the existing
+process-scan tool only when WMIC is absent, preserving opaque-process and positive
+control refusals. A Windows 3.12 crash-child startup timeout is retained in the
+evidence; all four checkpoints pass unchanged in a focused rerun. Acceptance
+is established by the replacement full matrix with the CIM compatibility fix:
+Windows 3.11/3.12 each 3,270 passed / 5 skipped; Ubuntu WSL2 3.11/3.12 each 3,269
+passed / 6 skipped. Source-bound results and prior diagnostic failures are in
+[[evidence/rw33-swarm-rebase-2026-09-14]]. The operator authorized commit, push and
+a draft PR after validation; merge remains an operator action.
+
 > **Claim work here before writing code.** This is the whole mechanism. We work ad hoc —
 > whoever picks something up — which is fine for four people and is not changing. What is not
 > fine is having no shared place to say "I have this", which is how the same five defects got

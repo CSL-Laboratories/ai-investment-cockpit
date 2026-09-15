@@ -12,50 +12,118 @@
     "status",
     "empirical_pass_claimed",
     "verdict",
-    "result"
+    "result",
+    "route_family"
   ],
   "properties": {
-    "job_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "claim_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "attempt": { "type": "integer", "minimum": 1 },
-    "role": { "type": "string", "const": "first-gate-review" },
-    "subject_filing_path": { "type": "string", "minLength": 1, "maxLength": 256 },
-    "brief_path": { "type": "string", "maxLength": 256 },
-    "route_model": { "type": "string", "maxLength": 64 },
+    "job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "claim_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "role": {
+      "type": "string",
+      "const": "first-gate-review"
+    },
+    "subject_filing_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "brief_path": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "route_model": {
+      "type": "string",
+      "maxLength": 64
+    },
     "status": {
       "type": "string",
-      "enum": ["success", "refusal", "timeout", "cancelled", "unknown"]
+      "enum": [
+        "success",
+        "refusal",
+        "timeout",
+        "cancelled",
+        "unknown"
+      ]
     },
-    "empirical_pass_claimed": { "type": "boolean" },
+    "empirical_pass_claimed": {
+      "type": "boolean",
+      "const": false
+    },
     "verdict": {
       "type": "string",
-      "enum": ["pass-with-dissent", "fail", "unknown"]
+      "enum": [
+        "pass-with-dissent",
+        "fail",
+        "unknown"
+      ]
     },
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["summary", "findings"],
+      "required": [
+        "summary",
+        "findings"
+      ],
       "properties": {
-        "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
         "findings": {
           "type": "array",
           "maxItems": 32,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["severity", "claim"],
+            "required": [
+              "severity",
+              "claim"
+            ],
             "properties": {
-              "id": { "type": "string", "maxLength": 64 },
+              "id": {
+                "type": "string",
+                "maxLength": 64
+              },
               "severity": {
                 "type": "string",
-                "enum": ["blocker", "high", "medium", "low", "note"]
+                "enum": [
+                  "blocker",
+                  "high",
+                  "medium",
+                  "low",
+                  "note"
+                ]
               },
-              "claim": { "type": "string", "maxLength": 1000 },
-              "source_path": { "type": "string", "maxLength": 256 }
+              "claim": {
+                "type": "string",
+                "maxLength": 1000
+              },
+              "source_path": {
+                "type": "string",
+                "maxLength": 256
+              }
             }
           }
         }
       }
+    },
+    "route_family": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
     }
   }
 }

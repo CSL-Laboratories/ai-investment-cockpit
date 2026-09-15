@@ -139,11 +139,15 @@ def test_g9_usage_limit_midloop_watch_only_disables_order_path(tmp_path):
     refused = system.gateway.place_equity_order(scen_w.order, **scen_w.submit_kwargs())
     assert refused.ok is False
     assert refused.stage == "mode", "watch-only must refuse at gate (b) 'mode', not later"
-    assert "watch-only" in refused.reason and "order path disabled" in refused.reason
+    # The durable watch-only coordinator now supplies a stable denial code.
+    # Keep an exact assertion, plus the stage/no-broker and recovery controls.
+    assert refused.reason == "review refused: watch_only_active"
     assert len(system.broker.submits) == submits_before, "FakePaperBroker must NOT be called"
 
     # audit-level proof of the refusal (chain-derived).
-    refusals = [p for p in _payloads(st, "order_refused") if "watch-only" in (p.get("reason") or "")]
+    refusals = [p for p in _payloads(st, "order_refused")
+                if p.get("reason") == "[review] watch_only_active"
+                and p.get("stage") == "mode"]
     assert refusals, "the watch-only order refusal must be audited (EVENT_ORDER_REFUSED)"
 
     # ---- recovery: fail-closed to review_live; watch-only clears --------------------------

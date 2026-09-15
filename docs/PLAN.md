@@ -117,22 +117,21 @@ inventory only (paths + a proposed in-repo shortlist). Claim:
 [[REGISTER]]. Briefs: `docs/research/swarm-briefs/rw26-*.md`. No
 qualify/reject, no activation, no order-path edit, no empirical PASS.
 
-### Cloud Devin swarm host — owner direction 2026-09-11
+### Cursor Cloud process rebase — RW-33, 2026-09-14
 
-Lucas directed that research, claimed-package development, and adversarial
-review run on the Cursor Cloud Agent Linux VM via Devin (owner-stated SWE-2
-credits, target 30–40 concurrent agents), **not** on `sentry`. Market/live
-testing and paper soaks remain owner-operated (Grok Bot or another service).
-This is a development-process amendment. It does not change PRODUCT
-acceptance, delivery-slice order, the nine invariants, or any empirical gate.
+Owner-directed process amendment: Cursor Cloud Head with scoped native sessions,
+qualified Codex/OpenCode development routes and distinct-family synthesis replaces
+new Devin/SWE-2 dispatch. The historical 30–40 concurrency target is retired.
+The scoped helper now previews only; actual CLI qualification is a separate bounded
+claim. Runtime installation and process tests grant no product or trading authority.
+See [the rebase](research/agent-swarm-rebase-2026-09-14.md) and
+[Cloud research/development/testing handoff](research/cursor-cloud-rdt-handoff-2026-09-14.md).
 
-Canonical write-up:
-[research/agent-swarm-cloud-host-2026-09-11.md](research/agent-swarm-cloud-host-2026-09-11.md).
-The 2-step shape remains
-[research/agent-swarm-orchestration-2026-09-10.md](research/agent-swarm-orchestration-2026-09-10.md).
-SWE-2 volume + Muse Spark second-gate + Grok Head:
-[research/agent-swarm-pipeline-2026-09-11.md](research/agent-swarm-pipeline-2026-09-11.md).
-Lucas is the final reviewer and merger.
+PRODUCT acceptance and adopted A–F delivery order remain unchanged. Start Cloud
+work with route/corpus inventory and one adapter qualification package, then claim
+the next useful research increment under A/B; preserve C/D authority-review gates.
+Market soaks and DEC-09 remain operator-host activities. Historical Devin process
+notes retain their evidence with a current amendment pointer.
 
 ### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
 

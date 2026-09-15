@@ -617,9 +617,84 @@ def test_windows_scan_positive_control_refuses_when_nothing_readable():
         preflight_mod._scan_windows_processes(stdout)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="WMIC scan is Windows-only")
+def _cim_record(cmdline='python -m pytest', name='python.exe', pid=123):
+    return {"CommandLine": cmdline, "Name": name, "ProcessId": pid}
+
+
+def test_cim_scan_preserves_multiline_command_lines_and_service_detection():
+    records = [
+        _cim_record('python "C:\\repo\\app\\main.py"\nName=explorer.exe\nProcessId=9'),
+        _cim_record(None, "System", 4),
+        _cim_record('python -m pytest', pid=456),
+    ]
+    assert preflight_mod._scan_windows_cim_processes(json.dumps(records)) == 1
+
+
+@pytest.mark.parametrize("records", [
+    [], {}, [_cim_record(None)], [_cim_record('')],
+    [_cim_record(None, "System", 4)], [_cim_record(name=None)],
+    [_cim_record(pid=True)], [_cim_record(pid=-1)], [_cim_record(cmdline=3)],
+    [{"Name": "python.exe"}], [_cim_record(), _cim_record()],
+], ids=["empty", "object", "opaque", "blank", "no-control", "bad-name",
+        "bool-pid", "negative-pid", "bad-command", "missing-field", "duplicate-pid"])
+def test_cim_scan_refuses_opaque_or_malformed_results(records):
+    with pytest.raises(preflight_mod.PreflightError):
+        preflight_mod._scan_windows_cim_processes(json.dumps(records))
+
+
+def test_cim_scan_refuses_non_json_without_echoing_content():
+    with pytest.raises(preflight_mod.PreflightError) as error:
+        preflight_mod._scan_windows_cim_processes(SECRET_MATERIAL)
+    assert SECRET_MATERIAL not in str(error.value)
+
+
+def test_missing_wmic_uses_cim_and_keeps_opaque_python_refusal(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs["timeout"] == 30
+        if argv[0] == "wmic":
+            raise FileNotFoundError("WMIC removed")
+        assert argv[:5] == ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]
+        return SimpleNamespace(returncode=0, stdout=json.dumps([_cim_record(None)]))
+
+    monkeypatch.setattr(preflight_mod.subprocess, "run", run)
+    with pytest.raises(preflight_mod.PreflightError, match="unreadable"):
+        preflight_mod._count_windows_service_processes()
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("failure", ["nonzero", "timeout"])
+def test_wmic_error_does_not_fall_back_to_a_successful_scan(monkeypatch, failure):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if failure == "timeout":
+            raise preflight_mod.subprocess.TimeoutExpired(argv, 30)
+        return SimpleNamespace(returncode=1, stdout="")
+
+    monkeypatch.setattr(preflight_mod.subprocess, "run", run)
+    with pytest.raises((preflight_mod.PreflightError, preflight_mod.subprocess.TimeoutExpired)):
+        preflight_mod._count_windows_service_processes()
+    assert len(calls) == 1
+
+
+def test_cim_query_error_refuses_even_with_parseable_output(monkeypatch):
+    def run(argv, **kwargs):
+        if argv[0] == "wmic":
+            raise FileNotFoundError("WMIC removed")
+        return SimpleNamespace(returncode=1, stdout=json.dumps([_cim_record()]))
+
+    monkeypatch.setattr(preflight_mod.subprocess, "run", run)
+    with pytest.raises(preflight_mod.PreflightError, match="CIM process scan failed"):
+        preflight_mod._count_windows_service_processes()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WMI/CIM scan is Windows-only")
 def test_windows_scan_live_smoke():
-    """The real WMIC output must parse: at least this test's own python process pairs
+    """The real WMI/CIM output must parse: this test's own python process pairs
     a name with a readable command line (guards the N1 record-framing regression)."""
     count = preflight_mod.default_count_service_processes()
     assert isinstance(count, int) and count == 0
