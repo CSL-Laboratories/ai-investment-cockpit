@@ -27,13 +27,29 @@ handoff and evidence. RW-32 is not reused.
 | Python | `/usr/bin/python3` 3.12.3 | local subprocess, sanitizable env | Admitted as the json-child executable only. |
 
 Authentication: this Cloud Agent session is authenticated as Lucas Guerra. No
-CLI login files for Codex/OpenCode/Devin were found. Credentials were not
-read. MCP servers exist under `~/.cursor/projects/workspace/mcps/` for Head;
-they are not attached to the admitted child argv.
+CLI login files for Codex/OpenCode/Devin were found (`~/.codex`, `~/.opencode`,
+`~/.devin`, `~/.local/bin/cursor-agent` absent). Credentials were not read.
+Head env names present: `CURSOR_AGENT`, `CURSOR_AGENT_SOCKET` (`/run/cursor/api.sock`),
+`CURSOR_CONVERSATION_ID`, `CURSOR_REQUEST_ID`. On-disk MCP dir contains only
+Playwright. Head may also expose other MCP namespaces in-session; none are
+attached to the admitted child argv.
 
-Cursor-native Task is distinct from Cursor CLI. Task cannot satisfy “pin
-actual argv/config/capabilities before spawn.” A read-only filesystem would
-not disable its shell, network or MCP tools.
+Cursor-native Task is distinct from Cursor CLI:
+
+| Field | Task (Head) | remote-cli | admitted json-child |
+|---|---|---|---|
+| Model pins | session allowlist (Grok/Claude/GPT/Muse/Gemini slugs) | not runnable here | `json-child` (no inference) |
+| Auth | Cloud Agent session | refuses before help | none |
+| Config | Head session / `.cursor` | n/a | argv + frozen envelope only |
+| Sandbox | host `cursorsandbox` is a shell helper, not a model route | n/a | child cwd is exclusive sandbox; writes there are not filings |
+| Tools / MCP / network | enabled; not deniable by argv | n/a | no subprocess/socket/urllib; sanitized env |
+| Fresh session | new Task is a new subagent; inherit is possible and forbidden for bulk | n/a | new attempt dir; no resume flag |
+| Transport | Head-internal | n/a | stdin excerpts in; one JSONL `final` out |
+| Cancellation | not exposed to this controller | n/a | `cancel_event` kills the process group |
+
+A read-only filesystem would not disable Task shell, network or MCP tools.
+Task therefore does not meet the spawn-boundary contract. Installed CLIs are
+unqualified. The admitted alternative is the no-tools json-child.
 
 ## Admitted profile
 

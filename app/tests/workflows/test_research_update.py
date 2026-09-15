@@ -33,6 +33,10 @@ def test_empty_run_update_explains_empty_board_and_keeps_gates():
     assert "supported 32" in payload["significance"]
     assert "cash 0" in payload["significance"]
     assert payload["next_trigger"] == "continue_get_only_natural_head_screens"
+    assert "cash_parse_hits=0" in payload["opposing_evidence"]
+    assert "supported SEC heads were reachable" in payload["opposing_evidence"]
+    assert "cash_merger_prospective_cohort_and_current_target" in payload["unknowns"]
+    assert payload["supporting_evidence"]
     classes = payload["failure_classes"]
     for name in (
         "acquisition", "extraction", "reasoning", "eligibility", "delivery", "scheduling",
