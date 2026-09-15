@@ -7,10 +7,29 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-12
+last-verified: 2026-09-15
 ---
 
 # The plan
+
+### RW-35 slice B empty-run research update — claimed 2026-09-15
+
+Useful-research increment through the existing composition, not another
+feasibility ledger. Retained RW-31 board counts and RW-29 case classes become
+a concise `#brief` update naming why the latest GET-only screen produced no
+eligible paper candidate. Code: `app/research/empty_run.py`,
+`app/workflows/research_update.py`. Tests:
+`app/tests/workflows/test_research_update.py`. No order-path edit, no soak,
+no empirical PASS. RW-32 remains the remote seal package and is not reused.
+
+### RW-34 bounded Cloud JSON-child adapter — claimed 2026-09-15
+
+First Cloud qualification package after RW-33. Cursor-native Task and installed
+CLIs were inventoried and remain unqualified where they cannot pin
+capabilities or enforce budget. The admitted development route is a no-tools
+JSON child with a controller in `docs/research/swarm-tools/bounded_job.py`.
+Tests: `app/tests/swarm/test_bounded_job.py`. Preview helper stays disabled.
+No production authority change.
 
 ### RW-25 product contract — ratified 2026-09-09
 

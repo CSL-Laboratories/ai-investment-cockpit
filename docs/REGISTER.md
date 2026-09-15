@@ -1,10 +1,26 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-09-12
+last-verified: 2026-09-15
 ---
 
 # The register
+
+## RW-35 slice B empty-run research update — claimed 2026-09-15
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-35` | Slice B: replay retained RW-29/RW-31 cited screens and cases through `main.compose` / `workflows.services` to a concise `#brief` research update that explains why earlier runs produced no useful result (acquisition/extraction/reasoning/eligibility/delivery/scheduling kept distinct). Named entry points: `research.empty_run.compose_empty_run_update`, `workflows.research_update.empty_run_update`, `POST /research/empty-run`. Retires the silent “process exited” empty-run story for this retained board. Does not mutate freeze/evaluation/cases/protocol/screens, lower the 30-identity gate, seed the watchlist, or touch the order path | claimed on `cursor/rw34-cursor-adapter-7968` from `codex/swarm-rebase-2026-09-14` (`cd8c86c`); Cloud Linux evidence [[evidence/rw34-cloud-adapter-2026-09-15]] | Cloud Head (Grok) | Green `tests/workflows/test_research_update.py` plus compose/service-set regressions; delivered payload includes empty/rejected cases, opposing evidence, unknowns and next trigger; freeze/evaluation/cases/protocol SHA-256 unchanged; `qualify_count` stays 0. Does **not** select launch strategies, activate W-23, authorize labelling/NAV, or claim empirical PASS |
+
+Positive test: `test_research_update_service_delivers_and_audits` and composed `POST /research/empty-run`. Negative test: removing `research_update` from `build_services` fails the service-set assertions in `test_main_compose`, `test_services`, and `test_rw01_market_day`.
+
+## RW-34 bounded Cloud JSON-child adapter — claimed 2026-09-15
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-34` | Qualify one development route on this Cursor Cloud Linux host. Inventory showed Cursor-native Task cannot pin argv/tools/budget; Cursor remote-cli 3.20.21 refuses outside a VS Code terminal and `cursor agent` would auto-install; Codex, OpenCode and Devin executables are absent. Admitted profile: `cursor-cloud-json-child` — pinned `sys.executable` + `docs/research/swarm-tools/json_child.py`, no-tools stdin excerpts, controller-owned exclusive filing, zero inference USD, concurrency/deadline/output caps, once-only settlement, unknown holds. Keep `spawn_scoped_leaf.py` preview-only. Outside production decision/risk/broker/audit/mode/eligibility paths | claimed on `cursor/rw34-cursor-adapter-7968` from `codex/swarm-rebase-2026-09-14` (`cd8c86c`); Cloud Linux evidence [[evidence/rw34-cloud-adapter-2026-09-15]] | Cloud Head (Grok) | Offline fake-child refusals (expired/missing admission, caps, changed inputs/profile, escape, duplicate output, timeout, cancel, oversized/malformed, unknown) plus one admitted real json-child fixture; first-gate same-family review; second-gate synthesizer role refused until a distinct qualified family exists; no empirical PASS |
+
+Exact admitted budget: `reserved_usd=0`, `max_concurrent=1` (tests may raise the cap), `timeout_seconds≤120`, `output_byte_limit≤128KiB`. Provider paid fallback remains unavailable. Muse/OpenRouter/Hive are not enabled by this claim.
 
 ## RW-33 Cursor swarm process rebase — claimed 2026-09-14
 

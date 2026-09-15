@@ -3,7 +3,8 @@
 Enforces the WP8 'services.py' contract of docs/build-scaffold-ultracode.md WP8 and SEC-20
 (EVENT_DRAWDOWN_MARK feeds the performance gate): build_services returns injected
 ``(state, clock) -> dict`` callables for the WP5 scheduler seams ({"brew","intraday",
-"eod"}) plus the fresh ``ask`` seam, the scheduler stubs stay NotImplementedError, and
+"eod"}) plus the fresh ``ask`` seam and RW-35 ``research_update``, the scheduler stubs
+stay NotImplementedError, and
 eod_review records the drawdown deterministically (no LLM). Hermetic: FrozenClock, tmp
 SQLite; the service closures run against empty windows so no transport is needed.
 """
@@ -27,7 +28,7 @@ def _payloads(st, event_type):
 
 def test_build_services_returns_scheduler_and_fresh_question_seams(st):
     services = build_services(st)
-    assert set(services) == {"brew", "intraday", "eod", "ask"}
+    assert set(services) == {"brew", "intraday", "eod", "ask", "research_update"}
     assert all(callable(fn) for fn in services.values())
 
 

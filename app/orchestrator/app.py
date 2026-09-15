@@ -8,7 +8,7 @@ deterministic core already in the tree: ``/mode`` (ladder + arm guard), ``/limit
 (SEC-15 privileged loosening), ``/killswitch``, and ``/status``.
 
 WP8 wiring (docs/build-scaffold-ultracode.md WP8): ``create_app`` gains an optional
-``services`` registry ({"brew", "intraday", "eod", "ask"} callables, built by
+``services`` registry ({"brew", "intraday", "eod", "ask", "research_update"} callables, built by
 ``workflows.services.build_services``). ``GET /brief/today`` / ``POST /brief/run`` read /
 invoke through it and stay ``501 not_wired`` when it is absent (existing WP5 tests keep
 passing); ``GET /proposals`` reads persisted ``ProposalRecord`` rows. The audited-limits
@@ -40,7 +40,7 @@ from schemas.models.brief_record import BriefRecord
 from schemas.models.market_event import MarketEvent
 from schemas.models.proposal_record import ProposalRecord
 from storage.repositories import Repo
-from workflows.constants import EVENT_AGENT_JOB
+from workflows.constants import EVENT_AGENT_JOB, EVENT_RESEARCH_UPDATE
 
 from .auth import ApiKeyAuth
 from .breakers import BreakerEngine
@@ -152,7 +152,7 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                watchlist=None, quant_snapshots=None, quant_key_provider=None) -> FastAPI:
     """Build the FastAPI app bound to an ``OrchestratorState``. ``auth`` is injectable for
     tests; production defaults to the keyring-backed key guard (every route requires it).
-    ``services`` is the WP8 workflow registry ({"brew","intraday","eod"}); when absent the
+    ``services`` is the WP8 workflow registry ({"brew","intraday","eod","ask","research_update"}); when absent the
     brief endpoints stay honest 501s. ``ingest`` is the RW-01 ``IngestRunner``, surfaced on
     ``GET /status``; ``main.compose`` assigns it after the app is built, so this parameter is
     only for callers that already hold a runner.
@@ -266,6 +266,32 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
         if not services or "brew" not in services:
             return _not_wired("/brief/run", "WP8")
         return services["brew"](state, state.clock)
+
+    @app.get("/research/empty-run")
+    def research_empty_run_get():
+        if not services or "research_update" not in services:
+            return _not_wired("/research/empty-run", "RW-35")
+        with state.session_factory() as s:
+            rows = s.execute(
+                select(AuditEntry).where(
+                    AuditEntry.event_type == EVENT_RESEARCH_UPDATE
+                ).order_by(AuditEntry.seq)
+            ).scalars().all()
+        verified = [row for row in rows if state.audit.verify_entry(row)]
+        if not verified:
+            raise HTTPException(status_code=404, detail="no empty-run research update stored")
+        latest = verified[-1]
+        return {
+            "event_type": EVENT_RESEARCH_UPDATE,
+            "seq": latest.seq,
+            "payload": latest.payload,
+        }
+
+    @app.post("/research/empty-run")
+    def research_empty_run_post():
+        if not services or "research_update" not in services:
+            return _not_wired("/research/empty-run", "RW-35")
+        return services["research_update"](state, state.clock)
 
     # ---- ingest (RW-01) ---------------------------------------------------------------
     @app.post("/ingest/poll")
@@ -496,6 +522,11 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                         AuditEntry.event_type == EVENT_PAPER_NOTIFICATION
                     ).order_by(AuditEntry.seq)
                 ).scalars().all()
+                research_rows = s.execute(
+                    select(AuditEntry).where(
+                        AuditEntry.event_type == EVENT_RESEARCH_UPDATE
+                    ).order_by(AuditEntry.seq)
+                ).scalars().all()
         except Exception as exc:  # noqa: BLE001 - an unreadable status cannot report all-clear
             state.admit_integrity_failure(
                 f"status database read failed: {type(exc).__name__}: {exc}"
@@ -569,6 +600,11 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
         latest_notification = (
             verified_notifications[-1].payload if verified_notifications else None
         )
+        verified_research = (
+            [row for row in research_rows if state.audit.verify_entry(row)]
+            if chain.ok else []
+        )
+        latest_research = verified_research[-1].payload if verified_research else None
         return {
             "mode": _mode_view(ladder),
             "market_calendar": market_calendar_status(state.clock.now()),
@@ -592,6 +628,10 @@ def create_app(state, *, auth: ApiKeyAuth | None = None,
                     if not bool((row.payload or {}).get("delivered"))
                 ) if chain.ok else None,
                 "latest": latest_notification,
+            },
+            "research_update": {
+                "total": len(verified_research) if chain.ok else None,
+                "latest": latest_research,
             },
             "ingest": {
                 "market_events": event_count,

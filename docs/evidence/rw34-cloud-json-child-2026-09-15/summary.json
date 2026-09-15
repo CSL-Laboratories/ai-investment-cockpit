@@ -1,0 +1,38 @@
+{
+  "claim_id": "RW-34",
+  "profile_id": "cursor-cloud-json-child",
+  "route_family": "cursor-cloud-json-child",
+  "route_model": "json-child",
+  "executable": "/workspace/.venv/bin/python",
+  "json_child_sha256": "ecbf584b60f46c18b2c3905e91431c76ddb24d8c4ae79ad94d277864a9def37a",
+  "brief_sha256": "4bdcc8efaf09b1f8c551dcbddf2686458fb7181095675e00e7df045752493121",
+  "leaf": {
+    "status": "success",
+    "hold": false,
+    "argv": [
+      "/workspace/.venv/bin/python",
+      "/workspace/docs/research/swarm-tools/json_child.py",
+      "--role",
+      "leaf",
+      "--output-limit",
+      "32768"
+    ],
+    "raw_sha256": "8efd54b7c5c30d2db9c1a1ba340a9e99a1d3f14d59ed1d37bb4b79856e2b85c1",
+    "filing_sha256": "f5d394529518ca0b00745c3c0a23d762e84accaa9c73be3729b67d0a81175708",
+    "receipt_sha256": "fd7acfef78bce6b1b8d3fc7833c31818d80875b0fa911c1128628660709f803c",
+    "reserved_usd": "0",
+    "observed_usd": "0",
+    "usage_class": "measured",
+    "empirical_pass_claimed": false
+  },
+  "first_gate": {
+    "status": "success",
+    "hold": false,
+    "raw_sha256": "01ca742d17b23c74e37ec30de306752497a628bc570a012d3cd174cef1a587d2",
+    "filing_sha256": "6aceaabfee12052fea6776a46eb40ef53233e7c2162029785140f82ebe32506b",
+    "receipt_sha256": "f69fb94cf33f54287c99282c42b6e50dc688caa49fb5ee715c02e5071fe3205a",
+    "empirical_pass_claimed": false
+  },
+  "second_gate": "refused: no qualified distinct-family synthesizer",
+  "empirical_pass_claimed": false
+}

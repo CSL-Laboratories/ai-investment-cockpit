@@ -15,6 +15,9 @@ instructions with Cursor Cloud/native work and qualification-gated CLI routes.
 for the adopted research, development and testing goals; this is not a new Kernel
 product or a waiver of PRODUCT/PLAN. [Evidence](evidence/rw33-swarm-rebase-2026-09-14.md)
 records offline validation and remaining runtime qualification.
+[RW-34/RW-35 Cloud evidence](evidence/rw34-cloud-adapter-2026-09-15.md) records
+the admitted json-child fixture hashes and the composed empty-run update;
+it is not DEC-09 and not empirical PASS.
 
 ## Product contract ratified — 2026-09-09
 
@@ -302,7 +305,8 @@ defects got fixed twice on two branches.
 | [[research/rw28-slice-a-evaluation-2026-09-11]] | RW-28 metrics + evaluation: discrete protocol, 0 qualify, no activation / no PASS |
 | [[research/rw29-case-inspection-2026-09-11]] | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
 | [[research/rw30-measurement-protocol-2026-09-12]] | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
-| [[research/rw31-screen-intake-2026-09-12]] | RW-31 screen ledger: empty 2026-09-12 board, cohort/label plan only, no PASS |
+| [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; no empirical PASS |
+| [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

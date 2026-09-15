@@ -1,0 +1,26 @@
+{
+  "job_id": "rw34-json-child-fixture",
+  "claim_id": "RW-34",
+  "attempt": 1,
+  "role": "leaf",
+  "principal": "cloud-head",
+  "disclosure": "public-tracked",
+  "brief_path": "docs/research/swarm-briefs/rw34-json-child-fixture.md",
+  "input_paths": [
+    "docs/research/swarm-briefs/rw34-json-child-fixture.md"
+  ],
+  "input_sha256": {
+    "docs/research/swarm-briefs/rw34-json-child-fixture.md": "4bdcc8efaf09b1f8c551dcbddf2686458fb7181095675e00e7df045752493121"
+  },
+  "policy_hash": "ecbf584b60f46c18b2c3905e91431c76ddb24d8c4ae79ad94d277864a9def37a",
+  "schema_kind": "leaf",
+  "deadline_utc": "2026-09-15T03:56:54+00:00",
+  "timeout_seconds": 20,
+  "output_byte_limit": 32768,
+  "reservation_id": "res-evidence-1",
+  "budget_scope": "rw34-cloud-json-child",
+  "remaining_usd": "0",
+  "reserved_usd": "0",
+  "profile_id": "cursor-cloud-json-child",
+  "acquisition_allowlist": []
+}

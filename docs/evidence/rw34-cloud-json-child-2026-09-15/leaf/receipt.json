@@ -1,0 +1,33 @@
+{
+  "job_id": "rw34-json-child-fixture",
+  "claim_id": "RW-34",
+  "attempt": 1,
+  "status": "success",
+  "route_family": "cursor-cloud-json-child",
+  "route_model": "json-child",
+  "profile_id": "cursor-cloud-json-child",
+  "executable": "/workspace/.venv/bin/python",
+  "argv": [
+    "/workspace/.venv/bin/python",
+    "/workspace/docs/research/swarm-tools/json_child.py",
+    "--role",
+    "leaf",
+    "--output-limit",
+    "32768"
+  ],
+  "raw_sha256": "8efd54b7c5c30d2db9c1a1ba340a9e99a1d3f14d59ed1d37bb4b79856e2b85c1",
+  "filing_sha256": "f5d394529518ca0b00745c3c0a23d762e84accaa9c73be3729b67d0a81175708",
+  "receipt_sha256": "fd7acfef78bce6b1b8d3fc7833c31818d80875b0fa911c1128628660709f803c",
+  "usage_class": "measured",
+  "reserved_usd": "0",
+  "observed_usd": "0",
+  "hold": false,
+  "empirical_pass_claimed": false,
+  "reason": "ok",
+  "paths": {
+    "raw": "/tmp/rw34-evidence-run/rw34-json-child-fixture/1/raw.jsonl",
+    "filing": "/tmp/rw34-evidence-run/rw34-json-child-fixture/1/filing.json",
+    "receipt": "/tmp/rw34-evidence-run/rw34-json-child-fixture/1/receipt.json",
+    "brief": "/workspace/docs/research/swarm-briefs/rw34-json-child-fixture.md"
+  }
+}

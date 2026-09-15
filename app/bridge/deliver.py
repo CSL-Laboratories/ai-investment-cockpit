@@ -106,6 +106,9 @@ def render_payload(channel: str, payload) -> str:
     layout; everything else falls back to compact JSON — honest and lossless, and RW-03 is
     where per-channel notification formatting actually belongs."""
     if channel == CHANNEL_BRIEF and isinstance(payload, dict):
+        if payload.get("kind") == "research_update":
+            from research.empty_run import render_empty_run_update
+            return render_empty_run_update(payload)
         return render_brief(payload)
     if isinstance(payload, str):
         return payload
