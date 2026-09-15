@@ -19,8 +19,10 @@ records offline validation and remaining runtime qualification.
 the admitted json-child fixture hashes and the composed empty-run update;
 it is not DEC-09 and not empirical PASS.
 [RW-36 2026-09-15 screen intake](research/rw36-screen-intake-2026-09-15.md)
-appends the GET-only board (cash 1 BOW, still empty/date-not-ready);
-the 30-identity gate stays closed.
+appends the Monday-evening GET-only board (cash 1 BOW, still empty/date-not-ready).
+[RW-37 Tuesday rescreen](research/rw37-screen-intake-2026-09-15.md)
+appends the same-day board (supported 32, cash 0); the 30-identity gate
+stays closed.
 
 ## Product contract ratified — 2026-09-09
 
@@ -311,6 +313,7 @@ defects got fixed twice on two branches.
 | [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; no empirical PASS |
 | [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs |
 | [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; no PASS |
+| [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; no PASS |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 

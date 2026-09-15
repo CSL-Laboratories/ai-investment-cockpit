@@ -29,17 +29,15 @@ def test_empty_run_update_explains_empty_board_and_keeps_gates():
     assert payload["qualify_count"] == 0
     assert payload["meets_cohort_gate"] is False
     assert payload["cohort_minimum"] == 30
-    assert payload["latest_screen_id"] == "w24_2026_09_15"
+    assert payload["latest_screen_id"] == "w24_2026_09_15_tue"
     assert "pool 199" in payload["significance"]
-    assert "supported 31" in payload["significance"]
-    assert "cash 1" in payload["significance"]
+    assert "supported 32" in payload["significance"]
+    assert "cash 0" in payload["significance"]
     assert payload["next_trigger"] == "continue_get_only_natural_head_screens"
-    assert "cash_parse_hits=1" in payload["opposing_evidence"]
-    assert "BOW" in payload["opposing_evidence"]
-    assert "not eligibility" in payload["opposing_evidence"]
+    assert "cash_parse_hits=0" in payload["opposing_evidence"]
     assert "supported SEC heads were reachable" in payload["opposing_evidence"]
-    assert "RW-36" in payload["supporting_evidence"]
-    assert "w24_2026_09_15" in payload["supporting_evidence"]
+    assert "RW-37" in payload["supporting_evidence"]
+    assert "w24_2026_09_15_tue" in payload["supporting_evidence"]
     assert "cash_merger_prospective_cohort_and_current_target" in payload["unknowns"]
     assert payload["supporting_evidence"]
     classes = payload["failure_classes"]

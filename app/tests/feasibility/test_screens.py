@@ -1,4 +1,4 @@
-"""RW-36 — GET-only screen ledger and cohort/label plan."""
+"""RW-37 — GET-only screen ledger and cohort/label plan."""
 
 from __future__ import annotations
 
@@ -36,6 +36,9 @@ from feasibility.screens import (
     SEP15_NOTE,
     SEP15_NOTE_SHA256,
     SEP15_SUPPORTED_SYMBOLS,
+    SEP15_TUE_NOTE,
+    SEP15_TUE_NOTE_SHA256,
+    SEP15_TUE_SUPPORTED_SYMBOLS,
     load_screens,
     sha256_file,
     validate_screens,
@@ -47,7 +50,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_checked_in_screens_load() -> None:
     payload = load_screens()
-    assert payload["claim_id"] == "RW-36"
+    assert payload["claim_id"] == "RW-37"
     assert payload["empirical_pass_claimed"] is False
     assert payload["qualify_count"] == 0
     assert payload["measurement_status"] == "not_started"
@@ -63,17 +66,23 @@ def test_checked_in_screens_load() -> None:
     assert payload["cases_sha256"] == RW29_CASES_SHA256
     assert payload["protocol_sha256"] == RW30_PROTOCOL_SHA256
     assert tuple(item["id"] for item in payload["screens"]) == SCREEN_IDS
+    monday = payload["screens"][2]
+    assert monday["id"] == "w24_2026_09_15"
+    assert monday["cash_parse_hit_symbols"] == list(SEP15_CASH_HITS)
+    assert monday["counts"]["supported_heads"] == 31
+    assert monday["counts"]["cash_parse_hits"] == 1
     latest = payload["screens"][-1]
-    assert latest["id"] == "w24_2026_09_15"
+    assert latest["id"] == "w24_2026_09_15_tue"
     assert latest["provenance"] == "operator_board"
     assert latest["raw_packet_status"] == "cited_summary_only"
     assert latest["identity_list_status"] == "cited_in_evidence_note"
-    assert latest["supported_symbols"] == list(SEP15_SUPPORTED_SYMBOLS)
-    assert latest["cash_parse_hit_symbols"] == list(SEP15_CASH_HITS)
+    assert latest["supported_symbols"] == list(SEP15_TUE_SUPPORTED_SYMBOLS)
+    assert "cash_parse_hit_symbols" not in latest
+    assert "BOW" not in latest["supported_symbols"]
     assert latest["counts"] == {
         "pool": 199,
-        "supported_heads": 31,
-        "cash_parse_hits": 1,
+        "supported_heads": 32,
+        "cash_parse_hits": 0,
         "selection_ready": 0,
         "date_ready": 0,
         "cohort": 0,
@@ -81,8 +90,8 @@ def test_checked_in_screens_load() -> None:
     assert payload["cohort_plan"]["next_owner_action"] == NEXT_OWNER_ACTION
     assert payload["cohort_plan"]["meets_gate"] is False
     assert payload["label_plan"]["labelling_authorized"] is False
-    assert payload["label_plan"]["candidate_extraction_refusal_n"] == 31
-    assert payload["label_plan"]["candidate_cash_merger_n"] == 1
+    assert payload["label_plan"]["candidate_extraction_refusal_n"] == 32
+    assert payload["label_plan"]["candidate_cash_merger_n"] == 0
     assert tuple(payload["label_plan"]["fields"]) == JUDGE_FIELDS
     assert all(value is False for value in payload["resource_allowance"].values())
 
@@ -102,17 +111,21 @@ def test_evidence_notes_exist_and_match_pins() -> None:
     sep09 = ROOT / SEP09_NOTE
     sep12 = ROOT / SEP12_NOTE
     sep15 = ROOT / SEP15_NOTE
+    sep15_tue = ROOT / SEP15_TUE_NOTE
     assert sep09.is_file()
     assert sep12.is_file()
     assert sep15.is_file()
+    assert sep15_tue.is_file()
     assert sha256_file(sep09) == SEP09_NOTE_SHA256
     assert sha256_file(sep12) == SEP12_NOTE_SHA256
     assert sha256_file(sep15) == SEP15_NOTE_SHA256
+    assert sha256_file(sep15_tue) == SEP15_TUE_NOTE_SHA256
     first = load_screens()["screens"][0]
     assert first["evidence_note"] == SEP09_NOTE
     assert first["supported_symbols"] == list(SEP09_SUPPORTED_SYMBOLS)
     assert len(SEP09_SUPPORTED_SYMBOLS) == 32
     assert len(SEP15_SUPPORTED_SYMBOLS) == 31
+    assert len(SEP15_TUE_SUPPORTED_SYMBOLS) == 32
 
 
 def test_sep12_must_not_invent_symbol_list() -> None:
@@ -131,21 +144,29 @@ def test_sep12_must_not_invent_soak_sha() -> None:
 
 def test_bow_cash_hit_does_not_open_the_gate() -> None:
     payload = load_screens()
-    latest = payload["screens"][-1]
-    assert latest["cash_parse_hit_symbols"] == ["BOW"]
-    assert latest["counts"]["cash_parse_hits"] == 1
-    assert latest["counts"]["selection_ready"] == 0
-    assert latest["counts"]["date_ready"] == 0
-    assert latest["meets_cohort_gate"] is False
+    monday = payload["screens"][2]
+    assert monday["id"] == "w24_2026_09_15"
+    assert monday["cash_parse_hit_symbols"] == ["BOW"]
+    assert monday["counts"]["cash_parse_hits"] == 1
+    assert monday["counts"]["selection_ready"] == 0
+    assert monday["counts"]["date_ready"] == 0
+    assert payload["screens"][-1]["counts"]["cash_parse_hits"] == 0
+    assert payload["meets_cohort_gate"] is False
     assert payload["labelling_authorized"] is False
     assert payload["watchlist_seed_authorized"] is False
     mutated = copy.deepcopy(payload)
-    latest_mut = mutated["screens"][-1]
-    latest_mut["meets_cohort_gate"] = True
     mutated["meets_cohort_gate"] = True
     mutated["cohort_plan"]["meets_gate"] = True
+    mutated["screens"][-1]["meets_cohort_gate"] = True
     with pytest.raises(jsonschema.ValidationError):
         validate_screens(mutated)
+
+
+def test_tue_must_not_copy_monday_bow() -> None:
+    payload = copy.deepcopy(load_screens())
+    payload["screens"][3]["cash_parse_hit_symbols"] = ["BOW"]
+    with pytest.raises(FeasibilityError, match="must not invent cash_parse_hit_symbols"):
+        validate_screens(payload)
 
 
 def test_held_out_rule_drift_rejected() -> None:

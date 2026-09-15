@@ -6,6 +6,14 @@ last-verified: 2026-09-15
 
 # The register
 
+## RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — claimed 2026-09-15
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-37` | Slice A: append the 2026-09-15 Tuesday GET-only W-24 natural-head board (NO PASS / empty / date-not-ready; pool 199, supported 32, cash 0, selection-ready 0, date-ready 0, cohort 0≪30) as a fourth `feasibility.screens.v1` row `w24_2026_09_15_tue`. Same calendar date as RW-36 Monday-evening (cash 1 BOW); counts changed so this is a new claim (RW-31 F-03). Pins unchanged RW-27/28/29/30 SHA-256. Keep the Monday BOW row frozen. `qualify_count` stays 0. Do not copy BOW forward, lower the 30-identity gate, seed the watchlist, or claim empirical PASS. Empty-run reads `screens[-1]`. No labelling, NAV, measurement, activation, or order-path edit | claimed on `cursor/rw37-screen-intake-7968` stacked on `cursor/rw36-screen-intake-7968` (`9bf9f1a`); cited note [[evidence/w24-natural-head-rescreen-2026-09-15-tue]] | Cloud Head (Grok) | Green `app/tests/feasibility/` plus empty-run compose regressions; Monday row still cash 1 BOW; freeze/evaluation/cases/protocol SHA-256 unchanged; Lucas merges. Does **not** select launch strategies, activate W-23, seed `COCKPIT_MERGER_WATCHLIST`, authorize labelling or a NAV feed, ingest soak JSON, or claim empirical PASS |
+
+`app/feasibility/screens.py` stays pure deterministic validation. Raw JSON/packets stay on the soak host. Cloud Linux is not a DEC-09 cell. RW-32 remains the remote seal package and is not reused.
+
 ## RW-36 slice A 2026-09-15 GET-only screen intake — claimed 2026-09-15
 
 | ID | Scope | Status | Owner | Completion contract |
