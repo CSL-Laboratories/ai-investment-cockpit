@@ -27,7 +27,7 @@
   ],
   "properties": {
     "schema_version": { "type": "string", "const": "feasibility.screens.v1" },
-    "claim_id": { "type": "string", "const": "RW-36" },
+    "claim_id": { "type": "string", "const": "RW-37" },
     "empirical_pass_claimed": { "type": "boolean", "const": false },
     "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -43,12 +43,12 @@
       "type": "string",
       "const": "This file records GET-only screen counts and a cohort/label plan. It is not a measurement, not labels, not a strategy cohort, and must not be reused as held-out outcomes."
     },
-    "latest_screen_id": { "type": "string", "const": "w24_2026_09_15" },
+    "latest_screen_id": { "type": "string", "const": "w24_2026_09_15_tue" },
     "meets_cohort_gate": { "type": "boolean", "const": false },
     "screens": {
       "type": "array",
-      "minItems": 3,
-      "maxItems": 3,
+      "minItems": 4,
+      "maxItems": 4,
       "items": { "$ref": "#/$defs/screen" }
     },
     "cohort_plan": {
@@ -135,8 +135,8 @@
           "type": "boolean",
           "const": true
         },
-        "candidate_extraction_refusal_n": { "type": "integer", "const": 31 },
-        "candidate_cash_merger_n": { "type": "integer", "const": 1 },
+        "candidate_extraction_refusal_n": { "type": "integer", "const": 32 },
+        "candidate_cash_merger_n": { "type": "integer", "const": 0 },
         "next_claim_that_may_authorize": {
           "type": "string",
           "const": "later_scoped_claim_after_sealed_raw_packet"
@@ -207,7 +207,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "enum": ["w24_2026_09_09", "w24_2026_09_12", "w24_2026_09_15"]
+          "enum": ["w24_2026_09_09", "w24_2026_09_12", "w24_2026_09_15", "w24_2026_09_15_tue"]
         },
         "screen_date": {
           "type": "string",

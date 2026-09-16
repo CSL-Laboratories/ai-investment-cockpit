@@ -12,6 +12,19 @@ last-verified: 2026-09-15
 
 # The plan
 
+### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — claimed 2026-09-15
+
+Seventh slice A package: record the Tuesday 2026-09-15 GET-only W-24
+board (empty / date-not-ready; pool 199, supported 32, cash 0,
+selection-ready 0, date-ready 0, cohort 0≪30) as a new claim. Same
+calendar date as RW-36; different counts (supported 32, cash 0, BOW
+dropped, CLST/DFH added). Do not loosen the Monday BOW freeze. Do not
+mutate freeze/evaluation/cases/protocol. Do not lower the 30-identity
+gate. No labelling, watchlist seed, activation, order-path edit, or
+empirical PASS. Empty-run cites `screens[-1]`.
+Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
+`app/tests/feasibility/test_screens.py`. RW-32 is not reused.
+
 ### RW-36 slice A 2026-09-15 GET-only screen intake — claimed 2026-09-15
 
 Sixth slice A package: record the 2026-09-15 GET-only W-24 board
@@ -28,9 +41,9 @@ package and is not reused.
 ### RW-35 slice B empty-run research update — claimed 2026-09-15
 
 Useful-research increment through the existing composition, not another
-feasibility ledger. The latest GET-only board (now the RW-36 2026-09-15
-row) and RW-29 case classes become a concise `#brief` update naming why
-the screen produced no eligible paper candidate. Code:
+feasibility ledger. The latest GET-only board (now the RW-37
+2026-09-15-tue row) and RW-29 case classes become a concise `#brief`
+update naming why the screen produced no eligible paper candidate. Code:
 `app/research/empty_run.py`, `app/workflows/research_update.py`. Tests:
 `app/tests/workflows/test_research_update.py`. No order-path edit, no soak,
 no empirical PASS. RW-32 remains the remote seal package and is not reused.

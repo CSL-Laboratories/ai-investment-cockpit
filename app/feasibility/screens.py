@@ -1,10 +1,11 @@
 """Record GET-only W-24 screens and a cohort/label plan. No LLM, no broker.
 
 RW-30 froze how a later measurement must be sealed. RW-31 recorded the
-2026-09-09 and 2026-09-12 GET-only boards. RW-36 appends the 2026-09-15
-operator seal (first cash hit BOW, still empty/date-not-ready) without
-lowering the 30-identity gate, authorizing labelling, seeding the merger
-watchlist, or starting measurement.
+2026-09-09 and 2026-09-12 GET-only boards. RW-36 recorded the 2026-09-15
+Monday-evening seal (cash 1 BOW). RW-37 appends the same-day Tuesday
+seal (supported 32, cash 0, BOW dropped) without lowering the 30-identity
+gate, authorizing labelling, seeding the merger watchlist, or starting
+measurement.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from feasibility.protocol import JUDGE_FIELDS, PROTOCOL_PATH, load_protocol
 from feasibility.validate import FREEZE_PATH, FeasibilityError
 
 SCREENS_VERSION = "feasibility.screens.v1"
-SCREENS_CLAIM_ID = "RW-36"
+SCREENS_CLAIM_ID = "RW-37"
 RW27_FREEZE_SHA256 = "26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8"
 RW28_EVALUATION_SHA256 = "665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31"
 RW29_CASES_SHA256 = "1f4f90a8dd03bc0970f8526bc951f425e46d4a0393bb2a6f74ce2f365bf3be41"
@@ -30,11 +31,13 @@ RW30_PROTOCOL_SHA256 = "a7bb528863b0a43073f1fbfbb91b6145fa6b6d85018a4dd5828c79ef
 SEP09_NOTE = "docs/evidence/w24-natural-head-rescreen-2026-09-09.md"
 SEP12_NOTE = "docs/evidence/w24-natural-head-rescreen-2026-09-12.md"
 SEP15_NOTE = "docs/evidence/w24-natural-head-rescreen-2026-09-15.md"
+SEP15_TUE_NOTE = "docs/evidence/w24-natural-head-rescreen-2026-09-15-tue.md"
 SEP09_NOTE_SHA256 = "427f5b9cf63b8071ad000a77ad59108bec77f7010ee6f8dfb95fa5379abd315b"
 SEP12_NOTE_SHA256 = "9007f8bcfab9c8bf901b81e8584bd1174f17ab0fd13c67b88a0bca273ee0ef0c"
 SEP15_NOTE_SHA256 = "360095f9e18a84c23f4005cf3c3af5cdb4b92efe27f5914aa21cdb303549f95d"
-SCREEN_IDS = ("w24_2026_09_09", "w24_2026_09_12", "w24_2026_09_15")
-LATEST_SCREEN_ID = "w24_2026_09_15"
+SEP15_TUE_NOTE_SHA256 = "69be6f1fe54b0a77552cc23b02a95494a28813762ccf1b105d60a164477e60a4"
+SCREEN_IDS = ("w24_2026_09_09", "w24_2026_09_12", "w24_2026_09_15", "w24_2026_09_15_tue")
+LATEST_SCREEN_ID = "w24_2026_09_15_tue"
 COHORT_RULE = "30_unique_eligible_identities_same_selection_date"
 NEXT_OWNER_ACTION = "continue_get_only_natural_head_screens"
 HELD_OUT_RULE = (
@@ -115,6 +118,40 @@ SEP15_SUPPORTED_SYMBOLS = (
     "ZYME",
 )
 SEP15_CASH_HITS = ("BOW",)
+SEP15_TUE_SUPPORTED_SYMBOLS = (
+    "ACA",
+    "AIRE",
+    "BKR",
+    "CCO",
+    "CLST",
+    "CYCU",
+    "CYCUW",
+    "DFH",
+    "DIOD",
+    "ESI",
+    "FSEA",
+    "GBCS",
+    "GRML",
+    "GRMLW",
+    "HUN",
+    "JTAI",
+    "OLN",
+    "PAYO",
+    "RLYB",
+    "RMBI",
+    "SLP",
+    "STRR",
+    "STRRP",
+    "TARS",
+    "TBPH",
+    "TXNM",
+    "UHS",
+    "UUUU",
+    "VCTR",
+    "VEEE",
+    "ZSQR",
+    "ZYME",
+)
 
 _HERE = Path(__file__).resolve().parent
 SCREENS_PATH = _HERE / "screens.v1.json"
@@ -221,6 +258,37 @@ def _validate_screen_row(item: dict[str, Any]) -> None:
             raise FeasibilityError("2026-09-15 must stay selection-ready 0 and date-ready 0")
         if item["counts"]["cash_parse_hits"] != len(item.get("cash_parse_hit_symbols") or ()):
             raise FeasibilityError("cash_parse_hit_symbols must match cash_parse_hits")
+    elif item["id"] == "w24_2026_09_15_tue":
+        if item["evidence_note"] != SEP15_TUE_NOTE or item["evidence_note_sha256"] != SEP15_TUE_NOTE_SHA256:
+            raise FeasibilityError("2026-09-15-tue must cite the checked-in evidence note digest")
+        if item["provenance"] != "operator_board":
+            raise FeasibilityError("2026-09-15-tue provenance is the operator board")
+        if item["claimant"] != "grok_bot_operator_board":
+            raise FeasibilityError("2026-09-15-tue claimant is the operator board")
+        if item["identity_list_status"] != "cited_in_evidence_note":
+            raise FeasibilityError("2026-09-15-tue identity list is cited in the evidence note")
+        if item["soak_sha_status"] != "cited_in_evidence_note":
+            raise FeasibilityError("2026-09-15-tue soak SHA is cited in the evidence note")
+        if item.get("supported_symbols") != list(SEP15_TUE_SUPPORTED_SYMBOLS):
+            raise FeasibilityError("2026-09-15-tue supported_symbols must match the evidence note")
+        if "cash_parse_hit_symbols" in item:
+            raise FeasibilityError("2026-09-15-tue must not invent cash_parse_hit_symbols")
+        if item["operator_main_head"] != SEP15_MAIN_HEAD:
+            raise FeasibilityError("2026-09-15-tue operator_main_head must match merged 8beb271")
+        if item.get("soak_sha_observed_live") != SEP15_SOAK_SHA:
+            raise FeasibilityError("2026-09-15-tue soak SHA must match the evidence note")
+        if item["constraint_source"] != "operator_board_statement":
+            raise FeasibilityError("2026-09-15-tue constraints are board-stated only")
+        if item["counts"]["pool"] != 199:
+            raise FeasibilityError("2026-09-15-tue pool must stay 199")
+        if item["counts"]["supported_heads"] != 32:
+            raise FeasibilityError("2026-09-15-tue supported_heads must stay 32")
+        if item["counts"]["cash_parse_hits"] != 0:
+            raise FeasibilityError("2026-09-15-tue cash_parse_hits must stay 0")
+        if item["counts"]["selection_ready"] != 0 or item["counts"]["date_ready"] != 0:
+            raise FeasibilityError("2026-09-15-tue must stay selection-ready 0 and date-ready 0")
+        if "BOW" in (item.get("supported_symbols") or ()):
+            raise FeasibilityError("2026-09-15-tue must not copy Monday BOW into the supported set")
     else:
         raise FeasibilityError("unknown screen id")
 
@@ -235,7 +303,7 @@ def validate_screens(payload: dict[str, Any]) -> None:
     if payload.get("empirical_pass_claimed") is not False:
         raise FeasibilityError("empirical_pass_claimed must be false")
     if payload.get("claim_id") != SCREENS_CLAIM_ID:
-        raise FeasibilityError("claim_id must be RW-36")
+        raise FeasibilityError("claim_id must be RW-37")
     if payload.get("qualify_count") != 0:
         raise FeasibilityError("this corpus cannot qualify a launch strategy")
     if payload.get("measurement_status") != "not_started":
@@ -278,7 +346,7 @@ def validate_screens(payload: dict[str, Any]) -> None:
     if dates != sorted(dates) or dates[-1] != "2026-09-15":
         raise FeasibilityError("screens must be ordered by date with 2026-09-15 last")
     if payload["latest_screen_id"] != LATEST_SCREEN_ID or payload["screens"][-1]["id"] != LATEST_SCREEN_ID:
-        raise FeasibilityError("latest_screen_id must be the 2026-09-15 board screen")
+        raise FeasibilityError("latest_screen_id must be the 2026-09-15-tue board screen")
     if payload["meets_cohort_gate"] is not False:
         raise FeasibilityError("cohort gate is not met")
     for item in payload["screens"]:

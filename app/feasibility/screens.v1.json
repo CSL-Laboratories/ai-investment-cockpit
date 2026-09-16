@@ -1,6 +1,6 @@
 {
   "schema_version": "feasibility.screens.v1",
-  "claim_id": "RW-36",
+  "claim_id": "RW-37",
   "empirical_pass_claimed": false,
   "freeze_sha256": "26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8",
   "evaluation_sha256": "665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31",
@@ -13,7 +13,7 @@
   "activation_authorized": false,
   "cef_nav_authorized": false,
   "held_out_rule": "This file records GET-only screen counts and a cohort/label plan. It is not a measurement, not labels, not a strategy cohort, and must not be reused as held-out outcomes.",
-  "latest_screen_id": "w24_2026_09_15",
+  "latest_screen_id": "w24_2026_09_15_tue",
   "meets_cohort_gate": false,
   "screens": [
     {
@@ -168,6 +168,68 @@
       "cash_parse_hit_symbols": [
         "BOW"
       ]
+    },
+    {
+      "id": "w24_2026_09_15_tue",
+      "screen_date": "2026-09-15",
+      "method": "w24_get_only_natural_head",
+      "claimant": "grok_bot_operator_board",
+      "provenance": "operator_board",
+      "raw_packet_status": "cited_summary_only",
+      "identity_list_status": "cited_in_evidence_note",
+      "soak_sha_status": "cited_in_evidence_note",
+      "evidence_note": "docs/evidence/w24-natural-head-rescreen-2026-09-15-tue.md",
+      "evidence_note_sha256": "69be6f1fe54b0a77552cc23b02a95494a28813762ccf1b105d60a164477e60a4",
+      "operator_main_head": "8beb271dbe8ca6adf90c25458fc7dfcb787120b7",
+      "soak_sha_observed_live": "5d50b25194c14beaac7bb979dcd559cc21a2fb95",
+      "gate_result": "no_pass_empty_date_not_ready",
+      "counts": {
+        "pool": 199,
+        "supported_heads": 32,
+        "cash_parse_hits": 0,
+        "selection_ready": 0,
+        "date_ready": 0,
+        "cohort": 0
+      },
+      "meets_cohort_gate": false,
+      "watchlist_seeded": false,
+      "discord_selection_posted": false,
+      "soak_head_rewritten": false,
+      "constraint_source": "operator_board_statement",
+      "supported_symbols": [
+        "ACA",
+        "AIRE",
+        "BKR",
+        "CCO",
+        "CLST",
+        "CYCU",
+        "CYCUW",
+        "DFH",
+        "DIOD",
+        "ESI",
+        "FSEA",
+        "GBCS",
+        "GRML",
+        "GRMLW",
+        "HUN",
+        "JTAI",
+        "OLN",
+        "PAYO",
+        "RLYB",
+        "RMBI",
+        "SLP",
+        "STRR",
+        "STRRP",
+        "TARS",
+        "TBPH",
+        "TXNM",
+        "UHS",
+        "UUUU",
+        "VCTR",
+        "VEEE",
+        "ZSQR",
+        "ZYME"
+      ]
     }
   ],
   "cohort_plan": {
@@ -197,8 +259,8 @@
     "seal_hashed_raw_filings_before_label_claim": true,
     "zero_cash_parse_is_not_labelled_truth": true,
     "supported_heads_are_not_a_strategy_cohort": true,
-    "candidate_extraction_refusal_n": 31,
-    "candidate_cash_merger_n": 1,
+    "candidate_extraction_refusal_n": 32,
+    "candidate_cash_merger_n": 0,
     "next_claim_that_may_authorize": "later_scoped_claim_after_sealed_raw_packet",
     "fields": [
       "cash_amount",
