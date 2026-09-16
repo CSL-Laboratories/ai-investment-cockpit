@@ -1,6 +1,6 @@
 """RW-35 — deliver a useful empty-run research update through compose.
 
-Uses retained RW-29/RW-31 cited inputs and the existing deliver seam. No LLM,
+Uses retained RW-29 cases plus the latest GET-only screen ledger. No LLM,
 no OrderGateway, no watchlist mutation, no lowered cohort gate.
 """
 

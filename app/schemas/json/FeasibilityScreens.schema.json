@@ -27,7 +27,7 @@
   ],
   "properties": {
     "schema_version": { "type": "string", "const": "feasibility.screens.v1" },
-    "claim_id": { "type": "string", "const": "RW-31" },
+    "claim_id": { "type": "string", "const": "RW-36" },
     "empirical_pass_claimed": { "type": "boolean", "const": false },
     "freeze_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "evaluation_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
@@ -43,12 +43,12 @@
       "type": "string",
       "const": "This file records GET-only screen counts and a cohort/label plan. It is not a measurement, not labels, not a strategy cohort, and must not be reused as held-out outcomes."
     },
-    "latest_screen_id": { "type": "string", "const": "w24_2026_09_12" },
+    "latest_screen_id": { "type": "string", "const": "w24_2026_09_15" },
     "meets_cohort_gate": { "type": "boolean", "const": false },
     "screens": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 3,
+      "maxItems": 3,
       "items": { "$ref": "#/$defs/screen" }
     },
     "cohort_plan": {
@@ -135,8 +135,8 @@
           "type": "boolean",
           "const": true
         },
-        "candidate_extraction_refusal_n": { "type": "integer", "const": 32 },
-        "candidate_cash_merger_n": { "type": "integer", "const": 0 },
+        "candidate_extraction_refusal_n": { "type": "integer", "const": 31 },
+        "candidate_cash_merger_n": { "type": "integer", "const": 1 },
         "next_claim_that_may_authorize": {
           "type": "string",
           "const": "later_scoped_claim_after_sealed_raw_packet"
@@ -207,11 +207,11 @@
       "properties": {
         "id": {
           "type": "string",
-          "enum": ["w24_2026_09_09", "w24_2026_09_12"]
+          "enum": ["w24_2026_09_09", "w24_2026_09_12", "w24_2026_09_15"]
         },
         "screen_date": {
           "type": "string",
-          "pattern": "^2026-09-(09|12)$"
+          "pattern": "^2026-09-(09|12|15)$"
         },
         "method": { "type": "string", "const": "w24_get_only_natural_head" },
         "claimant": {
@@ -262,8 +262,15 @@
         },
         "supported_symbols": {
           "type": "array",
-          "minItems": 32,
+          "minItems": 31,
           "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 8 }
+        },
+        "cash_parse_hit_symbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1, "maxLength": 8 }
         }
@@ -282,8 +289,8 @@
       ],
       "properties": {
         "pool": { "type": "integer", "minimum": 0 },
-        "supported_heads": { "type": "integer", "const": 32 },
-        "cash_parse_hits": { "type": "integer", "const": 0 },
+        "supported_heads": { "type": "integer", "minimum": 0 },
+        "cash_parse_hits": { "type": "integer", "minimum": 0 },
         "selection_ready": { "type": "integer", "const": 0 },
         "date_ready": { "type": "integer", "const": 0 },
         "cohort": { "type": "integer", "const": 0 }

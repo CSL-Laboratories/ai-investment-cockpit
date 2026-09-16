@@ -2,7 +2,7 @@
 title: Docs index — what to read, in what order, and what to ignore
 type: index
 status: live
-last-verified: 2026-09-12
+last-verified: 2026-09-15
 ---
 
 # Docs index
@@ -18,6 +18,9 @@ records offline validation and remaining runtime qualification.
 [RW-34/RW-35 Cloud evidence](evidence/rw34-cloud-adapter-2026-09-15.md) records
 the admitted json-child fixture hashes and the composed empty-run update;
 it is not DEC-09 and not empirical PASS.
+[RW-36 2026-09-15 screen intake](research/rw36-screen-intake-2026-09-15.md)
+appends the GET-only board (cash 1 BOW, still empty/date-not-ready);
+the 30-identity gate stays closed.
 
 ## Product contract ratified — 2026-09-09
 
@@ -307,6 +310,7 @@ defects got fixed twice on two branches.
 | [[research/rw30-measurement-protocol-2026-09-12]] | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
 | [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; no empirical PASS |
 | [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs |
+| [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; no PASS |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |
 
