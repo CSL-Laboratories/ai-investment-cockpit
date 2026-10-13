@@ -110,3 +110,8 @@ provisioned.
    code: review subprocess spawn, path construction, credential lookup, and temp-file use,
    and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
    `os.name`. See `DEC-09` in `docs/REGISTER.md`.
+
+## Web lookups
+
+Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
+It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
