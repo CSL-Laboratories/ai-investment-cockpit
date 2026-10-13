@@ -9,7 +9,9 @@ name: ci
 # Hosted split (cost: keep ordinary PR spend on Blacksmith Linux 2 vCPU):
 #   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
 #   windows      — push to main, workflow_dispatch, or PR label `ci:full`
-#   macos        — same events as windows; GitHub-hosted macos-latest (no Blacksmith macOS)
+#   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
+#                  workflow_dispatch. GitHub-hosted macos-latest (no Blacksmith macOS).
+#                  Not on ordinary main pushes: ~$0.93/run would dominate a ~$50 budget.
 #
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
@@ -19,14 +21,18 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
+  schedule:
+    # 07:17 UTC: US night / EU morning, off the hour to miss the cron stampede.
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A newer run for the same ref supersedes the run it interrupted.
+# A newer run for the same ref supersedes the run it interrupted. Nightly has its
+# own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'default' }}
   cancel-in-progress: true
 
 jobs:
@@ -36,6 +42,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       run-tests: ${{ steps.decide.outputs.run-tests }}
+      run-macos: ${{ steps.decide.outputs.run-macos }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,9 +57,33 @@ jobs:
           PUSH_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
+          emit() {
+            echo "run-tests=$1" >> "$GITHUB_OUTPUT"
+            echo "run-macos=$2" >> "$GITHUB_OUTPUT"
+            echo "run-tests=$1 run-macos=$2"
+          }
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            emit true true
             echo "workflow_dispatch always runs hosted gates."
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            # Nightly is macOS-only. Do not start Linux/Windows. Skip macOS when
+            # main had no commits in the last 24h so idle days do not spend ~$0.93.
+            git fetch --deepen=500 || git fetch --unshallow || true
+            count="$(git rev-list --count --since='24 hours ago' HEAD || echo "")"
+            if [ -z "$count" ]; then
+              emit false true
+              echo "Could not count recent commits; fail open to nightly macOS."
+              exit 0
+            fi
+            if [ "$count" -gt 0 ]; then
+              emit false true
+              echo "Nightly macOS: ${count} commit(s) on this ref in the last 24h."
+            else
+              emit false false
+              echo "Nightly macOS skipped: no commits in the last 24h."
+            fi
             exit 0
           fi
           if [ "$EVENT_NAME" = "pull_request" ]; then
@@ -63,18 +94,18 @@ jobs:
             HEAD="$PUSH_HEAD"
           fi
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            emit true false
             echo "No base SHA; fail open to running tests."
             exit 0
           fi
           if ! git fetch --depth=1 origin "$BASE" || ! git fetch --depth=1 origin "$HEAD"; then
-            echo "run-tests=true" >> "$GITHUB_OUTPUT"
+            emit true false
             echo "Could not fetch diff endpoints; fail open to running tests."
             exit 0
           fi
           files="$(git diff --name-only "$BASE" "$HEAD" -- || true)"
           if [ -z "$files" ]; then
-            echo "run-tests=false" >> "$GITHUB_OUTPUT"
+            emit false false
             echo "No changed files; skip test jobs."
             exit 0
           fi
@@ -89,8 +120,7 @@ jobs:
             run_tests=true
             break
           done <<< "$files"
-          echo "run-tests=${run_tests}" >> "$GITHUB_OUTPUT"
-          echo "run-tests=${run_tests}"
+          emit "$run_tests" false
 
   linux:
     name: linux
@@ -117,7 +147,7 @@ jobs:
   linux-gates:
     name: linux-gates
     needs: [filter, linux]
-    if: always() && !cancelled()
+    if: always() && !cancelled() && github.event_name != 'schedule'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
@@ -164,15 +194,16 @@ jobs:
     name: macos
     needs: filter
     if: >
-      needs.filter.outputs.run-tests == 'true' &&
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && needs.filter.outputs.run-macos == 'true') ||
       (
-        github.event_name == 'workflow_dispatch' ||
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'ci:full') &&
+        needs.filter.outputs.run-tests == 'true'
       )
-    # Best-effort portability only. Single 3.12 cell: a 3.11/3.12 macos-latest
-    # matrix would dominate the ~$40/month Actions budget. Blacksmith has no
-    # macOS runners for this org, so this stays on GitHub-hosted macos-latest.
+    # Best-effort portability only. Single 3.12 cell on GitHub-hosted macos-latest
+    # (no Blacksmith macOS). Not on ordinary main pushes: ~$0.93/run would dominate
+    # the ~$50/month budget. Nightly 07:17 UTC skips when main was idle 24h.
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
