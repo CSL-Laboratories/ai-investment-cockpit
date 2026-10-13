@@ -88,10 +88,11 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Run the gates
 
 `DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
-Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort; GitHub-hosted
-Actions are optional manual diagnostics; Hetzner is not part of current package validation.
-This changes platform evidence only and does not waive any online, broker, witness, paper-day,
-or pre-live gate.
+Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort. Hosted Actions
+do not replace that matrix: Linux `linux-gates` is the cheap required PR check; Windows and
+macOS run on `main`, the `ci:full` label, or `workflow_dispatch` only. Hetzner is not part of
+current package validation. This changes platform evidence only and does not waive any online,
+broker, witness, paper-day, or pre-live gate.
 
 ```bash
 cd app
