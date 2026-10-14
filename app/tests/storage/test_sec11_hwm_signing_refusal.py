@@ -198,7 +198,7 @@ def test_sql_write_boundary_with_independent_writer_must_refuse(env, fault):
     damaged = None
 
     def at_insert(connection, cursor, statement, parameters, context, executemany):
-        nonlocal injected, damaged
+        nonlocal injected
         if injected or not str(statement).startswith("INSERT INTO audit_entry "):
             return
         injected = True

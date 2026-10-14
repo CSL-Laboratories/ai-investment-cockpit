@@ -160,32 +160,6 @@ def _decode_json_value(value):
         return value
 
 
-def _is_model_payload(stdout: str) -> bool:
-    """Does stdout parse as a model payload — Claude's single JSON envelope, or Codex's JSONL?
-
-    The channel test behind ``_limit_signal``. Anything that parses as one of the two promised
-    protocols came from the MODEL and is derived from untrusted feed text; anything else is the
-    CLI itself talking, and the CLI is the vendor.
-    """
-    text = (stdout or "").strip()
-    if not text:
-        return False
-    try:
-        json.loads(text, parse_constant=_no_nonfinite)
-        return True                      # claude: one envelope
-    except ValueError:
-        pass
-    lines = [ln for ln in (line.strip() for line in text.splitlines()) if ln]
-    if not lines:
-        return False
-    for line in lines:                   # codex: JSONL, every line an object
-        try:
-            json.loads(line, parse_constant=_no_nonfinite)
-        except ValueError:
-            return False
-    return True
-
-
 def _scrub_prompt_echo(stderr: str, prompt: str | None) -> str:
     """BUG-063 (SEC-25): a CLI can echo its prompt back on stderr on a parse error
     (transport.py keeps the stderr tail for diagnostics and says exactly this), and the
