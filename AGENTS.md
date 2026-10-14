@@ -125,7 +125,7 @@ It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no 
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
 - **Devin** — the only PR reviewer, review only (on PR open; on-demand via `/devin review`).
-- **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs authored by org members (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
+- **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
 - **Blacksmith** — the only CI.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
 - **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
@@ -152,7 +152,7 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
-- The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository member PRs; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
+- The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
 - Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
 
 ## Hosted CI
@@ -167,7 +167,7 @@ Hosted split (PR #102):
 ## Review roles
 
 - **Devin** is the only GitHub PR reviewer. It does not auto-fix.
-- **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs authored by org members (other PRs are skipped by the workflow's event gate).
+- **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
