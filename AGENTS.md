@@ -116,3 +116,85 @@ provisioned.
 
 Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
 It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
+
+## Engineering stack (Oct 2026)
+
+- **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
+- **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
+- **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
+- **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
+- **GitHub** — org **CSL-Laboratories**.
+- **Devin** — the only PR reviewer and review auto-fixer (on PR open; on-demand via `/devin review`).
+- **Blacksmith** — the only CI.
+- **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
+- **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
+
+## Discord bot (`csl-bot-operations`)
+
+Liaison's stable slash commands — there is no top-level `/review`, and `/ci` always takes an argument:
+
+- `/issue`, `/plan`, `/debug`, `/feature`, `/standup`
+- `/ci full|run`
+- `/devin review pr:<url>|run|status`
+- `/telemetry`, `/help`, `/connect`
+
+MCP: https://csl-discord-bot-production.up.railway.app/mcp (declared in `.cursor/mcp.json` and `.mcp.json`). Each dev mints a bearer token via `/connect`. Never commit the token; set `CSL_DISCORD_BOT_MCP_TOKEN`. Cursor interpolates `${env:CSL_DISCORD_BOT_MCP_TOKEN}`; Claude Code interpolates `${CSL_DISCORD_BOT_MCP_TOKEN}`. Tools: `issue_create`, `issue_list`, `issue_status`, `issue_assign`, `plan`, `debug`, `feature`, `standup`, `ci_full`, `ci_run`, `devin_review`, `devin_run`, `devin_status`, `telemetry`.
+
+Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
+
+## Linear-first workflow
+
+Agents must stay Linear-aware and proactive. Linear is the source of truth.
+
+- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
+- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
+- **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
+- The author addresses Devin and CI comments on their own PR, then resolves the threads.
+- Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
+
+## Hosted CI
+
+Hosted split (PR #102):
+
+- Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
+- Windows runs on push to `main`, the `ci:full` label, and manual dispatch.
+- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on manual dispatch — not on ordinary `main` pushes.
+- Superseded runs are cancelled.
+
+## Review roles
+
+- **Devin** is the only GitHub PR reviewer and review auto-fixer. **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- Cursor, Claude Code, Codex, and Grok develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+
+## Automations
+
+Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wednesdays 10 AM PT) are human-managed. Other agents must not create, edit, or trigger Devin automations, and must not edit Devin settings.
+
+## Post-merge flow
+
+- A CI failure on `main` triggers the Devin fixer, which opens a Linear **Bug** (run id in the title) and a fix PR. The Discord bot posts the failure to the alerts channel.
+- The weekly dead-code sweep opens a Linear **Chore** plus a cleanup PR.
+- The Discord bot sends a weekly digest of stale PRs and issues.
+
+## Security
+
+- Never commit secrets. GitHub secret scanning and push protection are on: a blocked push means remove the secret and rotate it. Never bypass.
+- Dependabot security updates are on. Its PRs follow the normal review flow.
+
+## Trading safety
+
+The engine runs in **paper trading** by default. Live trading requires an explicit human-controlled switch. Agents must never enable live trading or add live broker credentials.
+
+## Performance
+
+Flag speed regressions. A benchmark CI step is tracked in Linear; until it lands, note perf impact in the PR description for engine changes.
+
+## Guardrails (MUST)
+
+Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
+
+Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
+
+Do not add paid services or raise spend limits.

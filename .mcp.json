@@ -3,6 +3,21 @@
     "parallel-search": {
       "type": "http",
       "url": "https://search.parallel.ai/mcp"
+    },
+    "context7": {
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "csl-bot-operations": {
+      "type": "http",
+      "url": "https://csl-discord-bot-production.up.railway.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CSL_DISCORD_BOT_MCP_TOKEN}"
+      }
     }
   }
 }
