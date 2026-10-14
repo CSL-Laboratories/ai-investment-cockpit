@@ -263,6 +263,20 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("ref: ${{ needs.resolve-pr.outputs.head_ref }}", mention)
         self.assertNotIn("ref: ${{ github.event.pull_request.head.ref }}", mention)
 
+    def test_privileged_jobs_attach_branch_before_push(self) -> None:
+        mention = self._job("claude-mention")
+        devin = self._job("devin-review-fix")
+        attach = 'git checkout -B "$HEAD_REF" "$HEAD_SHA"'
+        self.assertIn(attach, mention)
+        self.assertIn(attach, devin)
+        self.assertIn("Bash(git push origin HEAD:refs/heads/*)", mention)
+        self.assertIn("Bash(git push origin HEAD:refs/heads/*)", devin)
+
+    def test_setup_python_cache_uses_app_manifest(self) -> None:
+        devin = self._job("devin-review-fix")
+        self.assertIn("cache-dependency-path:", devin)
+        self.assertIn("app/pyproject.toml", devin)
+
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
