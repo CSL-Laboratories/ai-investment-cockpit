@@ -45,7 +45,6 @@ log = logging.getLogger(__name__)
 # raises UnpairedPeriodicFiling rather than silently emitting an 8-K-style extraction for a
 # periodic form; we count it and move on, because the first time a ticker is ever polled that
 # is the CORRECT and expected outcome for every periodic filing it has.
-_BASELINE = "baseline"
 _SUBMISSIONS_ARCHIVE_NAME = re.compile(r"^CIK\d{10}-submissions-\d{3}\.json$")
 _SEC_ACCESSION = re.compile(r"^\d{10}-\d{2}-\d{6}$")
 _MAX_HISTORICAL_SUBMISSION_FILES = 20

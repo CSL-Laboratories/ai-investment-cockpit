@@ -46,7 +46,6 @@ CHANNEL_BRIEF = "#brief"
 CHANNEL_ALERTS = "#alerts"
 CHANNEL_PROPOSALS = "#proposals"
 CHANNEL_SYSTEM = "#system"
-LOGICAL_CHANNELS = (CHANNEL_BRIEF, CHANNEL_ALERTS, CHANNEL_PROPOSALS, CHANNEL_SYSTEM)
 
 # Discord's message-content ceiling is 2000 characters. Render below it and say so when the
 # body was cut, so a truncated brief is never mistaken for a short one.

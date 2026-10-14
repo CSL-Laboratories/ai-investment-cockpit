@@ -26,7 +26,6 @@ import keyring
 # ``keyring set ai-investment-cockpit <name>``). One service, so the operator's provisioning
 # commands and the app's reads cannot drift apart.
 SERVICE = "ai-investment-cockpit"
-_SERVICE = SERVICE          # historical private alias; both names resolve to the one constant
 
 
 class Redacted:
