@@ -123,8 +123,8 @@ It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no 
 - **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
-- **Devin** — automated PR review on PR open; on-demand reviews.
-- **Blacksmith CI** — hosted GitHub Actions runners.
+- **Devin** — the only PR reviewer and review auto-fixer (on PR open; on-demand via `/devin review`).
+- **Blacksmith** — the only CI.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
 - **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
 
@@ -150,7 +150,7 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
-- Address Devin and CI review comments, then resolve the threads.
+- The author addresses Devin and CI comments on their own PR, then resolves the threads.
 - Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
 
 ## Hosted CI
@@ -158,6 +158,34 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 - Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
 - Windows and macOS run on the `ci:full` label, on manual dispatch, and on `main` (macOS nightly at 07:17 UTC).
 - Superseded runs are cancelled.
+
+## Review roles
+
+- **Devin** is the only PR reviewer and review auto-fixer. **Blacksmith** is the only CI.
+- Cursor, Claude Code, Codex, and Grok develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+
+## Automations
+
+Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wednesdays 10 AM PT) are human-managed. Other agents must not create, edit, or trigger Devin automations, and must not edit Devin settings.
+
+## Post-merge flow
+
+- A CI failure on `main` triggers the Devin fixer, which opens a Linear **Bug** (run id in the title) and a fix PR. The Discord bot posts the failure to the alerts channel.
+- The weekly dead-code sweep opens a Linear **Chore** plus a cleanup PR.
+- The Discord bot sends a weekly digest of stale PRs and issues.
+
+## Security
+
+- Never commit secrets. GitHub secret scanning and push protection are on: a blocked push means remove the secret and rotate it. Never bypass.
+- Dependabot security updates are on. Its PRs follow the normal review flow.
+
+## Trading safety
+
+The engine runs in **paper trading** by default. Live trading requires an explicit human-controlled switch. Agents must never enable live trading or add live broker credentials.
+
+## Performance
+
+Flag speed regressions. A benchmark CI step is tracked in Linear; until it lands, note perf impact in the PR description for engine changes.
 
 ## Guardrails (MUST)
 
