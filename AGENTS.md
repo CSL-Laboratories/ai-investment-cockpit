@@ -110,3 +110,43 @@ provisioned.
    code: review subprocess spawn, path construction, credential lookup, and temp-file use,
    and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
    `os.name`. See `DEC-09` in `docs/REGISTER.md`.
+
+## Web lookups
+
+Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
+It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
+
+## Engineering stack (Oct 2026)
+
+- **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
+- **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
+- **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
+- **GitHub** — org **CSL-Laboratories**.
+- **Devin** — automated PR review on PR open; on-demand reviews.
+- **Blacksmith CI** — hosted GitHub Actions runners.
+- **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
+- **Discord bot** (`csl-bot-operations`) — operator commands (`/ci`, `/review`, `/devin review|run|status`).
+
+## Linear-first workflow
+
+- Every change starts from a Linear issue (`CSL-N`).
+- Branch names come from Linear's copied branch name, so the PR auto-links.
+- PR title includes `CSL-N`.
+- One issue per PR; keep PRs small and stackable.
+- New ideas and review findings become **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, and the project — not drive-by changes.
+- Address Devin and CI review comments, then resolve the threads.
+- Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
+
+## Hosted CI
+
+- Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
+- Windows and macOS run on the `ci:full` label, on manual dispatch, and on `main` (macOS nightly at 07:17 UTC).
+- Superseded runs are cancelled.
+
+## Guardrails (MUST)
+
+Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
+
+Trigger CI and reviews through the Discord bot (`/ci`, `/review`, `/devin review|run|status`) or the `ci:full` label — not by editing config.
+
+Do not add paid services or raise spend limits.

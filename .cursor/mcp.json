@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "parallel-search": {
+      "url": "https://search.parallel.ai/mcp"
+    },
+    "context7": {
+      "url": "https://mcp.context7.com/mcp"
+    }
+  }
+}
