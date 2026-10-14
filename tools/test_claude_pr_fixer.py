@@ -649,16 +649,16 @@ class DenialsReportTests(unittest.TestCase):
         self.assertEqual(text.count("`"), 6)
 
     def test_absolute_file_paths_show_repo_relative_path(self) -> None:
-        data = {"type": "result", "permission_denials": [
-            {"tool_name": "Edit", "tool_input": {
-                "file_path": "/home/runner/work/r/r/.github/workflows/claude.yml"}},
-            {"tool_name": "Read", "tool_input": {"file_path": "/home/runner/.ssh/id_rsa"}},
-            {"tool_name": "Read", "tool_input": {"file_path": "/x/../app/../../etc/passwd"}},
-        ]}
-        lines = self._report(data)
-        self.assertIn("tool=Edit input=.github/workflows/claude.yml", lines[1])
-        self.assertIn("tool=Read input=[path]", lines[2])
-        self.assertIn("tool=Read input=[path]", lines[3])
+        root = "/home/runner/work/r/r"
+        self.assertEqual(
+            self.mod.path_shape(root + "/.github/workflows/claude.yml", root),
+            ".github/workflows/claude.yml",
+        )
+        self.assertEqual(self.mod.path_shape("/tmp/app/config.py", root), "[path]")
+        self.assertEqual(self.mod.path_shape("/home/runner/.ssh/id_rsa", root), "[path]")
+        self.assertEqual(self.mod.path_shape(root + "/../app/x.py", root), "[path]")
+        self.assertEqual(self.mod.path_shape(root + "/.github/x.yml", ""), "[path]")
+        self.assertEqual(self.mod.path_shape("app/core/x.py", root), "app/core/x.py")
 
     def test_missing_or_bad_file_is_safe(self) -> None:
         self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])

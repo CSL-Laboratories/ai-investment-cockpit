@@ -53,20 +53,17 @@ def safe_name(value: Any) -> str:
     return name if SAFE_NAME_RE.fullmatch(name) else "[tool]"
 
 
-ABS_REPO_PATH_RE = re.compile(
-    r"/((?:app|tools|scripts|docs|experiments|\.github)/[A-Za-z0-9._/-]{1,80})$"
-)
-
-
-def path_shape(value: Any) -> str:
-    """Show a file tool's path relative to the repo when it is a known repo path."""
+def path_shape(value: Any, workspace: str | None = None) -> str:
+    """Show a file tool's path relative to the checkout when it lies inside it."""
     text = str(value or "")
-    if REPO_PATH_RE.fullmatch(text):
-        return text
-    match = ABS_REPO_PATH_RE.search(text)
-    if text.startswith("/") and match and ".." not in text:
-        return match.group(1)
-    return "[path]"
+    if ".." in text:
+        return "[path]"
+    root = (workspace if workspace is not None else os.environ.get("GITHUB_WORKSPACE", "")).rstrip("/")
+    if text.startswith("/"):
+        if not root or not text.startswith(root + "/"):
+            return "[path]"
+        text = text[len(root) + 1 :]
+    return text if REPO_PATH_RE.fullmatch(text) else "[path]"
 
 
 def summarize_input(tool_input: Any) -> str:
