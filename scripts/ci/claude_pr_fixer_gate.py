@@ -19,6 +19,7 @@ MENTION_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@claude(?![A-Za-z0-9_])")
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._/-]+$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
+PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
 
 
 def is_whole_word_mention(text: str | None) -> bool:
@@ -35,6 +36,8 @@ def is_human(user_type: str | None) -> bool:
 
 def safe_head_ref(ref: str | None) -> str:
     value = ref or ""
+    if value in PROTECTED_REFS:
+        return ""
     if not SAFE_REF_RE.fullmatch(value):
         return ""
     return value
