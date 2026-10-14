@@ -580,8 +580,16 @@ class DenialsReportTests(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         return str(path)
 
-    def test_reports_tool_and_command(self) -> None:
-        data = [
+    def _report(self, data) -> list:
+        with tempfile.TemporaryDirectory() as tmp:
+            return self.mod.report(self._write(tmp, data))
+
+    def _bash(self, command: str) -> dict:
+        return {"type": "result", "permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": command}}]}
+
+    def test_reports_tool_and_command_shape(self) -> None:
+        lines = self._report([
             {"type": "assistant", "message": "secret-ish text"},
             {
                 "type": "result",
@@ -590,34 +598,59 @@ class DenialsReportTests(unittest.TestCase):
                     {"tool_name": "Edit", "tool_input": {"file_path": ".github/workflows/x.yml"}},
                 ],
             },
-        ]
-        with tempfile.TemporaryDirectory() as tmp:
-            lines = self.mod.report(self._write(tmp, data))
+        ])
         self.assertEqual(lines[0], "claude-denials: count=2")
         self.assertIn("tool=Bash input=cd app && ruff check .", lines[1])
         self.assertIn("tool=Edit input=.github/workflows/x.yml", lines[2])
         self.assertNotIn("secret-ish", "\n".join(lines))
 
-    def test_redacts_token_like_values(self) -> None:
+    def test_collects_denials_from_every_result(self) -> None:
+        lines = self._report([self._bash("cd app"), {"type": "result", "permission_denials": []}])
+        self.assertEqual(lines[0], "claude-denials: count=1")
+
+    def test_masks_arguments_and_credentials(self) -> None:
         token = "ghp_" + "A" * 36
-        data = {"type": "result", "permission_denials": [
-            {"tool_name": "Bash", "tool_input": {"command": f"git push https://x:{token}@github.com"}}]}
-        with tempfile.TemporaryDirectory() as tmp:
-            out = "\n".join(self.mod.report(self._write(tmp, data)))
-        self.assertNotIn(token, out)
-        self.assertIn("[redacted]", out)
+        for command, secret in (
+            (f"git push https://x:{token}@github.com main", token),
+            ("mysql -p hunter2 db", "hunter2"),
+            ("curl -H Authorization:pw123 https://example.com", "pw123"),
+            ("export PASS=s3cr3t", "s3cr3t"),
+        ):
+            out = "\n".join(self._report(self._bash(command)))
+            self.assertNotIn(secret, out, command)
+            self.assertIn("[arg]", out, command)
+
+    def test_known_gate_commands_stay_readable(self) -> None:
+        for command in (
+            "python3 -X utf8 -B tools/ci_gate.py --force",
+            "python -m pytest -q app/tests",
+            "ruff check app",
+        ):
+            self.assertIn("input=" + command, self._report(self._bash(command))[1])
 
     def test_truncates_long_input(self) -> None:
-        data = {"type": "result", "permission_denials": [
-            {"tool_name": "Bash", "tool_input": {"command": "echo " + "x " * 300}}]}
+        line = self._report(self._bash("echo " + "x " * 300))[1]
+        self.assertIn("...(+", line)
+        self.assertLess(len(line), 160)
+
+    def test_summary_cannot_inject_markup(self) -> None:
+        bad = {"type": "result", "permission_denials": [
+            {"tool_name": "Bash`![x](http://e)", "tool_input": {"command": "`![img](http://e)`"}}]}
         with tempfile.TemporaryDirectory() as tmp:
-            line = self.mod.report(self._write(tmp, data))[1]
-        self.assertLess(len(line), 260)
+            summary = Path(tmp) / "summary.md"
+            env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
+            subprocess.run(
+                [sys.executable, "-X", "utf8", "-B", str(DENIALS_PATH), self._write(tmp, bad)],
+                env=env, check=True, capture_output=True, text=True,
+            )
+            text = summary.read_text(encoding="utf-8")
+        self.assertIn("```text", text)
+        self.assertNotIn("](http", text)
+        self.assertEqual(text.count("`"), 6)
 
     def test_missing_or_bad_file_is_safe(self) -> None:
         self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(self.mod.report(self._write(tmp, [])), ["claude-denials: count=0"])
+        self.assertEqual(self._report([]), ["claude-denials: count=0"])
 
 
 class ActionlintTests(unittest.TestCase):
