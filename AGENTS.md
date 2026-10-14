@@ -120,6 +120,7 @@ It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no 
 
 - **Parallel Search MCP** — web search and fetch at https://search.parallel.ai/mcp (no key).
 - **Context7 MCP** — up-to-date library docs at https://mcp.context7.com/mcp (works without a key).
+- **Linear MCP** — issues, comments, and status at https://mcp.linear.app/mcp (or the Devin Linear integration).
 - **Linear** — source of truth for work. Workspace **CSL laboratories**, team key **CSL**, project **ai-investment-cockpit**.
 - **GitHub** — org **CSL-Laboratories**.
 - **Devin** — automated PR review on PR open; on-demand reviews.
@@ -129,11 +130,13 @@ It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no 
 
 ## Linear-first workflow
 
-- Every change starts from a Linear issue (`CSL-N`).
-- Branch names come from Linear's copied branch name, so the PR auto-links.
-- PR title includes `CSL-N`.
-- One issue per PR; keep PRs small and stackable.
-- New ideas and review findings become **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, and the project — not drive-by changes.
+Agents must stay Linear-aware and proactive. Linear is the source of truth.
+
+- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
+- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
+- **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
 - Address Devin and CI review comments, then resolve the threads.
 - Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
 
