@@ -8,6 +8,12 @@
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp"
+    },
+    "csl-bot-operations": {
+      "url": "https://csl-discord-bot-production.up.railway.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:CSL_DISCORD_BOT_MCP_TOKEN}"
+      }
     }
   }
 }

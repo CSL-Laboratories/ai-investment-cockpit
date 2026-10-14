@@ -126,7 +126,20 @@ It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no 
 - **Devin** — automated PR review on PR open; on-demand reviews.
 - **Blacksmith CI** — hosted GitHub Actions runners.
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
-- **Discord bot** (`csl-bot-operations`) — operator commands (`/ci`, `/review`, `/devin review|run|status`).
+- **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
+
+## Discord bot (`csl-bot-operations`)
+
+Liaison's stable slash commands — there is no top-level `/review`, and `/ci` always takes an argument:
+
+- `/issue`, `/plan`, `/debug`, `/feature`, `/standup`
+- `/ci full|run`
+- `/devin review pr:<url>|run|status`
+- `/telemetry`, `/help`, `/connect`
+
+MCP: https://csl-discord-bot-production.up.railway.app/mcp (declared in `.cursor/mcp.json` and `.mcp.json`). Each dev mints a bearer token via `/connect`. Never commit the token; set `CSL_DISCORD_BOT_MCP_TOKEN` and reference `${env:CSL_DISCORD_BOT_MCP_TOKEN}` only. Tools: `issue_create`, `issue_list`, `issue_status`, `issue_assign`, `plan`, `debug`, `feature`, `standup`, `ci_full`, `ci_run`, `devin_review`, `devin_run`, `devin_status`, `telemetry`.
+
+Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
@@ -150,6 +163,6 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
 
-Trigger CI and reviews through the Discord bot (`/ci`, `/review`, `/devin review|run|status`) or the `ci:full` label — not by editing config.
+Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 
 Do not add paid services or raise spend limits.

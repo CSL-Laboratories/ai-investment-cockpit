@@ -11,6 +11,13 @@
     "linear": {
       "type": "http",
       "url": "https://mcp.linear.app/mcp"
+    },
+    "csl-bot-operations": {
+      "type": "http",
+      "url": "https://csl-discord-bot-production.up.railway.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:CSL_DISCORD_BOT_MCP_TOKEN}"
+      }
     }
   }
 }
