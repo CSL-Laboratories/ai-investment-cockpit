@@ -103,7 +103,11 @@ jobs:
             echo "Could not fetch diff endpoints; fail open to running tests."
             exit 0
           fi
-          files="$(git diff --name-only "$BASE" "$HEAD" -- || true)"
+          if ! files="$(git diff --name-only "$BASE" "$HEAD" --)"; then
+            emit true false
+            echo "Could not diff endpoints; fail open to running tests."
+            exit 0
+          fi
           if [ -z "$files" ]; then
             emit false false
             echo "No changed files; skip test jobs."
@@ -114,6 +118,14 @@ jobs:
           run_tests=false
           while IFS= read -r f; do
             [ -z "$f" ] && continue
+            # Swarm tests import docs/research/swarm-tools, schemas, and hashed
+            # briefs. Any Python/JSON/YAML under docs/ is executable or a fixture,
+            # not skippable documentation.
+            if printf '%s\n' "$f" | grep -Eq \
+              '^docs/research/swarm-tools/|^docs/research/swarm-schemas/|^docs/research/swarm-briefs/|\.py$|\.json$|\.ya?ml$'; then
+              run_tests=true
+              break
+            fi
             if printf '%s\n' "$f" | grep -Eq '^docs/|\.md$|^LICENSE([.].*)?$|^\.gitignore$|^\.gitattributes$|^\.editorconfig$'; then
               continue
             fi
