@@ -44,26 +44,56 @@ def pr_payload(
     head_repo: str = REPO,
     head_ref: str = "feature/fix",
     head_sha: str = "a" * 40,
-    author_association: str = "MEMBER",
+    author_association: str = "CONTRIBUTOR",
+    author: str = "lucas",
 ) -> dict:
     return {
         "number": number,
         "state": state,
         "author_association": author_association,
+        "user": {"login": author, "type": "User"},
         "head": {"ref": head_ref, "sha": head_sha, "repo": {"full_name": head_repo}},
     }
 
 
-def comment(*, body: str, association: str = "MEMBER", user_type: str = "User") -> dict:
+def comment(
+    *,
+    body: str,
+    association: str = "CONTRIBUTOR",
+    user_type: str = "User",
+    login: str = "alice",
+) -> dict:
     return {
         "body": body,
         "author_association": association,
-        "user": {"type": user_type, "login": "alice"},
+        "user": {"type": user_type, "login": login},
     }
 
 
-def decide(event_name: str, event: dict, repository: str = REPO, pr: dict | None = None) -> dict:
-    return gate.evaluate(event_name, event, repository, pr=pr)
+# Repository permissions as the collaborators API would report them.
+PERMS = {
+    "lucas": "admin",
+    "alice": "write",
+    "maint": "maintain",
+    "reader": "read",
+    "mallory": "none",
+}
+
+
+def lookup(login: str) -> str:
+    if login == "boom":
+        raise RuntimeError("api down")
+    return PERMS.get(login, "none")
+
+
+def decide(
+    event_name: str,
+    event: dict,
+    repository: str = REPO,
+    pr: dict | None = None,
+    permission_lookup=lookup,
+) -> dict:
+    return gate.evaluate(event_name, event, repository, pr=pr, permission_lookup=permission_lookup)
 
 
 class MentionMatrixTests(unittest.TestCase):
@@ -87,10 +117,29 @@ class MentionMatrixTests(unittest.TestCase):
         got = decide(
             "issue_comment",
             event,
-            pr=pr_payload(author_association="CONTRIBUTOR"),
+            pr=pr_payload(author="reader", author_association="MEMBER"),
         )
         self.assertEqual(got["mention"], "false")
         self.assertEqual(got["same_repo"], "true")
+
+    def test_contributor_commenter_with_write_is_allowed(self) -> None:
+        event = {
+            "comment": comment(body="@claude fix", association="CONTRIBUTOR", login="alice"),
+            "issue": {"number": 42, "state": "open", "pull_request": {"url": "x"}},
+        }
+        got = decide("issue_comment", event, pr=pr_payload())
+        self.assertEqual(got["mention"], "true")
+        self.assertEqual(got["commenter_association"], "CONTRIBUTOR")
+        self.assertEqual(got["commenter_permission"], "write")
+
+    def test_read_only_commenter_is_rejected(self) -> None:
+        event = {
+            "comment": comment(body="@claude fix", association="MEMBER", login="reader"),
+            "issue": {"number": 42, "state": "open", "pull_request": {"url": "x"}},
+        }
+        got = decide("issue_comment", event, pr=pr_payload())
+        self.assertEqual(got["mention"], "false")
+        self.assertEqual(got["commenter_permission"], "read")
 
     def test_review_comment_mention(self) -> None:
         event = {
@@ -145,7 +194,7 @@ class MentionMatrixTests(unittest.TestCase):
 
     def test_outsider_mention_is_skipped(self) -> None:
         event = {
-            "comment": comment(body="@claude", association="NONE"),
+            "comment": comment(body="@claude", association="MEMBER", login="mallory"),
             "issue": {"number": 42, "state": "open", "pull_request": {"url": "x"}},
         }
         got = decide("issue_comment", event, pr=pr_payload())
@@ -190,9 +239,48 @@ class DevinMatrixTests(unittest.TestCase):
     def test_devin_on_non_member_pr_is_skipped(self) -> None:
         got = decide(
             "pull_request_review",
-            self._review(author_association="CONTRIBUTOR"),
+            self._review(author="reader", author_association="MEMBER"),
         )
         self.assertEqual(got["devin"], "false")
+        self.assertEqual(got["pr_author_permission"], "read")
+
+    def test_private_member_contributor_with_write_is_allowed(self) -> None:
+        got = decide("pull_request_review", self._review(author_association="CONTRIBUTOR"))
+        self.assertEqual(got["devin"], "true")
+        self.assertEqual(got["pr_author_association"], "CONTRIBUTOR")
+        self.assertEqual(got["pr_author_permission"], "admin")
+
+    def test_maintain_author_is_allowed(self) -> None:
+        got = decide("pull_request_review", self._review(author="maint"))
+        self.assertEqual(got["devin"], "true")
+
+    def test_contributor_without_permission_is_rejected(self) -> None:
+        got = decide("pull_request_review", self._review(author="mallory"))
+        self.assertEqual(got["devin"], "false")
+
+    def test_permission_lookup_error_fails_closed(self) -> None:
+        got = decide("pull_request_review", self._review(author="boom"))
+        self.assertEqual(got["devin"], "false")
+        self.assertEqual(got["pr_author_permission"], "none")
+
+    def test_no_lookup_fails_closed(self) -> None:
+        got = decide("pull_request_review", self._review(), permission_lookup=None)
+        self.assertEqual(got["devin"], "false")
+
+    def test_unsafe_login_is_not_looked_up(self) -> None:
+        seen: list[str] = []
+
+        def spy(login: str) -> str:
+            seen.append(login)
+            return "admin"
+
+        got = decide(
+            "pull_request_review",
+            self._review(author="../../evil"),
+            permission_lookup=spy,
+        )
+        self.assertEqual(got["devin"], "false")
+        self.assertEqual(seen, [])
 
     def test_other_bot_review_is_skipped(self) -> None:
         event = self._review()
@@ -301,9 +389,12 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn(".github/workflows", self.text)
         self.assertIn("include_comments_by_actor: devin-ai-integration[bot]", self.text)
 
-    def test_devin_auto_trigger_stays_but_is_member_gated(self) -> None:
+    def test_devin_auto_trigger_stays_but_is_permission_gated(self) -> None:
         self.assertIn("devin-ai-integration[bot]", self.text)
-        self.assertIn("author_association", GATE_PATH.read_text(encoding="utf-8"))
+        source = GATE_PATH.read_text(encoding="utf-8")
+        self.assertIn("collaborators/{login}/permission", source)
+        self.assertNotIn("MEMBER_ASSOC", source)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", self._job("resolve-pr"))
 
     def test_acceptance_gates_before_push(self) -> None:
         devin = self._job("devin-review-fix")
@@ -351,8 +442,19 @@ class GateCliTests(unittest.TestCase):
                 __import__("json").dumps(event),
                 encoding="utf-8",
             )
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            fake_gh = fake_bin / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                'case "$*" in *collaborators/*/permission*) '
+                'echo \'{"permission": "write"}\' ;; *) exit 1 ;; esac\n',
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
             env = {
-                **os.environ,
+                **{k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")},
+                "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
                 "GITHUB_EVENT_NAME": "issue_comment",
                 "GITHUB_REPOSITORY": REPO,
                 "GITHUB_EVENT_PATH": str(event_path),
@@ -371,6 +473,8 @@ class GateCliTests(unittest.TestCase):
             self.assertIn("mention=true", body)
             self.assertIn("head_ref=feature/fix", body)
             self.assertIn("head_sha=" + "a" * 40, body)
+            self.assertIn("pr_author_association=CONTRIBUTOR", body)
+            self.assertIn("commenter_permission=write", body)
 
 
 class ActionlintTests(unittest.TestCase):

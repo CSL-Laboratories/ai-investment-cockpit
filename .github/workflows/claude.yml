@@ -30,6 +30,8 @@ jobs:
       github.event_name == 'pull_request_review'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
+    # GITHUB_TOKEN reads collaborator permission (needs only repo metadata,
+    # granted with any read scope) and the PR payload. No write scopes here.
     permissions:
       contents: read
       pull-requests: read
@@ -53,6 +55,11 @@ jobs:
           #!/usr/bin/env python3
           """Evaluate Claude PR Fixer event paths. Fail closed. Provider-free.
 
+          Authorization uses the repository permission of the relevant user
+          (PR author for the Devin path; PR author and comment author for @claude),
+          looked up with the workflow GITHUB_TOKEN. author_association is logged only:
+          private org members are reported as CONTRIBUTOR, so it cannot authorize.
+
           Reads the GitHub event JSON and optional PR payload. Writes GitHub Actions
           outputs when GITHUB_OUTPUT is set. Import evaluate() from tests.
           """
@@ -62,9 +69,10 @@ jobs:
           import os
           import re
           import subprocess
-          from typing import Any
+          from typing import Any, Callable
 
-          MEMBER_ASSOC = frozenset({"OWNER", "MEMBER"})
+          WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
+          SAFE_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
           DEVIN_BOT = "devin-ai-integration[bot]"
           DEVIN_STATES = frozenset({"commented", "changes_requested"})
           MENTION_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
@@ -78,8 +86,32 @@ jobs:
               return bool(text) and MENTION_RE.search(text) is not None
 
 
-          def is_member(association: str | None) -> bool:
-              return (association or "") in MEMBER_ASSOC
+          PermissionLookup = Callable[[str], str]
+
+
+          def has_write(permission: str | None) -> bool:
+              return (permission or "") in WRITE_PERMISSIONS
+
+
+          def safe_login(login: str | None) -> str:
+              value = login or ""
+              return value if SAFE_LOGIN_RE.fullmatch(value) else ""
+
+
+          def _no_lookup(_login: str) -> str:
+              return "none"
+
+
+          def _permission(lookup: PermissionLookup, login: str | None, cache: dict[str, str]) -> str:
+              name = safe_login(login)
+              if not name:
+                  return "none"
+              if name not in cache:
+                  try:
+                      cache[name] = str(lookup(name) or "none")
+                  except Exception:  # fail closed on any lookup error
+                      cache[name] = "none"
+              return cache[name]
 
 
           def is_human(user_type: str | None) -> bool:
@@ -113,8 +145,11 @@ jobs:
               event: dict[str, Any],
               repository: str,
               pr: dict[str, Any] | None = None,
+              permission_lookup: PermissionLookup | None = None,
           ) -> dict[str, str]:
-              """Return mention/devin/same_repo/head_ref/pr_number/reason as strings."""
+              """Return mention/devin/same_repo/head_ref/pr_number/reason plus audit fields."""
+              lookup = permission_lookup or _no_lookup
+              cache: dict[str, str] = {}
               payload = pr if pr is not None else (event.get("pull_request") or None)
               issue = event.get("issue") or {}
               if payload is None and issue.get("pull_request"):
@@ -139,24 +174,32 @@ jobs:
               number = str(payload.get("number") or issue.get("number") or "")
               same_repo = _head_repo(payload) == repository
               state = str(payload.get("state") or issue.get("state") or "")
-              author_member = is_member(payload.get("author_association"))
-              open_same_member = same_repo and state == "open" and author_member
+              author = (payload.get("user") or {}).get("login")
+              author_assoc = str(payload.get("author_association") or "")
+              open_same = same_repo and state == "open"
+              author_perm = _permission(lookup, author, cache) if open_same else "unchecked"
+              open_same_writer = open_same and has_write(author_perm)
+              comment = event.get("comment") or {}
+              commenter = (comment.get("user") or {}).get("login")
+              commenter_assoc = str(comment.get("author_association") or "")
+              commenter_perm = "unchecked"
 
               mention = "false"
-              if event_name in MENTION_EVENTS and open_same_member:
-                  comment = event.get("comment") or {}
-                  if (
-                      is_whole_word_mention(comment.get("body"))
-                      and is_member(comment.get("author_association"))
-                      and is_human((comment.get("user") or {}).get("type"))
-                  ):
+              if (
+                  event_name in MENTION_EVENTS
+                  and open_same_writer
+                  and is_whole_word_mention(comment.get("body"))
+                  and is_human((comment.get("user") or {}).get("type"))
+              ):
+                  commenter_perm = _permission(lookup, commenter, cache)
+                  if has_write(commenter_perm):
                       mention = "true"
 
               review = event.get("review") or {}
               devin = "false"
               if (
                   event_name == "pull_request_review"
-                  and open_same_member
+                  and open_same_writer
                   and (review.get("user") or {}).get("login") == DEVIN_BOT
                   and str(review.get("state") or "").lower() in DEVIN_STATES
               ):
@@ -170,6 +213,12 @@ jobs:
                   "head_sha": head_sha,
                   "pr_number": number,
                   "reason": "ok" if (mention == "true" or devin == "true" or same_repo) else "fork-or-skip",
+                  "pr_author": safe_login(author),
+                  "pr_author_association": author_assoc,
+                  "pr_author_permission": author_perm,
+                  "commenter": safe_login(commenter),
+                  "commenter_association": commenter_assoc,
+                  "commenter_permission": commenter_perm,
               }
 
 
@@ -198,6 +247,19 @@ jobs:
               except json.JSONDecodeError:
                   return None
               return data if isinstance(data, dict) else None
+
+
+          def gh_permission(repository: str) -> PermissionLookup:
+              def lookup(login: str) -> str:
+                  raw = subprocess.check_output(
+                      ["gh", "api", f"repos/{repository}/collaborators/{login}/permission"],
+                      text=True,
+                      stderr=subprocess.DEVNULL,
+                  )
+                  data = json.loads(raw)
+                  return str(data.get("permission") or "none") if isinstance(data, dict) else "none"
+
+              return lookup
 
 
           def load_event(path: str) -> dict[str, Any]:
@@ -242,7 +304,7 @@ jobs:
                   if pr is None:
                       emit(_skip("pr-fetch-failed"))
                       return 0
-              emit(evaluate(event_name, event, repository, pr=pr))
+              emit(evaluate(event_name, event, repository, pr=pr, permission_lookup=gh_permission(repository)))
               return 0
 
 
