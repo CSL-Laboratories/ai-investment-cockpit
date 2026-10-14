@@ -10,5 +10,10 @@ def last_n(items: list[int] | None, n: int) -> list[int]:
 
 
 def average(values: list[float]) -> float:
-    """Arithmetic mean of values."""
+    """Arithmetic mean of values.
+
+    Example:
+        >>> average([1.0, 2.0, 3.0])
+        2.0
+    """
     return sum(values) / len(values)
