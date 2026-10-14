@@ -403,11 +403,14 @@ jobs:
                ruff check app
                python -m pytest -q app/tests
                If you touched tools/ or scripts/ci/, also run python -X utf8 -B tools/test_claude_pr_fixer.py.
+               Run each gate command exactly as written above: no pipes, redirects, or extra words.
+               Use one simple command per call: no heredocs, loops, or &&; use git commit -m with a short message; use Edit/Write for files.
                If a gate fails, or a command you need is denied, do NOT push. Instead post a PR comment
                (gh api repos/REPO/issues/PR/comments) and reply on each affected thread, naming the exact
                command and the failure. Never exit without either pushing or posting that failure reply.
-            4. Push, then reply to each review thread you addressed with the commit SHA, and reply to the
-               triggering comment with a short summary and the SHA.
+            4. Push, then reply to each review thread you addressed with the commit SHA and the gate result
+               (each gate command and pass/fail), and reply to the triggering comment with a short summary,
+               the SHA, and the gate result.
             5. If you disagree with a finding or request, do NOT resolve the thread; reply explaining why.
             6. If there is nothing to change, reply saying so.
             Rules: NEVER merge, NEVER force-push, NEVER rebase or rewrite history. Only push new commits
@@ -622,10 +625,12 @@ jobs:
                ruff check app
                python -m pytest -q app/tests
                If you touched tools/ or scripts/ci/, also run python -X utf8 -B tools/test_claude_pr_fixer.py.
+               Run each gate command exactly as written above: no pipes, redirects, or extra words.
+               Use one simple command per call: no heredocs, loops, or &&; use git commit -m with a short message; use Edit/Write for files.
                If a gate fails, or a command you need is denied, do NOT push. Instead post a PR comment
                (gh api repos/REPO/issues/PR/comments) and reply on each affected thread, naming the exact
                command and the failure. Never exit without either pushing or posting that failure reply.
-            4. Reply to each thread with the commit SHA that addresses it.
+            4. Reply to each thread with the commit SHA that addresses it and the gate result (each gate command and pass/fail).
             5. If you disagree, do NOT resolve the thread; reply explaining why.
             6. If there are no actionable findings, do nothing.
             Rules: NEVER merge, NEVER force-push, NEVER rebase or rewrite history. Only push new commits
