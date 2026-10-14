@@ -255,9 +255,11 @@ The release-blocking matrix is local native Windows plus Ubuntu 24.04 under WSL2
 operator's Windows workstation, each on Python 3.11 and 3.12. All four cells passed on the PR #53
 source tree, which is byte-identical to the tree of clean merged main
 `ebda9b6691cfcfc72b76056d0190768e5f14cd66`. macOS remains a best-effort portability target,
-not a release gate. GitHub-hosted Actions are optional manually dispatched diagnostics, not
-merge authority. Hetzner is outside this decision and is not required or tested for current
-packages. See [[evidence/local-platform-matrix-2026-08-24]].
+not a release gate. Hosted Linux `linux-gates` is a cheap required PR status check and does
+not replace that local matrix as package acceptance. Hosted Windows runs on `main`,
+the `ci:full` label, or `workflow_dispatch`; hosted macOS is nightly on `main` (skipped if
+idle 24h), `ci:full`, or `workflow_dispatch`. Hetzner is outside this decision and is not
+required or tested for current packages. See [[evidence/local-platform-matrix-2026-08-24]].
 
 This policy does not weaken platform-neutral implementation requirements and does not convert
 same-host WSL2 into an independent witness. Any older statement below that a hosted/macOS or

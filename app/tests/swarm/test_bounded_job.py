@@ -433,6 +433,16 @@ def test_preview_does_not_spawn(tmp_path, capsys, monkeypatch):
     def unexpected(*_a, **_k):
         pytest.fail("preview spawned a child")
 
+    # CLI Controller() uses wall-clock time. Pin it to NOW so this cell does not
+    # start failing the day after the fixture deadline (2026-09-15).
+    real_controller = job.Controller
+
+    class FrozenController(real_controller):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("now_fn", lambda: NOW)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(job, "Controller", FrozenController)
     monkeypatch.setattr(job.subprocess, "Popen", unexpected)
     envelope = tmp_path / "envelope.json"
     envelope.write_text(json.dumps(_envelope()), encoding="utf-8")
