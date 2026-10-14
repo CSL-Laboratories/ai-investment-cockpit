@@ -648,6 +648,18 @@ class DenialsReportTests(unittest.TestCase):
         self.assertNotIn("](http", text)
         self.assertEqual(text.count("`"), 6)
 
+    def test_absolute_file_paths_show_repo_relative_path(self) -> None:
+        data = {"type": "result", "permission_denials": [
+            {"tool_name": "Edit", "tool_input": {
+                "file_path": "/home/runner/work/r/r/.github/workflows/claude.yml"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "/home/runner/.ssh/id_rsa"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "/x/../app/../../etc/passwd"}},
+        ]}
+        lines = self._report(data)
+        self.assertIn("tool=Edit input=.github/workflows/claude.yml", lines[1])
+        self.assertIn("tool=Read input=[path]", lines[2])
+        self.assertIn("tool=Read input=[path]", lines[3])
+
     def test_missing_or_bad_file_is_safe(self) -> None:
         self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])
         self.assertEqual(self._report([]), ["claude-denials: count=0"])

@@ -53,9 +53,28 @@ def safe_name(value: Any) -> str:
     return name if SAFE_NAME_RE.fullmatch(name) else "[tool]"
 
 
+ABS_REPO_PATH_RE = re.compile(
+    r"/((?:app|tools|scripts|docs|experiments|\.github)/[A-Za-z0-9._/-]{1,80})$"
+)
+
+
+def path_shape(value: Any) -> str:
+    """Show a file tool's path relative to the repo when it is a known repo path."""
+    text = str(value or "")
+    if REPO_PATH_RE.fullmatch(text):
+        return text
+    match = ABS_REPO_PATH_RE.search(text)
+    if text.startswith("/") and match and ".." not in text:
+        return match.group(1)
+    return "[path]"
+
+
 def summarize_input(tool_input: Any) -> str:
     if isinstance(tool_input, dict):
-        for key in ("command", "file_path", "path", "pattern"):
+        for key in ("file_path", "path"):
+            if key in tool_input:
+                return path_shape(tool_input[key])
+        for key in ("command", "pattern"):
             if key in tool_input:
                 return shape(tool_input[key])
         return "keys=" + ",".join(sorted(safe_name(k) for k in tool_input))
