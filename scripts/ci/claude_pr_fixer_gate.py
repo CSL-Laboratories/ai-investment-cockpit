@@ -55,8 +55,8 @@ def _permission(lookup: PermissionLookup, login: str | None, cache: dict[str, st
     if name not in cache:
         try:
             cache[name] = str(lookup(name) or "none")
-        except Exception:  # fail closed on any lookup error
-            cache[name] = "none"
+        except Exception:  # fail closed; "error" keeps outages distinct from denials
+            cache[name] = "error"
     return cache[name]
 
 

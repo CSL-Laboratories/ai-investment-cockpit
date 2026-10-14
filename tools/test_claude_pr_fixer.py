@@ -10,6 +10,7 @@ Optionally runs actionlint when it is on PATH.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -261,7 +262,7 @@ class DevinMatrixTests(unittest.TestCase):
     def test_permission_lookup_error_fails_closed(self) -> None:
         got = decide("pull_request_review", self._review(author="boom"))
         self.assertEqual(got["devin"], "false")
-        self.assertEqual(got["pr_author_permission"], "none")
+        self.assertEqual(got["pr_author_permission"], "error")
 
     def test_no_lookup_fails_closed(self) -> None:
         got = decide("pull_request_review", self._review(), permission_lookup=None)
@@ -429,37 +430,48 @@ class WorkflowStructureTests(unittest.TestCase):
 
 
 class GateCliTests(unittest.TestCase):
-    def test_cli_writes_outputs_for_member_mention(self) -> None:
+    """Run the gate as a process with a stub gh that checks token and login."""
+
+    def _run_cli(self, *, token: str | None, comment_login: str = "alice") -> str:
         event = {
-            "comment": comment(body="@claude please"),
+            "comment": comment(body="@claude please", login=comment_login),
             "issue": {"number": 9, "state": "open", "pull_request": {"url": "x"}},
             "pull_request": pr_payload(number=9),
         }
         with tempfile.TemporaryDirectory() as tmp:
             event_path = Path(tmp) / "event.json"
             output_path = Path(tmp) / "out.txt"
-            event_path.write_text(
-                __import__("json").dumps(event),
-                encoding="utf-8",
-            )
+            event_path.write_text(json.dumps(event), encoding="utf-8")
             fake_bin = Path(tmp) / "bin"
             fake_bin.mkdir()
             fake_gh = fake_bin / "gh"
             fake_gh.write_text(
                 "#!/bin/sh\n"
-                'case "$*" in *collaborators/*/permission*) '
-                'echo \'{"permission": "write"}\' ;; *) exit 1 ;; esac\n',
+                '[ "$GH_TOKEN" = "stub-token" ] || exit 2\n'
+                'case "$*" in\n'
+                f'  "api repos/{REPO}/collaborators/lucas/permission") '
+                "echo '{\"permission\": \"admin\"}' ;;\n"
+                f'  "api repos/{REPO}/collaborators/alice/permission") '
+                "echo '{\"permission\": \"write\"}' ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n",
                 encoding="utf-8",
             )
             fake_gh.chmod(0o755)
             env = {
-                **{k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")},
-                "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
-                "GITHUB_EVENT_NAME": "issue_comment",
-                "GITHUB_REPOSITORY": REPO,
-                "GITHUB_EVENT_PATH": str(event_path),
-                "GITHUB_OUTPUT": str(output_path),
+                k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN")
             }
+            env.update(
+                {
+                    "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+                    "GITHUB_EVENT_NAME": "issue_comment",
+                    "GITHUB_REPOSITORY": REPO,
+                    "GITHUB_EVENT_PATH": str(event_path),
+                    "GITHUB_OUTPUT": str(output_path),
+                }
+            )
+            if token is not None:
+                env["GH_TOKEN"] = token
             result = subprocess.run(
                 [sys.executable, "-X", "utf8", "-B", str(GATE_PATH)],
                 cwd=ROOT,
@@ -469,12 +481,27 @@ class GateCliTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            body = output_path.read_text(encoding="utf-8")
-            self.assertIn("mention=true", body)
-            self.assertIn("head_ref=feature/fix", body)
-            self.assertIn("head_sha=" + "a" * 40, body)
-            self.assertIn("pr_author_association=CONTRIBUTOR", body)
-            self.assertIn("commenter_permission=write", body)
+            return output_path.read_text(encoding="utf-8")
+
+    def test_cli_writes_outputs_for_writer_mention(self) -> None:
+        body = self._run_cli(token="stub-token")
+        self.assertIn("mention=true", body)
+        self.assertIn("head_ref=feature/fix", body)
+        self.assertIn("head_sha=" + "a" * 40, body)
+        self.assertIn("pr_author_association=CONTRIBUTOR", body)
+        self.assertIn("pr_author_permission=admin", body)
+        self.assertIn("commenter_permission=write", body)
+
+    def test_cli_fails_closed_without_token(self) -> None:
+        body = self._run_cli(token=None)
+        self.assertIn("mention=false", body)
+        self.assertIn("pr_author_permission=error", body)
+
+    def test_cli_looks_up_the_actual_commenter(self) -> None:
+        body = self._run_cli(token="stub-token", comment_login="mallory")
+        self.assertIn("mention=false", body)
+        self.assertIn("commenter=mallory", body)
+        self.assertIn("commenter_permission=error", body)
 
 
 class ActionlintTests(unittest.TestCase):
