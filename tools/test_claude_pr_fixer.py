@@ -400,8 +400,8 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_acceptance_gates_before_push(self) -> None:
         devin = self._job("devin-review-fix")
         self.assertIn("acceptance gate", devin.lower())
-        self.assertIn("ruff check .", devin)
-        self.assertIn("python -m pytest -q", devin)
+        self.assertIn("ruff check app", devin)
+        self.assertIn("python -m pytest -q app/tests", devin)
         self.assertNotIn("tools/ci_gate.py", devin)
 
     def test_embedded_gate_matches_source_file(self) -> None:
@@ -502,6 +502,167 @@ class GateCliTests(unittest.TestCase):
         self.assertIn("mention=false", body)
         self.assertIn("commenter=mallory", body)
         self.assertIn("commenter_permission=error", body)
+
+
+DENIALS_PATH = ROOT / "scripts" / "ci" / "claude_denials.py"
+DENIALS_HEREDOC = "CLAUDE_DENIALS_REPORT"
+
+
+def load_denials():
+    spec = importlib.util.spec_from_file_location("claude_denials", DENIALS_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FixerGateAndPromptTests(unittest.TestCase):
+    GATES = ("Bash(ruff check app)", "Bash(python -m pytest -q app/tests)")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def _job(self, name: str) -> str:
+        return WorkflowStructureTests._job(self, name)  # type: ignore[arg-type]
+
+    def test_gates_are_single_commands_allowlisted_exactly(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            for gate_tool in self.GATES:
+                self.assertIn(gate_tool, body, job)
+            self.assertNotIn("Bash(cd ", body, job)
+            self.assertNotIn("cd app &&", body, job)
+            self.assertNotIn("ci_gate.py:*", body, job)
+            self.assertNotIn("pytest:*", body, job)
+            self.assertNotIn("ruff check:*", body, job)
+
+    def test_both_prompts_require_sha_replies_and_failure_reply(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            self.assertIn("prompt: |", body, job)
+            self.assertIn("commit SHA", body, job)
+            self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("do NOT push", body, job)
+            self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
+            self.assertIn("UNTRUSTED DATA", body, job)
+
+    def test_denials_are_reported_after_each_fixer(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            self.assertIn("id: claude", body, job)
+            self.assertIn("Report tool-permission denials", body, job)
+            self.assertIn("steps.claude.outputs.execution_file", body, job)
+            self.assertNotIn("show_full_output", body, job)
+
+    def test_mention_job_installs_gate_deps(self) -> None:
+        mention = self._job("claude-mention")
+        self.assertIn("actions/setup-python@v5", mention)
+        self.assertIn("Install acceptance-gate deps", mention)
+        self.assertIn("ruff check app", mention)
+        self.assertIn("python -m pytest -q app/tests", mention)
+
+    def test_embedded_denials_match_source(self) -> None:
+        start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        self.assertEqual(self.text.count(start), 2)
+        source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
+        for chunk in self.text.split(start)[1:]:
+            embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
+            self.assertEqual(embedded, source)
+
+
+class DenialsReportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mod = load_denials()
+
+    def _write(self, tmp: str, data) -> str:
+        path = Path(tmp) / "exec.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return str(path)
+
+    def _report(self, data) -> list:
+        with tempfile.TemporaryDirectory() as tmp:
+            return self.mod.report(self._write(tmp, data))
+
+    def _bash(self, command: str) -> dict:
+        return {"type": "result", "permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": command}}]}
+
+    def test_reports_tool_and_command_shape(self) -> None:
+        lines = self._report([
+            {"type": "assistant", "message": "secret-ish text"},
+            {
+                "type": "result",
+                "permission_denials": [
+                    {"tool_name": "Bash", "tool_input": {"command": "cd app && ruff check ."}},
+                    {"tool_name": "Edit", "tool_input": {"file_path": ".github/workflows/x.yml"}},
+                ],
+            },
+        ])
+        self.assertEqual(lines[0], "claude-denials: count=2")
+        self.assertIn("tool=Bash input=cd app && ruff check .", lines[1])
+        self.assertIn("tool=Edit input=.github/workflows/x.yml", lines[2])
+        self.assertNotIn("secret-ish", "\n".join(lines))
+
+    def test_collects_denials_from_every_result(self) -> None:
+        lines = self._report([self._bash("cd app"), {"type": "result", "permission_denials": []}])
+        self.assertEqual(lines[0], "claude-denials: count=1")
+
+    def test_masks_arguments_and_credentials(self) -> None:
+        token = "ghp_" + "A" * 36
+        for command, secret in (
+            (f"git push https://x:{token}@github.com main", token),
+            ("mysql -p hunter2 db", "hunter2"),
+            ("curl -H Authorization:pw123 https://example.com", "pw123"),
+            ("export PASS=s3cr3t", "s3cr3t"),
+        ):
+            out = "\n".join(self._report(self._bash(command)))
+            self.assertNotIn(secret, out, command)
+            self.assertIn("[arg]", out, command)
+
+    def test_known_gate_commands_stay_readable(self) -> None:
+        for command in (
+            "python3 -X utf8 -B tools/ci_gate.py --force",
+            "python -m pytest -q app/tests",
+            "ruff check app",
+        ):
+            self.assertIn("input=" + command, self._report(self._bash(command))[1])
+
+    def test_truncates_long_input(self) -> None:
+        line = self._report(self._bash("echo " + "x " * 300))[1]
+        self.assertIn("...(+", line)
+        self.assertLess(len(line), 160)
+
+    def test_summary_cannot_inject_markup(self) -> None:
+        bad = {"type": "result", "permission_denials": [
+            {"tool_name": "Bash`![x](http://e)", "tool_input": {"command": "`![img](http://e)`"}}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary.md"
+            env = {**os.environ, "GITHUB_STEP_SUMMARY": str(summary)}
+            subprocess.run(
+                [sys.executable, "-X", "utf8", "-B", str(DENIALS_PATH), self._write(tmp, bad)],
+                env=env, check=True, capture_output=True, text=True,
+            )
+            text = summary.read_text(encoding="utf-8")
+        self.assertIn("```text", text)
+        self.assertNotIn("](http", text)
+        self.assertEqual(text.count("`"), 6)
+
+    def test_absolute_file_paths_show_repo_relative_path(self) -> None:
+        root = "/home/runner/work/r/r"
+        self.assertEqual(
+            self.mod.path_shape(root + "/.github/workflows/claude.yml", root),
+            ".github/workflows/claude.yml",
+        )
+        self.assertEqual(self.mod.path_shape("/tmp/app/config.py", root), "[path]")
+        self.assertEqual(self.mod.path_shape("/home/runner/.ssh/id_rsa", root), "[path]")
+        self.assertEqual(self.mod.path_shape(root + "/../app/x.py", root), "[path]")
+        self.assertEqual(self.mod.path_shape(root + "/.github/x.yml", ""), "[path]")
+        self.assertEqual(self.mod.path_shape("app/core/x.py", root), "app/core/x.py")
+
+    def test_missing_or_bad_file_is_safe(self) -> None:
+        self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])
+        self.assertEqual(self._report([]), ["claude-denials: count=0"])
 
 
 class ActionlintTests(unittest.TestCase):
