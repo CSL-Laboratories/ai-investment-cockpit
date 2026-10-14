@@ -137,7 +137,7 @@ Liaison's stable slash commands — there is no top-level `/review`, and `/ci` a
 - `/devin review pr:<url>|run|status`
 - `/telemetry`, `/help`, `/connect`
 
-MCP: https://csl-discord-bot-production.up.railway.app/mcp (declared in `.cursor/mcp.json` and `.mcp.json`). Each dev mints a bearer token via `/connect`. Never commit the token; set `CSL_DISCORD_BOT_MCP_TOKEN` and reference `${env:CSL_DISCORD_BOT_MCP_TOKEN}` only. Tools: `issue_create`, `issue_list`, `issue_status`, `issue_assign`, `plan`, `debug`, `feature`, `standup`, `ci_full`, `ci_run`, `devin_review`, `devin_run`, `devin_status`, `telemetry`.
+MCP: https://csl-discord-bot-production.up.railway.app/mcp (declared in `.cursor/mcp.json` and `.mcp.json`). Each dev mints a bearer token via `/connect`. Never commit the token; set `CSL_DISCORD_BOT_MCP_TOKEN`. Cursor interpolates `${env:CSL_DISCORD_BOT_MCP_TOKEN}`; Claude Code interpolates `${CSL_DISCORD_BOT_MCP_TOKEN}`. Tools: `issue_create`, `issue_list`, `issue_status`, `issue_assign`, `plan`, `debug`, `feature`, `standup`, `ci_full`, `ci_run`, `devin_review`, `devin_run`, `devin_status`, `telemetry`.
 
 Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
@@ -155,13 +155,15 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 ## Hosted CI
 
+Intended hosted split (open PR #102; until it lands, `.github/workflows/ci.yml` is `workflow_dispatch` only — do not edit it):
+
 - Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
 - Windows and macOS run on the `ci:full` label, on manual dispatch, and on `main` (macOS nightly at 07:17 UTC).
 - Superseded runs are cancelled.
 
 ## Review roles
 
-- **Devin** is the only PR reviewer and review auto-fixer. **Blacksmith** is the only CI.
+- **Devin** is the only GitHub PR reviewer and review auto-fixer. **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Claude Code, Codex, and Grok develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
 ## Automations
