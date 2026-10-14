@@ -230,8 +230,9 @@ canonical invariant list, and nothing else restates it.
    the platform instructions in `AGENTS.md`; order-path changes also require adversarial review.
 5. Record whether evidence is local-platform, live-market, paper-broker, independent-witness, or deployment
    evidence. Those are not interchangeable.
-6. Run the four-cell local matrix required by `DEC-09` before merge. GitHub-hosted execution is
-   optional and does not replace any required online, broker, witness, or deployment gate.
+6. Run the four-cell local matrix required by `DEC-09` before merge. Hosted Linux `linux-gates`
+   is a required PR diagnostic and does not replace that matrix or any required online, broker,
+   witness, or deployment gate.
 
 ---
 

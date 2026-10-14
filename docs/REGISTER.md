@@ -217,7 +217,7 @@ do not certify the other BUG-126..145 claims. No empirical or activation gate ch
 
 | Lifecycle stage | State | Next gate |
 |---|---|---|
-| Offline development | **local platform gate green** | `DEC-09` accepts the clean four-cell native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix; hosted Actions are optional and macOS is best-effort; do not start `RW-13` while empirical gates remain open |
+| Offline development | **local platform gate green** | `DEC-09` accepts the clean four-cell native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix; hosted Linux `linux-gates` is a required PR diagnostic and does not replace that matrix; hosted Windows/macOS are not ordinary-PR checks; macOS is best-effort; do not start `RW-13` while empirical gates remain open |
 | Online testing and evidence | **active** | [[evidence/rw14-rw19-live-evidence-2026-08-18]] closes RW-14's named live drill and measures RW-19 reconnect/backfill plus the single-writer bottleneck; finish RW-11/RW-15/RW-19/W-24 evidence; W-25 provisioning waits on an explicit provider/cost decision and real-cloud/witness evidence |
 | Paper MVP | **not reached** | real W-24/W-23 prospective cohort + target evidence, RW-15 online evidence, then two audited unattended `W-22` market days |
 | Production beta | **blocked by MVP** | `RW-13` dynamic path plus `W16` four-week paper soak |
@@ -428,7 +428,7 @@ Not bugs. Work that cannot start until someone chooses.
 | `DEC-06` | Robinhood MCP version/authentication profile: use `RW-18` to discover whether the server supports the 2026-07-28 stateless core and optional OAuth Client Credentials extension or requires delegated interactive OAuth/reauthentication. Do not assume unattended machine auth. | resolved by `RW-18`; blocks `W17` |
 | `DEC-07` | Dynamic market-data entitlement: re-verify current Alpaca tiers/connection constraints at build and choose IEX versus consolidated SIP from a measured trigger false-negative/latency study for the bring-up universe. | `RW-13`, dynamic `RW-14` gate |
 | `DEC-08` | Robinhood live tool contract: exact request/response schemas, status vocabulary, client-order-id/idempotency behavior, rate/errors, and supported order-type/TIF intersection, all from the `RW-18` no-capital authenticated discovery spike. | resolved by `RW-18`; blocks `W17` and Robinhood side of `RW-15` |
-| `DEC-09` | **Resolved 2026-08-24:** release-blocking validation is the local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix on the operator workstation. macOS is best-effort; GitHub-hosted runs are optional manual diagnostics; Hetzner is outside the current package. This does not relax platform-neutral code or independent-witness/deployment gates. | current package acceptance; [[evidence/local-platform-matrix-2026-08-24]] |
+| `DEC-09` | **Resolved 2026-08-24:** release-blocking validation is the local native-Windows + Ubuntu/WSL2 × Python 3.11/3.12 matrix on the operator workstation. macOS is best-effort. Hosted Linux `linux-gates` is a cheap required PR check and does not replace that matrix; hosted Windows runs on `main`, `ci:full`, or `workflow_dispatch`; hosted macOS is nightly on `main` (skipped if idle 24h), `ci:full`, or `workflow_dispatch`. Hetzner is outside the current package. This does not relax platform-neutral code or independent-witness/deployment gates. | current package acceptance; [[evidence/local-platform-matrix-2026-08-24]] |
 
 ---
 

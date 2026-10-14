@@ -1,53 +1,225 @@
 name: ci
 
+# DEC-09 still owns package acceptance: the local native-Windows + Ubuntu/WSL2 ×
+# Python 3.11/3.12 matrix on the operator workstation. Hosted jobs here are merge
+# diagnostics, not a substitute for that matrix, and they do not satisfy online,
+# broker, witness, paper-day, or pre-live gates. macOS remains best-effort; Hetzner
+# is outside the current package.
+#
+# Hosted split (cost: keep ordinary PR spend on Blacksmith Linux 2 vCPU):
+#   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
+#   windows      — push to main, workflow_dispatch, or PR label `ci:full`
+#   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
+#                  workflow_dispatch. GitHub-hosted macos-latest (no Blacksmith macOS).
+#                  Not on ordinary main pushes: ~$0.93/run would dominate a ~$50 budget.
+#
+# This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
+# runner labels (open PR #100, branch blacksmith-migration-33156c9).
+
 on:
-  # DEC-09 makes the native-Windows + Ubuntu/WSL2 local four-cell matrix authoritative.
-  # Hosted execution is an optional diagnostic and must be started explicitly so ordinary
-  # pushes and pull requests do not consume Actions budget.
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  schedule:
+    # 07:17 UTC: US night / EU morning, off the hour to miss the cron stampede.
+    - cron: "17 7 * * *"
   workflow_dispatch:
 
-# A second manual run for the same ref supersedes the run it interrupted.
+permissions:
+  contents: read
+
+# A newer run for the same ref supersedes the run it interrupted. Nightly has its
+# own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'default' }}
   cancel-in-progress: true
 
 jobs:
-  gates:
-    # Optional hosted parity check for the two DEC-09 supported environments. It supplements,
-    # but does not replace, the required local Windows + Ubuntu/WSL2 Python 3.11/3.12 matrix.
-    # fail-fast is off so every requested cell reports.
+  filter:
+    name: filter
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      run-tests: ${{ steps.decide.outputs.run-tests }}
+      run-macos: ${{ steps.decide.outputs.run-macos }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Decide whether code gates must run
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          emit() {
+            echo "run-tests=$1" >> "$GITHUB_OUTPUT"
+            echo "run-macos=$2" >> "$GITHUB_OUTPUT"
+            echo "run-tests=$1 run-macos=$2"
+          }
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            emit true true
+            echo "workflow_dispatch always runs hosted gates."
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            # Nightly is macOS-only. Do not start Linux/Windows. Skip macOS when
+            # main had no commits in the last 24h so idle days do not spend ~$0.93.
+            git fetch --deepen=500 || git fetch --unshallow || true
+            count="$(git rev-list --count --since='24 hours ago' HEAD || echo "")"
+            if [ -z "$count" ]; then
+              emit false true
+              echo "Could not count recent commits; fail open to nightly macOS."
+              exit 0
+            fi
+            if [ "$count" -gt 0 ]; then
+              emit false true
+              echo "Nightly macOS: ${count} commit(s) on this ref in the last 24h."
+            else
+              emit false false
+              echo "Nightly macOS skipped: no commits in the last 24h."
+            fi
+            exit 0
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE"
+            HEAD="$PR_HEAD"
+          else
+            BASE="$PUSH_BEFORE"
+            HEAD="$PUSH_HEAD"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            emit true false
+            echo "No base SHA; fail open to running tests."
+            exit 0
+          fi
+          if ! git fetch --depth=1 origin "$BASE" || ! git fetch --depth=1 origin "$HEAD"; then
+            emit true false
+            echo "Could not fetch diff endpoints; fail open to running tests."
+            exit 0
+          fi
+          if ! files="$(git diff --name-only "$BASE" "$HEAD" --)"; then
+            emit true false
+            echo "Could not diff endpoints; fail open to running tests."
+            exit 0
+          fi
+          if [ -z "$files" ]; then
+            emit false false
+            echo "No changed files; skip test jobs."
+            exit 0
+          fi
+          echo "Changed files:"
+          printf '%s\n' "$files"
+          run_tests=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            # Swarm tests import docs/research/swarm-tools, schemas, and hashed
+            # briefs. Any Python/JSON/YAML under docs/ is executable or a fixture,
+            # not skippable documentation.
+            if printf '%s\n' "$f" | grep -Eq \
+              '^docs/research/swarm-tools/|^docs/research/swarm-schemas/|^docs/research/swarm-briefs/|\.py$|\.json$|\.ya?ml$'; then
+              run_tests=true
+              break
+            fi
+            if printf '%s\n' "$f" | grep -Eq '^docs/|\.md$|^LICENSE([.].*)?$|^\.gitignore$|^\.gitattributes$|^\.editorconfig$'; then
+              continue
+            fi
+            run_tests=true
+            break
+          done <<< "$files"
+          emit "$run_tests" false
+
+  linux:
+    name: linux
+    needs: filter
+    if: needs.filter.outputs.run-tests == 'true'
+    # Optional hosted Linux diagnostic for the two CPython versions DEC-09 covers.
+    # fail-fast is off so every requested cell reports. Does not replace the local
+    # Ubuntu/WSL2 cells.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ["3.11", "3.12"]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: app
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install runtime and validation dependencies
-        # Match app/pyproject.toml, including real Discord command-tree coverage. Its
-        # absent-dependency fallback runs in an isolated subprocess in the same suite.
-        run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
-      - name: Lint
-        run: ruff check .
-      # Pinned SHORT because pytest nests its generated tmp dirs under the runner temp path,
-      # and combined with this repo's deep fixture paths that crosses MAX_PATH — surfacing as
-      # ~80 bogus WinError 3 / WinError 206 failures in the parquet and tempfile paths that
-      # have nothing to do with the code under test. Set via GITHUB_ENV rather than a step
-      # `env:` block so the other two platforms are not handed an empty TMP.
-      - name: Pin a short TMP (Windows MAX_PATH)
-        if: runner.os == 'Windows'
-        shell: pwsh
+
+  # Stable required status-check name. Passes when the Linux matrix succeeded, or
+  # when Linux was skipped because the change is docs-only. Configure branch
+  # protection / rulesets to require exactly this name: linux-gates
+  linux-gates:
+    name: linux-gates
+    needs: [filter, linux]
+    if: always() && !cancelled() && github.event_name != 'schedule'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Required Linux gate
         run: |
-          New-Item -ItemType Directory -Force C:\t | Out-Null
-          "TMP=C:\t"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TEMP=C:\t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: Gates + tests (merge blockers)
-        # Includes the Invariant-1 call-site, no-LLM-in-risk, and secrets-grep gates (test_invariants.py).
-        run: python -m pytest -q
+          set -euo pipefail
+          filter="${{ needs.filter.result }}"
+          linux="${{ needs.linux.result }}"
+          echo "filter=${filter} linux=${linux}"
+          if [ "$filter" != "success" ]; then
+            echo "filter job did not succeed"
+            exit 1
+          fi
+          if [ "$linux" = "success" ] || [ "$linux" = "skipped" ]; then
+            exit 0
+          fi
+          echo "linux matrix result=${linux}"
+          exit 1
+
+  windows:
+    name: windows
+    needs: filter
+    if: >
+      needs.filter.outputs.run-tests == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+      )
+    # Hosted Windows supplements, but does not replace, the DEC-09 native-Windows cells.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    runs-on: blacksmith-4vcpu-windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/run-gates
+        with:
+          python-version: ${{ matrix.python-version }}
+
+  macos:
+    name: macos
+    needs: filter
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && needs.filter.outputs.run-macos == 'true') ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'ci:full') &&
+        needs.filter.outputs.run-tests == 'true'
+      )
+    # Best-effort portability only. Single 3.12 cell on GitHub-hosted macos-latest
+    # (no Blacksmith macOS). Not on ordinary main pushes: ~$0.93/run would dominate
+    # the ~$50/month budget. Nightly 07:17 UTC skips when main was idle 24h.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/run-gates
+        with:
+          python-version: "3.12"

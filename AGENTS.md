@@ -104,8 +104,9 @@ provisioned.
 4. Keep the repository private and commit only when the operator asks.
 5. Any order-path change needs an adversarial-review round.
 6. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
-   Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation; do not
-   require GitHub-hosted execution or Hetzner for current package acceptance. macOS is a
+   Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
+   Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
+   hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
    best-effort portability target, not a release gate. Continue to write platform-neutral
    code: review subprocess spawn, path construction, credential lookup, and temp-file use,
    and prefer inspecting the failure (as `orchestrator/halt.py` does) over branching on
@@ -155,10 +156,11 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 ## Hosted CI
 
-Intended hosted split (open PR #102; until it lands, `.github/workflows/ci.yml` is `workflow_dispatch` only — do not edit it):
+Hosted split (PR #102):
 
 - Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
-- Windows and macOS run on the `ci:full` label, on manual dispatch, and on `main` (macOS nightly at 07:17 UTC).
+- Windows runs on push to `main`, the `ci:full` label, and manual dispatch.
+- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on manual dispatch — not on ordinary `main` pushes.
 - Superseded runs are cancelled.
 
 ## Review roles
