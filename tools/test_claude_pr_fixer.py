@@ -546,6 +546,11 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
             self.assertIn("UNTRUSTED DATA", body, job)
+            self.assertIn("exactly as written above: no pipes, redirects, or extra words", body, job)
+            self.assertIn("no heredocs, loops, or &&", body, job)
+            self.assertIn("git commit -m with a short message", body, job)
+            self.assertIn("use Edit/Write for files", body, job)
+            self.assertIn("the gate result", body, job)
 
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
