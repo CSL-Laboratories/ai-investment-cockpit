@@ -1,0 +1,45 @@
+name: run-gates
+description: Install the CI dependency set, run Ruff, then pytest. Pins a short Windows TMP.
+
+inputs:
+  python-version:
+    description: CPython version for this cell
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: |
+          app/pyproject.toml
+          .github/actions/run-gates/action.yml
+    - name: Install runtime and validation dependencies
+      # Match app/pyproject.toml, including real Discord command-tree coverage. Its
+      # absent-dependency fallback runs in an isolated subprocess in the same suite.
+      working-directory: app
+      shell: bash
+      run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
+    - name: Lint
+      working-directory: app
+      shell: bash
+      run: ruff check .
+    # Pinned SHORT because pytest nests its generated tmp dirs under the runner temp path,
+    # and combined with this repo's deep fixture paths that crosses MAX_PATH — surfacing as
+    # ~80 bogus WinError 3 / WinError 206 failures in the parquet and tempfile paths that
+    # have nothing to do with the code under test. Set via GITHUB_ENV rather than a step
+    # `env:` block so the other two platforms are not handed an empty TMP.
+    - name: Pin a short TMP (Windows MAX_PATH)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force C:\t | Out-Null
+        "TMP=C:\t"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "TEMP=C:\t" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+    - name: Gates + tests (merge blockers)
+      # Includes the Invariant-1 call-site, no-LLM-in-risk, and secrets-grep gates (test_invariants.py).
+      working-directory: app
+      shell: bash
+      run: python -m pytest -q
