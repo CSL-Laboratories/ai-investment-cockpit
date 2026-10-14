@@ -569,7 +569,7 @@ class FixerGateAndPromptTests(unittest.TestCase):
 
     def test_embedded_denials_match_source(self) -> None:
         start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
-        self.assertEqual(self.text.count(start), 2)
+        self.assertEqual(self.text.count(start), 3)
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
         for chunk in self.text.split(start)[1:]:
             embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
@@ -668,6 +668,144 @@ class DenialsReportTests(unittest.TestCase):
     def test_missing_or_bad_file_is_safe(self) -> None:
         self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])
         self.assertEqual(self._report([]), ["claude-denials: count=0"])
+
+
+SCAN_PATH = ROOT / "scripts" / "ci" / "claude_conflict_scan.py"
+SCAN_HEREDOC = "CLAUDE_CONFLICT_SCAN"
+
+
+def load_scan():
+    spec = importlib.util.spec_from_file_location("claude_conflict_scan", SCAN_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def conflicted_pr(**kw) -> dict:
+    pr = {
+        "number": kw.get("number", 7),
+        "state": kw.get("state", "open"),
+        "mergeable": kw.get("mergeable", False),
+        "mergeable_state": kw.get("mergeable_state", "dirty"),
+        "user": {"login": kw.get("author", "lucas")},
+        "labels": [{"name": n} for n in kw.get("labels", [])],
+        "head": {
+            "ref": kw.get("head_ref", "feature/x"),
+            "sha": kw.get("head_sha", "b" * 40),
+            "repo": {"full_name": kw.get("head_repo", REPO)},
+        },
+        "base": {"ref": kw.get("base_ref", "main")},
+    }
+    return pr
+
+
+class ConflictScanTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mod = load_scan()
+
+    def _select(self, prs, lookup_fn=lookup, cap=3):
+        return self.mod.select(prs, REPO, lookup_fn, max_prs=cap)
+
+    def test_selects_conflicted_same_repo_writer_pr(self) -> None:
+        chosen, audit = self._select([conflicted_pr()])
+        self.assertEqual(
+            chosen,
+            [{"number": "7", "head_ref": "feature/x", "head_sha": "b" * 40, "base_ref": "main"}],
+        )
+        self.assertIn("select author_permission=admin", audit[0])
+
+    def test_skips_each_unsafe_or_ineligible_case(self) -> None:
+        cases = {
+            "not-open": conflicted_pr(state="closed"),
+            "fork": conflicted_pr(head_repo="evil/fork"),
+            "not-conflicted": conflicted_pr(mergeable=True, mergeable_state="clean"),
+            "unknown-mergeable": conflicted_pr(mergeable=None, mergeable_state="unknown"),
+            "protected-head": conflicted_pr(head_ref="main"),
+            "unsafe-head": conflicted_pr(head_ref="feat/../main"),
+            "unsafe-base": conflicted_pr(base_ref="a b"),
+            "unsafe-sha": conflicted_pr(head_sha="zz"),
+            "labelled": conflicted_pr(labels=["needs-decision"]),
+            "reader": conflicted_pr(author="reader"),
+            "no-access": conflicted_pr(author="mallory"),
+            "lookup-error": conflicted_pr(author="boom"),
+            "unsafe-login": conflicted_pr(author="../x"),
+        }
+        for name, pr in cases.items():
+            chosen, audit = self._select([pr])
+            self.assertEqual(chosen, [], name)
+            self.assertIn("skip=", audit[0], name)
+
+    def test_contributor_association_with_write_permission_is_selected(self) -> None:
+        pr = conflicted_pr(author="alice")
+        pr["author_association"] = "CONTRIBUTOR"
+        self.assertEqual(len(self._select([pr])[0]), 1)
+
+    def test_no_lookup_fails_closed(self) -> None:
+        self.assertEqual(self._select([conflicted_pr()], lookup_fn=None)[0], [])
+
+    def test_cap_bounds_runs(self) -> None:
+        prs = [conflicted_pr(number=n, head_ref=f"f/{n}") for n in range(1, 6)]
+        chosen, audit = self._select(prs, cap=2)
+        self.assertEqual([c["number"] for c in chosen], ["1", "2"])
+        self.assertEqual(sum("skip=over-cap" in a for a in audit), 3)
+
+    def test_embedded_scan_matches_source(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = f"python3 - <<'{SCAN_HEREDOC}'\n"
+        self.assertEqual(text.count(start), 1)
+        chunk = text.split(start, 1)[1]
+        embedded = textwrap.dedent(chunk[: chunk.find(SCAN_HEREDOC)]).rstrip("\n")
+        self.assertEqual(embedded, SCAN_PATH.read_text(encoding="utf-8").rstrip("\n"))
+
+
+class ConflictJobStructureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def _job(self, name: str) -> str:
+        return WorkflowStructureTests._job(self, name)  # type: ignore[arg-type]
+
+    def test_triggers_are_bounded(self) -> None:
+        self.assertIn('cron: "7,37 * * * *"', self.text)
+        self.assertIn("workflow_dispatch:", self.text)
+        scan = self._job("conflict-scan")
+        self.assertIn("contents: read", scan)
+        self.assertNotIn("write", scan.split("steps:")[0])
+        self.assertIn("GH_TOKEN: ${{ github.token }}", scan)
+
+    def test_resolver_keeps_protections(self) -> None:
+        job = self._job("conflict-resolve")
+        self.assertIn("group: claude-${{ matrix.pr.number }}", job)
+        self.assertIn("cancel-in-progress: false", job)
+        self.assertIn("max-parallel: 1", job)
+        self.assertIn("ref: ${{ matrix.pr.head_sha }}", job)
+        self.assertIn('git checkout -B "$HEAD_REF" "$HEAD_SHA"', job)
+        self.assertIn("merge --no-ff --no-edit", job)
+        self.assertIn("Bash(git push origin HEAD:refs/heads/${{ matrix.pr.head_ref }})", job)
+        self.assertNotIn("HEAD:refs/heads/*", job)
+        self.assertIn("Edit(.github/workflows/**)", job)
+        self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
+        self.assertIn("Bash(git reset:*)", job.split("--disallowedTools", 1)[1])
+        self.assertIn("Report tool-permission denials", job)
+        self.assertIn("UNTRUSTED DATA", job)
+        self.assertIn("no heredocs, loops, or &&", job)
+        self.assertIn("exactly as written above", job)
+        self.assertIn("python -m pytest -q app/tests", job)
+
+    def test_resolver_comments_or_labels(self) -> None:
+        job = self._job("conflict-resolve")
+        self.assertIn("merge commit SHA", job)
+        self.assertIn("needs-decision", job)
+        self.assertIn("push NOTHING", job)
+        self.assertIn("git merge --abort", job)
+        self.assertIn("Never exit without either pushing or posting that comment", job)
+
+    def test_comment_and_review_jobs_ignore_conflict_events(self) -> None:
+        resolve = self._job("resolve-pr")
+        self.assertNotIn("schedule", resolve)
+        self.assertNotIn("'push'", resolve)
 
 
 class ActionlintTests(unittest.TestCase):
