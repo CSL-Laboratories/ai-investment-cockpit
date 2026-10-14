@@ -400,8 +400,8 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_acceptance_gates_before_push(self) -> None:
         devin = self._job("devin-review-fix")
         self.assertIn("acceptance gate", devin.lower())
-        self.assertIn("ruff check .", devin)
-        self.assertIn("python -m pytest -q", devin)
+        self.assertIn("ruff check app", devin)
+        self.assertIn("python -m pytest -q app/tests", devin)
         self.assertNotIn("tools/ci_gate.py", devin)
 
     def test_embedded_gate_matches_source_file(self) -> None:
@@ -502,6 +502,122 @@ class GateCliTests(unittest.TestCase):
         self.assertIn("mention=false", body)
         self.assertIn("commenter=mallory", body)
         self.assertIn("commenter_permission=error", body)
+
+
+DENIALS_PATH = ROOT / "scripts" / "ci" / "claude_denials.py"
+DENIALS_HEREDOC = "CLAUDE_DENIALS_REPORT"
+
+
+def load_denials():
+    spec = importlib.util.spec_from_file_location("claude_denials", DENIALS_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FixerGateAndPromptTests(unittest.TestCase):
+    GATES = ("Bash(ruff check app)", "Bash(python -m pytest -q app/tests)")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def _job(self, name: str) -> str:
+        return WorkflowStructureTests._job(self, name)  # type: ignore[arg-type]
+
+    def test_gates_are_single_commands_allowlisted_exactly(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            for gate_tool in self.GATES:
+                self.assertIn(gate_tool, body, job)
+            self.assertNotIn("Bash(cd ", body, job)
+            self.assertNotIn("cd app &&", body, job)
+            self.assertNotIn("ci_gate.py:*", body, job)
+            self.assertNotIn("pytest:*", body, job)
+            self.assertNotIn("ruff check:*", body, job)
+
+    def test_both_prompts_require_sha_replies_and_failure_reply(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            self.assertIn("prompt: |", body, job)
+            self.assertIn("commit SHA", body, job)
+            self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("do NOT push", body, job)
+            self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
+            self.assertIn("UNTRUSTED DATA", body, job)
+
+    def test_denials_are_reported_after_each_fixer(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            body = self._job(job)
+            self.assertIn("id: claude", body, job)
+            self.assertIn("Report tool-permission denials", body, job)
+            self.assertIn("steps.claude.outputs.execution_file", body, job)
+            self.assertNotIn("show_full_output", body, job)
+
+    def test_mention_job_installs_gate_deps(self) -> None:
+        mention = self._job("claude-mention")
+        self.assertIn("actions/setup-python@v5", mention)
+        self.assertIn("Install acceptance-gate deps", mention)
+        self.assertIn("ruff check app", mention)
+        self.assertIn("python -m pytest -q app/tests", mention)
+
+    def test_embedded_denials_match_source(self) -> None:
+        start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
+        self.assertEqual(self.text.count(start), 2)
+        source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
+        for chunk in self.text.split(start)[1:]:
+            embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
+            self.assertEqual(embedded, source)
+
+
+class DenialsReportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mod = load_denials()
+
+    def _write(self, tmp: str, data) -> str:
+        path = Path(tmp) / "exec.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return str(path)
+
+    def test_reports_tool_and_command(self) -> None:
+        data = [
+            {"type": "assistant", "message": "secret-ish text"},
+            {
+                "type": "result",
+                "permission_denials": [
+                    {"tool_name": "Bash", "tool_input": {"command": "cd app && ruff check ."}},
+                    {"tool_name": "Edit", "tool_input": {"file_path": ".github/workflows/x.yml"}},
+                ],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = self.mod.report(self._write(tmp, data))
+        self.assertEqual(lines[0], "claude-denials: count=2")
+        self.assertIn("tool=Bash input=cd app && ruff check .", lines[1])
+        self.assertIn("tool=Edit input=.github/workflows/x.yml", lines[2])
+        self.assertNotIn("secret-ish", "\n".join(lines))
+
+    def test_redacts_token_like_values(self) -> None:
+        token = "ghp_" + "A" * 36
+        data = {"type": "result", "permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": f"git push https://x:{token}@github.com"}}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = "\n".join(self.mod.report(self._write(tmp, data)))
+        self.assertNotIn(token, out)
+        self.assertIn("[redacted]", out)
+
+    def test_truncates_long_input(self) -> None:
+        data = {"type": "result", "permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": "echo " + "x " * 300}}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            line = self.mod.report(self._write(tmp, data))[1]
+        self.assertLess(len(line), 260)
+
+    def test_missing_or_bad_file_is_safe(self) -> None:
+        self.assertEqual(self.mod.report("/nonexistent/x.json"), ["claude-denials: execution file unreadable"])
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.mod.report(self._write(tmp, [])), ["claude-denials: count=0"])
 
 
 class ActionlintTests(unittest.TestCase):
