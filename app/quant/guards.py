@@ -29,6 +29,7 @@ which is precisely the capability an autonomous high-frequency loop has and a hu
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -86,7 +87,11 @@ class Guards:
     tripped: bool = field(default=False, init=False)
     trip_reason: str | None = field(default=None, init=False)
     blocked: int = field(default=0, init=False)
-    _recent_orders: list[int] = field(default_factory=list, init=False, repr=False)
+    _recent_orders: deque[int] = field(default_factory=deque, init=False, repr=False)
+    # False after a timestamp goes backwards. The fast path only drops a prefix,
+    # which is the whole expiry when stamps are non-decreasing. A backwards stamp
+    # can leave an expired time behind a newer one, so the next check scans.
+    _rate_ordered: bool = field(default=True, init=False, repr=False)
 
     def trip(self, reason: str) -> None:
         """Latch the kill switch. Once tripped it stays tripped for the session.
@@ -103,6 +108,7 @@ class Guards:
         self.tripped = False
         self.trip_reason = None
         self._recent_orders.clear()
+        self._rate_ordered = True
 
     def check(self, intent, *, strategy=None, oms=None, books=None, ts: int = 0) -> GuardVerdict:
         """The pre-trade gate. Called on EVERY intent before it reaches the book."""
@@ -245,11 +251,37 @@ class Guards:
         return GuardVerdict.ok()
 
     def _rate_ok(self, ts: int) -> bool:
+        """Whether this order still fits in the message-rate window.
+
+        The paper loop calls this on every non-cancel intent. A full window used
+        to allocate a new list and copy every stamp still inside it. Event time
+        does not go backwards, so expired stamps are a prefix and fall off the
+        front. A backwards stamp keeps the old scan, once, and the following
+        check scans too until the window is ordered again.
+        """
         window_start = ts - self.limits.order_rate_window_ns
-        self._recent_orders = [t for t in self._recent_orders if t >= window_start]
-        if len(self._recent_orders) >= self.limits.max_orders_per_window:
+        recent = self._recent_orders
+        if self._rate_ordered:
+            while recent and recent[0] < window_start:
+                recent.popleft()
+        else:
+            kept: deque[int] = deque()
+            ordered = True
+            previous: int | None = None
+            for stamp in recent:
+                if stamp < window_start:
+                    continue
+                if previous is not None and stamp < previous:
+                    ordered = False
+                previous = stamp
+                kept.append(stamp)
+            self._recent_orders = recent = kept
+            self._rate_ordered = ordered
+        if len(recent) >= self.limits.max_orders_per_window:
             return False
-        self._recent_orders.append(ts)
+        if recent and ts < recent[-1]:
+            self._rate_ordered = False
+        recent.append(ts)
         return True
 
     def observe_pnl(self, total: float) -> None:

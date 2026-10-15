@@ -184,6 +184,34 @@ def _read_live_index(oms, repeats: int) -> None:
         oms.live_orders()
 
 
+def _rate_burst():
+    from quant.events import Side
+    from quant.guards import GuardLimits, Guards
+    from quant.oms import NewOrder
+
+    guards = Guards(limits=GuardLimits(max_orders_per_window=500, order_rate_window_ns=10**18))
+    intent = NewOrder(client_id="c", symbol="S", side=Side.BUY, qty=1, price_ticks=1)
+    for ts in range(500):
+        guards.check(intent, ts=ts)
+    return guards, intent
+
+
+def _rate_copy(recent, repeats: int) -> None:
+    window = 10**18
+    cap = 500
+    for ts in range(repeats):
+        window_start = ts - window
+        recent = [stamp for stamp in recent if stamp >= window_start]
+        if len(recent) >= cap:
+            continue
+        recent.append(500 + ts)
+
+
+def _rate_deque(guards, intent, repeats: int) -> None:
+    for ts in range(repeats):
+        guards.check(intent, ts=1_000 + ts)
+
+
 def _repeat_snapshot(book, repeats: int) -> None:
     for _ in range(repeats):
         book.snapshot()
@@ -264,6 +292,16 @@ def main() -> None:
     print(row(f"snapshot, {snap_n} unchanged reads", cached, rebuilt))
     if rebuilt / cached < 1.0:
         sys.exit("snapshot cache regressed below rebuilding the depth")
+    guards, intent = _rate_burst()
+    rate_n = 5_000
+    copied = [500 - 1]
+    _rate_copy(copied, 4)
+    _rate_deque(guards, intent, 4)
+    copy_time = _time(lambda: _rate_copy(list(range(500)), rate_n))
+    deque_time = _time(lambda: _rate_deque(guards, intent, rate_n))
+    print(row(f"order-rate window, {rate_n} checks", deque_time, copy_time))
+    if copy_time / deque_time < 1.0:
+        sys.exit("order-rate window regressed below copying the stamp list")
 
 
 if __name__ == "__main__":
