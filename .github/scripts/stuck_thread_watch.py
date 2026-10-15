@@ -22,6 +22,9 @@ PR_MARKER_PREFIX = "stuck-pr-threads:"
 PR_MARKER_RE = re.compile(
     r"<!--\s*stuck-pr-threads:([A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}#[1-9][0-9]{0,8})\s*-->"
 )
+CANONICAL_MARKER_RE = re.compile(
+    r"<!--\s*stuck-pr-threads:([A-Za-z0-9._/-]{1,120}#[1-9][0-9]{0,8})\s*-->"
+)
 MANAGED_BEGIN = "<!-- stuck-pr-threads-begin -->"
 MANAGED_END = "<!-- stuck-pr-threads-end -->"
 SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{1,128}$")
@@ -228,20 +231,44 @@ def pr_markers_in(text: str) -> list[str]:
     return PR_MARKER_RE.findall(text or "")
 
 
+def canonical_marker_key(desc: str) -> str | None:
+    head = (desc or "").split(MANAGED_BEGIN, 1)[0]
+    match = CANONICAL_MARKER_RE.search(head)
+    return match.group(1) if match else None
+
+
+def _key_matches_pr(key: str, repo: str, number: int) -> bool:
+    return key in {pr_key(repo, number), f"{repo_short(repo)}#{number}"}
+
+
+def _owned_description(desc: str) -> str:
+    text = desc or ""
+    if MANAGED_END in text:
+        return text.split(MANAGED_END, 1)[0]
+    return text.split(MANAGED_BEGIN, 1)[0]
+
+
+def _pr_identity_agrees(desc: str, repo: str, number: int) -> bool:
+    text = _owned_description(desc).lower()
+    if "github.com/" in text and "/pull/" in text:
+        return f"github.com/{repo.lower()}/pull/{number}" in text
+    return True
+
+
 def description_is_for_pr(desc: str, repo: str, number: int) -> bool:
-    keys = pr_markers_in(desc)
-    wanted = pr_key(repo, number)
-    return bool(keys) and all(key == wanted for key in keys)
+    key = canonical_marker_key(desc)
+    if key is None:
+        return False
+    return _key_matches_pr(key, repo, number) and _pr_identity_agrees(desc, repo, number)
 
 
 def title_matches_without_conflict(title: str, desc: str, repo: str, number: int) -> bool:
     if title != pr_rollup_title(repo, number):
         return False
-    keys = pr_markers_in(desc)
-    if not keys:
-        return True
-    wanted = pr_key(repo, number)
-    return all(key == wanted for key in keys)
+    key = canonical_marker_key(desc)
+    if key is None:
+        return _pr_identity_agrees(desc, repo, number)
+    return _key_matches_pr(key, repo, number) and _pr_identity_agrees(desc, repo, number)
 
 
 def is_approved_pr(pr: dict[str, Any]) -> bool:
@@ -764,11 +791,12 @@ def select_stuck(
 
 def linear_find_existing(linear: Linear, cfg: Config, number: int) -> dict[str, Any] | None:
     title = pr_rollup_title(cfg.repository, number)
-    needle = f"{PR_MARKER_PREFIX}{pr_key(cfg.repository, number)}"
-    searches = (
-        (LINEAR_SEARCH, {"contains": needle, "teamKey": cfg.linear_team_key}),
-        (LINEAR_SEARCH_TITLE, {"title": title, "teamKey": cfg.linear_team_key}),
+    needles = (
+        f"{PR_MARKER_PREFIX}{pr_key(cfg.repository, number)}",
+        f"{PR_MARKER_PREFIX}{repo_short(cfg.repository)}#{number}",
     )
+    searches = [(LINEAR_SEARCH, {"contains": needle, "teamKey": cfg.linear_team_key}) for needle in needles]
+    searches.append((LINEAR_SEARCH_TITLE, {"title": title, "teamKey": cfg.linear_team_key}))
     for query, variables in searches:
         data = linear.graphql(query, variables)
         for node in ((data.get("issues") or {}).get("nodes")) or []:

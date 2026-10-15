@@ -139,7 +139,19 @@ class FakeLinear(mod.Linear):
                 }
             }
         if "issues(" in query:
-            nodes = [self.existing] if self.existing else []
+            nodes: list[dict] = []
+            if self.existing:
+                desc = str(self.existing.get("description") or "")
+                title = str(self.existing.get("title") or "")
+                contains = variables.get("contains")
+                eq_title = variables.get("title")
+                matched = True
+                if contains is not None and contains not in desc:
+                    matched = False
+                if eq_title is not None and eq_title != title:
+                    matched = False
+                if matched:
+                    nodes = [self.existing]
             return {"issues": {"nodes": nodes}}
         if "teams(" in query:
             return {
@@ -550,6 +562,61 @@ def test_linear_find_rejects_foreign_marker():
     }
     linear = FakeLinear(existing=existing)
     assert mod.linear_find_existing(linear, cfg(), 12) is None
+
+
+def test_linear_find_short_form_renamed_title():
+    existing = {
+        "id": "legacy",
+        "identifier": "CSL-77",
+        "url": "https://linear.app/i/CSL-77",
+        "title": "Decision needed: PR #12",
+        "description": "<!-- stuck-pr-threads:ai-investment-cockpit#12 -->\nolder roll-up",
+    }
+    linear = FakeLinear(existing=existing)
+    found = mod.linear_find_existing(linear, cfg(), 12)
+    assert found is not None
+    assert found["id"] == "legacy"
+    item = mod.StuckThread(
+        pr_number=12,
+        pr_url="https://ex/12",
+        pr_title="t",
+        thread_id="PRRT_kwDOabc",
+        path="AGENTS.md",
+        line="12",
+        thread_url="https://ex/r",
+        devin_body="finding",
+        claude_body="needs a human",
+        reason="needs-human",
+    )
+    url = mod.upsert_linear_issue(linear, [item], cfg())
+    assert url == "https://linear.app/i/CSL-77"
+    assert linear.created == []
+    assert linear.updated[0]["title"] == "Stuck PR threads: ai-investment-cockpit#12"
+    assert (
+        "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->"
+        in linear.updated[0]["description"]
+    )
+
+
+def test_linear_find_ignores_quoted_marker_in_suffix():
+    existing = {
+        "id": "real",
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": (
+            "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->\n"
+            "<!-- stuck-pr-threads-begin -->\n"
+            "generated\n"
+            "<!-- stuck-pr-threads-end -->\n\n"
+            "See also <!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#13 -->\n"
+        ),
+    }
+    linear = FakeLinear(existing=existing)
+    found = mod.linear_find_existing(linear, cfg(), 12)
+    assert found is not None
+    assert found["id"] == "real"
+    assert mod.linear_find_existing(linear, cfg(), 13) is None
+    assert mod.description_is_for_pr(existing["description"], cfg().repository, 12)
+    assert not mod.description_is_for_pr(existing["description"], cfg().repository, 13)
 
 
 def test_linear_update_failure_raises():
