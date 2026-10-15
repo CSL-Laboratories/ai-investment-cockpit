@@ -114,6 +114,20 @@ def test_inconclusive_does_not_clear_or_replace_a_regression_comment(tmp_path):
     assert "unchanged" in body
 
 
+def test_missing_case_is_never_cleared(tmp_path):
+    clear = tmp_path / "clear.md"
+    leave = tmp_path / "leave.md"
+    report = _report({"risk_evaluate": [1.0] * 10}, {})
+    assert report.cases[0].status == "missing"
+    with pytest.raises(ValueError):
+        render_clear(report)
+    write_outputs(
+        report, comment=None, clear_comment=clear, summary=None, report_path=None, leave=leave,
+    )
+    assert not clear.exists()
+    assert "risk_evaluate" in leave.read_text(encoding="utf-8")
+
+
 def test_child_env_points_at_the_tree_and_drops_scale(monkeypatch, tmp_path):
     monkeypatch.setenv("COCKPIT_BENCH_SCALE", "0.1")
     monkeypatch.setenv("PYTHONPATH", "/tmp/not-the-tree")

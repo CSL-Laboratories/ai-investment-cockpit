@@ -58,6 +58,12 @@ class Report:
         return tuple(case.name for case in self.cases if case.status == "inconclusive")
 
 
+    @property
+    def unverified(self) -> tuple[str, ...]:
+        """Cases that were not measured to a verdict: inconclusive or missing."""
+        return tuple(case.name for case in self.cases if case.status in ("inconclusive", "missing"))
+
+
 def median(samples: list[float]) -> float:
     return statistics.median(samples)
 
@@ -273,8 +279,8 @@ def render_comment(report: Report) -> str:
 
 
 def render_clear(report: Report) -> str:
-    if report.inconclusive:
-        raise ValueError("an inconclusive run is not a cleared performance check")
+    if report.unverified:
+        raise ValueError("an inconclusive or missing case is not a cleared performance check")
     return (
         f"{COMMENT_MARKER}\n"
         "## Performance check cleared\n\n"
@@ -329,7 +335,7 @@ def write_outputs(
     # One comment action per run. An inconclusive case must not post "cleared"
     # and must not replace an earlier regression comment. The leave file tells
     # the workflow to keep the existing comment.
-    action = "regression" if report.regressions else "leave" if report.inconclusive else "clear"
+    action = "regression" if report.regressions else "leave" if report.unverified else "clear"
 
     def _drop(path: Path | None) -> None:
         if path is not None and path.exists():
@@ -344,9 +350,9 @@ def write_outputs(
         _drop(comment)
         _drop(clear_comment)
         if leave is not None:
-            names = ", ".join(report.inconclusive)
+            names = ", ".join(report.unverified)
             leave.write_text(
-                f"inconclusive: {names}; existing pull-request comment left unchanged\n",
+                f"inconclusive or missing: {names}; existing regression comment left unchanged\n",
                 encoding="utf-8",
             )
     else:
