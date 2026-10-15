@@ -28,6 +28,13 @@ import os
 import re
 from decimal import Decimal
 from enum import Enum
+
+from config.models import (
+    DEFAULT_CONTEXT_TOKEN_CAP,
+    DEFAULT_DECISION_MODEL,
+    DECISION_MODEL_PINS,
+    HAIKU_55_LONG_CONTEXT_TOKENS,
+)
 from pathlib import Path
 
 from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
@@ -328,6 +335,29 @@ class Settings(BaseSettings):
     # This switch is valid only for read_only/paper human-gated work; it cannot relax the
     # Claude-only auto/live runtime pin. Env: COCKPIT_DECISION_RUNTIME.
     decision_runtime: DecisionRuntime = DecisionRuntime.claude
+    # Trading-decision Claude model (CSL-42 / CSL-98). Allowlist only: Haiku 4.5 is the
+    # fallback; set claude-haiku-5-5 when that id is available on the Claude CLI. This
+    # does not select Opus, and it does not relax the Claude-only auto/live pin.
+    # Env: COCKPIT_DECISION_MODEL.
+    decision_model: str = DEFAULT_DECISION_MODEL
+    # Hard prompt cap. Haiku 5.5 bills every token at 5x once the prompt exceeds 100k
+    # input tokens, so the cap cannot be configured onto that tier. The estimator is
+    # conservative (UTF-8 bytes / 3). Env: COCKPIT_CONTEXT_TOKEN_CAP.
+    context_token_cap: int = Field(
+        default=DEFAULT_CONTEXT_TOKEN_CAP,
+        ge=1,
+        le=HAIKU_55_LONG_CONTEXT_TOKENS - 1,
+    )
+
+    @field_validator("decision_model")
+    @classmethod
+    def _validate_decision_model(cls, value):
+        key = str(value).strip()
+        if key not in DECISION_MODEL_PINS:
+            allowed = ", ".join(sorted(DECISION_MODEL_PINS))
+            raise ValueError(f"decision_model must be one of: {allowed}")
+        return key
+
     # The separate LOW-PRIVILEGE Windows account decision-stage subprocesses run under. When set,
     # main.compose() FAILS CLOSED unless that account provably cannot read the bearer stores
     # (agent_runner/account_guard.py; docs/setup/low-priv-agent-account.md). None => dev, the

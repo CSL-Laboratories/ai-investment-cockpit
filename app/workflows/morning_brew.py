@@ -1,7 +1,7 @@
 """WP8 — the pre-market morning brew pipeline (contract Owner B 'morning_brew.py').
 
 Implements docs/build-scaffold-ultracode.md WP8 (morning brew: ingest window -> ONE batched
-triage call -> ONE deep brief call -> validated MorningBrief -> BriefRecord + delivery) and
+triage call -> ONE cheap summary call -> validated MorningBrief -> BriefRecord + delivery) and
 the SEC closures on that path: M2/M3 of docs/prompt-injection-defense.md (all feed text
 enters prompts only via ``workflows.packets`` untrusted-content wrapping), SEC-09
 (``scrub_output_fields`` on every MorningBrief prose field before store/post; blocked ==
@@ -24,6 +24,7 @@ from schemas.models.brief_record import BriefRecord
 from workflows.agent_calls import call_agent
 from workflows.budget import _HARD_EVENT_TYPES
 from workflows.constants import EVENT_BRIEF, EVENT_TRIAGE_BATCH
+from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
 from workflows.events import events_in_window
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
@@ -56,8 +57,8 @@ TRIAGE_TIMEOUT_PER_EVENT_SECONDS = 2.5
 #
 # Scaled differently from triage on purpose. The brief emits PROSE over the material/urgent
 # subset, not one entry per item, so its output does not grow with the packet the way triage's
-# does — but it runs on `deep` (opus, config/models.yaml), which is several times slower per
-# token than triage's haiku. Hence the large base and the shallower slope.
+# does. It now runs on the cheap Haiku summary alias. The ceiling stays generous: a false
+# timeout trips the vendor breaker, and a generous ceiling only delays a genuine failure.
 #
 # Erring generous is the cheap direction: a false timeout trips the vendor breaker and degrades
 # the whole cockpit, whereas a generous ceiling only delays a genuine failure — and since the
@@ -212,12 +213,20 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
 
     # ---- ONE batched triage call --------------------------------------------------------
     t_tmpl = load_prompt("triage_batch")
+    t_overhead = estimate_tokens(t_tmpl.render(
+        batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
+    t_fit = fit_packet(packet, reserved_tokens=t_overhead, cap=context_token_cap(state.settings))
+    packet = t_fit.packet
+    kept_ids = {item.event_id for item in packet.items}
+    dispatched = [ev for ev in dispatched if ev.id in kept_ids]
     t_prompt = t_tmpl.render(batch_id=batch_id, window_start=window_start,
                              window_end=window_end, packet_block=packet.prompt_block())
     t_result, _t_job = call_agent(
         state, alias="triage", prompt_ref=t_tmpl.ref, prompt_hash=t_tmpl.sha256,
         prompt=t_prompt, schema_name="TriageResult",
-        input_refs={"raw_refs": sorted(packet.dispatched_refs)}, transport=transport,
+        input_refs={"raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(t_fit.dropped)},
+        transport=transport,
         timeout_s=TRIAGE_TIMEOUT_BASE_SECONDS
         + TRIAGE_TIMEOUT_PER_EVENT_SECONDS * len(dispatched),
     )
@@ -240,15 +249,21 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         class_by_event[ev.id] = item.get("classification")
     # survivors the model failed to score keep the "deferred" disposition (never dropped)
 
-    # ---- ONE deep brief call over the material/urgent packet ----------------------------
+    # ---- ONE cheap summary call over the material/urgent packet -------------------------
     brief_events = [ev for ev in events if class_by_event.get(ev.id) in ("material", "urgent")]
     brief_packet = build_packet(brief_events)
     b_tmpl = load_prompt("morning_brief")
+    b_overhead = estimate_tokens(b_tmpl.render(date=date, packet_block=""))
+    b_fit = fit_packet(
+        brief_packet, reserved_tokens=b_overhead, cap=context_token_cap(state.settings))
+    brief_packet = b_fit.packet
     b_prompt = b_tmpl.render(date=date, packet_block=brief_packet.prompt_block())
     b_result, b_job = call_agent(
-        state, alias="deep", prompt_ref=b_tmpl.ref, prompt_hash=b_tmpl.sha256,
+        state, alias="summary", prompt_ref=b_tmpl.ref, prompt_hash=b_tmpl.sha256,
         prompt=b_prompt, schema_name="MorningBrief",
-        input_refs={"raw_refs": sorted(brief_packet.dispatched_refs)}, transport=transport,
+        input_refs={"raw_refs": sorted(brief_packet.dispatched_refs),
+                    "context_dropped": len(b_fit.dropped)},
+        transport=transport,
         timeout_s=BRIEF_TIMEOUT_BASE_SECONDS
         + BRIEF_TIMEOUT_PER_EVENT_SECONDS * len(brief_events),
     )

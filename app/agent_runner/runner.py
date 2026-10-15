@@ -60,6 +60,12 @@ def _cli_model(alias: str, runtime: str) -> str:
     return cli_model_for(alias, runtime)
 
 
+def _cli_model_arg(spec: AgentSpec) -> str:
+    if spec.model_id:
+        return spec.model_id
+    return _cli_model(spec.model_alias, spec.runtime)
+
+
 def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
     # SEC-06: a decision-stage job MUST run with an empty tool set.
     if spec.decision_stage and spec.allowed_tools:
@@ -70,7 +76,7 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
     if spec.runtime == "claude":
         argv = [
             "claude", "-p", "--output-format", "json",
-            "--model", _cli_model(spec.model_alias, spec.runtime),
+            "--model", _cli_model_arg(spec),
             "--max-turns", str(spec.max_turns),
         ]
         if spec.decision_stage:
@@ -112,7 +118,7 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
         elif resume and spec.session_id:
             argv += ["resume", spec.session_id]
         argv += [
-            "--model", _cli_model(spec.model_alias, spec.runtime),
+            "--model", _cli_model_arg(spec),
         ]
         if spec.decision_stage and spec.schema_path:
             argv += ["--output-schema", spec.schema_path]

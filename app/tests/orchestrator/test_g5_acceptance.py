@@ -355,7 +355,8 @@ def test_g5_3_arm_accepted_when_both_stages_claude(st):
 
 
 def test_g5_3_default_decision_stage_runtimes_are_claude():
-    assert default_decision_stage_runtimes() == ["claude", "claude"]
+    # triage, legacy deep, and the Haiku trading-decision alias. All Claude.
+    assert default_decision_stage_runtimes() == ["claude", "claude", "claude"]
 
 
 def test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm(st):

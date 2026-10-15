@@ -36,6 +36,7 @@ from workflows.budget import (
     rank_candidates,
 )
 from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
+from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
 from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
@@ -249,12 +250,32 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
 
     # ---- ONE batched triage call over the survivors --------------------------------------
     tmpl = load_prompt("triage_batch")
+    overhead = estimate_tokens(tmpl.render(
+        batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
+    fit = fit_packet(packet, reserved_tokens=overhead, cap=context_token_cap(state.settings))
+    if fit.dropped:
+        dropped_ids = {item.event_id for item in fit.dropped}
+        for ev in list(survivors):
+            if ev.id in dropped_ids:
+                _defer(state, dispositions, ev, "context_limit")
+        survivors = [ev for ev in survivors if ev.id not in dropped_ids]
+        packet = fit.packet
+    if not survivors:
+        _audit_batch(state, batch_id=batch_id, window_start=window_start,
+                     window_end=window_end, scored=[], dispositions=dispositions,
+                     degraded=False, consumed=False)
+        return {"status": "context_limited", "window_start": window_start,
+                "window_end": window_end,
+                "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
+                "system_events": system_events}
     prompt = tmpl.render(batch_id=batch_id, window_start=window_start,
                          window_end=window_end, packet_block=packet.prompt_block())
     t_result, _t_job = call_agent(
         state, alias="triage", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TriageResult",
-        input_refs={"raw_refs": sorted(packet.dispatched_refs)}, transport=transport,
+        input_refs={"raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(fit.dropped)},
+        transport=transport,
     )
     jobs_total += 1
     if t_result.status in (LIMIT_HIT, TIMEOUT):

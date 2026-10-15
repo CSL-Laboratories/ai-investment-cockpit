@@ -53,6 +53,7 @@ from schemas.models.portfolio_snapshot import PortfolioSnapshot
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
 from workflows.agent_calls import call_agent
+from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
 from workflows.constants import EVENT_PROPOSAL
 from workflows.events import resolve_raw
 from workflows.grounding import evaluate_grounding
@@ -393,13 +394,22 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
 
-    # ---- ONE deep call (trade_proposal.v1, schema TradeProposal) ------------------------
+    # ---- ONE decision call (trade_proposal.v1, schema TradeProposal) --------------------
+    # Keep the subject event's items first so the token cap sheds other symbols' tail
+    # before it sheds the evidence this proposal is allowed to cite (SEC-14).
+    owned = [item for item in packet.items if item.event_id == event.id]
+    others = [item for item in packet.items if item.event_id != event.id]
+    packet = Packet(items=tuple(owned + others))
     tmpl = load_prompt("trade_proposal")
+    overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
+    fit = fit_packet(packet, reserved_tokens=overhead, cap=context_token_cap(state.settings))
+    packet = fit.packet
     prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
     result, job = call_agent(
-        state, alias="deep", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
+        state, alias="decision", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TradeProposal",
-        input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs)},
+        input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(fit.dropped)},
         transport=transport,
     )
     if result.status in (LIMIT_HIT, TIMEOUT):

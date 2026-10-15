@@ -15,12 +15,16 @@ to here so tests inject a FakeTransport (never a real subprocess).
 """
 from __future__ import annotations
 
-from agent_runner.result import NEEDS_HUMAN, OK
+from decimal import Decimal
+
+from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
 from agent_runner.runner import run_agent
 from agent_runner.spec import AgentSpec
 from config.models import (
     configured_decision_runtime,
+    job_class_for,
     pinned_model_for,
+    resolve_decision_claude,
     runtime_allowed_for_mode,
     runtime_for,
 )
@@ -29,6 +33,8 @@ from orchestrator.breakers import BreakerEngine
 from orchestrator.mode_ladder import ModeLadder
 from schemas.models.agent_job import AgentJob
 from workflows.constants import EVENT_AGENT_JOB
+from workflows.context_limit import context_token_cap, estimate_tokens
+from workflows.cost_log import parse_vendor_usage, quote_cost
 from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
@@ -75,6 +81,18 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             f"decision runtime {runtime!r} is not allowed in mode {mode.value!r}; "
             "Codex is limited to human-gated read_only/paper work"
         )
+    job_class = job_class_for(alias, runtime)
+    model_id = None
+    pinned = pinned_model_for(alias, runtime)
+    # Trading decisions on Claude use the allowlisted Haiku id (4.5 fallback,
+    # 5.5 when configured). Auto/live already refused a non-Claude runtime above.
+    if job_class == "decision" and runtime == "claude":
+        model_id, pinned = resolve_decision_claude(
+            getattr(state.settings, "decision_model", pinned)
+        )
+    cap = context_token_cap(state.settings)
+    estimated_input = estimate_tokens(prompt)
+    context_limited = estimated_input > cap
     engine = BreakerEngine(state)
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
     generation = state.usage.window(runtime).generation
@@ -92,6 +110,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         timeout_s=timeout_s,
         decision_stage=True,
         cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
+        model_id=model_id,
     )
     started = state.clock.now()
     # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd, and — SEC-05 —
@@ -105,16 +124,46 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             state=health_state,
         )
 
-    result = run_agent(spec, transport=transport, usage=state.usage,
-                       secret_values=_provisioned_secret_values(),   # BUG-092: Inv 4 check armed
-                       pinned_cwd=pinned_cwd,
-                       decision_agent_account=getattr(state.settings, "decision_agent_account", None),
-                       health_fault=admit_health_fault)
+    if context_limited:
+        # Our cap, not a vendor limit: do not spawn and do not open watch-only.
+        result = AgentResult(status=ERROR, error="context_limit")
+    else:
+        result = run_agent(spec, transport=transport, usage=state.usage,
+                           secret_values=_provisioned_secret_values(),  # BUG-092: Inv 4
+                           pinned_cwd=pinned_cwd,
+                           decision_agent_account=getattr(
+                               state.settings, "decision_agent_account", None),
+                           health_fault=admit_health_fault)
     completed = state.clock.now()
 
     refs = dict(input_refs or {})
     refs["_generation"] = generation
-    pinned = pinned_model_for(alias, runtime)
+    dropped_raw = refs.get("context_dropped", 0)
+    context_dropped = dropped_raw if type(dropped_raw) is int and dropped_raw >= 0 else 0
+    vendor_usage = None if context_limited else parse_vendor_usage(result.raw or "")
+    if vendor_usage is not None:
+        quote = quote_cost(
+            pinned, input_tokens=vendor_usage[0], output_tokens=vendor_usage[1],
+            input_token_source="vendor",
+        )
+    else:
+        quote = quote_cost(
+            pinned, input_tokens=estimated_input, output_tokens=None,
+            input_token_source="estimate",
+        )
+    if context_limited:
+        usage_estimate = Decimal("0")
+        cost = quote.as_payload()
+        cost["usd"] = "0.00000000"
+        cost["usd_scope"] = "not_sent"
+        cost["billed"] = False
+        cost["refused"] = "context_limit"
+    else:
+        usage_estimate = Decimal(quote.usd) if quote.usd is not None else None
+        cost = quote.as_payload()
+        cost["billed"] = True
+    cost["context_token_cap"] = cap
+    cost["context_dropped"] = context_dropped
     job_status = _STATUS_MAP.get(result.status, "failed")
     job = AgentJob(
         id=job_id,
@@ -126,6 +175,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         input_refs=refs,
         schema_id=schema_name,
         status=job_status,
+        usage_estimate=usage_estimate,
         session_id=result.session_id,
         started_at=started,
         completed_at=completed,
@@ -135,8 +185,10 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         job, EVENT_AGENT_JOB, actor="agent_calls",
         payload={
             "status": job_status, "model": alias, "runtime": runtime,
+            "model_pinned": pinned, "job_class": job_class,
             "prompt_template": prompt_ref, "schema_id": schema_name,
             "result_status": result.status, "generation": generation,
+            "cost": cost,
             # Fixed internal tokens only; never model/feed text. This makes timeout and
             # quarantine causes observable without reading a CLI session transcript.
             "result_error": result.error,
