@@ -30,7 +30,7 @@ Lucas adopted [PRODUCT.md](../PRODUCT.md) and its supporting contracts under PD-
 completing the RW-25 grill on `work/rw25-product-grill`.
 [The planning record](product-planning.md) preserves exact answers and ratification.
 PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order;
-the claim is the Linear assignment (REGISTER records work ID, branch, and status).
+claim by assigning the `CSL-N` issue and moving it to In Progress (REGISTER records work ID, branch, and status).
 Current runtime invariants and applicable empirical gates retain
 their authority until their separately reviewed amendments or required evidence.
 

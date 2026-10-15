@@ -99,8 +99,8 @@ authority implementation changes. It also calls for account/settlement applicabi
 review of current risk assumptions. The DEC-09 matrix and pre-live gates remain.
 
 **Current precedence:** PRODUCT owns product scope/acceptance; this PLAN owns delivery
-order and adopts the linked delivery slices; the claim is the Linear assignment
-(REGISTER records work ID, branch, and status). The older MVP
+order and adopts the linked delivery slices; claim by assigning the `CSL-N` issue
+and moving it to In Progress (REGISTER records work ID, branch, and status). The older MVP
 definition, single-strategy scope and serial delivery order below are superseded where
 they conflict with this section and PRODUCT. Their applicable subsystem/evidence gates
 remain under the explicit dispositions in the delivery plan. Existing runtime invariants

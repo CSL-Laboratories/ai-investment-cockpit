@@ -112,7 +112,7 @@ threads.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements).
 6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
-   title. Message convention: `CSL-N: fix(RW-xx): …`.
+   title. Message convention: `CSL-N: fix(RW-xx): …` or `CSL-N: feat(W-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
