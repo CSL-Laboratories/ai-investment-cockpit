@@ -481,6 +481,33 @@ def _reviews(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
     return list_items(gh.get, f"repos/{repository}/pulls/{number}/reviews")
 
 
+def latest_ci_full_actor(events: list[dict[str, Any]]) -> str:
+    """Login of the actor who last applied ``ci:full``, or empty if unlabeled."""
+    actor = ""
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("event") or "")
+        if kind not in {"labeled", "unlabeled"}:
+            continue
+        if str((item.get("label") or {}).get("name") or "") != CI_FULL_LABEL:
+            continue
+        if kind == "unlabeled":
+            actor = ""
+            continue
+        actor = str((item.get("actor") or {}).get("login") or "")
+    return actor
+
+
+def ci_full_is_gate_owned(events: list[dict[str, Any]], authors: frozenset[str]) -> bool:
+    actor = latest_ci_full_actor(events)
+    return bool(actor) and actor in authors
+
+
+def _issue_events(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
+    return list_items(gh.get, f"repos/{repository}/issues/{number}/events")
+
+
 def gate_ready_on_other_sha(comments: list[dict[str, Any]], sha: str) -> bool:
     """True when a prior SHA was READY and the current SHA is not.
 
@@ -525,19 +552,27 @@ def _post_request_if_needed(
     comments: list[dict[str, Any]],
     *,
     clear_stale_ready: bool = False,
+    only_gate_owned_label: bool = False,
+    authors: frozenset[str] | None = None,
 ) -> list[str]:
     number = safe_pr(pr.get("number"))
     if not number:
         return ["codex-gate: skip=bad-pr-number"]
     sha = safe_sha((pr.get("head") or {}).get("sha"))
-    # Only pull_request events clear a prior READY label. A scheduled scan
-    # must not strip a human-added ci:full (that unlabeled event also
-    # cancels an in-progress full-matrix run).
-    logs = (
-        _clear_stale_ready(gh, repository, number, sha, comments)
-        if clear_stale_ready
-        else []
-    )
+    logs: list[str] = []
+    if clear_stale_ready:
+        allow = True
+        if only_gate_owned_label:
+            # Scheduled recovery may clear a gate-owned READY leftover after a
+            # displaced pull_request run, but must not strip a human-added
+            # ci:full (that unlabeled event also cancels a full-matrix run).
+            try:
+                events = _issue_events(gh, repository, number)
+            except (OSError, subprocess.CalledProcessError, ValueError):
+                events = []
+            allow = ci_full_is_gate_owned(events, authors or marker_authors(gh))
+        if allow:
+            logs.extend(_clear_stale_ready(gh, repository, number, sha, comments))
     decision = decide_request(pr, repository, comments)
     if decision != "post":
         logs.append(f"codex-gate: pr={number} request={decision}")
@@ -616,7 +651,15 @@ def _handle_timeout(
         sha = safe_sha((pr.get("head") or {}).get("sha"))
         authors = marker_authors(gh)
         comments = trusted_comments(_issue_comments(gh, repository, number), authors)
-        request_logs = _post_request_if_needed(gh, repository, pr, comments)
+        request_logs = _post_request_if_needed(
+            gh,
+            repository,
+            pr,
+            comments,
+            clear_stale_ready=True,
+            only_gate_owned_label=True,
+            authors=authors,
+        )
         logs.extend(request_logs)
         # A displaced PR-open run recovers here. Do not timeout the same SHA
         # in the run that just posted the request (age is zero).

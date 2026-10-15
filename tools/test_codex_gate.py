@@ -73,6 +73,14 @@ def review(body: str, *, login: str = "chatgpt-codex-connector[bot]", sha: str =
     return {"body": body, "user": {"login": login}, "commit_id": sha}
 
 
+def label_event(login: str, *, unlabeled: bool = False) -> dict[str, Any]:
+    return {
+        "event": "unlabeled" if unlabeled else "labeled",
+        "actor": {"login": login},
+        "label": {"name": "ci:full"},
+    }
+
+
 class FakeGH:
     def __init__(self) -> None:
         self.posts: list[tuple[str, dict[str, Any]]] = []
@@ -82,11 +90,14 @@ class FakeGH:
         self.comments: list[dict[str, Any]] = []
         self.reviews: list[dict[str, Any]] = []
         self.prs: list[dict[str, Any]] = []
+        self.events: list[dict[str, Any]] = []
         self.fail_workflow = False
 
     def get(self, path: str) -> Any:
         if path.rstrip("/") in {"user", "/user"} or path.endswith("/user"):
             return {"login": "github-actions[bot]"}
+        if "/events" in path:
+            return list(self.events)
         if "/comments" in path:
             return list(self.comments)
         if "/reviews" in path:
@@ -494,6 +505,7 @@ class RunTests(unittest.TestCase):
             comment(mod.action_marker("c" * 40, "READY")),
             comment(mod.gate_marker(SHA) + "\n@codex review"),
         ]
+        gh.events = [label_event("github-actions[bot]"), label_event("lucas")]
         rc = mod.run(
             event_name="schedule",
             event={},
@@ -504,12 +516,49 @@ class RunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(gh.deletes, [])
 
+    def test_schedule_clears_gate_owned_stale_label(self) -> None:
+        gh = FakeGH()
+        gh.prs = [pr_payload()]
+        gh.comments = [
+            comment(mod.action_marker("c" * 40, "READY")),
+            comment(mod.gate_marker(SHA) + "\n@codex review"),
+        ]
+        gh.events = [label_event("github-actions[bot]")]
+        rc = mod.run(
+            event_name="schedule",
+            event={},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertTrue(any("labels/ci:full" in path for path in gh.deletes))
+
     def test_gate_ready_helper_requires_current_sha_not_ready(self) -> None:
         older = [comment(mod.action_marker("c" * 40, "READY"))]
         both = older + [comment(mod.action_marker(SHA, "READY"))]
         self.assertTrue(mod.gate_ready_on_other_sha(older, SHA))
         self.assertFalse(mod.gate_ready_on_other_sha(both, SHA))
         self.assertFalse(mod.gate_ready_on_other_sha([], SHA))
+
+    def test_ci_full_ownership_follows_latest_label_event(self) -> None:
+        authors = frozenset({"github-actions[bot]"})
+        self.assertTrue(
+            mod.ci_full_is_gate_owned([label_event("github-actions[bot]")], authors)
+        )
+        self.assertFalse(mod.ci_full_is_gate_owned([label_event("lucas")], authors))
+        self.assertFalse(
+            mod.ci_full_is_gate_owned(
+                [label_event("github-actions[bot]"), label_event("lucas")],
+                authors,
+            )
+        )
+        self.assertFalse(
+            mod.ci_full_is_gate_owned(
+                [label_event("github-actions[bot]"), label_event("github-actions[bot]", unlabeled=True)],
+                authors,
+            )
+        )
 
 
 class WorkflowStructureTests(unittest.TestCase):
