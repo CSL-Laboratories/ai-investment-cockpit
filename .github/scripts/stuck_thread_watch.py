@@ -1078,16 +1078,16 @@ def mediate_pr(
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
-            generated = build_linear_description(stuck, cfg)
-            existing = linear_find_existing(linear, cfg, number)
-            if rollup_is_current(existing, generated, cfg.repository, number):
-                logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
-            else:
-                try:
+            try:
+                generated = build_linear_description(stuck, cfg)
+                existing = linear_find_existing(linear, cfg, number)
+                if rollup_is_current(existing, generated, cfg.repository, number):
+                    logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
+                else:
                     url = upsert_linear_issue(linear, stuck, cfg)
                     logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
-                except Exception:
-                    logs.append(f"stuck-thread-watch: pr={number} linear=error")
+            except Exception:
+                logs.append(f"stuck-thread-watch: pr={number} linear=error")
     labelled = False
     for item in eligible:
         if posted_today >= cfg.max_per_pr_per_day:

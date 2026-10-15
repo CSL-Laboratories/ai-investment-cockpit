@@ -710,6 +710,32 @@ def _rollup_item(**overrides) -> object:
     return mod.StuckThread(**values)
 
 
+def test_linear_outage_does_not_block_mediation():
+    class BoomLinear(FakeLinear):
+        def graphql(self, query: str, variables: dict | None = None) -> dict:
+            raise RuntimeError("linear down")
+
+    gh = FakeGitHub()
+    stuck = thread(
+        comments=[
+            comment(DEVIN, "finding"),
+            comment("claude[bot]", "needs a human"),
+        ]
+    )
+    pr = {
+        "number": 12,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://ex/12",
+        "title": "t",
+        "reviewThreads": {"nodes": [stuck]},
+    }
+    logs = mod.mediate_pr(pr, cfg(), gh, BoomLinear(), NOW)
+    assert any("linear=error" in line for line in logs)
+    assert any("mediate=posted" in line for line in logs)
+    assert len(gh.posts) == 1
+
+
 def test_gate_marker_rejects_longer_pr_number():
     repo = cfg().repository
     desc_123 = f"<!-- codex-gate-mediate:{repo}:123 -->\nno pull url\n"
