@@ -53,6 +53,10 @@ class Report:
     def regressions(self) -> tuple[str, ...]:
         return tuple(case.name for case in self.cases if case.status == "regression")
 
+    @property
+    def inconclusive(self) -> tuple[str, ...]:
+        return tuple(case.name for case in self.cases if case.status == "inconclusive")
+
 
 def median(samples: list[float]) -> float:
     return statistics.median(samples)
@@ -157,6 +161,8 @@ def child_env(repo: Path, *, scale: float) -> dict[str, str]:
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     if scale != 1:
+        # A scaled smoke test must not inherit the Actions guard into the child.
+        env.pop("GITHUB_ACTIONS", None)
         env["COCKPIT_BENCH_SCALE"] = str(scale)
     return env
 
@@ -267,16 +273,8 @@ def render_comment(report: Report) -> str:
 
 
 def render_clear(report: Report) -> str:
-    unclear = [case.name for case in report.cases if case.status in ("inconclusive", "missing")]
-    if unclear:
-        names = ", ".join(f"`{name}`" for name in unclear)
-        return (
-            f"{COMMENT_MARKER}\n"
-            "## Performance check inconclusive\n\n"
-            f"No regression was confirmed, but {names} could not be cleared "
-            "(wide sample spread or missing case). This is not an all-clear.\n\n"
-            f"{render_summary(report)}"
-        )
+    if report.inconclusive:
+        raise ValueError("an inconclusive run is not a cleared performance check")
     return (
         f"{COMMENT_MARKER}\n"
         "## Performance check cleared\n\n"
@@ -313,6 +311,7 @@ def write_outputs(
     clear_comment: Path | None,
     summary: Path | None,
     report_path: Path | None,
+    leave: Path | None = None,
 ) -> None:
     text = render_summary(report)
     if summary is not None:
@@ -327,13 +326,34 @@ def write_outputs(
         body = asdict(report)
         body["regressions"] = list(report.regressions)
         report_path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
-    if comment is not None:
-        if report.regressions:
+    # One comment action per run. An inconclusive case must not post "cleared"
+    # and must not replace an earlier regression comment. The leave file tells
+    # the workflow to keep the existing comment.
+    action = "regression" if report.regressions else "leave" if report.inconclusive else "clear"
+
+    def _drop(path: Path | None) -> None:
+        if path is not None and path.exists():
+            path.unlink()
+
+    if action == "regression":
+        if comment is not None:
             comment.write_text(render_comment(report), encoding="utf-8")
-        elif comment.exists():
-            comment.unlink()
-    if clear_comment is not None:
-        clear_comment.write_text(render_clear(report), encoding="utf-8")
+        _drop(clear_comment)
+        _drop(leave)
+    elif action == "leave":
+        _drop(comment)
+        _drop(clear_comment)
+        if leave is not None:
+            names = ", ".join(report.inconclusive)
+            leave.write_text(
+                f"inconclusive: {names}; existing pull-request comment left unchanged\n",
+                encoding="utf-8",
+            )
+    else:
+        _drop(comment)
+        _drop(leave)
+        if clear_comment is not None:
+            clear_comment.write_text(render_clear(report), encoding="utf-8")
 
 
 def compare_trees(
@@ -371,6 +391,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--summary", type=Path)
     parser.add_argument("--comment", type=Path)
     parser.add_argument("--clear-comment", type=Path)
+    parser.add_argument("--leave", type=Path)
     args = parser.parse_args(argv)
     try:
         report = compare_trees(
@@ -390,6 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         clear_comment=args.clear_comment,
         summary=args.summary,
         report_path=args.report,
+        leave=args.leave,
     )
     print(render_summary(report))
     for line in warning_lines(report):

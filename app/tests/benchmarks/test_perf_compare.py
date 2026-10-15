@@ -13,6 +13,7 @@ from benchmarks.compare import (
     compare_samples,
     main,
     rel_iqr,
+    render_clear,
     render_comment,
     write_outputs,
 )
@@ -84,12 +85,33 @@ def test_comment_file_only_when_a_regression_is_flagged(tmp_path):
     text = comment.read_text(encoding="utf-8")
     assert text.startswith(COMMENT_MARKER)
     assert "risk_evaluate" in text
-    assert COMMENT_MARKER in clear.read_text(encoding="utf-8")
+    assert not clear.exists()
 
-    comment.unlink()
     ok = _report({"risk_evaluate": [1.0] * 8}, {"risk_evaluate": [1.0] * 8})
     write_outputs(ok, comment=comment, clear_comment=clear, summary=None, report_path=None)
     assert not comment.exists()
+    assert "cleared" in clear.read_text(encoding="utf-8").lower()
+
+
+def test_inconclusive_does_not_clear_or_replace_a_regression_comment(tmp_path):
+    comment = tmp_path / "comment.md"
+    clear = tmp_path / "clear.md"
+    leave = tmp_path / "leave.md"
+    comment.write_text("prior regression body\n", encoding="utf-8")
+    clear.write_text("prior cleared body\n", encoding="utf-8")
+    cand = [1.10, 1.10, 1.10, 1.12, 1.12, 1.12, 1.12, 1.14, 1.14, 1.14]
+    report = _report({"risk_evaluate": [1.0] * 10}, {"risk_evaluate": cand})
+    assert report.cases[0].status == "inconclusive"
+    with pytest.raises(ValueError, match="inconclusive"):
+        render_clear(report)
+    write_outputs(
+        report, comment=comment, clear_comment=clear, summary=None, report_path=None, leave=leave,
+    )
+    assert not comment.exists()
+    assert not clear.exists()
+    body = leave.read_text(encoding="utf-8").lower()
+    assert "cleared" not in body
+    assert "unchanged" in body
 
 
 def test_child_env_points_at_the_tree_and_drops_scale(monkeypatch, tmp_path):
@@ -99,6 +121,10 @@ def test_child_env_points_at_the_tree_and_drops_scale(monkeypatch, tmp_path):
     assert env["PYTHONPATH"] == str((tmp_path / "app").resolve())
     assert "COCKPIT_BENCH_SCALE" not in env
     assert env["PYTHONHASHSEED"] == "0"
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    scaled = child_env(tmp_path, scale=0.05)
+    assert "GITHUB_ACTIONS" not in scaled
+    assert scaled["COCKPIT_BENCH_SCALE"] == "0.05"
 
 
 def test_scale_is_refused_on_actions(monkeypatch):
@@ -113,7 +139,12 @@ def test_scale_is_refused_on_actions(monkeypatch):
         ])
 
 
-def test_same_tree_comparison_exits_clean(tmp_path, monkeypatch):
+def test_same_tree_comparison_exits_clean(monkeypatch, tmp_path):
+    # Hosted pytest sets GITHUB_ACTIONS. The production comparer refuses --scale
+    # in that case; this smoke test clears it first, and child processes copy
+    # that environment. Setting it here first means dropping the delenv fails
+    # the test even when the host itself is not Actions.
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     report_path = tmp_path / "report.json"
     code = main([
@@ -140,6 +171,9 @@ def test_benchmarks_job_is_not_part_of_linux_gates():
     gates = text.split("  linux-gates:", 1)[1].split("  windows:", 1)[0]
     assert "benchmarks" not in gates
     assert "needs: [filter, linux]" in text
+    before_jobs = text.split("jobs:", 1)[0]
+    assert "issues: write" not in before_jobs
+    assert "pull-requests: write" not in before_jobs
     bench = text.split("  benchmarks:", 1)[1]
     assert "timeout-minutes: 5" in bench
     assert "--threshold 0.10" in bench

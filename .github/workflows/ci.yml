@@ -34,10 +34,6 @@ on:
 
 permissions:
   contents: read
-  # The benchmarks job comments on a confirmed regression. Every other job
-  # sets contents: read so it does not inherit these write scopes.
-  issues: write
-  pull-requests: write
 
 # A newer run for the same ref supersedes the run it interrupted. Nightly has its
 # own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
@@ -286,7 +282,8 @@ jobs:
             --report ../bench-report.json \
             --summary ../bench-summary.md \
             --comment ../bench-comment.md \
-            --clear-comment ../bench-clear.md
+            --clear-comment ../bench-clear.md \
+            --leave ../bench-leave.md
       - name: Flag regressions on the pull request
         if: github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
@@ -302,7 +299,10 @@ jobs:
           body_file=""
           if [ -s bench-comment.md ]; then
             body_file=bench-comment.md
-          elif [ -n "$existing" ]; then
+          elif [ -f bench-leave.md ]; then
+            echo "Inconclusive samples; leaving any existing performance comment unchanged."
+            exit 0
+          elif [ -n "$existing" ] && [ -s bench-clear.md ]; then
             body_file=bench-clear.md
           else
             echo "No regression comment to post."
