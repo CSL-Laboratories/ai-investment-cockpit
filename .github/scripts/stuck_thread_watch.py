@@ -126,9 +126,10 @@ query($contains: String!, $teamKey: String!) {
     filter: {
       team: { key: { eq: $teamKey } }
       description: { contains: $contains }
+      state: { type: { nin: ["completed", "canceled"] } }
     }
   ) {
-    nodes { id identifier url title description }
+    nodes { id identifier url title description state { type } }
   }
 }
 """
@@ -139,9 +140,10 @@ query($title: String!, $teamKey: String!) {
     filter: {
       team: { key: { eq: $teamKey } }
       title: { eq: $title }
+      state: { type: { nin: ["completed", "canceled"] } }
     }
   ) {
-    nodes { id identifier url title description }
+    nodes { id identifier url title description state { type } }
   }
 }
 """
@@ -227,6 +229,29 @@ def pr_marker(repo: str, number: int) -> str:
     return f"<!-- {PR_MARKER_PREFIX}{pr_key(repo, number)} -->"
 
 
+GATE_MARKER_PREFIX = "codex-gate-mediate:"
+
+
+def gate_marker_needle(repo: str, number: int) -> str:
+    return f"{GATE_MARKER_PREFIX}{repo}:{number}"
+
+
+def description_has_gate_marker(desc: str, repo: str, number: int) -> bool:
+    return gate_marker_needle(repo, number) in (desc or "")
+
+
+def issue_is_active(node: dict[str, Any]) -> bool:
+    state = node.get("state") if isinstance(node.get("state"), dict) else {}
+    return str(state.get("type") or "").lower() not in {"completed", "canceled"}
+
+
+def managed_section(text: str) -> str:
+    body = text or ""
+    if MANAGED_BEGIN not in body or MANAGED_END not in body:
+        return ""
+    return body.split(MANAGED_BEGIN, 1)[1].split(MANAGED_END, 1)[0]
+
+
 def pr_markers_in(text: str) -> list[str]:
     return PR_MARKER_RE.findall(text or "")
 
@@ -285,6 +310,22 @@ def title_matches_without_conflict(title: str, desc: str, repo: str, number: int
     if key is None:
         return _pr_identity_agrees(desc, repo, number)
     return _key_matches_pr(key, repo, number) and _pr_identity_agrees(desc, repo, number)
+
+
+def issue_is_for_pr(node: dict[str, Any], repo: str, number: int) -> bool:
+    if not issue_is_active(node):
+        return False
+    desc = str(node.get("description") or "")
+    title = str(node.get("title") or "")
+    if not preamble_markers_agree(desc, repo, number):
+        return False
+    if description_is_for_pr(desc, repo, number):
+        return True
+    if title_matches_without_conflict(title, desc, repo, number):
+        return True
+    if description_has_gate_marker(desc, repo, number):
+        return _pr_identity_agrees(desc, repo, number)
+    return False
 
 
 def is_approved_pr(pr: dict[str, Any]) -> bool:
@@ -818,18 +859,15 @@ def linear_find_existing(linear: Linear, cfg: Config, number: int) -> dict[str, 
     needles = (
         f"{PR_MARKER_PREFIX}{pr_key(cfg.repository, number)}",
         f"{PR_MARKER_PREFIX}{repo_short(cfg.repository)}#{number}",
+        gate_marker_needle(cfg.repository, number),
+        f"github.com/{cfg.repository}/pull/{number}",
     )
     searches = [(LINEAR_SEARCH, {"contains": needle, "teamKey": cfg.linear_team_key}) for needle in needles]
     searches.append((LINEAR_SEARCH_TITLE, {"title": title, "teamKey": cfg.linear_team_key}))
     for query, variables in searches:
         data = linear.graphql(query, variables)
         for node in ((data.get("issues") or {}).get("nodes")) or []:
-            if not isinstance(node, dict):
-                continue
-            desc = str(node.get("description") or "")
-            if description_is_for_pr(desc, cfg.repository, number):
-                return node
-            if title_matches_without_conflict(str(node.get("title") or ""), desc, cfg.repository, number):
+            if isinstance(node, dict) and issue_is_for_pr(node, cfg.repository, number):
                 return node
     return None
 
@@ -882,7 +920,11 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     generated = build_linear_description(items, cfg)
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
-        description = merge_linear_description(generated, str(existing.get("description") or ""))
+        existing_desc = str(existing.get("description") or "")
+        new_block = managed_section(generated)
+        if new_block and new_block == managed_section(existing_desc):
+            return "unchanged"
+        description = merge_linear_description(generated, existing_desc)
         updated = linear.graphql(
             LINEAR_UPDATE,
             {"id": existing["id"], "input": {"title": title, "description": description}},
@@ -987,6 +1029,18 @@ def mediate_pr(
     comments = list_issue_comments(gh, cfg, number)
     stuck, audit = select_stuck(pr, comments, cfg, now)
     logs.extend(f"stuck-thread-watch: {line}" for line in audit)
+    posted_today = mediation_count_since(comments, now - timedelta(hours=24))
+    to_mediate: list[StuckThread] = []
+    for item in stuck:
+        if item.already_mediated:
+            continue
+        if posted_today + len(to_mediate) >= cfg.max_per_pr_per_day:
+            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
+            continue
+        if not cfg.codex_pat:
+            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
+            continue
+        to_mediate.append(item)
     if stuck and cfg.file_linear:
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
@@ -996,17 +1050,8 @@ def mediate_pr(
                 logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} linear=error")
-    posted_today = mediation_count_since(comments, now - timedelta(hours=24))
     labelled = False
-    for item in stuck:
-        if item.already_mediated:
-            continue
-        if posted_today >= cfg.max_per_pr_per_day:
-            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
-            continue
-        if not cfg.codex_pat:
-            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
-            continue
+    for item in to_mediate:
         if cfg.apply_pr_label and not labelled:
             try:
                 apply_pr_label(gh, cfg, number)
@@ -1016,7 +1061,6 @@ def mediate_pr(
                 logs.append(f"stuck-thread-watch: pr={number} label=error")
         try:
             post_mediation(gh, item, cfg)
-            posted_today += 1
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=posted")
         except Exception:
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=error")
