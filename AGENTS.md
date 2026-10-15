@@ -170,10 +170,11 @@ Hosted split (PR #102):
 
 ## Review roles
 
-- **Devin** is the only GitHub PR reviewer. It does not auto-fix.
+- **Devin** is the GitHub PR code reviewer (findings). It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
+- The Codex GitHub app may post a `CODEX-GATE:` line as the CI/fixer gate (CSL-103). That is not a code-review verdict and not a substitute for Devin. See Code Review Rules.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
-- Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
 ## Code Review Rules
 
@@ -185,8 +186,8 @@ review body with exactly one verdict line**:
     CODEX-GATE: READY
     CODEX-GATE: MEDIATE
 
-- `FIX` — Devin (or the human) left actionable findings; run one batched
-  Claude PR Fixer pass (`devin-review-fix`).
+- `FIX` — unresolved Devin findings remain; run one batched Claude PR Fixer
+  pass (`devin-review-fix`). Human-only findings need a human `@claude` mention.
 - `READY` — findings are settled or none remain; apply the `ci:full` label
   so the hosted Windows/macOS matrix runs once.
 - `MEDIATE` — Devin and Claude disagree or a thread needs a human; hand off

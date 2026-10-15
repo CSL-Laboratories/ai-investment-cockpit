@@ -55,8 +55,15 @@ def pr_payload(
     }
 
 
-def comment(body: str, created: str | None = None) -> dict[str, Any]:
-    item: dict[str, Any] = {"body": body}
+def comment(
+    body: str,
+    created: str | None = None,
+    login: str = "github-actions[bot]",
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "body": body,
+        "user": {"login": login, "type": "Bot" if login.endswith("[bot]") else "User"},
+    }
     if created:
         item["created_at"] = created
     return item
@@ -71,12 +78,15 @@ class FakeGH:
         self.posts: list[tuple[str, dict[str, Any]]] = []
         self.dispatches: list[tuple[str, dict[str, Any], str]] = []
         self.workflows: list[tuple[str, dict[str, str]]] = []
+        self.deletes: list[str] = []
         self.comments: list[dict[str, Any]] = []
         self.reviews: list[dict[str, Any]] = []
         self.prs: list[dict[str, Any]] = []
         self.fail_workflow = False
 
     def get(self, path: str) -> Any:
+        if path.rstrip("/") in {"user", "/user"} or path.endswith("/user"):
+            return {"login": "github-actions[bot]"}
         if "/comments" in path:
             return list(self.comments)
         if "/reviews" in path:
@@ -95,6 +105,9 @@ class FakeGH:
         self.posts.append((path, body))
         return {"id": len(self.posts)}
 
+    def delete(self, path: str) -> None:
+        self.deletes.append(path)
+
     def dispatch(self, event_type: str, payload: dict[str, Any], repository: str) -> None:
         self.dispatches.append((event_type, payload, repository))
 
@@ -105,12 +118,26 @@ class FakeGH:
 
 
 class ParseVerdictTests(unittest.TestCase):
-    def test_last_verdict_wins(self) -> None:
-        self.assertEqual(mod.parse_verdict("CODEX-GATE: FIX\nCODEX-GATE: READY"), "READY")
-        self.assertEqual(mod.parse_verdict("see CODEX-GATE: MEDIATE please"), "MEDIATE")
-        self.assertEqual(mod.parse_verdict("CODEX-GATE: NOPE"), "")
+    def test_standalone_last_line_only(self) -> None:
+        self.assertEqual(mod.parse_verdict("nits\nCODEX-GATE: MEDIATE\n"), "MEDIATE")
+        self.assertEqual(mod.parse_verdict("CODEX-GATE: FIX"), "FIX")
         self.assertEqual(mod.parse_verdict(""), "")
         self.assertEqual(mod.parse_verdict(None), "")
+
+    def test_quoted_or_multiple_lines_are_rejected(self) -> None:
+        self.assertEqual(mod.parse_verdict("CODEX-GATE: FIX\nCODEX-GATE: READY"), "")
+        self.assertEqual(mod.parse_verdict("see CODEX-GATE: MEDIATE please"), "")
+        self.assertEqual(mod.parse_verdict("CODEX-GATE: NOPE"), "")
+        self.assertEqual(
+            mod.parse_verdict(
+                "Options were CODEX-GATE: FIX or CODEX-GATE: READY; more investigation needed."
+            ),
+            "",
+        )
+        self.assertEqual(
+            mod.parse_verdict("CODEX-GATE: FIX\nmore investigation needed."),
+            "",
+        )
 
 
 class RequestDecisionTests(unittest.TestCase):
@@ -255,6 +282,27 @@ class ApplyVerdictTests(unittest.TestCase):
         self.assertEqual(mediated, [])
         self.assertTrue(logs)
 
+    def test_failed_side_effect_does_not_mark(self) -> None:
+        posted: list[str] = []
+
+        def boom() -> None:
+            raise OSError("dispatch failed")
+
+        with self.assertRaises(OSError):
+            mod.apply_verdict(
+                "FIX",
+                repository=REPO,
+                pr_number="42",
+                sha=SHA,
+                comments=[],
+                day="2026-10-15",
+                post_comment=posted.append,
+                add_label=lambda _n: None,
+                dispatch_fixer=boom,
+                run_mediator=lambda: None,
+            )
+        self.assertEqual(posted, [])
+
 
 class RunTests(unittest.TestCase):
     def test_missing_secret_notices_and_skips(self) -> None:
@@ -355,6 +403,57 @@ class RunTests(unittest.TestCase):
         self.assertIn("::notice::", buf.getvalue())
         self.assertIn("stuck-thread-watch", buf.getvalue())
 
+    def test_review_skips_fork_and_draft(self) -> None:
+        gh = FakeGH()
+        for pr in (
+            pr_payload(head_repo="evil/fork"),
+            pr_payload(draft=True),
+            pr_payload(state="closed"),
+        ):
+            gh.dispatches.clear()
+            rc = mod.run(
+                event_name="pull_request_review",
+                event={"review": review("CODEX-GATE: READY"), "pull_request": pr},
+                repository=REPO,
+                pat="not-a-real-secret",
+                gh=gh,
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(gh.dispatches, [])
+            self.assertFalse(any("/labels" in path for path, _ in gh.posts))
+
+    def test_forged_markers_do_not_count(self) -> None:
+        gh = FakeGH()
+        gh.comments = [
+            comment(mod.action_marker(SHA, "FIX"), login="mallory"),
+            comment(mod.fixer_run_marker("2026-10-15", SHA), login="mallory"),
+        ]
+        rc = mod.run(
+            event_name="pull_request_review",
+            event={
+                "review": review("looks unfinished\nCODEX-GATE: FIX"),
+                "pull_request": pr_payload(),
+            },
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.dispatches, [("devin-review-fix", {"pr_number": "42"}, REPO)])
+
+    def test_new_sha_clears_prior_ready_label(self) -> None:
+        gh = FakeGH()
+        gh.comments = [comment(mod.action_marker("c" * 40, "READY"))]
+        rc = mod.run(
+            event_name="pull_request",
+            event={"pull_request": pr_payload()},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertTrue(any("labels/ci:full" in path for path in gh.deletes))
+
 
 class WorkflowStructureTests(unittest.TestCase):
     @classmethod
@@ -379,7 +478,11 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_review_job_if_is_codex_only(self) -> None:
         self.assertIn("chatgpt-codex-connector[bot]", self.text)
-        self.assertIn("github.event_name == 'pull_request'", self.text)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
+        self.assertIn("group: codex-gate", self.text)
+        self.assertNotIn("github.run_id", self.text)
+        self.assertIn("github.event.repository.default_branch", self.text)
+        self.assertIn("persist-credentials: false", self.text)
 
     def test_claude_dispatch_triggers(self) -> None:
         self.assertIn("repository_dispatch:", self.claude)
@@ -402,6 +505,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("Parallel Task API deep research", self.agents)
         self.assertIn("in addition to Search/Extract", self.agents)
         self.assertIn("Grok Bots do not research or resolve decision issues", self.agents)
+        self.assertIn("not a code-review verdict and not a substitute for Devin", self.agents)
+        self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bots", claude)

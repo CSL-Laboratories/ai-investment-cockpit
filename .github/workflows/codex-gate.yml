@@ -30,22 +30,27 @@ permissions:
   issues: write
   actions: write
 
+# One group for the whole repo so a review and a scheduled scan cannot both
+# dispatch FIX for the same SHA. event-paths in the same run still proceeds.
 concurrency:
-  group: codex-gate-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  group: codex-gate
   cancel-in-progress: false
 
 jobs:
   gate:
-    # PR events always run (post @codex once per SHA). Reviews only if Codex
-    # submitted them. Schedule/dispatch scan for timeouts. Other bots never
-    # start this runner.
+    # Same-repo PRs only. Reviews only if Codex submitted them. Schedule and
+    # dispatch scan for timeouts. Forks never get the PAT or a checkout.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      ) ||
       (
         github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -65,6 +70,9 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.pat.outputs.skip != 'true'
         with:
+          # Trusted default-branch copy. Never run the PR head with the PAT.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
           fetch-depth: 1
       - name: Run Codex gate
         if: steps.pat.outputs.skip != 'true'
