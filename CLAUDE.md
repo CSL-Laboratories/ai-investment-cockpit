@@ -115,3 +115,11 @@ forces its import to fail and covers the fallback without skipping either path.
   A general `app/surfaces/` abstraction is not merged.
 - **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
   `docs/research/agent-swarm-rebase-2026-09-14.md`.
+
+## Review loop
+
+Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
+[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
+which asks Codex to mediate (`@codex review`) and records the decision request
+(Linear Triage, `needs-decision`). Humans decide. The watcher never resolves
+threads, pushes, or merges.
