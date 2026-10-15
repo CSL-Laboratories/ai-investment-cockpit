@@ -48,7 +48,7 @@ def _canonical_ticker(value) -> str | None:
     return ticker if _TICKER.match(ticker) else None
 
 
-def escape_untrusted(text) -> str:
+def python_escape_untrusted(text) -> str:
     if text is None or text == "":
         return ""
     if not isinstance(text, str):
@@ -101,13 +101,13 @@ def _safe_ts(ts):
     return ts
 
 
-def content_hash(obj) -> str:
+def python_content_hash(obj) -> str:
     raw = json.dumps(obj, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
-def to_market_event(*, source, article_id, symbols, headline, summary, ts,
-                    event_type="news", raw=None) -> dict:
+def python_to_market_event(*, source, article_id, symbols, headline, summary, ts,
+                           event_type="news", raw=None) -> dict:
     if source not in ALLOWED_SOURCES:
         raise ValueError(f"source not allowlisted: {source!r}")   # §5 feed allowlist
     raw = raw if raw is not None else {"headline": headline, "summary": summary}
@@ -117,12 +117,112 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
     return {
         "source": source,
         "article_id": str(article_id),
-        "event_type": escape_untrusted(event_type) or "news",
+        "event_type": python_escape_untrusted(event_type) or "news",
         "symbols": _clean_symbols(symbols),
-        "headline": escape_untrusted(headline),
-        "summary": escape_untrusted(summary),
+        "headline": python_escape_untrusted(headline),
+        "summary": python_escape_untrusted(summary),
         "ts": _safe_ts(ts),
         "raw_ref": f"{source}:{_safe_ref_component(article_id)}",   # BUG-085: prompt-bound
-        "content_hash": content_hash(raw_input),
+        "content_hash": python_content_hash(raw_input),
         "raw_input": raw_input,
     }
+
+
+_NATIVE = None
+NORMALIZE_BACKEND = "python"
+
+
+def _load_native() -> None:
+    """Use the Rust normalizer when the extension is installed.
+
+    A missing module keeps the Python path. Subclasses of ``str`` / ``list`` stay
+    on the Python path: those objects can change ``strip`` or ``split`` between
+    checks, which is the behavior the ticker-boundary tests pin.
+    """
+    global _NATIVE, NORMALIZE_BACKEND
+    try:
+        import cockpit_quant as native
+    except ImportError:
+        return
+    if not all(hasattr(native, name) for name in ("escape_untrusted", "content_hash", "market_event")):
+        return
+    _NATIVE = native
+    NORMALIZE_BACKEND = "rust"
+
+
+def _plain_json(value) -> bool:
+    if value is None or type(value) in (str, int, float, bool):
+        return True
+    if type(value) in (list, tuple):
+        return all(_plain_json(item) for item in value)
+    if type(value) is dict:
+        return all(type(key) is str and _plain_json(item) for key, item in value.items())
+    return False
+
+
+def _plain_symbols(symbols) -> bool:
+    if type(symbols) is str:
+        return True
+    if type(symbols) not in (list, tuple):
+        return False
+    return all(type(item) is str for item in symbols)
+
+
+def escape_untrusted(text) -> str:
+    native = _NATIVE
+    if native is not None and (text is None or text == "" or type(text) is str):
+        if text is None or text == "":
+            return ""
+        return native.escape_untrusted(text)
+    return python_escape_untrusted(text)
+
+
+def content_hash(obj) -> str:
+    native = _NATIVE
+    if native is not None and _plain_json(obj):
+        return native.content_hash(obj)
+    return python_content_hash(obj)
+
+
+def to_market_event(*, source, article_id, symbols, headline, summary, ts,
+                    event_type="news", raw=None) -> dict:
+    native = _NATIVE
+    plain = (
+        native is not None
+        and type(source) is str
+        and source in ALLOWED_SOURCES
+        and type(article_id) in (str, int)
+        and type(article_id) is not bool
+        and _plain_symbols(symbols)
+        and type(headline) is str
+        and type(summary) is str
+        and type(event_type) is str
+        and (ts is None or type(ts) in (str, int, float))
+        and type(ts) is not bool
+        and (raw is None or _plain_json(raw))
+    )
+    if not plain:
+        return python_to_market_event(
+            source=source, article_id=article_id, symbols=symbols, headline=headline,
+            summary=summary, ts=ts, event_type=event_type, raw=raw,
+        )
+    article = article_id if type(article_id) is str else str(article_id)
+    event_type_out, symbols_out, headline_out, summary_out, raw_ref, digest, raw_json = native.market_event(
+        source, article, symbols, headline, summary, event_type, raw,
+    )
+    raw_input = {"headline": headline, "summary": summary} if raw is None else json.loads(raw_json)
+    return {
+        "source": source,
+        "article_id": article,
+        "event_type": event_type_out,
+        "symbols": symbols_out,
+        "headline": headline_out,
+        "summary": summary_out,
+        "ts": _safe_ts(ts),
+        "raw_ref": raw_ref,
+        "content_hash": digest,
+        "raw_input": raw_input,
+    }
+
+
+_load_native()
