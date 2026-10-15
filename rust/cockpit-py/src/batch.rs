@@ -22,7 +22,12 @@ pub(crate) fn apply_many<'py>(
     ops: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyList>> {
     let out = PyList::empty(py);
-    drive(book, ops, Some(&out))?;
+    if let Err(err) = drive(book, ops, Some(&out)) {
+        // The prefix is already applied. Keep those rows on the exception so
+        // the Python adapter can update orders the caller still holds.
+        let _ = err.value(py).setattr("applied", &out);
+        return Err(err);
+    }
     Ok(out)
 }
 
@@ -194,7 +199,11 @@ fn apply_match(
         match_order(book, &aggressive, take_i64(tup, 8)?, take_i64(tup, 9)?).map_err(raise)?;
     if let Some(out) = out {
         let row = match_tuple(result);
-        out.append(("m", row.0, row.1, row.2, row.3, row.4, row.5, row.6))?;
+        // `touched` is stripped before the public row. It is how a retained
+        // order learns its qty without scanning the book.
+        out.append((
+            "m", row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7,
+        ))?;
     }
     Ok(())
 }

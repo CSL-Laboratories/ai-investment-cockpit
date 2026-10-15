@@ -138,6 +138,44 @@ def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     return order
 
 
+def _absorb_batch(book, rows) -> list:
+    """Apply a batch result to orders the caller already holds.
+
+    ``"a"`` and ``"p"`` are new objects (replace is cancel-plus-add). ``"c"``
+    drops the order and leaves its qty. ``"r"`` edits qty, including a full
+    reduce to 0. ``"m"`` applies the matcher's qty updates and self-trade
+    cancels. The qty-update list is not part of the public row.
+    """
+    public = []
+    for row in rows:
+        kind = row[0]
+        if kind in ("a", "p"):
+            # A new order. Forget the previous object without allocating one
+            # the caller of the batch did not ask to hold.
+            book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "c":
+            book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "r":
+            order = _cached(book, row[1])
+            if order is not None:
+                order.qty = row[4]
+                if order.qty <= 0:
+                    order.qty = 0
+                    book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "m":
+            # (kind, status, filled, remaining, trades, fills, resting, stp, touched)
+            stp = row[7]
+            touched = row[8] if len(row) > 8 else ()
+            _apply_effects(book, touched, stp)
+            public.append(row[:8])
+        else:
+            public.append(row)
+    return public
+
+
 def _apply_effects(book, touched, cancelled) -> None:
     """Update only the orders the matcher names.
 
@@ -357,17 +395,35 @@ class LimitOrderBook:
         Fill timestamps stay in Python: this payload is the book mutation only.
 
         A bad op raises the same exception the single-call method would. Ops
-        before it stay applied.
+        before it stay applied, including on any ``RestingOrder`` the caller
+        already holds.
         """
-        return _call(self._core.apply_many, ops)
+        try:
+            rows = self._core.apply_many(ops)
+        except (
+            cockpit_quant.NotFound,
+            cockpit_quant.IntegrityError,
+            cockpit_quant.BookValueError,
+        ) as exc:
+            applied = getattr(exc, "applied", None)
+            if applied:
+                _absorb_batch(self, applied)
+            _raise(exc)
+        except Exception as exc:
+            applied = getattr(exc, "applied", None)
+            if applied:
+                _absorb_batch(self, applied)
+            raise
+        return _absorb_batch(self, rows)
 
     def apply_quiet(self, ops) -> int:
         """Same sequence as ``apply_many``, returning only how many ops applied.
 
-        Use this when the caller already has the tape and only needs the book
-        updated. Per-op tuples are not built.
+        The count hides the per-op tuples from the caller. Those tuples are
+        still applied to retained orders, so a held ``RestingOrder`` cannot go
+        stale after a quiet reduce, cancel, replace, or fill.
         """
-        return _call(self._core.apply_quiet, ops)
+        return len(self.apply_many(ops))
 
 
 def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_ts: int, ingest_ts: int):
