@@ -325,3 +325,75 @@ def test_batch_match_status_strings_are_the_python_enum():
     python_book, python_rows = _replay(PythonLimitOrderBook, ops)
     assert [_norm(row) for row in rows] == python_rows
     assert _state(batched) == _state(python_book)
+
+
+def test_batch_ops_keep_a_retained_order_as_live_as_the_python_book():
+    """A caller that kept the object from ``add`` sees the same qty the Python book edits."""
+    rust = LimitOrderBook("BATCH")
+    python = PythonLimitOrderBook("BATCH")
+    held = rust.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=1, ts=1)
+    py = python.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=1, ts=1)
+
+    rust.apply_many([("r", "a", 3)])
+    python.reduce("a", 3)
+    assert held is rust.get("a")
+    assert held.qty == py.qty == 7
+
+    rust.apply_quiet([("r", "a", held.qty)])
+    python.reduce("a", py.qty)
+    assert held.qty == py.qty == 0
+    assert rust.get("a") is None and python.get("a") is None
+
+    resting = rust.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, seq=2, ts=2)
+    py_rest = python.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, seq=2, ts=2)
+    rust.apply_many([("m", "hit", "buy", 4, 100, "day", None, "allow", 3, 3)])
+    match(python, AggressiveOrder(order_id="hit", side=Side.BUY, qty=4, price_ticks=100, stp=SelfTradePrevention.ALLOW))
+    assert resting is rust.get("ask")
+    assert resting.qty == py_rest.qty == 6
+    rust.apply_quiet([("c", "ask")])
+    python.cancel("ask")
+    assert resting.qty == py_rest.qty == 6
+    assert rust.get("ask") is None and python.get("ask") is None
+
+    own = rust.add(order_id="own", side=Side.SELL, price_ticks=102, qty=5, owner="mm", seq=4, ts=4)
+    py_own = python.add(order_id="own", side=Side.SELL, price_ticks=102, qty=5, owner="mm", seq=4, ts=4)
+    rust.apply_quiet([("m", "self", "buy", 5, 102, "day", "mm", "cancel_resting", 5, 5)])
+    match(
+        python,
+        AggressiveOrder(
+            order_id="self", side=Side.BUY, qty=5, price_ticks=102, owner="mm",
+            stp=SelfTradePrevention.CANCEL_RESTING,
+        ),
+    )
+    assert own.qty == py_own.qty == 5
+    assert rust.get("own") is None and python.get("own") is None
+
+    old = rust.add(order_id="c", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=6, ts=6)
+    py_old = python.add(order_id="c", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=6, ts=6)
+    rust.apply_many([("p", "c", 101, 4, 8, 8)])
+    py_new = python.replace("c", new_price_ticks=101, new_qty=4, seq=8, ts=8)
+    assert old is not rust.get("c")
+    assert old.qty == py_old.qty == 10
+    assert rust.get("c").qty == py_new.qty == 4
+
+    cancelled = rust.add(order_id="b", side=Side.BUY, price_ticks=99, qty=8, owner="mm", seq=9, ts=9)
+    py_cancel = python.add(order_id="b", side=Side.BUY, price_ticks=99, qty=8, owner="mm", seq=9, ts=9)
+    rust.apply_quiet([("c", "b")])
+    python.cancel("b")
+    assert cancelled.qty == py_cancel.qty == 8
+    assert rust.get("b") is None and python.get("b") is None
+
+    prefix = rust.add(order_id="d", side=Side.BUY, price_ticks=100, qty=10, seq=10, ts=10)
+    py_prefix = python.add(order_id="d", side=Side.BUY, price_ticks=100, qty=10, seq=10, ts=10)
+    with pytest.raises(ValueError, match="duplicate"):
+        rust.apply_many([
+            ("r", "d", 4),
+            ("a", "d", "sell", 101, 1, 11, 11, None),
+        ])
+    with pytest.raises(ValueError, match="duplicate"):
+        python.reduce("d", 4)
+        python.add(order_id="d", side=Side.SELL, price_ticks=101, qty=1, seq=11, ts=11)
+    assert prefix is rust.get("d")
+    assert prefix.qty == py_prefix.qty == 6
+    rust.check_integrity()
+    python.check_integrity()
