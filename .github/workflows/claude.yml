@@ -11,6 +11,12 @@ on:
         description: "Only scan this PR number (optional)"
         required: false
         default: ""
+      job:
+        description: "Job to run: conflict-scan (default) or batched devin-review-fix"
+        required: false
+        default: "conflict-scan"
+  repository_dispatch:
+    types: [devin-review-fix]
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -20,11 +26,14 @@ on:
   pull_request:
     paths:
       - ".github/workflows/claude.yml"
+      - ".github/workflows/codex-gate.yml"
       - ".github/actionlint.yaml"
       - "scripts/ci/claude_pr_fixer_gate.py"
       - "scripts/ci/claude_denials.py"
       - "scripts/ci/claude_conflict_scan.py"
+      - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
+      - "tools/test_codex_gate.py"
 
 # Job-level concurrency only. Workflow-level concurrency would admit skipped
 # comments and cancel a queued fixer run.
@@ -35,11 +44,40 @@ permissions:
 
 jobs:
   resolve-pr:
-    # Same-repo open PRs only. Plain issues never enter this job.
+    # Job-level `if` is the runner gate (CSL-103): skipped events start no runner.
+    # Admit Devin/Codex submitted reviews, human @claude comments, and the
+    # batched-fixer dispatch. Skip every other bot sender and every bot
+    # review comment (claude[bot], cursor[bot], github-actions[bot],
+    # blacksmith-sh[bot], …).
     if: >-
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
-      github.event_name == 'pull_request_review_comment' ||
-      github.event_name == 'pull_request_review'
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        github.event.sender.type != 'Bot' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@claude')
+      ) ||
+      (
+        github.event_name == 'pull_request_review_comment' &&
+        github.event.sender.type != 'Bot' &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(github.event.comment.body, '@claude')
+      ) ||
+      (
+        github.event_name == 'pull_request_review' &&
+        (
+          github.event.review.user.login == 'devin-ai-integration[bot]' ||
+          github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+        )
+      ) ||
+      (
+        github.event_name == 'repository_dispatch' &&
+        github.event.action == 'devin-review-fix'
+      ) ||
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.job == 'devin-review-fix'
+      )
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     # GITHUB_TOKEN reads collaborator permission (needs only repo metadata,
@@ -62,58 +100,63 @@ jobs:
           GITHUB_EVENT_PATH: ${{ github.event_path }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          DISPATCH_PR_NUMBER: ${{ github.event.client_payload.pr_number || github.event.inputs.pr_number || '' }}
         run: |
           python3 - <<'CLAUDE_PR_FIXER_GATE'
           #!/usr/bin/env python3
           """Evaluate Claude PR Fixer event paths. Fail closed. Provider-free.
-
+          
           Authorization uses the repository permission of the relevant user
           (PR author for the Devin path; PR author and comment author for @claude),
           looked up with the workflow GITHUB_TOKEN. author_association is logged only:
           private org members are reported as CONTRIBUTOR, so it cannot authorize.
-
+          
           Reads the GitHub event JSON and optional PR payload. Writes GitHub Actions
           outputs when GITHUB_OUTPUT is set. Import evaluate() from tests.
           """
           from __future__ import annotations
-
+          
           import json
           import os
           import re
           import subprocess
           from typing import Any, Callable
-
+          
           WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
           SAFE_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
           DEVIN_BOT = "devin-ai-integration[bot]"
+          CODEX_BOT = "chatgpt-codex-connector[bot]"
+          ALLOWED_REVIEW_BOTS = frozenset({DEVIN_BOT, CODEX_BOT})
           DEVIN_STATES = frozenset({"commented", "changes_requested"})
           MENTION_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
+          DISPATCH_EVENTS = frozenset({"repository_dispatch", "workflow_dispatch"})
+          FIXER_DISPATCH = "devin-review-fix"
           MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@claude(?![A-Za-z0-9_])")
           SAFE_REF_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._/-]+$")
           SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
           PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
-
-
+          
+          
           def is_whole_word_mention(text: str | None) -> bool:
               return bool(text) and MENTION_RE.search(text) is not None
-
-
+          
+          
           PermissionLookup = Callable[[str], str]
-
-
+          
+          
           def has_write(permission: str | None) -> bool:
               return (permission or "") in WRITE_PERMISSIONS
-
-
+          
+          
           def safe_login(login: str | None) -> str:
               value = login or ""
               return value if SAFE_LOGIN_RE.fullmatch(value) else ""
-
-
+          
+          
           def _no_lookup(_login: str) -> str:
               return "none"
-
-
+          
+          
           def _permission(lookup: PermissionLookup, login: str | None, cache: dict[str, str]) -> str:
               name = safe_login(login)
               if not name:
@@ -124,12 +167,91 @@ jobs:
                   except Exception:  # fail closed; "error" keeps outages distinct from denials
                       cache[name] = "error"
               return cache[name]
-
-
+          
+          
           def is_human(user_type: str | None) -> bool:
               return (user_type or "User") != "Bot"
-
-
+          
+          
+          def contains_at_claude(text: str | None) -> bool:
+              """Job-level `contains(..., '@claude')` is case-insensitive substring match."""
+              return "@claude" in (text or "").lower()
+          
+          
+          def is_bot_actor(user: dict[str, Any] | None, sender: dict[str, Any] | None = None) -> bool:
+              """True when the comment user or event sender is a GitHub App/bot."""
+              for blob in (user, sender):
+                  if not isinstance(blob, dict):
+                      continue
+                  typ = str(blob.get("type") or "")
+                  login = str(blob.get("login") or "")
+                  if typ == "Bot" or login.endswith("[bot]"):
+                      return True
+              return False
+          
+          
+          def dispatch_job_name(event: dict[str, Any], dispatch_job: str = "") -> str:
+              if dispatch_job:
+                  return dispatch_job
+              inputs = event.get("inputs") if isinstance(event.get("inputs"), dict) else {}
+              if str(inputs.get("job") or ""):
+                  return str(inputs.get("job") or "")
+              return str(event.get("action") or "")
+          
+          
+          def job_level_admits(
+              event_name: str,
+              event: dict[str, Any],
+              *,
+              dispatch_job: str = "",
+          ) -> bool:
+              """Mirror of the resolve-pr job-level `if:` so skipped events start no runner.
+          
+              Admit Devin/Codex submitted reviews, human @claude comments, and the
+              batched-fixer dispatch. Skip every other bot sender and every bot review
+              comment (claude[bot], cursor[bot], github-actions[bot], blacksmith-sh[bot]).
+              """
+              sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
+              if event_name == "issue_comment":
+                  issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+                  comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
+                  user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+                  return bool(
+                      issue.get("pull_request")
+                      and not is_bot_actor(user, sender)
+                      and contains_at_claude(comment.get("body"))
+                  )
+              if event_name == "pull_request_review_comment":
+                  comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
+                  user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
+                  return bool(not is_bot_actor(user, sender) and contains_at_claude(comment.get("body")))
+              if event_name == "pull_request_review":
+                  review = event.get("review") if isinstance(event.get("review"), dict) else {}
+                  user = review.get("user") if isinstance(review.get("user"), dict) else {}
+                  login = str(user.get("login") or "")
+                  action = str(event.get("action") or "submitted")
+                  return action in {"", "submitted"} and login in ALLOWED_REVIEW_BOTS
+              if event_name == "repository_dispatch":
+                  return str(event.get("action") or "") == FIXER_DISPATCH
+              if event_name == "workflow_dispatch":
+                  return dispatch_job_name(event, dispatch_job) == FIXER_DISPATCH
+              return False
+          
+          
+          def dispatch_pr_number(event: dict[str, Any], env_number: str = "") -> str:
+              if env_number and str(env_number).isdigit():
+                  return str(env_number)
+              payload = event.get("client_payload") if isinstance(event.get("client_payload"), dict) else {}
+              candidate = payload.get("pr_number")
+              if candidate is not None and str(candidate).isdigit():
+                  return str(candidate)
+              inputs = event.get("inputs") if isinstance(event.get("inputs"), dict) else {}
+              candidate = inputs.get("pr_number")
+              if candidate is not None and str(candidate).isdigit():
+                  return str(candidate)
+              return ""
+          
+          
           def safe_head_ref(ref: str | None) -> str:
               value = ref or ""
               if value in PROTECTED_REFS:
@@ -137,21 +259,21 @@ jobs:
               if not SAFE_REF_RE.fullmatch(value):
                   return ""
               return value
-
-
+          
+          
           def safe_head_sha(sha: str | None) -> str:
               value = (sha or "").lower()
               if not SAFE_SHA_RE.fullmatch(value):
                   return ""
               return value
-
-
+          
+          
           def _head_repo(pr: dict[str, Any] | None) -> str:
               if not pr:
                   return ""
               return str(((pr.get("head") or {}).get("repo") or {}).get("full_name") or "")
-
-
+          
+          
           def evaluate(
               event_name: str,
               event: dict[str, Any],
@@ -176,13 +298,13 @@ jobs:
                   }
               if payload is None:
                   return _skip("not-a-pr")
-
+          
               head = payload.get("head") or {}
               head_ref = safe_head_ref(head.get("ref"))
               head_sha = safe_head_sha(head.get("sha"))
               if not head_ref or not head_sha:
                   return _skip("unsafe-or-empty-ref")
-
+          
               number = str(payload.get("number") or issue.get("number") or "")
               same_repo = _head_repo(payload) == repository
               state = str(payload.get("state") or issue.get("state") or "")
@@ -195,7 +317,7 @@ jobs:
               commenter = (comment.get("user") or {}).get("login")
               commenter_assoc = str(comment.get("author_association") or "")
               commenter_perm = "unchecked"
-
+          
               mention = "false"
               if (
                   event_name in MENTION_EVENTS
@@ -206,7 +328,7 @@ jobs:
                   commenter_perm = _permission(lookup, commenter, cache)
                   if has_write(commenter_perm):
                       mention = "true"
-
+          
               review = event.get("review") or {}
               devin = "false"
               if (
@@ -215,8 +337,13 @@ jobs:
                   and (review.get("user") or {}).get("login") == DEVIN_BOT
                   and str(review.get("state") or "").lower() in DEVIN_STATES
               ):
+                  # Authorization still computed for Devin reviews. The workflow job `if`
+                  # runs the fixer only on dispatch (Codex FIX / timeout), not per review.
                   devin = "true"
-
+              if event_name in DISPATCH_EVENTS and open_same_writer:
+                  if dispatch_job_name(event) == FIXER_DISPATCH:
+                      devin = "true"
+          
               return {
                   "mention": mention,
                   "devin": devin,
@@ -232,8 +359,8 @@ jobs:
                   "commenter_association": commenter_assoc,
                   "commenter_permission": commenter_perm,
               }
-
-
+          
+          
           def _skip(reason: str) -> dict[str, str]:
               return {
                   "mention": "false",
@@ -244,8 +371,8 @@ jobs:
                   "pr_number": "",
                   "reason": reason,
               }
-
-
+          
+          
           def fetch_pr(repository: str, number: int) -> dict[str, Any] | None:
               try:
                   raw = subprocess.check_output(
@@ -259,8 +386,8 @@ jobs:
               except json.JSONDecodeError:
                   return None
               return data if isinstance(data, dict) else None
-
-
+          
+          
           def gh_permission(repository: str) -> PermissionLookup:
               def lookup(login: str) -> str:
                   raw = subprocess.check_output(
@@ -270,18 +397,18 @@ jobs:
                   )
                   data = json.loads(raw)
                   return str(data.get("permission") or "none") if isinstance(data, dict) else "none"
-
+          
               return lookup
-
-
+          
+          
           def load_event(path: str) -> dict[str, Any]:
               with open(path, encoding="utf-8") as handle:
                   data = json.load(handle)
               if not isinstance(data, dict):
                   raise ValueError("event JSON must be an object")
               return data
-
-
+          
+          
           def emit(decision: dict[str, str]) -> None:
               dest = os.environ.get("GITHUB_OUTPUT")
               for key, value in decision.items():
@@ -290,8 +417,8 @@ jobs:
                   if dest:
                       with open(dest, "a", encoding="utf-8") as handle:
                           handle.write(line + "\n")
-
-
+          
+          
           def main() -> int:
               event_name = os.environ.get("GITHUB_EVENT_NAME", "")
               repository = os.environ.get("GITHUB_REPOSITORY", "")
@@ -306,9 +433,17 @@ jobs:
                   return 0
               pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else None
               issue = event.get("issue") if isinstance(event.get("issue"), dict) else None
-              if pr is None and issue and issue.get("pull_request"):
+              if pr is None:
+                  raw_number = ""
+                  if issue and issue.get("pull_request"):
+                      raw_number = str(issue.get("number") or "")
+                  if not raw_number:
+                      raw_number = dispatch_pr_number(event, os.environ.get("DISPATCH_PR_NUMBER", ""))
+                  if not raw_number:
+                      emit(evaluate(event_name, event, repository, pr=None, permission_lookup=gh_permission(repository)))
+                      return 0
                   try:
-                      number = int(issue.get("number"))
+                      number = int(raw_number)
                   except (TypeError, ValueError):
                       emit(_skip("bad-pr-number"))
                       return 0
@@ -318,10 +453,11 @@ jobs:
                       return 0
               emit(evaluate(event_name, event, repository, pr=pr, permission_lookup=gh_permission(repository)))
               return 0
-
-
+          
+          
           if __name__ == "__main__":
               raise SystemExit(main())
+
           CLAUDE_PR_FIXER_GATE
 
   event-paths:
@@ -334,6 +470,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Event-matrix gate
         run: python3 -X utf8 -B tools/test_claude_pr_fixer.py
+      - name: Codex-gate tests
+        run: python3 -X utf8 -B tools/test_codex_gate.py
       - name: actionlint
         env:
           ACTIONLINT_VERSION: "1.7.7"
@@ -565,9 +703,16 @@ jobs:
 
   devin-review-fix:
     needs: resolve-pr
+    # Batched fixer: Codex FIX / 20-minute timeout dispatch, or a human
+    # workflow_dispatch. Devin reviews still pass resolve-pr (audit) but do
+    # not start this job; that is the CSL-103 cost gate.
     if: >-
       needs.resolve-pr.outputs.devin == 'true' &&
-      needs.resolve-pr.outputs.same_repo == 'true'
+      needs.resolve-pr.outputs.same_repo == 'true' &&
+      (
+        (github.event_name == 'repository_dispatch' && github.event.action == 'devin-review-fix') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'devin-review-fix')
+      )
     concurrency:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       cancel-in-progress: false
@@ -826,8 +971,12 @@ jobs:
           CLAUDE_DENIALS_REPORT
 
   conflict-scan:
-    # Push to the default branch, a 30-minute schedule, or manual dispatch.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Push to the default branch, a 30-minute schedule, or manual dispatch
+    # that is not the batched fixer (CSL-103).
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'devin-review-fix')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     concurrency:
@@ -852,7 +1001,7 @@ jobs:
           python3 - <<'CLAUDE_CONFLICT_SCAN'
           #!/usr/bin/env python3
           """Find same-repo open PRs with merge conflicts for the Claude conflict resolver.
-
+          
           Fail closed. Selects a PR only when GitHub reports it CONFLICTING (mergeable
           false / mergeable_state dirty), its head is in this repository, its refs are
           safe, its head is not a protected branch, it is not labelled needs-decision,
@@ -860,14 +1009,14 @@ jobs:
           GITHUB_OUTPUT. Import select() from tests.
           """
           from __future__ import annotations
-
+          
           import json
           import os
           import re
           import subprocess
           import time
           from typing import Any, Callable
-
+          
           WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
           SAFE_REF_RE = re.compile(r"^(?!.*\.\.)(?!/)(?!.*//)[A-Za-z0-9._/-]{1,200}$")
           SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
@@ -884,17 +1033,23 @@ jobs:
           ROTATION_SECONDS = 1800
           MAX_RUN_PAGES = 5
           FIXER_EVENTS = frozenset(
-              {"issue_comment", "pull_request_review", "pull_request_review_comment"}
+              {
+                  "issue_comment",
+                  "pull_request_review",
+                  "pull_request_review_comment",
+                  "repository_dispatch",
+                  "workflow_dispatch",
+              }
           )
           WORKFLOW_FILE = "claude.yml"
-
+          
           PermissionLookup = Callable[[str], str]
-
-
+          
+          
           def is_conflicted(pr: dict[str, Any]) -> bool:
               return pr.get("mergeable") is False and str(pr.get("mergeable_state") or "") == "dirty"
-
-
+          
+          
           def open_bases(prs: list[dict[str, Any]]) -> set[str]:
               """Base branches targeted by any open PR (stacked review branches)."""
               return {
@@ -902,8 +1057,8 @@ jobs:
                   for pr in prs
                   if isinstance(pr, dict) and str(pr.get("state") or "open") == "open"
               }
-
-
+          
+          
           def is_protected_head(head_ref: str, review_bases: set[str]) -> bool:
               """Default/release branches and any branch another open PR targets are off limits."""
               return (
@@ -911,13 +1066,13 @@ jobs:
                   or head_ref.startswith(PROTECTED_PREFIXES)
                   or head_ref in review_bases
               )
-
-
+          
+          
           def _ref(value: Any) -> str:
               text = str(value or "")
               return text if SAFE_REF_RE.fullmatch(text) else ""
-
-
+          
+          
           def select(
               prs: list[dict[str, Any]],
               repository: str,
@@ -976,13 +1131,13 @@ jobs:
                       {"number": number, "head_ref": head_ref, "head_sha": head_sha, "base_ref": base_ref}
                   )
               return chosen, audit
-
-
+          
+          
           def _gh_json(path: str) -> Any:
               raw = subprocess.check_output(["gh", "api", path], text=True, stderr=subprocess.DEVNULL)
               return json.loads(raw)
-
-
+          
+          
           def list_open_prs(repository: str, get: Callable[[str], Any] | None = None) -> list[dict[str, Any]]:
               """All open PR listing entries, following pagination (bounded by MAX_PAGES x 100)."""
               get = get or _gh_json
@@ -995,20 +1150,20 @@ jobs:
                   if len(listing) < 100:
                       break
               return entries
-
-
+          
+          
           def list_open_numbers(repository: str, get: Callable[[str], Any] | None = None) -> list[str]:
               return [str(p.get("number")) for p in list_open_prs(repository, get)]
-
-
+          
+          
           def rotate_window(numbers: list[str], epoch: float, size: int = MAX_DETAIL_PRS) -> list[str]:
               """Bounded slice of numbers whose start advances by `size` every ROTATION_SECONDS."""
               if len(numbers) <= size:
                   return numbers
               start = (int(epoch // ROTATION_SECONDS) * size) % len(numbers)
               return (numbers[start:] + numbers[:start])[:size]
-
-
+          
+          
           def fetch_prs(
               repository: str,
               only: str = "",
@@ -1018,7 +1173,7 @@ jobs:
               now: Callable[[], float] = time.time,
           ) -> tuple[list[dict[str, Any]], set[str]]:
               """Return (PR details, bases of all open PRs).
-
+          
               The open listing is always fetched so stacked-branch protection also holds
               for a single-PR dispatch. mergeable is only on the single-PR endpoint and is
               computed lazily: retries share one time budget, never sleep after the last
@@ -1055,13 +1210,13 @@ jobs:
                   if isinstance(pr, dict):
                       details.append(pr)
               return details, bases
-
-
+          
+          
           def fixer_busy(
               repository: str, current_run_id: str = "", get: Callable[[str], Any] | None = None
           ) -> bool:
               """True if an event-driven Claude fixer run (comment/review/PR) is queued or running.
-
+          
               The resolver shares the per-PR claude-<N> concurrency group with the fixers, and
               GitHub keeps only one pending job per group. Not queueing resolvers while any
               fixer run is active means a scheduled resolver can never displace a pending,
@@ -1092,16 +1247,16 @@ jobs:
               except (OSError, ValueError, subprocess.CalledProcessError):
                   return True
               return False
-
-
+          
+          
           def gh_permission(repository: str) -> PermissionLookup:
               def lookup(login: str) -> str:
                   data = _gh_json(f"repos/{repository}/collaborators/{login}/permission")
                   return str(data.get("permission") or "none") if isinstance(data, dict) else "none"
-
+          
               return lookup
-
-
+          
+          
           def emit(chosen: list[dict[str, str]], audit: list[str]) -> None:
               for line in audit:
                   print(line)
@@ -1112,8 +1267,8 @@ jobs:
               if dest:
                   with open(dest, "a", encoding="utf-8") as handle:
                       handle.write("\n".join(lines) + "\n")
-
-
+          
+          
           def main() -> int:
               repository = os.environ.get("GITHUB_REPOSITORY", "")
               only = os.environ.get("PR_NUMBER", "").strip()
@@ -1131,10 +1286,11 @@ jobs:
               chosen, audit = select(prs, repository, gh_permission(repository), review_bases=bases)
               emit(chosen, audit)
               return 0
-
-
+          
+          
           if __name__ == "__main__":
               raise SystemExit(main())
+
           CLAUDE_CONFLICT_SCAN
 
   conflict-resolve:

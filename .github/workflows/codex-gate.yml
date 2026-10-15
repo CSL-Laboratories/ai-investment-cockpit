@@ -1,0 +1,97 @@
+# Codex CI/fixer gate (CSL-103). GitHub-hosted ubuntu-latest on purpose:
+# this must not spend Blacksmith minutes. Missing CODEX_TRIGGER_PAT is a
+# notice skip, not a failure.
+#
+# Posts one `@codex review` per head SHA, parses CODEX-GATE: FIX|READY|MEDIATE,
+# dispatches one batched Claude fixer, labels ci:full, or hands off to
+# stuck-thread-watch (CSL-86 / PR #124). 20-minute timeout fail-opens to FIX.
+# Cap: 3 fixer runs per PR per UTC day. Human @claude bypasses the cap
+# (claude.yml claude-mention job).
+name: Codex CI/fixer gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  schedule:
+    # Check 20-minute timeouts. Odd minute to miss the cron stampede.
+    - cron: "7,17,27,37,47,57 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Only scan this PR number (optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: codex-gate-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # PR events always run (post @codex once per SHA). Reviews only if Codex
+    # submitted them. Schedule/dispatch scan for timeouts. Other bots never
+    # start this runner.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check trigger PAT
+        id: pat
+        env:
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_TRIGGER_PAT}" ]; then
+            echo "::notice::CODEX_TRIGGER_PAT is not configured; skipping Codex gate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.pat.outputs.skip != 'true'
+        with:
+          fetch-depth: 1
+      - name: Run Codex gate
+        if: steps.pat.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: python3 -X utf8 -B scripts/ci/codex_gate.py
+
+  event-paths:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Codex-gate tests
+        run: python3 -X utf8 -B tools/test_codex_gate.py
+      - name: Fixer event-matrix tests
+        run: python3 -X utf8 -B tools/test_claude_pr_fixer.py
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+          ./actionlint -color .github/workflows/codex-gate.yml .github/workflows/claude.yml .github/workflows/ci.yml

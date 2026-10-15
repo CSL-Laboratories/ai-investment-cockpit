@@ -173,6 +173,27 @@ Hosted split (PR #102):
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
+## Code Review Rules
+
+Codex reviews of GitHub pull requests in this repository are the CI/fixer
+gate (CSL-103), not a substitute for Devin. After reviewing a PR, **end the
+review body with exactly one verdict line**:
+
+    CODEX-GATE: FIX
+    CODEX-GATE: READY
+    CODEX-GATE: MEDIATE
+
+- `FIX` — Devin (or the human) left actionable findings; run one batched
+  Claude PR Fixer pass (`devin-review-fix`).
+- `READY` — findings are settled or none remain; apply the `ci:full` label
+  so the hosted Windows/macOS matrix runs once.
+- `MEDIATE` — Devin and Claude disagree or a thread needs a human; hand off
+  to the stuck-thread-watch / Codex mediator (CSL-86 / PR #124).
+
+Do not omit the verdict line. Do not put more than one. The gate's 20-minute
+timeout treats a missing verdict as `FIX` (fail open, capped at 3 fixer runs
+per PR per UTC day). Human `@claude` mentions bypass that cap.
+
 ## Automations
 
 Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wednesdays 10 AM PT) are human-managed. Other agents must not create, edit, or trigger Devin automations, and must not edit Devin settings.
