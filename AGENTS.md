@@ -209,6 +209,16 @@ Hosted split (PR #102):
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33). Devin reviews GitHub PRs only and never fixes; that does not grant Devin research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
+## When Claude can't fix a review thread
+
+Devin reviews only and never fixes, so a thread is never handed back to Devin.
+If Claude cannot fix it, Claude leaves the thread open and replies with why,
+@mentions the PR author on the PR, comments on the linked Linear issue with the
+PR link and the open question, and adds the `needs-decision` label. The PR
+author's Grok Bot or agent watches for these and either resolves the thread or
+escalates to the human. A human may merge past it with the admin bypass only
+after that decision.
+
 ## Automations
 
 Devin automations (**Main CI failure fixer** and **Weekly dead-code sweep**, Wednesdays 10 AM PT) are human-managed. Other agents must not create, edit, or trigger Devin automations, and must not edit Devin settings.
