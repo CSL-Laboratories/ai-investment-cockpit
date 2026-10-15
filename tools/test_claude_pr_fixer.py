@@ -806,10 +806,18 @@ class ConflictScanTests(unittest.TestCase):
                 return [{"number": n, "state": "open"} for n in range((page - 1) * 100 + 1, page * 100 + 1)]
             return conflicted_pr(mergeable=None, mergeable_state="unknown")
 
-        prs, _ = self.mod.fetch_prs(REPO, "", get=get, sleep=lambda _s: None, clock=lambda: 0.0)
-        self.assertEqual(len(prs), 1000)
+        prs, _ = self.mod.fetch_prs(REPO, "", get=get, sleep=lambda _s: None, clock=lambda: 0.0, now=lambda: 0.0)
+        self.assertEqual(len(prs), self.mod.MAX_DETAIL_PRS)
         details = [c for c in calls if "?state=open" not in c]
-        self.assertEqual(len(details), 1000 + self.mod.MAX_RETRY_REQUESTS)
+        self.assertEqual(len(details), self.mod.MAX_DETAIL_PRS + self.mod.MAX_RETRY_REQUESTS)
+
+    def test_window_rotation_covers_every_pr(self) -> None:
+        numbers = [str(n) for n in range(1, 1001)]
+        seen = set()
+        for step in range(5):
+            seen.update(self.mod.rotate_window(numbers, step * self.mod.ROTATION_SECONDS))
+        self.assertEqual(seen, set(numbers))
+        self.assertEqual(self.mod.rotate_window(numbers[:5], 12345.0), numbers[:5])
 
     def test_fixer_busy_blocks_scan(self) -> None:
         def make(runs):
@@ -819,7 +827,19 @@ class ConflictScanTests(unittest.TestCase):
         self.assertTrue(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "pull_request_review"}])))
         self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 1, "event": "issue_comment"}])))
         self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "schedule"}])))
+        self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "pull_request"}])))
         self.assertTrue(self.mod.fixer_busy(REPO, "1", lambda path: {"message": "error"}))
+
+    def test_fixer_busy_follows_run_pages(self) -> None:
+        def get(path):
+            if "in_progress" not in path:
+                return {"workflow_runs": []}
+            page = int(path.rsplit("page=", 1)[1])
+            if page == 1:
+                return {"workflow_runs": [{"id": 10 + n, "event": "schedule"} for n in range(100)]}
+            return {"workflow_runs": [{"id": 999, "event": "issue_comment"}]}
+
+        self.assertTrue(self.mod.fixer_busy(REPO, "1", get))
 
     def test_single_pr_dispatch_keeps_stacked_protection(self) -> None:
         listing = [

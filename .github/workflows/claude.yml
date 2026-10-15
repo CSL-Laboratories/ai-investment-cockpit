@@ -837,9 +837,12 @@ jobs:
           MAX_PAGES = 10
           MERGEABLE_ATTEMPTS = 4
           MERGEABLE_BUDGET_SECONDS = 120.0
-          MAX_RETRY_REQUESTS = 150
+          MAX_RETRY_REQUESTS = 100
+          MAX_DETAIL_PRS = 200  # per scan; the window rotates every scan so no PR starves
+          ROTATION_SECONDS = 1800
+          MAX_RUN_PAGES = 5
           FIXER_EVENTS = frozenset(
-              {"issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"}
+              {"issue_comment", "pull_request_review", "pull_request_review_comment"}
           )
           WORKFLOW_FILE = "claude.yml"
 
@@ -956,12 +959,21 @@ jobs:
               return [str(p.get("number")) for p in list_open_prs(repository, get)]
 
 
+          def rotate_window(numbers: list[str], epoch: float, size: int = MAX_DETAIL_PRS) -> list[str]:
+              """Bounded slice of numbers whose start advances by `size` every ROTATION_SECONDS."""
+              if len(numbers) <= size:
+                  return numbers
+              start = (int(epoch // ROTATION_SECONDS) * size) % len(numbers)
+              return (numbers[start:] + numbers[:start])[:size]
+
+
           def fetch_prs(
               repository: str,
               only: str = "",
               get: Callable[[str], Any] | None = None,
               sleep: Callable[[float], None] = time.sleep,
               clock: Callable[[], float] = time.monotonic,
+              now: Callable[[], float] = time.time,
           ) -> tuple[list[dict[str, Any]], set[str]]:
               """Return (PR details, bases of all open PRs).
 
@@ -969,13 +981,15 @@ jobs:
               for a single-PR dispatch. mergeable is only on the single-PR endpoint and is
               computed lazily: retries share one time budget, never sleep after the last
               attempt, and stop after the deadline or once MAX_RETRY_REQUESTS retries are
-              spent. Every open PR still gets one detail request, so no PR is starved by
-              listing order. Pending PRs are skipped.
+              spent. At most MAX_DETAIL_PRS PRs are fetched per scan, from a window that
+              rotates with wall-clock time (one step per 30-minute schedule), so the scan
+              stays bounded and every PR is reached within a few scans. Pending PRs are
+              skipped.
               """
               get = get or _gh_json
               listing = list_open_prs(repository, get)
               bases = open_bases(listing)
-              numbers = [only] if only else [str(p.get("number")) for p in listing]
+              numbers = [only] if only else rotate_window([str(p.get("number")) for p in listing], now())
               deadline = clock() + MERGEABLE_BUDGET_SECONDS
               retries = 0
               details: list[dict[str, Any]] = []
@@ -1014,19 +1028,25 @@ jobs:
               get = get or _gh_json
               try:
                   for status in ("queued", "in_progress", "waiting", "pending"):
-                      data = get(
-                          f"repos/{repository}/actions/workflows/{WORKFLOW_FILE}/runs?status={status}&per_page=100"
-                      )
-                      runs = data.get("workflow_runs") if isinstance(data, dict) else None
-                      if not isinstance(runs, list):
-                          return True
-                      for run in runs:
-                          if not isinstance(run, dict):
-                              continue
-                          if str(run.get("id") or "") == current_run_id:
-                              continue
-                          if str(run.get("event") or "") in FIXER_EVENTS:
+                      for page in range(1, MAX_RUN_PAGES + 1):
+                          data = get(
+                              f"repos/{repository}/actions/workflows/{WORKFLOW_FILE}/runs"
+                              f"?status={status}&per_page=100&page={page}"
+                          )
+                          runs = data.get("workflow_runs") if isinstance(data, dict) else None
+                          if not isinstance(runs, list):
                               return True
+                          for run in runs:
+                              if not isinstance(run, dict):
+                                  continue
+                              if str(run.get("id") or "") == current_run_id:
+                                  continue
+                              if str(run.get("event") or "") in FIXER_EVENTS:
+                                  return True
+                          if len(runs) < 100:
+                              break
+                      else:
+                          return True  # more pages than we inspect: fail closed
               except (OSError, ValueError, subprocess.CalledProcessError):
                   return True
               return False
