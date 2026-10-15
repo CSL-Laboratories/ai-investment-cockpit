@@ -4,7 +4,7 @@
 //! of its level. Fill-or-kill is decided before any mutation. Self-trade
 //! prevention defaults to cancelling the resting order.
 
-use crate::book::Book;
+use crate::book::{fit_add, fit_sub, Book};
 use crate::error::BookError;
 use crate::side::Side;
 
@@ -80,6 +80,10 @@ pub struct MatchOutput {
     pub trades: Vec<(i64, i64)>,
     pub resting_order_id: Option<String>,
     pub stp_cancelled: Vec<String>,
+    /// Resting orders a trade changed, as `(order_id, qty_after)`.
+    /// `qty_after == 0` means the order was fully filled. Self-trade cancels
+    /// are not listed; those ids stay in `stp_cancelled` and keep their qty.
+    pub touched: Vec<(String, i64)>,
 }
 
 fn crosses(side: Side, limit: Option<i64>, level: i64) -> bool {
@@ -97,7 +101,7 @@ fn is_self_trade(order: &Aggressive, resting_owner: Option<&str>) -> bool {
     }
 }
 
-fn available_qty(book: &Book, order: &Aggressive) -> i64 {
+fn available_qty(book: &Book, order: &Aggressive) -> Result<i64, BookError> {
     let opposite = order.side.opposite();
     let mut total = 0;
     for price in book.prices(opposite) {
@@ -114,13 +118,21 @@ fn available_qty(book: &Book, order: &Aggressive) -> i64 {
             if is_self_trade(order, resting.owner.as_deref()) && order.stp != SelfTrade::Allow {
                 continue;
             }
-            total += resting.qty;
+            total = fit_add(total, resting.qty)?;
             if total >= order.qty {
-                return total;
+                return Ok(total);
             }
         }
     }
-    total
+    Ok(total)
+}
+
+fn partial(err: BookError, stp_cancelled: Vec<String>, touched: Vec<(String, i64)>) -> BookError {
+    BookError::Partial {
+        message: err.to_string(),
+        stp_cancelled,
+        touched,
+    }
 }
 
 pub fn match_order(
@@ -141,7 +153,7 @@ pub fn match_order(
         ));
     }
 
-    if order.tif == TimeInForce::Fok && available_qty(book, order) < order.qty {
+    if order.tif == TimeInForce::Fok && available_qty(book, order)? < order.qty {
         return Ok(MatchOutput {
             status: "rejected",
             filled_qty: 0,
@@ -150,6 +162,7 @@ pub fn match_order(
             trades: Vec::new(),
             resting_order_id: None,
             stp_cancelled: Vec::new(),
+            touched: Vec::new(),
         });
     }
 
@@ -158,6 +171,7 @@ pub fn match_order(
     let mut fills = Vec::new();
     let mut trades = Vec::new();
     let mut stp_cancelled = Vec::new();
+    let mut touched = Vec::new();
     let opposite = order.side.opposite();
     let prices = book.prices(opposite);
 
@@ -174,7 +188,8 @@ pub fn match_order(
             };
             if is_self_trade(order, resting.owner.as_deref()) && order.stp != SelfTrade::Allow {
                 if order.stp == SelfTrade::CancelResting {
-                    book.cancel(&resting.order_id)?;
+                    book.cancel(&resting.order_id)
+                        .map_err(|err| partial(err, stp_cancelled.clone(), touched.clone()))?;
                     stp_cancelled.push(resting.order_id);
                     continue;
                 }
@@ -191,13 +206,20 @@ pub fn match_order(
                     trades,
                     resting_order_id: None,
                     stp_cancelled,
+                    touched,
                 });
             }
 
             let traded = remaining.min(resting.qty);
-            book.reduce_qty(&resting.order_id, traded)?;
-            remaining -= traded;
-            filled += traded;
+            let resting_id = resting.order_id.clone();
+            book.reduce_qty(&resting_id, traded)
+                .map_err(|err| partial(err, stp_cancelled.clone(), touched.clone()))?;
+            let left = book.get(&resting_id).map(|order| order.qty).unwrap_or(0);
+            touched.push((resting_id, left));
+            remaining = fit_sub(remaining, traded)
+                .map_err(|err| partial(err, stp_cancelled.clone(), touched.clone()))?;
+            filled = fit_add(filled, traded)
+                .map_err(|err| partial(err, stp_cancelled.clone(), touched.clone()))?;
             trades.push((resting.price_ticks, traded));
 
             if resting.owner.is_some() {
@@ -232,12 +254,13 @@ pub fn match_order(
             trades,
             resting_order_id: None,
             stp_cancelled,
+            touched,
         });
     }
 
     if order.tif.rests() && order.price_ticks.is_some() {
         let price = order.price_ticks.expect("checked");
-        book.add(
+        if let Err(err) = book.add(
             order.order_id.clone(),
             order.side,
             price,
@@ -245,7 +268,9 @@ pub fn match_order(
             seq,
             exchange_ts,
             order.owner.clone(),
-        )?;
+        ) {
+            return Err(partial(err, stp_cancelled, touched));
+        }
         return Ok(MatchOutput {
             status: "resting",
             filled_qty: filled,
@@ -254,6 +279,7 @@ pub fn match_order(
             trades,
             resting_order_id: Some(order.order_id.clone()),
             stp_cancelled,
+            touched,
         });
     }
 
@@ -270,6 +296,7 @@ pub fn match_order(
         trades,
         resting_order_id: None,
         stp_cancelled,
+        touched,
     })
 }
 

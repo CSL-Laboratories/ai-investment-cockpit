@@ -10,6 +10,22 @@ use crate::error::{py_str_repr, BookError};
 use crate::list::List;
 use crate::side::Side;
 
+pub(crate) fn fit_add(left: i64, right: i64) -> Result<i64, BookError> {
+    left.checked_add(right).ok_or_else(|| {
+        BookError::Value(format!(
+            "quantity {left} + {right} does not fit in a signed 64-bit integer"
+        ))
+    })
+}
+
+pub(crate) fn fit_sub(left: i64, right: i64) -> Result<i64, BookError> {
+    left.checked_sub(right).ok_or_else(|| {
+        BookError::Value(format!(
+            "quantity {left} - {right} does not fit in a signed 64-bit integer"
+        ))
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Order {
     pub order_id: String,
@@ -74,8 +90,12 @@ impl Level {
         self.orders.len()
     }
 
-    fn true_total(&self) -> i64 {
-        self.orders.iter().map(|order| order.qty).sum()
+    fn true_total(&self) -> Result<i64, BookError> {
+        let mut total = 0i64;
+        for order in self.orders.iter() {
+            total = fit_add(total, order.qty)?;
+        }
+        Ok(total)
     }
 
     fn append(&mut self, order: Order) -> Result<(), BookError> {
@@ -86,7 +106,7 @@ impl Level {
                 order.price_ticks
             )));
         }
-        self.total_qty += order.qty;
+        self.total_qty = fit_add(self.total_qty, order.qty)?;
         let id = order.order_id.clone();
         let idx = self.orders.push_back(order);
         self.by_id.insert(id, idx);
@@ -99,7 +119,7 @@ impl Level {
             .remove(order_id)
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
         let order = self.orders.remove(idx);
-        self.total_qty -= order.qty;
+        self.total_qty = fit_sub(self.total_qty, order.qty)?;
         Ok(order)
     }
 
@@ -122,9 +142,9 @@ impl Level {
         }
         {
             let order = self.orders.get_mut(idx);
-            order.qty -= qty;
+            order.qty = fit_sub(order.qty, qty)?;
         }
-        self.total_qty -= qty;
+        self.total_qty = fit_sub(self.total_qty, qty)?;
         let remaining = self.orders.get(idx).qty;
         if remaining == 0 {
             self.by_id.remove(order_id);
@@ -141,7 +161,7 @@ impl Level {
                 found = true;
                 break;
             }
-            ahead += order.qty;
+            ahead = fit_add(ahead, order.qty)?;
         }
         if found {
             Ok(ahead)
@@ -360,7 +380,7 @@ impl Book {
             .get(order_id)
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
         self.reduce_qty(order_id, qty)?;
-        order.qty -= qty;
+        order.qty = fit_sub(order.qty, qty)?;
         Ok(order)
     }
 
@@ -556,12 +576,12 @@ impl Book {
         out
     }
 
-    pub fn total_qty(&self, side: Side) -> i64 {
-        self.side_book(side)
-            .levels
-            .values()
-            .map(|level| level.total_qty)
-            .sum()
+    pub fn total_qty(&self, side: Side) -> Result<i64, BookError> {
+        let mut total = 0i64;
+        for level in self.side_book(side).levels.values() {
+            total = fit_add(total, level.total_qty)?;
+        }
+        Ok(total)
     }
 
     /// Resting orders in index insertion order.
@@ -624,7 +644,7 @@ impl Book {
                         side.as_str()
                     )));
                 }
-                let true_total = level.true_total();
+                let true_total = level.true_total()?;
                 if level.total_qty != true_total {
                     return Err(BookError::Integrity(format!(
                         "level {price} on {}: cached total {} != true total {true_total}",

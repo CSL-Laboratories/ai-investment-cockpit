@@ -4,6 +4,7 @@
 use cockpit_book::{match_order, Aggressive, Book, BookError, Order, SelfTrade, Side, TimeInForce};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use pyo3::types::PyInt;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
@@ -14,6 +15,36 @@ fn raise(err: BookError) -> PyErr {
         BookError::NotFound(id) => NotFound::new_err(id),
         BookError::Integrity(message) => IntegrityError::new_err(message),
         BookError::Value(message) => BookValueError::new_err(message),
+        BookError::Partial {
+            message,
+            stp_cancelled,
+            touched,
+        } => {
+            let err = BookValueError::new_err(message);
+            Python::with_gil(|py| {
+                let _ = err.value(py).setattr("stp_cancelled", stp_cancelled);
+                let _ = err.value(py).setattr("touched", touched);
+            });
+            err
+        }
+    }
+}
+
+/// A Python int that fits in `i64`. Out-of-range ints are `ValueError`, not
+/// PyO3's `OverflowError`. The book domain is signed 64-bit.
+struct FitI64(i64);
+
+impl<'py> FromPyObject<'py> for FitI64 {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(value) = ob.extract::<i64>() {
+            return Ok(Self(value));
+        }
+        if ob.is_instance_of::<PyInt>() {
+            return Err(BookValueError::new_err(
+                "value must fit in a signed 64-bit integer",
+            ));
+        }
+        ob.extract::<i64>().map(Self)
     }
 }
 
@@ -30,6 +61,7 @@ type MatchTuple = (
     Vec<(String, String, i64, i64, String, i64)>,
     Option<String>,
     Vec<String>,
+    Vec<(String, i64)>,
 );
 
 fn order_tuple(order: Order) -> OrderTuple {
@@ -70,15 +102,15 @@ impl BookCore {
         &mut self,
         order_id: String,
         side_name: String,
-        price_ticks: i64,
-        qty: i64,
+        price_ticks: FitI64,
+        qty: FitI64,
         seq: i64,
         ts: i64,
         owner: Option<String>,
     ) -> PyResult<OrderTuple> {
         let side = parse_side(&side_name).map_err(raise)?;
         self.book
-            .add(order_id, side, price_ticks, qty, seq, ts, owner)
+            .add(order_id, side, price_ticks.0, qty.0, seq, ts, owner)
             .map(order_tuple)
             .map_err(raise)
     }
@@ -87,9 +119,9 @@ impl BookCore {
         self.book.cancel(order_id).map(order_tuple).map_err(raise)
     }
 
-    fn reduce(&mut self, order_id: &str, qty: i64) -> PyResult<OrderTuple> {
+    fn reduce(&mut self, order_id: &str, qty: FitI64) -> PyResult<OrderTuple> {
         self.book
-            .reduce(order_id, qty)
+            .reduce(order_id, qty.0)
             .map(order_tuple)
             .map_err(raise)
     }
@@ -98,13 +130,19 @@ impl BookCore {
     fn replace(
         &mut self,
         order_id: &str,
-        new_price_ticks: Option<i64>,
-        new_qty: Option<i64>,
+        new_price_ticks: Option<FitI64>,
+        new_qty: Option<FitI64>,
         seq: i64,
         ts: i64,
     ) -> PyResult<OrderTuple> {
         self.book
-            .replace(order_id, new_price_ticks, new_qty, seq, ts)
+            .replace(
+                order_id,
+                new_price_ticks.map(|value| value.0),
+                new_qty.map(|value| value.0),
+                seq,
+                ts,
+            )
             .map(order_tuple)
             .map_err(raise)
     }
@@ -200,7 +238,7 @@ impl BookCore {
 
     fn total_qty(&self, side_name: &str) -> PyResult<i64> {
         let side = parse_side(side_name).map_err(raise)?;
-        Ok(self.book.total_qty(side))
+        self.book.total_qty(side).map_err(raise)
     }
 
     fn orders(&self) -> Vec<OrderTuple> {
@@ -231,8 +269,8 @@ impl BookCore {
         &mut self,
         order_id: String,
         side_name: String,
-        qty: i64,
-        price_ticks: Option<i64>,
+        qty: FitI64,
+        price_ticks: Option<FitI64>,
         tif_name: String,
         owner: Option<String>,
         stp_name: String,
@@ -249,8 +287,8 @@ impl BookCore {
         let aggressive = Aggressive {
             order_id,
             side,
-            qty,
-            price_ticks,
+            qty: qty.0,
+            price_ticks: price_ticks.map(|value| value.0),
             tif,
             owner,
             stp,
@@ -278,6 +316,7 @@ impl BookCore {
             fills,
             result.resting_order_id,
             result.stp_cancelled,
+            result.touched,
         ))
     }
 }

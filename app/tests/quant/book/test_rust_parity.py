@@ -256,3 +256,102 @@ def test_rust_failed_remainder_reconciles_retained_orders():
     assert _failed_remainder_script(LimitOrderBook("DUP")) == _failed_remainder_script(
         PythonLimitOrderBook("DUP")
     )
+
+
+def _stp_failed_remainder_script(book):
+    """Self-trade cancel, then the remainder cannot rest because the id is taken.
+
+    The cancelled order leaves the book. Its held qty stays. Missing is not a fill.
+    """
+    mine = book.add(order_id="mine", side=Side.SELL, price_ticks=100, qty=4, owner="mm")
+    book.add(order_id="dup", side=Side.BUY, price_ticks=90, qty=1, owner="other")
+    with pytest.raises(ValueError, match="duplicate"):
+        match(
+            book,
+            AggressiveOrder(
+                order_id="dup", side=Side.BUY, qty=6, price_ticks=100,
+                tif=TimeInForce.DAY, owner="mm",
+                stp=SelfTradePrevention.CANCEL_RESTING,
+            ),
+        )
+    return mine.qty, book.get("mine") is None
+
+
+def test_rust_stp_cancel_plus_failed_remainder_keeps_held_qty():
+    assert _stp_failed_remainder_script(LimitOrderBook("STP")) == _stp_failed_remainder_script(
+        PythonLimitOrderBook("STP")
+    )
+
+
+def _id_reuse_script(book):
+    """Same id, two endings: a self-trade cancel, and a full fill.
+
+    Cancel leaves the old object's qty. A full fill zeros it. Either way the
+    book then holds a new order under that id.
+    """
+    cancelled = book.add(order_id="X", side=Side.SELL, price_ticks=100, qty=10, owner="mm")
+    match(
+        book,
+        AggressiveOrder(
+            order_id="X", side=Side.BUY, qty=15, price_ticks=100, owner="mm",
+            stp=SelfTradePrevention.CANCEL_RESTING,
+        ),
+    )
+    rested_after_cancel = book.get("X")
+    cancel_case = (
+        cancelled.qty,
+        rested_after_cancel is not cancelled,
+        rested_after_cancel.side,
+        rested_after_cancel.qty,
+    )
+    book.cancel("X")
+
+    filled = book.add(order_id="X", side=Side.SELL, price_ticks=100, qty=10, owner="mm")
+    match(
+        book,
+        AggressiveOrder(
+            order_id="X", side=Side.BUY, qty=15, price_ticks=100, owner="other",
+            stp=SelfTradePrevention.ALLOW,
+        ),
+    )
+    rested_after_fill = book.get("X")
+    fill_case = (
+        filled.qty,
+        rested_after_fill is not filled,
+        rested_after_fill.side,
+        rested_after_fill.qty,
+    )
+    return cancel_case, fill_case
+
+
+def test_rust_id_reuse_distinguishes_fill_from_self_trade_cancel():
+    assert _id_reuse_script(LimitOrderBook("REUSE")) == _id_reuse_script(PythonLimitOrderBook("REUSE"))
+
+
+def test_rust_qty_domain_is_signed_64_bit():
+    """The Rust book is signed 64-bit. Python ints are unbounded.
+
+    ``2**63`` does not fit. Two orders of ``2**62`` each fit alone and their
+    level total does not. Both are ``ValueError``, not ``OverflowError``.
+    """
+    python = PythonLimitOrderBook("DOM")
+    python.add(order_id="wide", side=Side.BUY, price_ticks=100, qty=2**63)
+    assert python.get("wide").qty == 2**63
+
+    rust = LimitOrderBook("DOM")
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.add(order_id="wide", side=Side.BUY, price_ticks=100, qty=2**63)
+    rust.add(order_id="a", side=Side.BUY, price_ticks=100, qty=2**62)
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.add(order_id="b", side=Side.BUY, price_ticks=100, qty=2**62)
+    assert rust.get("a").qty == 2**62
+    rust.check_integrity()
+
+    # Each level fits. Their sum does not, so the book total is refused too.
+    python.add(order_id="lo", side=Side.SELL, price_ticks=101, qty=2**62)
+    python.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
+    assert python.total_qty(Side.SELL) == 2**63
+    rust.add(order_id="lo", side=Side.SELL, price_ticks=101, qty=2**62)
+    rust.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.total_qty(Side.SELL)

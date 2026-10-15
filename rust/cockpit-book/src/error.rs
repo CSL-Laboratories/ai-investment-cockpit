@@ -8,6 +8,15 @@ pub enum BookError {
     NotFound(String),
     Value(String),
     Integrity(String),
+    /// A match changed the book and then failed (the remainder could not rest).
+    /// `touched` is `(order_id, qty_after)` for trades. `qty_after == 0` is a
+    /// full fill. `stp_cancelled` ids were removed without a trade, so their
+    /// held qty stays put.
+    Partial {
+        message: String,
+        stp_cancelled: Vec<String>,
+        touched: Vec<(String, i64)>,
+    },
 }
 
 impl fmt::Display for BookError {
@@ -15,6 +24,7 @@ impl fmt::Display for BookError {
         match self {
             BookError::NotFound(id) => write!(f, "{id}"),
             BookError::Value(message) | BookError::Integrity(message) => write!(f, "{message}"),
+            BookError::Partial { message, .. } => write!(f, "{message}"),
         }
     }
 }

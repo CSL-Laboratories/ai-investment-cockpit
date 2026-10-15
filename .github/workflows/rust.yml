@@ -11,6 +11,10 @@ name: rust
 # Nightly macOS stays in ci.yml (07:17 UTC, skipped when main was idle 24h) and
 # is not duplicated here.
 #
+# The platform gate lives in `filter`. A job-level `if` cannot read `matrix`
+# (GitHub evaluates it before the matrix exists, and the run fails with zero
+# jobs). `filter` emits only the cells that should start.
+#
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
 # Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
 # brokers, live capital, or the order path. Landing any edit under
@@ -41,40 +45,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  filter:
+    name: filter
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.gate.outputs.matrix }}
+    steps:
+      - name: Choose hosted cells
+        id: gate
+        env:
+          RUN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_MACOS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          include = [
+              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
+              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
+          ]
+          if os.environ["RUN_WINDOWS"] == "true":
+              include.extend([
+                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+              ])
+          if os.environ["RUN_MACOS"] == "true":
+              include.append(
+                  {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("matrix<<EOF\n")
+              fh.write(json.dumps({"include": include}))
+              fh.write("\nEOF\n")
+          PY
+
   rust-book:
     name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
+    needs: filter
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: blacksmith-2vcpu-ubuntu-2404
-            python-version: "3.11"
-            os-name: linux
-          - runner: blacksmith-2vcpu-ubuntu-2404
-            python-version: "3.12"
-            os-name: linux
-          - runner: blacksmith-4vcpu-windows-2025
-            python-version: "3.11"
-            os-name: windows
-          - runner: blacksmith-4vcpu-windows-2025
-            python-version: "3.12"
-            os-name: windows
-          - runner: macos-latest
-            python-version: "3.12"
-            os-name: macos
-    if: >-
-      matrix.os-name == 'linux'
-      || github.event_name == 'workflow_dispatch'
-      || (matrix.os-name == 'windows' && github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || (matrix.os-name == 'windows' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
-      || (matrix.os-name == 'macos' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+      matrix: ${{ fromJson(needs.filter.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
+          # makes rustup download a second toolchain and then test 1.83.0.
+          toolchain: "1.83.0"
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

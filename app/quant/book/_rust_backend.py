@@ -138,52 +138,27 @@ def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     return order
 
 
-def _note_execution(book, cancelled) -> None:
-    """Apply matcher effects to orders the caller already holds.
+def _apply_effects(book, touched, cancelled) -> None:
+    """Update only the orders the matcher names.
 
-    Fills are emitted for our orders only, so the update reads the book.
-    A full fill leaves ``qty == 0`` and drops the order. A self-trade cancel
-    removes it and leaves ``qty`` where it was. Orders the caller already
-    dropped are not in the cache.
+    ``touched`` is ``(order_id, qty_after)`` for a trade. ``qty_after == 0`` is
+    a full fill, and that is the only time a held object is zeroed. ``cancelled``
+    is a self-trade removal: the held object keeps its qty, including when the
+    remainder later rests under the same id. An id that is merely absent from
+    the book is not treated as a fill.
     """
-    for order_id in cancelled:
-        book._live.pop(order_id, None)
-    gone = []
-    for order_id, ref in list(book._live.items()):
-        order = ref()
-        if order is None:
-            gone.append(order_id)
+    cancelled_ids = set(cancelled)
+    for order_id, qty in touched:
+        if order_id in cancelled_ids:
             continue
-        row = book._core.get(order_id)
-        if row is None:
-            order.qty = 0
-            gone.append(order_id)
-        else:
-            order.qty = row[3]
-    for order_id in gone:
-        book._live.pop(order_id, None)
-
-
-def _resync_live(book) -> None:
-    """Bring retained orders in line with the native book after a partial match.
-
-    A match that raises may already have consumed resting qty. There is no
-    self-trade list on that path, so an order the native book dropped is treated
-    as fully filled.
-    """
-    gone = []
-    for order_id, ref in list(book._live.items()):
-        order = ref()
+        order = _cached(book, order_id)
         if order is None:
-            gone.append(order_id)
             continue
-        row = book._core.get(order_id)
-        if row is None:
+        order.qty = int(qty)
+        if order.qty <= 0:
             order.qty = 0
-            gone.append(order_id)
-        else:
-            order.qty = row[3]
-    for order_id in gone:
+            book._live.pop(order_id, None)
+    for order_id in cancelled_ids:
         book._live.pop(order_id, None)
 
 
@@ -342,7 +317,7 @@ class LimitOrderBook:
         ]
 
     def total_qty(self, side: Side) -> int:
-        return self._core.total_qty(side.value)
+        return _call(self._core.total_qty, side.value)
 
     def our_orders(self, owner: str | None = None) -> list:
         return [
@@ -370,9 +345,8 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
     from quant.events import Fill
 
     price = None if order.price_ticks is None else int(order.price_ticks)
-    prior = _cached(book, order.order_id)
     try:
-        status, filled, remaining, trades, fills, resting, stp = book._core.match_order(
+        status, filled, remaining, trades, fills, resting, stp, touched = book._core.match_order(
             order.order_id,
             order.side.value,
             int(order.qty),
@@ -384,17 +358,11 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
             int(exchange_ts),
         )
     except (cockpit_quant.NotFound, cockpit_quant.IntegrityError, cockpit_quant.BookValueError) as exc:
-        # The native walk may have consumed orders before failing (e.g. a
-        # duplicate-ID remainder), so resync every retained order first.
-        _resync_live(book)
+        # Trades and self-trade cancels may already have landed. Apply those
+        # ids only; a missing id is not a fill.
+        _apply_effects(book, getattr(exc, "touched", ()), getattr(exc, "stp_cancelled", ()))
         _raise(exc)
-    if prior is not None and resting == order.order_id:
-        # The incoming order consumed a resting order with the same ID and
-        # rested its remainder under it. The old object is spent; a later
-        # ``get`` must build the new order, not edit the old one.
-        prior.qty = 0
-        book._live.pop(order.order_id, None)
-    _note_execution(book, stp)
+    _apply_effects(book, touched, stp)
     return MatchResult(
         status=MatchStatus(status),
         filled_qty=filled,
