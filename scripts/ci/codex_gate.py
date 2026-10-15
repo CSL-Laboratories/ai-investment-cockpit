@@ -481,9 +481,35 @@ def _reviews(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
     return list_items(gh.get, f"repos/{repository}/pulls/{number}/reviews")
 
 
-def latest_ci_full_actor(events: list[dict[str, Any]]) -> str:
-    """Login of the actor who last applied ``ci:full``, or empty if unlabeled."""
-    actor = ""
+def parse_gh_time(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def last_ready_created_at(comments: list[dict[str, Any]]) -> datetime | None:
+    latest: datetime | None = None
+    for item in comments:
+        body = str((item or {}).get("body") or "")
+        if not any(match.group(2) == "READY" for match in ACTION_RE.finditer(body)):
+            continue
+        stamped = parse_gh_time((item or {}).get("created_at"))
+        if stamped is not None and (latest is None or stamped > latest):
+            latest = stamped
+    return latest
+
+
+def last_ci_full_labeled_at(events: list[dict[str, Any]]) -> datetime | None:
+    latest: datetime | None = None
     for item in events:
         if not isinstance(item, dict):
             continue
@@ -493,15 +519,27 @@ def latest_ci_full_actor(events: list[dict[str, Any]]) -> str:
         if str((item.get("label") or {}).get("name") or "") != CI_FULL_LABEL:
             continue
         if kind == "unlabeled":
-            actor = ""
+            latest = None
             continue
-        actor = str((item.get("actor") or {}).get("login") or "")
-    return actor
+        latest = parse_gh_time(item.get("created_at"))
+    return latest
 
 
-def ci_full_is_gate_owned(events: list[dict[str, Any]], authors: frozenset[str]) -> bool:
-    actor = latest_ci_full_actor(events)
-    return bool(actor) and actor in authors
+def label_predates_last_ready(
+    comments: list[dict[str, Any]], events: list[dict[str, Any]]
+) -> bool:
+    """True when current ``ci:full`` is not a later override of the last READY.
+
+    READY adds the label, then posts the action comment, so a gate-owned
+    label is at or before that comment. A later labeled event is a manual
+    override — including when the PAT owner and the operator are the same
+    login.
+    """
+    labeled_at = last_ci_full_labeled_at(events)
+    ready_at = last_ready_created_at(comments)
+    if labeled_at is None or ready_at is None:
+        return False
+    return labeled_at <= ready_at
 
 
 def _issue_events(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
@@ -553,7 +591,6 @@ def _post_request_if_needed(
     *,
     clear_stale_ready: bool = False,
     only_gate_owned_label: bool = False,
-    authors: frozenset[str] | None = None,
 ) -> list[str]:
     number = safe_pr(pr.get("number"))
     if not number:
@@ -563,14 +600,15 @@ def _post_request_if_needed(
     if clear_stale_ready:
         allow = True
         if only_gate_owned_label:
-            # Scheduled recovery may clear a gate-owned READY leftover after a
-            # displaced pull_request run, but must not strip a human-added
-            # ci:full (that unlabeled event also cancels a full-matrix run).
+            # Scheduled recovery may clear a leftover READY label after a
+            # displaced pull_request run. Do not use the label actor: the PAT
+            # owner and a human adding ci:full are the same login. Compare
+            # the latest labeled event to the last READY comment instead.
             try:
                 events = _issue_events(gh, repository, number)
             except (OSError, subprocess.CalledProcessError, ValueError):
                 events = []
-            allow = ci_full_is_gate_owned(events, authors or marker_authors(gh))
+            allow = label_predates_last_ready(comments, events)
         if allow:
             logs.extend(_clear_stale_ready(gh, repository, number, sha, comments))
     decision = decide_request(pr, repository, comments)
@@ -658,7 +696,6 @@ def _handle_timeout(
             comments,
             clear_stale_ready=True,
             only_gate_owned_label=True,
-            authors=authors,
         )
         logs.extend(request_logs)
         # A displaced PR-open run recovers here. Do not timeout the same SHA

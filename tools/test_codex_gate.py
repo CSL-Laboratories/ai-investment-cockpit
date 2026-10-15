@@ -73,12 +73,20 @@ def review(body: str, *, login: str = "chatgpt-codex-connector[bot]", sha: str =
     return {"body": body, "user": {"login": login}, "commit_id": sha}
 
 
-def label_event(login: str, *, unlabeled: bool = False) -> dict[str, Any]:
-    return {
+def label_event(
+    login: str,
+    *,
+    unlabeled: bool = False,
+    created: str | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
         "event": "unlabeled" if unlabeled else "labeled",
         "actor": {"login": login},
         "label": {"name": "ci:full"},
     }
+    if created:
+        item["created_at"] = created
+    return item
 
 
 class FakeGH:
@@ -502,10 +510,35 @@ class RunTests(unittest.TestCase):
         gh = FakeGH()
         gh.prs = [pr_payload()]
         gh.comments = [
-            comment(mod.action_marker("c" * 40, "READY")),
-            comment(mod.gate_marker(SHA) + "\n@codex review"),
+            comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z"),
+            comment(mod.gate_marker(SHA) + "\n@codex review", created="2026-10-15T15:10:00Z"),
         ]
-        gh.events = [label_event("github-actions[bot]"), label_event("lucas")]
+        gh.events = [
+            label_event("github-actions[bot]", created="2026-10-15T15:00:00Z"),
+            label_event("lucas", created="2026-10-15T15:12:00Z"),
+        ]
+        rc = mod.run(
+            event_name="schedule",
+            event={},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.deletes, [])
+
+    def test_schedule_keeps_pat_owner_manual_label(self) -> None:
+        gh = FakeGH()
+        gh.prs = [pr_payload()]
+        gh.comments = [
+            comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z"),
+            comment(mod.gate_marker(SHA) + "\n@codex review", created="2026-10-15T15:10:00Z"),
+        ]
+        # Same actor as the gate PAT owner; later timestamp is the override.
+        gh.events = [
+            label_event("github-actions[bot]", created="2026-10-15T15:00:00Z"),
+            label_event("github-actions[bot]", created="2026-10-15T15:12:00Z"),
+        ]
         rc = mod.run(
             event_name="schedule",
             event={},
@@ -520,10 +553,10 @@ class RunTests(unittest.TestCase):
         gh = FakeGH()
         gh.prs = [pr_payload()]
         gh.comments = [
-            comment(mod.action_marker("c" * 40, "READY")),
-            comment(mod.gate_marker(SHA) + "\n@codex review"),
+            comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z"),
+            comment(mod.gate_marker(SHA) + "\n@codex review", created="2026-10-15T15:10:00Z"),
         ]
-        gh.events = [label_event("github-actions[bot]")]
+        gh.events = [label_event("github-actions[bot]", created="2026-10-15T15:00:00Z")]
         rc = mod.run(
             event_name="schedule",
             event={},
@@ -541,22 +574,27 @@ class RunTests(unittest.TestCase):
         self.assertFalse(mod.gate_ready_on_other_sha(both, SHA))
         self.assertFalse(mod.gate_ready_on_other_sha([], SHA))
 
-    def test_ci_full_ownership_follows_latest_label_event(self) -> None:
-        authors = frozenset({"github-actions[bot]"})
+    def test_label_predates_last_ready_ignores_actor(self) -> None:
+        ready = [comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z")]
         self.assertTrue(
-            mod.ci_full_is_gate_owned([label_event("github-actions[bot]")], authors)
-        )
-        self.assertFalse(mod.ci_full_is_gate_owned([label_event("lucas")], authors))
-        self.assertFalse(
-            mod.ci_full_is_gate_owned(
-                [label_event("github-actions[bot]"), label_event("lucas")],
-                authors,
+            mod.label_predates_last_ready(
+                ready,
+                [label_event("github-actions[bot]", created="2026-10-15T15:00:00Z")],
             )
         )
         self.assertFalse(
-            mod.ci_full_is_gate_owned(
-                [label_event("github-actions[bot]"), label_event("github-actions[bot]", unlabeled=True)],
-                authors,
+            mod.label_predates_last_ready(
+                ready,
+                [label_event("github-actions[bot]", created="2026-10-15T15:12:00Z")],
+            )
+        )
+        self.assertFalse(
+            mod.label_predates_last_ready(
+                ready,
+                [
+                    label_event("github-actions[bot]", created="2026-10-15T15:00:00Z"),
+                    label_event("github-actions[bot]", unlabeled=True, created="2026-10-15T15:01:00Z"),
+                ],
             )
         )
 
