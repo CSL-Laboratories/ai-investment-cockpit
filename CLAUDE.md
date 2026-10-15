@@ -73,8 +73,9 @@ body (that links the PR). Merging moves the issue to **Done**. If the PR does
 not move it to **In Review**, move it yourself. Keep milestone comments current;
 @mention a teammate when blocked or needing approval (`needs-decision`); file
 anything that comes up in-session to Triage instead of dropping it. If Claude
-cannot fix a review thread, leave it open and follow **When Claude can't fix a
-review thread** in [`AGENTS.md`](AGENTS.md).
+cannot fix a review thread, follow **When Claude can't fix a review thread** in
+[`AGENTS.md`](AGENTS.md). Before merging, check Linear for open `Stuck PR
+thread` issues tied to the PR.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then

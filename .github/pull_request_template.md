@@ -15,4 +15,5 @@ Fixes CSL-___
 - [ ] Paper-trading only; no live broker credentials
 - [ ] Devin review completed on the current head commit
 - [ ] All review threads resolved (or answered with rationale)
+- [ ] No open Linear `Stuck PR thread` issues for this PR (or the decision is recorded)
 - [ ] Tests run locally and/or green in CI (name the commands)

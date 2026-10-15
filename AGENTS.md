@@ -212,12 +212,13 @@ Hosted split (PR #102):
 ## When Claude can't fix a review thread
 
 Devin reviews only and never fixes, so a thread is never handed back to Devin.
-If Claude cannot fix it, Claude leaves the thread open and replies with why,
-@mentions the PR author on the PR, comments on the linked Linear issue with the
-PR link and the open question, and adds the `needs-decision` label. The PR
-author's Grok Bot or agent watches for these and either resolves the thread or
-escalates to the human. A human may merge past it with the admin bypass only
-after that decision.
+If Claude cannot fix it, Claude leaves the thread open, replies with why, and
+@mentions the PR author. A watcher then files a Linear issue titled
+`Stuck PR thread: repo#PR – topic`, labeled `needs-decision` and linked to the
+PR's CSL issue. Developers resolve it from Linear like any other issue.
+
+Before merging any PR, check Linear for open `Stuck PR thread` issues tied to
+it, and resolve them or record the decision first.
 
 ## Automations
 
