@@ -170,8 +170,31 @@ Hosted split (PR #102):
 
 - **Devin** is the only GitHub PR reviewer. It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
+- **Codex auto-resolve** (CSL-179, [`.github/workflows/codex-auto-resolve.yml`](.github/workflows/codex-auto-resolve.yml)) never posts `@codex review` (the CI/fixer gate and stuck-thread watcher do that). When Codex's ruling includes the shared per-thread marker for the **current** PR head, required checks on that head are green, and no owner/human decision is needed, it replies citing the ruling and SHA and calls GraphQL `resolveReviewThread`. KEEP, a missing fix, a stale SHA, pending/failing checks, or a missing/malformed/ambiguous marker leave the thread open (needs-decision path). Writes use repo secret `CODEX_TRIGGER_PAT` (the same PAT that posts `@codex review`); `GITHUB_TOKEN` is read-only. The PAT identity is what GitHub records as resolving the thread.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+
+## Codex thread-verdict contract
+
+Shared with recursion (CSL-178). Codex emits one structured marker **per review thread** after a gate or stuck-thread `@codex review`. The auto-resolve workflow parses it; Codex must not resolve the thread itself.
+
+HTML (required for auto-resolve):
+
+    <!-- codex-thread-verdict:<thread_id>:<head_sha>:RESOLVE -->
+    <!-- codex-thread-verdict:<thread_id>:<head_sha>:KEEP -->
+
+Visible companion line:
+
+    CODEX-THREAD: RESOLVE thread=<thread_id> sha=<head_sha>
+    CODEX-THREAD: KEEP thread=<thread_id> sha=<head_sha> reason=needs-decision|fix-missing|ambiguous
+
+- `thread_id` is the GitHub GraphQL review-thread node id (the value in `<!-- codex-mediation:<thread_id> -->` once #124 lands).
+- `head_sha` is the 40-character hex of the PR head Codex reviewed. A marker whose SHA is not the current head is ignored (never resolve on a stale SHA).
+- `RESOLVE` = the fix is already on that exact head and no owner/human decision is needed.
+- `KEEP` = a decision is needed, the fix is missing, or it is ambiguous. If unsure, KEEP.
+- `CODEX-GATE: READY` is not a per-thread resolve. Mixed or malformed markers fail closed to KEEP.
+
+After #124 / #131 merge, those prompts should keep "do not resolve/push/merge yourself" and append this marker. Helper: `mediation_verdict_instructions()` in `.github/scripts/codex_auto_resolve.py`.
 
 ## Automations
 
