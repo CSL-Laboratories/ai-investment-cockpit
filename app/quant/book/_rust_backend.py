@@ -125,6 +125,17 @@ def _note_execution(book, fills, cancelled) -> None:
         book._live.pop(order_id, None)
 
 
+def _resync_live(book) -> None:
+    """Bring retained orders in line with the native book after a partial match."""
+    for order_id, order in list(book._live.items()):
+        row = book._core.get(order_id)
+        if row is None:
+            order.qty = 0
+            book._live.pop(order_id, None)
+        else:
+            order.qty = row[3]
+
+
 class PriceLevel:
     """Live view of one price. ``total_qty`` is writable so the integrity control can fail."""
 
@@ -320,6 +331,9 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
             int(exchange_ts),
         )
     except (cockpit_quant.NotFound, cockpit_quant.IntegrityError, cockpit_quant.BookValueError) as exc:
+        # The native walk may have consumed orders before failing (e.g. a
+        # duplicate-ID remainder), so resync every retained order first.
+        _resync_live(book)
         _raise(exc)
     _note_execution(book, fills, stp)
     return MatchResult(

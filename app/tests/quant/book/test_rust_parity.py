@@ -236,3 +236,23 @@ def _live_qty_script(book):
 
 def test_rust_retained_orders_match_the_python_book():
     assert _live_qty_script(LimitOrderBook("LIVE")) == _live_qty_script(PythonLimitOrderBook("LIVE"))
+
+
+def _failed_remainder_script(book):
+    ask = book.add(order_id="a", side=Side.SELL, price_ticks=100, qty=4, owner="mm")
+    book.add(order_id="dup", side=Side.BUY, price_ticks=90, qty=1, owner="mm")
+    with pytest.raises(Exception):
+        match(
+            book,
+            AggressiveOrder(
+                order_id="dup", side=Side.BUY, qty=6, price_ticks=100,
+                tif=TimeInForce.DAY, owner="other",
+            ),
+        )
+    return ask.qty, book.get("a") is None
+
+
+def test_rust_failed_remainder_reconciles_retained_orders():
+    assert _failed_remainder_script(LimitOrderBook("DUP")) == _failed_remainder_script(
+        PythonLimitOrderBook("DUP")
+    )
