@@ -351,17 +351,24 @@ class OMS:
     def live_orders(self, *, symbol: str | None = None, strategy: str | None = None) -> list[ManagedOrder]:
         """Orders the venue could still fill, in first-seen client-id order.
 
-        The index is maintained on register and on each terminal transition. It is
-        the same set a scan of ``_orders`` would keep, without walking the terminal
-        history on every context build.
+        ``_live`` is the set of ids. The order objects come from ``_orders``, so a
+        guard view that overlays worse pending-replace terms onto a copy of
+        ``_orders`` is what exposure and position projection read. The index is
+        the same set a scan of ``_orders`` would keep, without walking the
+        terminal history on every context build.
         """
-        if strategy is None and symbol is None:
-            return list(self._live.values())
-        return [
-            order for order in self._live.values()
-            if (strategy is None or order.strategy == strategy)
-            and (symbol is None or order.symbol == symbol)
-        ]
+        orders = self._orders
+        selected = []
+        for client_id in self._live:
+            order = orders.get(client_id)
+            if order is None:
+                continue
+            if strategy is not None and order.strategy != strategy:
+                continue
+            if symbol is not None and order.symbol != symbol:
+                continue
+            selected.append(order)
+        return selected
 
     def open_side_qty(self, symbol: str, side) -> int:
         """Total remaining size of LIVE orders on ``side`` for ``symbol`` — the worst-case

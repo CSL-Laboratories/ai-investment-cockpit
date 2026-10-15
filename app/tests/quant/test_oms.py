@@ -13,6 +13,9 @@ The properties pinned:
 """
 from __future__ import annotations
 
+from copy import copy
+from dataclasses import replace
+
 import pytest
 
 from quant.events import Fill, Liquidity, Side
@@ -307,3 +310,16 @@ def test_live_orders_match_a_full_scan_including_a_reused_id(oms):
     assert oms.live_orders()[0].state is OrderState.PARTIALLY_FILLED
     oms.on_rejected("b", reason="no")
     assert [order.client_id for order in oms.live_orders()] == ["a"]
+
+
+def test_an_orders_overlay_is_what_exposure_reads(oms):
+    """AutoLoop's guard view copies ``_orders`` and writes the worst pending
+    replace onto that copy. Exposure has to see those terms, and the original
+    OMS must keep the acknowledged ones."""
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    view = copy(oms)
+    view._orders = dict(oms._orders)
+    view._orders["a"] = replace(oms.get("a"), qty=10)
+    assert view.exposure_ticks() == 100
+    assert view.open_side_qty("TEST", Side.BUY) == 10
+    assert oms.exposure_ticks() == 50
