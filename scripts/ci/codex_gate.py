@@ -224,10 +224,35 @@ def pr_field_text(description: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def description_has_pr_url(description: str, repository: str, pr_number: str) -> bool:
-    """True when the PR URL appears as its own token, including Markdown links."""
-    url = pr_html_url(repository, pr_number)
-    return bool(re.search(rf"{re.escape(url)}(?:/?(?:[)\s#\"'<\]]|$))", description or ""))
+_MD_PR_URL_RE = re.compile(r"\[(?:[^\]]*)\]\((https://github\.com/[^)\s]+)\)")
+_BARE_PR_URL_RE = re.compile(r"(https://github\.com/[^\s)\]>\"']+)")
+
+
+def primary_pr_url(field: str) -> str:
+    """First Markdown-link target or bare GitHub URL in the ``**PR:**`` field."""
+    text = (field or "").strip()
+    if not text:
+        return ""
+    md = _MD_PR_URL_RE.search(text)
+    bare = _BARE_PR_URL_RE.search(text)
+    start = len(text) + 1
+    url = ""
+    if md is not None:
+        start = md.start()
+        url = md.group(1)
+    if bare is not None and bare.start() < start:
+        url = bare.group(1)
+    return url.rstrip("/")
+
+
+def description_has_pr_url(field: str, repository: str, pr_number: str) -> bool:
+    """True when the **PR:** field's primary URL is this pull request.
+
+    A related Markdown link after a foreign primary URL does not count.
+    """
+    wanted = pr_html_url(repository, pr_number).rstrip("/")
+    primary = primary_pr_url(field)
+    return bool(primary) and primary == wanted
 
 
 def stuck_pr_keys_in(text: str) -> list[str]:

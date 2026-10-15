@@ -959,6 +959,67 @@ class RunTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertIn(mod.stuck_pr_marker(REPO, "42"), created[0]["input"]["description"])
 
+    def test_create_needs_decision_issue_ignores_related_link_in_pr_field(self) -> None:
+        created: list[dict[str, Any]] = []
+        stolen = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            "**PR:** [other PR](https://github.com/other/example/pull/42) "
+            f"[related](https://github.com/{REPO}/pull/42)\n"
+        )
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "title: { eq" in query:
+                return {"issues": {"nodes": []}}
+            if "issues(" in query:
+                return {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "stolen-1",
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-101",
+                                "description": stolen,
+                            }
+                        ]
+                    }
+                }
+            if "teams(" in query:
+                return {
+                    "teams": {
+                        "nodes": [
+                            {
+                                "id": "t1",
+                                "states": {"nodes": [{"id": "s1", "type": "triage"}]},
+                            }
+                        ]
+                    }
+                }
+            if "issueLabels" in query:
+                name = str(variables.get("name") or "")
+                return {"issueLabels": {"nodes": [{"id": name, "name": name}]}}
+            if "projects(" in query:
+                return {
+                    "projects": {
+                        "nodes": [{"id": "p1", "name": "ai-investment-cockpit"}]
+                    }
+                }
+            if "issueCreate" in query:
+                created.append(variables)
+                return {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-102"},
+                    }
+                }
+            if "issueUpdate" in query:
+                raise AssertionError("must not steal a roll-up via a related PR link")
+            raise AssertionError(query[:80])
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-102")
+        self.assertEqual(len(created), 1)
+
     def test_create_needs_decision_issue_updates_watcher_marker(self) -> None:
         updates: list[dict[str, Any]] = []
         watcher = (
@@ -1152,6 +1213,20 @@ class RunTests(unittest.TestCase):
             f"[discussion](https://github.com/{REPO}/pull/42)\n"
         )
         self.assertFalse(mod.mediate_description_matches(related, REPO, "42"))
+        same_field = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            "**PR:** [other PR](https://github.com/other/example/pull/42) "
+            f"[related](https://github.com/{REPO}/pull/42)\n"
+        )
+        self.assertFalse(mod.mediate_description_matches(same_field, REPO, "42"))
+        self.assertFalse(mod.rollup_may_update(same_field, REPO, "42"))
+        self.assertEqual(
+            mod.primary_pr_url(
+                "[other PR](https://github.com/other/example/pull/42) "
+                f"[related](https://github.com/{REPO}/pull/42)"
+            ),
+            "https://github.com/other/example/pull/42",
+        )
 
     def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
         human_ok = {
