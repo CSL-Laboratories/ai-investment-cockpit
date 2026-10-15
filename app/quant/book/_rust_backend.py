@@ -225,6 +225,9 @@ class LimitOrderBook:
         return list(self._core.prices(side.value))
 
     def depth(self, side: Side, levels: int = 5) -> list:
+        if levels < 0:
+            # Match the reference's ``prices[:levels]`` slice semantics.
+            levels = len(range(len(self._core.prices(side.value)))[:levels])
         return [
             _LevelSnapshot(price_ticks=price, qty=qty, order_count=count)
             for price, qty, count in self._core.depth(side.value, levels)
