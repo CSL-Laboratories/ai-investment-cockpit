@@ -44,7 +44,7 @@ straight into the risk engine.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal, getcontext
 
 from quant.events import Fill, Liquidity, PriceScale, Side
 
@@ -218,9 +218,15 @@ def _load_native() -> None:
     COSTS_BACKEND = "rust"
 
 
+def _default_context() -> bool:
+    """The Rust arithmetic is fixed at 28 digits half-even; other contexts stay in Python."""
+    ctx = getcontext()
+    return ctx.prec == 28 and ctx.rounding == ROUND_HALF_EVEN
+
+
 def _native_fee_for(schedule: FeeSchedule, *, side: Side, qty: int, price: Decimal, liquidity: Liquidity):
     native = _NATIVE
-    if native is None:
+    if native is None or not _default_context():
         return _USE_PYTHON
     if (
         isinstance(qty, bool)
@@ -246,7 +252,7 @@ def _native_fee_for(schedule: FeeSchedule, *, side: Side, qty: int, price: Decim
 
 def _native_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, seconds: float):
     native = _NATIVE
-    if native is None or not isinstance(short_notional, Decimal):
+    if native is None or not _default_context() or not isinstance(short_notional, Decimal):
         return _USE_PYTHON
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float, Decimal)):
         return _USE_PYTHON
@@ -259,7 +265,7 @@ def _native_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, secon
 
 def _native_cost_bps(cost: Decimal, notional: Decimal):
     native = _NATIVE
-    if native is None or not isinstance(cost, Decimal) or not isinstance(notional, Decimal):
+    if native is None or not _default_context() or not isinstance(cost, Decimal) or not isinstance(notional, Decimal):
         return _USE_PYTHON
     return Decimal(native.cost_bps(format(cost, "f"), format(notional, "f")))
 

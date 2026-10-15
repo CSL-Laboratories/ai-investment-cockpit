@@ -299,12 +299,14 @@ pub fn div(left: &Dec, right: &Dec) -> Result<Dec, String> {
                 exp,
             };
             if !exact {
-                // Fold a non-zero remainder into the sticky bit of the last digit
-                // by bumping a trailing 0 into a 1 when the computed digits were
-                // an exact prefix. Only needed when every guard digit is 0.
-                if out.digs.len() > PREC && out.digs[PREC..].iter().all(|d| *d == 0) {
+                // Fold a non-zero remainder into the sticky bit. Every digit past
+                // PREC + 1 only feeds `sticky`, so turning a trailing 0 into a 1
+                // records the remainder without changing the round digit.
+                if out.digs.len() > PREC + 1 {
                     if let Some(last) = out.digs.last_mut() {
-                        *last = 1;
+                        if *last == 0 {
+                            *last = 1;
+                        }
                     }
                 }
             }
