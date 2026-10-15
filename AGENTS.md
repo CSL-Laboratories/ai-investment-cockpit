@@ -212,10 +212,12 @@ Hosted split (PR #102):
 ## When Claude can't fix a review thread
 
 Devin reviews only and never fixes, so a thread is never handed back to Devin.
-If Claude cannot fix it, Claude leaves the thread open, replies with why, and
-@mentions the PR author. A watcher then files a Linear issue titled
-`Stuck PR thread: repo#PR – topic`, labeled `needs-decision` and linked to the
-PR's CSL issue. Developers resolve it from Linear like any other issue.
+Hosted Claude has no Linear access. If Claude cannot fix a thread, Claude
+leaves it open, replies with why, and @mentions the PR author. The PR author
+agent then files a Linear issue titled `Stuck PR thread: repo#PR – topic`,
+labeled `needs-decision`, linked to the PR and to the PR's CSL issue, with the
+PR link and the open question. Developers resolve it from Linear like any
+other issue.
 
 Before merging any PR, check Linear for open `Stuck PR thread` issues tied to
 it, and resolve them or record the decision first.

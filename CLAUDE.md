@@ -74,7 +74,8 @@ not move it to **In Review**, move it yourself. Keep milestone comments current;
 @mention a teammate when blocked or needing approval (`needs-decision`); file
 anything that comes up in-session to Triage instead of dropping it. If Claude
 cannot fix a review thread, follow **When Claude can't fix a review thread** in
-[`AGENTS.md`](AGENTS.md). Before merging, check Linear for open `Stuck PR
+[`AGENTS.md`](AGENTS.md): hosted Claude has no Linear access, so the PR author
+agent files the Linear issue. Before merging, check Linear for open `Stuck PR
 thread` issues tied to the PR.
 
 ## Session workflow
