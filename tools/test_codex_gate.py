@@ -1152,6 +1152,13 @@ class RunTests(unittest.TestCase):
             f"[discussion](https://github.com/{REPO}/pull/42)\n"
         )
         self.assertFalse(mod.mediate_description_matches(related, REPO, "42"))
+        related_field = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            f"**PR:** [other PR](https://github.com/other/example/pull/42) "
+            f"[related](https://github.com/{REPO}/pull/42)\n"
+        )
+        self.assertFalse(mod.mediate_description_matches(related_field, REPO, "42"))
+        self.assertFalse(mod.rollup_may_update(related_field, REPO, "42"))
 
     def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
         human_ok = {

@@ -224,10 +224,27 @@ def pr_field_text(description: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def description_has_pr_url(description: str, repository: str, pr_number: str) -> bool:
-    """True when the PR URL appears as its own token, including Markdown links."""
-    url = pr_html_url(repository, pr_number)
-    return bool(re.search(rf"{re.escape(url)}(?:/?(?:[)\s#\"'<\]]|$))", description or ""))
+PRIMARY_PR_URL_RE = re.compile(
+    r"\[(?:[^\]]*)\]\((https://github\.com/[^)\s]+)\)"
+    r"|(https://github\.com/[^\s)\]\"'<]+)"
+)
+
+
+def primary_pr_field_url(description: str) -> str:
+    """First GitHub URL in the ``**PR:**`` field (Markdown link, else bare)."""
+    field = pr_field_text(description)
+    if not field:
+        return ""
+    match = PRIMARY_PR_URL_RE.search(field)
+    if not match:
+        return ""
+    raw = match.group(1) or match.group(2) or ""
+    return raw.rstrip("/").split("#", 1)[0]
+
+
+def pr_field_is_this_pr(description: str, repository: str, pr_number: str) -> bool:
+    got = primary_pr_field_url(description)
+    return bool(got) and got == pr_html_url(repository, pr_number)
 
 
 def stuck_pr_keys_in(text: str) -> list[str]:
@@ -317,7 +334,7 @@ def mediate_description_matches(
     )
     if not has_legacy:
         return False
-    return description_has_pr_url(pr_field_text(body), repository, pr_number)
+    return pr_field_is_this_pr(body, repository, pr_number)
 
 
 def title_matches_rollup(
