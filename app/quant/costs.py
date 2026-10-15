@@ -44,7 +44,14 @@ straight into the risk engine.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_EVEN, Decimal, getcontext
+from decimal import (
+    ROUND_HALF_EVEN,
+    Decimal,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+    getcontext,
+)
 
 from quant.events import Fill, Liquidity, PriceScale, Side
 
@@ -218,10 +225,31 @@ def _load_native() -> None:
     COSTS_BACKEND = "rust"
 
 
+# Signals the default context traps. Clearing one of these (or enabling another)
+# changes whether an operation raises, so that call cannot use the fixed Rust path.
+_DEFAULT_TRAPS = frozenset({InvalidOperation, DivisionByZero, Overflow})
+
+
+def _enabled_traps(traps) -> frozenset:
+    return frozenset(signal for signal, enabled in traps.items() if enabled)
+
+
 def _default_context() -> bool:
-    """The Rust arithmetic is fixed at 28 digits half-even; other contexts stay in Python."""
+    """The Rust arithmetic is the default context only.
+
+    Precision 28, half-even, ``Emin``/``Emax`` at the default limits, clamp off,
+    and the default trap set. Any other active context stays in Python, including
+    a caller who only clears ``InvalidOperation`` or narrows ``prec``.
+    """
     ctx = getcontext()
-    return ctx.prec == 28 and ctx.rounding == ROUND_HALF_EVEN
+    return (
+        ctx.prec == 28
+        and ctx.rounding == ROUND_HALF_EVEN
+        and ctx.Emin == -999999
+        and ctx.Emax == 999999
+        and not ctx.clamp
+        and _enabled_traps(ctx.traps) == _DEFAULT_TRAPS
+    )
 
 
 def _native_fee_for(schedule: FeeSchedule, *, side: Side, qty: int, price: Decimal, liquidity: Liquidity):

@@ -7,7 +7,7 @@ The Python functions named ``python_*`` are the reference; ``FeeSchedule`` and
 from __future__ import annotations
 
 import random
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal, InvalidOperation, localcontext
 
 import pytest
 
@@ -103,6 +103,30 @@ def _assert_same_tracker(accelerated: PnLTracker, reference: PnLTracker) -> None
             assert Decimal(value) == Decimal(other)
         else:
             assert value == other
+
+
+def test_custom_decimal_context_matches_python():
+    """A narrowed, re-rounded, or untrapped context must not keep Rust's fixed result."""
+    one = Decimal("1")
+    seven = Decimal("7")
+    with localcontext() as ctx:
+        ctx.prec = 6
+        assert costs.cost_bps(one, seven) == python_cost_bps(one, seven) == Decimal("1428.57")
+        assert SCHEDULE.borrow_cost(short_notional=one, seconds=1) == python_borrow_cost(
+            SCHEDULE, short_notional=one, seconds=1,
+        )
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_DOWN
+        assert costs.cost_bps(one, seven) == python_cost_bps(one, seven)
+        assert costs.cost_bps(one, seven) == Decimal("1428.571428571428571428571428")
+    with localcontext() as ctx:
+        ctx.traps[InvalidOperation] = False
+        borrowed = SCHEDULE.borrow_cost(short_notional=Decimal("NaN"), seconds=1)
+        reference = python_borrow_cost(SCHEDULE, short_notional=Decimal("NaN"), seconds=1)
+        # Decimal NaN is not equal to itself; both paths must return NaN rather than raise.
+        assert borrowed.is_nan() and reference.is_nan()
+    assert costs.cost_bps(one, seven) == python_cost_bps(one, seven)
+    assert costs.cost_bps(one, seven) == Decimal("1428.571428571428571428571429")
 
 
 def test_schedule_methods_match_the_python_reference():
