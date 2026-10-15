@@ -871,6 +871,16 @@ class RunTests(unittest.TestCase):
         self.assertFalse(
             mod.mediate_description_matches(mod.mediate_issue_marker("acme/other", "42"), REPO, "42")
         )
+        markdown = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            f"**PR:** [#42](https://github.com/{REPO}/pull/42)\n"
+        )
+        self.assertTrue(mod.mediate_description_matches(markdown, REPO, "42"))
+        numbered = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            f"**PR:** https://github.com/{REPO}/pull/420\n"
+        )
+        self.assertFalse(mod.mediate_description_matches(numbered, REPO, "42"))
 
     def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
         human_ok = {

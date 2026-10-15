@@ -171,6 +171,12 @@ def pr_html_url(repository: str, pr_number: str) -> str:
     return f"https://github.com/{repository}/pull/{pr_number}"
 
 
+def description_has_pr_url(description: str, repository: str, pr_number: str) -> bool:
+    """True when the PR URL appears as its own token, including Markdown links."""
+    url = pr_html_url(repository, pr_number)
+    return bool(re.search(rf"{re.escape(url)}(?:/?(?:[)\s#\"'<\]]|$))", description or ""))
+
+
 def mediate_description_matches(
     description: str, repository: str, pr_number: str
 ) -> bool:
@@ -178,8 +184,7 @@ def mediate_description_matches(
     body = description or ""
     if mediate_issue_marker(repository, pr_number) in body:
         return True
-    url = pr_html_url(repository, pr_number)
-    if not re.search(rf"{re.escape(url)}(?:\s|$|#)", body):
+    if not description_has_pr_url(body, repository, pr_number):
         return False
     return (
         mediate_issue_marker_legacy(pr_number) in body
