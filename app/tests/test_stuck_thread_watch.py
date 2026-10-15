@@ -410,8 +410,16 @@ def test_run_posts_one_codex_comment_and_files_linear():
     assert len(linear.created) == 1
     assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#9"
     assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#9 -->" in linear.created[0]["description"]
+    assert (
+        "<!-- codex-gate-mediate:CSL-Laboratories/ai-investment-cockpit:9 -->"
+        in linear.created[0]["description"]
+    )
+    assert "<!-- /codex-gate-mediate -->" in linear.created[0]["description"]
     assert "<!-- stuck-pr-threads-begin -->" in linear.created[0]["description"]
     assert "<!-- stuck-pr-threads-end -->" in linear.created[0]["description"]
+    assert linear.created[0]["description"].index("<!-- stuck-pr-threads-end -->") < linear.created[0][
+        "description"
+    ].index("<!-- /codex-gate-mediate -->")
     assert "<!-- codex-mediation:PRRT_kwDOabc -->" not in linear.created[0]["description"]
     assert "do not file a new Linear issue per thread" in body
     assert linear.created[0]["stateId"] == "triage-1"
@@ -933,6 +941,10 @@ def test_two_stuck_threads_one_linear_issue():
     assert len(linear.created) == 1
     assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#11"
     assert "Stuck threads:** 2" in linear.created[0]["description"]
+    assert (
+        "<!-- codex-gate-mediate:CSL-Laboratories/ai-investment-cockpit:11 -->"
+        in linear.created[0]["description"]
+    )
     assert any("linear=https://linear.app/i/CSL-99" in line for line in logs)
 
 
@@ -961,6 +973,7 @@ def test_workflow_structure():
     assert "STUCK_HOURS:" in text.split("jobs:")[0]
     assert "python3 .github/scripts/stuck_thread_watch.py" in text
     assert "Stuck PR threads: <repo>#<PR>" in text
+    assert "codex-gate-mediate:owner/repo:N" in text
     assert "Skip already-approved PRs" in text
     assert "contents: write" not in text
     assert "pull-requests: write" not in text

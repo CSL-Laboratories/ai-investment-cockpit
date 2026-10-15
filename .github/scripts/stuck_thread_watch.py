@@ -240,6 +240,22 @@ def description_has_gate_marker(desc: str, repo: str, number: int) -> bool:
     return gate_marker_needle(repo, number) in (desc or "")
 
 
+def gate_html_marker(repo: str, number: int) -> str:
+    return f"<!-- {gate_marker_needle(repo, number)} -->"
+
+
+def empty_gate_fence(repo: str, number: int) -> str:
+    return f"{gate_html_marker(repo, number)}\n<!-- /codex-gate-mediate -->\n"
+
+
+def with_shared_gate_key(body: str, repo: str, number: int) -> str:
+    """Append #131's marker so MEDIATE can find a watcher-created roll-up."""
+    text = body or ""
+    if gate_html_marker(repo, number) in text:
+        return text if text.endswith("\n") else text + "\n"
+    return text.rstrip() + "\n\n" + empty_gate_fence(repo, number)
+
+
 def issue_is_active(node: dict[str, Any]) -> bool:
     state = node.get("state") if isinstance(node.get("state"), dict) else {}
     return str(state.get("type") or "").lower() not in {"completed", "canceled"}
@@ -664,6 +680,14 @@ def merge_linear_description(generated: str, existing: str | None) -> str:
     return generated
 
 
+def linear_managed_unchanged(existing: dict[str, Any] | None, generated: str) -> bool:
+    if not existing:
+        return False
+    new_block = managed_section(generated)
+    old_block = managed_section(str(existing.get("description") or ""))
+    return bool(new_block) and new_block == old_block
+
+
 class GitHub:
     """Thin `gh` wrapper. Writes use an explicit token; reads use GH_TOKEN."""
 
@@ -921,10 +945,13 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
-        new_block = managed_section(generated)
-        if new_block and new_block == managed_section(existing_desc):
+        if linear_managed_unchanged(existing, generated):
             return "unchanged"
-        description = merge_linear_description(generated, existing_desc)
+        description = with_shared_gate_key(
+            merge_linear_description(generated, existing_desc),
+            cfg.repository,
+            number,
+        )
         updated = linear.graphql(
             LINEAR_UPDATE,
             {"id": existing["id"], "input": {"title": title, "description": description}},
@@ -938,7 +965,7 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     payload: dict[str, Any] = {
         "teamId": ids["teamId"],
         "title": title,
-        "description": generated,
+        "description": with_shared_gate_key(generated, cfg.repository, number),
         "labelIds": ids["labelIds"],
     }
     if ids.get("stateId"):
@@ -1045,11 +1072,16 @@ def mediate_pr(
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
-            try:
-                url = upsert_linear_issue(linear, stuck, cfg)
-                logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
-            except Exception:
-                logs.append(f"stuck-thread-watch: pr={number} linear=error")
+            generated = build_linear_description(stuck, cfg)
+            existing = linear_find_existing(linear, cfg, number)
+            if linear_managed_unchanged(existing, generated):
+                logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
+            else:
+                try:
+                    url = upsert_linear_issue(linear, stuck, cfg)
+                    logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
+                except Exception:
+                    logs.append(f"stuck-thread-watch: pr={number} linear=error")
     labelled = False
     for item in to_mediate:
         if cfg.apply_pr_label and not labelled:
