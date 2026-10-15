@@ -113,7 +113,8 @@ def test_scale_is_refused_on_actions(monkeypatch):
         ])
 
 
-def test_same_tree_comparison_exits_clean(tmp_path):
+def test_same_tree_comparison_exits_clean(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     report_path = tmp_path / "report.json"
     code = main([
         "--baseline-root", str(REPO),

@@ -267,6 +267,16 @@ def render_comment(report: Report) -> str:
 
 
 def render_clear(report: Report) -> str:
+    unclear = [case.name for case in report.cases if case.status in ("inconclusive", "missing")]
+    if unclear:
+        names = ", ".join(f"`{name}`" for name in unclear)
+        return (
+            f"{COMMENT_MARKER}\n"
+            "## Performance check inconclusive\n\n"
+            f"No regression was confirmed, but {names} could not be cleared "
+            "(wide sample spread or missing case). This is not an all-clear.\n\n"
+            f"{render_summary(report)}"
+        )
     return (
         f"{COMMENT_MARKER}\n"
         "## Performance check cleared\n\n"
