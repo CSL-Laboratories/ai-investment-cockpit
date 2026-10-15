@@ -118,6 +118,7 @@ provisioned.
 
 Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
 It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
+Direction or architecture still needs Parallel deep research (Task API) — see Linear-first.
 
 ## Engineering stack (Oct 2026)
 
@@ -150,6 +151,7 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 - **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- **Before proposing or deciding direction or architecture** on an issue, run Parallel **deep research** (the Task API, not Search/Extract) or link an existing Linear comment titled `Deep research brief`, and cite that brief on the issue.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
