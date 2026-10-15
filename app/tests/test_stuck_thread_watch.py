@@ -710,6 +710,77 @@ def _rollup_item(**overrides) -> object:
     return mod.StuckThread(**values)
 
 
+def test_gate_marker_rejects_longer_pr_number():
+    repo = cfg().repository
+    desc_123 = f"<!-- codex-gate-mediate:{repo}:123 -->\nno pull url\n"
+    assert not mod.description_has_gate_marker(desc_123, repo, 12)
+    assert not mod.issue_is_for_pr(
+        {"title": "other", "description": desc_123},
+        repo,
+        12,
+    )
+    assert mod.description_has_gate_marker(f"<!-- codex-gate-mediate:{repo}:12 -->", repo, 12)
+
+
+def test_failed_post_does_not_consume_cap():
+    class FailFirst(FakeGitHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_left = 1
+
+        def rest(self, path: str, method: str = "GET", body: dict | None = None, token: str | None = None):
+            if method == "POST" and path.endswith("/comments") and self.fail_left:
+                self.fail_left -= 1
+                raise RuntimeError("post failed")
+            return super().rest(path, method, body, token)
+
+    gh = FailFirst()
+    first = thread(
+        thread_id="PRRT_kwDOone",
+        comments=[
+            comment(DEVIN, "first finding"),
+            comment("claude[bot]", "needs a human"),
+        ],
+    )
+    second = thread(
+        thread_id="PRRT_kwDOtwo",
+        comments=[
+            comment(DEVIN, "second finding"),
+            comment("claude[bot]", "couldn't fix this"),
+        ],
+    )
+    pr = {
+        "number": 11,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://ex/11",
+        "title": "t",
+        "reviewThreads": {"nodes": [first, second]},
+    }
+    logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=1, file_linear=False), gh, FakeLinear(), NOW)
+    assert any("mediate=error" in line for line in logs)
+    assert any("mediate=posted" in line and "PRRT_kwDOtwo" in line for line in logs)
+    assert not any("over-cap" in line for line in logs)
+    assert len(gh.posts) == 1
+
+
+def test_linear_restores_renamed_title():
+    item = _rollup_item()
+    generated = mod.build_linear_description([item], cfg())
+    existing = {
+        "id": "x",
+        "url": "https://linear.app/i/CSL-77",
+        "identifier": "CSL-77",
+        "title": "Decision for Lucas",
+        "description": generated,
+    }
+    linear = FakeLinear(existing=existing)
+    url = mod.upsert_linear_issue(linear, [item], cfg())
+    assert url == "https://linear.app/i/CSL-77"
+    assert linear.created == []
+    assert linear.updated[0]["title"] == "Stuck PR threads: ai-investment-cockpit#12"
+
+
 def test_linear_skips_unchanged_generated_block():
     item = _rollup_item()
     generated = mod.build_linear_description([item], cfg())

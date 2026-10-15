@@ -237,7 +237,8 @@ def gate_marker_needle(repo: str, number: int) -> str:
 
 
 def description_has_gate_marker(desc: str, repo: str, number: int) -> bool:
-    return gate_marker_needle(repo, number) in (desc or "")
+    needle = rf"{re.escape(gate_marker_needle(repo, number))}(?![0-9])"
+    return re.search(needle, desc or "") is not None
 
 
 def gate_html_marker(repo: str, number: int) -> str:
@@ -688,6 +689,14 @@ def linear_managed_unchanged(existing: dict[str, Any] | None, generated: str) ->
     return bool(new_block) and new_block == old_block
 
 
+def rollup_is_current(existing: dict[str, Any] | None, generated: str, repo: str, number: int) -> bool:
+    if not existing or not linear_managed_unchanged(existing, generated):
+        return False
+    if str(existing.get("title") or "") != pr_rollup_title(repo, number):
+        return False
+    return pr_marker(repo, number) in str(existing.get("description") or "")
+
+
 class GitHub:
     """Thin `gh` wrapper. Writes use an explicit token; reads use GH_TOKEN."""
 
@@ -945,7 +954,7 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
-        if linear_managed_unchanged(existing, generated):
+        if rollup_is_current(existing, generated, cfg.repository, number):
             return "unchanged"
         description = with_shared_gate_key(
             merge_linear_description(generated, existing_desc),
@@ -1057,24 +1066,21 @@ def mediate_pr(
     stuck, audit = select_stuck(pr, comments, cfg, now)
     logs.extend(f"stuck-thread-watch: {line}" for line in audit)
     posted_today = mediation_count_since(comments, now - timedelta(hours=24))
-    to_mediate: list[StuckThread] = []
+    eligible: list[StuckThread] = []
     for item in stuck:
         if item.already_mediated:
-            continue
-        if posted_today + len(to_mediate) >= cfg.max_per_pr_per_day:
-            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
             continue
         if not cfg.codex_pat:
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
             continue
-        to_mediate.append(item)
+        eligible.append(item)
     if stuck and cfg.file_linear:
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
             generated = build_linear_description(stuck, cfg)
             existing = linear_find_existing(linear, cfg, number)
-            if linear_managed_unchanged(existing, generated):
+            if rollup_is_current(existing, generated, cfg.repository, number):
                 logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
             else:
                 try:
@@ -1083,7 +1089,10 @@ def mediate_pr(
                 except Exception:
                     logs.append(f"stuck-thread-watch: pr={number} linear=error")
     labelled = False
-    for item in to_mediate:
+    for item in eligible:
+        if posted_today >= cfg.max_per_pr_per_day:
+            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
+            continue
         if cfg.apply_pr_label and not labelled:
             try:
                 apply_pr_label(gh, cfg, number)
@@ -1093,6 +1102,7 @@ def mediate_pr(
                 logs.append(f"stuck-thread-watch: pr={number} label=error")
         try:
             post_mediation(gh, item, cfg)
+            posted_today += 1
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=posted")
         except Exception:
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=error")
