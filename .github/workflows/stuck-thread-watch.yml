@@ -1,6 +1,8 @@
 # In-repo stuck-thread watch + Codex mediator.
 # Own file on purpose: a cron inside claude.yml never fired because of event noise.
 # Lightweight API script only — GitHub-hosted ubuntu-latest, no Blacksmith, no tests.
+# Linear: one roll-up issue per PR (`Stuck PR threads: <repo>#<PR>`), updated in place.
+# Skip already-approved PRs. Never one Linear issue per thread.
 name: Stuck thread watch
 
 on:

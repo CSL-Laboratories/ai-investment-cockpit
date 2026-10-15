@@ -120,11 +120,24 @@ class FakeLinear(mod.Linear):
         super().__init__("lin", post=self._post)
         self.existing = existing
         self.created: list[dict] = []
+        self.updated: list[dict] = []
 
     def _post(self, query: str, variables: dict) -> dict:
         if "issueCreate" in query:
             self.created.append(variables["input"])
             return {"issueCreate": {"success": True, "issue": {"url": "https://linear.app/i/CSL-99"}}}
+        if "issueUpdate" in query:
+            self.updated.append({"id": variables["id"], **(variables.get("input") or {})})
+            return {
+                "issueUpdate": {
+                    "success": True,
+                    "issue": {
+                        "id": variables["id"],
+                        "url": (self.existing or {}).get("url") or "https://linear.app/i/CSL-77",
+                        "identifier": (self.existing or {}).get("identifier") or "CSL-77",
+                    },
+                }
+            }
         if "issues(" in query:
             nodes = [self.existing] if self.existing else []
             return {"issues": {"nodes": nodes}}
@@ -149,6 +162,12 @@ class FakeLinear(mod.Linear):
 def test_marker_round_trip():
     assert mod.marker("PRRT_kwDOabc") == "<!-- codex-mediation:PRRT_kwDOabc -->"
     assert "PRRT_kwDOabc" in mod.markers_in("hello <!-- codex-mediation:PRRT_kwDOabc -->")
+    assert mod.pr_marker("CSL-Laboratories/ai-investment-cockpit", 9) == (
+        "<!-- stuck-pr-threads:ai-investment-cockpit#9 -->"
+    )
+    assert mod.pr_rollup_title("CSL-Laboratories/ai-investment-cockpit", 9) == (
+        "Stuck PR threads: ai-investment-cockpit#9"
+    )
 
 
 def test_marker_rejects_unsafe_id():
@@ -307,7 +326,8 @@ def test_select_skips_already_mediated():
     }
     comments = [{"body": "<!-- codex-mediation:PRRT_kwDOabc -->", "created_at": "2026-10-15T00:00:00Z"}]
     chosen, audit = mod.select_stuck(pr, comments, cfg(), NOW)
-    assert chosen == []
+    assert len(chosen) == 1
+    assert chosen[0].already_mediated is True
     assert any("already-mediated" in line for line in audit)
 
 
@@ -337,13 +357,14 @@ def test_daily_cap_and_missing_pat(tmp_path):
     logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=3), gh, linear, NOW)
     assert any("over-cap" in line for line in logs)
     assert gh.posts == []
-    assert linear.created == []
+    assert len(linear.created) == 1
+    assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#4"
 
     linear = FakeLinear()
     logs = mod.mediate_pr(pr, cfg(codex_pat="", max_per_pr_per_day=99), gh, linear, NOW)
     assert any("skipped-no-secret" in line for line in logs)
     assert gh.posts == []
-    assert linear.created == []
+    assert len(linear.created) == 1
 
 
 def test_run_posts_one_codex_comment_and_files_linear():
@@ -375,7 +396,10 @@ def test_run_posts_one_codex_comment_and_files_linear():
     assert "UNTRUSTED DATA" in body
     assert "do **not** push" in body.lower() or "Do **not** push" in body
     assert len(linear.created) == 1
-    assert "<!-- codex-mediation:PRRT_kwDOabc -->" in linear.created[0]["description"]
+    assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#9"
+    assert "<!-- stuck-pr-threads:ai-investment-cockpit#9 -->" in linear.created[0]["description"]
+    assert "<!-- codex-mediation:PRRT_kwDOabc -->" not in linear.created[0]["description"]
+    assert "do not file a new Linear issue per thread" in body
     assert linear.created[0]["stateId"] == "triage-1"
 
 
@@ -400,12 +424,16 @@ def test_linear_dedupe_skips_create():
         "id": "x",
         "identifier": "CSL-77",
         "url": "https://linear.app/i/CSL-77",
-        "description": "<!-- codex-mediation:PRRT_kwDOabc -->",
+        "title": "Stuck PR threads: ai-investment-cockpit#2",
+        "description": "<!-- stuck-pr-threads:ai-investment-cockpit#2 -->",
     }
     linear = FakeLinear(existing=existing)
     logs = mod.mediate_pr(pr, cfg(codex_pat="pat"), gh, linear, NOW)
     assert linear.created == []
-    assert any("linear=https://linear.app/i/CSL-77" in line or "linear=existing" in line for line in logs)
+    assert len(linear.updated) == 1
+    assert linear.updated[0]["title"] == "Stuck PR threads: ai-investment-cockpit#2"
+    assert "<!-- stuck-pr-threads:ai-investment-cockpit#2 -->" in linear.updated[0]["description"]
+    assert any("linear=https://linear.app/i/CSL-77" in line or "linear=updated" in line for line in logs)
 
 
 def test_linear_resolve_ids_requires_needs_decision_and_project():
@@ -509,6 +537,64 @@ def test_load_config_reads_env():
     assert loaded.codex_pat == ""
 
 
+def test_skips_approved_prs():
+    gh = FakeGitHub()
+    stuck = thread(
+        comments=[
+            comment(DEVIN, "finding"),
+            comment("claude[bot]", "needs a human"),
+        ]
+    )
+    pr = {
+        "number": 124,
+        "isDraft": False,
+        "state": "OPEN",
+        "reviewDecision": "APPROVED",
+        "url": "https://ex/124",
+        "title": "t",
+        "reviewThreads": {"nodes": [stuck]},
+    }
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(), gh, linear, NOW)
+    assert any("skip=approved" in line for line in logs)
+    assert gh.posts == []
+    assert linear.created == []
+    assert linear.updated == []
+
+
+def test_two_stuck_threads_one_linear_issue():
+    gh = FakeGitHub()
+    first = thread(
+        thread_id="PRRT_kwDOone",
+        comments=[
+            comment(DEVIN, "first finding"),
+            comment("claude[bot]", "needs a human"),
+        ],
+    )
+    second = thread(
+        thread_id="PRRT_kwDOtwo",
+        comments=[
+            comment(DEVIN, "second finding"),
+            comment("claude[bot]", "couldn't fix this"),
+        ],
+    )
+    pr = {
+        "number": 11,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://ex/11",
+        "title": "t",
+        "reviewThreads": {"nodes": [first, second]},
+    }
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(), gh, linear, NOW)
+    assert len(gh.posts) == 2
+    assert len(linear.created) == 1
+    assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#11"
+    assert "Stuck threads:** 2" in linear.created[0]["description"]
+    assert any("linear=https://linear.app/i/CSL-99" in line for line in logs)
+
+
 def test_script_never_resolves_or_pushes():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "never resolves" in text.lower()
@@ -533,5 +619,7 @@ def test_workflow_structure():
     assert "LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}" in text
     assert "STUCK_HOURS:" in text.split("jobs:")[0]
     assert "python3 .github/scripts/stuck_thread_watch.py" in text
+    assert "Stuck PR threads: <repo>#<PR>" in text
+    assert "Skip already-approved PRs" in text
     assert "contents: write" not in text
     assert "pull-requests: write" not in text
