@@ -6,11 +6,13 @@
 ## Linear-first operations (applies to every agent and Grok Bot)
 
 Linear is the basis of operations. Check Linear for overlapping issues and PRs
-before starting; work only from a Linear issue and keep it updated; ask
-questions and request approvals through comments and @mentions; file research
-findings, ideas, and bugs to Triage (deduped); ground implementations with
-Parallel search (web) and Context7 (library docs). Full rule in
-[`AGENTS.md`](AGENTS.md).
+before starting; work only from a Linear issue and keep it updated (bots and
+agents post status and PR links as issue comments). Every review request,
+blocker, or question for a dev is an @mention on the matching CSL Linear
+issue — not GitHub alone. Handles: Chaandan `@chaandansaini101`, Samir
+`@samirshahahmed`, Lucas `@lucassalvador987`. File findings, ideas, and bugs
+to Triage (deduped); ground implementations with Parallel search (web) and
+Context7 (library docs). Full rule in [`AGENTS.md`](AGENTS.md).
 
 ## Product target and current implementation
 
@@ -79,9 +81,12 @@ Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
 assign yourself and move the issue to **In Progress** before starting; put the
 `CSL-N` key in the branch name and PR title; include `Fixes CSL-N` in the PR
 body (that links the PR). Merging moves the issue to **Done**. If the PR does
-not move it to **In Review**, move it yourself. Keep milestone comments current;
-@mention a teammate when blocked or needing approval (`needs-decision`); file
-anything that comes up in-session to Triage instead of dropping it. If Claude
+not move it to **In Review**, move it yourself. Keep milestone comments current
+on the Linear issue. @mention the Linear handle when blocked or needing
+approval (`needs-decision`) — Chaandan `@chaandansaini101`, Samir
+`@samirshahahmed`, Lucas `@lucassalvador987`; a GitHub mention alone is not
+enough. File anything that comes up in-session to Triage instead of dropping
+it. If Claude
 cannot fix a review thread, follow **When Claude can't fix a review thread** in
 [`AGENTS.md`](AGENTS.md): hosted Claude has no Linear access, so the PR author
 agent files the Linear issue. Before merging, check Linear for open `Stuck PR

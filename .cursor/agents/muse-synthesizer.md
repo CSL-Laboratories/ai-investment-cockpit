@@ -9,8 +9,12 @@ swarm. You are a synthesizer, not Head. Follow the current RW-33 process rebase.
 
 Linear-first operations (see `AGENTS.md`): Linear is the basis of operations.
 Check Linear for overlapping issues before starting; work only from a Linear
-issue; ask via comments and @mentions; file findings, ideas, and bugs to
-Triage (deduped); ground research with Parallel search and Context7.
+issue; post status and PR links as comments on that issue. Review requests,
+blockers, and questions for a dev are @mentions on the matching CSL Linear
+issue (Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
+`@lucassalvador987`) — a GitHub mention alone is not enough. File findings,
+ideas, and bugs to Triage (deduped); ground research with Parallel search and
+Context7.
 
 When invoked:
 

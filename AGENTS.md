@@ -8,8 +8,12 @@ Linear is the basis of operations.
 
 - Before starting work, check Linear for overlapping issues and PRs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
-  and PR links.
-- Ask questions and request approvals through issue comments and @mentions.
+  and PR links. Bots and agents post their own status updates and PR links as
+  comments on that issue.
+- Every review request, blocker, or question for a dev must be an @mention
+  comment on the matching CSL Linear issue so the Linear bot notifies them. A
+  GitHub mention alone is not enough. Linear handles: Chaandan
+  `@chaandansaini101`, Samir `@samirshahahmed`, Lucas `@lucassalvador987`.
 - Autonomously file research findings, ideas, and bugs to Triage, deduped.
 - Ground every implementation in the best available research: Parallel search
   for web research and Context7 for current library docs.
@@ -179,9 +183,9 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
   Use `needs-decision` when a human direction call is required. File follow-ups
   to **Triage** with one Type label, the repo label `ai-investment-cockpit`,
   the project, and a link back to the parent issue or PR — not drive-by changes.
-- **Owners** are looked up dynamically. Never hardcode founders as owners.
-  Check the current assignee or project lead in Linear. Assign new issues to
-  the parent issue's owner, or leave them in Triage unassigned when unclear.
+- **Mentions** use the Linear handles in **Linear-first operations**, not
+  GitHub. Assign new issues to the parent issue's owner, or leave them in
+  Triage unassigned when unclear.
 - The author addresses CI comments on their own PR, then resolves the threads.
   Devin findings and `@claude` mentions are handled by the Claude Code Action
   (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers;
@@ -196,10 +200,12 @@ Linear is the team's primary async channel, alongside Google Meet and Discord.
 
 - Any agent or Grok Bot working on an issue keeps it current in Linear as work
   progresses: status, a short progress comment at meaningful milestones
-  (started, blocked, PR opened, done), and the PR link.
-- When blocked or needing help or approval, comment on the Linear issue and
-  @mention the relevant teammate. Look owners up dynamically; never hardcode
-  them. Add the `needs-decision` label for approvals.
+  (started, blocked, PR opened, done), and the PR link, posted as a comment on
+  the issue.
+- Every review request, blocker, or question for a dev is an @mention comment
+  on the matching CSL Linear issue (Chaandan `@chaandansaini101`, Samir
+  `@samirshahahmed`, Lucas `@lucassalvador987`). A GitHub mention alone is not
+  enough. Add the `needs-decision` label for approvals.
 - Anything that comes up during a dev session gets filed as a new Linear issue
   in **Triage** instead of being dropped: ideas discussed, bugs or oddities
   found in development, and areas to develop or test further. Link it to the
@@ -225,11 +231,12 @@ Hosted split (PR #102):
 
 Devin reviews only and never fixes, so a thread is never handed back to Devin.
 Hosted Claude has no Linear access. If Claude cannot fix a thread, Claude
-leaves it open, replies with why, and @mentions the PR author. The PR author
-agent then files a Linear issue titled `Stuck PR thread: repo#PR – topic`,
-labeled `needs-decision`, linked to the PR and to the PR's CSL issue, with the
-PR link and the open question. Developers resolve it from Linear like any
-other issue.
+leaves it open, replies with why, and @mentions the PR author on GitHub. The
+PR author agent then files a Linear issue titled `Stuck PR thread: repo#PR –
+topic`, labeled `needs-decision`, linked to the PR and to the PR's CSL issue,
+with the PR link and the open question, and @mentions the relevant Linear
+handle on that issue (a GitHub mention alone is not enough). Developers
+resolve it from Linear like any other issue.
 
 Before merging any PR, check Linear for open `Stuck PR thread` issues tied to
 it, and resolve them or record the decision first.
