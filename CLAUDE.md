@@ -16,7 +16,7 @@ Context7 (library docs). **Wait for jobs before reviewing:** no approve or
 request-changes until Devin Review, Claude fixer jobs (`devin-review-fix`,
 `resolve-pr`), and required CI have finished on the current head; stale-head
 reviews do not count; re-review after new pushes. Post review requests and
-status as Linear @mentions; a watcher posts when the PR is ready. Full rule in
+status as Linear @mentions; check job status on the PR directly. Full rule in
 [`AGENTS.md`](AGENTS.md).
 
 ## Product target and current implementation
@@ -73,7 +73,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
   qualification and admitted budgets. Devin reviews PRs (reviews only, never
-  fixes); Claude fixes. Muse synthesis requires
+  fixes); Claude fixes. Research/dev swarm jobs stay retired
+  (`spawn_devin_leaf.py` frozen, RW-33). Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
@@ -83,23 +84,24 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 
 Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
 (Linear-first workflow and **Linear is how we communicate**). Short form:
-assign yourself and move the issue to **In Progress** before starting; put the
-`CSL-N` key in the branch name and PR title; include `Fixes CSL-N` in the PR
-body (that links the PR). Merging moves the issue to **Done**. If the PR does
-not move it to **In Review**, move it yourself. Keep milestone comments current
-on the Linear issue. @mention the Linear handle when blocked or needing
-approval (`needs-decision`) — Chaandan `@chaandansaini101`, Samir
-`@samirshahahmed`, Lucas `@lucassalvador987`; a GitHub mention alone is not
-enough. File anything that comes up in-session to Triage instead of dropping
-it. If Claude
-cannot fix a review thread, follow **When Claude can't fix a review thread** in
-[`AGENTS.md`](AGENTS.md): hosted Claude has no Linear access, so the PR author
-agent files the Linear issue. Before merging, check Linear for open `Stuck PR
-thread` issues tied to the PR.
+assign yourself and move the issue to **In Progress** before starting; branch
+from Linear's copied name or `csl-<n>-slug`; put `CSL-N` in the PR title;
+replace the `Fixes CSL-___` placeholder with the real key (`Fixes CSL-N` is
+Linear's magic word). Merging moves the issue to **Done**. If the PR does not
+move it to **In Review**, move it yourself. Agents working a CSL issue keep
+milestone comments current on that issue. @mention the Linear handle when
+blocked or needing approval (`needs-decision`) — Chaandan `@chaandansaini101`,
+Samir `@samirshahahmed`, Lucas `@lucassalvador987`; a GitHub mention alone is
+not enough. File anything that comes up in-session to Triage instead of
+dropping it. Stuck threads: see the **Review loop** (CSL-86 / PR #124) — one
+roll-up Linear issue per PR (`Stuck PR threads: <repo>#N`), human PR author as
+fallback. Before merging, that roll-up must be handled and the PR must have
+no unresolved GitHub review threads.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
-   `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for the
+   ID/status board (the claim is the Linear assignment).
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
@@ -109,7 +111,7 @@ thread` issues tied to the PR.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements).
 6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
-   title. Message convention: `CSL-N: …`.
+   title. Message convention: `CSL-N: fix(RW-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.

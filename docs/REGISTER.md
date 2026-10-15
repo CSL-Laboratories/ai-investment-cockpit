@@ -76,10 +76,10 @@ a draft PR after validation; merge remains an operator action.
 documents that disagreed with each other, and the `BUG-03x` series lived only in commit
 messages and no register at all — which is precisely why that work got duplicated.
 
-**Detail lives in the owning doc; the claim lives here.** `SEC-*` findings are written up in
+**Detail lives in the owning doc; the claim is the Linear assignment.** `SEC-*` findings are written up in
 [[security-hardening-backlog]]. `WP-*` contracts are in [[build-scaffold-ultracode]] (cited by
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
-and the claim board, not the specification.
+and records work ID, branch, and status, not the specification.
 
 ## RW-31 slice A screen intake and cohort/label plan — claimed 2026-09-12
 

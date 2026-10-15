@@ -184,17 +184,21 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
   and branch in `docs/REGISTER.md`; the register is the ID/status board, Linear
   assignment is the claim.
 - **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
-  is `CSL-N: ...`. Put `Fixes CSL-N` in the PR body so GitHub links the issue.
-  One issue per PR; keep PRs small and stackable.
+  carries `CSL-N: ...`. Put `Fixes CSL-N` in the PR body — that is Linear's
+  magic word. Replace the `Fixes CSL-___` placeholder with the real key; a
+  branch name alone can link the PR but does not move the issue to Done. One
+  issue per PR; keep PRs small and stackable.
 - **Statuses:** when you start, assign yourself and move the issue to
-  **In Progress**. `Fixes CSL-N` links the PR. Merging moves the issue to
-  **Done** automatically. If the PR does not move the issue to **In Review**,
-  move it yourself. Keep comments current at other milestones — see
+  **In Progress**. `Fixes CSL-N` (real key) is what Linear uses to close on
+  merge. If the PR does not move the issue to **In Review**, move it yourself.
+  Agents working a CSL issue keep comments current at other milestones — see
   **Linear is how we communicate**.
-- **Routing labels** (single-select): `for-devin`, `for-claude`, `for-cursor`.
-  Use `needs-decision` when a human direction call is required. File follow-ups
-  to **Triage** with one Type label, the repo label `ai-investment-cockpit`,
-  the project, and a link back to the parent issue or PR — not drive-by changes.
+- **Routing labels** `for-devin`, `for-claude`, and `for-cursor` are the
+  single-select route group. `needs-decision` is a separate label. Humans
+  apply `for-devin` (agents must not trigger Devin automations). File
+  follow-ups to **Triage** with one Type label, the repo label
+  `ai-investment-cockpit`, the project, and a link back to the parent issue
+  or PR — not drive-by changes.
 - **Mentions** use the Linear handles in **Linear-first operations**, not
   GitHub. Look up the parent issue's current assignee or project lead in Linear
   and @mention them; the named handles are notification routes, not proof of
@@ -212,10 +216,10 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
 
 Linear is the team's primary async channel, alongside Google Meet and Discord.
 
-- Any agent or Grok Bot working on an issue keeps it current in Linear as work
-  progresses: status, a short progress comment at meaningful milestones
-  (started, blocked, PR opened, done), and the PR link, posted as a comment on
-  the issue.
+- Agents working a CSL issue keep it current in Linear as work progresses:
+  status, a short progress comment at meaningful milestones (started, blocked,
+  PR opened, done), and the PR link, posted as a comment on that issue.
+  Operator soak runs are not told to post Linear milestone comments.
 - Every review request, blocker, or question for a dev is an @mention comment
   on the matching CSL Linear issue (Chaandan `@chaandansaini101`, Samir
   `@samirshahahmed`, Lucas `@lucassalvador987`). A GitHub mention alone is not
@@ -244,16 +248,17 @@ Hosted split (PR #102):
 ## When Claude can't fix a review thread
 
 Devin reviews only and never fixes, so a thread is never handed back to Devin.
-Hosted Claude has no Linear access. If Claude cannot fix a thread, Claude
-leaves it open, replies with why, and @mentions the PR author on GitHub. The
-PR author agent then files a Linear issue titled `Stuck PR thread: repo#PR –
-topic`, labeled `needs-decision`, linked to the PR and to the PR's CSL issue,
-with the PR link and the open question, and @mentions the relevant Linear
-handle on that issue (a GitHub mention alone is not enough). Developers
-resolve it from Linear like any other issue.
+Stuck-thread handling is owned by the **Review loop** (CSL-86 / PR #124,
+`.github/workflows/stuck-thread-watch.yml`). Hosted Claude has no Linear
+access: it leaves the thread open, replies with why, and @mentions the PR
+author on GitHub. The watcher files **exactly one** roll-up Linear issue per
+PR titled `Stuck PR threads: <repo>#N` (`needs-decision`, linked to the PR's
+CSL issue), not one issue per thread. The human PR author is the fallback
+filer. Developers resolve it from Linear like any other issue.
 
-Before merging any PR, check Linear for open `Stuck PR thread` issues tied to
-it, and resolve them or record the decision first.
+Before merging any PR, check Linear for that roll-up issue **and** that the PR
+has no unresolved GitHub review threads; resolve them or record the decision
+first.
 
 ## Automations
 

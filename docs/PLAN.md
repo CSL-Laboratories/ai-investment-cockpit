@@ -97,7 +97,8 @@ authority implementation changes. It also calls for account/settlement applicabi
 review of current risk assumptions. The DEC-09 matrix and pre-live gates remain.
 
 **Current precedence:** PRODUCT owns product scope/acceptance; this PLAN owns delivery
-order and adopts the linked delivery slices; REGISTER owns claims. The older MVP
+order and adopts the linked delivery slices; the claim is the Linear assignment
+(REGISTER records work ID, branch, and status). The older MVP
 definition, single-strategy scope and serial delivery order below are superseded where
 they conflict with this section and PRODUCT. Their applicable subsystem/evidence gates
 remain under the explicit dispositions in the delivery plan. Existing runtime invariants
@@ -1479,8 +1480,9 @@ blocks promotion and returns the system to the appropriate lower/watch-only post
 Every production package follows this loop:
 
 1. **Claim:** assign yourself on the Linear `CSL-N` issue and move it to In Progress.
-   Then record the work ID and branch on exactly one [[REGISTER]] row (`claimed`), name
-   the branch `work/<id>-<slug>`, and answer the seven intake questions in §5 before
+   Then record the work ID and branch on exactly one [[REGISTER]] row (`claimed`).
+   Name the branch from Linear's copied branch name, or `csl-<n>-slug`; the PR title
+   must still carry `CSL-N`. Answer the seven intake questions in §5 before
    editing code. Paired retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled
    together but retain separate deletion gates.
 2. **Pin the baseline:** start from latest merged `main`, record its CI-attestation state, clear

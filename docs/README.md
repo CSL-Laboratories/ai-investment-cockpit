@@ -29,8 +29,9 @@ stays closed.
 Lucas adopted [PRODUCT.md](../PRODUCT.md) and its supporting contracts under PD-048,
 completing the RW-25 grill on `work/rw25-product-grill`.
 [The planning record](product-planning.md) preserves exact answers and ratification.
-PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order and
-REGISTER owns claims. Current runtime invariants and applicable empirical gates retain
+PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order;
+the claim is the Linear assignment (REGISTER records work ID, branch, and status).
+Current runtime invariants and applicable empirical gates retain
 their authority until their separately reviewed amendments or required evidence.
 
 Read the [operating contracts](product-operating-contracts.md) for the shared workflow,
