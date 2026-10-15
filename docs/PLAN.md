@@ -1478,10 +1478,11 @@ blocks promotion and returns the system to the appropriate lower/watch-only post
 
 Every production package follows this loop:
 
-1. **Claim:** change exactly one [[REGISTER]] row to `claimed`, name the branch
-   `work/<id>-<slug>`, and answer the seven intake questions in §5 before editing code. Paired
-   retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled together but retain separate
-   deletion gates.
+1. **Claim:** assign yourself on the Linear `CSL-N` issue and move it to In Progress.
+   Then record the work ID and branch on exactly one [[REGISTER]] row (`claimed`), name
+   the branch `work/<id>-<slug>`, and answer the seven intake questions in §5 before
+   editing code. Paired retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled
+   together but retain separate deletion gates.
 2. **Pin the baseline:** start from latest merged `main`, record its CI-attestation state, clear
    ambient `COCKPIT_*`, use the short Windows temp path, run targeted tests plus Ruff, and record
    any live/paper fixture the gate will compare against. During a CI-budget pause, local green

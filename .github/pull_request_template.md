@@ -7,7 +7,7 @@ Fixes CSL-___
 <!-- Commands run, and what they proved. -->
 
 ## Checklist
-- [ ] Claimed in Linear by assigning yourself
+- [ ] Claimed in Linear by assigning yourself and moving to In Progress
 - [ ] Linear issue updated, and any follow-ups filed to Triage
 - [ ] `CSL-N` key in the branch name and PR title
 - [ ] No secrets committed (keyring only)

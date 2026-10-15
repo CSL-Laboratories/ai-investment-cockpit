@@ -150,15 +150,18 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 Agents must stay Linear-aware and proactive. Linear is the source of truth
 (team **CSL**, project **ai-investment-cockpit**).
 
-- **Claim = assign yourself** in Linear before starting. Unassign if you stop.
-  Find or create the issue via the Linear MCP first. Do not start a change
-  without a `CSL-N`. Then record the work ID and branch in `docs/REGISTER.md`;
-  the register is the ID/status board, Linear assignment is the claim.
+- **Claim = assign yourself** in Linear before starting, and move the issue to
+  **In Progress**. Unassign if you stop. Find or create the issue via the Linear
+  MCP first. Do not start a change without a `CSL-N`. Then record the work ID
+  and branch in `docs/REGISTER.md`; the register is the ID/status board, Linear
+  assignment is the claim.
 - **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
   is `CSL-N: ...`. Put `Fixes CSL-N` in the PR body so GitHub links the issue.
   One issue per PR; keep PRs small and stackable.
-- **Statuses** still move via the GitHub integration on branch/PR/merge.
-  Agents and Grok Bots also keep status current at other milestones — see
+- **Statuses:** when you start, assign yourself and move the issue to
+  **In Progress**. `Fixes CSL-N` links the PR. Merging moves the issue to
+  **Done** automatically. If the PR does not move the issue to **In Review**,
+  move it yourself. Keep comments current at other milestones — see
   **Linear is how we communicate**.
 - **Routing labels** (single-select): `for-devin`, `for-claude`, `for-cursor`.
   Use `needs-decision` when a human direction call is required. File follow-ups

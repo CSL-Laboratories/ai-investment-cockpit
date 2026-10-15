@@ -83,7 +83,7 @@ the repair record. Missing prospective observations and independent labels remai
 |---|---|
 | **[PRODUCT](../PRODUCT.md)** | Product purpose, scope and acceptance, with its adopted operating, tax and acceptance contracts. |
 | **[[PLAN]]** | Current delivery order, package lifecycle and scope reconciliation. Its RW-25 section supersedes conflicting older MVP/strategy/order text while retaining applicable evidence gates. |
-| **[[REGISTER]]** | One ID space and status board. **Claim in Linear (assign the `CSL-N` issue), then record the ID here before writing code.** |
+| **[[REGISTER]]** | One ID space and status board. **Claim in Linear (assign the `CSL-N` issue and move it to In Progress), then record the ID here before writing code.** |
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
