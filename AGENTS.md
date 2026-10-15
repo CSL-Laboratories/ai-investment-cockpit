@@ -1,5 +1,7 @@
 # Codex operating guide — AI Investment Cockpit
 
+> **How CSL works:** start with the Linear doc [How CSL works](https://linear.app/csl-laboratories/document/how-csl-works-922e0df6026f).
+
 This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in
 `docs/security-hardening-backlog.md` are satisfied.
