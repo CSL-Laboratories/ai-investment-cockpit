@@ -11,7 +11,7 @@
 //! An error leaves every earlier op applied and raises the same exception the
 //! single-call method would.
 
-use crate::{match_tuple, order_tuple, parse_side, raise};
+use crate::{match_tuple, order_tuple, parse_side, raise, FitI64};
 use cockpit_book::{match_order, Aggressive, Book, BookError, Order, SelfTrade, TimeInForce};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -88,7 +88,7 @@ fn take_str(tup: &Bound<'_, PyTuple>, index: usize) -> PyResult<String> {
 }
 
 fn take_i64(tup: &Bound<'_, PyTuple>, index: usize) -> PyResult<i64> {
-    tup.get_item(index)?.extract()
+    Ok(tup.get_item(index)?.extract::<FitI64>()?.0)
 }
 
 fn take_opt_str(tup: &Bound<'_, PyTuple>, index: usize) -> PyResult<Option<String>> {
@@ -96,7 +96,11 @@ fn take_opt_str(tup: &Bound<'_, PyTuple>, index: usize) -> PyResult<Option<Strin
 }
 
 fn take_opt_i64(tup: &Bound<'_, PyTuple>, index: usize) -> PyResult<Option<i64>> {
-    tup.get_item(index)?.extract()
+    let item = tup.get_item(index)?;
+    if item.is_none() {
+        return Ok(None);
+    }
+    Ok(Some(item.extract::<FitI64>()?.0))
 }
 
 fn emit_order(out: Option<&Bound<'_, PyList>>, kind: &str, order: Order) -> PyResult<()> {
@@ -201,9 +205,7 @@ fn apply_match(
         let row = match_tuple(result);
         // `touched` is stripped before the public row. It is how a retained
         // order learns its qty without scanning the book.
-        out.append((
-            "m", row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7,
-        ))?;
+        out.append(("m", row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7))?;
     }
     Ok(())
 }
