@@ -14,6 +14,7 @@ mod batch;
 mod costs;
 mod ingest;
 mod signals;
+mod synthetic;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
@@ -368,5 +369,6 @@ fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     costs::register(m)?;
     ingest::register(m)?;
     signals::register(m)?;
+    synthetic::register(m)?;
     Ok(())
 }

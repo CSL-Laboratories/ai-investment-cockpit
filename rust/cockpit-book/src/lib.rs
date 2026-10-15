@@ -9,9 +9,12 @@ mod book;
 mod error;
 mod list;
 mod matching;
+mod mt;
 mod side;
+mod synthetic;
 
 pub use book::{Book, DepthLevel, Order};
 pub use error::BookError;
 pub use matching::{match_order, Aggressive, FillOut, MatchOutput, SelfTrade, TimeInForce};
 pub use side::Side;
+pub use synthetic::{synthetic_events, SynthAction, SynthError, SynthEvent, SynthParams};

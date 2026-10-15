@@ -100,6 +100,12 @@ class SyntheticFeed:
     params: SyntheticParams = field(default_factory=SyntheticParams)
 
     def __iter__(self) -> Iterator[Event]:
+        native = _rust_events(self)
+        if native is not None:
+            return iter(native)
+        return self._python_events()
+
+    def _python_events(self) -> Iterator[Event]:
         rng = random.Random(self.seed)
         p = self.params
         state = {
@@ -244,3 +250,59 @@ class SyntheticFeed:
     @staticmethod
     def _any_resting(s: dict) -> bool:
         return len(s["book"]) > 0
+
+
+def _rust_events(feed: SyntheticFeed) -> list[Event] | None:
+    """The same tape from the extension, or None when it is not installed.
+
+    A seed that does not fit in a signed 64-bit integer stays on the Python
+    generator. Any other failure from a present extension is raised: a broken
+    build must not silently change the stream.
+    """
+    try:
+        import cockpit_quant
+    except ImportError:
+        return None
+    generate = getattr(cockpit_quant, "synthetic_events", None)
+    if generate is None:
+        return None
+    params = feed.params
+    try:
+        rows = generate(
+            list(feed.symbols),
+            feed.n_events,
+            feed.seed,
+            params.initial_ticks,
+            params.tick_volatility,
+            params.depth_levels,
+            params.arrival_decay,
+            params.min_size,
+            params.max_size,
+            params.cancel_probability,
+            params.target_resting_orders,
+            params.trade_probability,
+            params.exchange_gap_ns,
+            params.feed_latency_ns,
+            params.feed_jitter_ns,
+            params.decode_latency_ns,
+            params.decode_jitter_ns,
+        )
+    except OverflowError:
+        return None
+    events: list[Event] = []
+    for action, symbol, seq, exchange_ts, recv_ts, ingest_ts, side, price, qty, order_ref in rows:
+        stamps = {
+            "symbol": symbol,
+            "seq": seq,
+            "exchange_ts": exchange_ts,
+            "recv_ts": recv_ts,
+            "ingest_ts": ingest_ts,
+        }
+        if action == "trade":
+            events.append(Trade(price_ticks=price, qty=qty, aggressor=Side(side), **stamps))
+        else:
+            events.append(BookUpdate(
+                action=BookAction(action), side=Side(side), price_ticks=price,
+                qty=qty, order_ref=order_ref, **stamps,
+            ))
+    return events

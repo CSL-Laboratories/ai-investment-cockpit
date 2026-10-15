@@ -158,6 +158,26 @@ def test_multi_symbol_generation_keeps_per_symbol_sequences():
         assert seqs == list(range(1, len(seqs) + 1))
 
 
+def test_rust_synthetic_matches_the_python_generator():
+    """The extension owns the shadow book. The events are still this generator's."""
+    cockpit = pytest.importorskip("cockpit_quant")
+    if not hasattr(cockpit, "synthetic_events"):
+        pytest.skip("synthetic_events is not installed")
+    cases = [
+        SyntheticFeed(symbols=("S",), n_events=400, seed=3),
+        SyntheticFeed(symbols=("AAA", "BBB"), n_events=300, seed=9),
+        SyntheticFeed(
+            symbols=("S",), n_events=200, seed=4,
+            params=SyntheticParams(
+                cancel_probability=0.8, trade_probability=0.2,
+                tick_volatility=1.2, depth_levels=3, target_resting_orders=12,
+            ),
+        ),
+    ]
+    for feed in cases:
+        assert list(feed) == list(feed._python_events())
+
+
 def test_a_quiet_generator_still_stabilises_depth():
     feed = SyntheticFeed(symbols=("S",), n_events=4_000, seed=8,
                          params=SyntheticParams(target_resting_orders=15))
