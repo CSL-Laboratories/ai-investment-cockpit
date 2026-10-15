@@ -20,11 +20,13 @@ MARKER_PREFIX = "codex-mediation:"
 MARKER_RE = re.compile(r"<!--\s*codex-mediation:([A-Za-z0-9_=-]{1,128})\s*-->")
 PR_MARKER_PREFIX = "stuck-pr-threads:"
 PR_MARKER_RE = re.compile(
-    r"<!--\s*stuck-pr-threads:([A-Za-z0-9._-]{1,80}#[1-9][0-9]{0,8})\s*-->"
+    r"<!--\s*stuck-pr-threads:([A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}#[1-9][0-9]{0,8})\s*-->"
 )
+MANAGED_BEGIN = "<!-- stuck-pr-threads-begin -->"
+MANAGED_END = "<!-- stuck-pr-threads-end -->"
 SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{1,128}$")
 SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
-SAFE_REPO_SHORT_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}$")
 NEEDS_HUMAN_RE = re.compile(
     r"(needs?\s+a\s+human|needs-decision|could(?:\s*not|n't)\s+fix|"
     r"cannot\s+fix|can'?t\s+fix|unable\s+to\s+fix|"
@@ -210,13 +212,36 @@ def pr_rollup_title(repo: str, number: int) -> str:
     return f"Stuck PR threads: {repo_short(repo)}#{number}"[:120]
 
 
-def pr_marker(repo: str, number: int) -> str:
-    short = repo_short(repo)
+def pr_key(repo: str, number: int) -> str:
     if not SAFE_PR_RE.fullmatch(str(number)):
         raise ValueError("unsafe pr number")
-    if not SAFE_REPO_SHORT_RE.fullmatch(short):
+    if not SAFE_REPO_RE.fullmatch(repo or ""):
         raise ValueError("unsafe repo")
-    return f"<!-- {PR_MARKER_PREFIX}{short}#{number} -->"
+    return f"{repo}#{number}"
+
+
+def pr_marker(repo: str, number: int) -> str:
+    return f"<!-- {PR_MARKER_PREFIX}{pr_key(repo, number)} -->"
+
+
+def pr_markers_in(text: str) -> list[str]:
+    return PR_MARKER_RE.findall(text or "")
+
+
+def description_is_for_pr(desc: str, repo: str, number: int) -> bool:
+    keys = pr_markers_in(desc)
+    wanted = pr_key(repo, number)
+    return bool(keys) and all(key == wanted for key in keys)
+
+
+def title_matches_without_conflict(title: str, desc: str, repo: str, number: int) -> bool:
+    if title != pr_rollup_title(repo, number):
+        return False
+    keys = pr_markers_in(desc)
+    if not keys:
+        return True
+    wanted = pr_key(repo, number)
+    return all(key == wanted for key in keys)
 
 
 def is_approved_pr(pr: dict[str, Any]) -> bool:
@@ -490,6 +515,7 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
     pr_url = items[0].pr_url or f"{cfg.repository}#{number}"
     blocks = [
         pr_marker(cfg.repository, number),
+        MANAGED_BEGIN,
         "",
         f"**PR:** {pr_url}",
         f"**Stuck threads:** {len(items)}",
@@ -515,11 +541,35 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
                 "",
             ]
         )
-    blocks.append(
-        "*Auto-filed by the in-repo stuck-thread watch "
-        "(`.github/workflows/stuck-thread-watch.yml`). Humans decide.*"
+    blocks.extend(
+        [
+            "*Auto-filed by the in-repo stuck-thread watch "
+            "(`.github/workflows/stuck-thread-watch.yml`). Humans decide.*",
+            MANAGED_END,
+        ]
     )
     return "\n".join(blocks) + "\n"
+
+
+def human_suffix(existing: str) -> str:
+    if MANAGED_END in existing:
+        return existing.split(MANAGED_END, 1)[1].lstrip("\n")
+    footer = "*Auto-filed by the in-repo stuck-thread watch"
+    idx = existing.rfind(footer)
+    if idx == -1:
+        return ""
+    after = existing[idx:]
+    newline = after.find("\n")
+    if newline == -1:
+        return ""
+    return after[newline + 1 :].lstrip("\n")
+
+
+def merge_linear_description(generated: str, existing: str | None) -> str:
+    suffix = human_suffix(existing or "")
+    if suffix.strip():
+        return generated.rstrip() + "\n\n" + suffix.lstrip("\n")
+    return generated
 
 
 class GitHub:
@@ -714,7 +764,7 @@ def select_stuck(
 
 def linear_find_existing(linear: Linear, cfg: Config, number: int) -> dict[str, Any] | None:
     title = pr_rollup_title(cfg.repository, number)
-    needle = f"{PR_MARKER_PREFIX}{repo_short(cfg.repository)}#{number}"
+    needle = f"{PR_MARKER_PREFIX}{pr_key(cfg.repository, number)}"
     searches = (
         (LINEAR_SEARCH, {"contains": needle, "teamKey": cfg.linear_team_key}),
         (LINEAR_SEARCH_TITLE, {"title": title, "teamKey": cfg.linear_team_key}),
@@ -725,9 +775,9 @@ def linear_find_existing(linear: Linear, cfg: Config, number: int) -> dict[str, 
             if not isinstance(node, dict):
                 continue
             desc = str(node.get("description") or "")
-            if needle in desc or PR_MARKER_RE.search(desc):
+            if description_is_for_pr(desc, cfg.repository, number):
                 return node
-            if str(node.get("title") or "") == title:
+            if title_matches_without_conflict(str(node.get("title") or ""), desc, cfg.repository, number):
                 return node
     return None
 
@@ -777,20 +827,24 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
         raise ValueError("no stuck threads")
     number = items[0].pr_number
     title = build_linear_title(cfg.repository, number)
-    description = build_linear_description(items, cfg)
+    generated = build_linear_description(items, cfg)
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
+        description = merge_linear_description(generated, str(existing.get("description") or ""))
         updated = linear.graphql(
             LINEAR_UPDATE,
             {"id": existing["id"], "input": {"title": title, "description": description}},
         )
-        issue = ((updated.get("issueUpdate") or {}).get("issue")) or existing
-        return str(issue.get("url") or issue.get("identifier") or existing.get("url") or "updated")
+        result = updated.get("issueUpdate") or {}
+        issue = result.get("issue") or {}
+        if result.get("success") is not True or not issue:
+            raise RuntimeError("linear update failed")
+        return str(issue.get("url") or issue.get("identifier") or "")
     ids = linear_resolve_ids(linear, cfg)
     payload: dict[str, Any] = {
         "teamId": ids["teamId"],
         "title": title,
-        "description": description,
+        "description": generated,
         "labelIds": ids["labelIds"],
     }
     if ids.get("stateId"):
@@ -800,7 +854,10 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     if ids.get("projectId"):
         payload["projectId"] = ids["projectId"]
     created = linear.graphql(LINEAR_CREATE, {"input": payload})
-    issue = ((created.get("issueCreate") or {}).get("issue")) or {}
+    result = created.get("issueCreate") or {}
+    issue = result.get("issue") or {}
+    if result.get("success") is not True or not issue:
+        raise RuntimeError("linear create failed")
     return str(issue.get("url") or issue.get("identifier") or "")
 
 

@@ -163,7 +163,7 @@ def test_marker_round_trip():
     assert mod.marker("PRRT_kwDOabc") == "<!-- codex-mediation:PRRT_kwDOabc -->"
     assert "PRRT_kwDOabc" in mod.markers_in("hello <!-- codex-mediation:PRRT_kwDOabc -->")
     assert mod.pr_marker("CSL-Laboratories/ai-investment-cockpit", 9) == (
-        "<!-- stuck-pr-threads:ai-investment-cockpit#9 -->"
+        "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#9 -->"
     )
     assert mod.pr_rollup_title("CSL-Laboratories/ai-investment-cockpit", 9) == (
         "Stuck PR threads: ai-investment-cockpit#9"
@@ -397,7 +397,9 @@ def test_run_posts_one_codex_comment_and_files_linear():
     assert "do **not** push" in body.lower() or "Do **not** push" in body
     assert len(linear.created) == 1
     assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#9"
-    assert "<!-- stuck-pr-threads:ai-investment-cockpit#9 -->" in linear.created[0]["description"]
+    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#9 -->" in linear.created[0]["description"]
+    assert "<!-- stuck-pr-threads-begin -->" in linear.created[0]["description"]
+    assert "<!-- stuck-pr-threads-end -->" in linear.created[0]["description"]
     assert "<!-- codex-mediation:PRRT_kwDOabc -->" not in linear.created[0]["description"]
     assert "do not file a new Linear issue per thread" in body
     assert linear.created[0]["stateId"] == "triage-1"
@@ -425,14 +427,14 @@ def test_linear_dedupe_skips_create():
         "identifier": "CSL-77",
         "url": "https://linear.app/i/CSL-77",
         "title": "Stuck PR threads: ai-investment-cockpit#2",
-        "description": "<!-- stuck-pr-threads:ai-investment-cockpit#2 -->",
+        "description": "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#2 -->",
     }
     linear = FakeLinear(existing=existing)
     logs = mod.mediate_pr(pr, cfg(codex_pat="pat"), gh, linear, NOW)
     assert linear.created == []
     assert len(linear.updated) == 1
     assert linear.updated[0]["title"] == "Stuck PR threads: ai-investment-cockpit#2"
-    assert "<!-- stuck-pr-threads:ai-investment-cockpit#2 -->" in linear.updated[0]["description"]
+    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#2 -->" in linear.updated[0]["description"]
     assert any("linear=https://linear.app/i/CSL-77" in line or "linear=updated" in line for line in logs)
 
 
@@ -535,6 +537,84 @@ def test_load_config_reads_env():
     assert loaded.stuck_hours == 8
     assert loaded.file_linear is True
     assert loaded.codex_pat == ""
+
+
+def test_linear_find_rejects_foreign_marker():
+    existing = {
+        "id": "wrong",
+        "title": "Stuck PR threads: ai-investment-cockpit#13",
+        "description": (
+            "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#13 -->\n"
+            "quoted stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12"
+        ),
+    }
+    linear = FakeLinear(existing=existing)
+    assert mod.linear_find_existing(linear, cfg(), 12) is None
+
+
+def test_linear_update_failure_raises():
+    class FailUpdate(FakeLinear):
+        def _post(self, query: str, variables: dict) -> dict:
+            if "issueUpdate" in query:
+                return {"issueUpdate": {"success": False, "issue": None}}
+            return super()._post(query, variables)
+
+    item = mod.StuckThread(
+        pr_number=12,
+        pr_url="https://ex/12",
+        pr_title="t",
+        thread_id="PRRT_kwDOabc",
+        path="AGENTS.md",
+        line="12",
+        thread_url="https://ex/r",
+        devin_body="finding",
+        claude_body="needs a human",
+        reason="needs-human",
+    )
+    existing = {
+        "id": "x",
+        "url": "https://linear.app/i/CSL-77",
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->",
+    }
+    with pytest.raises(RuntimeError, match="linear update failed"):
+        mod.upsert_linear_issue(FailUpdate(existing=existing), [item], cfg())
+
+
+def test_linear_update_preserves_human_notes():
+    item = mod.StuckThread(
+        pr_number=12,
+        pr_url="https://ex/12",
+        pr_title="t",
+        thread_id="PRRT_kwDOabc",
+        path="AGENTS.md",
+        line="12",
+        thread_url="https://ex/r",
+        devin_body="finding",
+        claude_body="needs a human",
+        reason="needs-human",
+    )
+    existing = {
+        "id": "x",
+        "url": "https://linear.app/i/CSL-77",
+        "identifier": "CSL-77",
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": (
+            "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->\n"
+            "<!-- stuck-pr-threads-begin -->\n"
+            "old generated\n"
+            "<!-- stuck-pr-threads-end -->\n\n"
+            "Decision: keep the current implementation\n"
+        ),
+    }
+    linear = FakeLinear(existing=existing)
+    url = mod.upsert_linear_issue(linear, [item], cfg())
+    assert url == "https://linear.app/i/CSL-77"
+    assert "Decision: keep the current implementation" in linear.updated[0]["description"]
+    assert "<!-- stuck-pr-threads-begin -->" in linear.updated[0]["description"]
+    assert linear.updated[0]["description"].index("<!-- stuck-pr-threads-end -->") < linear.updated[0][
+        "description"
+    ].index("Decision: keep the current implementation")
 
 
 def test_skips_approved_prs():
