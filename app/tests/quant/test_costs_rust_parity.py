@@ -1,8 +1,9 @@
 """CSL-42 — Rust costs and PnL must match the Python Decimal implementation exactly.
 
 Skipped when the extension is not installed, which is the hosted Python gate.
-The Python functions named ``python_*`` are the reference; ``FeeSchedule`` and
-``PnLTracker`` dispatch to Rust when the wheel is present.
+The Python functions named ``python_*`` are the reference. ``FeeSchedule.fee_for``
+and ``PnLTracker.mark`` / ``on_fill`` stay on that path. The extension functions
+are what this module compares against it.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ from quant.costs import (
     python_fee_for,
 )
 from quant.events import Fill, Liquidity, PriceScale, Side
-from quant.pnl import PNL_BACKEND, PnLTracker
+from quant.pnl import PNL_BACKEND, PnLTracker, _make_pnl_core, _rust_mark, _rust_on_fill
 
 pytestmark = pytest.mark.skipif(
     COSTS_BACKEND != "rust" or PNL_BACKEND != "rust",
@@ -39,7 +40,17 @@ def _fill(side: Side, qty: int, ticks: int, *, liquidity=Liquidity.MAKER, ts: in
     )
 
 
-def _drive(tracker: PnLTracker, steps, rng: random.Random) -> None:
+def _drive(tracker: PnLTracker, steps, rng: random.Random, *, core: bool = False) -> None:
+    if core:
+        tracker._core = _make_pnl_core(tracker.schedule)
+        assert tracker._core is not None
+        _rust_mark(tracker, 10_000.0, 0)
+        for step in steps:
+            _rust_mark(tracker, step["mid"], step["ts"])
+            fill = step["fill"]
+            if fill is not None:
+                _rust_on_fill(tracker, fill, step["fill_mid"])
+        return
     mid = 10_000.0
     tracker.mark(mid, ts=0)
     for step in steps:
@@ -75,8 +86,8 @@ def _script(seed: int, n: int, schedule_name: str) -> list[dict]:
 def _trackers(schedule: FeeSchedule) -> tuple[PnLTracker, PnLTracker]:
     accelerated = PnLTracker(scale=PENNY, schedule=schedule)
     reference = PnLTracker(scale=PENNY, schedule=schedule)
-    assert accelerated._core is not None
-    reference._core = None
+    assert accelerated._core is None
+    assert reference._core is None
     return accelerated, reference
 
 
@@ -105,16 +116,53 @@ def _assert_same_tracker(accelerated: PnLTracker, reference: PnLTracker) -> None
             assert value == other
 
 
+def _extension_fee(side: Side, qty: int, price: Decimal, liquidity: Liquidity) -> Decimal:
+    import cockpit_quant
+    return Decimal(cockpit_quant.fee_for(
+        format(SCHEDULE.maker_rebate_per_share, "f"),
+        format(SCHEDULE.taker_fee_per_share, "f"),
+        format(SCHEDULE.sec_fee_rate, "f"),
+        format(SCHEDULE.taf_per_share, "f"),
+        format(SCHEDULE.taf_cap, "f"),
+        format(SCHEDULE.clearing_per_share, "f"),
+        "sell" if side is Side.SELL else "buy",
+        qty,
+        format(price, "f"),
+        "maker" if liquidity is Liquidity.MAKER else "taker",
+    ))
+
+
+def _extension_borrow(notional: Decimal, seconds) -> Decimal:
+    import cockpit_quant
+    return Decimal(cockpit_quant.borrow_cost(
+        format(SCHEDULE.borrow_rate_annual, "f"), format(notional, "f"), str(seconds),
+    ))
+
+
+def _extension_bps(cost: Decimal, notional: Decimal) -> Decimal:
+    import cockpit_quant
+    return Decimal(cockpit_quant.cost_bps(format(cost, "f"), format(notional, "f")))
+
+
 def test_schedule_methods_match_the_python_reference():
     assert SCHEDULE.fee_for(
         side=Side.BUY, qty=1_000, price=Decimal("100.00"), liquidity=Liquidity.MAKER,
     ) == python_fee_for(
         SCHEDULE, side=Side.BUY, qty=1_000, price=Decimal("100.00"), liquidity=Liquidity.MAKER,
     )
+    assert _extension_fee(Side.BUY, 1_000, Decimal("100.00"), Liquidity.MAKER) == python_fee_for(
+        SCHEDULE, side=Side.BUY, qty=1_000, price=Decimal("100.00"), liquidity=Liquidity.MAKER,
+    )
     assert SCHEDULE.borrow_cost(short_notional=Decimal("1000000"), seconds=3600) == python_borrow_cost(
         SCHEDULE, short_notional=Decimal("1000000"), seconds=3600,
     )
+    assert _extension_borrow(Decimal("1000000"), 3600) == python_borrow_cost(
+        SCHEDULE, short_notional=Decimal("1000000"), seconds=3600,
+    )
     assert costs.cost_bps(Decimal("-1.80"), Decimal("100000")) == python_cost_bps(
+        Decimal("-1.80"), Decimal("100000"),
+    )
+    assert _extension_bps(Decimal("-1.80"), Decimal("100000")) == python_cost_bps(
         Decimal("-1.80"), Decimal("100000"),
     )
 
@@ -130,39 +178,38 @@ def test_random_fees_borrow_and_bps_match(seed):
         assert SCHEDULE.fee_for(side=side, qty=qty, price=price, liquidity=liquidity) == python_fee_for(
             SCHEDULE, side=side, qty=qty, price=price, liquidity=liquidity,
         )
+        assert _extension_fee(side, qty, price, liquidity) == python_fee_for(
+            SCHEDULE, side=side, qty=qty, price=price, liquidity=liquidity,
+        )
         seconds = rng.choice([0, -1, 0.001, 1.5, 3600, 7200.5, 30 * 86400, 1e-9])
         notional = Decimal(rng.randrange(-5, 1_000_000)) / Decimal("100")
         assert SCHEDULE.borrow_cost(short_notional=notional, seconds=seconds) == python_borrow_cost(
             SCHEDULE, short_notional=notional, seconds=seconds,
         )
+        assert _extension_borrow(notional, seconds) == python_borrow_cost(
+            SCHEDULE, short_notional=notional, seconds=seconds,
+        )
         cost = Decimal(rng.randrange(-10_000, 10_000)) / Decimal("100")
         base = Decimal(rng.randrange(0, 50_000)) / Decimal("10")
         assert costs.cost_bps(cost, base) == python_cost_bps(cost, base)
+        assert _extension_bps(cost, base) == python_cost_bps(cost, base)
 
 
 @pytest.mark.parametrize("seed", range(4))
 def test_pnl_stream_matches_with_fees_disabled(seed):
-    saved = costs._NATIVE
-    costs._NATIVE = None
-    try:
-        accelerated, reference = _trackers(ZERO_FEES)
-        _drive(reference, _script(seed, 120, "free"), random.Random(0))
-        _drive(accelerated, _script(seed, 120, "free"), random.Random(0))
-    finally:
-        costs._NATIVE = saved
+    accelerated, reference = _trackers(ZERO_FEES)
+    script = _script(seed, 120, "free")
+    _drive(reference, script, random.Random(0))
+    _drive(accelerated, script, random.Random(0), core=True)
     _assert_same_tracker(accelerated, reference)
 
 
 @pytest.mark.parametrize("seed", range(4))
 def test_pnl_stream_matches_with_the_default_schedule(seed):
-    saved = costs._NATIVE
-    costs._NATIVE = None
-    try:
-        accelerated, reference = _trackers(SCHEDULE)
-        _drive(reference, _script(seed + 20, 80, "default"), random.Random(0))
-        _drive(accelerated, _script(seed + 20, 80, "default"), random.Random(0))
-    finally:
-        costs._NATIVE = saved
+    accelerated, reference = _trackers(SCHEDULE)
+    script = _script(seed + 20, 80, "default")
+    _drive(reference, script, random.Random(0))
+    _drive(accelerated, script, random.Random(0), core=True)
     _assert_same_tracker(accelerated, reference)
 
 
@@ -248,3 +295,36 @@ def test_batched_fee_and_pnl_replay_match_single_calls():
     assert (None if last_mid is None else Decimal(last_mid)) == accelerated._last_mid
     assert last_ts == accelerated._last_ts
     assert Decimal(cash) == accelerated._cash
+
+
+def test_live_tracker_does_not_attach_a_core():
+    tracker = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    assert tracker._core is None
+    tracker.mark(10_000.0, ts=0)
+    tracker.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.0)
+    assert tracker._core is None
+    assert tracker.fills == 1
+
+
+def test_live_methods_do_not_call_the_extension(monkeypatch):
+    import cockpit_quant
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("extension called")
+
+    monkeypatch.setattr(cockpit_quant, "fee_for", _boom)
+    monkeypatch.setattr(cockpit_quant, "borrow_cost", _boom)
+    monkeypatch.setattr(cockpit_quant, "cost_bps", _boom)
+    assert SCHEDULE.fee_for(
+        side=Side.SELL, qty=100, price=Decimal("4.00"), liquidity=Liquidity.TAKER,
+    ) == python_fee_for(
+        SCHEDULE, side=Side.SELL, qty=100, price=Decimal("4.00"), liquidity=Liquidity.TAKER,
+    )
+    assert SCHEDULE.borrow_cost(short_notional=Decimal("1000"), seconds=2) == python_borrow_cost(
+        SCHEDULE, short_notional=Decimal("1000"), seconds=2,
+    )
+    assert costs.cost_bps(Decimal("1"), Decimal("100")) == python_cost_bps(Decimal("1"), Decimal("100"))
+    tracker = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    tracker.mark(10_000.0, ts=0)
+    tracker.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.0)
+    assert tracker.fills == 1

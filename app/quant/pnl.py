@@ -134,10 +134,11 @@ class PnLTracker:
     """Running cash from fills, maintained independently of the three attribution terms so
     ``mark_to_market`` is a genuinely separate calculation for the exactness test to check
     against — not the same expression rearranged."""
+    # One mark or fill is a handful of Decimal operations. Crossing into the extension
+    # on each call measured slower, and so did ``pnl_replay`` of a finished tape once
+    # tracker construction was not charged to the Decimal loop. Guards read the running
+    # total, so the paper loop calls ``mark`` and ``on_fill``.
     _core: object | None = field(default=None, init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self._core = _make_pnl_core(self.schedule)
 
     def mark(self, mid_ticks: float | None, ts: int | None = None) -> None:
         """Mark the CURRENT position to a new mid, accruing inventory drift and borrow.
@@ -146,12 +147,6 @@ class PnLTracker:
         telescopes, so the endpoints are what matter — but it does coarsen the equity curve,
         and drawdown measured on a coarse curve understates the real one.
         """
-        if self._core is not None and _rust_mid_ok(mid_ticks) and (ts is None or _fits_i64(ts)):
-            _rust_mark(self, mid_ticks, ts)
-            return
-        if mid_ticks is not None:
-            # Python now owns the ledger; the native core would restore stale state.
-            self._core = None
         if mid_ticks is None:
             return
         # A mid can sit on a half tick, so it is not a price on the grid and ``to_decimal``
@@ -176,11 +171,6 @@ class PnLTracker:
         inventory to a price move that had not happened yet, and the exactness identity in
         the module docstring would stop holding.
         """
-        if self._core is not None and _rust_fill_ok(fill, mid_ticks):
-            _rust_on_fill(self, fill, mid_ticks)
-            return
-        # Python now owns the ledger; the native core would restore stale state.
-        self._core = None
         if mid_ticks is not None:
             self.mark(mid_ticks, fill.ingest_ts)
 
