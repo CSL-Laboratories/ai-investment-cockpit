@@ -143,6 +143,10 @@ def render_comment(
     purpose = purpose_from_body(str(pr.get("body") or ""))
     return (
         f"{marker(repo, number)}\n\n"
+        f"Linear-first (CSL-88): work from the CSL Linear issue; check it and its "
+        f"PR-sync comment for overlap first; post status and questions there; file "
+        f"new findings to Triage; use current docs (Context7) and web research "
+        f"(Parallel) before implementing.\n\n"
         f"**PR:** {html}\n"
         f"**Author:** {author}\n"
         f"**Status:** {status}\n"

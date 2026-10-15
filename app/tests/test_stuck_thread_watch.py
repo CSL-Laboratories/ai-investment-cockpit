@@ -311,6 +311,7 @@ def test_run_posts_one_codex_comment_and_files_linear():
     assert len(gh.posts) == 1
     body = gh.posts[0][1]["body"]
     assert body.startswith("@codex review")
+    assert "Linear-first (CSL-88)" in body
     assert "<!-- codex-mediation:PRRT_kwDOabc -->" in body
     assert "UNTRUSTED DATA" in body
     assert "do **not** push" in body.lower() or "Do **not** push" in body

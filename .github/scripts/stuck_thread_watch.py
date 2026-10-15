@@ -380,6 +380,10 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
     return (
         f"@codex review\n\n"
         f"{marker(item.thread_id)}\n\n"
+        f"Linear-first (CSL-88): work from the CSL Linear issue; check it and its "
+        f"PR-sync comment for overlap first; post status and questions there; file "
+        f"new findings to Triage; use current docs (Context7) and web research "
+        f"(Parallel) before implementing.\n\n"
         f"Mediate this stuck review thread on {cfg.repository}#{item.pr_number}. "
         f"Say which side is right and propose the minimal fix. Do **not** push code, "
         f"merge the pull request, or resolve the thread.\n\n"

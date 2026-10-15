@@ -381,6 +381,8 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
+        self.assertIn("Linear-first (CSL-88)", self.text)
+        self.assertGreaterEqual(self.text.count("Linear-first (CSL-88)"), 6)
 
     def test_tool_allowlist_and_denials(self) -> None:
         self.assertIn("--allowedTools", self.text)

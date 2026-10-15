@@ -112,6 +112,7 @@ def test_render_contains_marker_and_fields():
         files=[{"filename": ".github/workflows/stuck-thread-watch.yml"}],
     )
     assert "<!-- pr-sync:CSL-Laboratories/ai-investment-cockpit#124 -->" in text
+    assert "Linear-first (CSL-88)" in text
     assert "**Status:** draft" in text
     assert "**Devin review on head:** no" in text
     assert "`abc123`" in text
