@@ -482,28 +482,53 @@ def _reviews(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
 
 
 def gate_ready_on_other_sha(comments: list[dict[str, Any]], sha: str) -> bool:
+    """True when a prior SHA was READY and the current SHA is not.
+
+    Reopening an already-READY head must not strip ``ci:full`` just because
+    an older SHA also has a READY marker.
+    """
+    current_ready = False
+    other_ready = False
     for item in comments:
         for match in ACTION_RE.finditer(str((item or {}).get("body") or "")):
-            if match.group(2) == "READY" and match.group(1) != sha:
-                return True
-    return False
+            if match.group(2) != "READY":
+                continue
+            if match.group(1) == sha:
+                current_ready = True
+            else:
+                other_ready = True
+    return other_ready and not current_ready
 
 
-def _handle_request(event: dict[str, Any], repository: str, gh: GitHub) -> list[str]:
-    pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
+def _clear_stale_ready(
+    gh: GitHub,
+    repository: str,
+    number: str,
+    sha: str,
+    comments: list[dict[str, Any]],
+) -> list[str]:
+    logs: list[str] = []
+    if not sha or not gate_ready_on_other_sha(comments, sha):
+        return logs
+    try:
+        gh.delete(f"repos/{repository}/issues/{number}/labels/{CI_FULL_LABEL}")
+        logs.append(f"codex-gate: pr={number} cleared={CI_FULL_LABEL}")
+    except (OSError, subprocess.CalledProcessError):
+        logs.append(f"codex-gate: pr={number} clear-label=error")
+    return logs
+
+
+def _post_request_if_needed(
+    gh: GitHub,
+    repository: str,
+    pr: dict[str, Any],
+    comments: list[dict[str, Any]],
+) -> list[str]:
     number = safe_pr(pr.get("number"))
     if not number:
         return ["codex-gate: skip=bad-pr-number"]
-    authors = marker_authors(gh)
-    comments = trusted_comments(_issue_comments(gh, repository, number), authors)
     sha = safe_sha((pr.get("head") or {}).get("sha"))
-    logs: list[str] = []
-    if sha and gate_ready_on_other_sha(comments, sha):
-        try:
-            gh.delete(f"repos/{repository}/issues/{number}/labels/{CI_FULL_LABEL}")
-            logs.append(f"codex-gate: pr={number} cleared={CI_FULL_LABEL}")
-        except (OSError, subprocess.CalledProcessError):
-            logs.append(f"codex-gate: pr={number} clear-label=error")
+    logs = _clear_stale_ready(gh, repository, number, sha, comments)
     decision = decide_request(pr, repository, comments)
     if decision != "post":
         logs.append(f"codex-gate: pr={number} request={decision}")
@@ -514,6 +539,16 @@ def _handle_request(event: dict[str, Any], repository: str, gh: GitHub) -> list[
     )
     logs.append(f"codex-gate: pr={number} sha={sha[:12]} request=posted")
     return logs
+
+
+def _handle_request(event: dict[str, Any], repository: str, gh: GitHub) -> list[str]:
+    pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
+    number = safe_pr(pr.get("number"))
+    if not number:
+        return ["codex-gate: skip=bad-pr-number"]
+    authors = marker_authors(gh)
+    comments = trusted_comments(_issue_comments(gh, repository, number), authors)
+    return _post_request_if_needed(gh, repository, pr, comments)
 
 
 def _handle_review(
@@ -570,6 +605,12 @@ def _handle_timeout(
         sha = safe_sha((pr.get("head") or {}).get("sha"))
         authors = marker_authors(gh)
         comments = trusted_comments(_issue_comments(gh, repository, number), authors)
+        request_logs = _post_request_if_needed(gh, repository, pr, comments)
+        logs.extend(request_logs)
+        # A displaced PR-open run recovers here. Do not timeout the same SHA
+        # in the run that just posted the request (age is zero).
+        if any("request=posted" in line for line in request_logs):
+            continue
         reviews = _reviews(gh, repository, number)
         verdict = decide_timeout(
             sha=sha, comments=comments, reviews=reviews, now=now, day=day

@@ -31,7 +31,9 @@ permissions:
   actions: write
 
 # One group for the whole repo so a review and a scheduled scan cannot both
-# dispatch FIX for the same SHA. event-paths in the same run still proceeds.
+# dispatch FIX for the same SHA. GitHub keeps one running + one pending run
+# per group; a displaced PR-open recovers on the next scheduled scan, which
+# posts any missing @codex review request. event-paths still proceeds.
 concurrency:
   group: codex-gate
   cancel-in-progress: false
@@ -82,10 +84,24 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
-        run: python3 -X utf8 -B scripts/ci/codex_gate.py
+        run: |
+          set -euo pipefail
+          # First-merge bootstrap: this workflow ships in the PR, but the
+          # PAT job checks out the default branch so it never runs PR-head
+          # code. Until the script lands on main, skip with a notice.
+          if [ ! -f scripts/ci/codex_gate.py ]; then
+            echo "::notice::codex_gate.py is not on the default branch yet; skipping until first merge."
+            exit 0
+          fi
+          python3 -X utf8 -B scripts/ci/codex_gate.py
 
+  # Tests check out the PR tree (same-repo only, GITHUB_TOKEN, no PAT).
+  # The gate job above is the only job that sees CODEX_TRIGGER_PAT, and it
+  # never checks out PR or fork code.
   event-paths:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

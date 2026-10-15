@@ -454,6 +454,46 @@ class RunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(any("labels/ci:full" in path for path in gh.deletes))
 
+    def test_current_ready_keeps_label_when_older_sha_also_ready(self) -> None:
+        gh = FakeGH()
+        gh.comments = [
+            comment(mod.action_marker("c" * 40, "READY")),
+            comment(mod.action_marker(SHA, "READY")),
+            comment(mod.gate_marker(SHA) + "\n@codex review"),
+        ]
+        rc = mod.run(
+            event_name="pull_request",
+            event={"pull_request": pr_payload()},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.deletes, [])
+        self.assertFalse(any("/labels" in path for path, _ in gh.posts))
+
+    def test_schedule_posts_missing_request(self) -> None:
+        gh = FakeGH()
+        gh.prs = [pr_payload()]
+        rc = mod.run(
+            event_name="schedule",
+            event={},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(gh.posts), 1)
+        self.assertIn(mod.gate_marker(SHA), gh.posts[0][1]["body"])
+        self.assertEqual(gh.dispatches, [])
+
+    def test_gate_ready_helper_requires_current_sha_not_ready(self) -> None:
+        older = [comment(mod.action_marker("c" * 40, "READY"))]
+        both = older + [comment(mod.action_marker(SHA, "READY"))]
+        self.assertTrue(mod.gate_ready_on_other_sha(older, SHA))
+        self.assertFalse(mod.gate_ready_on_other_sha(both, SHA))
+        self.assertFalse(mod.gate_ready_on_other_sha([], SHA))
+
 
 class WorkflowStructureTests(unittest.TestCase):
     @classmethod
@@ -483,6 +523,15 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("github.run_id", self.text)
         self.assertIn("github.event.repository.default_branch", self.text)
         self.assertIn("persist-credentials: false", self.text)
+        self.assertIn("codex_gate.py is not on the default branch yet", self.text)
+        self.assertIn("event-paths", self.text)
+        self.assertIn("never checks out PR or fork code", self.text)
+        # Tests may check out same-repo PR code; they never receive the PAT.
+        event_paths_job = self.text.split("\n  event-paths:")[1]
+        self.assertIn(
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            event_paths_job.split("runs-on:")[0],
+        )
 
     def test_claude_dispatch_triggers(self) -> None:
         self.assertIn("repository_dispatch:", self.claude)
