@@ -1,0 +1,38 @@
+# Keep one Linear comment current per PR so Grok Bots can see shared-file risk.
+# Not a required check. Missing LINEAR_API_KEY is a skip, not a failure.
+name: Linear PR sync
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, closed]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: linear-pr-sync-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout sync script
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Upsert Linear PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        run: python3 .github/scripts/linear_pr_sync.py
