@@ -44,11 +44,11 @@ permissions:
 
 jobs:
   resolve-pr:
-    # Job-level `if` is the runner gate (CSL-103): skipped events start no runner.
-    # Admit Devin/Codex submitted reviews, human @claude comments, and the
-    # batched-fixer dispatch. Skip every other bot sender and every bot
-    # review comment (claude[bot], cursor[bot], github-actions[bot],
-    # blacksmith-sh[bot], …).
+    # Job-level `if` is the runner gate (CSL-103): bot-noise and non-@claude
+    # comments start no runner. Devin/Codex submitted reviews still allocate
+    # this job for audit; only dispatch / human @claude run the fixer.
+    # Skip every other bot sender and every bot review comment (claude[bot],
+    # cursor[bot], github-actions[bot], blacksmith-sh[bot], …).
     if: >-
       (
         github.event_name == 'issue_comment' &&

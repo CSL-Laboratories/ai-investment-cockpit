@@ -6,7 +6,7 @@ parses `CODEX-GATE: FIX|READY|MEDIATE` from the Codex review, and then:
 
 * FIX — one batched `devin-review-fix` repository_dispatch
 * READY — add the `ci:full` label
-* MEDIATE — hand off to stuck-thread-watch (CSL-86 / PR #124)
+* MEDIATE — file a Linear `needs-decision` Triage issue
 * no verdict within 20 minutes — FIX (fail open)
 
 Cap: 3 fixer runs per PR per UTC day. Human `@claude` mentions do not go
@@ -21,6 +21,8 @@ import json
 import os
 import re
 import subprocess
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -40,7 +42,53 @@ TIMEOUT = timedelta(minutes=20)
 FIXER_CAP = 3
 CI_FULL_LABEL = "ci:full"
 FIXER_EVENT = "devin-review-fix"
-STUCK_WORKFLOW = "stuck-thread-watch.yml"
+MEDIATION_RE = re.compile(r"<!--\s*codex-mediation:[A-Za-z0-9_=-]{1,128}\s*-->")
+LINEAR_URL = "https://api.linear.app/graphql"
+LINEAR_TEAM_KEY = "CSL"
+LINEAR_LABELS = ("needs-decision", "auto-filed", "ai-investment-cockpit")
+LINEAR_PROJECT = "ai-investment-cockpit"
+LINEAR_LOOKUP = """
+query($teamKey: String!) {
+  teams(filter: { key: { eq: $teamKey } }) {
+    nodes { id states { nodes { id type } } }
+  }
+}
+"""
+LINEAR_LABEL_LOOKUP = """
+query($name: String!) {
+  issueLabels(filter: { name: { eq: $name } }, first: 25) {
+    nodes { id name }
+  }
+}
+"""
+LINEAR_PROJECT_LOOKUP = """
+query($name: String!) {
+  projects(filter: { name: { eq: $name } }, first: 10) {
+    nodes { id name }
+  }
+}
+"""
+LINEAR_SEARCH = """
+query($contains: String!, $teamKey: String!) {
+  issues(
+    first: 10
+    filter: {
+      team: { key: { eq: $teamKey } }
+      description: { contains: $contains }
+    }
+  ) {
+    nodes { id identifier url description }
+  }
+}
+"""
+LINEAR_CREATE = """
+mutation($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue { id identifier url }
+  }
+}
+"""
 
 Get = Callable[[str], Any]
 Post = Callable[[str, dict[str, Any]], Any]
@@ -87,6 +135,28 @@ def gate_marker(sha: str) -> str:
 
 def action_marker(sha: str, verdict: str) -> str:
     return f"<!-- codex-gate-action:{sha}:{verdict} -->"
+
+
+def mediate_marker(sha: str) -> str:
+    return f"<!-- codex-gate-mediate:{sha} -->"
+
+
+def latest_codex_prompt_is_mediation(comments: list[dict[str, Any]]) -> bool:
+    """True when the newest ``@codex review`` comment is a stuck-thread mediation."""
+    newest_at: datetime | None = None
+    newest_is_mediation = False
+    for item in comments:
+        body = str((item or {}).get("body") or "")
+        if "@codex review" not in body:
+            continue
+        stamped = parse_dt((item or {}).get("created_at") or (item or {}).get("createdAt"))
+        if stamped is None:
+            stamped = datetime.min.replace(tzinfo=timezone.utc)
+        is_med = bool(MEDIATION_RE.search(body))
+        if newest_at is None or stamped >= newest_at:
+            newest_at = stamped
+            newest_is_mediation = is_med
+    return newest_is_mediation
 
 
 def fixer_run_marker(day: str, sha: str = "") -> str:
@@ -269,6 +339,8 @@ def decide_verdict(
     existing = action_for_sha(comments, sha)
     if existing:
         return f"skip-already-{existing.lower()}"
+    if latest_codex_prompt_is_mediation(comments) and not parse_verdict(review_body):
+        return "skip-mediation-review"
     verdict = parse_verdict(review_body) or verdict_from_reviews(reviews, sha)
     if not verdict:
         return "skip-no-verdict"
@@ -299,6 +371,8 @@ def decide_timeout(
         if verdict == "FIX" and cap_reached(comments, day, cap):
             return "skip-cap"
         return verdict
+    if latest_codex_prompt_is_mediation(comments):
+        return "skip-mediation-pending"
     needle = gate_marker(sha)
     stamp: datetime | None = None
     for item in comments:
@@ -326,7 +400,7 @@ def apply_verdict(
     post_comment: Callable[[str], None],
     add_label: Callable[[str], None],
     dispatch_fixer: Callable[[], None],
-    run_mediator: Callable[[], None],
+    file_decision: Callable[[], str],
 ) -> list[str]:
     logs = [f"codex-gate: pr={pr_number} sha={sha[:12]} verdict={verdict}"]
     if verdict.startswith("skip-"):
@@ -350,15 +424,100 @@ def apply_verdict(
         logs.append(f"codex-gate: pr={pr_number} labeled={CI_FULL_LABEL}")
         return logs
     if verdict == "MEDIATE":
-        run_mediator()
+        url = file_decision()
+        extra = f" Linear: {url}" if url else " Linear filing skipped."
         post_comment(
             f"{action_marker(sha, 'MEDIATE')}\n"
-            f"Codex gate: MEDIATE — handed off to stuck-thread-watch for `{sha}`."
+            f"{mediate_marker(sha)}\n"
+            f"Codex gate: MEDIATE — needs a human for `{sha}`.{extra}"
         )
         logs.append(f"codex-gate: pr={pr_number} mediate")
         return logs
     logs.append(f"codex-gate: pr={pr_number} skip=unknown-verdict")
     return logs
+
+
+def linear_graphql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    req = urllib.request.Request(
+        LINEAR_URL,
+        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+        headers={
+            "Authorization": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("linear request failed") from exc
+    if payload.get("errors"):
+        raise RuntimeError("linear graphql errors")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise RuntimeError("linear graphql errors")
+    return data
+
+
+def create_needs_decision_issue(
+    graphql: Callable[[str, dict[str, Any]], dict[str, Any]],
+    *,
+    repository: str,
+    pr_number: str,
+    sha: str,
+) -> str:
+    needle = mediate_marker(sha)
+    existing = graphql(
+        LINEAR_SEARCH, {"contains": f"codex-gate-mediate:{sha}", "teamKey": LINEAR_TEAM_KEY}
+    )
+    for node in ((existing.get("issues") or {}).get("nodes")) or []:
+        if isinstance(node, dict) and needle in str(node.get("description") or ""):
+            return str(node.get("url") or node.get("identifier") or "existing")
+    team_data = graphql(LINEAR_LOOKUP, {"teamKey": LINEAR_TEAM_KEY})
+    teams = ((team_data.get("teams") or {}).get("nodes")) or []
+    if not teams or not isinstance(teams[0], dict):
+        raise RuntimeError("linear team missing")
+    team = teams[0]
+    state_id = ""
+    for state in ((team.get("states") or {}).get("nodes")) or []:
+        if str((state or {}).get("type") or "") == "triage":
+            state_id = str(state.get("id") or "")
+            break
+    found: dict[str, str] = {}
+    for name in LINEAR_LABELS:
+        lookup = graphql(LINEAR_LABEL_LOOKUP, {"name": name})
+        nodes = ((lookup.get("issueLabels") or {}).get("nodes")) or []
+        if nodes and isinstance(nodes[0], dict) and nodes[0].get("id"):
+            found[name] = str(nodes[0]["id"])
+    if not found.get("needs-decision"):
+        raise RuntimeError("linear needs-decision missing")
+    proj = graphql(LINEAR_PROJECT_LOOKUP, {"name": LINEAR_PROJECT})
+    projects = ((proj.get("projects") or {}).get("nodes")) or []
+    project_id = ""
+    if projects and isinstance(projects[0], dict) and projects[0].get("id"):
+        project_id = str(projects[0]["id"])
+    if not project_id:
+        raise RuntimeError("linear project missing")
+    short = repository.split("/")[-1] if repository else "repo"
+    payload: dict[str, Any] = {
+        "teamId": team.get("id"),
+        "title": f"Codex MEDIATE: {short}#{pr_number}"[:120],
+        "description": (
+            f"{needle}\n\n"
+            f"**PR:** https://github.com/{repository}/pull/{pr_number}\n"
+            f"**SHA:** `{sha}`\n\n"
+            f"Codex gate MEDIATE: Devin and Claude disagree or a thread needs a "
+            f"human. Auto-filed by `.github/workflows/codex-gate.yml`. Humans decide.\n"
+        ),
+        "labelIds": [found[name] for name in LINEAR_LABELS if found.get(name)],
+        "projectId": project_id,
+    }
+    if state_id:
+        payload["stateId"] = state_id
+    created = graphql(LINEAR_CREATE, {"input": payload})
+    issue = ((created.get("issueCreate") or {}).get("issue")) or {}
+    return str(issue.get("url") or issue.get("identifier") or "")
 
 
 class GitHub:
@@ -728,14 +887,21 @@ def _act(
     def dispatch_fixer() -> None:
         gh.dispatch(FIXER_EVENT, {"pr_number": number}, repository)
 
-    def run_mediator() -> None:
+    def file_decision() -> str:
+        key = os.environ.get("LINEAR_API_KEY", "").strip()
+        if not key:
+            notice("LINEAR_API_KEY is not configured; MEDIATE recorded without Linear.")
+            return ""
         try:
-            gh.workflow_run(STUCK_WORKFLOW, {"pr_number": number})
-        except (OSError, subprocess.CalledProcessError):
-            notice(
-                f"stuck-thread-watch workflow not available yet; "
-                f"MEDIATE recorded on {repository}#{number}"
+            return create_needs_decision_issue(
+                lambda query, variables: linear_graphql(key, query, variables),
+                repository=repository,
+                pr_number=number,
+                sha=sha,
             )
+        except (OSError, RuntimeError, ValueError, urllib.error.URLError):
+            notice("Linear filing failed; MEDIATE recorded on the PR.")
+            return ""
 
     return apply_verdict(
         verdict,
@@ -747,7 +913,7 @@ def _act(
         post_comment=post_comment,
         add_label=add_label,
         dispatch_fixer=dispatch_fixer,
-        run_mediator=run_mediator,
+        file_decision=file_decision,
     )
 
 

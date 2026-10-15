@@ -3,8 +3,8 @@
 # notice skip, not a failure.
 #
 # Posts one `@codex review` per head SHA, parses CODEX-GATE: FIX|READY|MEDIATE,
-# dispatches one batched Claude fixer, labels ci:full, or hands off to
-# stuck-thread-watch (CSL-86 / PR #124). 20-minute timeout fail-opens to FIX.
+# dispatches one batched Claude fixer, labels ci:full, or files a Linear
+# needs-decision issue (MEDIATE). 20-minute timeout fail-opens to FIX.
 # Cap: 3 fixer runs per PR per UTC day. Human @claude bypasses the cap
 # (claude.yml claude-mention job).
 name: Codex CI/fixer gate
@@ -24,11 +24,9 @@ on:
         required: false
         default: ""
 
+# Writes go through CODEX_TRIGGER_PAT, not GITHUB_TOKEN.
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
-  actions: write
 
 # One group for the whole repo so a review and a scheduled scan cannot both
 # dispatch FIX for the same SHA. GitHub keeps one running + one pending run
@@ -81,6 +79,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
@@ -115,7 +114,11 @@ jobs:
       - name: actionlint
         env:
           ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
         run: |
           set -euo pipefail
-          bash <(curl -fsSL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "$ACTIONLINT_VERSION"
+          curl -fsSL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
           ./actionlint -color .github/workflows/codex-gate.yml .github/workflows/claude.yml .github/workflows/ci.yml

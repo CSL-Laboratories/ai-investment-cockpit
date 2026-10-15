@@ -207,6 +207,21 @@ class VerdictDecisionTests(unittest.TestCase):
             "READY",
         )
 
+    def test_mediation_review_without_gate_line_is_skipped(self) -> None:
+        comments = [
+            comment("<!-- codex-mediation:abc -->\n@codex review\nmediate", created="2026-10-15T12:00:00Z"),
+        ]
+        self.assertEqual(
+            mod.decide_verdict(
+                sha=SHA,
+                review_body="advisory notes, no gate line",
+                reviews=[],
+                comments=comments,
+                day="2026-10-15",
+            ),
+            "skip-mediation-review",
+        )
+
 
 class TimeoutDecisionTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -250,6 +265,21 @@ class TimeoutDecisionTests(unittest.TestCase):
             "skip-cap",
         )
 
+    def test_timeout_skips_stuck_thread_mediation(self) -> None:
+        comments = [
+            self._request(30),
+            comment(
+                "<!-- codex-mediation:abc -->\n@codex review\nmediate this thread",
+                created=(self.now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ),
+        ]
+        self.assertEqual(
+            mod.decide_timeout(
+                sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"
+            ),
+            "skip-mediation-pending",
+        )
+
 
 class ApplyVerdictTests(unittest.TestCase):
     def _apply(self, verdict: str) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -267,7 +297,7 @@ class ApplyVerdictTests(unittest.TestCase):
             post_comment=posted.append,
             add_label=labels.append,
             dispatch_fixer=lambda: dispatched.append("fixer"),
-            run_mediator=lambda: mediated.append("watch"),
+            file_decision=lambda: (mediated.append("linear") or "https://linear.app/issue/CSL-1"),
         )
         return logs, posted, labels, dispatched, mediated  # type: ignore[return-value]
 
@@ -288,10 +318,13 @@ class ApplyVerdictTests(unittest.TestCase):
         self.assertIn("READY", posted[0])
 
     def test_mediate_handoff(self) -> None:
-        _, _, labels, dispatched, mediated = self._apply("MEDIATE")
-        self.assertEqual(mediated, ["watch"])
+        _, posted, labels, dispatched, mediated = self._apply("MEDIATE")
+        self.assertEqual(mediated, ["linear"])
         self.assertEqual(dispatched, [])
         self.assertEqual(labels, [])
+        self.assertIn("codex-gate-mediate:" + SHA, posted[0])
+        self.assertIn("needs a human", posted[0])
+        self.assertIn("https://linear.app/issue/CSL-1", posted[0])
 
     def test_skip_is_noop(self) -> None:
         logs, posted, labels, dispatched, mediated = self._apply("skip-waiting")
@@ -318,7 +351,7 @@ class ApplyVerdictTests(unittest.TestCase):
                 post_comment=posted.append,
                 add_label=lambda _n: None,
                 dispatch_fixer=boom,
-                run_mediator=lambda: None,
+                file_decision=lambda: "",
             )
         self.assertEqual(posted, [])
 
@@ -402,11 +435,10 @@ class RunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(gh.dispatches, [])
 
-    def test_mediate_missing_workflow_notices(self) -> None:
+    def test_mediate_missing_linear_notices(self) -> None:
         gh = FakeGH()
-        gh.fail_workflow = True
         buf = io.StringIO()
-        with patch("sys.stdout", buf):
+        with patch("sys.stdout", buf), patch.dict(os.environ, {"LINEAR_API_KEY": ""}, clear=False):
             rc = mod.run(
                 event_name="pull_request_review",
                 event={
@@ -420,7 +452,8 @@ class RunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(gh.dispatches, [])
         self.assertIn("::notice::", buf.getvalue())
-        self.assertIn("stuck-thread-watch", buf.getvalue())
+        self.assertIn("LINEAR_API_KEY", buf.getvalue())
+        self.assertTrue(any("MEDIATE" in (body.get("body") or "") for _, body in gh.posts))
 
     def test_review_skips_fork_and_draft(self) -> None:
         gh = FakeGH()
@@ -574,6 +607,30 @@ class RunTests(unittest.TestCase):
         self.assertFalse(mod.gate_ready_on_other_sha(both, SHA))
         self.assertFalse(mod.gate_ready_on_other_sha([], SHA))
 
+    def test_create_needs_decision_issue_dedupes(self) -> None:
+        calls: list[str] = []
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            calls.append(query)
+            if "issues(" in query:
+                return {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-9",
+                                "description": mod.mediate_marker(SHA) + "\nexisting",
+                            }
+                        ]
+                    }
+                }
+            raise AssertionError("should not create")
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-9")
+        self.assertEqual(len(calls), 1)
+
     def test_label_predates_last_ready_ignores_actor(self) -> None:
         ready = [comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z")]
         self.assertTrue(
@@ -658,11 +715,26 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("Parallel Task API deep research", self.agents)
         self.assertIn("in addition to Search/Extract", self.agents)
         self.assertIn("Grok Bots do not research or resolve decision issues", self.agents)
-        self.assertIn("not a code-review verdict and not a substitute for Devin", self.agents)
+        self.assertIn("neither a Devin substitute", self.agents)
         self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
+        self.assertIn("A founder may have their own bot", self.agents)
+        self.assertIn("Stuck-thread watch", self.agents)
+        self.assertIn("codex-mediation:", self.agents)
+        self.assertIn("needs-decision", self.agents)
+        self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bots", claude)
+
+    def test_pat_job_token_is_read_only_and_actionlint_is_checksummed(self) -> None:
+        self.assertIn("contents: read", self.text)
+        self.assertNotIn("actions: write", self.text)
+        self.assertNotIn("issues: write", self.text)
+        self.assertNotIn("pull-requests: write", self.text)
+        self.assertIn("ACTIONLINT_SHA256", self.text)
+        self.assertIn("sha256sum -c", self.text)
+        self.assertNotIn("download-actionlint.bash", self.text)
+        self.assertIn("LINEAR_API_KEY", self.text)
 
     def test_does_not_print_secret_names_as_values(self) -> None:
         source = GATE_PATH.read_text(encoding="utf-8")
