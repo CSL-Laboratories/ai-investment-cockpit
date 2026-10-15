@@ -160,14 +160,26 @@ def _note_execution(book, cancelled) -> None:
 
 
 def _resync_live(book) -> None:
-    """Bring retained orders in line with the native book after a partial match."""
-    for order_id, order in list(book._live.items()):
+    """Bring retained orders in line with the native book after a partial match.
+
+    A match that raises may already have consumed resting qty. There is no
+    self-trade list on that path, so an order the native book dropped is treated
+    as fully filled.
+    """
+    gone = []
+    for order_id, ref in list(book._live.items()):
+        order = ref()
+        if order is None:
+            gone.append(order_id)
+            continue
         row = book._core.get(order_id)
         if row is None:
             order.qty = 0
-            book._live.pop(order_id, None)
+            gone.append(order_id)
         else:
             order.qty = row[3]
+    for order_id in gone:
+        book._live.pop(order_id, None)
 
 
 class PriceLevel:
