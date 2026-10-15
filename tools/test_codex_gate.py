@@ -696,6 +696,14 @@ class RunTests(unittest.TestCase):
 
     def test_create_needs_decision_issue_updates_rollup(self) -> None:
         updates: list[dict[str, Any]] = []
+        existing = (
+            f"{mod.mediate_marker('42', SHA)}\n"
+            f"**PR:** https://github.com/{REPO}/pull/42\n"
+            f"**SHA:** `{SHA}`\n\n"
+            "Codex gate MEDIATE: Devin and Claude disagree or a thread needs a "
+            "human. Auto-filed by `.github/workflows/codex-gate.yml`. Humans decide.\n"
+            "Wait for Alice's risk decision\n"
+        )
 
         def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             if "issues(" in query:
@@ -705,7 +713,7 @@ class RunTests(unittest.TestCase):
                             {
                                 "id": "issue-1",
                                 "url": "https://linear.app/csl-laboratories/issue/CSL-9",
-                                "description": mod.mediate_marker("42", SHA) + "\nexisting",
+                                "description": existing,
                             }
                         ]
                     }
@@ -727,9 +735,11 @@ class RunTests(unittest.TestCase):
         self.assertEqual(len(updates), 1)
         self.assertEqual(updates[0]["id"], "issue-1")
         self.assertEqual(updates[0]["input"]["title"], "Stuck PR threads: example#42")
-        self.assertIn(mod.mediate_issue_marker("42"), updates[0]["input"]["description"])
-        self.assertIn("b" * 40, updates[0]["input"]["description"])
-        self.assertNotIn("codex-gate-mediate:42:" + SHA, updates[0]["input"]["description"])
+        body = updates[0]["input"]["description"]
+        self.assertIn(mod.mediate_issue_marker(REPO, "42"), body)
+        self.assertIn("b" * 40, body)
+        self.assertIn("Wait for Alice's risk decision", body)
+        self.assertNotIn("codex-gate-mediate:42:" + SHA, body)
 
     def test_create_needs_decision_issue_rollup_title(self) -> None:
         created: list[dict[str, Any]] = []
@@ -772,16 +782,95 @@ class RunTests(unittest.TestCase):
         )
         self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-10")
         self.assertEqual(created[0]["input"]["title"], "Stuck PR threads: example#42")
-        self.assertIn(mod.mediate_issue_marker("42"), created[0]["input"]["description"])
+        self.assertIn(mod.mediate_issue_marker(REPO, "42"), created[0]["input"]["description"])
+        self.assertIn(mod.mediate_issue_end_marker(), created[0]["input"]["description"])
         self.assertNotIn(f"codex-gate-mediate:42:{SHA}", created[0]["input"]["description"])
 
-    def test_mediate_description_does_not_match_other_pr(self) -> None:
-        self.assertTrue(mod.mediate_description_matches(mod.mediate_issue_marker("42"), "42"))
-        self.assertTrue(
-            mod.mediate_description_matches(mod.mediate_marker("42", SHA), "42")
+    def test_create_needs_decision_issue_ignores_other_repo(self) -> None:
+        created: list[dict[str, Any]] = []
+        other = (
+            f"{mod.mediate_issue_marker('acme/other', '42')}\n"
+            "**PR:** https://github.com/acme/other/pull/42\n"
+            f"{mod.mediate_issue_end_marker()}\n"
         )
-        self.assertFalse(mod.mediate_description_matches(mod.mediate_issue_marker("42"), "4"))
-        self.assertFalse(mod.mediate_description_matches(mod.mediate_issue_marker("4"), "42"))
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "issues(" in query:
+                return {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "other-1",
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-8",
+                                "description": other,
+                            }
+                        ]
+                    }
+                }
+            if "teams(" in query:
+                return {
+                    "teams": {
+                        "nodes": [
+                            {
+                                "id": "t1",
+                                "states": {"nodes": [{"id": "s1", "type": "triage"}]},
+                            }
+                        ]
+                    }
+                }
+            if "issueLabels" in query:
+                name = str(variables.get("name") or "")
+                return {"issueLabels": {"nodes": [{"id": name, "name": name}]}}
+            if "projects(" in query:
+                return {
+                    "projects": {
+                        "nodes": [{"id": "p1", "name": "ai-investment-cockpit"}]
+                    }
+                }
+            if "issueCreate" in query:
+                created.append(variables)
+                return {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-11"},
+                    }
+                }
+            if "issueUpdate" in query:
+                raise AssertionError("must not update another repository's issue")
+            raise AssertionError(query[:80])
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-11")
+        self.assertEqual(len(created), 1)
+
+    def test_merge_mediate_description_keeps_notes_on_repeat(self) -> None:
+        first = mod.merge_mediate_description(
+            "Wait for Alice's risk decision", REPO, "42", SHA
+        )
+        self.assertIn("Wait for Alice's risk decision", first)
+        second = mod.merge_mediate_description(first, REPO, "42", "b" * 40)
+        self.assertEqual(second.count("Wait for Alice's risk decision"), 1)
+        self.assertIn("b" * 40, second)
+        self.assertNotIn(SHA, second.split(mod.mediate_issue_end_marker())[0])
+
+    def test_mediate_description_does_not_match_other_pr(self) -> None:
+        own = mod.mediate_issue_marker(REPO, "42")
+        self.assertTrue(mod.mediate_description_matches(own, REPO, "42"))
+        legacy = (
+            f"{mod.mediate_marker('42', SHA)}\n**PR:** https://github.com/{REPO}/pull/42\n"
+        )
+        self.assertTrue(mod.mediate_description_matches(legacy, REPO, "42"))
+        self.assertFalse(mod.mediate_description_matches(own, REPO, "4"))
+        other = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            "**PR:** https://github.com/acme/other/pull/42\n"
+        )
+        self.assertFalse(mod.mediate_description_matches(other, REPO, "42"))
+        self.assertFalse(
+            mod.mediate_description_matches(mod.mediate_issue_marker("acme/other", "42"), REPO, "42")
+        )
 
     def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
         human_ok = {
@@ -819,6 +908,28 @@ class RunTests(unittest.TestCase):
                 [
                     {
                         "user": {"login": "chatgpt-codex-connector[bot]"},
+                        "state": "APPROVED",
+                        "submitted_at": "2026-10-15T15:00:00Z",
+                    }
+                ]
+            )
+        )
+        self.assertFalse(
+            mod.pr_is_approved(
+                [
+                    {
+                        "user": {"login": "chatgpt-codex-connector", "type": "Bot"},
+                        "state": "APPROVED",
+                        "submitted_at": "2026-10-15T15:00:00Z",
+                    }
+                ]
+            )
+        )
+        self.assertFalse(
+            mod.pr_is_approved(
+                [
+                    {
+                        "user": {"login": "chatgpt-codex-connector"},
                         "state": "APPROVED",
                         "submitted_at": "2026-10-15T15:00:00Z",
                     }

@@ -150,7 +150,15 @@ def mediate_marker(pr_number: str, sha: str) -> str:
     return f"<!-- codex-gate-mediate:{pr_number}:{sha} -->"
 
 
-def mediate_issue_marker(pr_number: str) -> str:
+def mediate_issue_marker(repository: str, pr_number: str) -> str:
+    return f"<!-- codex-gate-mediate:{repository}:{pr_number} -->"
+
+
+def mediate_issue_end_marker() -> str:
+    return "<!-- /codex-gate-mediate -->"
+
+
+def mediate_issue_marker_legacy(pr_number: str) -> str:
     return f"<!-- codex-gate-mediate:{pr_number} -->"
 
 
@@ -159,12 +167,24 @@ def stuck_pr_title(repository: str, pr_number: str) -> str:
     return f"Stuck PR threads: {short}#{pr_number}"[:120]
 
 
-def mediate_description_matches(description: str, pr_number: str) -> bool:
-    """True for this PR's roll-up marker or a legacy SHA-keyed marker."""
+def pr_html_url(repository: str, pr_number: str) -> str:
+    return f"https://github.com/{repository}/pull/{pr_number}"
+
+
+def mediate_description_matches(
+    description: str, repository: str, pr_number: str
+) -> bool:
+    """True for this repo+PR roll-up, including legacy PR-only markers."""
     body = description or ""
-    if mediate_issue_marker(pr_number) in body:
+    if mediate_issue_marker(repository, pr_number) in body:
         return True
-    return f"<!-- codex-gate-mediate:{pr_number}:" in body
+    url = pr_html_url(repository, pr_number)
+    if not re.search(rf"{re.escape(url)}(?:\s|$|#)", body):
+        return False
+    return (
+        mediate_issue_marker_legacy(pr_number) in body
+        or f"<!-- codex-gate-mediate:{pr_number}:" in body
+    )
 
 
 def pending_mediate_marker(pr_number: str, sha: str) -> str:
@@ -326,16 +346,32 @@ def verdict_from_reviews(reviews: list[dict[str, Any]], sha: str) -> str:
     return found
 
 
+def review_user_is_bot(review: dict[str, Any] | None) -> bool:
+    user = (review or {}).get("user") or {}
+    login = str(user.get("login") or "")
+    kind = str(user.get("type") or "")
+    if kind.lower() == "bot":
+        return True
+    if not login:
+        return True
+    if login.endswith("[bot]") or login in CODEX_BOTS:
+        return True
+    return login in {"devin-ai-integration", "github-actions"}
+
+
 def pr_is_approved(reviews: list[dict[str, Any]]) -> bool:
     """True when a human APPROVED and no later human CHANGES_REQUESTED.
 
-    Bot reviews (Devin, Codex, Actions) do not count. Per-user latest
-    non-comment state; any outstanding human CHANGES_REQUESTED wins.
+    Bot reviews (Devin, Codex, Actions, ``user.type == Bot``) do not count.
+    Per-user latest non-comment state; any outstanding human CHANGES_REQUESTED
+    wins.
     """
     latest: dict[str, tuple[datetime, str]] = {}
     for review in reviews:
+        if review_user_is_bot(review):
+            continue
         login = str(((review or {}).get("user") or {}).get("login") or "")
-        if not login or login.endswith("[bot]"):
+        if not login:
             continue
         state = str((review or {}).get("state") or "").upper()
         if state not in {"APPROVED", "CHANGES_REQUESTED"}:
@@ -543,23 +579,53 @@ def linear_graphql(api_key: str, query: str, variables: dict[str, Any]) -> dict[
     return data
 
 
+GATE_BLOCK_RE = re.compile(
+    r"<!--\s*codex-gate-mediate:[^>]*-->.*?<!--\s*/codex-gate-mediate\s*-->",
+    re.DOTALL,
+)
+LEGACY_GATE_TEMPLATE_RE = re.compile(
+    r"<!--\s*codex-gate-mediate:[^>]*-->\s*"
+    r"(?:\*\*PR:\*\*[^\n]*\n)?"
+    r"(?:\*\*SHA:\*\*[^\n]*\n)?"
+    r"\s*Codex gate MEDIATE:.*?Humans decide\.\s*",
+    re.DOTALL,
+)
+
+
 def mediate_issue_description(repository: str, pr_number: str, sha: str) -> str:
     return (
-        f"{mediate_issue_marker(pr_number)}\n\n"
-        f"**PR:** https://github.com/{repository}/pull/{pr_number}\n"
+        f"{mediate_issue_marker(repository, pr_number)}\n\n"
+        f"**PR:** {pr_html_url(repository, pr_number)}\n"
         f"**SHA:** `{sha}`\n\n"
         f"Codex gate MEDIATE: Devin and Claude disagree or a thread needs a "
         f"human. One Linear issue per PR. Auto-filed by "
         f"`.github/workflows/codex-gate.yml`. Humans decide.\n"
+        f"{mediate_issue_end_marker()}\n"
     )
+
+
+def merge_mediate_description(
+    existing: str, repository: str, pr_number: str, sha: str
+) -> str:
+    """Replace the gate-owned block only; keep human notes and other text."""
+    block = mediate_issue_description(repository, pr_number, sha).rstrip()
+    body = existing or ""
+    if GATE_BLOCK_RE.search(body):
+        return GATE_BLOCK_RE.sub(block, body, count=1)
+    rest = LEGACY_GATE_TEMPLATE_RE.sub("", body, count=1).strip()
+    if rest:
+        return f"{block}\n\n{rest}\n"
+    return block + "\n"
 
 
 def find_mediate_issue(
     graphql: Callable[[str, dict[str, Any]], dict[str, Any]],
+    repository: str,
     pr_number: str,
 ) -> dict[str, Any] | None:
     searches = (
-        mediate_issue_marker(pr_number),
+        mediate_issue_marker(repository, pr_number),
+        pr_html_url(repository, pr_number),
         f"codex-gate-mediate:{pr_number}:",
     )
     for contains in searches:
@@ -569,7 +635,7 @@ def find_mediate_issue(
         )
         for node in ((existing.get("issues") or {}).get("nodes")) or []:
             if isinstance(node, dict) and mediate_description_matches(
-                str(node.get("description") or ""), pr_number
+                str(node.get("description") or ""), repository, pr_number
             ):
                 return node
     return None
@@ -583,13 +649,15 @@ def create_needs_decision_issue(
     sha: str,
 ) -> str:
     title = stuck_pr_title(repository, pr_number)
-    description = mediate_issue_description(repository, pr_number, sha)
-    existing = find_mediate_issue(graphql, pr_number)
+    existing = find_mediate_issue(graphql, repository, pr_number)
     if existing is not None:
         issue_id = str(existing.get("id") or "")
         fallback = str(existing.get("url") or existing.get("identifier") or "existing")
         if not issue_id:
             return fallback
+        description = merge_mediate_description(
+            str(existing.get("description") or ""), repository, pr_number, sha
+        )
         updated = graphql(
             LINEAR_UPDATE,
             {"id": issue_id, "input": {"title": title, "description": description}},
@@ -629,7 +697,7 @@ def create_needs_decision_issue(
     payload: dict[str, Any] = {
         "teamId": team.get("id"),
         "title": title,
-        "description": description,
+        "description": mediate_issue_description(repository, pr_number, sha),
         "labelIds": [found[name] for name in LINEAR_LABELS if found.get(name)],
         "projectId": project_id,
     }
