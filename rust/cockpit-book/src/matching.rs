@@ -212,9 +212,10 @@ pub fn match_order(
 
             let traded = remaining.min(resting.qty);
             let resting_id = resting.order_id.clone();
+            let was_indexed = book.contains(&resting_id);
             if let Err(err) = book.reduce_qty(&resting_id, traded) {
-                // The order may already be gone before the failure; that is a fill.
-                if book.get(&resting_id).is_none() {
+                // Removed mid-call is a fill; never indexed is an integrity fault, not a fill.
+                if was_indexed && book.get(&resting_id).is_none() {
                     touched.push((resting_id, 0));
                 }
                 return Err(partial(err, stp_cancelled, touched));
