@@ -4,6 +4,10 @@
 //! is also what ``Decimal.quantize(Decimal("0.01"))`` uses for the SEC fee.
 //! Values are a sign, a base-10 coefficient, and an exponent:
 //! ``(-1)^neg * int(digits) * 10^exp``.
+//!
+//! The context is fixed. A caller that changes precision, rounding, the exponent
+//! range, clamp, or the default trap set is not computed here: ``quant.costs``
+//! keeps that call on the Python implementation, which honors the active context.
 
 use std::cmp::Ordering;
 
