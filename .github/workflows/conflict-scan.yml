@@ -1,7 +1,9 @@
-# Dedicated schedule file. GitHub never enqueued `schedule` while conflict-scan
-# lived in claude.yml next to high-volume comment/review events (zero schedule
-# runs on the default branch; push-triggered scans did run). A changed cron
-# also re-arms GitHub's scheduler.
+# Dedicated schedule file. GitHub never enqueued `schedule` for conflict-scan
+# while it lived in claude.yml (zero schedule runs on the default branch;
+# push-triggered scans did run). Schedules can be delayed or dropped under
+# load; a changed cron re-arms a dead schedule. Splitting away from the
+# high-volume comment/review workflow is a hypothesis for why schedule never
+# fired, not documented GitHub behavior.
 name: Claude conflict scan
 
 on:

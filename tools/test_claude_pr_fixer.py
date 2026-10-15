@@ -889,10 +889,13 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertNotIn("\n  conflict-resolve:\n", self.fixer)
         self.assertIn(SCAN_CRON, scan_on)
         self.assertIn("workflow_dispatch:", scan_on)
-        self.assertNotIn("\n  issue_comment:\n", scan_on)
-        self.assertNotIn("\n  pull_request_review:\n", scan_on)
-        self.assertNotIn("\n  pull_request_review_comment:\n", scan_on)
-        self.assertNotIn("\n  pull_request:\n", scan_on)
+        on_block = scan_on.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+        on_keys = [
+            line.strip().rstrip(":")
+            for line in on_block.splitlines()
+            if line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":")
+        ]
+        self.assertEqual(on_keys, ["push", "schedule", "workflow_dispatch"])
 
     def test_triggers_are_bounded(self) -> None:
         self.assertIn(SCAN_CRON, self.text)
