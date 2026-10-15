@@ -355,3 +355,36 @@ def test_rust_qty_domain_is_signed_64_bit():
     rust.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
     with pytest.raises(ValueError, match="signed 64-bit"):
         rust.total_qty(Side.SELL)
+
+
+def test_resting_at_matches_the_python_index_order():
+    python = PythonLimitOrderBook("S")
+    rust = LimitOrderBook("S")
+    rng = random.Random(4)
+    for i in range(30):
+        side = Side.BUY if rng.random() < 0.5 else Side.SELL
+        price = 100 + rng.randrange(-3, 4)
+        if side is Side.BUY:
+            price = min(price, 99)
+        else:
+            price = max(price, 101)
+        order_id = f"o{i}"
+        qty = 100 * rng.randint(1, 4)
+        python.add(order_id=order_id, side=side, price_ticks=price, qty=qty, seq=i, ts=i)
+        rust.add(order_id=order_id, side=side, price_ticks=price, qty=qty, seq=i, ts=i)
+        if i % 4 == 3:
+            victim = f"o{rng.randrange(i + 1)}"
+            if victim in python:
+                python.cancel(victim)
+                rust.cancel(victim)
+    python_ids = list(python._index)
+    assert [rust.resting_at(i).order_id for i in range(len(rust))] == python_ids
+    for i, order_id in enumerate(python_ids):
+        left = python.resting_at(i)
+        right = rust.resting_at(i)
+        assert right.order_id == left.order_id == order_id
+        assert right.side is left.side
+        assert right.price_ticks == left.price_ticks
+        assert right.qty == left.qty
+    with pytest.raises(IndexError):
+        rust.resting_at(len(rust))

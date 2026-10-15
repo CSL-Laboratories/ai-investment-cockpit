@@ -299,6 +299,21 @@ class LimitOrderBook:
     def _index(self) -> dict:
         return {row[0]: _take_row(self, row) for row in self._core.orders()}
 
+    def resting_at(self, index: int):
+        """One resting order in insertion order, without copying the index.
+
+        ``_index`` builds a ``RestingOrder`` for every live id. The synthetic
+        feed used that to pick one cancel target, and the copies dominated the
+        generator. This asks the book for that one row.
+        """
+        if type(index) is not int or index < 0:
+            raise IndexError(index)
+        try:
+            row = self._core.order_at(index)
+        except IndexError:
+            raise IndexError(index) from None
+        return _take_row(self, row)
+
     @property
     def _bid_prices(self) -> _Ladder:
         return _Ladder(self._core, "buy")

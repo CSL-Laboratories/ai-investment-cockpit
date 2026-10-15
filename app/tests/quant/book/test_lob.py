@@ -353,3 +353,21 @@ def test_snapshot_derived_statistics_agree_with_the_live_book(book):
     assert snap.mid_ticks == 101.0
     assert snap.microprice == pytest.approx(101.8)
     assert snap.imbalance == pytest.approx(0.8)
+
+
+def test_resting_at_follows_insertion_order_and_rejects_a_bad_index(book):
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    book.add(order_id="b", side=Side.SELL, price_ticks=101, qty=20)
+    book.add(order_id="c", side=Side.BUY, price_ticks=99, qty=30)
+    assert book.resting_at(0).order_id == "a"
+    assert book.resting_at(1).order_id == "b"
+    assert book.resting_at(2).qty == 30
+    book.cancel("b")
+    assert book.resting_at(0).order_id == "a"
+    assert book.resting_at(1).order_id == "c"
+    with pytest.raises(IndexError):
+        book.resting_at(2)
+    with pytest.raises(IndexError):
+        book.resting_at(-1)
+    with pytest.raises(IndexError):
+        book.resting_at(True)
