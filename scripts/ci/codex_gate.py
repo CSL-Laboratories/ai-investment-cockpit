@@ -37,7 +37,17 @@ FIX_DAY_RE = re.compile(r"<!--\s*codex-fixer-run:(\d{4}-\d{2}-\d{2})(?::[0-9a-f]
 VERDICT_LINE_RE = re.compile(r"^CODEX-GATE:\s*(FIX|READY|MEDIATE)$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
+SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}$")
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)(?!/)(?!.*//)[A-Za-z0-9._/-]{1,200}$")
+STUCK_PR_PREFIX = "stuck-pr-threads:"
+STUCK_PR_MARKER_RE = re.compile(
+    r"<!--\s*stuck-pr-threads:([A-Za-z0-9._/-]{1,120}#[1-9][0-9]{0,8})\s*-->"
+)
+GATE_BEGIN = "<!-- codex-gate-mediate-begin -->"
+GATE_END = "<!-- codex-gate-mediate-end -->"
+WATCHER_BEGIN = "<!-- stuck-pr-threads-begin -->"
+WATCHER_END = "<!-- stuck-pr-threads-end -->"
+CLOSED_STATE_TYPES = frozenset({"completed", "canceled"})
 PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
 TIMEOUT = timedelta(minutes=20)
 FIXER_CAP = 3
@@ -78,7 +88,20 @@ query($contains: String!, $teamKey: String!) {
       description: { contains: $contains }
     }
   ) {
-    nodes { id identifier url description }
+    nodes { id identifier url title description state { name type } }
+  }
+}
+"""
+LINEAR_SEARCH_TITLE = """
+query($title: String!, $teamKey: String!) {
+  issues(
+    first: 10
+    filter: {
+      team: { key: { eq: $teamKey } }
+      title: { eq: $title }
+    }
+  ) {
+    nodes { id identifier url title description state { name type } }
   }
 }
 """
@@ -150,12 +173,27 @@ def mediate_marker(pr_number: str, sha: str) -> str:
     return f"<!-- codex-gate-mediate:{pr_number}:{sha} -->"
 
 
+def repo_short(repository: str) -> str:
+    return (repository or "").split("/")[-1] or "repo"
+
+
+def stuck_pr_key(repository: str, pr_number: str) -> str:
+    if not SAFE_PR_RE.fullmatch(pr_number) or not SAFE_REPO_RE.fullmatch(repository or ""):
+        raise ValueError("unsafe repo or pr")
+    return f"{repository}#{pr_number}"
+
+
+def stuck_pr_marker(repository: str, pr_number: str) -> str:
+    return f"<!-- {STUCK_PR_PREFIX}{stuck_pr_key(repository, pr_number)} -->"
+
+
 def mediate_issue_marker(repository: str, pr_number: str) -> str:
-    return f"<!-- codex-gate-mediate:{repository}:{pr_number} -->"
+    """Shared Linear roll-up key (same string as stuck-thread-watch)."""
+    return stuck_pr_marker(repository, pr_number)
 
 
 def mediate_issue_end_marker() -> str:
-    return "<!-- /codex-gate-mediate -->"
+    return GATE_END
 
 
 def mediate_issue_marker_legacy(pr_number: str) -> str:
@@ -163,8 +201,7 @@ def mediate_issue_marker_legacy(pr_number: str) -> str:
 
 
 def stuck_pr_title(repository: str, pr_number: str) -> str:
-    short = repository.split("/")[-1] if repository else "repo"
-    return f"Stuck PR threads: {short}#{pr_number}"[:120]
+    return f"Stuck PR threads: {repo_short(repository)}#{pr_number}"[:120]
 
 
 def pr_html_url(repository: str, pr_number: str) -> str:
@@ -185,25 +222,65 @@ def description_has_pr_url(description: str, repository: str, pr_number: str) ->
     return bool(re.search(rf"{re.escape(url)}(?:/?(?:[)\s#\"'<\]]|$))", description or ""))
 
 
+def stuck_pr_keys_in(text: str) -> list[str]:
+    return STUCK_PR_MARKER_RE.findall(text or "")
+
+
+def _key_matches_pr(key: str, repository: str, pr_number: str) -> bool:
+    return key in {f"{repository}#{pr_number}", f"{repo_short(repository)}#{pr_number}"}
+
+
+def rollup_preamble(description: str) -> str:
+    text = description or ""
+    if WATCHER_BEGIN in text:
+        return text.split(WATCHER_BEGIN, 1)[0]
+    if GATE_BEGIN in text:
+        return text.split(GATE_BEGIN, 1)[0]
+    return text
+
+
+def issue_is_closed(node: dict[str, Any]) -> bool:
+    state = node.get("state") if isinstance(node.get("state"), dict) else {}
+    kind = str(state.get("type") or "").lower()
+    name = str(state.get("name") or "").lower()
+    return kind in CLOSED_STATE_TYPES or name in {"done", "canceled", "cancelled"}
+
+
 def mediate_description_matches(
     description: str, repository: str, pr_number: str
 ) -> bool:
-    """True for this repo+PR roll-up, including legacy PR-only markers.
+    """True for this repo+PR roll-up, including shared and legacy markers.
 
-    Legacy markers are PR-number-only. Match them only when the ``**PR:**``
-    field (bare URL or Markdown) is this repository's pull request, not when
-    a related link appears elsewhere in the description.
+    The shared key is ``<!-- stuck-pr-threads:owner/repo#N -->``. Legacy
+    ``codex-gate-mediate`` markers still match when the ``**PR:**`` field is
+    this pull request.
     """
     body = description or ""
-    if mediate_issue_marker(repository, pr_number) in body:
-        return True
+    keys = stuck_pr_keys_in(rollup_preamble(body))
+    if keys:
+        return all(_key_matches_pr(key, repository, pr_number) for key in keys)
     has_legacy = (
         mediate_issue_marker_legacy(pr_number) in body
         or f"<!-- codex-gate-mediate:{pr_number}:" in body
+        or f"<!-- codex-gate-mediate:{repository}:{pr_number} -->" in body
     )
     if not has_legacy:
         return False
     return description_has_pr_url(pr_field_text(body), repository, pr_number)
+
+
+def title_matches_rollup(
+    node: dict[str, Any], repository: str, pr_number: str
+) -> bool:
+    if issue_is_closed(node):
+        return False
+    if str(node.get("title") or "") != stuck_pr_title(repository, pr_number):
+        return False
+    desc = str(node.get("description") or "")
+    keys = stuck_pr_keys_in(rollup_preamble(desc))
+    if not keys:
+        return True
+    return all(_key_matches_pr(key, repository, pr_number) for key in keys)
 
 
 def pending_mediate_marker(pr_number: str, sha: str) -> str:
@@ -599,7 +676,8 @@ def linear_graphql(api_key: str, query: str, variables: dict[str, Any]) -> dict[
 
 
 GATE_BLOCK_RE = re.compile(
-    r"<!--\s*codex-gate-mediate:[^>]*-->.*?<!--\s*/codex-gate-mediate\s*-->",
+    r"<!--\s*codex-gate-mediate-begin\s*-->.*?<!--\s*codex-gate-mediate-end\s*-->"
+    r"|<!--\s*codex-gate-mediate:[^>]*-->.*?<!--\s*/codex-gate-mediate\s*-->",
     re.DOTALL,
 )
 LEGACY_GATE_TEMPLATE_RE = re.compile(
@@ -611,30 +689,43 @@ LEGACY_GATE_TEMPLATE_RE = re.compile(
 )
 
 
-def mediate_issue_description(repository: str, pr_number: str, sha: str) -> str:
+def gate_owned_block(repository: str, pr_number: str, sha: str) -> str:
     return (
-        f"{mediate_issue_marker(repository, pr_number)}\n\n"
+        f"{GATE_BEGIN}\n"
         f"**PR:** {pr_html_url(repository, pr_number)}\n"
         f"**SHA:** `{sha}`\n\n"
         f"Codex gate MEDIATE: Devin and Claude disagree or a thread needs a "
         f"human. One Linear issue per PR. Auto-filed by "
         f"`.github/workflows/codex-gate.yml`. Humans decide.\n"
-        f"{mediate_issue_end_marker()}\n"
+        f"{GATE_END}"
     )
+
+
+def mediate_issue_description(repository: str, pr_number: str, sha: str) -> str:
+    return f"{stuck_pr_marker(repository, pr_number)}\n{gate_owned_block(repository, pr_number, sha)}\n"
 
 
 def merge_mediate_description(
     existing: str, repository: str, pr_number: str, sha: str
 ) -> str:
-    """Replace the gate-owned block only; keep human notes and other text."""
-    block = mediate_issue_description(repository, pr_number, sha).rstrip()
+    """Replace the gate-owned block only; keep watcher text and human notes."""
+    block = gate_owned_block(repository, pr_number, sha)
     body = existing or ""
     if GATE_BLOCK_RE.search(body):
-        return GATE_BLOCK_RE.sub(block, body, count=1)
-    rest = LEGACY_GATE_TEMPLATE_RE.sub("", body, count=1).strip()
-    if rest:
-        return f"{block}\n\n{rest}\n"
-    return block + "\n"
+        body = GATE_BLOCK_RE.sub(block, body, count=1)
+    else:
+        rest = LEGACY_GATE_TEMPLATE_RE.sub("", body, count=1).strip("\n")
+        if WATCHER_END in rest:
+            before, after = rest.split(WATCHER_END, 1)
+            body = f"{before}{WATCHER_END}\n\n{block}{after}"
+        elif rest.strip():
+            body = f"{block}\n\n{rest}"
+        else:
+            body = block
+    marker = stuck_pr_marker(repository, pr_number)
+    if not any(_key_matches_pr(key, repository, pr_number) for key in stuck_pr_keys_in(body)):
+        body = f"{marker}\n{body.lstrip('\n')}"
+    return body if body.endswith("\n") else f"{body}\n"
 
 
 def find_mediate_issue(
@@ -642,21 +733,31 @@ def find_mediate_issue(
     repository: str,
     pr_number: str,
 ) -> dict[str, Any] | None:
-    searches = (
-        mediate_issue_marker(repository, pr_number),
-        pr_html_url(repository, pr_number),
+    needles = (
+        f"{STUCK_PR_PREFIX}{repository}#{pr_number}",
+        f"{STUCK_PR_PREFIX}{repo_short(repository)}#{pr_number}",
+        f"codex-gate-mediate:{repository}:{pr_number}",
         f"codex-gate-mediate:{pr_number}:",
     )
-    for contains in searches:
+    for contains in needles:
         existing = graphql(
             LINEAR_SEARCH,
             {"contains": contains, "teamKey": LINEAR_TEAM_KEY},
         )
         for node in ((existing.get("issues") or {}).get("nodes")) or []:
-            if isinstance(node, dict) and mediate_description_matches(
+            if not isinstance(node, dict) or issue_is_closed(node):
+                continue
+            if mediate_description_matches(
                 str(node.get("description") or ""), repository, pr_number
             ):
                 return node
+    titled = graphql(
+        LINEAR_SEARCH_TITLE,
+        {"title": stuck_pr_title(repository, pr_number), "teamKey": LINEAR_TEAM_KEY},
+    )
+    for node in ((titled.get("issues") or {}).get("nodes")) or []:
+        if isinstance(node, dict) and title_matches_rollup(node, repository, pr_number):
+            return node
     return None
 
 

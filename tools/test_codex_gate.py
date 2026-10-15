@@ -736,7 +736,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(updates[0]["id"], "issue-1")
         self.assertEqual(updates[0]["input"]["title"], "Stuck PR threads: example#42")
         body = updates[0]["input"]["description"]
-        self.assertIn(mod.mediate_issue_marker(REPO, "42"), body)
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), body)
         self.assertIn("b" * 40, body)
         self.assertIn("Wait for Alice's risk decision", body)
         self.assertNotIn("codex-gate-mediate:42:" + SHA, body)
@@ -782,16 +782,18 @@ class RunTests(unittest.TestCase):
         )
         self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-10")
         self.assertEqual(created[0]["input"]["title"], "Stuck PR threads: example#42")
-        self.assertIn(mod.mediate_issue_marker(REPO, "42"), created[0]["input"]["description"])
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), created[0]["input"]["description"])
+        self.assertIn(mod.GATE_BEGIN, created[0]["input"]["description"])
         self.assertIn(mod.mediate_issue_end_marker(), created[0]["input"]["description"])
         self.assertNotIn(f"codex-gate-mediate:42:{SHA}", created[0]["input"]["description"])
 
     def test_create_needs_decision_issue_ignores_other_repo(self) -> None:
         created: list[dict[str, Any]] = []
         other = (
-            f"{mod.mediate_issue_marker('acme/other', '42')}\n"
+            f"{mod.stuck_pr_marker('acme/other', '42')}\n"
+            f"{mod.WATCHER_BEGIN}\n"
             "**PR:** https://github.com/acme/other/pull/42\n"
-            f"{mod.mediate_issue_end_marker()}\n"
+            f"{mod.WATCHER_END}\n"
         )
 
         def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -845,6 +847,106 @@ class RunTests(unittest.TestCase):
         self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-11")
         self.assertEqual(len(created), 1)
 
+    def test_create_needs_decision_issue_adopts_title_and_skips_done(self) -> None:
+        updates: list[dict[str, Any]] = []
+        created: list[dict[str, Any]] = []
+        unmarked = {
+            "id": "hand-1",
+            "url": "https://linear.app/csl-laboratories/issue/CSL-167",
+            "title": "Stuck PR threads: example#42",
+            "description": "Hand-made roll-up",
+            "state": {"name": "Triage", "type": "triage"},
+        }
+        done = {
+            "id": "done-1",
+            "url": "https://linear.app/csl-laboratories/issue/CSL-169",
+            "title": "Stuck PR threads: example#7",
+            "description": "",
+            "state": {"name": "Done", "type": "completed"},
+        }
+
+        def graphql_open(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "title: { eq" in query:
+                return {"issues": {"nodes": [unmarked]}}
+            if "issues(" in query:
+                return {"issues": {"nodes": []}}
+            if "issueUpdate" in query:
+                updates.append(variables)
+                return {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": unmarked["url"]},
+                    }
+                }
+            raise AssertionError(query[:80])
+
+        url = mod.create_needs_decision_issue(
+            graphql_open, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, unmarked["url"])
+        self.assertEqual(len(updates), 1)
+        self.assertIn("Hand-made roll-up", updates[0]["input"]["description"])
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), updates[0]["input"]["description"])
+
+        def graphql_done(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "title: { eq" in query:
+                return {"issues": {"nodes": [done]}}
+            if "issues(" in query:
+                return {"issues": {"nodes": []}}
+            if "teams(" in query:
+                return {
+                    "teams": {
+                        "nodes": [
+                            {
+                                "id": "t1",
+                                "states": {"nodes": [{"id": "s1", "type": "triage"}]},
+                            }
+                        ]
+                    }
+                }
+            if "issueLabels" in query:
+                name = str(variables.get("name") or "")
+                return {"issueLabels": {"nodes": [{"id": name, "name": name}]}}
+            if "projects(" in query:
+                return {
+                    "projects": {
+                        "nodes": [{"id": "p1", "name": "ai-investment-cockpit"}]
+                    }
+                }
+            if "issueCreate" in query:
+                created.append(variables)
+                return {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-12"},
+                    }
+                }
+            if "issueUpdate" in query:
+                raise AssertionError("must not update a Done issue")
+            raise AssertionError(query[:80])
+
+        url = mod.create_needs_decision_issue(
+            graphql_done, repository=REPO, pr_number="7", sha=SHA
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-12")
+        self.assertEqual(len(created), 1)
+
+    def test_merge_keeps_watcher_block(self) -> None:
+        existing = (
+            f"{mod.stuck_pr_marker(REPO, '42')}\n"
+            f"{mod.WATCHER_BEGIN}\n"
+            "watcher threads\n"
+            f"{mod.WATCHER_END}\n"
+            "Wait for Alice's risk decision\n"
+        )
+        merged = mod.merge_mediate_description(existing, REPO, "42", SHA)
+        self.assertIn(mod.WATCHER_BEGIN, merged)
+        self.assertIn("watcher threads", merged)
+        self.assertIn(mod.WATCHER_END, merged)
+        self.assertIn(mod.GATE_BEGIN, merged)
+        self.assertIn("Wait for Alice's risk decision", merged)
+        self.assertLess(merged.index(mod.WATCHER_END), merged.index(mod.GATE_BEGIN))
+
     def test_merge_mediate_description_keeps_notes_on_repeat(self) -> None:
         first = mod.merge_mediate_description(
             "Wait for Alice's risk decision", REPO, "42", SHA
@@ -856,7 +958,7 @@ class RunTests(unittest.TestCase):
         self.assertNotIn(SHA, second.split(mod.mediate_issue_end_marker())[0])
 
     def test_mediate_description_does_not_match_other_pr(self) -> None:
-        own = mod.mediate_issue_marker(REPO, "42")
+        own = mod.stuck_pr_marker(REPO, "42")
         self.assertTrue(mod.mediate_description_matches(own, REPO, "42"))
         legacy = (
             f"{mod.mediate_marker('42', SHA)}\n**PR:** https://github.com/{REPO}/pull/42\n"
@@ -869,7 +971,7 @@ class RunTests(unittest.TestCase):
         )
         self.assertFalse(mod.mediate_description_matches(other, REPO, "42"))
         self.assertFalse(
-            mod.mediate_description_matches(mod.mediate_issue_marker("acme/other", "42"), REPO, "42")
+            mod.mediate_description_matches(mod.stuck_pr_marker("acme/other", "42"), REPO, "42")
         )
         markdown = (
             f"{mod.mediate_issue_marker_legacy('42')}\n"
@@ -1043,6 +1145,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("A founder may have their own bot", self.agents)
         self.assertIn("Stuck-thread watch", self.agents)
         self.assertIn("Stuck PR threads:", self.agents)
+        self.assertIn("stuck-pr-threads:", self.agents)
         self.assertIn("already approved", self.agents)
         self.assertIn("codex-mediation:", self.agents)
         self.assertIn("needs-decision", self.agents)
