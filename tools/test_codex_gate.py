@@ -326,6 +326,28 @@ class ApplyVerdictTests(unittest.TestCase):
         self.assertIn("needs a human", posted[0])
         self.assertIn("https://linear.app/issue/CSL-1", posted[0])
 
+    def test_mediate_skips_approved_pr(self) -> None:
+        posted: list[str] = []
+        mediated: list[str] = []
+        logs = mod.apply_verdict(
+            "MEDIATE",
+            repository=REPO,
+            pr_number="42",
+            sha=SHA,
+            comments=[],
+            day="2026-10-15",
+            post_comment=posted.append,
+            add_label=lambda _n: None,
+            dispatch_fixer=lambda: None,
+            file_decision=lambda: (mediated.append("linear") or "https://linear.app/issue/CSL-1"),
+            pr_approved=True,
+        )
+        self.assertEqual(mediated, [])
+        self.assertEqual(len(posted), 1)
+        self.assertIn("already approved", posted[0])
+        self.assertIn("codex-gate-action:" + SHA + ":MEDIATE", posted[0])
+        self.assertTrue(any("mediate=skip-approved" in line for line in logs))
+
     def test_mediate_without_linear_url_does_not_mark(self) -> None:
         posted: list[str] = []
         logs = mod.apply_verdict(
@@ -492,6 +514,34 @@ class RunTests(unittest.TestCase):
         self.assertFalse(any("codex-gate-action:" in (body.get("body") or "") for _, body in gh.posts))
         self.assertTrue(any("codex-gate-mediate-pending:" in (body.get("body") or "") for _, body in gh.posts))
 
+    def test_mediate_run_skips_linear_when_pr_approved(self) -> None:
+        gh = FakeGH()
+        gh.reviews = [
+            {
+                "body": "",
+                "user": {"login": "alice"},
+                "state": "APPROVED",
+                "commit_id": SHA,
+                "submitted_at": "2026-10-15T15:00:00Z",
+            }
+        ]
+        with patch.dict(os.environ, {"LINEAR_API_KEY": "lin_api_not_real"}, clear=False):
+            rc = mod.run(
+                event_name="pull_request_review",
+                event={
+                    "review": review("nits\nCODEX-GATE: MEDIATE"),
+                    "pull_request": pr_payload(),
+                },
+                repository=REPO,
+                pat="not-a-real-secret",
+                gh=gh,
+            )
+        self.assertEqual(rc, 0)
+        bodies = [str(body.get("body") or "") for _, body in gh.posts]
+        self.assertTrue(any("already approved" in item for item in bodies))
+        self.assertTrue(any("codex-gate-action:" + SHA + ":MEDIATE" in item for item in bodies))
+        self.assertFalse(any("Linear:" in item for item in bodies))
+
     def test_review_skips_fork_and_draft(self) -> None:
         gh = FakeGH()
         for pr in (
@@ -644,29 +694,138 @@ class RunTests(unittest.TestCase):
         self.assertFalse(mod.gate_ready_on_other_sha(both, SHA))
         self.assertFalse(mod.gate_ready_on_other_sha([], SHA))
 
-    def test_create_needs_decision_issue_dedupes(self) -> None:
-        calls: list[str] = []
+    def test_create_needs_decision_issue_updates_rollup(self) -> None:
+        updates: list[dict[str, Any]] = []
 
         def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
-            calls.append(query)
             if "issues(" in query:
                 return {
                     "issues": {
                         "nodes": [
                             {
+                                "id": "issue-1",
                                 "url": "https://linear.app/csl-laboratories/issue/CSL-9",
                                 "description": mod.mediate_marker("42", SHA) + "\nexisting",
                             }
                         ]
                     }
                 }
-            raise AssertionError("should not create")
+            if "issueUpdate" in query:
+                updates.append(variables)
+                return {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-9"},
+                    }
+                }
+            raise AssertionError("should update, not create")
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha="b" * 40
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-9")
+        self.assertEqual(len(updates), 1)
+        self.assertEqual(updates[0]["id"], "issue-1")
+        self.assertEqual(updates[0]["input"]["title"], "Stuck PR threads: example#42")
+        self.assertIn(mod.mediate_issue_marker("42"), updates[0]["input"]["description"])
+        self.assertIn("b" * 40, updates[0]["input"]["description"])
+        self.assertNotIn("codex-gate-mediate:42:" + SHA, updates[0]["input"]["description"])
+
+    def test_create_needs_decision_issue_rollup_title(self) -> None:
+        created: list[dict[str, Any]] = []
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "issues(" in query:
+                return {"issues": {"nodes": []}}
+            if "teams(" in query:
+                return {
+                    "teams": {
+                        "nodes": [
+                            {
+                                "id": "t1",
+                                "states": {"nodes": [{"id": "s1", "type": "triage"}]},
+                            }
+                        ]
+                    }
+                }
+            if "issueLabels" in query:
+                name = str(variables.get("name") or "")
+                return {"issueLabels": {"nodes": [{"id": name, "name": name}]}}
+            if "projects(" in query:
+                return {
+                    "projects": {
+                        "nodes": [{"id": "p1", "name": "ai-investment-cockpit"}]
+                    }
+                }
+            if "issueCreate" in query:
+                created.append(variables)
+                return {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-10"},
+                    }
+                }
+            raise AssertionError(query[:80])
 
         url = mod.create_needs_decision_issue(
             graphql, repository=REPO, pr_number="42", sha=SHA
         )
-        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-9")
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-10")
+        self.assertEqual(created[0]["input"]["title"], "Stuck PR threads: example#42")
+        self.assertIn(mod.mediate_issue_marker("42"), created[0]["input"]["description"])
+        self.assertNotIn(f"codex-gate-mediate:42:{SHA}", created[0]["input"]["description"])
+
+    def test_mediate_description_does_not_match_other_pr(self) -> None:
+        self.assertTrue(mod.mediate_description_matches(mod.mediate_issue_marker("42"), "42"))
+        self.assertTrue(
+            mod.mediate_description_matches(mod.mediate_marker("42", SHA), "42")
+        )
+        self.assertFalse(mod.mediate_description_matches(mod.mediate_issue_marker("42"), "4"))
+        self.assertFalse(mod.mediate_description_matches(mod.mediate_issue_marker("4"), "42"))
+
+    def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
+        human_ok = {
+            "user": {"login": "alice"},
+            "state": "APPROVED",
+            "submitted_at": "2026-10-15T15:00:00Z",
+        }
+        self.assertTrue(mod.pr_is_approved([human_ok]))
+        self.assertFalse(
+            mod.pr_is_approved(
+                [
+                    human_ok,
+                    {
+                        "user": {"login": "bob"},
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-10-15T16:00:00Z",
+                    },
+                ]
+            )
+        )
+        self.assertTrue(
+            mod.pr_is_approved(
+                [
+                    human_ok,
+                    {
+                        "user": {"login": "devin-ai-integration[bot]"},
+                        "state": "CHANGES_REQUESTED",
+                        "submitted_at": "2026-10-15T16:00:00Z",
+                    },
+                ]
+            )
+        )
+        self.assertFalse(
+            mod.pr_is_approved(
+                [
+                    {
+                        "user": {"login": "chatgpt-codex-connector[bot]"},
+                        "state": "APPROVED",
+                        "submitted_at": "2026-10-15T15:00:00Z",
+                    }
+                ]
+            )
+        )
+        self.assertFalse(mod.pr_is_approved([]))
 
     def test_label_predates_last_ready_ignores_actor(self) -> None:
         ready = [comment(mod.action_marker("c" * 40, "READY"), created="2026-10-15T15:00:00Z")]
@@ -756,6 +915,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("Human-only findings need a human `@claude` mention", self.agents)
         self.assertIn("A founder may have their own bot", self.agents)
         self.assertIn("Stuck-thread watch", self.agents)
+        self.assertIn("Stuck PR threads:", self.agents)
+        self.assertIn("already approved", self.agents)
         self.assertIn("codex-mediation:", self.agents)
         self.assertIn("needs-decision", self.agents)
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)

@@ -3,8 +3,9 @@
 # notice skip, not a failure.
 #
 # Posts one `@codex review` per head SHA, parses CODEX-GATE: FIX|READY|MEDIATE,
-# dispatches one batched Claude fixer, labels ci:full, or files a Linear
-# needs-decision issue (MEDIATE). 20-minute timeout fail-opens to FIX.
+# dispatches one batched Claude fixer, labels ci:full, or files/updates one
+# Linear needs-decision issue per PR (MEDIATE; skip if already approved).
+# 20-minute timeout fail-opens to FIX.
 # Cap: 3 fixer runs per PR per UTC day. Human @claude bypasses the cap
 # (claude.yml claude-mention job).
 name: Codex CI/fixer gate
