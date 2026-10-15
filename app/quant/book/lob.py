@@ -58,6 +58,7 @@ import bisect
 from dataclasses import dataclass, field
 from typing import Iterator
 
+from quant.book._activate import maybe_install as _maybe_install_rust
 from quant.events import Side
 
 
@@ -279,6 +280,10 @@ class LimitOrderBook:
     hand-built test sequences drive the book directly and assert on queue positions without
     a matcher, a feed, or a clock in the picture.
     """
+
+    # "python" until ``_activate`` rebinds the name to the Rust class, when that
+    # extension is installed. The class object itself stays the reference impl.
+    backend = "python"
 
     __slots__ = ("symbol", "_bids", "_asks", "_bid_prices", "_ask_prices", "_index", "_last_seq", "_last_ts")
 
@@ -597,3 +602,22 @@ class LimitOrderBook:
             raise BookIntegrityError(
                 f"order index holds {sorted(set(self._index) - seen)} not present in any level"
             )
+
+
+# The names above are the Python reference. When the Rust extension is installed
+# they are rebound so existing imports (`from quant.book.lob import LimitOrderBook`)
+# exercise the port. ``PythonLimitOrderBook`` stays the reference for parity and
+# the benchmark. BookSnapshot / the exception types are not rebound: callers
+# construct those directly.
+PythonLimitOrderBook = LimitOrderBook
+PythonPriceLevel = PriceLevel
+PythonRestingOrder = RestingOrder
+
+_rust_book = _maybe_install_rust(
+    OrderNotFound, BookIntegrityError, BookSnapshot, LevelSnapshot, RestingOrder,
+)
+if _rust_book is not None:
+    # Rebind the book only. ``PriceLevel`` stays the reference class: the Python
+    # book's methods look that name up when they create a level, and the Rust
+    # book returns its own level view from ``level()``.
+    LimitOrderBook = _rust_book[0]

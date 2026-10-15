@@ -1,0 +1,55 @@
+name: rust
+
+# CSL-42: the Rust FIFO book. This job builds the crate, runs its tests, installs
+# the PyO3 extension, and re-runs the Python book tests against that extension.
+# It does not replace linux-gates or the DEC-09 local matrix, and it does not
+# touch brokers, live capital, or the order path.
+
+on:
+  pull_request:
+    paths:
+      - "rust/**"
+      - "app/quant/book/**"
+      - "app/tests/quant/book/**"
+      - ".github/workflows/rust.yml"
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "app/quant/book/**"
+      - "app/tests/quant/book/**"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-book:
+    name: rust-book
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust tests
+        working-directory: rust
+        run: cargo test --workspace
+      - name: Build the Python extension
+        run: |
+          python -m pip install -U pip maturin
+          python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
+          python -m pip install --force-reinstall rust/target/wheels/cockpit_quant-*.whl
+      - name: Python book tests against the extension
+        working-directory: app
+        run: |
+          python -m pip install pytest
+          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py
+      - name: Benchmark Rust against the Python reference
+        run: python rust/bench_compare.py
