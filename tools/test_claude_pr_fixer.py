@@ -544,7 +544,19 @@ class FixerGateAndPromptTests(unittest.TestCase):
             body = self._job(job)
             self.assertIn("prompt: |", body, job)
             self.assertIn("commit SHA", body, job)
-            self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("Do not resolve unanswered threads", body, job)
+            self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
+            self.assertIn("resolveReviewThread", body, job)
+            self.assertIn(
+                "Bash(gh api repos/*/pulls/*/comments/*/replies:*)",
+                body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0],
+                job,
+            )
+            self.assertIn(
+                "Bash(gh api graphql:*resolveReviewThread*)",
+                body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0],
+                job,
+            )
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
             self.assertIn("UNTRUSTED DATA", body, job)
@@ -903,6 +915,9 @@ class ConflictJobStructureTests(unittest.TestCase):
             self.assertIn(f'"Edit({path})"', job)
             self.assertIn(f'"Write({path})"', job)
         self.assertIn("tools/test_claude_pr_fixer.py.", job.split("--allowedTools", 1)[0])
+        allow = job.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+        self.assertNotIn("comments/*/replies", allow)
+        self.assertNotIn("resolveReviewThread", allow)
         self.assertIn("Bash(git push origin HEAD:refs/heads/${{ matrix.pr.head_ref }})", job)
         self.assertNotIn("HEAD:refs/heads/*", job)
         self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
