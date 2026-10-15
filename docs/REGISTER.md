@@ -64,7 +64,9 @@ passed / 6 skipped. Source-bound results and prior diagnostic failures are in
 [[evidence/rw33-swarm-rebase-2026-09-14]]. The operator authorized commit, push and
 a draft PR after validation; merge remains an operator action.
 
-> **Claim work here before writing code.** This is the whole mechanism. We work ad hoc —
+> **Claim work in Linear (assign the `CSL-N` issue to yourself) before writing code, then
+> record the work ID and branch here.** Linear assignment is the claim; this register is the
+> shared ID space and status board. We work ad hoc —
 > whoever picks something up — which is fine for four people and is not changing. What is not
 > fine is having no shared place to say "I have this", which is how the same five defects got
 > fixed twice on two branches.

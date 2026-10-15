@@ -152,7 +152,8 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
 
 - **Claim = assign yourself** in Linear before starting. Unassign if you stop.
   Find or create the issue via the Linear MCP first. Do not start a change
-  without a `CSL-N`.
+  without a `CSL-N`. Then record the work ID and branch in `docs/REGISTER.md`;
+  the register is the ID/status board, Linear assignment is the claim.
 - **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
   is `CSL-N: ...`. Put `Fixes CSL-N` in the PR body so GitHub links the issue.
   One issue per PR; keep PRs small and stackable.
