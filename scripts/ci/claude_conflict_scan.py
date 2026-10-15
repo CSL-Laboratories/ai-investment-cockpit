@@ -27,7 +27,11 @@ MAX_PRS = 3
 MAX_PAGES = 10
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_BUDGET_SECONDS = 120.0
-MAX_DETAIL_REQUESTS = 150
+MAX_RETRY_REQUESTS = 150
+FIXER_EVENTS = frozenset(
+    {"issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"}
+)
+WORKFLOW_FILE = "claude.yml"
 
 PermissionLookup = Callable[[str], str]
 
@@ -154,30 +158,30 @@ def fetch_prs(
     The open listing is always fetched so stacked-branch protection also holds
     for a single-PR dispatch. mergeable is only on the single-PR endpoint and is
     computed lazily: retries share one time budget, never sleep after the last
-    attempt, stop after the deadline, and total detail requests are capped so the
-    scan always finishes well inside its job timeout. Pending PRs are skipped.
+    attempt, and stop after the deadline or once MAX_RETRY_REQUESTS retries are
+    spent. Every open PR still gets one detail request, so no PR is starved by
+    listing order. Pending PRs are skipped.
     """
     get = get or _gh_json
     listing = list_open_prs(repository, get)
     bases = open_bases(listing)
     numbers = [only] if only else [str(p.get("number")) for p in listing]
     deadline = clock() + MERGEABLE_BUDGET_SECONDS
-    requests = 0
+    retries = 0
     details: list[dict[str, Any]] = []
     for number in numbers:
         if not number.isdigit():
             continue
-        if requests >= MAX_DETAIL_REQUESTS:
-            break
         pr: dict[str, Any] = {}
         for attempt in range(MERGEABLE_ATTEMPTS):
+            if attempt:
+                retries += 1
             pr = get(f"repos/{repository}/pulls/{number}")
-            requests += 1
             if not isinstance(pr, dict) or pr.get("mergeable") is not None:
                 break
             if (
                 attempt == MERGEABLE_ATTEMPTS - 1
-                or requests >= MAX_DETAIL_REQUESTS
+                or retries >= MAX_RETRY_REQUESTS
                 or clock() + 5 > deadline
             ):
                 break
@@ -185,6 +189,37 @@ def fetch_prs(
         if isinstance(pr, dict):
             details.append(pr)
     return details, bases
+
+
+def fixer_busy(
+    repository: str, current_run_id: str = "", get: Callable[[str], Any] | None = None
+) -> bool:
+    """True if an event-driven Claude fixer run (comment/review/PR) is queued or running.
+
+    The resolver shares the per-PR claude-<N> concurrency group with the fixers, and
+    GitHub keeps only one pending job per group. Not queueing resolvers while any
+    fixer run is active means a scheduled resolver can never displace a pending,
+    one-shot fixer. Fails closed: a lookup error counts as busy.
+    """
+    get = get or _gh_json
+    try:
+        for status in ("queued", "in_progress", "waiting", "pending"):
+            data = get(
+                f"repos/{repository}/actions/workflows/{WORKFLOW_FILE}/runs?status={status}&per_page=100"
+            )
+            runs = data.get("workflow_runs") if isinstance(data, dict) else None
+            if not isinstance(runs, list):
+                return True
+            for run in runs:
+                if not isinstance(run, dict):
+                    continue
+                if str(run.get("id") or "") == current_run_id:
+                    continue
+                if str(run.get("event") or "") in FIXER_EVENTS:
+                    return True
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return True
+    return False
 
 
 def gh_permission(repository: str) -> PermissionLookup:
@@ -214,6 +249,9 @@ def main() -> int:
         emit([], ["conflict-scan: bad-input"])
         return 0
     try:
+        if fixer_busy(repository, os.environ.get("GITHUB_RUN_ID", "")):
+            emit([], ["conflict-scan: skip=fixer-busy (an event-driven Claude run is active; next scan retries)"])
+            return 0
         prs, bases = fetch_prs(repository, only)
     except (OSError, ValueError, subprocess.CalledProcessError):
         emit([], ["conflict-scan: fetch-failed"])
