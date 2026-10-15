@@ -398,13 +398,21 @@ class LimitOrderBook:
         before it stay applied, including on any ``RestingOrder`` the caller
         already holds.
         """
-        # Materialize first: a generator may read the book between yields, and
-        # the native call holds the book borrowed while it iterates.
-        ops = list(ops)
+        if isinstance(ops, (list, tuple)):
+            return self._apply_sequence(list(ops))
+        # A generator runs its body on each pull. Apply the op it just yielded
+        # before asking for the next one, so a read of the book between yields
+        # sees the earlier op. Listing it first would run those reads too early.
+        public: list = []
+        for op in ops:
+            public.extend(self._apply_chunk([op]))
+        return public
+
+    def _apply_sequence(self, ops: list):
         if not self._live:
             return self._apply_chunk(ops)
-        # Retained orders read the native book after a match, so a match must
-        # be the last op of its chunk. Later ops cannot change what it saw.
+        # A match ends its chunk. The next op is absorbed only after the held
+        # qty from that match is applied, so a later cancel cannot look like a fill.
         public: list = []
         start = 0
         for index, op in enumerate(ops):
@@ -422,10 +430,9 @@ class LimitOrderBook:
             applied = getattr(exc, "applied", None) or []
             if applied:
                 _absorb_batch(self, applied)
-            failed = chunk[len(applied)] if len(applied) < len(chunk) else None
-            if isinstance(failed, tuple) and failed and failed[0] == "m":
-                # The matcher may have consumed resting qty before it failed.
-                _resync_live(self)
+            # A failed match may already have traded or cancelled. Those ids are
+            # on the error. An id that is merely missing was not filled.
+            _apply_effects(self, getattr(exc, "touched", ()), getattr(exc, "stp_cancelled", ()))
             if isinstance(exc, (
                 cockpit_quant.NotFound,
                 cockpit_quant.IntegrityError,
@@ -441,9 +448,11 @@ class LimitOrderBook:
         With no retained orders the native quiet path builds no result rows.
         Otherwise the rows still update retained orders, so a held
         ``RestingOrder`` cannot go stale after a quiet reduce, cancel,
-        replace, or fill.
+        replace, or fill. A generator is applied one op at a time, same as
+        ``apply_many``.
         """
-        ops = list(ops)
+        if not isinstance(ops, (list, tuple)):
+            return len(self.apply_many(ops))
         if self._live:
             return len(self.apply_many(ops))
         return _call(self._core.apply_quiet, ops)

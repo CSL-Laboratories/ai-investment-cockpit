@@ -433,3 +433,27 @@ def test_failed_match_resyncs_retained_orders():
         rust.apply_many([("m", "hit", "buy", 5, 100, "day", None, "allow", 3, 3)])
     assert rust.get("ask") is None
     assert ask.qty == 0
+
+
+def test_batch_stp_cancel_plus_failed_remainder_keeps_held_qty():
+    """A self-trade cancel before a duplicate remainder is not a fill."""
+    rust = LimitOrderBook("STP")
+    python = PythonLimitOrderBook("STP")
+    mine = rust.add(order_id="mine", side=Side.SELL, price_ticks=100, qty=4, owner="mm", seq=1, ts=1)
+    py = python.add(order_id="mine", side=Side.SELL, price_ticks=100, qty=4, owner="mm", seq=1, ts=1)
+    rust.add(order_id="dup", side=Side.BUY, price_ticks=90, qty=1, owner="other", seq=2, ts=2)
+    python.add(order_id="dup", side=Side.BUY, price_ticks=90, qty=1, owner="other", seq=2, ts=2)
+    op = ("m", "dup", "buy", 6, 100, "day", "mm", "cancel_resting", 3, 3)
+    with pytest.raises(ValueError, match="duplicate"):
+        rust.apply_many([op])
+    with pytest.raises(ValueError, match="duplicate"):
+        match(
+            python,
+            AggressiveOrder(
+                order_id="dup", side=Side.BUY, qty=6, price_ticks=100,
+                tif=TimeInForce.DAY, owner="mm",
+                stp=SelfTradePrevention.CANCEL_RESTING,
+            ),
+        )
+    assert mine.qty == py.qty == 4
+    assert rust.get("mine") is None and python.get("mine") is None

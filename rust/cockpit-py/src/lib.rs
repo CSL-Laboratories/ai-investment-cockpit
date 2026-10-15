@@ -40,7 +40,7 @@ pub(crate) fn raise(err: BookError) -> PyErr {
 
 /// A Python int that fits in `i64`. Out-of-range ints are `ValueError`, not
 /// PyO3's `OverflowError`. The book domain is signed 64-bit.
-struct FitI64(i64);
+pub(crate) struct FitI64(pub(crate) i64);
 
 impl<'py> FromPyObject<'py> for FitI64 {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
