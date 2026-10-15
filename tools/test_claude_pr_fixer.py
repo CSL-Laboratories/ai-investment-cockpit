@@ -572,6 +572,22 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("use Edit/Write for files", body, job)
             self.assertIn("the gate result", body, job)
 
+    def test_resolve_follows_pushed_fix_only(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            prompt = self._job(job).split("prompt: |", 1)[1].split("claude_args:", 1)[0]
+            after_push = prompt.find("After that push, resolve each thread whose fix was pushed")
+            resolve_call = prompt.find("gh api graphql resolveReviewThread")
+            leave_open = prompt.find("leave the thread open")
+            do_not_push = prompt.find("do NOT push")
+            self.assertGreater(after_push, -1, job)
+            self.assertGreater(resolve_call, after_push, job)
+            self.assertGreater(leave_open, resolve_call, job)
+            self.assertGreater(do_not_push, -1, job)
+            fail_block = prompt[do_not_push:after_push]
+            self.assertIn("Never exit without either pushing or posting that failure reply", fail_block, job)
+            self.assertNotIn("resolveReviewThread", fail_block, job)
+            self.assertNotIn("resolve each thread", fail_block, job)
+
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
             body = self._job(job)
