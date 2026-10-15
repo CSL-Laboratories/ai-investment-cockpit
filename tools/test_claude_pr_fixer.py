@@ -552,8 +552,13 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("CSL-89", body, job)
             self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
             self.assertIn("resolveReviewThread", body, job)
+            self.assertIn("via REST", body, job)
+            self.assertIn("Do not call gh api graphql except resolveReviewThread", body, job)
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
             deny = body.split("--disallowedTools", 1)[1]
+            self.assertNotIn("Bash(gh api:*)", allow, job)
+            self.assertIn("Bash(gh api repos:*)", allow, job)
+            self.assertIn("Bash(gh api /repos:*)", allow, job)
             self.assertIn("Bash(gh api repos/*/pulls/*/comments/*/replies:*)", allow, job)
             self.assertIn("Bash(gh api graphql:*resolveReviewThread*)", allow, job)
             self.assertNotIn("Bash(gh api graphql:*)", deny.split("\n", 1)[0], job)
