@@ -881,6 +881,12 @@ class RunTests(unittest.TestCase):
             f"**PR:** https://github.com/{REPO}/pull/420\n"
         )
         self.assertFalse(mod.mediate_description_matches(numbered, REPO, "42"))
+        related = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            "**PR:** [#42](https://github.com/other/project/pull/42)\n"
+            f"[discussion](https://github.com/{REPO}/pull/42)\n"
+        )
+        self.assertFalse(mod.mediate_description_matches(related, REPO, "42"))
 
     def test_pr_is_approved_ignores_bots_and_changes(self) -> None:
         human_ok = {

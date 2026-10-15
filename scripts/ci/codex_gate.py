@@ -171,6 +171,14 @@ def pr_html_url(repository: str, pr_number: str) -> str:
     return f"https://github.com/{repository}/pull/{pr_number}"
 
 
+PR_FIELD_RE = re.compile(r"^\s*\*\*PR:\*\*\s*(.+)$", re.MULTILINE)
+
+
+def pr_field_text(description: str) -> str:
+    match = PR_FIELD_RE.search(description or "")
+    return match.group(1).strip() if match else ""
+
+
 def description_has_pr_url(description: str, repository: str, pr_number: str) -> bool:
     """True when the PR URL appears as its own token, including Markdown links."""
     url = pr_html_url(repository, pr_number)
@@ -180,16 +188,22 @@ def description_has_pr_url(description: str, repository: str, pr_number: str) ->
 def mediate_description_matches(
     description: str, repository: str, pr_number: str
 ) -> bool:
-    """True for this repo+PR roll-up, including legacy PR-only markers."""
+    """True for this repo+PR roll-up, including legacy PR-only markers.
+
+    Legacy markers are PR-number-only. Match them only when the ``**PR:**``
+    field (bare URL or Markdown) is this repository's pull request, not when
+    a related link appears elsewhere in the description.
+    """
     body = description or ""
     if mediate_issue_marker(repository, pr_number) in body:
         return True
-    if not description_has_pr_url(body, repository, pr_number):
-        return False
-    return (
+    has_legacy = (
         mediate_issue_marker_legacy(pr_number) in body
         or f"<!-- codex-gate-mediate:{pr_number}:" in body
     )
+    if not has_legacy:
+        return False
+    return description_has_pr_url(pr_field_text(body), repository, pr_number)
 
 
 def pending_mediate_marker(pr_number: str, sha: str) -> str:
