@@ -3,6 +3,15 @@
 > Auto-loaded each session. Keep it tight and high-signal. The detailed playbooks
 > and the full design corpus live in `docs/` — start at `docs/README.md`.
 
+## Linear-first operations (applies to every agent and Grok Bot)
+
+Linear is the basis of operations. Check Linear for overlapping issues and PRs
+before starting; work only from a Linear issue and keep it updated; ask
+questions and request approvals through comments and @mentions; file research
+findings, ideas, and bugs to Triage (deduped); ground implementations with
+Parallel search (web) and Context7 (library docs). Full rule in
+[`AGENTS.md`](AGENTS.md).
+
 ## Product target and current implementation
 
 The ratified [PRODUCT.md](PRODUCT.md) owns purpose, scope and acceptance for the
