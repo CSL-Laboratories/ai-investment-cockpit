@@ -426,10 +426,9 @@ jobs:
                (gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies) with the commit SHA and the gate result
                (each gate command and pass/fail), and reply to the triggering comment with a short summary,
                the SHA, and the gate result.
-               After that push, resolve each thread whose fix was pushed (CSL-89) with
-               gh api graphql resolveReviewThread, citing the fix SHA.
-            5. If you cannot fix a thread or you disagree, leave the thread open and reply with the rationale
-               so the stuck-thread watch can file a Linear Triage issue as today.
+            5. If you disagree with a finding or request, reply with the rationale.
+               After you have answered a thread with a fix or a rationale, you may resolve it with a
+               narrowly scoped gh api graphql resolveReviewThread call. Do not resolve unanswered threads.
             6. If there is nothing to change, reply saying so.
             Rules: NEVER merge, NEVER force-push, NEVER rebase or rewrite history. Only push new commits
             with git push origin HEAD:refs/heads/BRANCH. Follow AGENTS.md, CLAUDE.md and CODEOWNERS. Never print secrets or env.
@@ -693,8 +692,8 @@ jobs:
                (gh api repos/REPO/issues/PR/comments) and reply on each affected thread
                (gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies), naming the exact
                command and the failure. Never exit without either pushing or posting that failure reply.
-            4. Push, then reply to each thread (gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies) with the commit SHA that addresses it and the gate result (each gate command and pass/fail). After that push, resolve each thread whose fix was pushed (CSL-89) with gh api graphql resolveReviewThread, citing the fix SHA.
-            5. If you cannot fix a thread or you disagree, leave the thread open and reply with the rationale so the stuck-thread watch can file a Linear Triage issue as today.
+            4. Reply to each thread (gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies) with the commit SHA that addresses it and the gate result (each gate command and pass/fail).
+            5. If you disagree, reply with the rationale. After you have answered a thread with a fix or a rationale, you may resolve it with a narrowly scoped gh api graphql resolveReviewThread call. Do not resolve unanswered threads.
             6. If there are no actionable findings, do nothing.
             Rules: NEVER merge, NEVER force-push, NEVER rebase or rewrite history. Only push new commits
             with git push origin HEAD:refs/heads/BRANCH. Follow AGENTS.md, CLAUDE.md and CODEOWNERS. Never print secrets or env.
