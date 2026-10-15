@@ -184,6 +184,17 @@ def _read_live_index(oms, repeats: int) -> None:
         oms.live_orders()
 
 
+def _repeat_snapshot(book, repeats: int) -> None:
+    for _ in range(repeats):
+        book.snapshot()
+
+
+def _rebuild_snapshot(book, repeats: int) -> None:
+    for _ in range(repeats):
+        book._snap_key = None
+        book.snapshot()
+
+
 def _time(fn, repeats: int = 5) -> float:
     samples = []
     for _ in range(repeats):
@@ -244,6 +255,15 @@ def main() -> None:
     print(row(f"live orders, 2 of 400, {reads} reads", indexed, scanned))
     if scanned / indexed < 1.0:
         sys.exit("live-order index regressed below scanning every order")
+    snap_book = LimitOrderBook("S")
+    _build_pick(snap_book, 32)
+    snap_book.snapshot()
+    snap_n = 20_000
+    cached = _time(lambda: _repeat_snapshot(snap_book, snap_n))
+    rebuilt = _time(lambda: _rebuild_snapshot(snap_book, snap_n))
+    print(row(f"snapshot, {snap_n} unchanged reads", cached, rebuilt))
+    if rebuilt / cached < 1.0:
+        sys.exit("snapshot cache regressed below rebuilding the depth")
 
 
 if __name__ == "__main__":

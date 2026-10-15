@@ -355,6 +355,36 @@ def test_snapshot_derived_statistics_agree_with_the_live_book(book):
     assert snap.imbalance == pytest.approx(0.8)
 
 
+def test_snapshot_is_reused_until_the_book_changes(book):
+    from quant.events import Side
+
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    book.add(order_id="b", side=Side.SELL, price_ticks=101, qty=4)
+    first = book.snapshot()
+    assert book.snapshot() is first
+    assert book.snapshot(levels=5) is first
+    stamped = book.snapshot(ts=7)
+    assert stamped is not first and stamped.ts == 7
+    assert book.snapshot(ts=7) is stamped
+    book.reduce("a", 3)
+    second = book.snapshot()
+    assert second is not first
+    assert second.bids[0].qty == 7
+    assert book.snapshot() is second
+
+
+def test_python_snapshot_is_reused_until_the_book_changes():
+    from quant.book.lob import PythonLimitOrderBook
+    from quant.events import Side
+
+    book = PythonLimitOrderBook("S")
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    first = book.snapshot()
+    assert book.snapshot() is first
+    book.add(order_id="c", side=Side.BUY, price_ticks=99, qty=1)
+    assert book.snapshot() is not first
+
+
 def test_resting_at_follows_insertion_order_and_rejects_a_bad_index(book):
     book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
     book.add(order_id="b", side=Side.SELL, price_ticks=101, qty=20)

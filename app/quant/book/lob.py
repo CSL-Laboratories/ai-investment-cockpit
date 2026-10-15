@@ -287,7 +287,10 @@ class LimitOrderBook:
     # extension is installed. The class object itself stays the reference impl.
     backend = "python"
 
-    __slots__ = ("symbol", "_bids", "_asks", "_bid_prices", "_ask_prices", "_index", "_last_seq", "_last_ts")
+    __slots__ = (
+        "symbol", "_bids", "_asks", "_bid_prices", "_ask_prices", "_index",
+        "_last_seq", "_last_ts", "_snap",
+    )
 
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
@@ -301,6 +304,7 @@ class LimitOrderBook:
         self._index: dict[str, RestingOrder] = {}
         self._last_seq = 0
         self._last_ts = 0
+        self._snap: tuple | None = None
 
     # ---- internals -------------------------------------------------------------------
 
@@ -354,6 +358,7 @@ class LimitOrderBook:
         """
         if order_id in self._index:
             raise ValueError(f"duplicate order_id {order_id!r} already resting in the book")
+        self._snap = None
         level = self._level_for_write(side, price_ticks)
         order = RestingOrder(
             order_id=order_id,
@@ -376,6 +381,7 @@ class LimitOrderBook:
         order = self._index.pop(order_id, None)
         if order is None:
             raise OrderNotFound(order_id)
+        self._snap = None
         levels, _ = self._side_maps(order.side)
         level = levels.get(order.price_ticks)
         if level is None:
@@ -391,6 +397,7 @@ class LimitOrderBook:
         order = self._index.get(order_id)
         if order is None:
             raise OrderNotFound(order_id)
+        self._snap = None
         levels, _ = self._side_maps(order.side)
         level = levels[order.price_ticks]
         level.reduce(order_id, qty)
@@ -422,6 +429,7 @@ class LimitOrderBook:
         existing = self._index.get(order_id)
         if existing is None:
             raise OrderNotFound(order_id)
+        self._snap = None
         price = existing.price_ticks if new_price_ticks is None else new_price_ticks
         qty = existing.qty if new_qty is None else new_qty
         if qty <= 0:
@@ -565,13 +573,26 @@ class LimitOrderBook:
         raise IndexError(index)
 
     def snapshot(self, *, levels: int = 5, seq: int | None = None, ts: int | None = None) -> BookSnapshot:
-        return BookSnapshot(
+        """Immutable depth. Repeated reads of an unchanged book return the same object.
+
+        The paper loop builds a context before and after each event. Most of those
+        reads see the same levels. The object is frozen, so keeping it is safe.
+        """
+        out_seq = self._last_seq if seq is None else seq
+        out_ts = self._last_ts if ts is None else ts
+        key = (levels, seq, ts, out_seq, out_ts)
+        cached = self._snap
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        snap = BookSnapshot(
             symbol=self.symbol,
-            seq=self._last_seq if seq is None else seq,
-            ts=self._last_ts if ts is None else ts,
+            seq=out_seq,
+            ts=out_ts,
             bids=tuple(self.depth(Side.BUY, levels)),
             asks=tuple(self.depth(Side.SELL, levels)),
         )
+        self._snap = (key, snap)
+        return snap
 
     def check_integrity(self) -> None:
         """Assert the book's accounting agrees with itself. For tests and the randomized sweep.

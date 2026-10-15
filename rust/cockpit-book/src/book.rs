@@ -208,6 +208,9 @@ pub struct Book {
     by_id: HashMap<String, Loc>,
     last_seq: i64,
     last_ts: i64,
+    /// Bumps on every successful mutation. Snapshot caches key on this, not on
+    /// `last_seq`: two adds can share a sequence number and still change depth.
+    generation: u64,
 }
 
 impl Book {
@@ -220,7 +223,16 @@ impl Book {
             by_id: HashMap::new(),
             last_seq: 0,
             last_ts: 0,
+            generation: 0,
         }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn bump(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     pub fn symbol(&self) -> &str {
@@ -355,6 +367,7 @@ impl Book {
         );
         self.last_seq = self.last_seq.max(seq);
         self.last_ts = self.last_ts.max(ts);
+        self.bump();
         Ok(order)
     }
 
@@ -379,6 +392,7 @@ impl Book {
         };
         self.index.remove(loc.node);
         self.drop_level_if_empty(loc.side, loc.price)?;
+        self.bump();
         Ok(order)
     }
 
@@ -415,6 +429,7 @@ impl Book {
             self.index.remove(loc.node);
             self.drop_level_if_empty(loc.side, loc.price)?;
         }
+        self.bump();
         Ok(())
     }
 
@@ -773,6 +788,20 @@ mod tests {
         book.add("ours", Side::Buy, 100, 200, 0, 0, Some("mm".into()))
             .unwrap();
         book.add("behind", Side::Buy, 100, 300, 0, 0, None).unwrap();
+    }
+
+    #[test]
+    fn generation_moves_only_when_the_book_changes() {
+        let mut book = fresh();
+        assert_eq!(book.generation(), 0);
+        book.add("a", Side::Buy, 100, 10, 1, 1, None).unwrap();
+        assert_eq!(book.generation(), 1);
+        assert!(book.add("a", Side::Buy, 100, 10, 1, 1, None).is_err());
+        assert_eq!(book.generation(), 1);
+        book.reduce_qty("a", 4).unwrap();
+        assert_eq!(book.generation(), 2);
+        book.cancel("a").unwrap();
+        assert_eq!(book.generation(), 3);
     }
 
     #[test]
