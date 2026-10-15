@@ -368,15 +368,49 @@ def test_daily_cap_and_missing_pat(tmp_path):
     linear = FakeLinear()
     logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=3), gh, linear, NOW)
     assert any("over-cap" in line for line in logs)
+    assert any("linear=skipped-no-actionable" in line for line in logs)
     assert gh.posts == []
-    assert len(linear.created) == 1
-    assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#4"
+    assert linear.created == []
+    assert linear.updated == []
 
     linear = FakeLinear()
     logs = mod.mediate_pr(pr, cfg(codex_pat="", max_per_pr_per_day=99), gh, linear, NOW)
     assert any("skipped-no-secret" in line for line in logs)
+    assert any("linear=skipped-no-actionable" in line for line in logs)
     assert gh.posts == []
+    assert linear.created == []
+    assert linear.updated == []
+
+
+def test_linear_writes_when_one_cap_slot_remains():
+    gh = FakeGitHub()
+    stuck = thread(
+        comments=[
+            comment(DEVIN, "finding"),
+            comment("claude[bot]", "needs a human"),
+        ]
+    )
+    pr = {
+        "number": 4,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://github.com/org/repo/pull/4",
+        "title": "demo",
+        "reviewThreads": {"nodes": [stuck]},
+    }
+    gh.pr_by_number[4] = pr
+    gh.issue_comments[4] = [
+        {"body": "<!-- codex-mediation:old1 -->", "created_at": "2026-10-15T10:00:00Z"},
+        {"body": "<!-- codex-mediation:old2 -->", "created_at": "2026-10-15T11:00:00Z"},
+    ]
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=3), gh, linear, NOW)
+    assert any("mediate=posted" in line for line in logs)
+    assert not any("over-cap" in line for line in logs)
+    assert not any("linear=skipped-no-actionable" in line for line in logs)
+    assert len(gh.posts) == 1
     assert len(linear.created) == 1
+    assert linear.created[0]["title"] == "Stuck PR threads: ai-investment-cockpit#4"
 
 
 def test_run_posts_one_codex_comment_and_files_linear():
@@ -748,6 +782,31 @@ def test_gate_marker_rejects_longer_pr_number():
     assert mod.description_has_gate_marker(f"<!-- codex-gate-mediate:{repo}:12 -->", repo, 12)
 
 
+def test_issue_is_for_pr_requires_stuck_pr_threads_marker():
+    repo = cfg().repository
+    marked = {
+        "title": "Renamed on purpose",
+        "description": "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->\n",
+        "state": {"type": "unstarted"},
+    }
+    title_only = {
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": "hand-made CSL-167 notes with no marker\n",
+        "state": {"type": "unstarted"},
+    }
+    gate_only = {
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": f"<!-- codex-gate-mediate:{repo}:12 -->\n",
+        "state": {"type": "unstarted"},
+    }
+    assert mod.issue_is_for_pr(marked, repo, 12)
+    assert not mod.issue_is_for_pr(title_only, repo, 12)
+    assert not mod.issue_is_for_pr(gate_only, repo, 12)
+    assert mod.linear_find_existing(FakeLinear(existing=title_only | {"id": "handmade"}), cfg(), 12) is None
+    assert mod.linear_find_existing(FakeLinear(existing=gate_only | {"id": "gate"}), cfg(), 12) is None
+    assert mod.linear_find_existing(FakeLinear(existing=marked | {"id": "real"}), cfg(), 12)["id"] == "real"
+
+
 def test_failed_post_does_not_consume_cap():
     class FailFirst(FakeGitHub):
         def __init__(self) -> None:
@@ -823,7 +882,7 @@ def test_linear_skips_unchanged_generated_block():
     assert linear.created == []
 
 
-def test_linear_adopts_codex_gate_issue():
+def test_linear_does_not_adopt_codex_gate_only():
     existing = {
         "id": "gate",
         "url": "https://linear.app/i/CSL-77",
@@ -838,21 +897,18 @@ def test_linear_adopts_codex_gate_issue():
         ),
     }
     linear = FakeLinear(existing=existing)
-    found = mod.linear_find_existing(linear, cfg(), 12)
-    assert found is not None
-    assert found["id"] == "gate"
+    assert mod.linear_find_existing(linear, cfg(), 12) is None
     url = mod.upsert_linear_issue(linear, [_rollup_item()], cfg())
-    assert url == "https://linear.app/i/CSL-77"
-    assert linear.created == []
-    updated = linear.updated[0]["description"]
-    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->" in updated
-    assert "<!-- stuck-pr-threads-begin -->" in updated
-    assert "<!-- codex-gate-mediate:CSL-Laboratories/ai-investment-cockpit:12 -->" in updated
-    assert "<!-- /codex-gate-mediate -->" in updated
-    assert updated.index("<!-- stuck-pr-threads-end -->") < updated.index("<!-- /codex-gate-mediate -->")
+    assert url == "https://linear.app/i/CSL-99"
+    assert linear.updated == []
+    assert len(linear.created) == 1
+    created = linear.created[0]["description"]
+    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->" in created
+    assert "<!-- stuck-pr-threads-begin -->" in created
+    assert "<!-- codex-gate-mediate:CSL-Laboratories/ai-investment-cockpit:12 -->" in created
 
 
-def test_linear_adopts_title_only_keeps_notes():
+def test_linear_does_not_adopt_title_only():
     existing = {
         "id": "handmade",
         "url": "https://linear.app/i/CSL-77",
@@ -861,14 +917,16 @@ def test_linear_adopts_title_only_keeps_notes():
         "description": "Operator notes for CSL-167. Do not clobber.\n",
     }
     linear = FakeLinear(existing=existing)
-    found = mod.linear_find_existing(linear, cfg(), 12)
-    assert found is not None
-    assert found["id"] == "handmade"
-    mod.upsert_linear_issue(linear, [_rollup_item()], cfg())
-    assert linear.created == []
-    updated = linear.updated[0]["description"]
-    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->" in updated
-    assert "Operator notes for CSL-167. Do not clobber." in updated
+    assert mod.linear_find_existing(linear, cfg(), 12) is None
+    repo = cfg().repository
+    assert not mod.issue_is_for_pr(existing, repo, 12)
+    url = mod.upsert_linear_issue(linear, [_rollup_item()], cfg())
+    assert url == "https://linear.app/i/CSL-99"
+    assert linear.updated == []
+    assert len(linear.created) == 1
+    created = linear.created[0]["description"]
+    assert "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->" in created
+    assert "Operator notes for CSL-167. Do not clobber." not in created
 
 
 def test_linear_find_skips_completed():
@@ -914,8 +972,43 @@ def test_rescan_skips_linear_when_unchanged():
     logs = mod.mediate_pr(pr, cfg(), gh, linear, NOW)
     assert linear.created == []
     assert linear.updated == []
-    assert any("linear=unchanged" in line for line in logs)
+    assert any("linear=skipped-no-actionable" in line for line in logs)
+    assert not any("linear=unchanged" in line for line in logs)
     assert gh.posts == []
+
+
+def test_actionable_thread_skips_unchanged_linear_then_mediates():
+    gh = FakeGitHub()
+    stuck = thread(
+        comments=[
+            comment(DEVIN, "finding"),
+            comment("claude[bot]", "needs a human"),
+        ]
+    )
+    pr = {
+        "number": 12,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/12",
+        "title": "t",
+        "reviewThreads": {"nodes": [stuck]},
+    }
+    gh.pr_by_number[12] = pr
+    item = _rollup_item()
+    existing = {
+        "id": "x",
+        "url": "https://linear.app/i/CSL-77",
+        "identifier": "CSL-77",
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": mod.build_linear_description([item], cfg()),
+    }
+    linear = FakeLinear(existing=existing)
+    logs = mod.mediate_pr(pr, cfg(), gh, linear, NOW)
+    assert linear.created == []
+    assert linear.updated == []
+    assert any("linear=unchanged" in line for line in logs)
+    assert any("mediate=posted" in line for line in logs)
+    assert len(gh.posts) == 1
 
 
 def test_linear_update_failure_raises():

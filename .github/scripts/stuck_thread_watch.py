@@ -133,20 +133,6 @@ query($contains: String!, $teamKey: String!) {
   }
 }
 """
-LINEAR_SEARCH_TITLE = """
-query($title: String!, $teamKey: String!) {
-  issues(
-    first: 10
-    filter: {
-      team: { key: { eq: $teamKey } }
-      title: { eq: $title }
-      state: { type: { nin: ["completed", "canceled"] } }
-    }
-  ) {
-    nodes { id identifier url title description state { type } }
-  }
-}
-"""
 LINEAR_CREATE = """
 mutation($input: IssueCreateInput!) {
   issueCreate(input: $input) {
@@ -318,31 +304,11 @@ def description_is_for_pr(desc: str, repo: str, number: int) -> bool:
     )
 
 
-def title_matches_without_conflict(title: str, desc: str, repo: str, number: int) -> bool:
-    if title != pr_rollup_title(repo, number):
-        return False
-    if not preamble_markers_agree(desc, repo, number):
-        return False
-    key = canonical_marker_key(desc)
-    if key is None:
-        return _pr_identity_agrees(desc, repo, number)
-    return _key_matches_pr(key, repo, number) and _pr_identity_agrees(desc, repo, number)
-
-
 def issue_is_for_pr(node: dict[str, Any], repo: str, number: int) -> bool:
+    """Adopt only by ``<!-- stuck-pr-threads:<repo>#N -->``, never by title."""
     if not issue_is_active(node):
         return False
-    desc = str(node.get("description") or "")
-    title = str(node.get("title") or "")
-    if not preamble_markers_agree(desc, repo, number):
-        return False
-    if description_is_for_pr(desc, repo, number):
-        return True
-    if title_matches_without_conflict(title, desc, repo, number):
-        return True
-    if description_has_gate_marker(desc, repo, number):
-        return _pr_identity_agrees(desc, repo, number)
-    return False
+    return description_is_for_pr(str(node.get("description") or ""), repo, number)
 
 
 def is_approved_pr(pr: dict[str, Any]) -> bool:
@@ -888,17 +854,15 @@ def select_stuck(
 
 
 def linear_find_existing(linear: Linear, cfg: Config, number: int) -> dict[str, Any] | None:
-    title = pr_rollup_title(cfg.repository, number)
     needles = (
         f"{PR_MARKER_PREFIX}{pr_key(cfg.repository, number)}",
         f"{PR_MARKER_PREFIX}{repo_short(cfg.repository)}#{number}",
-        gate_marker_needle(cfg.repository, number),
-        f"github.com/{cfg.repository}/pull/{number}",
     )
-    searches = [(LINEAR_SEARCH, {"contains": needle, "teamKey": cfg.linear_team_key}) for needle in needles]
-    searches.append((LINEAR_SEARCH_TITLE, {"title": title, "teamKey": cfg.linear_team_key}))
-    for query, variables in searches:
-        data = linear.graphql(query, variables)
+    for needle in needles:
+        data = linear.graphql(
+            LINEAR_SEARCH,
+            {"contains": needle, "teamKey": cfg.linear_team_key},
+        )
         for node in ((data.get("issues") or {}).get("nodes")) or []:
             if isinstance(node, dict) and issue_is_for_pr(node, cfg.repository, number):
                 return node
@@ -1066,6 +1030,7 @@ def mediate_pr(
     stuck, audit = select_stuck(pr, comments, cfg, now)
     logs.extend(f"stuck-thread-watch: {line}" for line in audit)
     posted_today = mediation_count_since(comments, now - timedelta(hours=24))
+    remaining = max(cfg.max_per_pr_per_day - posted_today, 0)
     eligible: list[StuckThread] = []
     for item in stuck:
         if item.already_mediated:
@@ -1074,8 +1039,12 @@ def mediate_pr(
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
             continue
         eligible.append(item)
-    if stuck and cfg.file_linear:
-        if not cfg.linear_api_key or linear is None:
+    # Cap and PAT first: Linear only when at least one thread would be mediated.
+    actionable = eligible[:remaining]
+    if cfg.file_linear and stuck:
+        if not actionable:
+            logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
+        elif not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
             try:
