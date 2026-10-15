@@ -183,7 +183,7 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
   MCP first. Do not start a change without a `CSL-N`. Then record the work ID
   and branch in `docs/REGISTER.md`; the register is the ID/status board, Linear
   assignment is the claim.
-- **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
+- **Branch** from Linear's copied branch name, or `CSL-<n>-slug`. **PR title**
   carries `CSL-N: ...`. Put `Fixes CSL-N` in the PR body — that is Linear's
   magic word. Replace the `Fixes CSL-___` placeholder with the real key; a
   branch name alone can link the PR but does not move the issue to Done. One

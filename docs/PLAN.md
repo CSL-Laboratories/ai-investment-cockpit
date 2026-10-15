@@ -1481,7 +1481,7 @@ Every production package follows this loop:
 
 1. **Claim:** assign yourself on the Linear `CSL-N` issue and move it to In Progress.
    Then record the work ID and branch on exactly one [[REGISTER]] row (`claimed`).
-   Name the branch from Linear's copied branch name, or `csl-<n>-slug`; the PR title
+   Name the branch from Linear's copied branch name, or `CSL-<n>-slug`; the PR title
    must still carry `CSL-N`. Answer the seven intake questions in §5 before
    editing code. Paired retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled
    together but retain separate deletion gates.

@@ -85,7 +85,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
 (Linear-first workflow and **Linear is how we communicate**). Short form:
 assign yourself and move the issue to **In Progress** before starting; branch
-from Linear's copied name or `csl-<n>-slug`; put `CSL-N` in the PR title;
+from Linear's copied name or `CSL-<n>-slug`; put `CSL-N` in the PR title;
 replace the `Fixes CSL-___` placeholder with the real key (`Fixes CSL-N` is
 Linear's magic word). Merging moves the issue to **Done**. If the PR does not
 move it to **In Review**, move it yourself. Agents working a CSL issue keep
@@ -111,7 +111,8 @@ no unresolved GitHub review threads.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements).
 6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
-   title. Message convention: `CSL-N: fix(RW-xx): …`.
+   title. Message convention: `CSL-N: <type>(<package-id>): …`, e.g.
+   `CSL-N: fix(RW-xx): …` or `CSL-N: feat(W-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
