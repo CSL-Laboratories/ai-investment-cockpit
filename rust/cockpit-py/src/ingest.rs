@@ -1,6 +1,8 @@
 //! PyO3 entry points for the raw/normalized market-event adapter.
 
-use cockpit_ingest::{content_hash, escape_untrusted, market_event, Json};
+use cockpit_ingest::{
+    content_hash, escape_untrusted, market_event, token_bucket_allow, Dedup, Json,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
@@ -136,10 +138,84 @@ fn market_event_many(
         .collect()
 }
 
+#[pyclass]
+struct DedupCore {
+    inner: Dedup,
+}
+
+#[pymethods]
+impl DedupCore {
+    #[new]
+    fn new(capacity: i64) -> Self {
+        Self {
+            inner: Dedup::new(capacity),
+        }
+    }
+
+    fn add(&mut self, key: &str) -> bool {
+        self.inner.add(key)
+    }
+
+    fn discard(&mut self, key: &str) -> bool {
+        self.inner.discard(key)
+    }
+}
+
+#[pyfunction]
+#[pyo3(name = "token_bucket_allow")]
+fn token_bucket_allow_py(
+    rate: f64,
+    capacity: f64,
+    tokens: f64,
+    last: f64,
+    now: f64,
+) -> (bool, f64, f64) {
+    token_bucket_allow(rate, capacity, tokens, last, now)
+}
+
+#[pyfunction]
+fn dedup_replay(capacity: i64, ops: Vec<(String, String)>) -> PyResult<Vec<bool>> {
+    let mut seen = Dedup::new(capacity);
+    let mut out = Vec::with_capacity(ops.len());
+    for (op, key) in ops {
+        match op.as_str() {
+            "a" => out.push(seen.add(&key)),
+            "d" => out.push(seen.discard(&key)),
+            _ => return Err(invalid(format!("unknown dedup op {op}"))),
+        }
+    }
+    Ok(out)
+}
+
+#[pyfunction]
+fn token_bucket_replay(
+    rate: f64,
+    capacity: f64,
+    tokens: f64,
+    last: f64,
+    times: Vec<f64>,
+) -> (Vec<bool>, f64, f64) {
+    let mut tokens = tokens;
+    let mut last = last;
+    let mut out = Vec::with_capacity(times.len());
+    for now in times {
+        let (allowed, next_tokens, next_last) =
+            token_bucket_allow(rate, capacity, tokens, last, now);
+        tokens = next_tokens;
+        last = next_last;
+        out.push(allowed);
+    }
+    (out, tokens, last)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<DedupCore>()?;
     m.add_function(wrap_pyfunction!(escape_untrusted_py, m)?)?;
     m.add_function(wrap_pyfunction!(content_hash_py, m)?)?;
     m.add_function(wrap_pyfunction!(market_event_py, m)?)?;
     m.add_function(wrap_pyfunction!(market_event_many, m)?)?;
+    m.add_function(wrap_pyfunction!(token_bucket_allow_py, m)?)?;
+    m.add_function(wrap_pyfunction!(dedup_replay, m)?)?;
+    m.add_function(wrap_pyfunction!(token_bucket_replay, m)?)?;
     Ok(())
 }

@@ -3,7 +3,7 @@ name = "cockpit-ingest"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Raw-vs-normalized market-event adapter (Inv 8). No network and no broker."
+description = "Feed normalization and admission (Inv 8). No network and no broker."
 license = "UNLICENSED"
 
 [dependencies]

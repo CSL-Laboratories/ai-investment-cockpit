@@ -4,15 +4,48 @@ from __future__ import annotations
 from collections import OrderedDict
 
 _MISSING = object()      # distinct from None, which is the stored VALUE of every seen key
+_I64_MIN = -2**63
+_I64_MAX = 2**63 - 1
+DEDUP_BACKEND = "python"
+_NATIVE = None
+
+
+def _load_native() -> None:
+    """Use the Rust dedup when the extension is installed.
+
+    A missing module keeps the pure-Python path. Any other import failure is a
+    broken extension and is not swallowed. The map is memory only.
+    """
+    global _NATIVE, DEDUP_BACKEND
+    try:
+        import cockpit_quant as native
+    except ImportError:
+        return
+    if not hasattr(native, "DedupCore"):
+        return
+    _NATIVE = native
+    DEDUP_BACKEND = "rust"
+
+
+def _rust_cap(capacity: int) -> bool:
+    return isinstance(capacity, int) and not isinstance(capacity, bool) and _I64_MIN <= capacity <= _I64_MAX
 
 
 class Dedup:
     def __init__(self, capacity: int = 50_000):
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._cap = capacity
+        self._core = None
+        native = _NATIVE
+        if native is not None and _rust_cap(capacity):
+            self._core = native.DedupCore(capacity)
 
     def add(self, key: str) -> bool:
         """Return True if newly added (not a duplicate)."""
+        if self._core is not None:
+            if not isinstance(key, str):
+                raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
+            return self._core.add(key)
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
@@ -37,4 +70,11 @@ class Dedup:
         capacity window — a bounded duplicate, never a loss. Losing evidence is the failure we
         refuse; a stale duplicate is not.
         """
+        if self._core is not None:
+            if not isinstance(key, str):
+                raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
+            return self._core.discard(key)
         return self._seen.pop(key, _MISSING) is not _MISSING
+
+
+_load_native()
