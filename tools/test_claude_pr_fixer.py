@@ -940,5 +940,91 @@ class ActionlintTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class FixerLoopCapTests(unittest.TestCase):
+    """Behavioral tests for the devin-review-fix loop cap and conflict-resolve head guard."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import textwrap
+
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.text = text
+        start = text.index("        id: cap\n")
+        run = text.index("        run: |\n", start) + len("        run: |\n")
+        end = text.index("\n      - ", run)
+        cls.script = textwrap.dedent(text[run:end])
+
+    def _run(self, commits: list[tuple[str, str]], comments: list[str]) -> tuple[str, str]:
+        import os
+        import shutil
+        import subprocess
+        import tempfile
+
+        if shutil.which("bash") is None or shutil.which("tac") is None:
+            self.skipTest("bash/tac not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "commits.tsv").write_text("".join(f"{a}\t{b}\n" for a, b in commits), encoding="utf-8")
+            (d / "comments.txt").write_text("".join(c + "\n" for c in comments), encoding="utf-8")
+            gh = d / "gh"
+            gh.write_text(
+                "#!/usr/bin/env bash\n"
+                'case "$*" in\n'
+                f'  *" -f body="*) echo posted >> "{d}/posted";;\n'
+                f'  */commits*) cat "{d}/commits.tsv";;\n'
+                f'  */comments*) cat "{d}/comments.txt";;\n'
+                "esac\n",
+                encoding="utf-8",
+            )
+            gh.chmod(0o755)
+            out = d / "out"
+            out.write_text("", encoding="utf-8")
+            env = dict(os.environ, PATH=f"{d}{os.pathsep}{os.environ.get('PATH', '')}", GITHUB_OUTPUT=str(out),
+                       REPO="o/r", PR_NUMBER="1", HEAD_SHA="abc123", GH_TOKEN="x")
+            subprocess.run(["bash", "-c", self.script], env=env, check=True, capture_output=True)
+            posted = (d / "posted").read_text(encoding="utf-8") if (d / "posted").exists() else ""
+            return out.read_text(encoding="utf-8"), posted
+
+    def test_three_claude_commits_after_human_skips_and_comments(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 3, [])
+        self.assertIn("skip=true", out)
+        self.assertEqual(posted.count("posted"), 1)
+
+    def test_two_claude_commits_runs(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 2, [])
+        self.assertIn("skip=false", out)
+        self.assertEqual(posted, "")
+
+    def test_human_commit_resets_streak(self) -> None:
+        c = [("claude[bot]", "claude[bot]")] * 3 + [("bob", "Bob")] + [("claude[bot]", "claude[bot]")] * 2
+        out, _ = self._run(c, [])
+        self.assertIn("skip=false", out)
+
+    def test_other_bot_does_not_reset_streak(self) -> None:
+        c = [("alice", "Alice"), ("claude[bot]", "claude[bot]"), ("github-actions[bot]", "github-actions[bot]"),
+             ("claude[bot]", "claude[bot]"), ("claude[bot]", "claude[bot]")]
+        out, _ = self._run(c, [])
+        self.assertIn("skip=true", out)
+
+    def test_existing_marker_suppresses_duplicate_comment(self) -> None:
+        out, posted = self._run([("claude[bot]", "claude[bot]")] * 3, ["<!-- claude-fixer-loop-cap:abc123 -->"])
+        self.assertIn("skip=true", out)
+        self.assertEqual(posted, "")
+
+    def test_fixer_steps_gated_on_cap(self) -> None:
+        start = self.text.index("  devin-review-fix:\n")
+        job = self.text[start:self.text.index("\n  conflict-scan:\n", start)]
+        steps = job.split("        id: cap\n", 1)[1].split("\n      - ")[1:]
+        self.assertTrue(steps)
+        for step in steps:
+            self.assertIn("steps.cap.outputs.skip != 'true'", step)
+
+    def test_conflict_resolve_waits_for_devin_on_claude_head(self) -> None:
+        job = self.text[self.text.index("  conflict-resolve:\n"):]
+        self.assertIn("devin-ai-integration[bot]", job)
+        self.assertIn(".commit_id == ", job)
+        self.assertIn("Devin review of head is pending", job)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

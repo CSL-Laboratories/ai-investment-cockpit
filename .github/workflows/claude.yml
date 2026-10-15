@@ -607,7 +607,9 @@ jobs:
           if [ "$count" -ge 3 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             marker="<!-- claude-fixer-loop-cap:$HEAD_SHA -->"
-            if ! gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" --jq '.[].body' | grep -qF "$marker"; then
+            # Buffer the full listing first: grep -q on a live pipe can SIGPIPE gh under pipefail.
+            existing="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" --jq '.[].body')"
+            if ! grep -qF "$marker" <<< "$existing"; then
               body="$marker"$'\n'"Claude PR Fixer paused: $count consecutive claude[bot] commits on this PR since the last human commit (cap is 3). A human needs to look at the remaining Devin findings; pushing a human commit re-arms the fixer."
               gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
             fi
