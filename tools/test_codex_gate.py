@@ -398,12 +398,13 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("CODEX-GATE: FIX", self.agents)
         self.assertIn("CODEX-GATE: READY", self.agents)
         self.assertIn("CODEX-GATE: MEDIATE", self.agents)
-        self.assertIn("Parallel **deep research**", self.agents)
-        self.assertIn("Task API", self.agents)
-        self.assertIn("Deep research brief", self.agents)
+        self.assertIn("When you are the assignee", self.agents)
+        self.assertIn("Parallel Task API deep research", self.agents)
+        self.assertIn("in addition to Search/Extract", self.agents)
+        self.assertIn("Grok Bots do not research or resolve decision issues", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-        self.assertIn("deep-research brief", claude)
         self.assertIn("AGENTS.md", claude)
+        self.assertIn("Grok Bots", claude)
 
     def test_does_not_print_secret_names_as_values(self) -> None:
         source = GATE_PATH.read_text(encoding="utf-8")

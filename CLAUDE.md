@@ -68,9 +68,9 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
-   scope and its deterministic gate before writing code. Direction or
-   architecture needs a Parallel deep-research brief (Task API) cited on the
-   Linear issue — see `AGENTS.md` Linear-first.
+   scope and its deterministic gate before writing code. Decision or direction
+   work: see `AGENTS.md` Linear-first (assignee Parallel Task API brief; Grok Bots
+   do not research or resolve those issues).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
