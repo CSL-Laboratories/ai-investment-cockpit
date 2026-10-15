@@ -81,7 +81,9 @@ class BookIntegrityError(RuntimeError):
     """
 
 
-@dataclass(slots=True)
+# ``weakref_slot`` lets the Rust adapter cache an order only while a caller
+# still holds it. A dropped order is not refreshed after a later match.
+@dataclass(slots=True, weakref_slot=True)
 class RestingOrder:
     """One order resting on the book.
 

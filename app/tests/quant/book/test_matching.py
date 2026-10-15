@@ -45,6 +45,16 @@ def test_a_retained_resting_order_sees_partial_and_full_fills():
     book.check_integrity()
 
 
+def test_a_retained_unowned_order_sees_a_fill_that_emits_no_fill_record():
+    """Fills are emitted for our orders only. The resting object still loses qty."""
+    book = LimitOrderBook("TEST")
+    resting = book.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10)
+    match(book, AggressiveOrder(order_id="hit", side=Side.BUY, qty=4, price_ticks=100))
+    assert resting.qty == 6
+    assert book.get("ask") is resting
+    book.check_integrity()
+
+
 def test_self_trade_prevention_pulls_a_retained_order_without_changing_its_qty():
     book = LimitOrderBook("TEST")
     resting = book.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, owner="mm")

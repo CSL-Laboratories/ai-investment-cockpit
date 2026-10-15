@@ -6,6 +6,8 @@ the existing tests — do not change.
 """
 from __future__ import annotations
 
+import weakref
+
 import cockpit_quant
 from quant.events import Liquidity, Side
 
@@ -84,6 +86,28 @@ class _Ladder:
         self._core.append_price(self._side, int(price))
 
 
+def _cached(book, order_id: str):
+    """The ``RestingOrder`` a caller still holds, or None once they dropped it."""
+    ref = book._live.get(order_id)
+    if ref is None:
+        return None
+    order = ref()
+    if order is None:
+        book._live.pop(order_id, None)
+    return order
+
+
+def _remember(book, order) -> None:
+    order_id = order.order_id
+
+    def _drop(ref, book=book, order_id=order_id):
+        current = book._live.get(order_id)
+        if current is ref:
+            book._live.pop(order_id, None)
+
+    book._live[order_id] = weakref.ref(order, _drop)
+
+
 def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     """Return the interned ``RestingOrder`` for ``row``.
 
@@ -91,9 +115,12 @@ def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     ``add``, ``get``, ``reduce``, ``level().orders``, and ``our_orders``. A
     later ``reduce`` or fill edits ``qty`` on it. ``replace`` is cancel-plus-add,
     so the previous object keeps the qty it had and the book holds a new one.
+
+    The cache is weak. A caller that dropped the object does not keep a stale
+    copy, and a later ``get`` builds a new one from the book.
     """
     order_id, _side, _price, qty, *_rest = row
-    existing = None if fresh else book._live.get(order_id)
+    existing = None if fresh else _cached(book, order_id)
     if existing is None:
         order = _order(row)
     else:
@@ -102,26 +129,33 @@ def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     if zero_leaves and qty <= 0:
         book._live.pop(order_id, None)
     else:
-        book._live[order_id] = order
+        _remember(book, order)
     return order
 
 
-def _note_execution(book, fills, cancelled) -> None:
+def _note_execution(book, cancelled) -> None:
     """Apply matcher effects to orders the caller already holds.
 
-    A fill reduces that order in place. A full fill leaves ``qty == 0`` and
-    drops it from the book. A self-trade cancel removes it and leaves ``qty``
-    where it was, matching ``cancel``.
+    Fills are emitted for our orders only, so the update reads the book.
+    A full fill leaves ``qty == 0`` and drops the order. A self-trade cancel
+    removes it and leaves ``qty`` where it was. Orders the caller already
+    dropped are not in the cache.
     """
-    for order_id, _side, _price, qty, _liquidity, _queue in fills:
-        order = book._live.get(order_id)
-        if order is None:
-            continue
-        order.qty -= int(qty)
-        if order.qty <= 0:
-            order.qty = 0
-            book._live.pop(order_id, None)
     for order_id in cancelled:
+        book._live.pop(order_id, None)
+    gone = []
+    for order_id, ref in list(book._live.items()):
+        order = ref()
+        if order is None:
+            gone.append(order_id)
+            continue
+        row = book._core.get(order_id)
+        if row is None:
+            order.qty = 0
+            gone.append(order_id)
+        else:
+            order.qty = row[3]
+    for order_id in gone:
         book._live.pop(order_id, None)
 
 
@@ -194,7 +228,8 @@ class LimitOrderBook:
 
     def cancel(self, order_id: str):
         row = _call(self._core.cancel, order_id)
-        order = self._live.pop(row[0], None)
+        order = _cached(self, row[0])
+        self._live.pop(row[0], None)
         return order if order is not None else _order(row)
 
     def reduce(self, order_id: str, qty: int):
@@ -335,7 +370,7 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
         # duplicate-ID remainder), so resync every retained order first.
         _resync_live(book)
         _raise(exc)
-    _note_execution(book, fills, stp)
+    _note_execution(book, stp)
     return MatchResult(
         status=MatchStatus(status),
         filled_qty=filled,
