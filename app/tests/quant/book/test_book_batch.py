@@ -1,7 +1,9 @@
 """CSL-42 — one batch call agrees with single calls and with the Python book.
 
-Skipped when the extension is not installed. ``apply_many`` returns the per-op
-payload; ``apply_quiet`` applies the same sequence and returns only the count.
+``apply_many`` returns the per-op payload; ``apply_quiet`` applies the same
+sequence and returns only the count. The required hosted Linux job installs
+the extension and runs this file (``ci.yml`` linux). A checkout without the
+wheel still skips, because the batch API is the Rust book.
 """
 from __future__ import annotations
 
