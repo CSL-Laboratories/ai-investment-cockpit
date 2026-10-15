@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from ingest.normalize import content_hash, escape_untrusted, to_market_event
+from ingest.normalize import (
+    content_hash,
+    escape_untrusted,
+    python_content_hash,
+    python_escape_untrusted,
+    python_to_market_event,
+    to_market_event,
+)
 
 
 def test_escape_neutralizes_markers():
@@ -94,6 +101,20 @@ def test_symbol_container_subclasses_cannot_fabricate_a_ticker_after_raw_validat
 
 def test_escape_handles_non_str_without_crashing():
     assert isinstance(escape_untrusted({"nested": "x"}), str)   # dict coerced, no TypeError
+
+
+def test_small_float_and_lone_surrogate_match_the_python_normalizer():
+    payload = {"price_change": 0.00001}
+    assert content_hash(payload) == python_content_hash(payload)
+    lone = "a\ud800"
+    assert escape_untrusted(lone) == python_escape_untrusted(lone)
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=[], headline=lone, summary="",
+        ts=None, raw=payload,
+    )
+    event = to_market_event(**kwargs)
+    assert event == python_to_market_event(**kwargs)
+    assert event["content_hash"] == content_hash(event["raw_input"])
 
 
 # ---- BUG-085: raw_ref is prompt-bound; hostile ids must not reach it raw ----------------
