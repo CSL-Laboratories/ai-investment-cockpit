@@ -147,15 +147,32 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
-Agents must stay Linear-aware and proactive. Linear is the source of truth.
+Agents must stay Linear-aware and proactive. Linear is the source of truth
+(team **CSL**, project **ai-investment-cockpit**).
 
-- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
-- Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
-- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
-- When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
-- **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
-- The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
-- Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
+- **Claim = assign yourself** in Linear before starting. Unassign if you stop.
+  Find or create the issue via the Linear MCP first. Do not start a change
+  without a `CSL-N`.
+- **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
+  is `CSL-N: ...`. Put `Fixes CSL-N` in the PR body so GitHub links the issue.
+  One issue per PR; keep PRs small and stackable.
+- **Statuses move automatically** via the GitHub integration (branch/PR →
+  In Progress / In Review; merge → Done). Do not set them by hand. Comment
+  progress on the issue.
+- **Routing labels** (single-select): `for-devin`, `for-claude`, `for-cursor`.
+  Use `needs-decision` when a human direction call is required. File follow-ups
+  to **Triage** with one Type label, the repo label `ai-investment-cockpit`,
+  the project, and a link back to the parent issue or PR — not drive-by changes.
+- **Owners** are looked up dynamically. Never hardcode founders as owners.
+  Check the current assignee or project lead in Linear. Assign new issues to
+  the parent issue's owner, or leave them in Triage unassigned when unclear.
+- The author addresses CI comments on their own PR, then resolves the threads.
+  Devin findings and `@claude` mentions are handled by the Claude Code Action
+  (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers;
+  on other PRs the author addresses them. Do not run review-fix loops on other
+  agents' PRs.
+- Humans make the load-bearing decisions (architecture, security, trading-risk,
+  merge order). Agents propose; humans decide.
 
 ## Hosted CI
 
@@ -170,7 +187,7 @@ Hosted split (PR #102):
 
 - **Devin** is the only GitHub PR reviewer. It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
-- **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33). Devin reviews GitHub PRs only and never fixes; that does not grant Devin research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
 
 ## Automations

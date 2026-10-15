@@ -56,11 +56,19 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin reviews PRs (reviews only, never
+  fixes); Claude fixes. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
   No swarm broker tools, secrets or soak starts. Product authority is unchanged.
+
+## Linear workflow
+
+Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
+(Linear-first workflow). Short form: assign yourself in Linear before starting;
+put the `CSL-N` key in the branch name and PR title; include `Fixes CSL-N` in
+the PR body.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
@@ -73,8 +81,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements).
-6. Commit only when the operator asks. Message convention:
-   `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
+   title. Message convention: `CSL-N: …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.
