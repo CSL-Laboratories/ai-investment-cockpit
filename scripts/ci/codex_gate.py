@@ -224,35 +224,27 @@ def pr_field_text(description: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-_MD_PR_URL_RE = re.compile(r"\[(?:[^\]]*)\]\((https://github\.com/[^)\s]+)\)")
-_BARE_PR_URL_RE = re.compile(r"(https://github\.com/[^\s)\]>\"']+)")
+PRIMARY_PR_URL_RE = re.compile(
+    r"\[(?:[^\]]*)\]\((https://github\.com/[^)\s]+)\)"
+    r"|(https://github\.com/[^\s)\]\"'<]+)"
+)
 
 
-def primary_pr_url(field: str) -> str:
-    """First Markdown-link target or bare GitHub URL in the ``**PR:**`` field."""
-    text = (field or "").strip()
-    if not text:
+def primary_pr_field_url(description: str) -> str:
+    """First GitHub URL in the ``**PR:**`` field (Markdown link, else bare)."""
+    field = pr_field_text(description)
+    if not field:
         return ""
-    md = _MD_PR_URL_RE.search(text)
-    bare = _BARE_PR_URL_RE.search(text)
-    start = len(text) + 1
-    url = ""
-    if md is not None:
-        start = md.start()
-        url = md.group(1)
-    if bare is not None and bare.start() < start:
-        url = bare.group(1)
-    return url.rstrip("/")
+    match = PRIMARY_PR_URL_RE.search(field)
+    if not match:
+        return ""
+    raw = match.group(1) or match.group(2) or ""
+    return raw.rstrip("/").split("#", 1)[0]
 
 
-def description_has_pr_url(field: str, repository: str, pr_number: str) -> bool:
-    """True when the **PR:** field's primary URL is this pull request.
-
-    A related Markdown link after a foreign primary URL does not count.
-    """
-    wanted = pr_html_url(repository, pr_number).rstrip("/")
-    primary = primary_pr_url(field)
-    return bool(primary) and primary == wanted
+def pr_field_is_this_pr(description: str, repository: str, pr_number: str) -> bool:
+    got = primary_pr_field_url(description)
+    return bool(got) and got == pr_html_url(repository, pr_number)
 
 
 def stuck_pr_keys_in(text: str) -> list[str]:
@@ -342,7 +334,7 @@ def mediate_description_matches(
     )
     if not has_legacy:
         return False
-    return description_has_pr_url(pr_field_text(body), repository, pr_number)
+    return pr_field_is_this_pr(body, repository, pr_number)
 
 
 def title_matches_rollup(
