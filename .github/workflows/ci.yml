@@ -12,6 +12,12 @@ name: ci
 #   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
 #                  workflow_dispatch. GitHub-hosted macos-latest (no Blacksmith macOS).
 #                  Not on ordinary main pushes: ~$0.93/run would dominate a ~$50 budget.
+#   benchmarks   — pull_request only, and only when filter runs the code gates.
+#                  Same-runner median comparison against the PR base SHA. Warns
+#                  above 10% after sample spread; does not fail linux-gates.
+#                  One 2 vCPU job, aimed at well under a minute. Blacksmith
+#                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
+#                  rounding error next to the $50 budget.
 #
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
@@ -28,6 +34,10 @@ on:
 
 permissions:
   contents: read
+  # The benchmarks job comments on a confirmed regression. Every other job
+  # sets contents: read so it does not inherit these write scopes.
+  issues: write
+  pull-requests: write
 
 # A newer run for the same ref supersedes the run it interrupted. Nightly has its
 # own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
@@ -38,6 +48,8 @@ concurrency:
 jobs:
   filter:
     name: filter
+    permissions:
+      contents: read
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
@@ -136,6 +148,8 @@ jobs:
 
   linux:
     name: linux
+    permissions:
+      contents: read
     needs: filter
     if: needs.filter.outputs.run-tests == 'true'
     # Optional hosted Linux diagnostic for the two CPython versions DEC-09 covers.
@@ -158,6 +172,8 @@ jobs:
   # protection / rulesets to require exactly this name: linux-gates
   linux-gates:
     name: linux-gates
+    permissions:
+      contents: read
     needs: [filter, linux]
     if: always() && !cancelled() && github.event_name != 'schedule'
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -181,6 +197,8 @@ jobs:
 
   windows:
     name: windows
+    permissions:
+      contents: read
     needs: filter
     if: >
       needs.filter.outputs.run-tests == 'true' &&
@@ -204,6 +222,8 @@ jobs:
 
   macos:
     name: macos
+    permissions:
+      contents: read
     needs: filter
     if: >
       github.event_name == 'workflow_dispatch' ||
@@ -223,3 +243,73 @@ jobs:
       - uses: ./.github/actions/run-gates
         with:
           python-version: "3.12"
+
+  # Informational only. Not a dependency of linux-gates, so a regression
+  # warning cannot block merge. A harness crash still fails this job.
+  benchmarks:
+    name: benchmarks
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    needs: filter
+    if: github.event_name == 'pull_request' && needs.filter.outputs.run-tests == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: _bench_base
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/benchmarks/requirements.txt
+      - name: Install benchmark dependencies
+        run: python -m pip install -r app/benchmarks/requirements.txt
+      - name: Compare hot paths with the base tree
+        working-directory: app
+        run: |
+          python -m benchmarks.compare \
+            --baseline-root ../_bench_base \
+            --candidate-root .. \
+            --threshold 0.10 \
+            --rounds 5 \
+            --orderings 2 \
+            --report ../bench-report.json \
+            --summary ../bench-summary.md \
+            --comment ../bench-comment.md \
+            --clear-comment ../bench-clear.md
+      - name: Flag regressions on the pull request
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          marker='<!-- csl-perf-bench -->'
+          mapfile -t ids < <(gh api --paginate "repos/${REPO}/issues/${PR}/comments" --jq ".[] | select(.body | contains(\"${marker}\")) | .id")
+          existing="${ids[0]:-}"
+          body_file=""
+          if [ -s bench-comment.md ]; then
+            body_file=bench-comment.md
+          elif [ -n "$existing" ]; then
+            body_file=bench-clear.md
+          else
+            echo "No regression comment to post."
+            exit 0
+          fi
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" --raw-field body="$(cat "$body_file")"
+          else
+            gh api --method POST "repos/${REPO}/issues/${PR}/comments" --raw-field body="$(cat "$body_file")"
+          fi
