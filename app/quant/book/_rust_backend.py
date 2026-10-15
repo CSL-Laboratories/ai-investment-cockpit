@@ -100,10 +100,15 @@ def _cached(book, order_id: str):
 def _remember(book, order) -> None:
     order_id = order.order_id
 
-    def _drop(ref, book=book, order_id=order_id):
-        current = book._live.get(order_id)
+    book_ref = weakref.ref(book)
+
+    def _drop(ref, book_ref=book_ref, order_id=order_id):
+        owner = book_ref()
+        if owner is None:
+            return
+        current = owner._live.get(order_id)
         if current is ref:
-            book._live.pop(order_id, None)
+            owner._live.pop(order_id, None)
 
     book._live[order_id] = weakref.ref(order, _drop)
 
@@ -365,6 +370,7 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
     from quant.events import Fill
 
     price = None if order.price_ticks is None else int(order.price_ticks)
+    prior = _cached(book, order.order_id)
     try:
         status, filled, remaining, trades, fills, resting, stp = book._core.match_order(
             order.order_id,
@@ -382,6 +388,12 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
         # duplicate-ID remainder), so resync every retained order first.
         _resync_live(book)
         _raise(exc)
+    if prior is not None and resting == order.order_id:
+        # The incoming order consumed a resting order with the same ID and
+        # rested its remainder under it. The old object is spent; a later
+        # ``get`` must build the new order, not edit the old one.
+        prior.qty = 0
+        book._live.pop(order.order_id, None)
     _note_execution(book, stp)
     return MatchResult(
         status=MatchStatus(status),
