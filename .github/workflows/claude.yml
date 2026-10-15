@@ -1139,7 +1139,7 @@ jobs:
 
   conflict-resolve:
     needs: conflict-scan
-    if: needs.conflict-scan.outputs.count != '0' && needs.conflict-scan.outputs.count != ''
+    if: github.event_name != 'push' && needs.conflict-scan.outputs.count != '0' && needs.conflict-scan.outputs.count != ''
     strategy:
       fail-fast: false
       max-parallel: 1

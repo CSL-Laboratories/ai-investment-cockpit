@@ -1026,5 +1026,20 @@ class FixerLoopCapTests(unittest.TestCase):
         self.assertIn("Devin review of head is pending", job)
 
 
+class ConflictResolvePushSkipTests(unittest.TestCase):
+    """CSL-107: claude-code-action@v1 rejects push; skip resolve on that event."""
+
+    def test_resolver_job_skips_push(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = text.index("  conflict-resolve:\n")
+        nxt = text.find("\n  ", start + len("  conflict-resolve:"))
+        while nxt != -1 and text[nxt + 3 : nxt + 4] in (" ", "\t"):
+            nxt = text.find("\n  ", nxt + 1)
+        job = text[start:] if nxt == -1 else text[start:nxt]
+        header = job.split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", header)
+        self.assertIn("needs.conflict-scan.outputs.count != '0'", header)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
