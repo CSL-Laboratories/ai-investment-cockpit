@@ -12,7 +12,7 @@ last-verified: 2026-10-15
 
 # The plan
 
-Reconciled 2026-10-15 against `origin/main` `4a4308d`. Headings and status sentences that still described a merged package as claimed or unmerged are updated. Historical intake text that a later sentence already marks as pre-merge stays as the implementation record. This pass does not close an empirical, paper-day, witness, selection, or pre-live gate.
+Reconciled 2026-10-15 against `origin/main` `4a4308d`. Headings and status sentences that still described a merged package as claimed or unmerged are updated. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. Historical intake text that a later sentence already marks as pre-merge stays as the implementation record. This pass does not close an empirical, paper-day, witness, selection, or pre-live gate.
 
 ### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 

@@ -6,7 +6,7 @@ last-verified: 2026-10-15
 
 # The register
 
-Reconciled 2026-10-15 against `origin/main` `4a4308d`. Status cells that still said `claimed`, `in review`, or `unmerged` after the corresponding pull request had merged are updated below. This pass records merge state only. It does not close an empirical, paper-day, witness, selection, or pre-live gate, and it does not claim PASS.
+Reconciled 2026-10-15 against `origin/main` `4a4308d`. Status cells that still said `claimed`, `in review`, or `unmerged` after the corresponding pull request had merged are updated below. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. This pass records merge state only. It does not close an empirical, paper-day, witness, selection, or pre-live gate, and it does not claim PASS.
 
 ## RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 
