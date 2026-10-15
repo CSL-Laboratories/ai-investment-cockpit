@@ -26,6 +26,7 @@ env:
   DEVIN_LOGIN: "devin-ai-integration[bot]"
   CLAUDE_LOGINS: "claude[bot],claude"
   FILE_LINEAR: "true"
+  # Personal-repo path only. Labels are posted with CODEX_TRIGGER_PAT (GITHUB_TOKEN is read-only).
   APPLY_PR_LABEL: "false"
   NEEDS_DECISION_LABEL: "needs-decision"
   LINEAR_TEAM_KEY: "CSL"

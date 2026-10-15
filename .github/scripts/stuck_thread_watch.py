@@ -23,9 +23,13 @@ SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
 NEEDS_HUMAN_RE = re.compile(
     r"(needs?\s+a\s+human|needs-decision|could(?:\s*not|n't)\s+fix|"
     r"cannot\s+fix|can'?t\s+fix|unable\s+to\s+fix|"
-    r"could(?:\s*not|n't)\s+verify|left(?:\s+the)?\s+thread\s+open|"
+    r"left(?:\s+the)?\s+thread\s+open|"
     r"needs?\s+a\s+judgment|human\s+to\s+(?:confirm|decide|resolve)|"
     r"escalate(?:d|s)?\s+to\s+a\s+human)",
+    re.IGNORECASE,
+)
+FIX_CLAIM_RE = re.compile(
+    r"\b(?:fixed|renamed|addressed|landed|pushed)\s+in\b|\bgates?\s+pass",
     re.IGNORECASE,
 )
 LINEAR_URL = "https://api.linear.app/graphql"
@@ -192,16 +196,32 @@ def mediation_count_since(comments: list[Any], since: datetime) -> int:
     return count
 
 
+def login_aliases(login: str) -> set[str]:
+    """GraphQL omits `[bot]`; REST includes it. Match both."""
+    name = (login or "").strip()
+    if not name:
+        return set()
+    bare = name[:-5] if name.endswith("[bot]") else name
+    return {bare, f"{bare}[bot]"}
+
+
 def is_devin(login: str, devin_login: str) -> bool:
-    return login == devin_login
+    return bool(login_aliases(login) & login_aliases(devin_login))
 
 
 def is_claude(login: str, claude_logins: list[str]) -> bool:
-    return login in claude_logins
+    wanted: set[str] = set()
+    for item in claude_logins:
+        wanted |= login_aliases(item)
+    return bool(login_aliases(login) & wanted)
 
 
 def claude_needs_human(text: str) -> bool:
     return bool(text) and NEEDS_HUMAN_RE.search(text) is not None
+
+
+def claude_claimed_fix(text: str) -> bool:
+    return bool(text) and FIX_CLAIM_RE.search(text) is not None
 
 
 def quote_untrusted(text: str, limit: int) -> str:
@@ -344,13 +364,17 @@ def classify_thread(
     last = claude_comments[-1]
     last_body = body_of(last)
     last_at = parse_dt(last.get("createdAt") or last.get("created_at"))
-    needs_human = any(claude_needs_human(body_of(c)) for c in claude_comments)
-    aged = False
-    if last_at is not None:
-        aged = now - last_at >= timedelta(hours=cfg.stuck_hours)
-    if not needs_human and not aged:
-        return None, "fresh-claude"
-    reason = "needs-human" if needs_human else "stale-claude"
+    last_idx = comments.index(last)
+    devin_after = any(is_devin(login_of(c), cfg.devin_login) for c in comments[last_idx + 1 :])
+    needs_human = claude_needs_human(last_body)
+    aged = last_at is not None and now - last_at >= timedelta(hours=cfg.stuck_hours)
+    claimed_fix = claude_claimed_fix(last_body)
+    if needs_human:
+        reason = "needs-human"
+    elif aged and (not claimed_fix or devin_after):
+        reason = "stale-devin-replied" if devin_after else "stale-claude"
+    else:
+        return None, "claude-fixed" if claimed_fix else "fresh-claude"
     path = str(thread.get("path") or opener.get("path") or "")
     line = str(thread.get("line") or opener.get("line") or "")
     url = str(opener.get("url") or "")
@@ -639,23 +663,27 @@ def linear_resolve_ids(linear: Linear, cfg: Config) -> dict[str, Any]:
     wanted = list(cfg.linear_labels)
     if cfg.linear_repo_label and cfg.linear_repo_label not in wanted:
         wanted.append(cfg.linear_repo_label)
+    found: dict[str, str] = {}
     for name in wanted:
-        found = linear.graphql(LINEAR_LABELS, {"name": name})
-        nodes = ((found.get("issueLabels") or {}).get("nodes")) or []
-        if nodes:
-            label_ids.append(str(nodes[0].get("id") or ""))
-    if not label_ids:
-        raise RuntimeError("linear labels missing")
+        lookup = linear.graphql(LINEAR_LABELS, {"name": name})
+        nodes = ((lookup.get("issueLabels") or {}).get("nodes")) or []
+        if nodes and nodes[0].get("id"):
+            found[name] = str(nodes[0]["id"])
+    if not found.get(cfg.needs_decision_label):
+        raise RuntimeError("linear needs-decision missing")
+    label_ids = [found[name] for name in wanted if found.get(name)]
     project_id = ""
     if cfg.linear_project:
         proj = linear.graphql(LINEAR_PROJECT, {"name": cfg.linear_project})
         nodes = ((proj.get("projects") or {}).get("nodes")) or []
-        if nodes:
-            project_id = str(nodes[0].get("id") or "")
+        if nodes and nodes[0].get("id"):
+            project_id = str(nodes[0]["id"])
+        if not project_id:
+            raise RuntimeError("linear project missing")
     return {
         "teamId": team.get("id"),
         "stateId": state_id or None,
-        "labelIds": [i for i in label_ids if i],
+        "labelIds": label_ids,
         "projectId": project_id or None,
     }
 
@@ -673,6 +701,8 @@ def file_linear_issue(linear: Linear, item: StuckThread, cfg: Config) -> str:
     }
     if ids.get("stateId"):
         payload["stateId"] = ids["stateId"]
+    if not ids.get("projectId") and cfg.linear_project:
+        raise RuntimeError("linear project missing")
     if ids.get("projectId"):
         payload["projectId"] = ids["projectId"]
     created = linear.graphql(LINEAR_CREATE, {"input": payload})
@@ -690,10 +720,13 @@ def post_mediation(gh: GitHub, item: StuckThread, cfg: Config) -> None:
 
 
 def apply_pr_label(gh: GitHub, cfg: Config, number: int) -> None:
+    if not cfg.codex_pat:
+        raise RuntimeError("no write token")
     gh.rest(
         f"repos/{cfg.repository}/issues/{number}/labels",
         method="POST",
         body={"labels": [cfg.needs_decision_label]},
+        token=cfg.codex_pat,
     )
 
 
@@ -748,11 +781,15 @@ def mediate_pr(
     posted_today = mediation_count_since(comments, now - timedelta(hours=24))
     labelled = False
     for item in stuck:
+        if posted_today >= cfg.max_per_pr_per_day:
+            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
+            continue
+        if not cfg.codex_pat:
+            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
+            continue
         if cfg.file_linear:
-            if not cfg.linear_api_key:
+            if not cfg.linear_api_key or linear is None:
                 logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} linear=skipped-no-secret")
-            elif linear is None:
-                logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} linear=skipped")
             else:
                 try:
                     url = file_linear_issue(linear, item, cfg)
@@ -766,12 +803,6 @@ def mediate_pr(
                 logs.append(f"stuck-thread-watch: pr={number} label={cfg.needs_decision_label}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} label=error")
-        if not cfg.codex_pat:
-            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
-            continue
-        if posted_today >= cfg.max_per_pr_per_day:
-            logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
-            continue
         try:
             post_mediation(gh, item, cfg)
             posted_today += 1

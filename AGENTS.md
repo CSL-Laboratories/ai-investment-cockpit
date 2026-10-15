@@ -171,9 +171,9 @@ Hosted split (PR #102):
 
 - **Devin** is the only GitHub PR reviewer. It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
-- **Stuck-thread watch** (`.github/workflows/stuck-thread-watch.yml`) asks Codex to mediate unresolved Devin threads Claude could not settle, and records a Linear `needs-decision` Triage issue. It never resolves threads, pushes, or merges.
+- **Stuck-thread watch** (`.github/workflows/stuck-thread-watch.yml`) is the only allowed Codex review path. It posts one advisory `@codex review` comment on unresolved Devin threads Claude could not settle, and records a Linear `needs-decision` Triage issue. The Codex reply must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
-- Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+- Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except that stuck-thread watcher. The author agent may fix CI failures on its own PR.
 
 ## Review loop
 

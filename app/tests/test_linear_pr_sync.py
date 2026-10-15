@@ -89,7 +89,9 @@ def sample_pr(**overrides) -> dict:
 
 def test_csl_key_from_title():
     assert mod.csl_key("CSL-86: add watcher") == "CSL-86"
+    assert mod.csl_key("csl-86: add watcher") == "CSL-86"
     assert mod.csl_key("no key here") == ""
+    assert mod.csl_key("no key", "cursor/csl-86-codex-mediator-2478") == "CSL-86"
 
 
 def test_purpose_skips_headings_and_html():
@@ -102,6 +104,8 @@ def test_devin_reviewed_head():
     reviews = [{"user": {"login": "devin-ai-integration[bot]"}, "commit_id": "abc123", "state": "COMMENTED"}]
     assert mod.devin_reviewed_head(reviews, "abc123") is True
     assert mod.devin_reviewed_head(reviews, "def456") is False
+    graphql = [{"user": {"login": "devin-ai-integration"}, "commit_id": "abc123", "state": "APPROVED"}]
+    assert mod.devin_reviewed_head(graphql, "abc123") is True
 
 
 def test_render_contains_marker_and_fields():
@@ -127,7 +131,20 @@ def test_main_push_flags_conflicts():
         files=[],
         vs_default=True,
     )
-    assert "out of date / conflicts with main" in text
+    assert "conflicts with main" in text
+    assert "out of date / conflicts with main" not in text
+
+
+def test_main_push_flags_behind_separately():
+    text = mod.render_comment(
+        sample_pr(mergeable=True, mergeable_state="behind"),
+        repo="CSL-Laboratories/ai-investment-cockpit",
+        reviews=[],
+        files=[],
+        vs_default=True,
+    )
+    assert "out of date with main" in text
+    assert "conflicts" not in text
 
 
 def test_upsert_edits_in_place():
@@ -162,14 +179,47 @@ def test_missing_secret_is_success():
 
 def test_skips_title_without_key():
     repo = "CSL-Laboratories/ai-investment-cockpit"
-    gh = FakeGitHub({9: sample_pr(number=9, title="no key")})
+    gh = FakeGitHub({9: sample_pr(number=9, title="no key", head={"sha": "abc", "ref": "feature"})})
     log = mod.sync_one(gh, FakeLinear(), repo, 9, vs_default=False)
     assert "no-linear-key" in log
 
 
+def test_uses_branch_linear_key():
+    repo = "CSL-Laboratories/ai-investment-cockpit"
+    linear = FakeLinear()
+    gh = FakeGitHub(
+        {9: sample_pr(number=9, title="docs only", head={"sha": "abc", "ref": "cursor/csl-86-x"})},
+        reviews={9: []},
+        files={9: []},
+    )
+    log = mod.sync_one(gh, linear, repo, 9, vs_default=False)
+    assert "issue=CSL-86" in log
+    assert linear.created
+
+
+def test_retries_until_mergeable_is_known():
+    repo = "CSL-Laboratories/ai-investment-cockpit"
+    calls = {"n": 0}
+
+    class RetryGitHub(FakeGitHub):
+        def rest(self, path: str, method: str = "GET"):
+            calls["n"] += 1
+            pr = dict(self.prs[9])
+            if calls["n"] < 3:
+                pr["mergeable"] = None
+            return pr
+
+    slept: list[float] = []
+    gh = RetryGitHub({9: sample_pr(number=9)}, reviews={9: []}, files={9: []})
+    pr = mod.load_pr_until_mergeable(gh, repo, 9, sleep=slept.append, attempts=4)
+    assert pr.get("mergeable") is True
+    assert calls["n"] == 3
+    assert slept == [2.0, 2.0]
+
+
 def test_workflow_structure():
     text = WORKFLOW.read_text(encoding="utf-8")
-    assert "pull_request:" in text
+    assert "pull_request_target:" in text
     assert "opened" in text
     assert "synchronize" in text
     assert "ready_for_review" in text
@@ -179,5 +229,8 @@ def test_workflow_structure():
     assert "timeout-minutes: 5" in text
     assert "cancel-in-progress: true" in text
     assert "LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}" in text
+    assert "ref: ${{ github.event.repository.default_branch }}" in text
+    assert "persist-credentials: false" in text
+    assert "head.sha" not in text
     assert "blacksmith-" not in text
     assert "python -m pytest" not in text

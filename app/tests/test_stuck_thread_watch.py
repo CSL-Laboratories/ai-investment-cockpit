@@ -159,8 +159,16 @@ def test_marker_rejects_unsafe_id():
 def test_needs_human_phrases():
     assert mod.claude_needs_human("I couldn't fix this; it needs a human.")
     assert mod.claude_needs_human("left the thread open for Lucas to confirm")
-    assert mod.claude_needs_human("could not verify the workspace setting")
+    assert not mod.claude_needs_human("could not verify the workspace setting")
     assert not mod.claude_needs_human("Fixed in abc123. Gates passed.")
+
+
+def test_login_aliases_accept_graphql_and_rest():
+    assert mod.is_devin("devin-ai-integration", DEVIN)
+    assert mod.is_devin("devin-ai-integration[bot]", DEVIN)
+    assert mod.is_claude("claude", ["claude[bot]", "claude"])
+    assert mod.is_claude("claude[bot]", ["claude[bot]"])
+    assert not mod.is_devin("alice", DEVIN)
 
 
 def test_classify_requires_devin_then_claude():
@@ -189,12 +197,12 @@ def test_classify_needs_human_immediately():
     assert item.path == "AGENTS.md"
 
 
-def test_classify_stale_after_stuck_hours():
+def test_classify_stale_after_stuck_hours_without_fix_claim():
     item, reason = mod.classify_thread(
         thread(
             comments=[
                 comment(DEVIN, "Please rename this helper.", created=NOW - timedelta(hours=10)),
-                comment("claude[bot]", "Renamed in abc.", created=NOW - timedelta(hours=7)),
+                comment("claude[bot]", "I still disagree with the rename.", created=NOW - timedelta(hours=7)),
             ]
         ),
         cfg=cfg(),
@@ -204,12 +212,59 @@ def test_classify_stale_after_stuck_hours():
     assert reason == "stale-claude"
 
 
+def test_classify_graphql_logins_without_bot_suffix():
+    item, reason = mod.classify_thread(
+        thread(
+            comments=[
+                comment("devin-ai-integration", "finding"),
+                comment("claude", "This needs a human."),
+            ]
+        ),
+        cfg=cfg(),
+        now=NOW,
+    )
+    assert item is not None
+    assert reason == "needs-human"
+
+
+def test_classify_ignores_earlier_needs_human_after_fix():
+    item, reason = mod.classify_thread(
+        thread(
+            comments=[
+                comment(DEVIN, "finding", created=NOW - timedelta(hours=10)),
+                comment("claude[bot]", "needs a human", created=NOW - timedelta(hours=8)),
+                comment("claude[bot]", "Fixed in abc123. Gates passed.", created=NOW - timedelta(hours=7)),
+            ]
+        ),
+        cfg=cfg(),
+        now=NOW,
+    )
+    assert item is None
+    assert reason == "claude-fixed"
+
+
+def test_classify_aged_after_devin_replies_to_fix():
+    item, reason = mod.classify_thread(
+        thread(
+            comments=[
+                comment(DEVIN, "finding", created=NOW - timedelta(hours=10)),
+                comment("claude[bot]", "Fixed in abc.", created=NOW - timedelta(hours=8)),
+                comment(DEVIN, "Still wrong.", created=NOW - timedelta(hours=7)),
+            ]
+        ),
+        cfg=cfg(),
+        now=NOW,
+    )
+    assert item is not None
+    assert reason == "stale-devin-replied"
+
+
 def test_classify_fresh_claude_not_stuck():
     item, reason = mod.classify_thread(
         thread(
             comments=[
                 comment(DEVIN, "Please rename this helper.", created=NOW - timedelta(hours=1)),
-                comment("claude[bot]", "Renamed in abc.", created=NOW - timedelta(minutes=10)),
+                comment("claude[bot]", "Still looking at this.", created=NOW - timedelta(minutes=10)),
             ]
         ),
         cfg=cfg(),
@@ -278,13 +333,17 @@ def test_daily_cap_and_missing_pat(tmp_path):
         {"body": "<!-- codex-mediation:old2 -->", "created_at": "2026-10-15T11:00:00Z"},
         {"body": "<!-- codex-mediation:old3 -->", "created_at": "2026-10-15T11:30:00Z"},
     ]
-    logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=3), gh, FakeLinear(), NOW)
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(max_per_pr_per_day=3), gh, linear, NOW)
     assert any("over-cap" in line for line in logs)
     assert gh.posts == []
+    assert linear.created == []
 
-    logs = mod.mediate_pr(pr, cfg(codex_pat="", max_per_pr_per_day=99), gh, FakeLinear(), NOW)
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(codex_pat="", max_per_pr_per_day=99), gh, linear, NOW)
     assert any("skipped-no-secret" in line for line in logs)
     assert gh.posts == []
+    assert linear.created == []
 
 
 def test_run_posts_one_codex_comment_and_files_linear():
@@ -344,9 +403,34 @@ def test_linear_dedupe_skips_create():
         "description": "<!-- codex-mediation:PRRT_kwDOabc -->",
     }
     linear = FakeLinear(existing=existing)
-    logs = mod.mediate_pr(pr, cfg(codex_pat=""), gh, linear, NOW)
+    logs = mod.mediate_pr(pr, cfg(codex_pat="pat"), gh, linear, NOW)
     assert linear.created == []
     assert any("linear=https://linear.app/i/CSL-77" in line or "linear=existing" in line for line in logs)
+
+
+def test_linear_resolve_ids_requires_needs_decision_and_project():
+    class MissingLinear(FakeLinear):
+        def _post(self, query: str, variables: dict) -> dict:
+            if "issueLabels" in query and variables.get("name") == "needs-decision":
+                return {"issueLabels": {"nodes": []}}
+            return super()._post(query, variables)
+
+    with pytest.raises(RuntimeError, match="needs-decision"):
+        mod.linear_resolve_ids(MissingLinear(), cfg())
+
+    class NoProjectLinear(FakeLinear):
+        def _post(self, query: str, variables: dict) -> dict:
+            if "projects(" in query:
+                return {"projects": {"nodes": []}}
+            return super()._post(query, variables)
+
+    with pytest.raises(RuntimeError, match="project"):
+        mod.linear_resolve_ids(NoProjectLinear(), cfg())
+
+
+def test_apply_pr_label_requires_write_token():
+    with pytest.raises(RuntimeError, match="no write token"):
+        mod.apply_pr_label(FakeGitHub(), cfg(codex_pat=""), 3)
 
 
 def test_personal_repo_applies_label_not_linear():
@@ -367,7 +451,7 @@ def test_personal_repo_applies_label_not_linear():
     }
     logs = mod.mediate_pr(
         pr,
-        cfg(file_linear=False, apply_pr_label=True, codex_pat=""),
+        cfg(file_linear=False, apply_pr_label=True, codex_pat="pat"),
         gh,
         None,
         NOW,

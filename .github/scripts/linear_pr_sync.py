@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -16,11 +17,13 @@ from typing import Any, Callable
 
 LINEAR_URL = "https://api.linear.app/graphql"
 DEVIN_LOGIN = "devin-ai-integration[bot]"
-CSL_KEY_RE = re.compile(r"CSL-[0-9]+")
+CSL_KEY_RE = re.compile(r"CSL-([0-9]+)", re.IGNORECASE)
 MARKER_RE = re.compile(r"<!--\s*pr-sync:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(\d+)\s*-->")
 SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
 PURPOSE_LINES = 8
 MAX_FILES = 12
+MERGEABLE_ATTEMPTS = 4
+MERGEABLE_SLEEP_SECONDS = 2.0
 LINEAR_ISSUE = """
 query($id: String!) {
   issue(id: $id) {
@@ -52,9 +55,12 @@ def marker(repo: str, number: int) -> str:
     return f"<!-- pr-sync:{repo}#{number} -->"
 
 
-def csl_key(title: str) -> str:
-    match = CSL_KEY_RE.search(title or "")
-    return match.group(0) if match else ""
+def csl_key(*texts: str) -> str:
+    for text in texts:
+        match = CSL_KEY_RE.search(text or "")
+        if match:
+            return f"CSL-{match.group(1)}"
+    return ""
 
 
 def purpose_from_body(body: str, limit: int = PURPOSE_LINES) -> str:
@@ -86,12 +92,10 @@ def pr_status(pr: dict[str, Any]) -> str:
 def merge_note(pr: dict[str, Any], *, vs_default: bool = False) -> str:
     state = str(pr.get("mergeable_state") or pr.get("mergeableState") or "")
     mergeable = pr.get("mergeable")
-    if vs_default and (state in {"dirty", "behind"} or mergeable is False):
-        return "out of date / conflicts with main"
     if state == "dirty" or mergeable is False:
-        return "conflicts"
+        return "conflicts with main" if vs_default else "conflicts"
     if state == "behind":
-        return "behind"
+        return "out of date with main" if vs_default else "behind"
     if vs_default and state == "clean":
         return "up to date with main"
     return state or ("unknown" if mergeable is None else "mergeable")
@@ -105,7 +109,8 @@ def devin_reviewed_head(reviews: list[dict[str, Any]], head_sha: str) -> bool:
         login = str(((review.get("user") or {}).get("login")) or "")
         sha = str(review.get("commit_id") or review.get("commitId") or "").lower()
         state = str(review.get("state") or "").upper()
-        if login == DEVIN_LOGIN and sha == head and state in {"COMMENTED", "CHANGES_REQUESTED", "APPROVED"}:
+        aliases = {DEVIN_LOGIN, DEVIN_LOGIN.removesuffix("[bot]")}
+        if login in aliases and sha == head and state in {"COMMENTED", "CHANGES_REQUESTED", "APPROVED"}:
             return True
     return False
 
@@ -267,6 +272,24 @@ def load_pr(gh: GitHub, repo: str, number: int) -> dict[str, Any]:
     return pr if isinstance(pr, dict) else {}
 
 
+def load_pr_until_mergeable(
+    gh: GitHub,
+    repo: str,
+    number: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = MERGEABLE_ATTEMPTS,
+) -> dict[str, Any]:
+    pr: dict[str, Any] = {}
+    for index in range(max(1, attempts)):
+        pr = load_pr(gh, repo, number)
+        if pr.get("mergeable") is not None:
+            return pr
+        if index + 1 < attempts:
+            sleep(MERGEABLE_SLEEP_SECONDS)
+    return pr
+
+
 def load_reviews(gh: GitHub, repo: str, number: int) -> list[dict[str, Any]]:
     items = gh.paginate(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
     return [i for i in items if isinstance(i, dict)]
@@ -287,10 +310,11 @@ def list_open_pr_numbers(gh: GitHub, repo: str) -> list[int]:
 
 
 def sync_one(gh: GitHub, linear: Linear, repo: str, number: int, *, vs_default: bool) -> str:
-    pr = load_pr(gh, repo, number)
+    pr = load_pr_until_mergeable(gh, repo, number)
     if not pr:
         return f"pr={number} skip=missing"
-    key = csl_key(str(pr.get("title") or ""))
+    head_ref = str(((pr.get("head") or {}).get("ref")) or "")
+    key = csl_key(str(pr.get("title") or ""), head_ref)
     if not key:
         return f"pr={number} skip=no-linear-key"
     reviews = load_reviews(gh, repo, number)
