@@ -21,14 +21,27 @@ SAFE_REF_RE = re.compile(r"^(?!.*\.\.)(?!/)(?!.*//)[A-Za-z0-9._/-]{1,200}$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 SAFE_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
+PROTECTED_PREFIXES = ("release/", "releases/", "hotfix/")
 SKIP_LABEL = "needs-decision"
 MAX_PRS = 3
+MAX_PAGES = 10
+MERGEABLE_ATTEMPTS = 4
+MERGEABLE_BUDGET_SECONDS = 120.0
 
 PermissionLookup = Callable[[str], str]
 
 
 def is_conflicted(pr: dict[str, Any]) -> bool:
     return pr.get("mergeable") is False and str(pr.get("mergeable_state") or "") == "dirty"
+
+
+def is_protected_head(head_ref: str, review_bases: set[str]) -> bool:
+    """Default/release branches and any branch another open PR targets are off limits."""
+    return (
+        head_ref in PROTECTED_REFS
+        or head_ref.startswith(PROTECTED_PREFIXES)
+        or head_ref in review_bases
+    )
 
 
 def _ref(value: Any) -> str:
@@ -46,6 +59,11 @@ def select(
     chosen: list[dict[str, str]] = []
     audit: list[str] = []
     cache: dict[str, str] = {}
+    review_bases = {
+        str(((pr or {}).get("base") or {}).get("ref") or "")
+        for pr in prs
+        if str((pr or {}).get("state") or "") == "open"
+    }
     for pr in prs:
         number = str(pr.get("number") or "")
         head = pr.get("head") or {}
@@ -63,8 +81,10 @@ def select(
             reason = "fork"
         elif not is_conflicted(pr):
             reason = "not-conflicted"
-        elif not head_ref or head_ref in PROTECTED_REFS or not base_ref:
+        elif not head_ref or not base_ref:
             reason = "unsafe-ref"
+        elif is_protected_head(head_ref, review_bases):
+            reason = "protected-head"
         elif not SAFE_SHA_RE.fullmatch(head_sha):
             reason = "unsafe-sha"
         elif SKIP_LABEL in labels:
@@ -96,24 +116,50 @@ def _gh_json(path: str) -> Any:
     return json.loads(raw)
 
 
-def fetch_prs(repository: str, only: str = "") -> list[dict[str, Any]]:
-    """Fetch PR details (mergeable is only on the single-PR endpoint)."""
-    if only:
-        numbers = [only]
-    else:
-        listing = _gh_json(f"repos/{repository}/pulls?state=open&per_page=50")
-        numbers = [str(p.get("number")) for p in listing if isinstance(p, dict)]
+def list_open_numbers(repository: str, get: Callable[[str], Any] | None = None) -> list[str]:
+    """All open PR numbers, following pagination (bounded by MAX_PAGES x 100)."""
+    get = get or _gh_json
+    numbers: list[str] = []
+    for page in range(1, MAX_PAGES + 1):
+        listing = get(f"repos/{repository}/pulls?state=open&per_page=100&page={page}")
+        if not isinstance(listing, list) or not listing:
+            break
+        numbers.extend(str(p.get("number")) for p in listing if isinstance(p, dict))
+        if len(listing) < 100:
+            break
+    return numbers
+
+
+def fetch_prs(
+    repository: str,
+    only: str = "",
+    get: Callable[[str], Any] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> list[dict[str, Any]]:
+    """Fetch PR details (mergeable is only on the single-PR endpoint).
+
+    GitHub computes mergeable lazily. Retries share one time budget and never
+    sleep after the last attempt, so many pending PRs cannot exhaust the job
+    timeout; a PR still pending is kept with mergeable=None and skipped.
+    """
+    get = get or _gh_json
+    numbers = [only] if only else list_open_numbers(repository, get)
+    deadline = clock() + MERGEABLE_BUDGET_SECONDS
     details: list[dict[str, Any]] = []
     for number in numbers:
         if not number.isdigit():
             continue
         pr: dict[str, Any] = {}
-        for _attempt in range(4):  # mergeable is computed lazily
-            pr = _gh_json(f"repos/{repository}/pulls/{number}")
-            if pr.get("mergeable") is not None:
+        for attempt in range(MERGEABLE_ATTEMPTS):
+            pr = get(f"repos/{repository}/pulls/{number}")
+            if not isinstance(pr, dict) or pr.get("mergeable") is not None:
                 break
-            time.sleep(5)
-        details.append(pr)
+            if attempt == MERGEABLE_ATTEMPTS - 1 or clock() + 5 > deadline:
+                break
+            sleep(5)
+        if isinstance(pr, dict):
+            details.append(pr)
     return details
 
 

@@ -722,6 +722,7 @@ class ConflictScanTests(unittest.TestCase):
             "not-conflicted": conflicted_pr(mergeable=True, mergeable_state="clean"),
             "unknown-mergeable": conflicted_pr(mergeable=None, mergeable_state="unknown"),
             "protected-head": conflicted_pr(head_ref="main"),
+            "release-head": conflicted_pr(head_ref="release/1.0"),
             "unsafe-head": conflicted_pr(head_ref="feat/../main"),
             "unsafe-base": conflicted_pr(base_ref="a b"),
             "unsafe-sha": conflicted_pr(head_sha="zz"),
@@ -750,6 +751,51 @@ class ConflictScanTests(unittest.TestCase):
         self.assertEqual([c["number"] for c in chosen], ["1", "2"])
         self.assertEqual(sum("skip=over-cap" in a for a in audit), 3)
 
+    def test_head_targeted_by_another_open_pr_is_protected(self) -> None:
+        stacked = conflicted_pr(number=8, head_ref="feature/y", base_ref="feature/x")
+        chosen, audit = self._select([conflicted_pr(), stacked])
+        self.assertEqual([c["number"] for c in chosen], ["8"])
+        self.assertIn("pr=7 skip=protected-head", audit[0])
+
+    def test_listing_follows_pagination(self) -> None:
+        pages = {1: [{"number": n} for n in range(1, 101)], 2: [{"number": 101}]}
+        calls = []
+
+        def get(path):
+            calls.append(path)
+            return pages.get(int(path.rsplit("page=", 1)[1]), [])
+
+        numbers = self.mod.list_open_numbers(REPO, get)
+        self.assertEqual(len(numbers), 101)
+        self.assertEqual(numbers[-1], "101")
+        self.assertEqual(len(calls), 2)
+
+    def test_pending_mergeable_shares_bounded_budget(self) -> None:
+        now = [0.0]
+        slept = []
+
+        def sleep(sec):
+            slept.append(sec)
+            now[0] += sec
+
+        def get(path):
+            if "?state=open" in path:
+                return [{"number": n} for n in range(1, 41)] if "page=1" in path else []
+            return conflicted_pr(number=int(path.rsplit("/", 1)[1]), mergeable=None, mergeable_state="unknown")
+
+        prs = self.mod.fetch_prs(REPO, "", get=get, sleep=sleep, clock=lambda: now[0])
+        self.assertEqual(len(prs), 40)
+        self.assertLessEqual(sum(slept), self.mod.MERGEABLE_BUDGET_SECONDS)
+
+    def test_no_sleep_after_last_attempt(self) -> None:
+        slept = []
+
+        def get(path):
+            return conflicted_pr(mergeable=None, mergeable_state="unknown")
+
+        self.mod.fetch_prs(REPO, "7", get=get, sleep=slept.append, clock=lambda: 0.0)
+        self.assertEqual(len(slept), self.mod.MERGEABLE_ATTEMPTS - 1)
+
     def test_embedded_scan_matches_source(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
         start = f"python3 - <<'{SCAN_HEREDOC}'\n"
@@ -777,15 +823,22 @@ class ConflictJobStructureTests(unittest.TestCase):
 
     def test_resolver_keeps_protections(self) -> None:
         job = self._job("conflict-resolve")
-        self.assertIn("group: claude-${{ matrix.pr.number }}", job)
+        self.assertIn("group: claude-conflict-${{ matrix.pr.number }}", job)
         self.assertIn("cancel-in-progress: false", job)
         self.assertIn("max-parallel: 1", job)
         self.assertIn("ref: ${{ matrix.pr.head_sha }}", job)
         self.assertIn('git checkout -B "$HEAD_REF" "$HEAD_SHA"', job)
-        self.assertIn("merge --no-ff --no-edit", job)
+        self.assertIn("merge --no-ff --no-commit", job)
+        self.assertNotIn("--no-edit", job)
+        self.assertIn('git config user.name "claude[bot]"', job)
+        self.assertIn("if: steps.prep.outputs.proceed == 'true'", job)
+        self.assertIn('"open $HEAD_SHA dirty"', job)
+        for path in (".github/**", "AGENTS.md", "CLAUDE.md", "CODEOWNERS", "scripts/ci/**", "tools/ci_gate.py"):
+            self.assertIn(f'"Edit({path})"', job)
+            self.assertIn(f'"Write({path})"', job)
+        self.assertIn("tools/test_claude_pr_fixer.py.", job.split("--allowedTools", 1)[0])
         self.assertIn("Bash(git push origin HEAD:refs/heads/${{ matrix.pr.head_ref }})", job)
         self.assertNotIn("HEAD:refs/heads/*", job)
-        self.assertIn("Edit(.github/workflows/**)", job)
         self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
         self.assertIn("Bash(git reset:*)", job.split("--disallowedTools", 1)[1])
         self.assertIn("Report tool-permission denials", job)
