@@ -487,6 +487,23 @@ class RunTests(unittest.TestCase):
         self.assertIn(mod.gate_marker(SHA), gh.posts[0][1]["body"])
         self.assertEqual(gh.dispatches, [])
 
+    def test_schedule_does_not_strip_manual_ci_full(self) -> None:
+        gh = FakeGH()
+        gh.prs = [pr_payload()]
+        gh.comments = [
+            comment(mod.action_marker("c" * 40, "READY")),
+            comment(mod.gate_marker(SHA) + "\n@codex review"),
+        ]
+        rc = mod.run(
+            event_name="schedule",
+            event={},
+            repository=REPO,
+            pat="not-a-real-secret",
+            gh=gh,
+        )
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.deletes, [])
+
     def test_gate_ready_helper_requires_current_sha_not_ready(self) -> None:
         older = [comment(mod.action_marker("c" * 40, "READY"))]
         both = older + [comment(mod.action_marker(SHA, "READY"))]

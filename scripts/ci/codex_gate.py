@@ -523,12 +523,21 @@ def _post_request_if_needed(
     repository: str,
     pr: dict[str, Any],
     comments: list[dict[str, Any]],
+    *,
+    clear_stale_ready: bool = False,
 ) -> list[str]:
     number = safe_pr(pr.get("number"))
     if not number:
         return ["codex-gate: skip=bad-pr-number"]
     sha = safe_sha((pr.get("head") or {}).get("sha"))
-    logs = _clear_stale_ready(gh, repository, number, sha, comments)
+    # Only pull_request events clear a prior READY label. A scheduled scan
+    # must not strip a human-added ci:full (that unlabeled event also
+    # cancels an in-progress full-matrix run).
+    logs = (
+        _clear_stale_ready(gh, repository, number, sha, comments)
+        if clear_stale_ready
+        else []
+    )
     decision = decide_request(pr, repository, comments)
     if decision != "post":
         logs.append(f"codex-gate: pr={number} request={decision}")
@@ -548,7 +557,9 @@ def _handle_request(event: dict[str, Any], repository: str, gh: GitHub) -> list[
         return ["codex-gate: skip=bad-pr-number"]
     authors = marker_authors(gh)
     comments = trusted_comments(_issue_comments(gh, repository, number), authors)
-    return _post_request_if_needed(gh, repository, pr, comments)
+    return _post_request_if_needed(
+        gh, repository, pr, comments, clear_stale_ready=True
+    )
 
 
 def _handle_review(
