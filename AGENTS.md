@@ -20,10 +20,12 @@ Linear is the basis of operations.
 - **Wait for jobs before reviewing:** no human or bot approves or requests
   changes on a PR until Devin Review, the Claude fixer jobs (`devin-review-fix`,
   `resolve-pr`), and required CI have all finished on the current head commit.
-  A review on a stale head does not count; after new pushes, the reviewer
-  reviews again. Review requests and their status are posted as @mention
-  comments on the CSL Linear issue, and a watcher posts there when a PR is
-  ready for review.
+  Devin Review's own verdict is exempt: its `changes_requested` is what starts
+  `devin-review-fix`. A review on a stale head does not count; after new
+  pushes, the reviewer reviews again. Review requests and their status are
+  posted as @mention comments on the CSL Linear issue. Check job status on the
+  PR directly; do not wait on a readiness notice, since no watcher that posts
+  one is part of this repo.
 
 This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in
@@ -191,8 +193,10 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
   to **Triage** with one Type label, the repo label `ai-investment-cockpit`,
   the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Mentions** use the Linear handles in **Linear-first operations**, not
-  GitHub. Assign new issues to the parent issue's owner, or leave them in
-  Triage unassigned when unclear.
+  GitHub. Look up the parent issue's current assignee or project lead in Linear
+  and @mention them; the named handles are notification routes, not proof of
+  ownership. Assign new issues to that owner, or leave them in Triage
+  unassigned when unclear.
 - The author addresses CI comments on their own PR, then resolves the threads.
   Devin findings and `@claude` mentions are handled by the Claude Code Action
   (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers;
