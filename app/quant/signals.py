@@ -24,8 +24,42 @@ stays import-clean enough for ``risk/`` to consume under Invariant 5.
 from __future__ import annotations
 
 import math
+import numbers
 from collections import deque
 from dataclasses import dataclass, field
+
+_I64_MIN = -2**63
+_I64_MAX = 2**63 - 1
+SIGNALS_BACKEND = "python"
+_NATIVE = None
+
+
+def _load_native() -> None:
+    """Use the Rust estimators when the extension is installed.
+
+    A missing module keeps the pure-Python path, so the hosted gates do not
+    need a Rust toolchain. Any other import failure is a broken extension and
+    is not swallowed. The extension is arithmetic only.
+    """
+    global _NATIVE, SIGNALS_BACKEND
+    try:
+        import cockpit_quant as native
+    except ImportError:
+        return
+    if not all(hasattr(native, name) for name in ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")):
+        return
+    _NATIVE = native
+    SIGNALS_BACKEND = "rust"
+
+
+def _real(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise TypeError(f"estimator observation must be a real number, got {type(value).__name__}")
+    return float(value)
+
+
+def _rust_window(window: int) -> bool:
+    return isinstance(window, int) and not isinstance(window, bool) and 0 <= window <= _I64_MAX
 
 
 @dataclass(slots=True)
@@ -46,9 +80,17 @@ class EwmaVolatility:
     _variance: float = field(default=0.0, repr=False)
     _last: float | None = field(default=None, repr=False)
     _count: int = field(default=0, repr=False)
+    _core: object | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        native = _NATIVE
+        if native is not None and isinstance(self.lam, numbers.Real) and not isinstance(self.lam, bool):
+            self._core = native.EwmaCore(float(self.lam))
 
     def update(self, price: float) -> float | None:
         """Feed one price; return the current volatility estimate, or None if not yet warm."""
+        if self._core is not None:
+            return self._core.update(_real(price))
         if price <= 0:
             return self.value
         if self._last is None:
@@ -65,12 +107,16 @@ class EwmaVolatility:
         """None until warm. Returning 0.0 while cold would be far worse than returning None:
         a market maker divides by volatility, and a zero estimate produces an infinitely
         confident quote at exactly the moment the model knows the least."""
+        if self._core is not None:
+            return self._core.value
         if self._count < 2:
             return None
         return math.sqrt(self._variance)
 
     @property
     def is_warm(self) -> bool:
+        if self._core is not None:
+            return self._core.is_warm
         return self._count >= 2
 
 
@@ -86,28 +132,40 @@ class RollingZScore:
 
     window: int = 200
     _values: deque[float] = field(default_factory=deque, repr=False)
+    _core: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.window < 2:
             raise ValueError(f"window must be >= 2, got {self.window}")
         self._values = deque(maxlen=self.window)
+        native = _NATIVE
+        if native is not None and _rust_window(self.window):
+            self._core = native.ZScoreCore(self.window)
 
     def update(self, value: float) -> float | None:
+        if self._core is not None:
+            return self._core.update(_real(value))
         self._values.append(value)
         return self.value
 
     @property
     def is_warm(self) -> bool:
+        if self._core is not None:
+            return self._core.is_warm
         return len(self._values) >= self.window
 
     @property
     def mean(self) -> float | None:
+        if self._core is not None:
+            return self._core.mean
         if not self._values:
             return None
         return sum(self._values) / len(self._values)
 
     @property
     def stdev(self) -> float | None:
+        if self._core is not None:
+            return self._core.stdev
         n = len(self._values)
         if n < 2:
             return None
@@ -122,6 +180,8 @@ class RollingZScore:
         large number. A constant spread is not an infinitely strong signal — it is no signal,
         and a strategy must be able to tell the difference.
         """
+        if self._core is not None:
+            return self._core.value
         if not self.is_warm:
             return None
         sd = self.stdev
@@ -143,19 +203,33 @@ class OrderFlowImbalance:
 
     window: int = 50
     _flow: deque[int] = field(default_factory=deque, repr=False)
+    _core: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.window < 1:
             raise ValueError(f"window must be >= 1, got {self.window}")
         self._flow = deque(maxlen=self.window)
+        native = _NATIVE
+        if native is not None and _rust_window(self.window):
+            self._core = native.OfiCore(self.window)
 
     def update(self, *, signed_qty: int) -> float:
+        if self._core is not None:
+            if isinstance(signed_qty, bool) or not isinstance(signed_qty, int):
+                raise TypeError(
+                    f"signed quantity must be an int, got {type(signed_qty).__name__}"
+                )
+            if signed_qty < _I64_MIN or signed_qty > _I64_MAX:
+                raise ValueError("signed quantity must fit in a signed 64-bit integer")
+            return self._core.update(signed_qty)
         self._flow.append(signed_qty)
         return self.value
 
     @property
     def value(self) -> float:
         """Net signed volume / gross volume. 0.0 on an empty window — genuinely no imbalance."""
+        if self._core is not None:
+            return self._core.value
         gross = sum(abs(q) for q in self._flow)
         if gross == 0:
             return 0.0
@@ -163,6 +237,8 @@ class OrderFlowImbalance:
 
     @property
     def is_warm(self) -> bool:
+        if self._core is not None:
+            return self._core.is_warm
         return len(self._flow) >= self.window
 
 
@@ -180,24 +256,34 @@ class RollingBeta:
     window: int = 200
     _xs: deque[float] = field(default_factory=deque, repr=False)
     _ys: deque[float] = field(default_factory=deque, repr=False)
+    _core: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.window < 3:
             raise ValueError(f"window must be >= 3, got {self.window}")
         self._xs = deque(maxlen=self.window)
         self._ys = deque(maxlen=self.window)
+        native = _NATIVE
+        if native is not None and _rust_window(self.window):
+            self._core = native.BetaCore(self.window)
 
     def update(self, x: float, y: float) -> float | None:
+        if self._core is not None:
+            return self._core.update(_real(x), _real(y))
         self._xs.append(x)
         self._ys.append(y)
         return self.beta
 
     @property
     def is_warm(self) -> bool:
+        if self._core is not None:
+            return self._core.is_warm
         return len(self._xs) >= self.window
 
     @property
     def beta(self) -> float | None:
+        if self._core is not None:
+            return self._core.beta
         n = len(self._xs)
         if n < 3:
             return None
@@ -211,6 +297,8 @@ class RollingBeta:
 
     @property
     def alpha(self) -> float | None:
+        if self._core is not None:
+            return self._core.alpha
         beta = self.beta
         if beta is None:
             return None
@@ -219,7 +307,12 @@ class RollingBeta:
 
     def residual(self, x: float, y: float) -> float | None:
         """The spread: how far y sits from where beta says it should be, given x."""
+        if self._core is not None:
+            return self._core.residual(_real(x), _real(y))
         beta, alpha = self.beta, self.alpha
         if beta is None or alpha is None:
             return None
         return y - (alpha + beta * x)
+
+
+_load_native()
