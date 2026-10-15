@@ -475,6 +475,41 @@ impl Book {
         Some(level.orders.get(idx).clone())
     }
 
+    /// `get(id).is_some()` without cloning the order.
+    ///
+    /// `contains` only checks the book map. An id that is mapped but missing
+    /// from its level is not resting.
+    pub(crate) fn on_level(&self, order_id: &str) -> bool {
+        let Some(loc) = self.by_id.get(order_id) else {
+            return false;
+        };
+        self.side_book(loc.side)
+            .levels
+            .get(&loc.price)
+            .is_some_and(|level| level.by_id.contains_key(order_id))
+    }
+
+    /// Test hook: keep the order on the level's list and in the book map, and
+    /// drop it from the level's id map. `contains` stays true. `get` is None.
+    #[cfg(test)]
+    pub(crate) fn detach_level_index(&mut self, order_id: &str) {
+        let loc = self
+            .by_id
+            .get(order_id)
+            .expect("order is in the book index");
+        let side = loc.side;
+        let price = loc.price;
+        let level = self
+            .side_book_mut(side)
+            .levels
+            .get_mut(&price)
+            .expect("level exists");
+        assert!(
+            level.by_id.remove(order_id).is_some(),
+            "level index had the id"
+        );
+    }
+
     pub fn queue_position(&self, order_id: &str) -> Result<i64, BookError> {
         let loc = self
             .by_id

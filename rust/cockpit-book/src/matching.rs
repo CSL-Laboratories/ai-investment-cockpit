@@ -212,10 +212,13 @@ pub fn match_order(
 
             let traded = remaining.min(resting.qty);
             let resting_id = resting.order_id.clone();
-            let was_indexed = book.contains(&resting_id);
+            // Snapshot presence on the level, not `contains`. The book map can
+            // still name an id whose level index has lost it; that reduce fails
+            // and nothing traded.
+            let was_on_level = book.on_level(&resting_id);
             if let Err(err) = book.reduce_qty(&resting_id, traded) {
-                // Removed mid-call is a fill; never indexed is an integrity fault, not a fill.
-                if was_indexed && book.get(&resting_id).is_none() {
+                // Removed mid-call is a fill. A desynced level index is not.
+                if was_on_level && !book.on_level(&resting_id) {
                     touched.push((resting_id, 0));
                 }
                 return Err(partial(err, stp_cancelled, touched));
@@ -500,6 +503,43 @@ mod tests {
                 assert_eq!(book.queue_position(id).unwrap(), naive_ahead(&naive, id));
             }
         }
+    }
+
+    #[test]
+    fn desynced_level_index_is_not_recorded_as_a_fill() {
+        let mut book = Book::new("DESYNC");
+        book.add("ask", Side::Sell, 100, 4, 1, 1, Some("mm".into()))
+            .unwrap();
+        book.detach_level_index("ask");
+        assert!(book.contains("ask"));
+        assert!(book.get("ask").is_none());
+        assert!(!book.on_level("ask"));
+        assert_eq!(book.level_head(Side::Sell, 100).unwrap().qty, 4);
+
+        let mut order = buy(4, Some(100));
+        order.order_id = "hit".into();
+        order.tif = TimeInForce::Ioc;
+        order.owner = Some("taker".into());
+        order.stp = SelfTrade::Allow;
+        let err = run(&mut book, &order).unwrap_err();
+        match err {
+            BookError::Partial {
+                touched,
+                stp_cancelled,
+                source,
+            } => {
+                assert!(
+                    touched.is_empty(),
+                    "a failed reduce is not a fill: {touched:?}"
+                );
+                assert!(stp_cancelled.is_empty());
+                assert!(matches!(source.as_ref(), BookError::NotFound(_)));
+            }
+            other => panic!("expected a partial match error, got {other:?}"),
+        }
+        assert!(book.contains("ask"));
+        assert!(book.get("ask").is_none());
+        assert_eq!(book.level_head(Side::Sell, 100).unwrap().qty, 4);
     }
 
     fn naive_ahead(rows: &[(Side, i64, String, i64)], id: &str) -> i64 {
