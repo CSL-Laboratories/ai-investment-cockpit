@@ -231,14 +231,23 @@ def pr_markers_in(text: str) -> list[str]:
     return PR_MARKER_RE.findall(text or "")
 
 
-def canonical_marker_key(desc: str) -> str | None:
+def preamble_marker_keys(desc: str) -> list[str]:
     head = (desc or "").split(MANAGED_BEGIN, 1)[0]
-    match = CANONICAL_MARKER_RE.search(head)
-    return match.group(1) if match else None
+    return CANONICAL_MARKER_RE.findall(head)
+
+
+def canonical_marker_key(desc: str) -> str | None:
+    keys = preamble_marker_keys(desc)
+    return keys[0] if keys else None
 
 
 def _key_matches_pr(key: str, repo: str, number: int) -> bool:
     return key in {pr_key(repo, number), f"{repo_short(repo)}#{number}"}
+
+
+def preamble_markers_agree(desc: str, repo: str, number: int) -> bool:
+    keys = preamble_marker_keys(desc)
+    return all(_key_matches_pr(key, repo, number) for key in keys)
 
 
 def _owned_description(desc: str) -> str:
@@ -251,7 +260,8 @@ def _owned_description(desc: str) -> str:
 def _pr_identity_agrees(desc: str, repo: str, number: int) -> bool:
     text = _owned_description(desc).lower()
     if "github.com/" in text and "/pull/" in text:
-        return f"github.com/{repo.lower()}/pull/{number}" in text
+        needle = rf"github\.com/{re.escape(repo.lower())}/pull/{int(number)}(?![0-9])"
+        return re.search(needle, text) is not None
     return True
 
 
@@ -259,11 +269,17 @@ def description_is_for_pr(desc: str, repo: str, number: int) -> bool:
     key = canonical_marker_key(desc)
     if key is None:
         return False
-    return _key_matches_pr(key, repo, number) and _pr_identity_agrees(desc, repo, number)
+    return (
+        _key_matches_pr(key, repo, number)
+        and preamble_markers_agree(desc, repo, number)
+        and _pr_identity_agrees(desc, repo, number)
+    )
 
 
 def title_matches_without_conflict(title: str, desc: str, repo: str, number: int) -> bool:
     if title != pr_rollup_title(repo, number):
+        return False
+    if not preamble_markers_agree(desc, repo, number):
         return False
     key = canonical_marker_key(desc)
     if key is None:
@@ -578,18 +594,26 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
     return "\n".join(blocks) + "\n"
 
 
+def _legacy_human_notes(existing: str) -> str:
+    leftover = CANONICAL_MARKER_RE.sub("", existing or "")
+    leftover = leftover.strip("\n")
+    return leftover if leftover.strip() else ""
+
+
 def human_suffix(existing: str) -> str:
     if MANAGED_END in existing:
         return existing.split(MANAGED_END, 1)[1].lstrip("\n")
     footer = "*Auto-filed by the in-repo stuck-thread watch"
     idx = existing.rfind(footer)
-    if idx == -1:
+    if idx != -1:
+        after = existing[idx:]
+        newline = after.find("\n")
+        if newline == -1:
+            return ""
+        return after[newline + 1 :].lstrip("\n")
+    if MANAGED_BEGIN in existing:
         return ""
-    after = existing[idx:]
-    newline = after.find("\n")
-    if newline == -1:
-        return ""
-    return after[newline + 1 :].lstrip("\n")
+    return _legacy_human_notes(existing)
 
 
 def merge_linear_description(generated: str, existing: str | None) -> str:

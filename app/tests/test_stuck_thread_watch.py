@@ -596,6 +596,7 @@ def test_linear_find_short_form_renamed_title():
         "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->"
         in linear.updated[0]["description"]
     )
+    assert "older roll-up" in linear.updated[0]["description"]
 
 
 def test_linear_find_ignores_quoted_marker_in_suffix():
@@ -617,6 +618,71 @@ def test_linear_find_ignores_quoted_marker_in_suffix():
     assert mod.linear_find_existing(linear, cfg(), 13) is None
     assert mod.description_is_for_pr(existing["description"], cfg().repository, 12)
     assert not mod.description_is_for_pr(existing["description"], cfg().repository, 13)
+
+
+def test_linear_find_rejects_conflicting_preamble_markers():
+    existing = {
+        "id": "ambiguous",
+        "title": "Stuck PR threads: ai-investment-cockpit#12",
+        "description": (
+            "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->\n"
+            "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#13 -->\n"
+            "<!-- stuck-pr-threads-begin -->\n"
+            "generated\n"
+            "<!-- stuck-pr-threads-end -->\n"
+        ),
+    }
+    linear = FakeLinear(existing=existing)
+    assert mod.linear_find_existing(linear, cfg(), 12) is None
+    assert mod.linear_find_existing(linear, cfg(), 13) is None
+    assert not mod.description_is_for_pr(existing["description"], cfg().repository, 12)
+    assert not mod.description_is_for_pr(existing["description"], cfg().repository, 13)
+
+
+def test_pr_identity_rejects_longer_pr_number():
+    repo = cfg().repository
+    only_123 = (
+        "<!-- stuck-pr-threads:ai-investment-cockpit#12 -->\n"
+        f"https://github.com/{repo.lower()}/pull/123\n"
+    )
+    only_12 = (
+        "<!-- stuck-pr-threads:CSL-Laboratories/ai-investment-cockpit#12 -->\n"
+        f"https://github.com/{repo.lower()}/pull/12\n"
+    )
+    assert not mod._pr_identity_agrees(only_123, repo, 12)
+    assert not mod.description_is_for_pr(only_123, repo, 12)
+    assert mod._pr_identity_agrees(only_12, repo, 12)
+    assert not mod._pr_identity_agrees(only_12, repo, 123)
+
+
+def test_linear_update_preserves_legacy_short_form_notes():
+    item = mod.StuckThread(
+        pr_number=12,
+        pr_url="https://ex/12",
+        pr_title="t",
+        thread_id="PRRT_kwDOabc",
+        path="AGENTS.md",
+        line="12",
+        thread_url="https://ex/r",
+        devin_body="finding",
+        claude_body="needs a human",
+        reason="needs-human",
+    )
+    existing = {
+        "id": "legacy",
+        "url": "https://linear.app/i/CSL-77",
+        "identifier": "CSL-77",
+        "title": "Decision needed: PR #12",
+        "description": "<!-- stuck-pr-threads:ai-investment-cockpit#12 -->\nDecision: wait for Lucas\n",
+    }
+    linear = FakeLinear(existing=existing)
+    url = mod.upsert_linear_issue(linear, [item], cfg())
+    assert url == "https://linear.app/i/CSL-77"
+    assert linear.created == []
+    assert "Decision: wait for Lucas" in linear.updated[0]["description"]
+    assert linear.updated[0]["description"].index("<!-- stuck-pr-threads-end -->") < linear.updated[0][
+        "description"
+    ].index("Decision: wait for Lucas")
 
 
 def test_linear_update_failure_raises():
