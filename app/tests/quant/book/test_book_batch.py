@@ -397,3 +397,39 @@ def test_batch_ops_keep_a_retained_order_as_live_as_the_python_book():
     assert prefix.qty == py_prefix.qty == 6
     rust.check_integrity()
     python.check_integrity()
+
+
+def test_batch_accepts_a_generator_that_reads_the_book():
+    book = LimitOrderBook("GEN")
+
+    def ops():
+        yield ("a", "a", "buy", 100, 5, 1, 1, None)
+        bid = book.best_bid()
+        yield ("a", "b", "buy", bid - 1, 5, 2, 2, None)
+
+    assert len(book.apply_many(ops())) == 2
+    assert len(book) == 2
+
+
+def test_match_then_cancel_keeps_post_match_qty_on_retained_order():
+    rust = LimitOrderBook("MC")
+    python = PythonLimitOrderBook("MC")
+    held = rust.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, seq=1, ts=1)
+    py = python.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, seq=1, ts=1)
+    rust.apply_many([
+        ("m", "hit", "buy", 4, 100, "day", None, "allow", 2, 2),
+        ("c", "ask"),
+    ])
+    match(python, AggressiveOrder(order_id="hit", side=Side.BUY, qty=4, price_ticks=100, stp=SelfTradePrevention.ALLOW))
+    python.cancel("ask")
+    assert held.qty == py.qty == 6
+
+
+def test_failed_match_resyncs_retained_orders():
+    rust = LimitOrderBook("FM")
+    ask = rust.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=4, seq=1, ts=1)
+    rust.add(order_id="hit", side=Side.BUY, price_ticks=90, qty=1, seq=2, ts=2)
+    with pytest.raises(Exception):
+        rust.apply_many([("m", "hit", "buy", 5, 100, "day", None, "allow", 3, 3)])
+    assert rust.get("ask") is None
+    assert ask.qty == 0

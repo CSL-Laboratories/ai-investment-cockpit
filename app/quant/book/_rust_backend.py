@@ -398,32 +398,55 @@ class LimitOrderBook:
         before it stay applied, including on any ``RestingOrder`` the caller
         already holds.
         """
+        # Materialize first: a generator may read the book between yields, and
+        # the native call holds the book borrowed while it iterates.
+        ops = list(ops)
+        if not self._live:
+            return self._apply_chunk(ops)
+        # Retained orders read the native book after a match, so a match must
+        # be the last op of its chunk. Later ops cannot change what it saw.
+        public: list = []
+        start = 0
+        for index, op in enumerate(ops):
+            if isinstance(op, tuple) and op and op[0] == "m":
+                public.extend(self._apply_chunk(ops[start:index + 1]))
+                start = index + 1
+        if start < len(ops):
+            public.extend(self._apply_chunk(ops[start:]))
+        return public
+
+    def _apply_chunk(self, chunk: list) -> list:
         try:
-            rows = self._core.apply_many(ops)
-        except (
-            cockpit_quant.NotFound,
-            cockpit_quant.IntegrityError,
-            cockpit_quant.BookValueError,
-        ) as exc:
-            applied = getattr(exc, "applied", None)
-            if applied:
-                _absorb_batch(self, applied)
-            _raise(exc)
+            rows = self._core.apply_many(chunk)
         except Exception as exc:
-            applied = getattr(exc, "applied", None)
+            applied = getattr(exc, "applied", None) or []
             if applied:
                 _absorb_batch(self, applied)
+            failed = chunk[len(applied)] if len(applied) < len(chunk) else None
+            if isinstance(failed, tuple) and failed and failed[0] == "m":
+                # The matcher may have consumed resting qty before it failed.
+                _resync_live(self)
+            if isinstance(exc, (
+                cockpit_quant.NotFound,
+                cockpit_quant.IntegrityError,
+                cockpit_quant.BookValueError,
+            )):
+                _raise(exc)
             raise
         return _absorb_batch(self, rows)
 
     def apply_quiet(self, ops) -> int:
         """Same sequence as ``apply_many``, returning only how many ops applied.
 
-        The count hides the per-op tuples from the caller. Those tuples are
-        still applied to retained orders, so a held ``RestingOrder`` cannot go
-        stale after a quiet reduce, cancel, replace, or fill.
+        With no retained orders the native quiet path builds no result rows.
+        Otherwise the rows still update retained orders, so a held
+        ``RestingOrder`` cannot go stale after a quiet reduce, cancel,
+        replace, or fill.
         """
-        return len(self.apply_many(ops))
+        ops = list(ops)
+        if self._live:
+            return len(self.apply_many(ops))
+        return _call(self._core.apply_quiet, ops)
 
 
 def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_ts: int, ingest_ts: int):
