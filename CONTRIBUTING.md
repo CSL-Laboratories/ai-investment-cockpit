@@ -2,7 +2,10 @@
 
 ## Linear-first operations (applies to every agent and Grok Bot)
 
-Linear is the basis of operations.
+Linear is the basis of operations. Bounded workers with a frozen brief (for
+example `muse-synthesizer`) are exempt from the Linear and external-research
+steps below; Head performs them before freezing the brief, and the worker's own
+prompt governs.
 
 - Before starting work, check Linear for overlapping issues and PRs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
@@ -18,10 +21,12 @@ Linear is the basis of operations.
 - **Wait for jobs before reviewing:** no human or bot approves or requests
   changes on a PR until Devin Review, the Claude fixer jobs (`devin-review-fix`,
   `resolve-pr`), and required CI have all finished on the current head commit.
-  A review on a stale head does not count; after new pushes, the reviewer
-  reviews again. Review requests and their status are posted as @mention
-  comments on the CSL Linear issue, and a watcher posts there when a PR is
-  ready for review.
+  Devin Review's own verdict is exempt: its `changes_requested` is what starts
+  `devin-review-fix`. A review on a stale head does not count; after new
+  pushes, the reviewer reviews again. Review requests and their status are
+  posted as @mention comments on the CSL Linear issue. Check job status on the
+  PR directly; do not wait on a readiness notice, since no watcher that posts
+  one is part of this repo.
 
 Full agent workflow, review roles, and invariants: [`AGENTS.md`](AGENTS.md) and
 [`CLAUDE.md`](CLAUDE.md). Operating model:

@@ -4,7 +4,10 @@
 
 ## Linear-first operations (applies to every agent and Grok Bot)
 
-Linear is the basis of operations.
+Linear is the basis of operations. Bounded workers with a frozen brief (for
+example `muse-synthesizer`) are exempt from the Linear and external-research
+steps below; Head performs them before freezing the brief, and the worker's own
+prompt governs.
 
 - Before starting work, check Linear for overlapping issues and PRs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
