@@ -278,6 +278,39 @@ def render_comment(report: Report) -> str:
     )
 
 
+def render_unverified(report: Report) -> str:
+    """Notice for a run that did not confirm a regression and did not clear.
+
+    Posted only when the pull request has no regression warning. The body names
+    each inconclusive or missing case and does not claim an all-clear.
+    """
+    if not report.unverified:
+        raise ValueError("an unverified run needs an inconclusive or missing case")
+    bullets = []
+    statuses = set()
+    for case in report.cases:
+        if case.status == "missing":
+            statuses.add("missing")
+            bullets.append(f"- `{case.name}`: missing on the pull request")
+        elif case.status == "inconclusive":
+            statuses.add("inconclusive")
+            detail = case.note or "not confirmed"
+            bullets.append(f"- `{case.name}`: inconclusive ({detail})")
+    title = (
+        "## Performance case missing"
+        if statuses == {"missing"}
+        else "## Performance check inconclusive"
+    )
+    return (
+        f"{COMMENT_MARKER}\n"
+        f"{title}\n\n"
+        "No regression was confirmed. This run is not an all-clear.\n\n"
+        + "\n".join(bullets)
+        + "\n\n"
+        + render_summary(report)
+    )
+
+
 def render_clear(report: Report) -> str:
     if report.unverified:
         raise ValueError("an inconclusive or missing case is not a cleared performance check")
@@ -332,9 +365,10 @@ def write_outputs(
         body = asdict(report)
         body["regressions"] = list(report.regressions)
         report_path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
-    # One comment action per run. An inconclusive case must not post "cleared"
-    # and must not replace an earlier regression comment. The leave file tells
-    # the workflow to keep the existing comment.
+    # One comment action per run. A regression comment wins. Otherwise an
+    # inconclusive or missing case writes a notice that is not an all-clear.
+    # select_comment_update posts that notice unless a regression warning is
+    # already on the pull request.
     action = "regression" if report.regressions else "leave" if report.unverified else "clear"
 
     def _drop(path: Path | None) -> None:
@@ -350,16 +384,39 @@ def write_outputs(
         _drop(comment)
         _drop(clear_comment)
         if leave is not None:
-            names = ", ".join(report.unverified)
-            leave.write_text(
-                f"inconclusive or missing: {names}; existing regression comment left unchanged\n",
-                encoding="utf-8",
-            )
+            leave.write_text(render_unverified(report), encoding="utf-8")
     else:
         _drop(comment)
         _drop(leave)
         if clear_comment is not None:
             clear_comment.write_text(render_clear(report), encoding="utf-8")
+
+
+REGRESSION_HEADING = "## Performance regression flagged"
+
+
+def select_comment_update(
+    existing: str | None,
+    regression_path: Path,
+    unverified_path: Path,
+    clear_path: Path,
+) -> Path | None:
+    """Choose the comment body to post, or None to leave the existing comment.
+
+    A regression body always wins. An inconclusive or missing notice replaces a
+    stale all-clear and is posted when no comment exists, but it does not
+    replace an earlier regression warning. A clear body updates an existing
+    comment only.
+    """
+    if regression_path.is_file() and regression_path.stat().st_size > 0:
+        return regression_path
+    if unverified_path.is_file() and unverified_path.stat().st_size > 0:
+        if existing and REGRESSION_HEADING in existing:
+            return None
+        return unverified_path
+    if existing and clear_path.is_file() and clear_path.stat().st_size > 0:
+        return clear_path
+    return None
 
 
 def compare_trees(

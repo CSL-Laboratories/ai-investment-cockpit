@@ -296,16 +296,14 @@ jobs:
           marker='<!-- csl-perf-bench -->'
           mapfile -t ids < <(gh api --paginate "repos/${REPO}/issues/${PR}/comments" --jq ".[] | select(.body | contains(\"${marker}\")) | .id")
           existing="${ids[0]:-}"
-          body_file=""
-          if [ -s bench-comment.md ]; then
-            body_file=bench-comment.md
-          elif [ -f bench-leave.md ]; then
-            echo "Inconclusive samples; leaving any existing performance comment unchanged."
-            exit 0
-          elif [ -n "$existing" ] && [ -s bench-clear.md ]; then
-            body_file=bench-clear.md
-          else
-            echo "No regression comment to post."
+          existing_file=""
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" --jq .body > bench-existing.md
+            existing_file=bench-existing.md
+          fi
+          body_file="$(EXISTING_FILE="$existing_file" PYTHONPATH=app python -c 'import os, sys; from pathlib import Path; from benchmarks.compare import select_comment_update; existing_path = os.environ.get("EXISTING_FILE") or ""; existing = Path(existing_path).read_text(encoding="utf-8") if existing_path else None; chosen = select_comment_update(existing, Path("bench-comment.md"), Path("bench-leave.md"), Path("bench-clear.md")); sys.stdout.write("" if chosen is None else str(chosen))')"
+          if [ -z "$body_file" ]; then
+            echo "Leaving the existing performance comment unchanged."
             exit 0
           fi
           if [ -n "$existing" ]; then

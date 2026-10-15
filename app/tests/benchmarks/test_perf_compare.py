@@ -9,12 +9,15 @@ import pytest
 from benchmarks.cases import CASE_NAMES
 from benchmarks.compare import (
     COMMENT_MARKER,
+    REGRESSION_HEADING,
     child_env,
     compare_samples,
     main,
     rel_iqr,
     render_clear,
     render_comment,
+    render_unverified,
+    select_comment_update,
     write_outputs,
 )
 
@@ -109,23 +112,61 @@ def test_inconclusive_does_not_clear_or_replace_a_regression_comment(tmp_path):
     )
     assert not comment.exists()
     assert not clear.exists()
-    body = leave.read_text(encoding="utf-8").lower()
-    assert "cleared" not in body
-    assert "unchanged" in body
+    body = leave.read_text(encoding="utf-8")
+    assert "cleared" not in body.lower()
+    assert "inconclusive" in body.lower()
+    assert "risk_evaluate" in body
+    regression = f"{COMMENT_MARKER}\n{REGRESSION_HEADING}\n\nstale warning\n"
+    all_clear = f"{COMMENT_MARKER}\n## Performance check cleared\n\nstale all-clear\n"
+    assert select_comment_update(regression, comment, leave, clear) is None
+    assert select_comment_update(all_clear, comment, leave, clear) == leave
+    assert select_comment_update(None, comment, leave, clear) == leave
 
 
 def test_missing_case_is_never_cleared(tmp_path):
     clear = tmp_path / "clear.md"
     leave = tmp_path / "leave.md"
-    report = _report({"risk_evaluate": [1.0] * 10}, {})
-    assert report.cases[0].status == "missing"
+    comment = tmp_path / "comment.md"
+    report = _report(
+        {"risk_evaluate": [1.0] * 10, "audit_append_verify": [0.05] * 6},
+        {"risk_evaluate": [1.0] * 10},
+    )
+    missing = [case for case in report.cases if case.status == "missing"]
+    assert [case.name for case in missing] == ["audit_append_verify"]
+    assert report.regressions == ()
     with pytest.raises(ValueError):
         render_clear(report)
+    notice = render_unverified(report)
+    assert "missing" in notice.lower()
+    assert "cleared" not in notice.lower()
+    assert "audit_append_verify" in notice
     write_outputs(
-        report, comment=None, clear_comment=clear, summary=None, report_path=None, leave=leave,
+        report, comment=comment, clear_comment=clear, summary=None, report_path=None, leave=leave,
     )
+    assert not comment.exists()
     assert not clear.exists()
-    assert "risk_evaluate" in leave.read_text(encoding="utf-8")
+    assert "missing" in leave.read_text(encoding="utf-8").lower()
+    all_clear = f"{COMMENT_MARKER}\n## Performance check cleared\n"
+    assert select_comment_update(all_clear, comment, leave, clear) == leave
+
+
+def test_regression_still_wins_when_another_case_is_missing(tmp_path):
+    comment = tmp_path / "comment.md"
+    clear = tmp_path / "clear.md"
+    leave = tmp_path / "leave.md"
+    report = _report(
+        {"risk_evaluate": [1.0] * 8, "audit_append_verify": [0.05] * 6},
+        {"risk_evaluate": [1.2] * 8},
+    )
+    assert report.regressions == ("risk_evaluate",)
+    assert any(case.status == "missing" for case in report.cases)
+    write_outputs(
+        report, comment=comment, clear_comment=clear, summary=None, report_path=None, leave=leave,
+    )
+    assert not leave.exists()
+    assert not clear.exists()
+    assert REGRESSION_HEADING in comment.read_text(encoding="utf-8")
+    assert select_comment_update("## Performance check cleared\n", comment, leave, clear) == comment
 
 
 def test_child_env_points_at_the_tree_and_drops_scale(monkeypatch, tmp_path):
@@ -194,3 +235,5 @@ def test_benchmarks_job_is_not_part_of_linux_gates():
     assert "pull_request" in bench
     assert "issues: write" in bench
     assert "pull-requests: write" in bench
+    assert "select_comment_update" in bench
+    assert "leaving any existing performance comment unchanged" not in bench.lower()
