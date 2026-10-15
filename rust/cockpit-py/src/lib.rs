@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyInt;
 
 mod costs;
+mod ingest;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
@@ -331,5 +332,6 @@ fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("IntegrityError", m.py().get_type::<IntegrityError>())?;
     m.add("BookValueError", m.py().get_type::<BookValueError>())?;
     costs::register(m)?;
+    ingest::register(m)?;
     Ok(())
 }
