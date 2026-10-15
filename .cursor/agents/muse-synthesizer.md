@@ -14,7 +14,10 @@ blockers, and questions for a dev are @mentions on the matching CSL Linear
 issue (Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
 `@lucassalvador987`) — a GitHub mention alone is not enough. File findings,
 ideas, and bugs to Triage (deduped); ground research with Parallel search and
-Context7.
+Context7. Wait for jobs before reviewing: no approve or request-changes until
+Devin Review, Claude fixer jobs (`devin-review-fix`, `resolve-pr`), and
+required CI have finished on the current head; stale-head reviews do not
+count. Post review requests and status as Linear @mentions.
 
 When invoked:
 

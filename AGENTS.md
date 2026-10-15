@@ -17,6 +17,13 @@ Linear is the basis of operations.
 - Autonomously file research findings, ideas, and bugs to Triage, deduped.
 - Ground every implementation in the best available research: Parallel search
   for web research and Context7 for current library docs.
+- **Wait for jobs before reviewing:** no human or bot approves or requests
+  changes on a PR until Devin Review, the Claude fixer jobs (`devin-review-fix`,
+  `resolve-pr`), and required CI have all finished on the current head commit.
+  A review on a stale head does not count; after new pushes, the reviewer
+  reviews again. Review requests and their status are posted as @mention
+  comments on the CSL Linear issue, and a watcher posts there when a PR is
+  ready for review.
 
 This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in

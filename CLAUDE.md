@@ -12,7 +12,12 @@ blocker, or question for a dev is an @mention on the matching CSL Linear
 issue — not GitHub alone. Handles: Chaandan `@chaandansaini101`, Samir
 `@samirshahahmed`, Lucas `@lucassalvador987`. File findings, ideas, and bugs
 to Triage (deduped); ground implementations with Parallel search (web) and
-Context7 (library docs). Full rule in [`AGENTS.md`](AGENTS.md).
+Context7 (library docs). **Wait for jobs before reviewing:** no approve or
+request-changes until Devin Review, Claude fixer jobs (`devin-review-fix`,
+`resolve-pr`), and required CI have finished on the current head; stale-head
+reviews do not count; re-review after new pushes. Post review requests and
+status as Linear @mentions; a watcher posts when the PR is ready. Full rule in
+[`AGENTS.md`](AGENTS.md).
 
 ## Product target and current implementation
 
