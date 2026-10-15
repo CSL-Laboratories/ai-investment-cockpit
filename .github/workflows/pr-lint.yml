@@ -1,0 +1,38 @@
+name: PR Lint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  linear-key:
+    name: Linear key in branch or title
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 2
+    steps:
+      - name: Require CSL-<n> in branch name or PR title
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: |
+          set -euo pipefail
+          if [ "$PR_AUTHOR_TYPE" = "Bot" ] || [[ "$PR_AUTHOR" == *"[bot]" ]] || [[ "$PR_AUTHOR" == dependabot* ]]; then
+            echo "pr-lint: bot author ($PR_AUTHOR), bypassing"
+            exit 0
+          fi
+          re='CSL-[0-9]+'
+          if [[ "$HEAD_REF" =~ $re ]] || [[ "$PR_TITLE" =~ $re ]]; then
+            echo "pr-lint: Linear key found"
+            exit 0
+          fi
+          echo "::error::Branch name or PR title must include a Linear key matching CSL-[0-9]+ (e.g. CSL-123-short-desc)."
+          exit 1

@@ -1,3 +1,6 @@
+# Default owners. Later, more specific entries take precedence.
+* @NotSkittlz @CDanTheMan @samir-shah-ahmed
+
 .github/ @NotSkittlz
 AGENTS.md @NotSkittlz
 .mcp.json @NotSkittlz
