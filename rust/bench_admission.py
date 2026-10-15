@@ -35,8 +35,9 @@ def _python_dedup(keys) -> None:
         seen.add(key)
 
 
-def _rust_dedup(keys) -> None:
-    seen = Dedup(capacity=8_192)
+def _extension_dedup(keys) -> None:
+    """Direct extension calls. Not the poller path: the method wrapper lost to OrderedDict."""
+    seen = cockpit_quant.DedupCore(8_192)
     for key in keys:
         seen.add(key)
 
@@ -76,13 +77,15 @@ def main() -> None:
     times = [i * 0.01 for i in range(N)]
     ops = [("a", key) for key in keys]
     _python_dedup(keys[:8])
-    _rust_dedup(keys[:8])
+    _extension_dedup(keys[:8])
     cockpit_quant.dedup_replay(8192, ops[:8])
+    if Dedup(8_192)._core is not None:
+        sys.exit("dedup attached the slower per-call extension")
     _shipped_bucket(times[:8])
     _batched_bucket(times[:8])
 
     py_dedup = _median(lambda: _python_dedup(keys))
-    rust_dedup = _median(lambda: _rust_dedup(keys))
+    rust_dedup = _median(lambda: _extension_dedup(keys))
     batch_dedup = _median(lambda: cockpit_quant.dedup_replay(8192, ops))
     py_bucket = _median(lambda: _python_bucket(times))
     shipped_bucket = _median(lambda: _shipped_bucket(times))
@@ -95,8 +98,9 @@ def main() -> None:
     print(f"n={N}  (median of 5, release)")
     print("| workload | python | rust | python/rust |")
     print("|---|---:|---:|---:|")
-    print(row("per-call dedup", py_dedup, rust_dedup))
-    print(row("batched dedup", py_dedup, batch_dedup))
+    print(row("per-call dedup shipped (OrderedDict)", py_dedup, py_dedup))
+    print(row("per-call dedup extension, not shipped", py_dedup, rust_dedup))
+    print(row("batched dedup, not shipped", py_dedup, batch_dedup))
     print(row("per-call token bucket", py_bucket, shipped_bucket))
     print(row("batched token bucket", py_bucket, batch_bucket))
     if py_bucket / shipped_bucket < 1.0 or py_bucket / batch_bucket < 1.0:

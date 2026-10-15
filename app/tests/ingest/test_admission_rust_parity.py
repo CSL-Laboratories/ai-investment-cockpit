@@ -20,11 +20,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _dedup(capacity):
-    accelerated = Dedup(capacity)
-    reference = Dedup(capacity)
-    reference._core = None
-    return accelerated, reference
+def _cores(capacity):
+    import cockpit_quant
+
+    shipped = Dedup(capacity)
+    assert shipped._core is None
+    return cockpit_quant.DedupCore(capacity), shipped
 
 
 def _drive_bucket(bucket, times, *, python: bool):
@@ -38,7 +39,7 @@ def _drive_bucket(bucket, times, *, python: bool):
 
 
 def test_dedup_matches_lru_eviction_and_discard():
-    rust, python = _dedup(2)
+    rust, python = _cores(2)
     script = ["a", "b", "a", "c", "a", "b"]
     for key in script:
         assert rust.add(key) is python.add(key)
@@ -47,12 +48,12 @@ def test_dedup_matches_lru_eviction_and_discard():
     assert rust.add("c") is python.add("c")
 
     for cap in (0, -1, -50):
-        rust, python = _dedup(cap)
+        rust, python = _cores(cap)
         assert rust.add("k") is python.add("k") is True
         assert rust.add("k") is python.add("k") is True
         assert rust.discard("k") is python.discard("k") is False
 
-    rust, python = _dedup(3)
+    rust, python = _cores(3)
     for key in ("a", "b", "c", "d"):
         assert rust.add(key) is python.add(key)
     assert rust.discard("a") is python.discard("a") is False
@@ -79,11 +80,19 @@ def test_dedup_replay_matches_a_random_script():
             assert replayed is python.discard(key)
 
 
-def test_a_non_str_key_is_refused_on_the_rust_path():
-    rust, python = _dedup(4)
-    with pytest.raises(TypeError, match="dedup key must be a str"):
-        rust.add(1)
-    assert python.add(1) is True
+def test_the_shipped_dedup_keeps_ordered_dict_keys():
+    """Pollers pass one key at a time. That call stays on OrderedDict.
+
+    The extension still matches it, and refuses a non-str. The class does not,
+    because an OrderedDict key was never limited to ``str``.
+    """
+    import cockpit_quant
+
+    seen = Dedup(4)
+    assert seen._core is None
+    assert seen.add(1) is True
+    with pytest.raises(TypeError):
+        cockpit_quant.DedupCore(4).add(1)
     odd = Dedup(capacity=True)
     assert odd._core is None
     assert odd.add("a") is True
