@@ -265,7 +265,7 @@ class TimeoutDecisionTests(unittest.TestCase):
             "skip-cap",
         )
 
-    def test_timeout_skips_stuck_thread_mediation(self) -> None:
+    def test_timeout_still_fires_when_mediation_prompt_is_newest(self) -> None:
         comments = [
             self._request(30),
             comment(
@@ -277,7 +277,7 @@ class TimeoutDecisionTests(unittest.TestCase):
             mod.decide_timeout(
                 sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"
             ),
-            "skip-mediation-pending",
+            "FIX",
         )
 
 
@@ -322,9 +322,26 @@ class ApplyVerdictTests(unittest.TestCase):
         self.assertEqual(mediated, ["linear"])
         self.assertEqual(dispatched, [])
         self.assertEqual(labels, [])
-        self.assertIn("codex-gate-mediate:" + SHA, posted[0])
+        self.assertIn("codex-gate-mediate:42:" + SHA, posted[0])
         self.assertIn("needs a human", posted[0])
         self.assertIn("https://linear.app/issue/CSL-1", posted[0])
+
+    def test_mediate_without_linear_url_does_not_mark(self) -> None:
+        posted: list[str] = []
+        logs = mod.apply_verdict(
+            "MEDIATE",
+            repository=REPO,
+            pr_number="42",
+            sha=SHA,
+            comments=[],
+            day="2026-10-15",
+            post_comment=posted.append,
+            add_label=lambda _n: None,
+            dispatch_fixer=lambda: None,
+            file_decision=lambda: "",
+        )
+        self.assertEqual(posted, [])
+        self.assertTrue(any("mediate=retry" in line for line in logs))
 
     def test_skip_is_noop(self) -> None:
         logs, posted, labels, dispatched, mediated = self._apply("skip-waiting")
@@ -390,6 +407,8 @@ class RunTests(unittest.TestCase):
         self.assertIn(mod.gate_marker(SHA), body)
         self.assertIn("@codex review", body)
         self.assertIn("CODEX-GATE: FIX", body)
+        self.assertIn("Linear needs-decision", body)
+        self.assertNotIn("stuck-thread-watch", body)
 
         gh.comments.append(comment(body))
         rc = mod.run(
@@ -453,7 +472,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(gh.dispatches, [])
         self.assertIn("::notice::", buf.getvalue())
         self.assertIn("LINEAR_API_KEY", buf.getvalue())
-        self.assertTrue(any("MEDIATE" in (body.get("body") or "") for _, body in gh.posts))
+        self.assertFalse(any("codex-gate-action:" in (body.get("body") or "") for _, body in gh.posts))
 
     def test_review_skips_fork_and_draft(self) -> None:
         gh = FakeGH()
@@ -618,7 +637,7 @@ class RunTests(unittest.TestCase):
                         "nodes": [
                             {
                                 "url": "https://linear.app/csl-laboratories/issue/CSL-9",
-                                "description": mod.mediate_marker(SHA) + "\nexisting",
+                                "description": mod.mediate_marker("42", SHA) + "\nexisting",
                             }
                         ]
                     }
@@ -728,6 +747,8 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_pat_job_token_is_read_only_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
+        self.assertIn("pull-requests: read", self.text)
+        self.assertIn("issues: read", self.text)
         self.assertNotIn("actions: write", self.text)
         self.assertNotIn("issues: write", self.text)
         self.assertNotIn("pull-requests: write", self.text)

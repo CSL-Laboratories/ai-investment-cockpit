@@ -24,9 +24,11 @@ on:
         required: false
         default: ""
 
-# Writes go through CODEX_TRIGGER_PAT, not GITHUB_TOKEN.
+# Writes go through CODEX_TRIGGER_PAT. GITHUB_TOKEN only reads.
 permissions:
   contents: read
+  pull-requests: read
+  issues: read
 
 # One group for the whole repo so a review and a scheduled scan cannot both
 # dispatch FIX for the same SHA. GitHub keeps one running + one pending run
