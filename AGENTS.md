@@ -156,9 +156,9 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
 - **Branch** from Linear's copied branch name, or `csl-<n>-slug`. **PR title**
   is `CSL-N: ...`. Put `Fixes CSL-N` in the PR body so GitHub links the issue.
   One issue per PR; keep PRs small and stackable.
-- **Statuses move automatically** via the GitHub integration (branch/PR →
-  In Progress / In Review; merge → Done). Do not set them by hand. Comment
-  progress on the issue.
+- **Statuses** still move via the GitHub integration on branch/PR/merge.
+  Agents and Grok Bots also keep status current at other milestones — see
+  **Linear is how we communicate**.
 - **Routing labels** (single-select): `for-devin`, `for-claude`, `for-cursor`.
   Use `needs-decision` when a human direction call is required. File follow-ups
   to **Triage** with one Type label, the repo label `ai-investment-cockpit`,
@@ -173,6 +173,21 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
   agents' PRs.
 - Humans make the load-bearing decisions (architecture, security, trading-risk,
   merge order). Agents propose; humans decide.
+
+## Linear is how we communicate
+
+Linear is the team's primary async channel, alongside Google Meet and Discord.
+
+- Any agent or Grok Bot working on an issue keeps it current in Linear as work
+  progresses: status, a short progress comment at meaningful milestones
+  (started, blocked, PR opened, done), and the PR link.
+- When blocked or needing help or approval, comment on the Linear issue and
+  @mention the relevant teammate. Look owners up dynamically; never hardcode
+  them. Add the `needs-decision` label for approvals.
+- Anything that comes up during a dev session gets filed as a new Linear issue
+  in **Triage** instead of being dropped: ideas discussed, bugs or oddities
+  found in development, and areas to develop or test further. Link it to the
+  current issue when related, and dedupe against existing issues first.
 
 ## Hosted CI
 

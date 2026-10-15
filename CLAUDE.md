@@ -66,9 +66,12 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 ## Linear workflow
 
 Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
-(Linear-first workflow). Short form: assign yourself in Linear before starting;
-put the `CSL-N` key in the branch name and PR title; include `Fixes CSL-N` in
-the PR body.
+(Linear-first workflow and **Linear is how we communicate**). Short form:
+assign yourself in Linear before starting; put the `CSL-N` key in the branch
+name and PR title; include `Fixes CSL-N` in the PR body. Keep the Linear issue
+current (status, milestone comments, PR link); @mention a teammate when blocked
+or needing approval (`needs-decision`); file anything that comes up in-session
+to Triage instead of dropping it.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
