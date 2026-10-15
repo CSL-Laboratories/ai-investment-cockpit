@@ -47,10 +47,15 @@ def _python_bucket(times) -> None:
         python_allow(bucket, now)
 
 
-def _rust_bucket(times) -> None:
+def _shipped_bucket(times) -> None:
     bucket = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
     for now in times:
         bucket.allow(now)
+
+
+def _batched_bucket(times) -> None:
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    bucket.allow_many(times)
 
 
 def _median(fn, repeats: int = 5) -> float:
@@ -73,15 +78,15 @@ def main() -> None:
     _python_dedup(keys[:8])
     _rust_dedup(keys[:8])
     cockpit_quant.dedup_replay(8192, ops[:8])
-    _python_bucket(times[:8])
-    _rust_bucket(times[:8])
+    _shipped_bucket(times[:8])
+    _batched_bucket(times[:8])
 
     py_dedup = _median(lambda: _python_dedup(keys))
     rust_dedup = _median(lambda: _rust_dedup(keys))
     batch_dedup = _median(lambda: cockpit_quant.dedup_replay(8192, ops))
     py_bucket = _median(lambda: _python_bucket(times))
-    rust_bucket = _median(lambda: _rust_bucket(times))
-    batch_bucket = _median(lambda: cockpit_quant.token_bucket_replay(1.0, 5.0, 0.0, 0.0, times))
+    shipped_bucket = _median(lambda: _shipped_bucket(times))
+    batch_bucket = _median(lambda: _batched_bucket(times))
 
     def row(name: str, python: float, rust: float) -> str:
         ratio = python / rust if rust else float("inf")
@@ -92,8 +97,10 @@ def main() -> None:
     print("|---|---:|---:|---:|")
     print(row("per-call dedup", py_dedup, rust_dedup))
     print(row("batched dedup", py_dedup, batch_dedup))
-    print(row("per-call token bucket", py_bucket, rust_bucket))
+    print(row("per-call token bucket", py_bucket, shipped_bucket))
     print(row("batched token bucket", py_bucket, batch_bucket))
+    if py_bucket / shipped_bucket < 1.0 or py_bucket / batch_bucket < 1.0:
+        sys.exit("token bucket shipped path regressed below 1x")
 
 
 if __name__ == "__main__":

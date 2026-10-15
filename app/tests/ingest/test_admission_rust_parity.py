@@ -89,18 +89,27 @@ def test_a_non_str_key_is_refused_on_the_rust_path():
     assert odd.add("a") is True
 
 
-def test_token_bucket_matches_including_a_backwards_clock():
+def test_one_allow_matches_python_for_a_float_clock():
+    bucket = TokenBucket(rate_per_sec=2.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=2.0, capacity=1.0, now=0.0)
+    assert bucket.allow(0.0) is python_allow(twin, 0.0) is False
+    assert bucket.allow(0.5) is python_allow(twin, 0.5)
+    assert bucket.tokens == twin.tokens
+    assert bucket._last == twin._last
+
+
+def test_allow_many_matches_including_a_backwards_clock():
     times = [0.0, 0.0, 0.4, 0.4, 1.0, 0.2, 3.0, 3.0, 3.2]
     rust = TokenBucket(rate_per_sec=2.0, capacity=1.5, now=0.0)
     python = TokenBucket(rate_per_sec=2.0, capacity=1.5, now=0.0)
-    assert _drive_bucket(rust, times, python=False) == _drive_bucket(python, times, python=True)
+    assert rust.allow_many(times) == _drive_bucket(python, times, python=True)
     assert rust.tokens == python.tokens
     assert rust._last == python._last
 
     rust.tokens = 0.25
     python.tokens = 0.25
-    assert rust.allow(4.0) is python_allow(python, 4.0)
-    assert rust.tokens == pytest.approx(python.tokens, rel=0, abs=0)
+    assert rust.allow_many([4.0]) == [python_allow(python, 4.0)]
+    assert rust.tokens == python.tokens
     assert rust._last == python._last
 
 

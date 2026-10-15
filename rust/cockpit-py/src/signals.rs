@@ -26,6 +26,13 @@ impl EwmaCore {
         self.inner.update(price)
     }
 
+    fn feed(&mut self, prices: Vec<f64>) -> Vec<Option<f64>> {
+        prices
+            .into_iter()
+            .map(|price| self.inner.update(price))
+            .collect()
+    }
+
     #[getter]
     fn value(&self) -> Option<f64> {
         self.inner.value()
@@ -149,6 +156,31 @@ fn ewma_replay(lam: f64, prices: Vec<f64>) -> Vec<Option<f64>> {
     prices.into_iter().map(|price| vol.update(price)).collect()
 }
 
+type EwmaFeedOut = (Vec<Option<f64>>, f64, Option<f64>, u32);
+
+/// Continue an estimator and return the series plus the fields Python keeps.
+///
+/// `last` is a float or None. It is not an optional argument: a missing previous
+/// price is a real estimator state.
+#[pyfunction]
+fn ewma_feed(
+    lam: f64,
+    variance: f64,
+    last: &Bound<'_, PyAny>,
+    count: u32,
+    prices: Vec<f64>,
+) -> PyResult<EwmaFeedOut> {
+    let previous = if last.is_none() {
+        None
+    } else {
+        Some(last.extract::<f64>()?)
+    };
+    let mut vol = EwmaVolatility::from_parts(lam, variance, previous, count);
+    let series: Vec<Option<f64>> = prices.into_iter().map(|price| vol.update(price)).collect();
+    let (variance, previous, count) = vol.parts();
+    Ok((series, variance, previous, count))
+}
+
 #[pyfunction]
 fn zscore_replay(window: usize, values: Vec<f64>) -> Vec<Option<f64>> {
     let mut z = RollingZScore::new(window);
@@ -182,6 +214,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OfiCore>()?;
     m.add_class::<BetaCore>()?;
     m.add_function(wrap_pyfunction!(ewma_replay, m)?)?;
+    m.add_function(wrap_pyfunction!(ewma_feed, m)?)?;
     m.add_function(wrap_pyfunction!(zscore_replay, m)?)?;
     m.add_function(wrap_pyfunction!(ofi_replay, m)?)?;
     m.add_function(wrap_pyfunction!(beta_replay, m)?)?;

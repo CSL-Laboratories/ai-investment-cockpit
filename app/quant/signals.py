@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import numbers
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 _I64_MIN = -2**63
@@ -84,13 +85,23 @@ class EwmaVolatility:
 
     def __post_init__(self) -> None:
         native = _NATIVE
-        if native is not None and isinstance(self.lam, numbers.Real) and not isinstance(self.lam, bool):
+        # ``type is`` rather than ``numbers.Real``: the broader check was slower
+        # than the volatility step and made a per-call extension binding lose.
+        if native is not None and (type(self.lam) is float or type(self.lam) is int):
             self._core = native.EwmaCore(float(self.lam))
 
     def update(self, price: float) -> float | None:
-        """Feed one price; return the current volatility estimate, or None if not yet warm."""
-        if self._core is not None:
-            return self._core.update(_real(price))
+        """Feed one price; return the current volatility estimate, or None if not yet warm.
+
+        A float or int goes straight into the extension. Anything else is checked
+        and then sent the same way, so one unusual price does not split the state.
+        A closed series uses ``update_many``, which is one call for the whole list.
+        """
+        core = self._core
+        if core is not None:
+            if type(price) is not float and type(price) is not int:
+                price = _real(price)
+            return core.update(price)
         if price <= 0:
             return self.value
         if self._last is None:
@@ -101,6 +112,14 @@ class EwmaVolatility:
         self._count += 1
         self._variance = self.lam * self._variance + (1.0 - self.lam) * ret * ret
         return self.value
+
+    def update_many(self, prices: Sequence[float]) -> list[float | None]:
+        """Feed a finished series in one call and leave this estimator at the end of it."""
+        core = self._core
+        if core is not None:
+            payload = prices if isinstance(prices, (list, tuple)) else list(prices)
+            return list(core.feed(payload))
+        return [self.update(price) for price in prices]
 
     @property
     def value(self) -> float | None:

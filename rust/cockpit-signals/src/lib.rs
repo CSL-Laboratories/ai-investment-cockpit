@@ -57,6 +57,19 @@ impl EwmaVolatility {
     pub fn is_warm(&self) -> bool {
         self.count >= 2
     }
+
+    pub fn from_parts(lam: f64, variance: f64, last: Option<f64>, count: u32) -> Self {
+        Self {
+            lam,
+            variance,
+            last,
+            count,
+        }
+    }
+
+    pub fn parts(&self) -> (f64, Option<f64>, u32) {
+        (self.variance, self.last, self.count)
+    }
 }
 
 #[derive(Clone, Debug)]

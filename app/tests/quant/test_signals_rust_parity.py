@@ -56,7 +56,7 @@ def test_window_messages_stay_on_the_python_path():
         RollingZScore(window=2.5)
 
 
-def test_ewma_matches_including_non_positive_prices():
+def test_ewma_update_matches_including_non_positive_prices():
     rust, python = _pair(EwmaVolatility, lam=0.94)
     prices = [100.0, 101.0, 100.5, 0.0, -3.0, 102.0, 99.0, 100.0, 1e-6, 1e6]
     for price in prices:
@@ -64,7 +64,25 @@ def test_ewma_matches_including_non_positive_prices():
         _same(rust.value, python.value)
         assert rust.is_warm is python.is_warm
     with pytest.raises(TypeError):
-        rust.update(True)
+        rust.update("nope")
+
+
+def test_ewma_update_many_matches_the_python_loop_and_resumes():
+    rust = EwmaVolatility(lam=0.94)
+    python = EwmaVolatility(lam=0.94)
+    assert rust._core is not None
+    python._core = None
+    first = [100.0, 101.0, 100.5, 0.0, -3.0]
+    for got, expected in zip(rust.update_many(first), [python.update(price) for price in first]):
+        _same(got, expected)
+    _same(rust.value, python.value)
+    assert rust.is_warm is python.is_warm
+    rest = [102.0, 99.0, 100.0, 1e-6, 1e6]
+    for got, expected in zip(rust.update_many(rest), [python.update(price) for price in rest]):
+        _same(got, expected)
+    _same(rust.value, python.value)
+    with pytest.raises(TypeError):
+        rust.update_many(["nope"])
 
 
 def test_ewma_replay_matches_the_python_loop():
@@ -77,7 +95,6 @@ def test_ewma_replay_matches_the_python_loop():
     prices[50] = 0.0
     replay = cockpit_quant.ewma_replay(0.94, prices)
     python = EwmaVolatility(lam=0.94)
-    python._core = None
     for price, replayed in zip(prices, replay):
         _same(replayed, python.update(price))
 

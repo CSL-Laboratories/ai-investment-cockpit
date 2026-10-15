@@ -45,10 +45,15 @@ def _python_ewma(prices) -> None:
         vol.update(price)
 
 
-def _rust_ewma(prices) -> None:
+def _shipped_ewma(prices) -> None:
     vol = EwmaVolatility(lam=0.94)
     for price in prices:
         vol.update(price)
+
+
+def _batched_ewma(prices) -> None:
+    vol = EwmaVolatility(lam=0.94)
+    vol.update_many(prices)
 
 
 def _python_z(values) -> None:
@@ -109,13 +114,12 @@ def main() -> None:
     qty = [100 if i % 3 else -40 for i in range(N)]
     xs = [float(i % 80) for i in range(N)]
     ys = [3.0 + 2.5 * x for x in xs]
-    _python_ewma(prices[:8])
-    _rust_ewma(prices[:8])
-    cockpit_quant.ewma_replay(0.94, prices[:8])
+    _shipped_ewma(prices[:8])
+    _batched_ewma(prices[:8])
 
     py_ewma = _median(lambda: _python_ewma(prices))
-    rust_ewma = _median(lambda: _rust_ewma(prices))
-    batch_ewma = _median(lambda: cockpit_quant.ewma_replay(0.94, prices))
+    shipped_ewma = _median(lambda: _shipped_ewma(prices))
+    batch_ewma = _median(lambda: _batched_ewma(prices))
     py_z = _median(lambda: _python_z(values))
     rust_z = _median(lambda: _rust_z(values))
     batch_z = _median(lambda: cockpit_quant.zscore_replay(64, values))
@@ -133,8 +137,10 @@ def main() -> None:
     print(f"n={N}  (median of 5, release)")
     print("| workload | python | rust | python/rust |")
     print("|---|---:|---:|---:|")
-    print(row("per-call EWMA", py_ewma, rust_ewma))
+    print(row("per-call EWMA", py_ewma, shipped_ewma))
     print(row("batched EWMA", py_ewma, batch_ewma))
+    if py_ewma / shipped_ewma < 1.0 or py_ewma / batch_ewma < 1.0:
+        sys.exit("EWMA shipped path regressed below 1x")
     print(row("per-call z-score", py_z, rust_z))
     print(row("batched z-score", py_z, batch_z))
     print(row("per-call OFI", py_ofi, rust_ofi))
