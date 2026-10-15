@@ -324,6 +324,8 @@ impl Book {
             .get(&price_ticks)
             .map(|level| level.total_qty)
             .unwrap_or(0);
+        // Reject an overflowing level total before any level is created.
+        fit_add(ahead, qty)?;
         let order = Order {
             order_id: order_id.clone(),
             side,
@@ -335,8 +337,13 @@ impl Book {
             original_qty: qty,
             qty_ahead_at_entry: ahead,
         };
-        self.level_for_write(side, price_ticks)
-            .append(order.clone())?;
+        if let Err(err) = self
+            .level_for_write(side, price_ticks)
+            .append(order.clone())
+        {
+            self.drop_level_if_empty(side, price_ticks)?;
+            return Err(err);
+        }
         let node = self.index.push_back(order_id.clone());
         self.by_id.insert(
             order_id,
@@ -445,6 +452,18 @@ impl Book {
         }
         let side = existing.side;
         let owner = existing.owner.clone();
+        // Check the destination level can take the new qty before the cancel,
+        // so a rejected replace leaves the original order and its queue slot.
+        let mut dest_total = self
+            .side_book(side)
+            .levels
+            .get(&price)
+            .map(|level| level.total_qty)
+            .unwrap_or(0);
+        if price == existing.price_ticks {
+            dest_total = fit_sub(dest_total, existing.qty)?;
+        }
+        fit_add(dest_total, qty)?;
         self.cancel(order_id)?;
         self.add(order_id, side, price, qty, seq, ts, owner)
     }
@@ -702,6 +721,34 @@ mod tests {
         book.add("ours", Side::Buy, 100, 200, 0, 0, Some("mm".into()))
             .unwrap();
         book.add("behind", Side::Buy, 100, 300, 0, 0, None).unwrap();
+    }
+
+    #[test]
+    fn rejected_replace_keeps_the_original_order_and_queue_slot() {
+        let mut book = fresh();
+        book.add("big", Side::Buy, 100, i64::MAX - 1, 0, 0, None)
+            .unwrap();
+        book.add("mine", Side::Buy, 101, 5, 0, 0, None).unwrap();
+        assert!(book.replace("mine", Some(100), Some(5), 1, 1).is_err());
+        assert_eq!(book.get("mine").unwrap().price_ticks, 101);
+        assert_eq!(book.level_qty(Side::Buy, 101), 5);
+        book.check_integrity().unwrap();
+
+        // Same-level replace nets out the old qty and still fits.
+        book.add("tail", Side::Buy, 101, 1, 0, 0, None).unwrap();
+        book.replace("mine", None, Some(9), 2, 2).unwrap();
+        assert_eq!(book.level_qty(Side::Buy, 101), 10);
+        book.check_integrity().unwrap();
+    }
+
+    #[test]
+    fn rejected_add_leaves_no_phantom_level() {
+        let mut book = fresh();
+        book.add("big", Side::Buy, 100, i64::MAX, 0, 0, None)
+            .unwrap();
+        assert!(book.add("more", Side::Buy, 100, 1, 0, 0, None).is_err());
+        assert_eq!(book.len(), 1);
+        book.check_integrity().unwrap();
     }
 
     #[test]

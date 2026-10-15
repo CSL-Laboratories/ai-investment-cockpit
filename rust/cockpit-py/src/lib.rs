@@ -16,11 +16,11 @@ fn raise(err: BookError) -> PyErr {
         BookError::Integrity(message) => IntegrityError::new_err(message),
         BookError::Value(message) => BookValueError::new_err(message),
         BookError::Partial {
-            message,
+            source,
             stp_cancelled,
             touched,
         } => {
-            let err = BookValueError::new_err(message);
+            let err = raise(*source);
             Python::with_gil(|py| {
                 let _ = err.value(py).setattr("stp_cancelled", stp_cancelled);
                 let _ = err.value(py).setattr("touched", touched);

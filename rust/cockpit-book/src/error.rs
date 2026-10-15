@@ -12,8 +12,9 @@ pub enum BookError {
     /// `touched` is `(order_id, qty_after)` for trades. `qty_after == 0` is a
     /// full fill. `stp_cancelled` ids were removed without a trade, so their
     /// held qty stays put.
+    /// `source` keeps the original error kind so Python sees the same class.
     Partial {
-        message: String,
+        source: Box<BookError>,
         stp_cancelled: Vec<String>,
         touched: Vec<(String, i64)>,
     },
@@ -24,7 +25,7 @@ impl fmt::Display for BookError {
         match self {
             BookError::NotFound(id) => write!(f, "{id}"),
             BookError::Value(message) | BookError::Integrity(message) => write!(f, "{message}"),
-            BookError::Partial { message, .. } => write!(f, "{message}"),
+            BookError::Partial { source, .. } => write!(f, "{source}"),
         }
     }
 }

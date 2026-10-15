@@ -129,7 +129,7 @@ fn available_qty(book: &Book, order: &Aggressive) -> Result<i64, BookError> {
 
 fn partial(err: BookError, stp_cancelled: Vec<String>, touched: Vec<(String, i64)>) -> BookError {
     BookError::Partial {
-        message: err.to_string(),
+        source: Box::new(err),
         stp_cancelled,
         touched,
     }
@@ -212,8 +212,13 @@ pub fn match_order(
 
             let traded = remaining.min(resting.qty);
             let resting_id = resting.order_id.clone();
-            book.reduce_qty(&resting_id, traded)
-                .map_err(|err| partial(err, stp_cancelled.clone(), touched.clone()))?;
+            if let Err(err) = book.reduce_qty(&resting_id, traded) {
+                // The order may already be gone before the failure; that is a fill.
+                if book.get(&resting_id).is_none() {
+                    touched.push((resting_id, 0));
+                }
+                return Err(partial(err, stp_cancelled, touched));
+            }
             let left = book.get(&resting_id).map(|order| order.qty).unwrap_or(0);
             touched.push((resting_id, left));
             remaining = fit_sub(remaining, traded)
