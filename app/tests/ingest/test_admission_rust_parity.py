@@ -1,9 +1,9 @@
-"""CSL-42 — Rust dedup and token bucket must match the Python admission controls.
+"""CSL-42 — Rust admission controls must match Python.
 
 Skipped when the extension is not installed, which is the hosted Python gate.
-Dedup compares a Rust-backed instance with a twin whose ``_core`` is cleared.
-The bucket compares ``TokenBucket.allow`` with ``python_allow`` on a twin that
-starts from the same numbers.
+``Dedup`` stays on OrderedDict, which won the one-key call the pollers make.
+``DedupCore`` is compared against that class. The bucket's ``allow`` and
+``allow_many`` are compared with ``python_allow``.
 """
 from __future__ import annotations
 
