@@ -27,12 +27,22 @@ MAX_PRS = 3
 MAX_PAGES = 10
 MERGEABLE_ATTEMPTS = 4
 MERGEABLE_BUDGET_SECONDS = 120.0
+MAX_DETAIL_REQUESTS = 150
 
 PermissionLookup = Callable[[str], str]
 
 
 def is_conflicted(pr: dict[str, Any]) -> bool:
     return pr.get("mergeable") is False and str(pr.get("mergeable_state") or "") == "dirty"
+
+
+def open_bases(prs: list[dict[str, Any]]) -> set[str]:
+    """Base branches targeted by any open PR (stacked review branches)."""
+    return {
+        str(((pr or {}).get("base") or {}).get("ref") or "")
+        for pr in prs
+        if isinstance(pr, dict) and str(pr.get("state") or "open") == "open"
+    }
 
 
 def is_protected_head(head_ref: str, review_bases: set[str]) -> bool:
@@ -54,16 +64,14 @@ def select(
     repository: str,
     permission_lookup: PermissionLookup | None,
     max_prs: int = MAX_PRS,
+    review_bases: set[str] | None = None,
 ) -> tuple[list[dict[str, str]], list[str]]:
     """Return (matrix entries, audit lines)."""
     chosen: list[dict[str, str]] = []
     audit: list[str] = []
     cache: dict[str, str] = {}
-    review_bases = {
-        str(((pr or {}).get("base") or {}).get("ref") or "")
-        for pr in prs
-        if str((pr or {}).get("state") or "") == "open"
-    }
+    if review_bases is None:
+        review_bases = open_bases(prs)
     for pr in prs:
         number = str(pr.get("number") or "")
         head = pr.get("head") or {}
@@ -116,18 +124,22 @@ def _gh_json(path: str) -> Any:
     return json.loads(raw)
 
 
-def list_open_numbers(repository: str, get: Callable[[str], Any] | None = None) -> list[str]:
-    """All open PR numbers, following pagination (bounded by MAX_PAGES x 100)."""
+def list_open_prs(repository: str, get: Callable[[str], Any] | None = None) -> list[dict[str, Any]]:
+    """All open PR listing entries, following pagination (bounded by MAX_PAGES x 100)."""
     get = get or _gh_json
-    numbers: list[str] = []
+    entries: list[dict[str, Any]] = []
     for page in range(1, MAX_PAGES + 1):
         listing = get(f"repos/{repository}/pulls?state=open&per_page=100&page={page}")
         if not isinstance(listing, list) or not listing:
             break
-        numbers.extend(str(p.get("number")) for p in listing if isinstance(p, dict))
+        entries.extend(p for p in listing if isinstance(p, dict))
         if len(listing) < 100:
             break
-    return numbers
+    return entries
+
+
+def list_open_numbers(repository: str, get: Callable[[str], Any] | None = None) -> list[str]:
+    return [str(p.get("number")) for p in list_open_prs(repository, get)]
 
 
 def fetch_prs(
@@ -136,31 +148,43 @@ def fetch_prs(
     get: Callable[[str], Any] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> list[dict[str, Any]]:
-    """Fetch PR details (mergeable is only on the single-PR endpoint).
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Return (PR details, bases of all open PRs).
 
-    GitHub computes mergeable lazily. Retries share one time budget and never
-    sleep after the last attempt, so many pending PRs cannot exhaust the job
-    timeout; a PR still pending is kept with mergeable=None and skipped.
+    The open listing is always fetched so stacked-branch protection also holds
+    for a single-PR dispatch. mergeable is only on the single-PR endpoint and is
+    computed lazily: retries share one time budget, never sleep after the last
+    attempt, stop after the deadline, and total detail requests are capped so the
+    scan always finishes well inside its job timeout. Pending PRs are skipped.
     """
     get = get or _gh_json
-    numbers = [only] if only else list_open_numbers(repository, get)
+    listing = list_open_prs(repository, get)
+    bases = open_bases(listing)
+    numbers = [only] if only else [str(p.get("number")) for p in listing]
     deadline = clock() + MERGEABLE_BUDGET_SECONDS
+    requests = 0
     details: list[dict[str, Any]] = []
     for number in numbers:
         if not number.isdigit():
             continue
+        if requests >= MAX_DETAIL_REQUESTS:
+            break
         pr: dict[str, Any] = {}
         for attempt in range(MERGEABLE_ATTEMPTS):
             pr = get(f"repos/{repository}/pulls/{number}")
+            requests += 1
             if not isinstance(pr, dict) or pr.get("mergeable") is not None:
                 break
-            if attempt == MERGEABLE_ATTEMPTS - 1 or clock() + 5 > deadline:
+            if (
+                attempt == MERGEABLE_ATTEMPTS - 1
+                or requests >= MAX_DETAIL_REQUESTS
+                or clock() + 5 > deadline
+            ):
                 break
             sleep(5)
         if isinstance(pr, dict):
             details.append(pr)
-    return details
+    return details, bases
 
 
 def gh_permission(repository: str) -> PermissionLookup:
@@ -190,11 +214,11 @@ def main() -> int:
         emit([], ["conflict-scan: bad-input"])
         return 0
     try:
-        prs = fetch_prs(repository, only)
+        prs, bases = fetch_prs(repository, only)
     except (OSError, ValueError, subprocess.CalledProcessError):
         emit([], ["conflict-scan: fetch-failed"])
         return 0
-    chosen, audit = select(prs, repository, gh_permission(repository))
+    chosen, audit = select(prs, repository, gh_permission(repository), review_bases=bases)
     emit(chosen, audit)
     return 0
 

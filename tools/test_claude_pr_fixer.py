@@ -783,7 +783,7 @@ class ConflictScanTests(unittest.TestCase):
                 return [{"number": n} for n in range(1, 41)] if "page=1" in path else []
             return conflicted_pr(number=int(path.rsplit("/", 1)[1]), mergeable=None, mergeable_state="unknown")
 
-        prs = self.mod.fetch_prs(REPO, "", get=get, sleep=sleep, clock=lambda: now[0])
+        prs, _bases = self.mod.fetch_prs(REPO, "", get=get, sleep=sleep, clock=lambda: now[0])
         self.assertEqual(len(prs), 40)
         self.assertLessEqual(sum(slept), self.mod.MERGEABLE_BUDGET_SECONDS)
 
@@ -795,6 +795,37 @@ class ConflictScanTests(unittest.TestCase):
 
         self.mod.fetch_prs(REPO, "7", get=get, sleep=slept.append, clock=lambda: 0.0)
         self.assertEqual(len(slept), self.mod.MERGEABLE_ATTEMPTS - 1)
+
+    def test_detail_requests_are_capped(self) -> None:
+        calls = []
+
+        def get(path):
+            calls.append(path)
+            if "?state=open" in path:
+                page = int(path.rsplit("page=", 1)[1])
+                return [{"number": n, "state": "open"} for n in range((page - 1) * 100 + 1, page * 100 + 1)]
+            return conflicted_pr(mergeable=None, mergeable_state="unknown")
+
+        self.mod.fetch_prs(REPO, "", get=get, sleep=lambda _s: None, clock=lambda: 0.0)
+        details = [c for c in calls if "?state=open" not in c]
+        self.assertEqual(len(details), self.mod.MAX_DETAIL_REQUESTS)
+
+    def test_single_pr_dispatch_keeps_stacked_protection(self) -> None:
+        listing = [
+            {"number": 7, "state": "open", "base": {"ref": "main"}},
+            {"number": 8, "state": "open", "base": {"ref": "feature/x"}},
+        ]
+
+        def get(path):
+            if "?state=open" in path:
+                return listing if "page=1" in path else []
+            return conflicted_pr()
+
+        prs, bases = self.mod.fetch_prs(REPO, "7", get=get, sleep=lambda _s: None, clock=lambda: 0.0)
+        self.assertEqual(len(prs), 1)
+        chosen, audit = self.mod.select(prs, REPO, lookup, review_bases=bases)
+        self.assertEqual(chosen, [])
+        self.assertIn("skip=protected-head", audit[0])
 
     def test_embedded_scan_matches_source(self) -> None:
         text = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -823,7 +854,7 @@ class ConflictJobStructureTests(unittest.TestCase):
 
     def test_resolver_keeps_protections(self) -> None:
         job = self._job("conflict-resolve")
-        self.assertIn("group: claude-conflict-${{ matrix.pr.number }}", job)
+        self.assertIn("group: claude-${{ matrix.pr.number }}", job)
         self.assertIn("cancel-in-progress: false", job)
         self.assertIn("max-parallel: 1", job)
         self.assertIn("ref: ${{ matrix.pr.head_sha }}", job)
@@ -832,7 +863,8 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertNotIn("--no-edit", job)
         self.assertIn('git config user.name "claude[bot]"', job)
         self.assertIn("if: steps.prep.outputs.proceed == 'true'", job)
-        self.assertIn('"open $HEAD_SHA dirty"', job)
+        self.assertIn('"open $HEAD_SHA dirty $REPO"', job)
+        self.assertIn(".head.repo.full_name", job)
         for path in (".github/**", "AGENTS.md", "CLAUDE.md", "CODEOWNERS", "scripts/ci/**", "tools/ci_gate.py"):
             self.assertIn(f'"Edit({path})"', job)
             self.assertIn(f'"Write({path})"', job)
