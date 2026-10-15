@@ -87,8 +87,10 @@ provisioned.
 ## Working conventions
 
 1. Read `docs/README.md` and the relevant plan before editing.
-2. Keep changes to one work package and add tests with the change.
-3. Use the project virtual environment. Create it once with `python -m venv .venv`
+2. Before proposing architecture or direction, read `docs/adr/` and the linked
+   decision issues; do not re-argue a recorded decision without new evidence.
+3. Keep changes to one work package and add tests with the change.
+4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
    `.github/workflows/ci.yml` and the command in `CLAUDE.md`), including `discord.py`.
@@ -103,9 +105,9 @@ provisioned.
    ~80 spurious `WinError 206` failures that are not real defects. Also clear any
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
-4. Keep the repository private and commit only when the operator asks.
-5. Any order-path change needs an adversarial-review round.
-6. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+5. Keep the repository private and commit only when the operator asks.
+6. Any order-path change needs an adversarial-review round.
+7. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
    Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
    hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
