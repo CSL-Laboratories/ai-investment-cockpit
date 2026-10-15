@@ -340,8 +340,25 @@ class ApplyVerdictTests(unittest.TestCase):
             dispatch_fixer=lambda: None,
             file_decision=lambda: "",
         )
-        self.assertEqual(posted, [])
+        self.assertEqual(len(posted), 1)
+        self.assertIn("codex-gate-mediate-pending:42:" + SHA, posted[0])
+        self.assertNotIn("codex-gate-action:", posted[0])
         self.assertTrue(any("mediate=retry" in line for line in logs))
+
+        posted2: list[str] = []
+        mod.apply_verdict(
+            "MEDIATE",
+            repository=REPO,
+            pr_number="42",
+            sha=SHA,
+            comments=[comment(posted[0])],
+            day="2026-10-15",
+            post_comment=posted2.append,
+            add_label=lambda _n: None,
+            dispatch_fixer=lambda: None,
+            file_decision=lambda: "",
+        )
+        self.assertEqual(posted2, [])
 
     def test_skip_is_noop(self) -> None:
         logs, posted, labels, dispatched, mediated = self._apply("skip-waiting")
@@ -473,6 +490,7 @@ class RunTests(unittest.TestCase):
         self.assertIn("::notice::", buf.getvalue())
         self.assertIn("LINEAR_API_KEY", buf.getvalue())
         self.assertFalse(any("codex-gate-action:" in (body.get("body") or "") for _, body in gh.posts))
+        self.assertTrue(any("codex-gate-mediate-pending:" in (body.get("body") or "") for _, body in gh.posts))
 
     def test_review_skips_fork_and_draft(self) -> None:
         gh = FakeGH()

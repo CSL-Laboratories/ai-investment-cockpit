@@ -141,6 +141,20 @@ def mediate_marker(pr_number: str, sha: str) -> str:
     return f"<!-- codex-gate-mediate:{pr_number}:{sha} -->"
 
 
+def pending_mediate_marker(pr_number: str, sha: str) -> str:
+    return f"<!-- codex-gate-mediate-pending:{pr_number}:{sha} -->"
+
+
+def comments_have_pending_mediate(
+    comments: list[dict[str, Any]], pr_number: str, sha: str
+) -> bool:
+    needle = pending_mediate_marker(pr_number, sha)
+    for item in comments:
+        if needle in str((item or {}).get("body") or ""):
+            return True
+    return False
+
+
 def latest_codex_prompt_is_mediation(comments: list[dict[str, Any]]) -> bool:
     """True when the newest ``@codex review`` comment is a stuck-thread mediation."""
     newest_at: datetime | None = None
@@ -425,6 +439,12 @@ def apply_verdict(
     if verdict == "MEDIATE":
         url = file_decision()
         if not url:
+            if not comments_have_pending_mediate(comments, pr_number, sha):
+                post_comment(
+                    f"{pending_mediate_marker(pr_number, sha)}\n"
+                    f"Codex gate: MEDIATE for `{sha}` needs a human. "
+                    f"Linear filing is pending and will retry."
+                )
             logs.append(f"codex-gate: pr={pr_number} mediate=retry")
             return logs
         post_comment(
