@@ -1039,18 +1039,22 @@ def mediate_pr(
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=skipped-no-secret")
             continue
         eligible.append(item)
-    # Cap and PAT first: Linear only when at least one thread would be mediated.
+    # Cap and PAT first: Linear only when at least one thread would be mediated,
+    # or when every stuck thread is already mediated and no marker-owned roll-up
+    # exists yet (retry after a Linear outage on an earlier scan).
     actionable = eligible[:remaining]
+    unmediated = [item for item in stuck if not item.already_mediated]
     if cfg.file_linear and stuck:
-        if not actionable:
-            logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
-        elif not cfg.linear_api_key or linear is None:
+        if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
             try:
                 generated = build_linear_description(stuck, cfg)
                 existing = linear_find_existing(linear, cfg, number)
-                if rollup_is_current(existing, generated, cfg.repository, number):
+                recover_missing = not unmediated and existing is None
+                if not actionable and not recover_missing:
+                    logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
+                elif rollup_is_current(existing, generated, cfg.repository, number):
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
                 else:
                     url = upsert_linear_issue(linear, stuck, cfg)

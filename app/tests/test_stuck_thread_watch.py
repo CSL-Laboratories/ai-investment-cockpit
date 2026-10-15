@@ -977,6 +977,35 @@ def test_rescan_skips_linear_when_unchanged():
     assert gh.posts == []
 
 
+def test_linear_recovers_missing_rollup_after_already_mediated():
+    gh = FakeGitHub()
+    stuck = thread(
+        comments=[
+            comment(DEVIN, "finding"),
+            comment("claude[bot]", "needs a human"),
+        ]
+    )
+    pr = {
+        "number": 12,
+        "isDraft": False,
+        "state": "OPEN",
+        "url": "https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/12",
+        "title": "t",
+        "reviewThreads": {"nodes": [stuck]},
+    }
+    gh.pr_by_number[12] = pr
+    gh.issue_comments[12] = [
+        {"body": "<!-- codex-mediation:PRRT_kwDOabc -->", "created_at": "2026-10-15T10:00:00Z"}
+    ]
+    linear = FakeLinear()
+    logs = mod.mediate_pr(pr, cfg(), gh, linear, NOW)
+    assert len(linear.created) == 1
+    assert linear.updated == []
+    assert any("linear=https://linear.app/i/CSL-99" in line for line in logs)
+    assert not any("linear=skipped-no-actionable" in line for line in logs)
+    assert gh.posts == []
+
+
 def test_actionable_thread_skips_unchanged_linear_then_mediates():
     gh = FakeGitHub()
     stuck = thread(

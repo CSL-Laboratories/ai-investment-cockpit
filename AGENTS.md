@@ -171,7 +171,7 @@ Hosted split (PR #102):
 
 - **Devin** is the only GitHub PR reviewer. It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
-- **Stuck-thread watch** (`.github/workflows/stuck-thread-watch.yml`) is the only allowed Codex review path. It posts one advisory `@codex review` comment on unresolved Devin threads Claude could not settle, and records **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks. It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. The Codex reply must not push, merge, resolve the thread, or open a fix PR.
+- **Stuck-thread watch** (`.github/workflows/stuck-thread-watch.yml`) is the only allowed Codex review path. It posts one advisory `@codex review` comment on unresolved Devin threads Claude could not settle, and records **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. The Codex reply must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except that stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
@@ -183,7 +183,8 @@ which asks Codex to mediate (`@codex review`) and records one Linear Triage
 `needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
 updated in place. Adopt an existing roll-up only by the `stuck-pr-threads` HTML
 marker, never by title. Write Linear only when at least one thread is
-actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks. Humans decide.
+actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks, or to create a
+missing roll-up after an earlier Linear outage. Humans decide.
 The watcher never resolves threads, pushes, or merges.
 
 ## Automations
