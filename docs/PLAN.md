@@ -87,8 +87,10 @@ Current implementation order: bounded feasibility/evaluator qualification; usefu
 research through the real composition; shared authority/executor/recovery contracts;
 integrated strategy-to-paper lifecycle; full tax/economic workflow; then complete
 release qualification and at least 20 Linux market days plus required coverage.
-These are delivery slices to split and claim in REGISTER before code, not new package
-IDs, permission to start operational runs or a claim that evidence already exists.
+These are delivery slices to split and claim in Linear (assign the `CSL-N` issue
+and move it to In Progress) before code, then record the work ID and branch in
+REGISTER. They are not new package IDs, permission to start operational runs or a
+claim that evidence already exists.
 
 The delivery plan explicitly maps the old MVP and DEC-03 selection to the adopted
 product, retains applicable W-23/W-24 and independent-label gates, and requires a

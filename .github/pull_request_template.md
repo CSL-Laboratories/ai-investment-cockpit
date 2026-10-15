@@ -17,5 +17,5 @@ Fixes CSL-___
 - [ ] Devin review completed on the current head commit
 - [ ] All review threads resolved (or answered with rationale)
 - [ ] No unresolved GitHub review threads
-- [ ] No open Linear `Stuck PR threads: <repo>#N` roll-up for this PR (or the decision is recorded)
+- [ ] No open Linear `Stuck PR threads: <repo>#N` roll-up for this PR, linked to the PR's CSL issue (or the decision is recorded)
 - [ ] Tests run locally and/or green in CI (name the commands)

@@ -94,9 +94,10 @@ blocked or needing approval (`needs-decision`) — Chaandan `@chaandansaini101`,
 Samir `@samirshahahmed`, Lucas `@lucassalvador987`; a GitHub mention alone is
 not enough. File anything that comes up in-session to Triage instead of
 dropping it. Stuck threads: see the **Review loop** (CSL-86 / PR #124) — one
-roll-up Linear issue per PR (`Stuck PR threads: <repo>#N`), human PR author as
-fallback. Before merging, that roll-up must be handled and the PR must have
-no unresolved GitHub review threads.
+roll-up Linear issue per PR (`Stuck PR threads: <repo>#N`, `needs-decision`,
+linked to the PR's CSL issue), human PR author as fallback. Before merging,
+that roll-up must be handled and the PR must have no unresolved GitHub review
+threads.
 
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
@@ -111,8 +112,7 @@ no unresolved GitHub review threads.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
    (research → architecture → build → security → enhancements).
 6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
-   title. Message convention: `CSL-N: <type>(<package-id>): …`, e.g.
-   `CSL-N: fix(RW-xx): …` or `CSL-N: feat(W-xx): …`.
+   title. Message convention: `CSL-N: fix(RW-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.

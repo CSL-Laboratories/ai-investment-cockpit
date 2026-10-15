@@ -253,8 +253,10 @@ Stuck-thread handling is owned by the **Review loop** (CSL-86 / PR #124,
 access: it leaves the thread open, replies with why, and @mentions the PR
 author on GitHub. The watcher files **exactly one** roll-up Linear issue per
 PR titled `Stuck PR threads: <repo>#N` (`needs-decision`, linked to the PR's
-CSL issue), not one issue per thread. The human PR author is the fallback
-filer. Developers resolve it from Linear like any other issue.
+CSL issue, shared with the codex gate's MEDIATE path via
+`<!-- stuck-pr-threads:owner/repo#N -->`), not one issue per thread. The human
+PR author is the fallback filer. Developers resolve it from Linear like any
+other issue.
 
 Before merging any PR, check Linear for that roll-up issue **and** that the PR
 has no unresolved GitHub review threads; resolve them or record the decision
