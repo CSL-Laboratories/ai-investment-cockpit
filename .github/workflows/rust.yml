@@ -35,6 +35,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -49,7 +51,7 @@ jobs:
       - name: Python book tests against the extension
         working-directory: app
         run: |
-          python -m pip install pytest
+          python -m pip install pytest keyring
           python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py
       - name: Benchmark Rust against the Python reference
         run: python rust/bench_compare.py
