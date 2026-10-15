@@ -338,6 +338,37 @@ class LimitOrderBook:
     def check_integrity(self) -> None:
         _call(self._core.check_integrity)
 
+    def apply_many(self, ops):
+        """Apply add, cancel, reduce, replace, and match ops in one call.
+
+        Each op is a tuple. Sides, time-in-force, and self-trade values are the
+        same strings the enums use (``"buy"``, ``"day"``, ``"cancel_resting"``):
+
+        * ``("a", order_id, side, price_ticks, qty, seq, ts, owner)``
+        * ``("c", order_id)``
+        * ``("r", order_id, qty)``
+        * ``("p", order_id, new_price_ticks, new_qty, seq, ts)`` — price or qty may be None
+        * ``("m", order_id, side, qty, price_ticks, tif, owner, stp, seq, exchange_ts)``
+          — ``price_ticks`` None is a market order
+
+        Returns one tagged tuple per op. The tag is the op kind. Order ops carry
+        the same fields a single call returns; a match op carries the matcher
+        payload (status, filled, remaining, trades, fills, resting id, stp ids).
+        Fill timestamps stay in Python: this payload is the book mutation only.
+
+        A bad op raises the same exception the single-call method would. Ops
+        before it stay applied.
+        """
+        return _call(self._core.apply_many, ops)
+
+    def apply_quiet(self, ops) -> int:
+        """Same sequence as ``apply_many``, returning only how many ops applied.
+
+        Use this when the caller already has the tape and only needs the book
+        updated. Per-op tuples are not built.
+        """
+        return _call(self._core.apply_quiet, ops)
+
 
 def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_ts: int, ingest_ts: int):
     """Run the Rust matcher and rehydrate Python ``Fill`` / ``MatchResult`` objects."""
