@@ -847,6 +847,46 @@ class RunTests(unittest.TestCase):
         self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-11")
         self.assertEqual(len(created), 1)
 
+    def test_create_needs_decision_issue_finds_renamed_legacy(self) -> None:
+        updates: list[dict[str, Any]] = []
+        renamed = {
+            "id": "legacy-1",
+            "url": "https://linear.app/csl-laboratories/issue/CSL-20",
+            "title": "Decision on risk limits",
+            "description": (
+                f"{mod.mediate_issue_marker_legacy('42')}\n"
+                f"**PR:** https://github.com/{REPO}/pull/42\n"
+            ),
+        }
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "title: { eq" in query:
+                return {"issues": {"nodes": []}}
+            if "issues(" in query:
+                contains = str(variables.get("contains") or "")
+                if contains in {
+                    f"codex-gate-mediate:42 -->",
+                    f"https://github.com/{REPO}/pull/42",
+                }:
+                    return {"issues": {"nodes": [renamed]}}
+                return {"issues": {"nodes": []}}
+            if "issueUpdate" in query:
+                updates.append(variables)
+                return {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": renamed["url"]},
+                    }
+                }
+            raise AssertionError(query[:80])
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, renamed["url"])
+        self.assertEqual(len(updates), 1)
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), updates[0]["input"]["description"])
+
     def test_create_needs_decision_issue_adopts_title_and_skips_done(self) -> None:
         updates: list[dict[str, Any]] = []
         created: list[dict[str, Any]] = []

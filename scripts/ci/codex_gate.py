@@ -738,6 +738,8 @@ def find_mediate_issue(
         f"{STUCK_PR_PREFIX}{repo_short(repository)}#{pr_number}",
         f"codex-gate-mediate:{repository}:{pr_number}",
         f"codex-gate-mediate:{pr_number}:",
+        f"codex-gate-mediate:{pr_number} -->",
+        pr_html_url(repository, pr_number),
     )
     for contains in needles:
         existing = graphql(
