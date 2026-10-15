@@ -850,48 +850,59 @@ class RunTests(unittest.TestCase):
         self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-11")
         self.assertEqual(len(created), 1)
 
-    def test_create_needs_decision_issue_finds_renamed_legacy(self) -> None:
-        found = mod.find_mediate_issue(
-            lambda query, variables: (
-                {
-                    "issues": {
-                        "nodes": [
-                            {
-                                "id": "legacy-1",
-                                "url": "https://linear.app/csl-laboratories/issue/CSL-20",
-                                "title": "Decision on risk limits",
-                                "description": (
-                                    f"{mod.mediate_issue_marker_legacy('42')}\n"
-                                    f"**PR:** https://github.com/{REPO}/pull/42\n"
-                                ),
-                            }
-                        ]
-                    }
-                }
-                if "issues(" in query
-                and str(variables.get("contains") or "")
-                in {
+    def test_create_needs_decision_issue_updates_legacy_twice(self) -> None:
+        updates: list[dict[str, Any]] = []
+        issue = {
+            "id": "legacy-1",
+            "url": "https://linear.app/csl-laboratories/issue/CSL-20",
+            "title": "Decision on risk limits",
+            "description": (
+                f"{mod.mediate_issue_marker_legacy('42')}\n"
+                f"**PR:** https://github.com/{REPO}/pull/42\n"
+            ),
+            "state": {"name": "Triage", "type": "triage"},
+        }
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "title: { eq" in query:
+                return {"issues": {"nodes": []}}
+            if "issues(" in query:
+                contains = str(variables.get("contains") or "")
+                if contains in {
                     "codex-gate-mediate:42 -->",
                     f"https://github.com/{REPO}/pull/42",
+                } or "stuck-pr-threads:" in contains:
+                    return {"issues": {"nodes": [issue]}}
+                return {"issues": {"nodes": []}}
+            if "issueUpdate" in query:
+                updates.append(variables)
+                issue["description"] = str(variables["input"]["description"])
+                issue["title"] = str(variables["input"]["title"])
+                return {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": issue["url"]},
+                    }
                 }
-                else {"issues": {"nodes": []}}
-            ),
-            REPO,
-            "42",
+            raise AssertionError("must update the legacy issue, not create")
+
+        first = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
         )
-        self.assertIsNotNone(found)
-        assert found is not None
-        self.assertEqual(found["id"], "legacy-1")
-        self.assertFalse(
-            mod.rollup_may_update(str(found["description"]), REPO, "42")
+        second = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha="b" * 40
         )
+        self.assertEqual(first, issue["url"])
+        self.assertEqual(second, issue["url"])
+        self.assertEqual(len(updates), 2)
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), updates[-1]["input"]["description"])
+        self.assertIn("b" * 40, updates[-1]["input"]["description"])
 
     def test_create_needs_decision_issue_skips_unqualified_overwrite(self) -> None:
         created: list[dict[str, Any]] = []
         foreign = (
-            f"{mod.mediate_issue_marker_legacy('42')}\n"
-            f"**PR:** https://github.com/{REPO}/pull/42\n"
-            "[discussion](https://github.com/other/project/pull/42)\n"
+            "<!-- stuck-pr-threads:example#42 -->\n"
+            "**PR:** https://github.com/other/example/pull/42\n"
         )
 
         def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -1115,6 +1126,7 @@ class RunTests(unittest.TestCase):
             f"{mod.mediate_marker('42', SHA)}\n**PR:** https://github.com/{REPO}/pull/42\n"
         )
         self.assertTrue(mod.mediate_description_matches(legacy, REPO, "42"))
+        self.assertTrue(mod.rollup_may_update(legacy, REPO, "42"))
         self.assertFalse(mod.mediate_description_matches(own, REPO, "4"))
         other = (
             f"{mod.mediate_issue_marker_legacy('42')}\n"

@@ -263,23 +263,21 @@ def has_repo_qualified_marker(
 
 
 def rollup_may_update(description: str, repository: str, pr_number: str) -> bool:
-    """Overwrite only with a repo-qualified marker, or an unmarked title match.
+    """Overwrite a found roll-up only when it is this repo's issue.
 
-    Legacy ``codex-gate-mediate:N`` / short-form ``stuck-pr-threads:repo#N``
-    issues can still be *found*, but a related Markdown link must not rewrite
-    another repository's roll-up.
+    Repo-qualified markers and unmarked title matches may update. A legacy
+    ``codex-gate-mediate:N`` issue may update when ``mediate_description_matches``
+    already confirmed the ``**PR:**`` field is this pull request. Short-form
+    ``stuck-pr-threads:repo#N`` (no owner) is ambiguous across orgs and must
+    not be rewritten.
     """
     if has_repo_qualified_marker(description, repository, pr_number):
         return True
-    body = description or ""
-    if stuck_pr_keys_in(rollup_preamble(body)):
+    if stuck_pr_keys_in(rollup_preamble(description or "")):
         return False
-    if re.search(
-        r"<!--\s*codex-gate-mediate:(?:[1-9][0-9]{0,8}|[A-Za-z0-9._-]{1,39}/)",
-        body,
-    ):
-        return False
-    return True
+    return mediate_description_matches(
+        description, repository, pr_number
+    ) or not re.search(r"<!--\s*codex-gate-mediate:", description or "")
 
 
 def rollup_preamble(description: str) -> str:
@@ -802,16 +800,21 @@ def find_mediate_issue(
         for node in ((existing.get("issues") or {}).get("nodes")) or []:
             if not isinstance(node, dict) or issue_is_closed(node):
                 continue
-            if mediate_description_matches(
-                str(node.get("description") or ""), repository, pr_number
-            ):
+            desc = str(node.get("description") or "")
+            if not mediate_description_matches(desc, repository, pr_number):
+                continue
+            if rollup_may_update(desc, repository, pr_number):
                 return node
     titled = graphql(
         LINEAR_SEARCH_TITLE,
         {"title": stuck_pr_title(repository, pr_number), "teamKey": LINEAR_TEAM_KEY},
     )
     for node in ((titled.get("issues") or {}).get("nodes")) or []:
-        if isinstance(node, dict) and title_matches_rollup(node, repository, pr_number):
+        if not isinstance(node, dict) or not title_matches_rollup(
+            node, repository, pr_number
+        ):
+            continue
+        if rollup_may_update(str(node.get("description") or ""), repository, pr_number):
             return node
     return None
 
