@@ -187,3 +187,52 @@ def test_random_operations_agree_with_the_python_book(seed):
         assert _state(rust) == _state(py), f"seed={seed} step={step} op={outcome}"
         rust.check_integrity()
         py.check_integrity()
+
+
+def _live_qty_script(book):
+    """The reference book's object identity, returned as qtys a caller still holds."""
+    held = book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=1, ts=1)
+    assert book.get("a") is held
+    assert book.level(Side.BUY, 100).orders["a"] is held
+    assert book.our_orders()[0] is held
+    book.reduce("a", 4)
+    partial = held.qty
+    book.reduce("a", held.qty)
+    zero = held.qty
+    assert book.get("a") is None
+
+    held = book.add(order_id="b", side=Side.BUY, price_ticks=100, qty=8, owner="mm")
+    assert book.cancel("b") is held
+    cancelled = held.qty
+
+    held = book.add(order_id="c", side=Side.SELL, price_ticks=101, qty=9, owner="mm", seq=2, ts=2)
+    replaced = book.replace("c", new_qty=3, seq=3, ts=3)
+    assert replaced is not held
+    assert book.get("c") is replaced
+
+    resting = book.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, owner="mm")
+    match(book, AggressiveOrder(order_id="hit", side=Side.BUY, qty=6, price_ticks=100))
+    filled = resting.qty
+    assert book.get("ask") is resting
+    own = book.add(order_id="own", side=Side.SELL, price_ticks=102, qty=5, owner="mm")
+    match(
+        book,
+        AggressiveOrder(
+            order_id="self", side=Side.BUY, qty=5, price_ticks=102, owner="mm",
+            stp=SelfTradePrevention.CANCEL_RESTING,
+        ),
+    )
+    return {
+        "partial": partial,
+        "zero": zero,
+        "cancelled": cancelled,
+        "old_replace_qty": held.qty,
+        "new_replace_qty": replaced.qty,
+        "filled": filled,
+        "stp_qty": own.qty,
+        "stp_gone": book.get("own") is None,
+    }
+
+
+def test_rust_retained_orders_match_the_python_book():
+    assert _live_qty_script(LimitOrderBook("LIVE")) == _live_qty_script(PythonLimitOrderBook("LIVE"))

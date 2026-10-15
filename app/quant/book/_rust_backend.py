@@ -84,11 +84,53 @@ class _Ladder:
         self._core.append_price(self._side, int(price))
 
 
+def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
+    """Return the interned ``RestingOrder`` for ``row``.
+
+    The Python book stores one mutable order and hands that same object out of
+    ``add``, ``get``, ``reduce``, ``level().orders``, and ``our_orders``. A
+    later ``reduce`` or fill edits ``qty`` on it. ``replace`` is cancel-plus-add,
+    so the previous object keeps the qty it had and the book holds a new one.
+    """
+    order_id, _side, _price, qty, *_rest = row
+    existing = None if fresh else book._live.get(order_id)
+    if existing is None:
+        order = _order(row)
+    else:
+        order = existing
+        order.qty = qty
+    if zero_leaves and qty <= 0:
+        book._live.pop(order_id, None)
+    else:
+        book._live[order_id] = order
+    return order
+
+
+def _note_execution(book, fills, cancelled) -> None:
+    """Apply matcher effects to orders the caller already holds.
+
+    A fill reduces that order in place. A full fill leaves ``qty == 0`` and
+    drops it from the book. A self-trade cancel removes it and leaves ``qty``
+    where it was, matching ``cancel``.
+    """
+    for order_id, _side, _price, qty, _liquidity, _queue in fills:
+        order = book._live.get(order_id)
+        if order is None:
+            continue
+        order.qty -= int(qty)
+        if order.qty <= 0:
+            order.qty = 0
+            book._live.pop(order_id, None)
+    for order_id in cancelled:
+        book._live.pop(order_id, None)
+
+
 class PriceLevel:
     """Live view of one price. ``total_qty`` is writable so the integrity control can fail."""
 
-    def __init__(self, core, side: Side, price: int) -> None:
-        self._core = core
+    def __init__(self, book, side: Side, price: int) -> None:
+        self._book = book
+        self._core = book._core
         self._side = side
         self.price_ticks = price
 
@@ -105,7 +147,7 @@ class PriceLevel:
         rows = self._core.level_orders(self._side.value, self.price_ticks)
         if not rows:
             return {}
-        return {row[0]: _order(row) for row in rows}
+        return {row[0]: _take_row(self._book, row) for row in rows}
 
     def __len__(self) -> int:
         return len(self.orders)
@@ -122,6 +164,7 @@ class LimitOrderBook:
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
         self._core = cockpit_quant.BookCore(symbol)
+        self._live: dict[str, object] = {}
 
     def add(
         self,
@@ -134,15 +177,17 @@ class LimitOrderBook:
         ts: int = 0,
         owner: str | None = None,
     ):
-        return _order(_call(
+        return _take_row(self, _call(
             self._core.add, order_id, side.value, int(price_ticks), int(qty), int(seq), int(ts), owner,
-        ))
+        ), fresh=True)
 
     def cancel(self, order_id: str):
-        return _order(_call(self._core.cancel, order_id))
+        row = _call(self._core.cancel, order_id)
+        order = self._live.pop(row[0], None)
+        return order if order is not None else _order(row)
 
     def reduce(self, order_id: str, qty: int):
-        return _order(_call(self._core.reduce, order_id, int(qty)))
+        return _take_row(self, _call(self._core.reduce, order_id, int(qty)), zero_leaves=True)
 
     def replace(
         self,
@@ -153,18 +198,18 @@ class LimitOrderBook:
         seq: int = 0,
         ts: int = 0,
     ):
-        return _order(_call(
+        return _take_row(self, _call(
             self._core.replace,
             order_id,
             None if new_price_ticks is None else int(new_price_ticks),
             None if new_qty is None else int(new_qty),
             int(seq),
             int(ts),
-        ))
+        ), fresh=True)
 
     def get(self, order_id: str):
         row = self._core.get(order_id)
-        return None if row is None else _order(row)
+        return None if row is None else _take_row(self, row)
 
     def __contains__(self, order_id: object) -> bool:
         if not isinstance(order_id, str):
@@ -176,7 +221,7 @@ class LimitOrderBook:
 
     @property
     def _index(self) -> dict:
-        return {row[0]: _order(row) for row in self._core.orders()}
+        return {row[0]: _take_row(self, row) for row in self._core.orders()}
 
     @property
     def _bid_prices(self) -> _Ladder:
@@ -219,7 +264,7 @@ class LimitOrderBook:
     def level(self, side: Side, price_ticks: int):
         if not self._core.has_level(side.value, int(price_ticks)):
             return None
-        return PriceLevel(self._core, side, int(price_ticks))
+        return PriceLevel(self, side, int(price_ticks))
 
     def prices(self, side: Side) -> list[int]:
         return list(self._core.prices(side.value))
@@ -276,6 +321,7 @@ def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_
         )
     except (cockpit_quant.NotFound, cockpit_quant.IntegrityError, cockpit_quant.BookValueError) as exc:
         _raise(exc)
+    _note_execution(book, fills, stp)
     return MatchResult(
         status=MatchStatus(status),
         filled_qty=filled,

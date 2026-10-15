@@ -33,6 +33,33 @@ from quant.book.matching import (
 from quant.events import Liquidity, Side
 
 
+def test_a_retained_resting_order_sees_partial_and_full_fills():
+    book = LimitOrderBook("TEST")
+    resting = book.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, owner="mm")
+    match(book, AggressiveOrder(order_id="hit", side=Side.BUY, qty=4, price_ticks=100))
+    assert resting.qty == 6
+    assert book.get("ask") is resting
+    match(book, AggressiveOrder(order_id="hit2", side=Side.BUY, qty=6, price_ticks=100))
+    assert resting.qty == 0
+    assert book.get("ask") is None
+    book.check_integrity()
+
+
+def test_self_trade_prevention_pulls_a_retained_order_without_changing_its_qty():
+    book = LimitOrderBook("TEST")
+    resting = book.add(order_id="ask", side=Side.SELL, price_ticks=100, qty=10, owner="mm")
+    match(
+        book,
+        AggressiveOrder(
+            order_id="hit", side=Side.BUY, qty=4, price_ticks=100, owner="mm",
+            stp=SelfTradePrevention.CANCEL_RESTING,
+        ),
+    )
+    assert resting.qty == 10
+    assert book.get("ask") is None
+    book.check_integrity()
+
+
 @pytest.fixture
 def book() -> LimitOrderBook:
     """Asks: 300 @101 (two orders, 100 then 200), 500 @102. Bids: 400 @99."""
