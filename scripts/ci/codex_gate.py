@@ -40,8 +40,16 @@ SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
 SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}$")
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)(?!/)(?!.*//)[A-Za-z0-9._/-]{1,200}$")
 STUCK_PR_PREFIX = "stuck-pr-threads:"
+# #124's canonical key. The slash form is repo-qualified (owner/repo#N); the
+# looser pattern still finds legacy short-form `repo#N` markers.
 STUCK_PR_MARKER_RE = re.compile(
     r"<!--\s*stuck-pr-threads:([A-Za-z0-9._/-]{1,120}#[1-9][0-9]{0,8})\s*-->"
+)
+REPO_QUALIFIED_STUCK_RE = re.compile(
+    r"<!--\s*stuck-pr-threads:([A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}#[1-9][0-9]{0,8})\s*-->"
+)
+REPO_QUALIFIED_GATE_RE = re.compile(
+    r"<!--\s*codex-gate-mediate:([A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}):([1-9][0-9]{0,8})\s*-->"
 )
 GATE_BEGIN = "<!-- codex-gate-mediate-begin -->"
 GATE_END = "<!-- codex-gate-mediate-end -->"
@@ -226,8 +234,52 @@ def stuck_pr_keys_in(text: str) -> list[str]:
     return STUCK_PR_MARKER_RE.findall(text or "")
 
 
+def repo_qualified_stuck_keys_in(text: str) -> list[str]:
+    """#124 `owner/repo#N` keys only; short-form `repo#N` is not qualified."""
+    return REPO_QUALIFIED_STUCK_RE.findall(text or "")
+
+
 def _key_matches_pr(key: str, repository: str, pr_number: str) -> bool:
     return key in {f"{repository}#{pr_number}", f"{repo_short(repository)}#{pr_number}"}
+
+
+def has_repo_qualified_marker(
+    description: str, repository: str, pr_number: str
+) -> bool:
+    """True when the roll-up names this owner/repo#N, not just a short repo name.
+
+    Accepts #124's ``<!-- stuck-pr-threads:owner/repo#N -->`` in the preamble
+    and the repo-qualified gate marker ``<!-- codex-gate-mediate:owner/repo:N -->``.
+    Number-only or short-form markers are not enough to overwrite.
+    """
+    wanted = f"{repository}#{pr_number}"
+    preamble = rollup_preamble(description or "")
+    if wanted in repo_qualified_stuck_keys_in(preamble):
+        return True
+    for repo, number in REPO_QUALIFIED_GATE_RE.findall(description or ""):
+        if repo == repository and number == pr_number:
+            return True
+    return False
+
+
+def rollup_may_update(description: str, repository: str, pr_number: str) -> bool:
+    """Overwrite only with a repo-qualified marker, or an unmarked title match.
+
+    Legacy ``codex-gate-mediate:N`` / short-form ``stuck-pr-threads:repo#N``
+    issues can still be *found*, but a related Markdown link must not rewrite
+    another repository's roll-up.
+    """
+    if has_repo_qualified_marker(description, repository, pr_number):
+        return True
+    body = description or ""
+    if stuck_pr_keys_in(rollup_preamble(body)):
+        return False
+    if re.search(
+        r"<!--\s*codex-gate-mediate:(?:[1-9][0-9]{0,8}|[A-Za-z0-9._-]{1,39}/)",
+        body,
+    ):
+        return False
+    return True
 
 
 def rollup_preamble(description: str) -> str:
@@ -251,9 +303,10 @@ def mediate_description_matches(
 ) -> bool:
     """True for this repo+PR roll-up, including shared and legacy markers.
 
-    The shared key is ``<!-- stuck-pr-threads:owner/repo#N -->``. Legacy
-    ``codex-gate-mediate`` markers still match when the ``**PR:**`` field is
-    this pull request.
+    The shared key is #124's ``<!-- stuck-pr-threads:owner/repo#N -->``.
+    Legacy ``codex-gate-mediate`` markers still *match* when the ``**PR:**``
+    field is this pull request; overwriting still requires a repo-qualified
+    marker (see ``rollup_may_update``).
     """
     body = description or ""
     keys = stuck_pr_keys_in(rollup_preamble(body))
@@ -772,13 +825,18 @@ def create_needs_decision_issue(
 ) -> str:
     title = stuck_pr_title(repository, pr_number)
     existing = find_mediate_issue(graphql, repository, pr_number)
-    if existing is not None:
+    existing_desc = (
+        str(existing.get("description") or "") if isinstance(existing, dict) else ""
+    )
+    if existing is not None and rollup_may_update(
+        existing_desc, repository, pr_number
+    ):
         issue_id = str(existing.get("id") or "")
         fallback = str(existing.get("url") or existing.get("identifier") or "existing")
         if not issue_id:
             return fallback
         description = merge_mediate_description(
-            str(existing.get("description") or ""), repository, pr_number, sha
+            existing_desc, repository, pr_number, sha
         )
         updated = graphql(
             LINEAR_UPDATE,

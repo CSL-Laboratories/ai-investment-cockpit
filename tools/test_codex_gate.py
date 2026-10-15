@@ -697,11 +697,13 @@ class RunTests(unittest.TestCase):
     def test_create_needs_decision_issue_updates_rollup(self) -> None:
         updates: list[dict[str, Any]] = []
         existing = (
-            f"{mod.mediate_marker('42', SHA)}\n"
+            f"{mod.stuck_pr_marker(REPO, '42')}\n"
+            f"{mod.GATE_BEGIN}\n"
             f"**PR:** https://github.com/{REPO}/pull/42\n"
             f"**SHA:** `{SHA}`\n\n"
             "Codex gate MEDIATE: Devin and Claude disagree or a thread needs a "
             "human. Auto-filed by `.github/workflows/codex-gate.yml`. Humans decide.\n"
+            f"{mod.GATE_END}\n"
             "Wait for Alice's risk decision\n"
         )
 
@@ -739,7 +741,8 @@ class RunTests(unittest.TestCase):
         self.assertIn(mod.stuck_pr_marker(REPO, "42"), body)
         self.assertIn("b" * 40, body)
         self.assertIn("Wait for Alice's risk decision", body)
-        self.assertNotIn("codex-gate-mediate:42:" + SHA, body)
+        self.assertIn(mod.GATE_BEGIN, body)
+        self.assertEqual(body.count(mod.stuck_pr_marker(REPO, "42")), 1)
 
     def test_create_needs_decision_issue_rollup_title(self) -> None:
         created: list[dict[str, Any]] = []
@@ -848,44 +851,145 @@ class RunTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
 
     def test_create_needs_decision_issue_finds_renamed_legacy(self) -> None:
-        updates: list[dict[str, Any]] = []
-        renamed = {
-            "id": "legacy-1",
-            "url": "https://linear.app/csl-laboratories/issue/CSL-20",
-            "title": "Decision on risk limits",
-            "description": (
-                f"{mod.mediate_issue_marker_legacy('42')}\n"
-                f"**PR:** https://github.com/{REPO}/pull/42\n"
+        found = mod.find_mediate_issue(
+            lambda query, variables: (
+                {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "legacy-1",
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-20",
+                                "title": "Decision on risk limits",
+                                "description": (
+                                    f"{mod.mediate_issue_marker_legacy('42')}\n"
+                                    f"**PR:** https://github.com/{REPO}/pull/42\n"
+                                ),
+                            }
+                        ]
+                    }
+                }
+                if "issues(" in query
+                and str(variables.get("contains") or "")
+                in {
+                    "codex-gate-mediate:42 -->",
+                    f"https://github.com/{REPO}/pull/42",
+                }
+                else {"issues": {"nodes": []}}
             ),
-        }
+            REPO,
+            "42",
+        )
+        self.assertIsNotNone(found)
+        assert found is not None
+        self.assertEqual(found["id"], "legacy-1")
+        self.assertFalse(
+            mod.rollup_may_update(str(found["description"]), REPO, "42")
+        )
+
+    def test_create_needs_decision_issue_skips_unqualified_overwrite(self) -> None:
+        created: list[dict[str, Any]] = []
+        foreign = (
+            f"{mod.mediate_issue_marker_legacy('42')}\n"
+            f"**PR:** https://github.com/{REPO}/pull/42\n"
+            "[discussion](https://github.com/other/project/pull/42)\n"
+        )
 
         def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             if "title: { eq" in query:
                 return {"issues": {"nodes": []}}
             if "issues(" in query:
-                contains = str(variables.get("contains") or "")
-                if contains in {
-                    f"codex-gate-mediate:42 -->",
-                    f"https://github.com/{REPO}/pull/42",
-                }:
-                    return {"issues": {"nodes": [renamed]}}
-                return {"issues": {"nodes": []}}
-            if "issueUpdate" in query:
-                updates.append(variables)
                 return {
-                    "issueUpdate": {
-                        "success": True,
-                        "issue": {"url": renamed["url"]},
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "foreign-1",
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-99",
+                                "description": foreign,
+                            }
+                        ]
                     }
                 }
+            if "teams(" in query:
+                return {
+                    "teams": {
+                        "nodes": [
+                            {
+                                "id": "t1",
+                                "states": {"nodes": [{"id": "s1", "type": "triage"}]},
+                            }
+                        ]
+                    }
+                }
+            if "issueLabels" in query:
+                name = str(variables.get("name") or "")
+                return {"issueLabels": {"nodes": [{"id": name, "name": name}]}}
+            if "projects(" in query:
+                return {
+                    "projects": {
+                        "nodes": [{"id": "p1", "name": "ai-investment-cockpit"}]
+                    }
+                }
+            if "issueCreate" in query:
+                created.append(variables)
+                return {
+                    "issueCreate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-100"},
+                    }
+                }
+            if "issueUpdate" in query:
+                raise AssertionError("must not overwrite a roll-up without a repo-qualified marker")
             raise AssertionError(query[:80])
 
         url = mod.create_needs_decision_issue(
             graphql, repository=REPO, pr_number="42", sha=SHA
         )
-        self.assertEqual(url, renamed["url"])
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-100")
+        self.assertEqual(len(created), 1)
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), created[0]["input"]["description"])
+
+    def test_create_needs_decision_issue_updates_watcher_marker(self) -> None:
+        updates: list[dict[str, Any]] = []
+        watcher = (
+            f"{mod.stuck_pr_marker(REPO, '42')}\n"
+            f"{mod.WATCHER_BEGIN}\n"
+            "watcher threads\n"
+            f"{mod.WATCHER_END}\n"
+        )
+
+        def graphql(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+            if "issues(" in query:
+                return {
+                    "issues": {
+                        "nodes": [
+                            {
+                                "id": "watch-1",
+                                "url": "https://linear.app/csl-laboratories/issue/CSL-86",
+                                "description": watcher,
+                            }
+                        ]
+                    }
+                }
+            if "issueUpdate" in query:
+                updates.append(variables)
+                return {
+                    "issueUpdate": {
+                        "success": True,
+                        "issue": {"url": "https://linear.app/csl-laboratories/issue/CSL-86"},
+                    }
+                }
+            raise AssertionError("should update the #124 roll-up, not create")
+
+        url = mod.create_needs_decision_issue(
+            graphql, repository=REPO, pr_number="42", sha=SHA
+        )
+        self.assertEqual(url, "https://linear.app/csl-laboratories/issue/CSL-86")
         self.assertEqual(len(updates), 1)
-        self.assertIn(mod.stuck_pr_marker(REPO, "42"), updates[0]["input"]["description"])
+        body = updates[0]["input"]["description"]
+        self.assertIn(mod.stuck_pr_marker(REPO, "42"), body)
+        self.assertIn(mod.WATCHER_BEGIN, body)
+        self.assertIn("watcher threads", body)
+        self.assertIn(mod.GATE_BEGIN, body)
 
     def test_create_needs_decision_issue_adopts_title_and_skips_done(self) -> None:
         updates: list[dict[str, Any]] = []
@@ -1000,6 +1104,13 @@ class RunTests(unittest.TestCase):
     def test_mediate_description_does_not_match_other_pr(self) -> None:
         own = mod.stuck_pr_marker(REPO, "42")
         self.assertTrue(mod.mediate_description_matches(own, REPO, "42"))
+        self.assertTrue(mod.has_repo_qualified_marker(own, REPO, "42"))
+        self.assertTrue(mod.rollup_may_update(own, REPO, "42"))
+        short = "<!-- stuck-pr-threads:example#42 -->"
+        self.assertTrue(mod.mediate_description_matches(short, REPO, "42"))
+        self.assertFalse(mod.has_repo_qualified_marker(short, REPO, "42"))
+        self.assertFalse(mod.rollup_may_update(short, REPO, "42"))
+        self.assertFalse(mod.has_repo_qualified_marker(own, "acme/other", "42"))
         legacy = (
             f"{mod.mediate_marker('42', SHA)}\n**PR:** https://github.com/{REPO}/pull/42\n"
         )
