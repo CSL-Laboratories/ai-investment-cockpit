@@ -165,12 +165,19 @@ class OMS:
     what keeps the OMS usable identically for replay, sim execution and post-hoc analysis.
     """
 
-    __slots__ = ("_orders", "_positions", "_by_strategy")
+    __slots__ = ("_orders", "_positions", "_by_strategy", "_live", "_rank", "_next_rank")
 
     def __init__(self) -> None:
         self._orders: dict[str, ManagedOrder] = {}
         self._positions: dict[str, int] = {}
         self._by_strategy: dict[str, set[str]] = {}
+        # Live orders only, in the same order as ``_orders`` (first time each client id
+        # was seen). ``live_orders`` used to walk every historical order and hash its
+        # state. A market-maker run keeps two quotes live and hundreds of terminal ids,
+        # and that scan was half the paper loop.
+        self._live: dict[str, ManagedOrder] = {}
+        self._rank: dict[str, int] = {}
+        self._next_rank = 0
 
     # ---- intake ----------------------------------------------------------------------
 
@@ -192,9 +199,37 @@ class OMS:
             side=intent.side, qty=intent.qty, price_ticks=intent.price_ticks,
             created_ts=ts, updated_ts=ts,
         )
-        self._orders[intent.client_id] = order
-        self._by_strategy.setdefault(strategy, set()).add(intent.client_id)
+        client_id = intent.client_id
+        if client_id not in self._rank:
+            self._rank[client_id] = self._next_rank
+            self._next_rank += 1
+        self._orders[client_id] = order
+        self._by_strategy.setdefault(strategy, set()).add(client_id)
+        self._place_live(order)
         return order
+
+    def _place_live(self, order: ManagedOrder) -> None:
+        """Insert ``order`` among the live ids in first-seen client-id order.
+
+        Reusing a terminal id keeps the rank it got on first registration, which is
+        where ``_orders`` still yields it. Appending would move that id behind every
+        quote opened while it was terminal.
+        """
+        client_id = order.client_id
+        if client_id in self._live:
+            self._live[client_id] = order
+            return
+        rank = self._rank[client_id]
+        placed: dict[str, ManagedOrder] = {}
+        inserted = False
+        for key, current in self._live.items():
+            if not inserted and self._rank[key] > rank:
+                placed[client_id] = order
+                inserted = True
+            placed[key] = current
+        if not inserted:
+            placed[client_id] = order
+        self._live = placed
 
     def _transition(self, order: ManagedOrder, dst: OrderState, *, ts: int, reason: str | None = None) -> None:
         if not legal_transition(order.state, dst):
@@ -206,6 +241,10 @@ class OMS:
         order.updated_ts = ts
         if reason is not None:
             order.reason = reason
+        if dst in TERMINAL_STATES:
+            self._live.pop(order.client_id, None)
+        elif order.client_id not in self._live:
+            self._place_live(order)
 
     # ---- venue callbacks ---------------------------------------------------------------
 
@@ -310,10 +349,18 @@ class OMS:
         return {s: q for s, q in self._positions.items() if q}
 
     def live_orders(self, *, symbol: str | None = None, strategy: str | None = None) -> list[ManagedOrder]:
-        ids = self._by_strategy.get(strategy, set()) if strategy is not None else self._orders.keys()
+        """Orders the venue could still fill, in first-seen client-id order.
+
+        The index is maintained on register and on each terminal transition. It is
+        the same set a scan of ``_orders`` would keep, without walking the terminal
+        history on every context build.
+        """
+        if strategy is None and symbol is None:
+            return list(self._live.values())
         return [
-            o for cid in ids
-            if (o := self._orders[cid]).is_live and (symbol is None or o.symbol == symbol)
+            order for order in self._live.values()
+            if (strategy is None or order.strategy == strategy)
+            and (symbol is None or order.symbol == symbol)
         ]
 
     def open_side_qty(self, symbol: str, side) -> int:

@@ -287,3 +287,23 @@ def test_a_fill_on_a_terminal_order_leaves_no_trace_of_itself(oms):
     assert oms.position("TEST") == before_position, "the refused fill moved the position"
     assert oms.get("c1").filled_qty == before_filled
     assert oms.get("c1").fill_notional_ticks == before_notional
+    assert oms.live_orders() == []
+
+
+def test_live_orders_match_a_full_scan_including_a_reused_id(oms):
+    """The index replaces the scan. A reused client id keeps the slot it had the
+    first time it was registered, which is where ``_orders`` still yields it."""
+    oms.register(_new("a", Side.BUY, 10), strategy="mm")
+    oms.register(NewOrder(client_id="b", symbol="BBB", side=Side.SELL, qty=10, price_ticks=20), strategy="mom")
+    oms.on_cancelled("a")
+    oms.register(_new("a", Side.BUY, 4, price=7), strategy="mm")
+    oms.on_acknowledged("a")
+    oms.on_fill(_fill("a", Side.BUY, 1, price=7))
+    scanned = [
+        order.client_id for order in oms._orders.values() if order.is_live
+    ]
+    assert [order.client_id for order in oms.live_orders()] == scanned == ["a", "b"]
+    assert [order.client_id for order in oms.live_orders(strategy="mm")] == ["a"]
+    assert oms.live_orders()[0].state is OrderState.PARTIALLY_FILLED
+    oms.on_rejected("b", reason="no")
+    assert [order.client_id for order in oms.live_orders()] == ["a"]
