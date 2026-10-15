@@ -8,7 +8,9 @@ last-verified: 2026-10-15
 # Docs index
 
 Reconciled 2026-10-15 against `origin/main` `4a4308d`, using the same commit and
-UTC merge-date rule as the REGISTER and PLAN status pass. Merge dates and
+UTC merge-date rule as the REGISTER and PLAN status pass (CSL-61,
+[PR #121](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/121),
+open until merged; merge it before or with this index). Merge dates and
 `last-verified` added here are UTC calendar dates from GitHub `mergedAt`
 (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and
 evidence dates already in these sections keep the calendar dates they recorded.
