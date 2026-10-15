@@ -1,7 +1,7 @@
 name: rust
 
-# CSL-42: the Rust FIFO book. This job builds the crate, runs its tests, installs
-# the PyO3 extension, and re-runs the Python book tests against that extension.
+# CSL-42: Rust book, costs, and PnL. This job builds the crate, runs its tests,
+# installs the PyO3 extension, and re-runs the Python tests against that extension.
 #
 # Hosted cells follow the split already used by ci.yml:
 #   linux   — Python 3.11 and 3.12 whenever this path filter runs
@@ -26,14 +26,24 @@ on:
     paths:
       - "rust/**"
       - "app/quant/book/**"
+      - "app/quant/costs.py"
+      - "app/quant/pnl.py"
       - "app/tests/quant/book/**"
+      - "app/tests/quant/test_pnl.py"
+      - "app/tests/quant/test_costs_rust_parity.py"
+      - "app/tests/quant/test_w21_cost_model.py"
       - ".github/workflows/rust.yml"
   push:
     branches: [main]
     paths:
       - "rust/**"
       - "app/quant/book/**"
+      - "app/quant/costs.py"
+      - "app/quant/pnl.py"
       - "app/tests/quant/book/**"
+      - "app/tests/quant/test_pnl.py"
+      - "app/tests/quant/test_costs_rust_parity.py"
+      - "app/tests/quant/test_w21_cost_model.py"
       - ".github/workflows/rust.yml"
   workflow_dispatch:
 
@@ -109,6 +119,8 @@ jobs:
         working-directory: app
         run: |
           python -m pip install pytest keyring
-          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py
+          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_verify.py tests/test_invariants.py
       - name: Benchmark Rust against the Python reference
-        run: python rust/bench_compare.py
+        run: |
+          python rust/bench_compare.py
+          python rust/bench_costs.py
