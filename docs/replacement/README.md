@@ -2,6 +2,8 @@
 
 **Status:** accepted contract under [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212);
 outcome artifacts and all implementation, empirical and release gates remain pending.
+The immutable accepted governing files preserve their pre-receipt candidate labels;
+the external human receipt and [program.json](program.json) record the transition.
 
 This directory is the review surface for the owner-directed Cockpit replacement.
 It proposes a successor product contract and a dependency-ordered month program.

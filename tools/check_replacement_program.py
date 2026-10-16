@@ -277,6 +277,10 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(re.fullmatch(r"[0-9a-f]{64}", research.get("sha256", "")) is not None, "authority reconciliation digest invalid")
     _require(_digest(research_file) == research["sha256"], "authority reconciliation digest mismatch")
     _require(
+        _digest(research_file) == accepted_receipt["authority_research_sha256"],
+        "authority research differs from accepted receipt",
+    )
+    _require(
         receipt.get("authority_research_sha256")
         == "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938",
         "superseded research digest changed",
@@ -287,6 +291,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     contract_paths = [item.get("path") for item in contracts]
     _require(len(contract_paths) == len(set(contract_paths)), "duplicate contract path")
     _require(set(contract_paths) == EXPECTED_CONTRACTS, "missing or unexpected contract path")
+    verified_contracts: dict[str, str] = {}
     for contract in contracts:
         rel = contract.get("path")
         expected = contract.get("sha256")
@@ -295,6 +300,11 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(path.is_file(), f"contract path missing: {rel}")
         _require(re.fullmatch(r"[0-9a-f]{64}", expected) is not None, f"invalid digest: {rel}")
         _require(_digest(path) == expected, f"contract digest mismatch: {rel}")
+        verified_contracts[rel] = _digest(path)
+    _require(
+        verified_contracts == accepted_receipt["accepted_contracts"],
+        "governing files differ from accepted receipt",
+    )
     superseded_contracts = receipt.get("accepted_contracts")
     _require(isinstance(superseded_contracts, dict), "superseded contract digest set missing")
     _require(superseded_contracts == EXPECTED_SUPERSEDED_CONTRACTS, "superseded contract digests changed")

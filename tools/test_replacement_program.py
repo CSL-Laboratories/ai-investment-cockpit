@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,6 +26,36 @@ class ReplacementProgramTests(unittest.TestCase):
         self.assertTrue(CHECKER._has_exact_outcome_heading("### O1\n", "O1"))
         self.assertTrue(CHECKER._has_exact_outcome_heading("### O1 ###\n", "O1"))
         self.assertFalse(CHECKER._has_exact_outcome_heading("### O1 retired\n", "O1"))
+
+    def test_contract_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+            program = CHECKER.load(root / "docs" / "replacement" / "program.json")
+            contract = root / "docs" / "replacement" / "SUCCESSOR-PRODUCT.md"
+            contract.write_text(
+                contract.read_text(encoding="utf-8") + "\nUnaccepted mutation.\n",
+                encoding="utf-8",
+            )
+            digest = hashlib.sha256(contract.read_bytes()).hexdigest()
+            program["contracts"][0]["sha256"] = digest
+            with self.assertRaises(CHECKER.ContractError):
+                CHECKER.validate(program, root)
+
+    def test_research_file_and_registry_hash_cannot_bypass_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            shutil.copytree(ROOT / "docs" / "replacement", root / "docs" / "replacement")
+            program = CHECKER.load(root / "docs" / "replacement" / "program.json")
+            research = root / "docs" / "replacement" / "AUTHORITY-COMPLIANCE-RESEARCH.md"
+            research.write_text(
+                research.read_text(encoding="utf-8") + "\nUnaccepted mutation.\n",
+                encoding="utf-8",
+            )
+            digest = hashlib.sha256(research.read_bytes()).hexdigest()
+            program["research_evidence"]["authority_compliance"]["sha256"] = digest
+            with self.assertRaises(CHECKER.ContractError):
+                CHECKER.validate(program, root)
 
     def test_required_fail_closed_controls(self) -> None:
         mutations = [
