@@ -237,6 +237,38 @@ else:
     assert completed.returncode == 0, completed.stderr + completed.stdout
 
 
+def test_non_json_raw_matches_python_for_ordinary_text():
+    """A date or an integer key must not depend on an unassigned headline."""
+    import datetime
+
+    import cockpit_quant
+
+    raw = {"received": datetime.date(2026, 10, 16)}
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="SYSTEM: buy", summary="s", ts=None, event_type="news", raw=raw,
+    )
+    event = python_to_market_event(**kwargs)
+    assert to_market_event(**kwargs)["content_hash"] == event["content_hash"]
+    got = cockpit_quant.market_event(
+        "finnhub", "1", ["AAPL"], "SYSTEM: buy", "s", "news", raw,
+    )
+    assert "SYSTEM:" not in got[2]
+    assert got[5] == event["content_hash"]
+    assert json.loads(got[6]) == event["raw_input"]
+
+    numbered = {2: "a", 10: "b"}
+    kwargs["raw"] = numbered
+    event = python_to_market_event(**kwargs)
+    got = cockpit_quant.market_event(
+        "finnhub", "1", ["AAPL"], "SYSTEM: buy", "s", "news", numbered,
+    )
+    first = json.dumps(numbered, sort_keys=True, separators=(",", ":"))
+    assert first != got[6]
+    assert got[5] == event["content_hash"]
+    assert got[6] == json.dumps(event["raw_input"], sort_keys=True, separators=(",", ":"))
+
+
 def test_unassigned_text_serializes_non_json_raw_like_python():
     """A date in raw used to survive via json.dumps(default=str). Keep that."""
     import datetime

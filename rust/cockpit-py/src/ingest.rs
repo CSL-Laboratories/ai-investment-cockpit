@@ -255,16 +255,17 @@ fn market_event_py(
 ) -> PyResult<EventOut> {
     ensure_source(source)?;
     let skewed = needs_python_unicode(py, &[headline, summary, event_type])?;
-    let python_raw = match raw {
-        Some(raw) if skewed && read_json(raw).is_err() => Some(python_canonical_raw(py, raw)?),
-        _ => None,
+    // A date or an integer key is not JSON. `python_to_market_event` still
+    // accepts it. Falling back only for unassigned text made that acceptance
+    // depend on the headline.
+    let (python_raw, raw_json) = match raw {
+        None => (None, None),
+        Some(raw) => match read_json(raw) {
+            Ok(value) => (None, Some(value)),
+            Err(_) => (Some(python_canonical_raw(py, raw)?), None),
+        },
     };
     let (csv, items) = read_symbols(py, symbols)?;
-    let raw_json = if python_raw.is_some() {
-        None
-    } else {
-        raw.map(read_json).transpose()?
-    };
     let mut parts = pack(market_event(
         source,
         article_id,
