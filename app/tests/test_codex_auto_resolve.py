@@ -164,6 +164,7 @@ class FakeGitHub(mod.GitHub):
                         "number": number,
                         "isDraft": bool(pr.get("isDraft")),
                         "state": str(pr.get("state") or "OPEN"),
+                        "isCrossRepository": bool(pr.get("isCrossRepository")),
                         "headRefOid": sha,
                         "commits": {
                             "nodes": [
@@ -235,6 +236,7 @@ def pr_payload(
         "number": number,
         "isDraft": draft,
         "state": "OPEN",
+        "isCrossRepository": False,
         "url": f"https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/{number}",
         "title": "CSL-179 demo",
         "headRefOid": sha,
@@ -334,10 +336,17 @@ def test_gate_ready_is_not_a_thread_resolve():
 
 
 def test_latest_codex_comment_wins():
+    older = comment(CODEX, verdict_body("MISSING"), NOW - timedelta(hours=1))
+    newer = comment(CODEX, verdict_body("DECIDE"), NOW)
+    latest = mod.latest_verdicts([older, newer])
+    assert latest[(THREAD, SHA)].verdict.verdict == "DECIDE"
+
+
+def test_decide_is_sticky_against_later_resolve():
     older = comment(CODEX, verdict_body("DECIDE"), NOW - timedelta(hours=1))
     newer = comment(CODEX, verdict_body("RESOLVE"), NOW)
     latest = mod.latest_verdicts([older, newer])
-    assert latest[(THREAD, SHA)].verdict.verdict == "RESOLVE"
+    assert latest[(THREAD, SHA)].verdict.verdict == "DECIDE"
 
 
 def test_non_codex_markers_are_ignored():
@@ -347,7 +356,8 @@ def test_non_codex_markers_are_ignored():
 
 
 def test_required_checks_fail_closed():
-    assert mod.required_checks_green({"state": "SUCCESS"}) == (True, "checks=green")
+    assert mod.required_checks_green(passing_rollup()) == (True, "checks=green")
+    assert mod.required_checks_green({"state": "SUCCESS"})[0] is False
     assert mod.required_checks_green({"state": "PENDING"})[0] is False
     assert mod.required_checks_green({"state": "FAILURE"})[0] is False
     assert mod.required_checks_green(None)[0] is False
@@ -469,7 +479,7 @@ def test_scan_skips_pending_required_checks():
     }
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
-    assert any("skip=checks=required-not-green" in line for line in logs)
+    assert any("skip=checks=linux-gates-not-green" in line for line in logs)
 
 
 def test_scan_ignores_own_pending_check():
@@ -693,8 +703,10 @@ def test_script_never_posts_codex_review_or_pushes():
 def test_workflow_structure():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "name: Codex auto-resolve" in text
-    assert "pull_request_review:" in text
-    assert "chatgpt-codex-connector[bot]" in text
+    assert "pull_request_review:" not in text
+    assert "pull_request_review_comment:" not in text
+    assert "issue_comment:" not in text
+    assert "workflow_dispatch:" in text
     assert "runs-on: ubuntu-latest" in text
     assert "blacksmith-" not in text
     assert "python -m pytest" not in text
@@ -707,7 +719,7 @@ def test_workflow_structure():
     assert "pull-requests: write" not in text
     assert "checks: read" in text
     assert "statuses: read" in text
-    assert "issue_comment:" not in text
+    assert "11bd71901bbe5b1630ceea73d27597364c9af683" in text
     assert "resolveReviewThread" in text
     assert "Never run the PR head with the PAT" in text
     assert "CODEX-THREAD: RESOLVE|DECIDE|MISSING|AMBIGUOUS" in text
@@ -743,3 +755,132 @@ def test_parse_paginated_concatenated_arrays():
     raw = json.dumps([{"id": 1}]) + json.dumps([{"id": 2}])
     items = mod.parse_paginated_json(raw)
     assert [i["id"] for i in items] == [1, 2]
+
+
+def test_conflicting_blocks_in_one_body_are_ambiguous():
+    body = verdict_body("DECIDE") + "\n" + verdict_body("RESOLVE")
+    parsed = mod.parse_thread_verdicts(body)
+    assert len(parsed) == 1
+    assert parsed[0].verdict == "AMBIGUOUS"
+    assert parsed[0].reason == "conflict"
+
+
+def test_duplicate_head_lines_are_ambiguous():
+    body = (
+        f"{mod.verdict_marker(THREAD)}\n"
+        "CODEX-THREAD: RESOLVE\n"
+        f"HEAD: {SHA2}\n"
+        f"HEAD: {SHA}\n"
+    )
+    parsed = mod.parse_thread_verdicts(body)
+    assert parsed[0].verdict == "AMBIGUOUS"
+    assert parsed[0].reason == "malformed-head"
+
+
+def test_malformed_decide_line_is_ambiguous():
+    body = (
+        f"{mod.verdict_marker(THREAD)}\n"
+        "CODEX-THREAD: RESOLVE\n"
+        "CODEX-THREAD: DECIDE reason=needs-decision\n"
+        f"HEAD: {SHA}\n"
+    )
+    parsed = mod.parse_thread_verdicts(body)
+    assert parsed[0].verdict == "AMBIGUOUS"
+    assert parsed[0].reason == "malformed"
+
+
+def test_linux_gates_skipped_is_not_green():
+    rollup = {
+        "state": "SUCCESS",
+        "contexts": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "linux-gates",
+                    "conclusion": "SKIPPED",
+                    "status": "COMPLETED",
+                    "isRequired": False,
+                }
+            ],
+        },
+    }
+    assert mod.required_checks_green(rollup) == (False, "checks=linux-gates-not-green")
+
+
+def test_required_check_named_resolve_is_not_ignored():
+    rollup = {
+        "state": "FAILURE",
+        "contexts": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "linux-gates",
+                    "conclusion": "SUCCESS",
+                    "status": "COMPLETED",
+                    "isRequired": True,
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "resolve",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "isRequired": True,
+                },
+            ],
+        },
+    }
+    assert mod.required_checks_green(rollup) == (False, "checks=required-not-green")
+
+
+def test_newer_headless_verdict_cancels_older_resolve():
+    older = comment(CODEX, verdict_body("RESOLVE"), NOW - timedelta(hours=1))
+    newer = comment(
+        CODEX,
+        f"{mod.verdict_marker(THREAD)}\nCODEX-THREAD: DECIDE\n",
+        NOW,
+    )
+    latest = mod.latest_verdicts([older, newer])
+    t = thread(comments=[older, newer])
+    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "ambiguous"
+    assert verdict is not None and verdict.verdict == "AMBIGUOUS"
+
+
+def test_protected_path_never_resolves():
+    t = thread(comments=[comment(CODEX, verdict_body())])
+    t["path"] = "app/risk/limits.py"
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "protected-path"
+    gh = ready_gh(threads=[t], reviews=[comment(CODEX, verdict_body())])
+    gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["path"] = "app/risk/limits.py"
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=protected-path" in line for line in logs)
+
+
+def test_fork_pr_skipped():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.pr_by_number[12]["isCrossRepository"] = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=fork" in line for line in logs)
+
+
+def test_closed_pr_during_head_refresh_does_not_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.pr_by_number[12]["state"] = "OPEN"
+    original = gh.graphql
+
+    def close_after_first(query, variables, token=None):
+        result = original(query, variables, token)
+        if "statusCheckRollup" in query:
+            gh.pr_by_number[12]["state"] = "CLOSED"
+        return result
+
+    gh.graphql = close_after_first  # type: ignore[method-assign]
+    logs = mod.scan_pr(pr_payload(threads=[thread()]), cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=closed-or-draft" in line or "stale-sha" in line for line in logs)

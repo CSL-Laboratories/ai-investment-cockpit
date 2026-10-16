@@ -19,15 +19,12 @@
 # stuck-thread watcher. GITHUB_TOKEN is read-only. The PAT identity is what
 # GitHub records as resolving the thread.
 #
-# issue_comment is intentionally not a trigger: that payload has no head.repo,
-# so a fork PR comment could otherwise admit a PAT job.
+# Review/comment events are intentionally omitted: GitHub would run this YAML
+# from the PR head, so a same-repo edit of this file would receive the PAT.
+# schedule and workflow_dispatch always run the default-branch copy.
 name: Codex auto-resolve
 
 on:
-  pull_request_review:
-    types: [submitted]
-  pull_request_review_comment:
-    types: [created]
   schedule:
     # Catch Codex reviews that land a few minutes after @codex review.
     # Offset from the gate (7/17/27/...) and stuck-thread watch (23 */2).
@@ -58,21 +55,9 @@ concurrency:
 
 jobs:
   resolve:
-    # Same-repo only. Review events only if Codex posted them.
-    # Forks never get the PAT or a checkout of untrusted code.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      ) ||
-      (
-        github.event_name == 'pull_request_review_comment' &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      )
+    # Default-branch copy only (schedule / workflow_dispatch).
+    # Forks are skipped in the script via isCrossRepository.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -94,7 +79,7 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: steps.pat.outputs.skip != 'true'
         with:
           # Trusted default-branch copy. Never run the PR head with the PAT.

@@ -38,6 +38,13 @@ CITE_PREFIX = "codex-thread-cited"
 RESOLVED_PREFIX = "codex-thread-resolved"
 VERDICT_ACTIONS = ("RESOLVE", "DECIDE", "MISSING", "AMBIGUOUS")
 SELF_CHECK_NAMES = frozenset({"codex auto-resolve", "resolve"})
+LINUX_GATES_NAMES = frozenset({"linux-gates"})
+PROTECTED_PATH_PREFIXES = (
+    "app/risk/",
+    "app/brokers/",
+    "app/orchestrator/",
+    "app/storage/audit.py",
+)
 VERDICT_BLOCK_RE = re.compile(
     r"<!--\s*" + VERDICT_PREFIX + r":(?P<tid>[A-Za-z0-9_=-]{1,128})\s*-->"
     r"(?P<body>.*?)(?=<!--\s*" + VERDICT_PREFIX + r":|\Z)",
@@ -47,11 +54,8 @@ VERDICT_ACTION_RE = re.compile(
     r"^CODEX-THREAD:\s*(RESOLVE|DECIDE|MISSING|AMBIGUOUS)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-VERDICT_HEAD_RE = re.compile(
-    r"^HEAD:\s*([0-9a-f]{40}|[0-9a-f]{64})\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-CODEX_THREAD_LINE_RE = re.compile(r"^CODEX-THREAD:\s*(\S+)", re.IGNORECASE)
+CODEX_THREAD_LINE_RE = re.compile(r"^CODEX-THREAD:\s*(.*)$", re.IGNORECASE)
+HEAD_LINE_RE = re.compile(r"^HEAD:\s*(.*)$", re.IGNORECASE)
 HTML_RESOLVED_RE = re.compile(
     r"<!--\s*codex-thread-resolved:([A-Za-z0-9_=-]{1,128}):"
     r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
@@ -72,7 +76,7 @@ query($owner: String!, $name: String!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: 50, after: $after, states: OPEN) {
       pageInfo { hasNextPage endCursor }
-      nodes { number isDraft state url title }
+      nodes { number isDraft state url title isCrossRepository }
     }
   }
 }
@@ -86,6 +90,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
       state
       url
       title
+      isCrossRepository
       headRefOid
       reviewThreads(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
@@ -116,6 +121,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       number
       isDraft
       state
+      isCrossRepository
       headRefOid
     }
   }
@@ -125,6 +131,9 @@ GITHUB_GRAPHQL_CHECKS = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      isDraft
+      state
+      isCrossRepository
       headRefOid
       commits(last: 1) {
         nodes {
@@ -353,26 +362,45 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
         if not tid:
             continue
         block = match.group("body") or ""
-        raw_actions: list[str] = []
+        thread_lines = 0
+        head_values: list[str] = []
         for line in block.splitlines():
-            prefix = CODEX_THREAD_LINE_RE.match(line.strip())
-            if prefix:
-                raw_actions.append(prefix.group(1).upper())
-        actions = VERDICT_ACTION_RE.findall(block)
-        heads = VERDICT_HEAD_RE.findall(block)
-        digest = safe_sha(heads[-1] if heads else "")
-        if any(action not in VERDICT_ACTIONS for action in raw_actions) or len(set(a.upper() for a in actions)) > 1:
-            found.append(ThreadVerdict(tid, digest, "AMBIGUOUS", reason="malformed", source="block"))
+            stripped = line.strip()
+            if CODEX_THREAD_LINE_RE.match(stripped):
+                thread_lines += 1
+            head_match = HEAD_LINE_RE.match(stripped)
+            if head_match:
+                head_values.append(head_match.group(1).strip())
+        actions = [str(item).upper() for item in VERDICT_ACTION_RE.findall(block)]
+        if not thread_lines:
+            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="missing-action", source="block"))
             continue
-        if not actions:
-            found.append(ThreadVerdict(tid, digest, "AMBIGUOUS", reason="missing-action", source="block"))
+        if thread_lines != len(actions) or len(set(actions)) != 1:
+            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="malformed", source="block"))
             continue
-        kind = str(actions[-1]).upper()
+        if len(head_values) != 1:
+            reason = "missing-head" if not head_values else "malformed-head"
+            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason=reason, source="block"))
+            continue
+        digest = safe_sha(head_values[0])
         if not digest:
-            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="missing-head", source="block"))
+            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="malformed-head", source="block"))
             continue
-        found.append(ThreadVerdict(tid, digest, kind, source="block"))
-    return found
+        found.append(ThreadVerdict(tid, digest, actions[-1], source="block"))
+    collapsed: dict[tuple[str, str], ThreadVerdict] = {}
+    order: list[tuple[str, str]] = []
+    for verdict in found:
+        key = (verdict.thread_id, verdict.sha)
+        prev = collapsed.get(key)
+        if prev is None:
+            collapsed[key] = verdict
+            order.append(key)
+            continue
+        if prev.verdict != verdict.verdict:
+            collapsed[key] = ThreadVerdict(
+                verdict.thread_id, verdict.sha, "AMBIGUOUS", reason="conflict", source="block"
+            )
+    return [collapsed[key] for key in order]
 
 
 def parse_resolved_markers(text: str | None) -> list[tuple[str, str]]:
@@ -420,12 +448,23 @@ def stamped_verdicts_from(item: dict[str, Any]) -> list[StampedVerdict]:
 def latest_verdicts(
     items: list[dict[str, Any]],
 ) -> dict[tuple[str, str], StampedVerdict]:
+    """DECIDE / MISSING / AMBIGUOUS stick for that head; a later RESOLVE cannot override."""
     latest: dict[tuple[str, str], StampedVerdict] = {}
     for item in items:
         for stamped in stamped_verdicts_from(item):
             key = (stamped.verdict.thread_id, stamped.verdict.sha)
             prev = latest.get(key)
-            if prev is None or stamped.when >= prev.when:
+            if prev is None:
+                latest[key] = stamped
+                continue
+            prev_kind = prev.verdict.verdict
+            new_kind = stamped.verdict.verdict
+            if prev_kind != "RESOLVE" and new_kind == "RESOLVE":
+                continue
+            if prev_kind == "RESOLVE" and new_kind != "RESOLVE":
+                latest[key] = stamped
+                continue
+            if stamped.when >= prev.when:
                 latest[key] = stamped
     return latest
 
@@ -435,7 +474,43 @@ def check_context_name(node: dict[str, Any]) -> str:
 
 
 def is_self_check(node: dict[str, Any]) -> bool:
-    return check_context_name(node) in SELF_CHECK_NAMES
+    """Only ignore this job while it is in progress. Never drop a required context."""
+    if node.get("isRequired"):
+        return False
+    if check_context_name(node) not in SELF_CHECK_NAMES:
+        return False
+    status = str(node.get("status") or node.get("state") or "").upper()
+    return status in {"", "IN_PROGRESS", "QUEUED", "WAITING", "PENDING"}
+
+
+def path_is_protected(path: str) -> bool:
+    text = (path or "").replace("\\", "/").lstrip("./")
+    if not text:
+        return False
+    for prefix in PROTECTED_PATH_PREFIXES:
+        if prefix.endswith("/"):
+            if text == prefix[:-1] or text.startswith(prefix):
+                return True
+        elif text == prefix or text.startswith(prefix + "/"):
+            return True
+    return False
+
+
+def linux_gates_success(nodes: list[dict[str, Any]]) -> bool:
+    gates = [n for n in nodes if check_context_name(n) in LINUX_GATES_NAMES]
+    if not gates:
+        return False
+    return all(check_run_strict_success(n) for n in gates)
+
+
+def check_run_strict_success(node: dict[str, Any]) -> bool:
+    if "conclusion" not in node and "status" not in node:
+        return str(node.get("state") or "").upper() == "SUCCESS"
+    status = str(node.get("status") or "").upper()
+    conclusion = str(node.get("conclusion") or "").upper()
+    if status and status != "COMPLETED":
+        return False
+    return conclusion == "SUCCESS"
 
 
 def check_run_ok(node: dict[str, Any]) -> bool:
@@ -463,6 +538,8 @@ def required_checks_green(rollup: dict[str, Any] | None) -> tuple[bool, str]:
     if has_next:
         return False, "checks=truncated"
     nodes = [n for n in nodes if not is_self_check(n)]
+    if not linux_gates_success(nodes):
+        return False, "checks=linux-gates-not-green"
     required = [n for n in nodes if n.get("isRequired")]
     if required:
         if all(check_run_ok(n) for n in required):
@@ -777,6 +854,10 @@ def fetch_head_state(gh: GitHub, cfg: Config, number: int) -> tuple[str, dict[st
         token=cfg.github_token,
     )
     pr = ((data.get("repository") or {}).get("pullRequest")) or {}
+    if pr.get("isDraft") or str(pr.get("state") or "OPEN") not in {"OPEN", "open"}:
+        return "", None
+    if pr.get("isCrossRepository"):
+        return "", None
     live = safe_sha(pr.get("headRefOid"))
     commits = ((pr.get("commits") or {}).get("nodes")) or []
     if not commits:
@@ -888,11 +969,18 @@ def classify_thread(
     comments = thread_comments(thread) + issue_comments
     if already_resolved_on_sha(comments, thread_id, head_sha):
         return "already-marked", None
+    if path_is_protected(str(thread.get("path") or "")):
+        return "protected-path", None
+    any_for_thread = [s for (tid, _sha), s in latest.items() if tid == thread_id]
+    if not any_for_thread:
+        return "no-verdict", None
+    newest = max(any_for_thread, key=lambda item: item.when)
     stamped = latest.get((thread_id, head_sha))
+    if newest.verdict.sha != head_sha:
+        if not newest.verdict.sha:
+            return "ambiguous", newest.verdict
+        return "stale-sha", None
     if stamped is None:
-        any_for_thread = [s for (tid, _sha), s in latest.items() if tid == thread_id]
-        if any_for_thread:
-            return "stale-sha", None
         return "no-verdict", None
     if stamped.verdict.verdict != "RESOLVE":
         return stamped.verdict.verdict.lower(), stamped.verdict
@@ -983,11 +1071,17 @@ def scan_pr(
     if pr.get("isDraft") or str(pr.get("state") or "OPEN") not in {"OPEN", "open"}:
         logs.append(f"codex-auto-resolve: pr={number} skip=closed-or-draft")
         return logs
+    if pr.get("isCrossRepository"):
+        logs.append(f"codex-auto-resolve: pr={number} skip=fork")
+        return logs
     head_sha = safe_sha(pr.get("headRefOid"))
     if not head_sha:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-head")
         return logs
     live, rollup = fetch_head_state(gh, cfg, number)
+    if not live:
+        logs.append(f"codex-auto-resolve: pr={number} skip=closed-or-draft")
+        return logs
     if live != head_sha:
         logs.append(f"codex-auto-resolve: pr={number} skip=stale-sha")
         return logs
