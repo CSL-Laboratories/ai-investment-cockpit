@@ -13,7 +13,7 @@ Resolve when every condition holds:
   the mutation — never resolve on a stale SHA)
 * no owner/human decision is needed (``KEEP`` / missing / malformed / mixed
   markers fail closed and leave the needs-decision path)
-* required checks on that head are green (``statusCheckRollup.state == SUCCESS``)
+* required checks on that head are green (this workflow's own runs excluded)
 
 Writes (thread reply + ``resolveReviewThread``) use repo secret
 ``CODEX_TRIGGER_PAT`` — the same PAT that posts ``@codex review``. GITHUB_TOKEN
@@ -44,6 +44,12 @@ LINE_VERDICT_RE = re.compile(
     r"sha=([0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
     r"(?:\s+reason=(needs-decision|fix-missing|ambiguous))?\s*$"
 )
+LINE_CLAIM_RE = re.compile(
+    r"^CODEX-THREAD:\s*(RESOLVE|KEEP)\s+"
+    r"thread=([A-Za-z0-9_=-]{1,128})\s+"
+    r"sha=([0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
+    r"(?:\s+\S.*)?$"
+)
 HTML_RESOLVED_RE = re.compile(
     r"<!--\s*codex-thread-resolved:([A-Za-z0-9_=-]{1,128}):"
     r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
@@ -55,6 +61,12 @@ SAFE_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,39}/[A-Za-z0-9._-]{1,80}$")
 GATE_LINE_RE = re.compile(r"^CODEX-GATE:\s*(FIX|READY|MEDIATE)$")
 PASSING_ROLLUP = frozenset({"SUCCESS"})
 BLOCKING_ROLLUP = frozenset({"FAILURE", "ERROR", "PENDING", "EXPECTED", "CANCELLED"})
+PASSING_CHECK_CONCLUSIONS = frozenset({"SUCCESS", "NEUTRAL", "SKIPPED"})
+BLOCKING_CHECK_CONCLUSIONS = frozenset(
+    {"FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STALE", "CANCELLED", "STARTUP_FAILURE"}
+)
+OWN_WORKFLOW_NAME = "Codex auto-resolve"
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 GITHUB_GRAPHQL_PRS = """
 query($owner: String!, $name: String!, $after: String) {
@@ -76,6 +88,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
       url
       title
       headRefOid
+      isCrossRepository
       reviewThreads(first: 50, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes {
@@ -83,6 +96,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           isResolved
           path
           comments(first: 80) {
+            pageInfo { hasNextPage endCursor }
             nodes {
               databaseId
               url
@@ -105,6 +119,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       isDraft
       state
       headRefOid
+      isCrossRepository
     }
   }
 }
@@ -115,7 +130,29 @@ query($owner: String!, $name: String!, $oid: GitObjectID!) {
     object(oid: $oid) {
       ... on Commit {
         oid
-        statusCheckRollup { state }
+        statusCheckRollup {
+          state
+          contexts(first: 100) {
+            pageInfo { hasNextPage }
+            nodes {
+              __typename
+              ... on CheckRun {
+                name
+                status
+                conclusion
+                checkSuite {
+                  workflowRun {
+                    workflow { name }
+                  }
+                }
+              }
+              ... on StatusContext {
+                context
+                state
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -135,6 +172,25 @@ mutation($threadId: ID!, $body: String!) {
     body: $body
   }) {
     comment { id url }
+  }
+}
+"""
+GITHUB_GRAPHQL_THREAD_COMMENTS = """
+query($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      comments(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          databaseId
+          url
+          body
+          createdAt
+          author { login }
+        }
+      }
+    }
   }
 }
 """
@@ -290,37 +346,74 @@ def _collapse_body_verdicts(found: list[ThreadVerdict]) -> dict[tuple[str, str],
             collapsed[key] = item
             continue
         if prev.verdict != item.verdict or (item.verdict == "KEEP" and item.reason != prev.reason):
-            reason = item.reason or prev.reason or "ambiguous"
             collapsed[key] = ThreadVerdict(
                 thread_id=item.thread_id,
                 sha=item.sha,
                 verdict="KEEP",
-                reason=reason if reason != "ambiguous" and prev.verdict != item.verdict else "ambiguous",
+                reason="ambiguous",
                 source="mixed",
             )
     return collapsed
 
 
 def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
-    """Parse HTML markers and visible ``CODEX-THREAD:`` lines. KEEP wins in-body."""
+    """Parse paired HTML + visible markers. Unpaired or malformed fail closed."""
     body = text or ""
-    found: list[ThreadVerdict] = []
+    html_found: list[ThreadVerdict] = []
+    line_found: list[ThreadVerdict] = []
+    malformed: set[tuple[str, str]] = set()
     for match in HTML_VERDICT_RE.finditer(body):
         tid = safe_thread_id(match.group(1))
         digest = safe_sha(match.group(2))
         kind = match.group(3)
         if tid and digest and kind in {"RESOLVE", "KEEP"}:
-            found.append(ThreadVerdict(tid, digest, kind, source="html"))
+            html_found.append(ThreadVerdict(tid, digest, kind, source="html"))
     for line in body.splitlines():
-        match = LINE_VERDICT_RE.fullmatch(line.strip())
-        if not match:
+        stripped = line.strip()
+        valid = LINE_VERDICT_RE.fullmatch(stripped)
+        claim = LINE_CLAIM_RE.fullmatch(stripped)
+        if valid:
+            kind, tid_raw, sha_raw, reason = (
+                valid.group(1),
+                valid.group(2),
+                valid.group(3),
+                valid.group(4) or "",
+            )
+            tid = safe_thread_id(tid_raw)
+            digest = safe_sha(sha_raw)
+            if tid and digest:
+                line_found.append(ThreadVerdict(tid, digest, kind, reason=reason, source="line"))
             continue
-        kind, tid_raw, sha_raw, reason = match.group(1), match.group(2), match.group(3), match.group(4) or ""
-        tid = safe_thread_id(tid_raw)
-        digest = safe_sha(sha_raw)
-        if tid and digest:
-            found.append(ThreadVerdict(tid, digest, kind, reason=reason, source="line"))
-    return list(_collapse_body_verdicts(found).values())
+        if claim:
+            tid = safe_thread_id(claim.group(2))
+            digest = safe_sha(claim.group(3))
+            if tid and digest:
+                malformed.add((tid, digest))
+    html_map = _collapse_body_verdicts(html_found)
+    line_map = _collapse_body_verdicts(line_found)
+    keys = set(html_map) | set(line_map) | malformed
+    paired: list[ThreadVerdict] = []
+    for key in keys:
+        tid, digest = key
+        if key in malformed:
+            paired.append(ThreadVerdict(tid, digest, "KEEP", reason="ambiguous", source="malformed"))
+            continue
+        html_item = html_map.get(key)
+        line_item = line_map.get(key)
+        if html_item is None or line_item is None:
+            paired.append(ThreadVerdict(tid, digest, "KEEP", reason="ambiguous", source="unpaired"))
+            continue
+        if html_item.verdict != line_item.verdict:
+            paired.append(ThreadVerdict(tid, digest, "KEEP", reason="ambiguous", source="mixed"))
+            continue
+        reason = line_item.reason if line_item.verdict == "KEEP" else ""
+        if html_item.source == "mixed" or line_item.source == "mixed":
+            paired.append(ThreadVerdict(tid, digest, "KEEP", reason="ambiguous", source="mixed"))
+            continue
+        paired.append(
+            ThreadVerdict(tid, digest, html_item.verdict, reason=reason, source="paired")
+        )
+    return paired
 
 
 def parse_resolved_markers(text: str | None) -> list[tuple[str, str]]:
@@ -368,10 +461,73 @@ def latest_verdicts(
     return latest
 
 
+def _workflow_name_of(node: dict[str, Any]) -> str:
+    suite = node.get("checkSuite") if isinstance(node.get("checkSuite"), dict) else {}
+    run = suite.get("workflowRun") if isinstance(suite.get("workflowRun"), dict) else {}
+    workflow = run.get("workflow") if isinstance(run.get("workflow"), dict) else {}
+    return str(workflow.get("name") or "")
+
+
+def _is_own_check(node: dict[str, Any]) -> bool:
+    return _workflow_name_of(node) == OWN_WORKFLOW_NAME
+
+
+def _check_run_outcome(node: dict[str, Any]) -> str:
+    status = str(node.get("status") or "").upper()
+    conclusion = str(node.get("conclusion") or "").upper()
+    if status and status not in {"COMPLETED"}:
+        return "pending"
+    if conclusion in PASSING_CHECK_CONCLUSIONS:
+        return "green"
+    if conclusion in BLOCKING_CHECK_CONCLUSIONS:
+        return conclusion.lower()
+    if not conclusion:
+        return "pending"
+    return conclusion.lower()
+
+
+def _status_outcome(node: dict[str, Any]) -> str:
+    state = str(node.get("state") or "").upper()
+    if state in PASSING_ROLLUP:
+        return "green"
+    if not state:
+        return "missing"
+    if state in BLOCKING_ROLLUP or state == "PENDING":
+        return state.lower()
+    return state.lower()
+
+
 def required_checks_green(rollup: dict[str, Any] | None) -> tuple[bool, str]:
-    """True only when the commit rollup is SUCCESS. Missing/pending fail closed."""
+    """True when remaining checks (excluding this workflow) are green.
+
+    Missing, pending, failing, or truncated context pages fail closed.
+    This workflow's own check runs are ignored so a review-triggered run
+    does not block on its IN_PROGRESS / CANCELLED rollup entry.
+    """
     if not isinstance(rollup, dict):
         return False, "checks=missing"
+    contexts = rollup.get("contexts")
+    if isinstance(contexts, dict) and ("nodes" in contexts or "pageInfo" in contexts):
+        page = contexts.get("pageInfo") if isinstance(contexts.get("pageInfo"), dict) else {}
+        if page.get("hasNextPage"):
+            return False, "checks=truncated"
+        nodes = [n for n in (contexts.get("nodes") or []) if isinstance(n, dict)]
+        remaining: list[str] = []
+        for node in nodes:
+            typename = str(node.get("__typename") or "")
+            if typename == "CheckRun" or ("conclusion" in node or "checkSuite" in node):
+                if _is_own_check(node):
+                    continue
+                remaining.append(_check_run_outcome(node))
+                continue
+            if typename == "StatusContext" or "context" in node:
+                remaining.append(_status_outcome(node))
+        if not remaining:
+            return False, "checks=missing"
+        blocking = [item for item in remaining if item != "green"]
+        if blocking:
+            return False, f"checks={blocking[0]}"
+        return True, "checks=green"
     state = str(rollup.get("state") or "").upper()
     if state in PASSING_ROLLUP:
         return True, "checks=green"
@@ -540,19 +696,33 @@ def cheap_codex_event(event: dict[str, Any], event_name: str) -> bool:
     return False
 
 
-def same_repo_pull(event: dict[str, Any], repository: str) -> bool:
-    pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
-    if not pr:
-        issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
-        if not issue.get("pull_request"):
-            return True
-        return True
+def head_repo_of(pr: dict[str, Any] | None) -> str:
+    if not isinstance(pr, dict):
+        return ""
     head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
     repo = head.get("repo") if isinstance(head.get("repo"), dict) else {}
-    full = str(repo.get("full_name") or "")
-    if not full:
-        return True
-    return full == repository
+    return str(repo.get("full_name") or "")
+
+
+def trusted_association(value: str | None) -> bool:
+    return str(value or "").upper() in TRUSTED_ASSOCIATIONS
+
+
+def same_repo_pull(event: dict[str, Any], repository: str) -> bool:
+    """Fail closed: missing head.repo is not same-repo.
+
+    ``issue_comment`` payloads have no ``pull_request.head``. The workflow
+    admit job looks that PR up before the PAT job starts; this helper
+    only proves same-repo when the event already carries head.repo.
+    """
+    pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else {}
+    if pr:
+        full = head_repo_of(pr)
+        return bool(full) and full == repository
+    issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
+    if issue.get("pull_request"):
+        return False
+    return True
 
 
 def should_scan_event(cfg: Config, load_event: Callable[[str], dict[str, Any]] | None = None) -> bool:
@@ -573,6 +743,9 @@ def should_scan_event(cfg: Config, load_event: Callable[[str], dict[str, Any]] |
         return False
     if not cheap_codex_event(event, cfg.event_name):
         return False
+    if cfg.event_name == "issue_comment":
+        # Admit job already proved same-repo; scan_pr re-checks isCrossRepository.
+        return True
     return same_repo_pull(event, cfg.repository)
 
 
@@ -601,6 +774,38 @@ def list_open_prs(gh: GitHub, cfg: Config) -> list[dict[str, Any]]:
     return found
 
 
+def fill_thread_comments(gh: GitHub, cfg: Config, thread: dict[str, Any]) -> dict[str, Any]:
+    """Paginate comments; refuse to resolve if the connection stays truncated."""
+    conn = thread.get("comments") if isinstance(thread.get("comments"), dict) else {}
+    nodes = [n for n in (conn.get("nodes") or []) if isinstance(n, dict)]
+    page = conn.get("pageInfo") if isinstance(conn.get("pageInfo"), dict) else {}
+    truncated = bool(page.get("hasNextPage"))
+    after = page.get("endCursor")
+    tid = str(thread.get("id") or "")
+    if truncated and tid:
+        truncated = True
+        for _ in range(20):
+            data = gh.graphql(
+                GITHUB_GRAPHQL_THREAD_COMMENTS,
+                {"id": tid, "after": after},
+                token=cfg.github_token,
+            )
+            more = ((data.get("node") or {}).get("comments")) or {}
+            nodes.extend(n for n in (more.get("nodes") or []) if isinstance(n, dict))
+            page = more.get("pageInfo") if isinstance(more.get("pageInfo"), dict) else {}
+            if not page.get("hasNextPage"):
+                truncated = False
+                break
+            after = page.get("endCursor")
+    filled = dict(thread)
+    filled["comments"] = {
+        "nodes": nodes,
+        "pageInfo": {"hasNextPage": truncated, "endCursor": after},
+    }
+    filled["commentsTruncated"] = truncated
+    return filled
+
+
 def list_pr(gh: GitHub, cfg: Config, number: int) -> dict[str, Any]:
     threads: list[dict[str, Any]] = []
     after = None
@@ -620,8 +825,9 @@ def list_pr(gh: GitHub, cfg: Config, number: int) -> dict[str, Any]:
         if not page.get("hasNextPage"):
             break
         after = page.get("endCursor")
+    filled = [fill_thread_comments(gh, cfg, thread) for thread in threads]
     pr_meta = dict(pr_meta)
-    pr_meta["reviewThreads"] = {"nodes": threads}
+    pr_meta["reviewThreads"] = {"nodes": filled}
     return pr_meta
 
 
@@ -734,11 +940,14 @@ def classify_thread(
         return "bad-thread-id", None
     if thread.get("isResolved"):
         return "already-resolved", None
+    if thread.get("commentsTruncated"):
+        return "comments-truncated", None
     comments = thread_comments(thread) + issue_comments
-    if already_resolved_on_sha(comments, thread_id, head_sha):
-        return "already-marked", None
     stamped = latest.get((thread_id, head_sha))
+    marked = already_resolved_on_sha(comments, thread_id, head_sha)
     if stamped is None:
+        if marked:
+            return "resolve", ThreadVerdict(thread_id, head_sha, "RESOLVE", source="marker")
         any_for_thread = [s for (tid, _sha), s in latest.items() if tid == thread_id]
         if any_for_thread:
             return "stale-sha", None
@@ -756,6 +965,7 @@ def reply_and_resolve(
     thread_id: str,
     sha: str,
     excerpt: str,
+    already_marked: bool = False,
 ) -> str:
     live = fetch_head_sha(gh, cfg, number)
     if not live or live != sha:
@@ -767,28 +977,36 @@ def reply_and_resolve(
     live = fetch_head_sha(gh, cfg, number)
     if live != sha:
         return "stale-sha"
-    resolved = gh.graphql(
-        RESOLVE_THREAD,
-        {"id": thread_id},
-        token=cfg.codex_pat,
-    )
+    if not already_marked:
+        try:
+            gh.graphql(
+                REPLY_THREAD,
+                {"threadId": thread_id, "body": build_resolve_reply(thread_id, sha, excerpt)},
+                token=cfg.codex_pat,
+            )
+        except Exception:
+            return "reply-error"
+        live = fetch_head_sha(gh, cfg, number)
+        if live != sha:
+            return "stale-after-reply"
+        rollup = fetch_rollup(gh, cfg, sha)
+        ok, _reason = required_checks_green(rollup)
+        if not ok:
+            return _reason
+    try:
+        resolved = gh.graphql(
+            RESOLVE_THREAD,
+            {"id": thread_id},
+            token=cfg.codex_pat,
+        )
+    except Exception:
+        return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
     echoed = str(thread.get("id") or "")
     if echoed != thread_id:
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
-    live = fetch_head_sha(gh, cfg, number)
-    if live != sha:
-        return "stale-after-resolve"
-    try:
-        gh.graphql(
-            REPLY_THREAD,
-            {"threadId": thread_id, "body": build_resolve_reply(thread_id, sha, excerpt)},
-            token=cfg.codex_pat,
-        )
-    except Exception:
-        return "reply-error"
     return "posted"
 
 
@@ -797,13 +1015,19 @@ def scan_pr(
     cfg: Config,
     gh: GitHub,
     now: datetime,
+    posted_run: list[int] | None = None,
 ) -> list[str]:
     logs: list[str] = []
     number = int(pr.get("number") or 0)
     if not number:
         return logs
+    if posted_run is None:
+        posted_run = [0]
     if "reviewThreads" not in pr or "headRefOid" not in pr:
         pr = list_pr(gh, cfg, number)
+    if pr.get("isCrossRepository") is True:
+        logs.append(f"codex-auto-resolve: pr={number} skip=fork")
+        return logs
     if pr.get("isDraft") or str(pr.get("state") or "OPEN") not in {"OPEN", "open"}:
         logs.append(f"codex-auto-resolve: pr={number} skip=closed-or-draft")
         return logs
@@ -826,12 +1050,12 @@ def scan_pr(
         issue_comments + [c for t in threads for c in thread_comments(t)],
         now,
     )
-    posted_run = 0
     if not cfg.codex_pat:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-secret")
         return logs
     for thread in threads:
-        tid = str(thread.get("id") or "?")
+        tid_raw = str(thread.get("id") or "?")
+        tid = safe_thread_id(tid_raw) or "unsafe-thread-id"
         reason, verdict = classify_thread(
             thread, head_sha=head_sha, latest=latest, issue_comments=issue_comments
         )
@@ -841,24 +1065,28 @@ def scan_pr(
         if not checks_ok:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={checks_reason}")
             continue
-        if posted_today >= cfg.max_per_pr_per_day or posted_run >= cfg.max_per_run:
+        if posted_today >= cfg.max_per_pr_per_day or posted_run[0] >= cfg.max_per_run:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=over-cap")
             continue
         excerpt = ruling_excerpt(items, verdict.thread_id if verdict else tid, head_sha, cfg.quote_limit)
+        marked = already_resolved_on_sha(
+            thread_comments(thread) + issue_comments, tid if tid != "unsafe-thread-id" else "", head_sha
+        )
         try:
             result = reply_and_resolve(
                 gh,
                 cfg,
                 number=number,
-                thread_id=tid,
+                thread_id=tid_raw,
                 sha=head_sha,
                 excerpt=excerpt,
+                already_marked=marked,
             )
         except Exception:
             result = "error"
         if result == "posted":
             posted_today += 1
-            posted_run += 1
+            posted_run[0] += 1
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} resolve=posted sha={head_sha}")
         else:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={result}")
@@ -892,9 +1120,10 @@ def run(
         print("codex-auto-resolve: failed to list pull requests")
         return 1
     logs: list[str] = []
+    posted_run = [0]
     for pr in prs:
         try:
-            logs.extend(scan_pr(pr, cfg, gh, now))
+            logs.extend(scan_pr(pr, cfg, gh, now, posted_run=posted_run))
         except Exception:
             logs.append(f"codex-auto-resolve: pr={pr.get('number')} error")
     for line in logs:
@@ -903,9 +1132,16 @@ def run(
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
             handle.write("### Codex auto-resolve\n\n```text\n")
-            handle.write("\n".join(logs) or "no-op")
+            handle.write("\n".join(sanitize_summary_line(line) for line in logs) or "no-op")
             handle.write("\n```\n")
     return 0
+
+
+def sanitize_summary_line(line: str) -> str:
+    """Keep untrusted thread ids from breaking the step-summary fence."""
+    text = "".join(ch if ch.isprintable() else " " for ch in (line or ""))
+    text = text.replace("```", "'''").replace("<", "&lt;").replace(">", "&gt;")
+    return text[:500]
 
 
 def main() -> int:

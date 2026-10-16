@@ -235,9 +235,9 @@ Visible companion line:
 - `head_sha` is the 40-character hex of the PR head Codex reviewed. A marker whose SHA is not the current head is ignored (never resolve on a stale SHA).
 - `RESOLVE` = the fix is already on that exact head and no owner/human decision is needed.
 - `KEEP` = a decision is needed, the fix is missing, or it is ambiguous. If unsure, KEEP.
-- `CODEX-GATE: READY` is not a per-thread resolve. Mixed or malformed markers fail closed to KEEP.
+- `CODEX-GATE: READY` is not a per-thread resolve. Auto-resolve requires the HTML marker and the matching visible companion line (same thread, SHA, and decision). HTML-only, line-only, mixed, or malformed companions fail closed to KEEP.
 
-After #124 / #131 merge, those prompts should keep "do not resolve/push/merge yourself" and append this marker. Helper: `mediation_verdict_instructions()` in `.github/scripts/codex_auto_resolve.py`.
+#131 has merged. After #124 lands, those prompts should keep "do not resolve/push/merge yourself" and append this marker. Helper: `mediation_verdict_instructions()` in `.github/scripts/codex_auto_resolve.py`. This consumer does not post `@codex review`.
 
 ## Automations
 

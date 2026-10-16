@@ -95,6 +95,8 @@ class FakeGitHub(mod.GitHub):
         self.replies: list[tuple[str, str]] = []
         self.fail_resolve = False
         self.fail_reply = False
+        self.thread_comment_extra: dict[str, list[dict]] = {}
+        self.thread_comments_truncated: set[str] = set()
 
     def _unused(self, *args, **kwargs):
         raise AssertionError("real gh invoked")
@@ -117,6 +119,19 @@ class FakeGitHub(mod.GitHub):
             body = str(variables["body"])
             self.replies.append((tid, body))
             return {"addPullRequestReviewThreadReply": {"comment": {"id": "C1", "url": "https://ex/c"}}}
+        if "PullRequestReviewThread" in query:
+            tid = str(variables.get("id") or "")
+            extra = list(self.thread_comment_extra.get(tid, []))
+            truncated = tid in self.thread_comments_truncated
+            return {
+                "node": {
+                    "id": tid,
+                    "comments": {
+                        "pageInfo": {"hasNextPage": truncated, "endCursor": "c2" if truncated else None},
+                        "nodes": extra,
+                    },
+                }
+            }
         if "statusCheckRollup" in query:
             oid = str(variables.get("oid") or "")
             return {"repository": {"object": {"oid": oid, "statusCheckRollup": self.rollup_by_sha.get(oid)}}}
@@ -192,7 +207,7 @@ def test_marker_round_trip():
     assert f"thread={THREAD}" in line
     assert f"sha={SHA}" in line
     parsed = mod.parse_thread_verdicts(f"{html}\n{mod.visible_verdict_line(THREAD, SHA, 'RESOLVE')}")
-    assert parsed == [mod.ThreadVerdict(THREAD, SHA, "RESOLVE", source="html")]
+    assert parsed == [mod.ThreadVerdict(THREAD, SHA, "RESOLVE", source="paired")]
 
 
 def test_marker_rejects_unsafe_id():
@@ -265,7 +280,7 @@ def test_classify_stale_sha():
     assert reason == "stale-sha"
 
 
-def test_classify_already_resolved_and_marked():
+def test_classify_already_resolved_retries_unresolved_marker():
     t = thread(resolved=True, comments=[comment(CODEX, verdict_body())])
     latest = mod.latest_verdicts(mod.thread_comments(t))
     reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
@@ -279,7 +294,7 @@ def test_classify_already_resolved_and_marked():
     )
     latest = mod.latest_verdicts(mod.thread_comments(marked))
     reason, _ = mod.classify_thread(marked, head_sha=SHA, latest=latest, issue_comments=[])
-    assert reason == "already-marked"
+    assert reason == "resolve"
 
 
 def test_scan_resolves_when_safe():
@@ -438,6 +453,9 @@ def test_workflow_structure():
     assert "python3 -X utf8 -B .github/scripts/codex_auto_resolve.py" in text
     assert "contents: write" not in text
     assert "pull-requests: write" not in text
+    assert "checks: read" in text
+    assert "statuses: read" in text
+    assert "needs.admit.outputs.ok" in text
     assert "resolveReviewThread" in text
     assert "Never run the PR head with the PAT" in text
 
@@ -461,3 +479,185 @@ def test_parse_paginated_concatenated_arrays():
     raw = json.dumps([{"id": 1}]) + json.dumps([{"id": 2}])
     items = mod.parse_paginated_json(raw)
     assert [i["id"] for i in items] == [1, 2]
+
+
+def test_unpaired_line_is_not_resolvable():
+    body = f"CODEX-THREAD: RESOLVE thread={THREAD} sha={SHA}\n"
+    parsed = mod.parse_thread_verdicts(body)
+    assert len(parsed) == 1
+    assert parsed[0].verdict == "KEEP"
+    assert parsed[0].source == "unpaired"
+
+
+def test_unpaired_html_is_not_resolvable():
+    body = f"{mod.verdict_marker(THREAD, SHA, 'RESOLVE')}\n"
+    parsed = mod.parse_thread_verdicts(body)
+    assert parsed[0].verdict == "KEEP"
+    assert parsed[0].source == "unpaired"
+
+
+def test_malformed_keep_companion_fails_closed():
+    body = (
+        f"{mod.verdict_marker(THREAD, SHA, 'RESOLVE')}\n"
+        f"CODEX-THREAD: KEEP thread={THREAD} sha={SHA} reason=unresolved\n"
+    )
+    parsed = mod.parse_thread_verdicts(body)
+    assert parsed[0].verdict == "KEEP"
+    assert parsed[0].source == "malformed"
+
+
+def test_own_workflow_check_does_not_block_green_ci():
+    rollup = {
+        "state": "PENDING",
+        "contexts": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "linux-gates",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "checkSuite": {"workflowRun": {"workflow": {"name": "CI"}}},
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "resolve",
+                    "status": "IN_PROGRESS",
+                    "conclusion": None,
+                    "checkSuite": {
+                        "workflowRun": {"workflow": {"name": "Codex auto-resolve"}}
+                    },
+                },
+            ],
+        },
+    }
+    assert mod.required_checks_green(rollup) == (True, "checks=green")
+
+
+def test_truncated_check_contexts_fail_closed():
+    rollup = {
+        "state": "SUCCESS",
+        "contexts": {"pageInfo": {"hasNextPage": True}, "nodes": []},
+    }
+    ok, reason = mod.required_checks_green(rollup)
+    assert ok is False
+    assert reason == "checks=truncated"
+
+
+def test_reply_failure_does_not_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.fail_reply = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=reply-error" in line for line in logs)
+
+
+def test_reply_then_resolve_on_retry_without_second_reply():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment("github-actions[bot]", mod.resolved_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert gh.replies == []
+    assert any("resolve=posted" in line for line in logs)
+
+
+def test_run_wide_cap_shared_across_prs():
+    gh = FakeGitHub()
+    threads_a = [
+        thread(thread_id=f"PRRT_kwDOaaa{i:03d}", comments=[])
+        for i in range(10)
+    ]
+    threads_b = [
+        thread(thread_id=f"PRRT_kwDObbb{i:03d}", comments=[])
+        for i in range(10)
+    ]
+    gh.pr_by_number[12] = pr_payload(12, threads=threads_a)
+    gh.pr_by_number[13] = pr_payload(13, threads=threads_b)
+    gh.head_by_number[12] = SHA
+    gh.head_by_number[13] = SHA
+    gh.rollup_by_sha[SHA] = {"state": "SUCCESS"}
+    reviews = [
+        comment(
+            CODEX,
+            verdict_body(tid=f"PRRT_kwDOaaa{i:03d}")
+            + "\n"
+            + verdict_body(tid=f"PRRT_kwDObbb{i:03d}"),
+        )
+        for i in range(10)
+    ]
+    gh.reviews[12] = reviews
+    gh.reviews[13] = reviews
+    posted_run = [0]
+    conf = cfg(max_per_run=10, pr_number="")
+    logs = []
+    logs.extend(mod.scan_pr(gh.pr_by_number[12], conf, gh, NOW, posted_run=posted_run))
+    logs.extend(mod.scan_pr(gh.pr_by_number[13], conf, gh, NOW, posted_run=posted_run))
+    assert len(gh.resolves) == 10
+    assert posted_run[0] == 10
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_fork_pr_is_skipped_during_scan():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.pr_by_number[12]["isCrossRepository"] = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=fork" in line for line in logs)
+
+
+def test_trusted_association_does_not_treat_contributor_as_write():
+    assert mod.trusted_association("OWNER")
+    assert mod.trusted_association("MEMBER")
+    assert mod.trusted_association("COLLABORATOR")
+    assert not mod.trusted_association("CONTRIBUTOR")
+    assert not mod.trusted_association("NONE")
+
+
+def test_issue_comment_payload_is_not_same_repo_without_head():
+    event = {
+        "comment": {"user": {"login": CODEX}},
+        "issue": {"number": 12, "pull_request": {"url": "https://example/pull/12"}},
+    }
+    assert not mod.same_repo_pull(event, "CSL-Laboratories/ai-investment-cockpit")
+
+
+def test_missing_head_repo_fails_closed():
+    event = {
+        "review": {"user": {"login": CODEX}},
+        "pull_request": {"head": {"repo": {}}},
+    }
+    assert not mod.same_repo_pull(event, "CSL-Laboratories/ai-investment-cockpit")
+
+
+def test_truncated_thread_comments_do_not_resolve():
+    t = thread(comments=[comment(CODEX, verdict_body())])
+    t["commentsTruncated"] = True
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "comments-truncated"
+
+
+def test_sanitize_summary_escapes_markup():
+    dirty = "thread=PRRT_x ```evil``` <img>"
+    clean = mod.sanitize_summary_line(dirty)
+    assert "```" not in clean
+    assert "<img>" not in clean
+    assert "&lt;img&gt;" in clean
+
+
+def test_fill_thread_comments_paginates_then_refuses_if_still_truncated():
+    gh = ready_gh(threads=[thread()], reviews=[])
+    t = thread(comments=[comment(CODEX, verdict_body())])
+    t["comments"]["pageInfo"] = {"hasNextPage": True, "endCursor": "c1"}
+    gh.thread_comments_truncated.add(THREAD)
+    filled = mod.fill_thread_comments(gh, cfg(), t)
+    assert filled["commentsTruncated"] is True
