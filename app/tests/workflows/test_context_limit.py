@@ -104,7 +104,26 @@ def test_fit_packet_drops_the_tail_and_keeps_a_prefix():
     assert fit.packet.dispatched_refs.isdisjoint(item.raw_ref for item in fit.dropped)
 
 
-def test_fit_packet_is_identity_under_the_cap():
+def test_repair_reserve_tokens_matches_the_call_gate_overhead():
+    from workflows.context_limit import repair_reserve_tokens
+
+    assert repair_reserve_tokens() == estimate_tokens(worst_case_repair_overhead())
+    assert repair_reserve_tokens() > 0
+
+
+def test_fit_with_repair_reserve_sheds_items_the_call_gate_would_refuse():
+    from workflows.context_limit import repair_reserve_tokens
+
+    packet = Packet(items=tuple(_item(i, 300) for i in range(5)))
+    reserved = 10
+    full = "\n\n".join(item.text for item in packet.items)
+    cap = reserved + estimate_tokens(full) + repair_reserve_tokens() - 1
+    assert fit_packet(packet, reserved_tokens=reserved, cap=cap).dropped == ()
+    fit = fit_packet(packet, reserved_tokens=reserved + repair_reserve_tokens(), cap=cap)
+    assert fit.dropped and fit.packet.items
+    assert fit.estimated_tokens + 0 <= cap
+
+
     packet = Packet(items=(_item(1, 20),))
     fit = fit_packet(packet, reserved_tokens=5, cap=10_000)
     assert fit.fits and fit.dropped == ()
