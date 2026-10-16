@@ -7,12 +7,40 @@
   "authority": {
     "current_runtime_invariants_preserved": true,
     "live_authority_granted": false,
-    "contract_acceptance": "pending_human_digest_receipt"
+    "contract_acceptance": "pending_updated_human_digest_receipt",
+    "superseded_acceptance_receipt": {
+      "linear_issue": "CSL-212",
+      "human_linear_comment_id": "736a6b55-2b20-463c-86e1-9553a5692996",
+      "mirror_comment_id": "15c6f540-3686-49eb-a9e7-d93083313e85",
+      "accepted_by": "Lucas Guerra",
+      "accepted_by_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "accepted_at": "2026-10-16T05:21:02.659Z",
+      "reviewed_head": "f5f4cefaa9bfcac8a87654428d96c921196e53d2",
+      "accepted_contracts": {
+        "docs/replacement/SUCCESSOR-PRODUCT.md": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487",
+        "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+        "docs/replacement/MONTH-PROGRAM.md": "cd46235c7d562c2587d4eb4d8ea7557fa1958a12c4dd0e6dc45c5822eea3b41a",
+        "docs/replacement/SCOPE-AUDIT.md": "3936196bee6c160025144be2315476fcc65f271484a02cce4138f4150414ae7c"
+      },
+      "authority_research_sha256": "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938",
+      "superseded_reason": "Human review required changes to accepted governing documents; a new exact digest receipt is required.",
+      "not_granted": [
+        "implementation_completion",
+        "empirical_pass",
+        "legal_account_or_venue_eligibility",
+        "provider_permission",
+        "release_qualification",
+        "live_authority",
+        "credentials",
+        "capital_movement",
+        "merge_permission"
+      ]
+    }
   },
   "contracts": [
     {
       "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
-      "sha256": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487"
+      "sha256": "0c779d8359fe2c71ea3386698d6d706dfc6816aade9cc3a1d63f4207e3926e48"
     },
     {
       "path": "docs/replacement/ISSUE-CONTRACT.md",
@@ -24,7 +52,7 @@
     },
     {
       "path": "docs/replacement/SCOPE-AUDIT.md",
-      "sha256": "3936196bee6c160025144be2315476fcc65f271484a02cce4138f4150414ae7c"
+      "sha256": "49e331ae69d22d859b3b0f8451bd18f809715b021188c95ad55153036e51da14"
     }
   ],
   "outcomes": [
@@ -34,16 +62,26 @@
       "title": "Successor product and economic contract",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o1",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
-      "intended_outcome": "Freeze the measurable successor product and economic contract contract and exact-candidate evidence gate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
+      "intended_outcome": "Freeze the measurable successor product and economic contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
       ],
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Repository scope audit, owner decisions in CSL-212, and Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; economic thresholds remain unresolved.",
+      "research_budget": {
+        "question": "What measurable product and economic contract should govern the US-individual successor?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned product and economic contract with unresolved-decision ledger",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [],
       "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
       "discretion_class": "human_gated",
@@ -54,7 +92,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -78,7 +125,7 @@
       "title": "Multi-market evidence and replay plane",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o2",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable multi-market evidence and replay plane contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -86,8 +133,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Source-commit audit of filings, ingestion, raw-store and replay surfaces plus official Kalshi and Polymarket US documentation checked 2026-10-16; entitlement and value evidence remain unresolved.",
+      "research_budget": {
+        "question": "What evidence, entitlement, identity and replay contract supports stocks and event markets?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned evidence and replay contract with entitlement matrix",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1"
       ],
@@ -100,7 +157,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -131,7 +197,7 @@
       "title": "Instrument, portfolio and accounting semantics",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o3",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable instrument, portfolio and accounting semantics contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -139,8 +205,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Source-commit audit of book, OMS, P&L, fee, tax and reconciliation contracts; event-market resolution, collateral and cross-venue accounting semantics remain unresolved.",
+      "research_budget": {
+        "question": "What instrument, portfolio, collateral, settlement, fee, tax and accounting semantics are required?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned market and accounting semantics with reconciliation cases",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O2"
@@ -154,7 +230,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -191,7 +276,7 @@
       "title": "Strategy research and economic qualification laboratory",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o4",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable strategy research and economic qualification laboratory contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -199,8 +284,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Historical strategy screens, frozen-cohort and feasibility evidence audited at the source commit; no strategy or positive net-yield result is promoted.",
+      "research_budget": {
+        "question": "What frozen evaluation protocol can falsify strategy and net-yield claims?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "frozen strategy evaluation protocol with baselines and falsifiers",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O2",
@@ -215,7 +310,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -258,7 +362,7 @@
       "title": "Provider-neutral decision laboratory",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o5",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable provider-neutral decision laboratory contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -266,8 +370,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Provider runner and mock-route audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 and OpenAI Decisions documentation checked 2026-10-16; installed-route evidence remains unresolved.",
+      "research_budget": {
+        "question": "What provider-neutral workload and installed-route protocol can compare decision routes?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "provider comparison manifest with installed-route qualification protocol",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O2",
@@ -282,7 +396,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -325,7 +448,7 @@
       "title": "Configurable authority, execution and recovery",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o6",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable configurable authority, execution and recovery contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -335,8 +458,18 @@
         "A proposal-only is the qualification reference; C bounded direct authorization is the future target only after separate gates.",
         "A, B and C are restrictive signed profiles over one independent enforcement layer, not a global autonomy switch."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Current nine invariants, order-path and recovery audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; legal, venue and provider permissions remain unresolved.",
+      "research_budget": {
+        "question": "What restrictive A, B and C authority profiles and recovery controls are legally and operationally admissible?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "signed authority-profile and recovery contract with adversarial cases",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O3",
@@ -357,7 +490,16 @@
         "Capability-scoped qualification matrix, adversarial negative controls and unresolved legal/venue/provider decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -406,7 +548,7 @@
       "title": "GUI and CLI operator product",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o7",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable gui and cli operator product contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -414,8 +556,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Source-commit audit of Discord, FastAPI and WebSocket operator surfaces plus owner direction for shared GUI and CLI; operator studies and distribution evidence remain unresolved.",
+      "research_budget": {
+        "question": "What shared service and operator contract supports useful GUI and CLI workflows without privileged paths?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "shared operator API and GUI/CLI acceptance contract",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O2",
@@ -431,7 +583,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -480,7 +641,7 @@
       "title": "Migration and performance frontier",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o8",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable migration and performance frontier contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -488,8 +649,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Source-commit inventory and existing benchmark/evidence records; no language, runtime split or migration candidate is selected.",
+      "research_budget": {
+        "question": "What measured migration frontier justifies preserving, replacing or optimizing components?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "measured preserve-replace frontier and migration recommendation",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O2",
         "O3",
@@ -507,7 +678,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [
@@ -568,7 +748,7 @@
       "title": "Qualification, packaging and release evidence",
       "parent_issue": "CSL-212",
       "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o9",
-      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "current_state": "Updated replacement contract is under review; this outcome remains pending its exact outcome artifact and dependency receipts.",
       "intended_outcome": "Freeze the measurable qualification, packaging and release evidence contract and exact-candidate evidence gate.",
       "non_goals": [
         "No live authority, credentials, capital movement or inferred acceptance."
@@ -576,8 +756,18 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
-      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "research_basis": "Historical acceptance, security-hardening, DEC-09 and release-evidence audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; no capability is release-qualified.",
+      "research_budget": {
+        "question": "What exact-candidate evidence bundle and independent protocol supports each maturity claim?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "capability evidence matrix and release-decision packet",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
       "dependencies": [
         "O1",
         "O2",
@@ -597,7 +787,16 @@
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
-      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
       "evidence": {
         "claimed": "researched",
         "not_claimed": [

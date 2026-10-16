@@ -43,7 +43,10 @@ inferred from historical implementation.
   proposal-only the reference qualification profile and C bounded direct
   authorization the owner-selected future target. All profiles share one independent
   enforcement and evidence layer. A provider response, typed decision or confidence
-  value is an input, never permission.
+  value is an input, never permission. Profile C is not authorized by this contract
+  and cannot create a second order path: any future implementation still uses the
+  single risk-pass, mode, approval and `OrderGateway` path unless those binding
+  invariants are separately amended and reviewed.
 - A GUI and scriptable CLI use one versioned application/service API and the same
   authority checks. A TUI is optional and must be justified by measured operator
   value. No surface owns a privileged order path.

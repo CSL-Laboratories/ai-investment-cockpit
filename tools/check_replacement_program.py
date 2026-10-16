@@ -1,4 +1,4 @@
-"""Offline validator for the CSL-212 replacement-program candidate."""
+"""Offline validator for the CSL-212 replacement-program registry."""
 
 from __future__ import annotations
 
@@ -31,6 +31,41 @@ EXPECTED_CONTRACTS = {
     "docs/replacement/MONTH-PROGRAM.md",
     "docs/replacement/SCOPE-AUDIT.md",
 }
+EXPECTED_AUTHORITY_KEYS = {
+    "current_runtime_invariants_preserved",
+    "live_authority_granted",
+    "contract_acceptance",
+    "superseded_acceptance_receipt",
+}
+EXPECTED_DISCRETION = {
+    "O1": "human_gated",
+    "O2": "collaborative_judgment",
+    "O3": "human_gated",
+    "O4": "collaborative_judgment",
+    "O5": "collaborative_judgment",
+    "O6": "human_gated",
+    "O7": "collaborative_judgment",
+    "O8": "human_gated",
+    "O9": "human_gated",
+}
+RESEARCH_BUDGET_FIELDS = {
+    "question",
+    "source_classes",
+    "quota_class",
+    "artifact",
+    "stop_condition",
+}
+VERIFICATION_FIELDS = {
+    "verifier_role",
+    "method",
+    "required_evidence",
+    "self_verification_sufficient",
+}
+REQUIRED_STOP_CONDITION = (
+    "Stop after the named artifact records alternatives, falsifiers, unresolved "
+    "decisions and the smallest next experiments; continuation requires a human "
+    "Linear receipt."
+)
 REQUIRED_OUTCOME_FIELDS = {
     "key",
     "linear_issue",
@@ -69,6 +104,10 @@ def _nonempty(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _nonempty_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(_nonempty(item) for item in value)
+
+
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -76,13 +115,38 @@ def _digest(path: Path) -> str:
 def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(program.get("schema_version") == 1, "unsupported schema_version")
     _require(program.get("program_id") == "cockpit.replacement.2026-10", "wrong program_id")
-    _require(program.get("status") == "candidate", "program must remain candidate")
+    _require(program.get("status") == "candidate", "updated program must remain candidate")
     _require(program.get("controlling_issue") == "CSL-212", "missing CSL-212 lineage")
     _require(program.get("source_commit") == "73ab78d9d69494c757cec875855121b1d29320a4", "stale source commit")
     authority = program.get("authority", {})
+    _require(set(authority) == EXPECTED_AUTHORITY_KEYS, "authority keys changed")
     _require(authority.get("current_runtime_invariants_preserved") is True, "runtime invariants not preserved")
-    _require(authority.get("live_authority_granted") is False, "candidate grants live authority")
-    _require(authority.get("contract_acceptance") == "pending_human_digest_receipt", "contract acceptance inferred")
+    _require(authority.get("live_authority_granted") is False, "program grants live authority")
+    _require(authority.get("contract_acceptance") == "pending_updated_human_digest_receipt", "updated digest acceptance inferred")
+    receipt = authority.get("superseded_acceptance_receipt", {})
+    _require(receipt.get("linear_issue") == "CSL-212", "superseded receipt issue mismatch")
+    _require(receipt.get("human_linear_comment_id") == "736a6b55-2b20-463c-86e1-9553a5692996", "superseded human comment mismatch")
+    _require(receipt.get("mirror_comment_id") == "15c6f540-3686-49eb-a9e7-d93083313e85", "superseded mirror mismatch")
+    _require(receipt.get("accepted_by") == "Lucas Guerra", "superseded acceptance owner mismatch")
+    _require(receipt.get("accepted_by_linear_user_id") == "8709c8bb-e7d2-429e-89f9-89a48b7187fa", "superseded owner identity mismatch")
+    _require(receipt.get("accepted_at") == "2026-10-16T05:21:02.659Z", "superseded acceptance timestamp mismatch")
+    _require(receipt.get("reviewed_head") == "f5f4cefaa9bfcac8a87654428d96c921196e53d2", "superseded reviewed head mismatch")
+    _require(_nonempty(receipt.get("superseded_reason")), "superseded receipt reason missing")
+    _require(
+        set(receipt.get("not_granted", []))
+        == {
+            "implementation_completion",
+            "empirical_pass",
+            "legal_account_or_venue_eligibility",
+            "provider_permission",
+            "release_qualification",
+            "live_authority",
+            "credentials",
+            "capital_movement",
+            "merge_permission",
+        },
+        "acceptance exclusions changed",
+    )
 
     research = program.get("research_evidence", {}).get("authority_compliance", {})
     _require(research.get("run_id") == "trun_db705696fec649d8ad991d8f8f7b7813", "authority research run missing")
@@ -95,6 +159,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(research_file.is_file(), "authority reconciliation file missing")
     _require(re.fullmatch(r"[0-9a-f]{64}", research.get("sha256", "")) is not None, "authority reconciliation digest invalid")
     _require(_digest(research_file) == research["sha256"], "authority reconciliation digest mismatch")
+    _require(receipt.get("authority_research_sha256") == research["sha256"], "superseded research digest mismatch")
 
     contracts = program.get("contracts")
     _require(isinstance(contracts, list) and contracts, "contracts missing")
@@ -109,6 +174,13 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(path.is_file(), f"contract path missing: {rel}")
         _require(re.fullmatch(r"[0-9a-f]{64}", expected) is not None, f"invalid digest: {rel}")
         _require(_digest(path) == expected, f"contract digest mismatch: {rel}")
+    superseded_contracts = receipt.get("accepted_contracts")
+    _require(isinstance(superseded_contracts, dict), "superseded contract digest set missing")
+    _require(set(superseded_contracts) == EXPECTED_CONTRACTS, "superseded contract paths changed")
+    _require(
+        all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in superseded_contracts.values()),
+        "superseded contract digest invalid",
+    )
 
     outcomes = program.get("outcomes")
     _require(isinstance(outcomes, list) and len(outcomes) == 9, "exactly nine outcomes required")
@@ -119,17 +191,22 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     seen: set[str] = set()
     for item in outcomes:
         key = item["key"]
-        missing = REQUIRED_OUTCOME_FIELDS - set(item)
-        _require(not missing, f"{key} missing fields: {sorted(missing)}")
+        _require(set(item) == REQUIRED_OUTCOME_FIELDS, f"{key} outcome fields changed")
         _require(item["parent_issue"] == "CSL-212", f"{key} missing parent lineage")
         issue = item["linear_issue"]
         _require(isinstance(issue, str) and re.fullmatch(r"CSL-[0-9]+", issue) is not None, f"{key} invalid Linear issue")
         _require(issue not in issues, f"duplicate Linear issue: {issue}")
         issues.add(issue)
-        for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "dependency_contracts", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions"}:
+        for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "dependency_contracts", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions", "research_budget", "independent_verification"}:
             _require(_nonempty(item[field]), f"{key} empty {field}")
-        _require(item["discretion_class"] in {"bounded_autonomy", "collaborative_judgment", "human_gated"}, f"{key} invalid discretion class")
-        _require(isinstance(item["research_budget"], str) and "stop" in item["research_budget"].lower(), f"{key} research budget lacks stop condition")
+        _require(item["discretion_class"] == EXPECTED_DISCRETION[key], f"{key} discretion class changed")
+        budget = item["research_budget"]
+        _require(isinstance(budget, dict) and set(budget) == RESEARCH_BUDGET_FIELDS, f"{key} research budget fields changed")
+        for field in RESEARCH_BUDGET_FIELDS - {"source_classes"}:
+            _require(_nonempty(budget[field]), f"{key} empty research budget {field}")
+        _require(_nonempty_list(budget["source_classes"]), f"{key} empty research source class")
+        _require(budget["quota_class"] == "one_bounded_reconciliation_pass", f"{key} research quota changed")
+        _require(budget["stop_condition"] == REQUIRED_STOP_CONDITION, f"{key} research stop condition changed")
         deps = item["dependencies"]
         _require(isinstance(deps, list), f"{key} dependencies must be a list")
         for dep in deps:
@@ -141,17 +218,21 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
             _require(ref.get("status") == "pending_human_digest_receipt" and ref.get("accepted_digest") is None, f"{key} inferred dependency acceptance")
         seen.add(key)
         for field in ("non_goals", "inherited_decisions", "falsifiers", "deliverables"):
-            _require(isinstance(item[field], list) and item[field], f"{key} empty {field}")
+            _require(_nonempty_list(item[field]), f"{key} empty {field}")
         verification = item["independent_verification"]
-        _require(_nonempty(verification) and "independent" in verification.lower(), f"{key} missing independent verification")
+        _require(isinstance(verification, dict) and set(verification) == VERIFICATION_FIELDS, f"{key} verification fields changed")
+        _require(verification["verifier_role"] == "independent_non_implementer", f"{key} verifier is not independent")
+        _require(verification["method"] == "rerun_exact_candidate_and_negative_controls", f"{key} verification method changed")
+        _require(_nonempty_list(verification["required_evidence"]), f"{key} verification evidence missing")
+        _require(verification["self_verification_sufficient"] is False, f"{key} self-verification accepted")
         _require(item["completion_gate_status"] == "pending_outcome_artifact", f"{key} completion gate status is unsupported")
         _require("must be checked in" in item["completion_gate"].lower(), f"{key} completion gate falsely claims execution")
         evidence = item["evidence"]
-        _require(isinstance(evidence, dict), f"{key} evidence must be an object")
+        _require(isinstance(evidence, dict) and set(evidence) == {"claimed", "not_claimed"}, f"{key} evidence fields changed")
         claimed = evidence.get("claimed")
         not_claimed = evidence.get("not_claimed")
         _require(claimed in MATURITY, f"{key} invalid claimed maturity")
-        _require(isinstance(not_claimed, list) and not_claimed, f"{key} missing unclaimed levels")
+        _require(_nonempty_list(not_claimed), f"{key} missing unclaimed levels")
         claimed_index = MATURITY.index(claimed)
         _require(not_claimed == list(MATURITY[claimed_index + 1 :]), f"{key} invalid evidence promotion")
 

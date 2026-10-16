@@ -1,6 +1,6 @@
 ---
-title: Historical Cockpit product contract
-status: historical-for-replacement-planning
+title: Cockpit product contract pending replacement acceptance
+status: authoritative-until-replacement-digest-acceptance
 last-verified: 2026-10-16
 ---
 
@@ -10,8 +10,9 @@ last-verified: 2026-10-16
 > [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212). The proposed
 > successor contract is under review in
 > [docs/replacement/SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md).
-> This September contract is retained as historical evidence and as a source of
-> candidate safeguards, not as the replacement product target. Current runtime
+> Until the updated replacement digest receives its required human Linear receipt,
+> this September contract remains the authoritative product contract while also
+> serving as historical evidence and a source of candidate safeguards. Current runtime
 > rules, nine invariants and pre-live controls remain authoritative until separately
 > reviewed implementation amendments; the successor direction itself grants no live
 > authority or empirical PASS.

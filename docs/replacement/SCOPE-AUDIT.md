@@ -83,7 +83,7 @@ Accepted initial constraints in this session:
 | Tax | Product and tax contracts only; no corresponding tax calculation package | Formal September requirement was not implemented and is not automatically inherited |
 | Multi-strategy product | Prototype quant strategies plus one deeply specified merger candidate | No two-to-three qualified strategy suite and no accepted allocation/overlap behavior |
 | Prediction markets | Backlog and draft sidecar concepts | No accepted event instrument, resolution, settlement, collateral, fee, execution or qualification contract |
-| Provider qualification | CLI runner, model configs, mocked routes, draft Jev work | No frozen comparative workload or installed-route qualification for the replacement providers |
+| Provider qualification | CLI runner, model configs and mocked routes | No frozen comparative workload or installed-route qualification for the replacement providers |
 | Product acceptance | Thousands of tests and substantial dated evidence | Tests are implementation evidence only; no 20-day accepted pilot, full workflow acceptance, qualified strategy suite or release PASS |
 
 The current tree's concentration confirms the shape: 244 test files, 39 schema files, 26 quant files, 25 filings files, 21 workflow files, and smaller orchestrator, broker, ingestion and Discord surfaces. That is a broad prototype/application corpus, not merely a hot-path engine and not a completed product.
@@ -92,15 +92,20 @@ The current tree's concentration confirms the shape: 244 test files, 39 schema f
 
 ### Superseded by current owner direction
 
-- paper trading as the permanent release ceiling;
+- the September paper-first product target as the successor end state; current
+  non-live runtime and every pre-live gate remain binding;
 - stocks/ETFs as the only executable asset class;
 - Discord/host control as a sufficient operator product;
 - the exact two-or-three strategy launch contract;
 - the selected cash-merger strategy as the product's defining path;
 - the September tax matrix as mandatory first-release scope;
 - the fixed 20-market-day rule as a universal gate for both asset classes;
-- the exact model-role and approval policy;
-- “positive profitability not required” as the only economic completion framing.
+- the exact model-role policy and future approval-profile shape, while Invariants 1
+  and 6 keep risk-pass, approval, the client-side human gate and the single
+  `OrderGateway` path binding until separately reviewed implementation amendments;
+- the September MVP rule that positive expected profitability was not required for
+  product acceptance, replacing it with explicit net-yield, benchmark, loss and
+  uncertainty criteria while retaining honest negative and inconclusive outcomes.
 
 Superseded does not mean deleted without evidence. Historical contracts remain the source for migration cases, threats, test oracles and known failure modes.
 
@@ -270,4 +275,17 @@ Primary repository contracts: `PRODUCT.md`, `AGENTS.md`, `CLAUDE.md`, `docs/READ
 
 Research/evidence sources: `docs/research/research-report.md`, `research-supplement.md`, `llm-hybrid-trading.md`, `upside-and-roi.md`, `gate-feasibility-and-value-2026-09-06.md`, `dec03-strategy-selection-2026-08-14.md`, and RW-26 through RW-37 evidence/research records. Historical scope sources were read only as superseded context: `cockpit-plan-original.md`, `capability-expansion-master-plan.md`, `enhancements-and-additions.md`, and `draft-discord-control-plane.md`.
 
-Current external API facts used in the replacement packet came from official Kalshi, Polymarket US and OpenAI documentation, with Context7 used for the current OpenAI Python SDK surface. External facts remain moving targets and must be pinned again at implementation/evaluation time.
+Current external API facts used in the replacement packet were checked on
+2026-10-16 against:
+
+- [Kalshi demo environment](https://docs.kalshi.com/getting_started/demo_env), which
+  documents mock funds, separate credentials and the Trade API v2 demo roots;
+- [Polymarket US API overview](https://docs.polymarket.us/trader-guide/api-overview),
+  which distinguishes the personal-account Retail API from exchange-participant APIs;
+- [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions), which
+  described the API as public beta, `gpt-6-luna` as the only listed model and Python
+  SDK 3.26.0 or later for its examples.
+
+Context7 was used for the current OpenAI Python SDK surface. These are
+source-documented facts, not local qualification, and remain moving targets that must
+be pinned again at implementation and evaluation time.

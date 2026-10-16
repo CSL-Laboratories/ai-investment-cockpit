@@ -1,5 +1,6 @@
 """Negative controls for the replacement-program contract."""
 from __future__ import annotations
+
 import copy
 import importlib.util
 import unittest
@@ -15,7 +16,7 @@ class ReplacementProgramTests(unittest.TestCase):
     def setUp(self) -> None:
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
 
-    def test_checked_in_candidate_passes(self) -> None:
+    def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
     def test_required_fail_closed_controls(self) -> None:
@@ -30,6 +31,16 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][0]["evidence"].update(not_claimed=["release_qualified"]),
             lambda p: p["outcomes"][0].pop("independent_verification"),
             lambda p: p["authority"].update(live_authority_granted=True),
+            lambda p: p["authority"].update(bounded_direct_authorized=True),
+            lambda p: p["outcomes"][0]["falsifiers"].append(""),
+            lambda p: p["outcomes"][0]["deliverables"].append("   "),
+            lambda p: p["outcomes"][0]["non_goals"].append(""),
+            lambda p: p["outcomes"][0]["inherited_decisions"].append(""),
+            lambda p: p["outcomes"][0]["research_budget"]["source_classes"].append(""),
+            lambda p: p["outcomes"][0]["research_budget"].update(stop_condition="nonstop unbounded"),
+            lambda p: p["outcomes"][0]["independent_verification"].update(verifier_role="not_independent"),
+            lambda p: p["outcomes"][0]["independent_verification"]["required_evidence"].append(""),
+            lambda p: p["outcomes"][5].update(discretion_class="bounded_autonomy"),
             lambda p: p["research_evidence"]["authority_compliance"].update(status="running"),
             lambda p: p["research_evidence"]["authority_compliance"].update(claim="live_qualified"),
             lambda p: p["research_evidence"]["authority_compliance"].update(sha256="0" * 64),
@@ -37,9 +48,8 @@ class ReplacementProgramTests(unittest.TestCase):
         for mutation in mutations:
             candidate = copy.deepcopy(self.program)
             mutation(candidate)
-            with self.subTest(mutation=mutation):
-                with self.assertRaises(CHECKER.ContractError):
-                    CHECKER.validate(candidate)
+            with self.subTest(mutation=mutation), self.assertRaises(CHECKER.ContractError):
+                CHECKER.validate(candidate)
 
 if __name__ == "__main__":
     unittest.main()
