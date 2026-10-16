@@ -19,6 +19,8 @@ Resolve when every condition holds:
 Writes (thread reply + ``resolveReviewThread``) use repo secret
 ``CODEX_TRIGGER_PAT`` — the same PAT that posts ``@codex review``. GITHUB_TOKEN
 is read-only. The PAT identity is what GitHub records as resolving the thread.
+A success receipt is posted only when the mutation's ``resolvedBy`` matches
+that identity, so a concurrent human resolve is not attributed to the bot.
 
 Missing ``CODEX_TRIGGER_PAT`` is a notice, not a failure.
 """
@@ -199,7 +201,7 @@ query($id: ID!, $cursor: String!) {
 RESOLVE_THREAD = """
 mutation($id: ID!) {
   resolveReviewThread(input: {threadId: $id}) {
-    thread { id isResolved }
+    thread { id isResolved resolvedBy { login } }
   }
 }
 """
@@ -1293,6 +1295,12 @@ def reply_and_resolve(
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
+    # resolveReviewThread is a successful no-op on an already-resolved
+    # thread. A human who won the race would otherwise get a PAT success
+    # receipt (and a cap charge). Fail closed unless GitHub attributes
+    # the resolve to the PAT identity.
+    if not login_matches(resolved_by_login(thread), cfg.pat_login):
+        return "already-resolved"
     stamp = now or utcnow()
     if publish_resolved_marker(
         gh,
@@ -1382,6 +1390,8 @@ def scan_pr(
     if not pat_login:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-pat-login")
         return logs
+    if not cfg.pat_login:
+        cfg = replace(cfg, pat_login=pat_login)
     posted_today = resolved_count_today(
         threads,
         issue_comments,

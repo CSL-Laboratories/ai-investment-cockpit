@@ -130,6 +130,7 @@ class FakeGitHub(mod.GitHub):
         self.fail_issue_post = False
         self.fail_viewer = False
         self.viewer_login = PAT_LOGIN
+        self.resolve_by_login: str | None = PAT_LOGIN
 
     def _unused(self, *args, **kwargs):
         raise AssertionError("real gh invoked")
@@ -156,7 +157,12 @@ class FakeGitHub(mod.GitHub):
                 raise RuntimeError("github graphql errors")
             tid = str(variables["id"])
             self.resolves.append(tid)
-            return {"resolveReviewThread": {"thread": {"id": tid, "isResolved": True}}}
+            thread_payload: dict[str, object] = {"id": tid, "isResolved": True}
+            if self.resolve_by_login:
+                thread_payload["resolvedBy"] = {"login": self.resolve_by_login}
+            else:
+                thread_payload["resolvedBy"] = None
+            return {"resolveReviewThread": {"thread": thread_payload}}
         if "addPullRequestReviewThreadReply" in query:
             if token != "pat":
                 raise AssertionError("reply must use CODEX_TRIGGER_PAT")
@@ -1028,6 +1034,27 @@ def test_mutation_error_aborts_remaining_scan():
     assert any("skip=abort-scan" in line for line in logs)
 
 
+def test_human_resolve_race_does_not_publish_receipt():
+    remaining = [2]
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.resolve_by_login = "alice"
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW, remaining_run=remaining)
+    assert gh.resolves == [THREAD]
+    assert gh.issue_posts == []
+    assert remaining == [2]
+    assert any("skip=already-resolved" in line for line in logs)
+    assert not any("resolve=posted" in line for line in logs)
+
+
+def test_missing_resolved_by_after_mutation_does_not_publish_receipt():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.resolve_by_login = ""
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert gh.issue_posts == []
+    assert any("skip=already-resolved" in line for line in logs)
+
+
 def test_scan_skips_retry_mark_when_human_resolved():
     gh = ready_gh(
         threads=[
@@ -1082,6 +1109,27 @@ def test_retry_resolve_skips_second_cite():
     assert gh.resolves == [THREAD]
     assert gh.replies == []
     assert any("resolve=posted" in line for line in logs)
+
+
+def test_retry_resolve_human_race_does_not_publish_receipt():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    gh.resolve_by_login = "alice"
+    remaining = [3]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW, remaining_run=remaining)
+    assert gh.resolves == [THREAD]
+    assert gh.issue_posts == []
+    assert remaining == [3]
+    assert any("skip=already-resolved" in line for line in logs)
 
 
 def test_idempotent_second_run():
@@ -1329,6 +1377,7 @@ def test_script_never_posts_codex_review_or_pushes():
     assert "git push" not in text
     assert "mergePullRequest" not in text
     assert "resolveReviewThread" in text
+    assert "resolvedBy { login }" in text
     assert "CODEX_TRIGGER_PAT" in text
 
 
