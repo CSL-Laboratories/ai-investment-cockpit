@@ -183,8 +183,19 @@ def test_circular_raw_raises_instead_of_overflowing():
     nested = 0
     for _ in range(3000):
         nested = [nested]
-    with pytest.raises(ValueError, match="JSON nesting too deep"):
-        cockpit_quant.content_hash(nested)
+    assert cockpit_quant.content_hash(nested) == python_content_hash(nested)
+
+
+def test_direct_content_hash_accepts_default_str_values():
+    """A date is not JSON. `python_content_hash` still hashes one default=str dump."""
+    import datetime
+
+    import cockpit_quant
+
+    raw = {"received": datetime.date(2026, 10, 16)}
+    assert cockpit_quant.content_hash(raw) == python_content_hash(raw)
+    numbered = {2: datetime.date(2026, 10, 16), 10: "b"}
+    assert cockpit_quant.content_hash(numbered) == python_content_hash(numbered)
 
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):

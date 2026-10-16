@@ -225,6 +225,23 @@ fn escape_with_python_unicode(py: Python<'_>, text: &str) -> PyResult<String> {
     Ok(escaped.chars().take(MAX_LEN).collect())
 }
 
+fn json_dump_kwargs(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("sort_keys", true)?;
+    kwargs.set_item("separators", (",", ":"))?;
+    kwargs.set_item("ensure_ascii", true)?;
+    kwargs.set_item("default", py.eval(c"str", None, None)?)?;
+    Ok(kwargs)
+}
+
+fn sha256_hex(py: Python<'_>, text: &str) -> PyResult<String> {
+    py.import("hashlib")?
+        .getattr("sha256")?
+        .call1((text.as_bytes(),))?
+        .call_method0("hexdigest")?
+        .extract()
+}
+
 /// Detached `raw_input` image for a value `read_json` cannot take.
 ///
 /// `python_to_market_event` does `json.loads(json.dumps(..., default=str))`
@@ -235,20 +252,11 @@ fn escape_with_python_unicode(py: Python<'_>, text: &str) -> PyResult<String> {
 fn python_canonical_raw(py: Python<'_>, raw: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
     let json = py.import("json")?;
     let dumps = json.getattr("dumps")?;
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("sort_keys", true)?;
-    kwargs.set_item("separators", (",", ":"))?;
-    kwargs.set_item("ensure_ascii", true)?;
-    kwargs.set_item("default", py.eval(c"str", None, None)?)?;
+    let kwargs = json_dump_kwargs(py)?;
     let first: String = dumps.call((raw,), Some(&kwargs))?.extract()?;
     let detached = json.getattr("loads")?.call1((&first,))?;
     let raw_json: String = dumps.call((detached,), Some(&kwargs))?.extract()?;
-    let digest: String = py
-        .import("hashlib")?
-        .getattr("sha256")?
-        .call1((raw_json.as_bytes(),))?
-        .call_method0("hexdigest")?
-        .extract()?;
+    let digest = sha256_hex(py, &raw_json)?;
     Ok((raw_json, digest))
 }
 
@@ -290,8 +298,18 @@ fn escape_untrusted_py(py: Python<'_>, text: &str) -> PyResult<String> {
 
 #[pyfunction]
 #[pyo3(name = "content_hash")]
-fn content_hash_py(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    Ok(content_hash(&read_json(value)?))
+fn content_hash_py(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(parsed) = read_json(value) {
+        return Ok(content_hash(&parsed));
+    }
+    // `python_content_hash` hashes one `default=str` dump. That is not the
+    // detached raw image `market_event` stores after `json.loads`.
+    let raw_json: String = py
+        .import("json")?
+        .getattr("dumps")?
+        .call((value,), Some(&json_dump_kwargs(py)?))?
+        .extract()?;
+    sha256_hex(py, &raw_json)
 }
 
 #[pyfunction]
