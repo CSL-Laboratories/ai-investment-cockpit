@@ -372,6 +372,19 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
     return record
 
 
+def subject_fits_context(state, event: MarketEvent, packet: Packet) -> bool:
+    """Pure preflight: does ``event``'s evidence survive the context cap? Lets the
+    caller defer BEFORE spending deep budget on a call that cannot be dispatched."""
+    owned = [item for item in packet.items if item.event_id == event.id]
+    others = [item for item in packet.items if item.event_id != event.id]
+    tmpl = load_prompt("trade_proposal")
+    overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
+    fit = fit_packet(
+        Packet(items=tuple(owned + others)),
+        reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
+    return any(item.event_id == event.id for item in fit.packet.items)
+
+
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None, book_fn=None,
                    observation_fn=None, metrics_fn=None,

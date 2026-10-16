@@ -42,7 +42,7 @@ from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import draft_proposal
+from workflows.proposals import draft_proposal, subject_fits_context
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
@@ -400,6 +400,12 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         ev = cand["_event"]
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
+            continue
+        if fn is draft_proposal and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+                and not subject_fits_context(state, ev, packet):
+            # Preflight before spending: an unfit subject makes no model call, so
+            # it must not consume a daily deep-escalation unit on each retry.
+            _defer(state, dispositions, ev, "context_limit")
             continue
         try:
             consumed = budget.try_consume(
