@@ -187,6 +187,13 @@ def test_circular_raw_raises_instead_of_overflowing():
         cockpit_quant.content_hash(nested)
     with pytest.raises(ValueError, match="JSON nesting too deep"):
         cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", nested)
+    with pytest.raises(ValueError, match="Circular reference detected"):
+        content_hash(loop)
+    with pytest.raises(ValueError, match="Circular reference detected"):
+        to_market_event(
+            source="finnhub", article_id="1", symbols=["AAPL"],
+            headline="h", summary="s", ts=None, raw=loop,
+        )
 
 
 def test_direct_content_hash_accepts_default_str_values():
@@ -212,6 +219,15 @@ def test_direct_content_hash_accepts_default_str_values():
     )
     got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", {"n": huge})
     assert got[5] == event["content_hash"]
+
+    class Digits(int):
+        def __str__(self):
+            return "123"
+
+    lied = Digits(2**65)
+    assert cockpit_quant.content_hash(lied) == python_content_hash(lied)
+    assert cockpit_quant.content_hash(lied) != python_content_hash(123)
+    assert cockpit_quant.content_hash(2**65) == python_content_hash(2**65)
 
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):

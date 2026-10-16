@@ -181,16 +181,29 @@ def _utf8_text(value) -> bool:
     return True
 
 
-def _plain_json(value) -> bool:
+def _plain_json(value, _seen=None) -> bool:
     if value is None or type(value) in (int, float, bool):
         return True
     if type(value) is str:
         return _utf8_text(value)
-    if type(value) in (list, tuple):
-        return all(_plain_json(item) for item in value)
-    if type(value) is dict:
-        return all(_utf8_text(key) and _plain_json(item) for key, item in value.items())
-    return False
+    if type(value) not in (list, tuple, dict):
+        return False
+    # A cycle is not plain JSON. Returning here lets `json.dumps` raise
+    # ValueError instead of this walk hitting RecursionError first.
+    if _seen is None:
+        _seen = set()
+    marker = id(value)
+    if marker in _seen:
+        return False
+    _seen.add(marker)
+    try:
+        if type(value) is dict:
+            return all(
+                _utf8_text(key) and _plain_json(item, _seen) for key, item in value.items()
+            )
+        return all(_plain_json(item, _seen) for item in value)
+    finally:
+        _seen.discard(marker)
 
 
 def _plain_symbols(symbols) -> bool:

@@ -51,6 +51,11 @@ fn read_json_at(
         if let Ok(value) = obj.extract::<i64>() {
             return Ok(Json::Int(value));
         }
+        // A subclass can override `__str__` with different digits. An exact
+        // `int` past i64 uses its decimal text; anything else is `json.dumps`.
+        if !obj.get_type().is(&PyInt::type_object(obj.py())) {
+            return Err(ReadError::Py(invalid("int subclass")));
+        }
         let text = obj.str()?.to_string();
         if let Some(rest) = text.strip_prefix('-') {
             if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
