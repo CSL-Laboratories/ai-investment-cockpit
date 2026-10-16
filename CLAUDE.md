@@ -8,16 +8,19 @@
 Linear is the basis of operations. Check Linear for overlapping issues and PRs
 before starting; work only from a Linear issue and keep it updated (bots and
 agents post status and PR links as issue comments). Every review request,
-blocker, or question for a dev is an @mention on the matching CSL Linear
-issue — not GitHub alone. Handles: Chaandan `@chaandansaini101`, Samir
-`@samirshahahmed`, Lucas `@lucassalvador987`. File findings, ideas, and bugs
-to Triage (deduped); ground implementations with Parallel search (web) and
-Context7 (library docs). **Wait for jobs before reviewing:** no approve or
-request-changes until Devin Review, Claude fixer jobs (`devin-review-fix`,
-`resolve-pr`), and required CI have finished on the current head; stale-head
-reviews do not count; re-review after new pushes. Post review requests and
-status as Linear @mentions; check job status on the PR directly. Full rule in
-[`AGENTS.md`](AGENTS.md).
+blocker, or question directed at a person is an @mention on the matching CSL
+Linear issue — not GitHub alone. Automated GitHub workflows keep their
+existing channels (Codex gate, Linear PR-sync, Devin Review). Handles:
+Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
+`@lucassalvador987`. File findings, ideas, and bugs to Triage (deduped);
+ground implementations with Parallel search (web) and Context7 (library
+docs). **Wait for jobs before reviewing:** no human or coding agent approves
+or request-changes until Devin Review, Claude fixer jobs (`devin-review-fix`,
+`resolve-pr`), and required CI have finished on the current head; the Codex
+CI/fixer gate still posts its `@codex review` request on open/synchronize
+without waiting; stale-head reviews do not count; re-review after new
+pushes. Post human/agent review requests and status as Linear @mentions;
+check job status on the PR directly. Full rule in [`AGENTS.md`](AGENTS.md).
 
 ## Product target and current implementation
 
@@ -72,8 +75,10 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin reviews PRs (reviews only, never
-  fixes); Claude fixes. Research/dev swarm jobs stay retired
+  qualification and admitted budgets. Devin reviews PRs (does not auto-fix
+  review findings; Claude does). The documented post-merge Main CI fixer and
+  weekly dead-code sweep stay as human-managed Devin automations.
+  Research/dev swarm jobs stay retired
   (`spawn_devin_leaf.py` frozen, RW-33). Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.

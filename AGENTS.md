@@ -13,22 +13,31 @@ prompt governs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
   and PR links. Bots and agents post their own status updates and PR links as
   comments on that issue.
-- Every review request, blocker, or question for a dev must be an @mention
-  comment on the matching CSL Linear issue so the Linear bot notifies them. A
-  GitHub mention alone is not enough. Linear handles: Chaandan
-  `@chaandansaini101`, Samir `@samirshahahmed`, Lucas `@lucassalvador987`.
+- Every review request, blocker, or question directed at a person must be an
+  @mention comment on the matching CSL Linear issue so the Linear bot notifies
+  them. A GitHub mention alone is not enough. Automated GitHub workflows keep
+  their existing channels and do not also @mention on Linear: the Codex gate
+  posts `@codex review` on the PR, Linear PR-sync writes PR status without an
+  extra @mention, and Devin Review posts findings on GitHub. Linear handles:
+  Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
+  `@lucassalvador987`.
 - Autonomously file research findings, ideas, and bugs to Triage, deduped.
 - Ground every implementation in the best available research: Parallel search
   for web research and Context7 for current library docs.
-- **Wait for jobs before reviewing:** no human or bot approves or requests
-  changes on a PR until Devin Review, the Claude fixer jobs (`devin-review-fix`,
-  `resolve-pr`), and required CI have all finished on the current head commit.
-  Devin Review's own verdict is exempt: its `changes_requested` is what starts
-  `devin-review-fix`. A review on a stale head does not count; after new
-  pushes, the reviewer reviews again. Review requests and their status are
-  posted as @mention comments on the CSL Linear issue. Check job status on the
-  PR directly; do not wait on a readiness notice, since no watcher that posts
-  one is part of this repo.
+- **Wait for jobs before reviewing:** no human or coding agent approves or
+  requests changes on a PR until Devin Review, the Claude fixer jobs
+  (`devin-review-fix`, `resolve-pr`), and required CI have all finished on the
+  current head commit. Devin Review's own verdict is exempt: its
+  `changes_requested` is what starts `devin-review-fix`. The Codex CI/fixer
+  gate (CSL-103) still posts its one `@codex review` request on
+  `open`/`synchronize` without waiting for those jobs; that request is not an
+  approve or request-changes, and `READY` is reconciled against live findings
+  after jobs settle (`ci:full` requests CI, not merge approval). A review on a
+  stale head does not count; after new pushes, the reviewer reviews again.
+  Human and agent review requests and their status are posted as @mention
+  comments on the CSL Linear issue. Check job status on the PR directly; do
+  not wait on a readiness notice, since no watcher that posts one is part of
+  this repo.
 
 This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in
@@ -225,10 +234,12 @@ Linear is the team's primary async channel, alongside Google Meet and Discord.
   status, a short progress comment at meaningful milestones (started, blocked,
   PR opened, done), and the PR link, posted as a comment on that issue.
   Operator soak runs are not told to post Linear milestone comments.
-- Every review request, blocker, or question for a dev is an @mention comment
-  on the matching CSL Linear issue (Chaandan `@chaandansaini101`, Samir
-  `@samirshahahmed`, Lucas `@lucassalvador987`). A GitHub mention alone is not
-  enough. Add the `needs-decision` label for approvals.
+- Every review request, blocker, or question directed at a person is an
+  @mention comment on the matching CSL Linear issue (Chaandan
+  `@chaandansaini101`, Samir `@samirshahahmed`, Lucas `@lucassalvador987`).
+  A GitHub mention alone is not enough. Automated GitHub workflows keep
+  their existing channels (see **Linear-first operations**). Add the
+  `needs-decision` label for approvals.
 - Anything that comes up during a dev session gets filed as a new Linear issue
   in **Triage** instead of being dropped: ideas discussed, bugs or oddities
   found in development, and areas to develop or test further. Link it to the
@@ -253,7 +264,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs. Devin reviews GitHub PRs only and never fixes; that does not grant Devin research/dev swarm jobs.
+- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs. Devin reviews GitHub PRs and does not auto-fix review findings (Claude does); that does not grant Devin research/dev swarm jobs. The documented post-merge Main CI failure fixer and weekly dead-code sweep remain the only Devin fix automations.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
@@ -307,7 +318,7 @@ ignores those reviews and never dispatches a fixer from them.
 
 ## When Claude can't fix a review thread
 
-Devin reviews only and never fixes, so a thread is never handed back to Devin.
+Devin does not auto-fix review findings, so a review thread is never handed back to Devin.
 Stuck-thread handling is owned by the **Review loop** (CSL-86 / PR #124,
 `.github/workflows/stuck-thread-watch.yml`). Hosted Claude has no Linear
 access: it leaves the thread open, replies with why, and @mentions the PR
