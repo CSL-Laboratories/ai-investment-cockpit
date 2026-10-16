@@ -45,6 +45,13 @@ def test_escape_and_hash_match_python():
         {"headline": "Big news", "summary": "s"},
         [True, False, None],
         {"n": -0.0, "p": 0.1, "e": 1e16, "z": 1.0},
+        {"price_change": 0.00001},
+        {"price_change": -0.00001},
+        {"price_change": 9.9e-05},
+        {"price_change": 1e-4},
+        {"price_change": 1e-6},
+        {"price_change": 1e15},
+        {"price_change": 1e16},
         "é\U0001F600",
         [float("nan"), float("inf"), float("-inf")],
     ]
@@ -88,6 +95,61 @@ def test_market_events_match_and_keep_raw_input_detached(seed):
         if "<" in headline:
             assert "<" not in rust["headline"]
             assert rust["raw_input"]["headline"] == headline
+
+
+def test_small_floats_keep_the_python_audit_hash():
+    """CPython switches to scientific below 1e-4. Ryu's fixed form must not be hashed."""
+    samples = (1e-5, -1e-5, 9.9e-5, 1.23e-5, 1e-4, 1e-6, 1e-7, 1e15, 1e16, -1e16)
+    for value in samples:
+        payload = {"price_change": value}
+        assert content_hash(payload) == python_content_hash(payload)
+    event = to_market_event(
+        source="finnhub", article_id="1", symbols=[], headline="h", summary="s",
+        ts=None, raw={"price_change": 0.00001},
+    )
+    python_event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=[], headline="h", summary="s",
+        ts=None, raw={"price_change": 0.00001},
+    )
+    assert event == python_event
+    assert event["content_hash"] == python_content_hash(event["raw_input"])
+    assert event["content_hash"] == content_hash(event["raw_input"])
+
+
+def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
+    """``ts`` is applied in Python, but a lone surrogate must not take the native call."""
+    import ingest.normalize as mod
+
+    lone = "a\ud800"
+
+    def refuse_native(*_args, **_kwargs):
+        raise AssertionError("native market_event was called")
+
+    monkeypatch.setattr(mod._NATIVE, "market_event", refuse_native)
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=lone,
+    )
+    event = to_market_event(**kwargs)
+    assert event == python_to_market_event(**kwargs)
+    assert event["ts"] == lone
+
+    plain = dict(kwargs, ts="2020-01-01T00:00:00Z")
+    monkeypatch.undo()
+    assert to_market_event(**plain) == python_to_market_event(**plain)
+
+
+def test_lone_surrogate_stays_on_the_python_path():
+    """A lone surrogate is a str PyO3 cannot encode. The Python path must take it."""
+    lone = "a\ud800"
+    assert escape_untrusted(lone) == python_escape_untrusted(lone)
+    payload = {"headline": lone}
+    assert content_hash(payload) == python_content_hash(payload)
+    kwargs = dict(
+        source="finnhub", article_id=lone, symbols=[lone, "AAPL"],
+        headline=lone, summary=lone, ts=None, event_type=lone, raw=payload,
+    )
+    assert to_market_event(**kwargs) == python_to_market_event(**kwargs)
 
 
 def test_batched_events_match_single_calls():
