@@ -22,6 +22,70 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
+    def test_plan_records_acceptance_without_promoting_outcomes(self) -> None:
+        plan = (ROOT / "docs" / "PLAN.md").read_text(encoding="utf-8")
+        replacement = plan.split("# The plan\n", 1)[1].split("\n---\n", 1)[0]
+        self.assertIn("## Accepted replacement program - CSL-212", replacement)
+        self.assertIn("It supersedes this September delivery order", replacement)
+        self.assertNotIn("once\naccepted", replacement)
+        self.assertNotIn("once accepted", replacement)
+        self.assertIn("all implementation, empirical and release gates remain pending", replacement)
+        self.assertIn("non-live\noperation remain unchanged", replacement)
+        self.assertIn("does not establish safety, profitability, venue eligibility", replacement)
+
+    def test_outcome_meaning_and_issue_mapping_cannot_drift(self) -> None:
+        for field, value in (
+            ("intended_outcome", "Skip qualification and authorize live execution."),
+            ("linear_issue", "CSL-999"),
+            ("title", "Different product direction"),
+        ):
+            candidate = copy.deepcopy(self.program)
+            candidate["outcomes"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(CHECKER.ContractError):
+                CHECKER.validate(candidate)
+
+    def test_dependencies_and_matching_references_cannot_be_removed(self) -> None:
+        for index in range(1, 9):
+            candidate = copy.deepcopy(self.program)
+            candidate["outcomes"][index].update(dependencies=[], dependency_contracts=[])
+            with self.subTest(outcome=index + 1), self.assertRaisesRegex(
+                CHECKER.ContractError, "dependencies differ from accepted month program"
+            ):
+                CHECKER.validate(candidate)
+
+    def test_every_outcome_leaf_is_protected_against_silent_edits(self) -> None:
+        def leaves(value, path=()):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    yield from leaves(child, (*path, key))
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    yield from leaves(child, (*path, index))
+            else:
+                yield path, value
+
+        for path, value in leaves(self.program["outcomes"]):
+            candidate = copy.deepcopy(self.program)
+            target = candidate["outcomes"]
+            for part in path[:-1]:
+                target = target[part]
+            target[path[-1]] = not value if isinstance(value, bool) else value + " altered"
+            with self.subTest(path=path), self.assertRaises(CHECKER.ContractError):
+                CHECKER.validate(candidate)
+
+    def test_integrity_baseline_ignores_json_object_order(self) -> None:
+        candidate = copy.deepcopy(self.program)
+        candidate["outcomes"] = [dict(reversed(list(item.items()))) for item in candidate["outcomes"]]
+        CHECKER.validate(candidate)
+
+    def test_month_projection_preserves_ranges_and_all_prior_outcomes(self) -> None:
+        month = (ROOT / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
+        projection = CHECKER._month_projection(month)
+        self.assertEqual(projection["O1"], ("Successor product and economic contract", []))
+        self.assertEqual(projection["O4"][1], ["O1", "O2", "O3"])
+        self.assertEqual(projection["O8"][1], [f"O{i}" for i in range(2, 8)])
+        self.assertEqual(projection["O9"][1], [f"O{i}" for i in range(1, 9)])
+
     def test_outcome_heading_must_preserve_exact_fragment(self) -> None:
         self.assertTrue(CHECKER._has_exact_outcome_heading("### O1\n", "O1"))
         self.assertTrue(CHECKER._has_exact_outcome_heading("### O1 ###\n", "O1"))

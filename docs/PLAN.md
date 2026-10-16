@@ -12,13 +12,19 @@ last-verified: 2026-10-15
 
 # The plan
 
-## Replacement program candidate — CSL-212
+## Accepted replacement program - CSL-212
 
-Lucas directed a full product reset on 2026-10-16. The dependency-ordered candidate
-program is [docs/replacement/MONTH-PROGRAM.md](replacement/MONTH-PROGRAM.md).
-It supersedes this September delivery order for new replacement planning once
-accepted. The historical packages below remain evidence and implementation record;
+Lucas accepted the exact successor contract digest set under CSL-212 on 2026-10-16.
+The accepted dependency-ordered program is
+[docs/replacement/MONTH-PROGRAM.md](replacement/MONTH-PROGRAM.md).
+It supersedes this September delivery order for new replacement planning.
+The historical packages below remain evidence and implementation record;
 they are not automatically admitted successor architecture.
+
+The immutable governing files retain their pre-receipt candidate labels;
+[the replacement index](replacement/README.md) and the receipt in
+[program.json](replacement/program.json) record acceptance. O1–O9 outcome artifacts
+and all implementation, empirical and release gates remain pending.
 
 Current runtime authority, the nine invariants, existing safety gates and non-live
 operation remain unchanged until separately scoped and reviewed amendments. The

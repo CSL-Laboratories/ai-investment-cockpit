@@ -86,6 +86,23 @@ EXPECTED_DISCRETION = {
     "O8": "human_gated",
     "O9": "human_gated",
 }
+# Integrity baseline from PR #151 head 29da947464f687f3a2a65d26fca4927bc2b59849.
+# These are NOT additional owner-accepted digests. The receipt accepts only the
+# governing/research files above. Pin annotations to prevent silent drift under
+# the accepted_contract label; independently derive title/dependency semantics
+# from the verified MONTH-PROGRAM below. Amendments require scoped review, and
+# changed governing direction requires a fresh human receipt (see replacement README).
+OUTCOME_BASELINE_DIGESTS = {
+    "O1": "d873c1e65c335c5dbff75f9862d6b3e26f954ce814c5d9ee7dddad2f079b123d",
+    "O2": "6d06e54af8ca2dc7695b194ff3219cbf10a17bfd101be08028bcaca5f142ee98",
+    "O3": "d106ef8b1aab9165b4a8128b607c7642c3eb8b19bd21e22a8046e7aea6494a6b",
+    "O4": "06b8b6a1ae6e2f853444ba52781eaba50d4262626f99b3e4d10cc0d462f4a392",
+    "O5": "a5c439c99edc67a97590d98c5cd15d34a296d1a6cfbe254955b70e4e7eff73d3",
+    "O6": "daf786fb77e09b47a81ebb1ad70783f0c63fe215820d558303f28343ae600a06",
+    "O7": "a4731895efc8ab4f4b5de62277fc1b398df2cc0ee41fcfc653816abb26e25d94",
+    "O8": "7b25def385c632df8181c214fa94d67f3051f2d49143746e08645b873e7e88d7",
+    "O9": "97d60e01df216f84581f69453b3c770e8b477a02181f6dde72f06db904eb1b4d",
+}
 RESEARCH_BUDGET_FIELDS = {
     "question",
     "source_classes",
@@ -167,6 +184,43 @@ def _has_exact_outcome_heading(document: str, key: str) -> bool:
     return re.search(
         rf"^### {re.escape(key)}(?:[ \t]+#+)?[ \t]*\r?$", document, re.MULTILINE
     ) is not None
+
+
+def _outcome_digest(outcome: dict[str, Any]) -> str:
+    canonical = json.dumps(outcome, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
+    """Project titles and hard edges from the receipt-verified Markdown clauses.
+
+    This deliberately supports the frozen month contract's syntax only. A future
+    contract/amendment needs review of its projection as well as its receipt.
+    """
+    projection = {}
+    for number in range(1, 10):
+        key = f"O{number}"
+        match = re.search(
+            rf"^### {key}\s+\*\*(.+?):\*\*\s+(.+?)(?:;|\.)",
+            document,
+            re.MULTILINE | re.DOTALL,
+        )
+        _require(match is not None, f"{key} governing projection missing")
+        title, opening = match.groups()
+        dependencies = []
+        if number > 1:
+            _require("consumes " in opening, f"{key} governing dependencies missing")
+            dependency_text = opening.split("consumes ", 1)[1]
+            if dependency_text == "all accepted\n   outcome contracts":
+                dependencies = [f"O{i}" for i in range(1, number)]
+            else:
+                for first, last in re.findall(r"O([1-9])(?:\s+to\s+O([1-9]))?", dependency_text):
+                    dependencies.extend(
+                        f"O{i}" for i in range(int(first), int(last or first) + 1)
+                    )
+                _require(bool(dependencies), f"{key} governing dependencies missing")
+        projection[key] = (title, dependencies)
+    return projection
 
 
 def validate(program: dict[str, Any], root: Path = ROOT) -> None:
@@ -317,9 +371,17 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     issues: set[str] = set()
     seen: set[str] = set()
     month_program = (root / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
+    projection = _month_projection(month_program)
     for item in outcomes:
         key = item["key"]
         _require(set(item) == REQUIRED_OUTCOME_FIELDS, f"{key} outcome fields changed")
+        title, dependencies = projection[key]
+        _require(item["title"] == title, f"{key} title differs from accepted month program")
+        _require(item["dependencies"] == dependencies, f"{key} dependencies differ from accepted month program")
+        _require(
+            _outcome_digest(item) == OUTCOME_BASELINE_DIGESTS[key],
+            f"{key} outcome integrity baseline changed; scoped review required",
+        )
         _require(item["parent_issue"] == "CSL-212", f"{key} missing parent lineage")
         issue = item["linear_issue"]
         _require(isinstance(issue, str) and re.fullmatch(r"CSL-[0-9]+", issue) is not None, f"{key} invalid Linear issue")
