@@ -737,6 +737,32 @@ def test_retry_mark_counts_toward_daily_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
+def test_old_cite_retry_mark_does_not_consume_today_cap():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body(), old),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 in gh.resolves
+    assert any("retry-mark=posted" in line for line in logs)
+    assert any("resolve=posted" in line for line in logs)
+
+
 def test_scan_skips_retry_mark_when_human_resolved():
     gh = ready_gh(
         threads=[
@@ -818,7 +844,7 @@ def test_daily_cap():
     prior = [
         comment(
             PAT_LOGIN,
-            mod.resolved_marker(f"PRRT_old{i:02d}", SHA),
+            mod.cite_marker(f"PRRT_old{i:02d}", SHA),
             NOW - timedelta(minutes=i),
         )
         for i in range(20)

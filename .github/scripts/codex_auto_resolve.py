@@ -1014,6 +1014,12 @@ def resolved_count_today(
     now: datetime,
     actor_login: str = "",
 ) -> int:
+    """Count PAT cite markers in the last 24h.
+
+    Cites are written immediately before ``resolveReviewThread``, so they
+    stamp the actual resolve time even if the success marker is delayed.
+    A later-day marker retry must not consume today's cap.
+    """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
@@ -1021,7 +1027,7 @@ def resolved_count_today(
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
-        if not parse_resolved_markers(body_of(comment)):
+        if not parse_cite_markers(body_of(comment)):
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
         if stamped is None or stamped >= start:
@@ -1265,7 +1271,6 @@ def scan_pr(
             except Exception:
                 marked = False
             if marked:
-                posted_today += 1
                 logs.append(
                     f"codex-auto-resolve: pr={number} thread={tid} retry-mark=posted sha={mark_sha}"
                 )
