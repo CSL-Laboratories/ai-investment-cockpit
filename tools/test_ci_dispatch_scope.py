@@ -93,8 +93,9 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertIn("github.event_name == 'merge_group'", self.ci['jobs']['windows']['if'])
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",
                          self.ci['jobs']['windows']['if'])
-        self.assertEqual(self.rust['jobs']['rust-book']['if'],
-                         "needs.filter.outputs.has-cells == 'true'")
+        for cells in ('true', 'false', ''):
+            self.assertEqual(bool(evaluate(self.rust['jobs']['rust-book']['if'], **{
+                'needs.filter.outputs.has-cells': cells})), cells == 'true')
         def group(doc, **context):
             return re.sub(r'\$\{\{(.*?)\}\}',
                           lambda match: str(evaluate(match[1], **context)),
@@ -103,9 +104,10 @@ class DispatchScopeTests(unittest.TestCase):
             pr = group(doc)
             queued = group(doc, **{'github.event_name': 'merge_group',
                                    'github.event.pull_request.number': '',
+                                   'github.ref': 'refs/heads/feature',
                                    'github.event.merge_group.head_ref': 'refs/heads/feature'})
             self.assertNotEqual(pr, queued)
-            self.assertIn('merge', queued)
+            self.assertIn('queue', queued)
             self.assertIn('refs/heads/feature', queued)
 
     def test_dispatch_defaults_and_existing_events(self):
