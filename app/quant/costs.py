@@ -43,8 +43,16 @@ straight into the risk engine.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import (
+    ROUND_HALF_EVEN,
+    Decimal,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+    getcontext,
+)
 
 from quant.events import Fill, Liquidity, PriceScale, Side
 
@@ -110,23 +118,10 @@ class FeeSchedule:
         A rebate that arrives as a positive "fee" and is subtracted is a sign error worth
         roughly twice the rebate, and it silently makes passive strategies look unprofitable.
         """
-        if qty <= 0:
-            raise ValueError(f"fee_for needs a positive qty, got {qty}")
-        shares = Decimal(qty)
-        notional = price * shares
-
-        exchange = (
-            -self.maker_rebate_per_share * shares
-            if liquidity is Liquidity.MAKER
-            else self.taker_fee_per_share * shares
-        )
-        regulatory = Decimal("0")
-        if side is Side.SELL:
-            # Sell-side only. Charging these on buys too would silently double the cost of
-            # every round trip, which reads as a strategy problem rather than a fee-model one.
-            regulatory += (notional * self.sec_fee_rate).quantize(Decimal("0.01"))
-            regulatory += min(self.taf_per_share * shares, self.taf_cap)
-        return exchange + regulatory + self.clearing_per_share * shares
+        accelerated = _native_fee_for(self, side=side, qty=qty, price=price, liquidity=liquidity)
+        if accelerated is not _USE_PYTHON:
+            return accelerated
+        return python_fee_for(self, side=side, qty=qty, price=price, liquidity=liquidity)
 
     def borrow_cost(self, *, short_notional: Decimal, seconds: float) -> Decimal:
         """Carry on a short position held for ``seconds``. Zero for a flat or long book.
@@ -135,10 +130,10 @@ class FeeSchedule:
         for seconds and a daily accrual would round its entire borrow cost to zero — which is
         the assumption that makes an intraday short look free.
         """
-        if short_notional <= 0 or seconds <= 0:
-            return Decimal("0")
-        year = Decimal(365 * 24 * 3600)
-        return short_notional * self.borrow_rate_annual * Decimal(str(seconds)) / year
+        accelerated = _native_borrow_cost(self, short_notional=short_notional, seconds=seconds)
+        if accelerated is not _USE_PYTHON:
+            return accelerated
+        return python_borrow_cost(self, short_notional=short_notional, seconds=seconds)
 
 
 ZERO_FEES = FeeSchedule(
@@ -164,6 +159,148 @@ def fee_for_fill(fill: Fill, scale: PriceScale, schedule: FeeSchedule) -> Decima
 
 def cost_bps(cost: Decimal, notional: Decimal) -> Decimal:
     """Cost as basis points of notional. Sign preserved, so a rebate reads negative."""
+    accelerated = _native_cost_bps(cost, notional)
+    if accelerated is not _USE_PYTHON:
+        return accelerated
+    return python_cost_bps(cost, notional)
+
+
+def python_fee_for(
+    schedule: FeeSchedule, *, side: Side, qty: int, price: Decimal, liquidity: Liquidity,
+) -> Decimal:
+    """Unaccelerated ``FeeSchedule.fee_for``. Parity tests call this directly."""
+    if qty <= 0:
+        raise ValueError(f"fee_for needs a positive qty, got {qty}")
+    shares = Decimal(qty)
+    notional = price * shares
+
+    exchange = (
+        -schedule.maker_rebate_per_share * shares
+        if liquidity is Liquidity.MAKER
+        else schedule.taker_fee_per_share * shares
+    )
+    regulatory = Decimal("0")
+    if side is Side.SELL:
+        regulatory += (notional * schedule.sec_fee_rate).quantize(Decimal("0.01"))
+        regulatory += min(schedule.taf_per_share * shares, schedule.taf_cap)
+    return exchange + regulatory + schedule.clearing_per_share * shares
+
+
+def python_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, seconds: float) -> Decimal:
+    """Unaccelerated ``FeeSchedule.borrow_cost``."""
+    if short_notional <= 0 or seconds <= 0:
+        return Decimal("0")
+    year = Decimal(365 * 24 * 3600)
+    return short_notional * schedule.borrow_rate_annual * Decimal(str(seconds)) / year
+
+
+def python_cost_bps(cost: Decimal, notional: Decimal) -> Decimal:
+    """Unaccelerated ``cost_bps``."""
     if notional <= 0:
         return Decimal("0")
     return cost / notional * Decimal("10000")
+
+
+_USE_PYTHON = object()
+_I64_MAX = 2**63 - 1
+COSTS_BACKEND = "python"
+_NATIVE = None
+
+
+def _load_native() -> None:
+    """Use the Rust arithmetic when the extension is installed.
+
+    A missing module is the pure-Python path (hosted gates do not build Rust).
+    Any other import failure is a broken extension and is not swallowed.
+    ``cockpit_quant`` is arithmetic only: it does not enter the impure set that
+    ``quant/verify.py`` is forbidden to reach.
+    """
+    global _NATIVE, COSTS_BACKEND
+    try:
+        import cockpit_quant as native
+    except ImportError:
+        return
+    if not all(hasattr(native, name) for name in ("fee_for", "borrow_cost", "cost_bps")):
+        return
+    _NATIVE = native
+    COSTS_BACKEND = "rust"
+
+
+# Signals the default context traps. Clearing one of these (or enabling another)
+# changes whether an operation raises, so that call cannot use the fixed Rust path.
+_DEFAULT_TRAPS = frozenset({InvalidOperation, DivisionByZero, Overflow})
+
+
+def _enabled_traps(traps) -> frozenset:
+    return frozenset(signal for signal, enabled in traps.items() if enabled)
+
+
+def _default_context() -> bool:
+    """The Rust arithmetic is the default context only.
+
+    Precision 28, half-even, ``Emin``/``Emax`` at the default limits, clamp off,
+    and the default trap set. Any other active context stays in Python, including
+    a caller who only clears ``InvalidOperation`` or narrows ``prec``.
+    """
+    ctx = getcontext()
+    return (
+        ctx.prec == 28
+        and ctx.rounding == ROUND_HALF_EVEN
+        and ctx.Emin == -999999
+        and ctx.Emax == 999999
+        and not ctx.clamp
+        and _enabled_traps(ctx.traps) == _DEFAULT_TRAPS
+    )
+
+
+def _native_fee_for(schedule: FeeSchedule, *, side: Side, qty: int, price: Decimal, liquidity: Liquidity):
+    native = _NATIVE
+    if native is None or not _default_context():
+        return _USE_PYTHON
+    if (
+        isinstance(qty, bool)
+        or not isinstance(qty, int)
+        or qty <= 0
+        or qty > _I64_MAX
+        or not isinstance(price, Decimal)
+    ):
+        return _USE_PYTHON
+    return Decimal(native.fee_for(
+        format(schedule.maker_rebate_per_share, "f"),
+        format(schedule.taker_fee_per_share, "f"),
+        format(schedule.sec_fee_rate, "f"),
+        format(schedule.taf_per_share, "f"),
+        format(schedule.taf_cap, "f"),
+        format(schedule.clearing_per_share, "f"),
+        "sell" if side is Side.SELL else "buy",
+        qty,
+        format(price, "f"),
+        "maker" if liquidity is Liquidity.MAKER else "taker",
+    ))
+
+
+def _native_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, seconds: float):
+    native = _NATIVE
+    if native is None or not _default_context() or not isinstance(short_notional, Decimal):
+        return _USE_PYTHON
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float, Decimal)):
+        return _USE_PYTHON
+    if isinstance(seconds, float) and not math.isfinite(seconds):
+        return _USE_PYTHON
+    if isinstance(seconds, Decimal) and not seconds.is_finite():
+        return _USE_PYTHON
+    return Decimal(native.borrow_cost(
+        format(schedule.borrow_rate_annual, "f"),
+        format(short_notional, "f"),
+        str(seconds),
+    ))
+
+
+def _native_cost_bps(cost: Decimal, notional: Decimal):
+    native = _NATIVE
+    if native is None or not _default_context() or not isinstance(cost, Decimal) or not isinstance(notional, Decimal):
+        return _USE_PYTHON
+    return Decimal(native.cost_bps(format(cost, "f"), format(notional, "f")))
+
+
+_load_native()

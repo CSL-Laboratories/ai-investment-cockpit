@@ -280,12 +280,18 @@ def test_a_verbatim_copy_of_the_example_file_boots(tmp_path, monkeypatch):
     the first version of this feature made it raise five ValidationErrors and refuse to boot
     over blank optional fields — turning "I haven't filled that in yet" into a dead process.
     """
-    example = (Path(__file__).resolve().parents[2] / ".env.example").read_text(encoding="utf-8")
+    example_path = Path(__file__).resolve().parents[2] / ".env.example"
+    # The _env_file seam does not run the default-path secret guard. Check the
+    # shipped template itself: COCKPIT_CONTEXT_TOKEN_CAP contains TOKEN and must
+    # be allowlisted or `cp .env.example .env` refuses to boot.
+    assert_no_secrets_in_env_file(example_path)
+    example = example_path.read_text(encoding="utf-8")
     env = write_env(tmp_path, example)
     for key in [k for k in os.environ if k.startswith("COCKPIT_")]:
         monkeypatch.delenv(key, raising=False)
     s = Settings(_env_file=str(env))
     assert s.mode.value == "read_only"
+    assert s.context_token_cap == 90_000
     assert s.guild_id is None
     assert s.brief_channel_id is None            # blank -> unset, feed logs NOT PROVISIONED
     assert s.audit_log_channel_id is None

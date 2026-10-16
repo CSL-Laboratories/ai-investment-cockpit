@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from agent_runner.result import OK
+from agent_runner.runner import repair_prompt_for, worst_case_repair_overhead
 from agent_runner.transport import ProcResult
 from config.models import (
     DEFAULT_DECISION_MODEL,
@@ -27,7 +28,7 @@ from tests.workflows.conftest import NOW, FakeTransport, envelope
 from workflows.agent_calls import call_agent
 from workflows.constants import EVENT_AGENT_JOB
 from workflows.context_limit import estimate_tokens, fit_packet
-from workflows.cost_log import parse_vendor_usage, quote_cost
+from workflows.cost_log import parse_vendor_usage, quote_cost, sum_quotes
 from workflows.packets import Packet, PacketItem
 
 VALID = {
@@ -70,10 +71,24 @@ def _events(st):
     return [e for e in entries if st.audit.verify_entry(e)]
 
 
-def test_estimate_is_at_least_the_dense_tokenizer_rule():
-    text = "AAPL filed an 8-K. " * 50
-    # Claude 4.7+ is about chars/3.08 on English. bytes/3 must not under-count that.
-    assert estimate_tokens(text) >= len(text.encode("utf-8")) // 4
+def test_dense_number_sample_accepted_by_the_cap_stays_under_100k():
+    """Digits at ~2.5 bytes/token must not cross Haiku 5.5's 100k tier.
+
+    bytes/3 under the 90k default would accept 270_000 bytes, which is
+    108_000 tokens at 2.5 bytes each. bytes/2 refuses that body, and any
+    body it accepts under the maximum legal cap stays under 100k tokens
+    even at 2 bytes each.
+    """
+    old_accept = "9" * 270_000
+    assert (len(old_accept) + 2) // 3 <= 90_000
+    assert len(old_accept) / 2.5 > 100_000
+    assert estimate_tokens(old_accept) > 90_000
+
+    cap = 99_999  # the largest cap Settings will store
+    accepted = "9" * (2 * cap - 1)
+    assert estimate_tokens(accepted) == cap
+    assert len(accepted) / 2 < 100_000
+    assert len(accepted) / 2.5 < 100_000
     assert estimate_tokens("") == 0
 
 
@@ -89,7 +104,26 @@ def test_fit_packet_drops_the_tail_and_keeps_a_prefix():
     assert fit.packet.dispatched_refs.isdisjoint(item.raw_ref for item in fit.dropped)
 
 
-def test_fit_packet_is_identity_under_the_cap():
+def test_repair_reserve_tokens_matches_the_call_gate_overhead():
+    from workflows.context_limit import repair_reserve_tokens
+
+    assert repair_reserve_tokens() == estimate_tokens(worst_case_repair_overhead())
+    assert repair_reserve_tokens() > 0
+
+
+def test_fit_with_repair_reserve_sheds_items_the_call_gate_would_refuse():
+    from workflows.context_limit import repair_reserve_tokens
+
+    packet = Packet(items=tuple(_item(i, 300) for i in range(5)))
+    reserved = 10
+    full = "\n\n".join(item.text for item in packet.items)
+    cap = reserved + estimate_tokens(full) + repair_reserve_tokens() - 1
+    assert fit_packet(packet, reserved_tokens=reserved, cap=cap).dropped == ()
+    fit = fit_packet(packet, reserved_tokens=reserved + repair_reserve_tokens(), cap=cap)
+    assert fit.dropped and fit.packet.items
+    assert fit.estimated_tokens + 0 <= cap
+
+
     packet = Packet(items=(_item(1, 20),))
     fit = fit_packet(packet, reserved_tokens=5, cap=10_000)
     assert fit.fits and fit.dropped == ()
@@ -150,6 +184,35 @@ def test_vendor_usage_reads_claude_envelope_and_ignores_prose():
     raw = json.dumps({"usage": {"input_tokens": 12, "output_tokens": 3}, "result": "capacity"})
     assert parse_vendor_usage(raw) == (12, 3)
     assert parse_vendor_usage("the model said input_tokens 999") is None
+
+
+def test_vendor_usage_adds_cache_tokens_before_pricing():
+    raw = json.dumps({
+        "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 8_000,
+            "cache_read_input_tokens": 2_000,
+            "output_tokens": 1_000,
+        },
+    })
+    assert parse_vendor_usage(raw) == (10_004, 1_000)
+    quote = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=10_004, output_tokens=1_000,
+        input_token_source="vendor",
+    )
+    # 10004 * $1/M + 1000 * $5/M. Cache tokens are counted at the base rate.
+    assert quote.usd == "0.01500400"
+    assert quote.input_tokens == 10_004
+    # The long-context tier sees the sum, not the uncached sliver.
+    tier = quote_cost(
+        "claude-haiku-5-5", input_tokens=4 + 100_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    assert tier.rate_tier == "haiku-5.5-long"
+    bad = json.dumps({
+        "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": -1},
+    })
+    assert parse_vendor_usage(bad) is None
 
 
 def test_settings_cap_cannot_reach_the_surcharge_tier():
@@ -294,3 +357,93 @@ def test_illegal_decision_model_fails_closed(st):
     with pytest.raises(ValueError, match="allowlisted"):
         _call(st, transport, alias="decision")
     assert transport.calls == []
+
+
+def test_worst_case_repair_overhead_covers_a_500_char_multibyte_reason():
+    reason = "\U0001F600" * 600
+    suffix = repair_prompt_for("", reason)
+    assert suffix == worst_case_repair_overhead()
+    assert estimate_tokens(suffix) == (len(suffix.encode("utf-8")) + 1) // 2
+
+
+def test_prompt_just_under_the_cap_is_refused_once_repair_reserve_is_added(st):
+    prompt = "x" * 90
+    overhead = estimate_tokens(worst_case_repair_overhead())
+    cap = estimate_tokens(prompt) + overhead - 1
+    assert estimate_tokens(prompt) <= cap < estimate_tokens(prompt) + overhead
+    st.settings.context_token_cap = cap
+    transport = FakeTransport([envelope(VALID)])
+    result, job = _call(st, transport, prompt=prompt)
+    assert transport.calls == []
+    assert result.status == "error" and result.error == "context_limit"
+    assert job.usage_estimate == Decimal("0")
+    cost = _events(st)[0].payload["cost"]
+    assert cost["billed"] is False
+    assert cost["refused"] == "context_limit"
+
+
+def test_prompt_with_room_for_repair_still_spawns(st):
+    prompt = "short"
+    overhead = estimate_tokens(worst_case_repair_overhead())
+    st.settings.context_token_cap = estimate_tokens(prompt) + overhead
+    transport = FakeTransport([envelope(VALID)])
+    result, _job = _call(st, transport, prompt=prompt)
+    assert result.status == OK
+    assert len(transport.calls) == 1
+
+
+def _vendor_raw(body, input_tokens, output_tokens, session_id="s"):
+    return json.dumps({
+        "session_id": session_id,
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "result": json.dumps(body),
+    })
+
+
+def test_repaired_job_prices_each_call_then_adds(st):
+    """Two short Haiku 5.5 calls must not be re-quoted as one long-context request."""
+    st.settings.decision_model = "claude-haiku-5-5"
+    invalid = {"question": "q?", "pattern": "nope"}
+    first = _vendor_raw(invalid, 80_000, 0, "s1")
+    second = _vendor_raw(VALID, 80_000, 0, "s2")
+    transport = FakeTransport([
+        ProcResult(0, first, "", False),
+        ProcResult(0, second, "", False),
+    ])
+    result, job = _call(st, transport, alias="decision")
+    assert result.status == OK and result.repaired is True
+    assert result.prior_raw == first
+    assert len(transport.calls) == 2
+    per = quote_cost(
+        "claude-haiku-5-5", input_tokens=80_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    combined_tokens = quote_cost(
+        "claude-haiku-5-5", input_tokens=160_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    assert per.rate_tier == "haiku-5.5-short"
+    assert combined_tokens.rate_tier == "haiku-5.5-long"
+    cost = _events(st)[0].payload["cost"]
+    assert cost["input_token_source"] == "vendor"
+    assert cost["rate_tier"] == "haiku-5.5-short"
+    assert cost["input_tokens"] == 160_000
+    assert Decimal(cost["usd"]) == Decimal(per.usd) * 2
+    assert Decimal(cost["usd"]) != Decimal(combined_tokens.usd)
+    assert job.usage_estimate == Decimal(cost["usd"])
+
+
+def test_sum_quotes_does_not_reapply_the_long_context_tier():
+    short = quote_cost(
+        "claude-haiku-5-5", input_tokens=80_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    added = sum_quotes([short, short])
+    retiered = quote_cost(
+        "claude-haiku-5-5", input_tokens=160_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    assert added.rate_tier == "haiku-5.5-short"
+    assert added.input_tokens == 160_000
+    assert Decimal(added.usd) == Decimal(short.usd) * 2
+    assert Decimal(added.usd) != Decimal(retiered.usd)

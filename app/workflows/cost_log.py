@@ -55,6 +55,48 @@ def _usd(amount: Decimal) -> str:
     return str(amount.quantize(_USD_QUANTUM, rounding=ROUND_HALF_UP))
 
 
+def sum_quotes(quotes: list[CostQuote]) -> CostQuote:
+    """Add separately-tiered quotes. Does not re-quote the combined token counts."""
+    if not quotes:
+        raise ValueError("sum_quotes requires at least one quote")
+    if len(quotes) == 1:
+        return quotes[0]
+    first = quotes[0]
+    input_tokens = 0
+    output_tokens = 0
+    saw_output = False
+    usd_total = Decimal("0")
+    unpriced = False
+    sources = set()
+    tiers = []
+    for quote in quotes:
+        input_tokens += quote.input_tokens
+        if quote.output_tokens is not None:
+            output_tokens += quote.output_tokens
+            saw_output = True
+        sources.add(quote.input_token_source)
+        tiers.append(quote.rate_tier)
+        if quote.usd is None:
+            unpriced = True
+        else:
+            usd_total += Decimal(quote.usd)
+    rate_tier = tiers[0] if len(set(tiers)) == 1 else "+".join(tiers)
+    source = "vendor" if sources == {"vendor"} else (
+        "estimate" if sources == {"estimate"} else "mixed"
+    )
+    return CostQuote(
+        model_pinned=first.model_pinned,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens if saw_output else None,
+        input_token_source=source,
+        rate_tier="unpriced" if unpriced else rate_tier,
+        usd=None if unpriced else _usd(usd_total),
+        usd_scope="unpriced" if unpriced else (
+            "input_output" if saw_output else "input_only"
+        ),
+    )
+
+
 def _tier(model_pinned: str, input_tokens: int):
     if model_pinned == "claude-haiku-5-5":
         if input_tokens > HAIKU_55_LONG_CONTEXT_TOKENS:

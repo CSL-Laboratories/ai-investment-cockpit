@@ -169,6 +169,26 @@ def test_malformed_deep_output_quarantines_and_mints_nothing(st, clock, tmp_path
     assert batch["consumed"] is False
 
 
+def test_cap_that_drops_every_article_defers_without_a_brief(st, clock, tmp_path):
+    _persist(st, clock, tmp_path)
+    st.settings.context_token_cap = 1
+    transport = FakeTransport([])
+    result = morning_brew(
+        st, clock, transport=transport, parquet_root=tmp_path / "raw",
+        holdings_symbols=frozenset({"AAPL"}),
+    )
+    assert result["status"] == "deferred_context_limit"
+    assert transport.calls == []
+    assert _rows(st, BriefRecord) == []
+    assert _rows(st, AgentJob) == []
+    again = morning_brew(
+        st, clock, transport=FakeTransport([]), parquet_root=tmp_path / "raw",
+        holdings_symbols=frozenset({"AAPL"}),
+    )
+    assert again["status"] == "deferred_context_limit"
+    assert _rows(st, BriefRecord) == []
+
+
 def test_second_run_same_day_is_idempotent(st, clock, tmp_path):
     rows = _persist(st, clock, tmp_path)
     transport = FakeTransport([envelope(_triage_body(_scored(rows))),

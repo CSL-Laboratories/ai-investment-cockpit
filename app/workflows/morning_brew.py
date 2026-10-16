@@ -24,7 +24,8 @@ from schemas.models.brief_record import BriefRecord
 from workflows.agent_calls import call_agent
 from workflows.budget import _HARD_EVENT_TYPES
 from workflows.constants import EVENT_BRIEF, EVENT_TRIAGE_BATCH
-from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.events import events_in_window
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
@@ -215,7 +216,9 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     t_tmpl = load_prompt("triage_batch")
     t_overhead = estimate_tokens(t_tmpl.render(
         batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
-    t_fit = fit_packet(packet, reserved_tokens=t_overhead, cap=context_token_cap(state.settings))
+    t_fit = fit_packet(
+        packet, reserved_tokens=t_overhead + repair_reserve_tokens(),
+        cap=context_token_cap(state.settings))
     packet = t_fit.packet
     kept_ids = {item.event_id for item in packet.items}
     dispatched = [ev for ev in dispatched if ev.id in kept_ids]
@@ -259,7 +262,7 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     b_tmpl = load_prompt("morning_brief")
     b_overhead = estimate_tokens(b_tmpl.render(date=date, packet_block=""))
     b_fit = fit_packet(
-        brief_packet, reserved_tokens=b_overhead, cap=context_token_cap(state.settings))
+        brief_packet, reserved_tokens=b_overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
     brief_packet = b_fit.packet
     b_prompt = b_tmpl.render(date=date, packet_block=brief_packet.prompt_block())
     b_result, b_job = call_agent(

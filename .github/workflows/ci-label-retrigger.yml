@@ -1,0 +1,49 @@
+# Companion to ci.yml / rust.yml. Ordinary labeled/unlabeled events must not
+# start those workflows: a skipped job named linux-gates is treated as success
+# and would satisfy the required check. This file has no job of that name.
+#
+# Adding `ci:full` or `enhancement` dispatches ci.yml (and rust.yml when the PR
+# touches Rust paths). Enhancement alone re-runs Linux; ci:full preserves the
+# full platform matrix, including when enhancement is added to an already-full PR.
+name: ci label retrigger
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-label-retrigger-${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  retrigger:
+    if: >
+      github.event.pull_request.draft != true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (github.event.label.name == 'ci:full' || github.event.label.name == 'enhancement')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch ci.yml and rust.yml for this head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          CI_SCOPE: ${{ (github.event.label.name == 'ci:full' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'full' || 'linux' }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$HEAD_REF" in
+            ''|main|master|HEAD|*..*|*" "*) echo "unsafe HEAD_REF"; exit 1 ;;
+          esac
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "scope=$CI_SCOPE" -f "pr_number=$PR_NUMBER" -f "pr_head_sha=$PR_HEAD_SHA" -f "merge_sha=$MERGE_SHA"
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')"
+          if printf '%s\n' "$files" | grep -Eq '^(rust/|app/quant/book/|app/quant/costs\.py|app/quant/pnl\.py|app/tests/quant/book/|app/tests/quant/test_pnl\.py|app/tests/quant/test_costs_rust_parity\.py|app/tests/quant/test_w21_cost_model\.py|\.github/workflows/rust\.yml)'; then
+            gh workflow run rust.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "scope=$CI_SCOPE" -f "pr_number=$PR_NUMBER" -f "pr_head_sha=$PR_HEAD_SHA" -f "merge_sha=$MERGE_SHA"
+          fi

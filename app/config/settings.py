@@ -363,7 +363,8 @@ class Settings(BaseSettings):
     decision_model: str = DEFAULT_DECISION_MODEL
     # Hard prompt cap. Haiku 5.5 bills every token at 5x once the prompt exceeds 100k
     # input tokens, so the cap cannot be configured onto that tier. The estimator is
-    # conservative (UTF-8 bytes / 3). Env: COCKPIT_CONTEXT_TOKEN_CAP.
+    # conservative (UTF-8 bytes / 2, dense enough for number-heavy text).
+    # Env: COCKPIT_CONTEXT_TOKEN_CAP.
     context_token_cap: int = Field(
         default=DEFAULT_CONTEXT_TOKEN_CAP,
         ge=1,

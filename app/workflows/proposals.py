@@ -53,7 +53,8 @@ from schemas.models.portfolio_snapshot import PortfolioSnapshot
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
 from workflows.agent_calls import call_agent
-from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.constants import EVENT_PROPOSAL
 from workflows.events import resolve_raw
 from workflows.grounding import evaluate_grounding
@@ -402,7 +403,8 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     packet = Packet(items=tuple(owned + others))
     tmpl = load_prompt("trade_proposal")
     overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
-    fit = fit_packet(packet, reserved_tokens=overhead, cap=context_token_cap(state.settings))
+    fit = fit_packet(
+        packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
     packet = fit.packet
     prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
     result, job = call_agent(
