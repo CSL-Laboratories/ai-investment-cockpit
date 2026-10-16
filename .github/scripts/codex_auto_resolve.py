@@ -19,6 +19,8 @@ Resolve when every condition holds:
 Writes (thread reply + ``resolveReviewThread``) use repo secret
 ``CODEX_TRIGGER_PAT`` — the same PAT that posts ``@codex review``. GITHUB_TOKEN
 is read-only. The PAT identity is what GitHub records as resolving the thread.
+A success receipt is posted only when the mutation's ``resolvedBy`` matches
+that identity, so a concurrent human resolve is not attributed to the bot.
 
 Missing ``CODEX_TRIGGER_PAT`` is a notice, not a failure.
 """
@@ -1254,7 +1256,7 @@ def reply_and_resolve(
     excerpt: str,
     retry: bool = False,
     now: datetime | None = None,
-    actor_login: str = "",
+    pat_login: str = "",
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1294,11 +1296,13 @@ def reply_and_resolve(
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
-    actor = actor_login or cfg.pat_login or fetch_pat_login(gh, cfg)
+    # resolveReviewThread is a successful no-op on an already-resolved
+    # thread. A human who won the race would otherwise get a PAT success
+    # receipt (and a cap charge). Fail closed unless GitHub attributes
+    # the resolve to the PAT identity.
+    actor = pat_login or cfg.pat_login
     if not actor or not login_matches(resolved_by_login(thread), actor):
-        # Concurrent human resolve is a successful no-op. Do not mint a
-        # PAT receipt or consume the daily cap for someone else's click.
-        return "foreign-resolve"
+        return "already-resolved"
     stamp = now or utcnow()
     if publish_resolved_marker(
         gh,
@@ -1388,6 +1392,8 @@ def scan_pr(
     if not pat_login:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-pat-login")
         return logs
+    if not cfg.pat_login:
+        cfg = replace(cfg, pat_login=pat_login)
     posted_today = resolved_count_today(
         threads,
         issue_comments,
@@ -1456,7 +1462,7 @@ def scan_pr(
                 excerpt=excerpt,
                 retry=reason == "retry-resolve",
                 now=now,
-                actor_login=pat_login,
+                pat_login=pat_login,
             )
         except Exception:
             result = "error"
