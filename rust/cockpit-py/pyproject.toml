@@ -1,0 +1,9 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "cockpit-quant"
+version = "0.1.0"
+description = "Rust FIFO limit order book for the AI Investment Cockpit"
+requires-python = ">=3.11"

@@ -1,0 +1,127 @@
+# Codex CI/fixer gate (CSL-103). GitHub-hosted ubuntu-latest on purpose:
+# this must not spend Blacksmith minutes. Missing CODEX_TRIGGER_PAT is a
+# notice skip, not a failure.
+#
+# Posts one `@codex review` per head SHA, parses CODEX-GATE: FIX|READY|MEDIATE,
+# dispatches one batched Claude fixer, labels ci:full, or files/updates one
+# Linear needs-decision issue per PR (MEDIATE; skip if already approved).
+# 20-minute timeout fail-opens to FIX.
+# Cap: 3 fixer runs per PR per UTC day. Human @claude bypasses the cap
+# (claude.yml claude-mention job).
+name: Codex CI/fixer gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
+  schedule:
+    # Check 20-minute timeouts. Odd minute to miss the cron stampede.
+    - cron: "7,17,27,37,47,57 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Only scan this PR number (optional)"
+        required: false
+        default: ""
+
+# Writes go through CODEX_TRIGGER_PAT. GITHUB_TOKEN only reads.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+# One group for the whole repo so a review and a scheduled scan cannot both
+# dispatch FIX for the same SHA. GitHub keeps one running + one pending run
+# per group; a displaced PR-open recovers on the next scheduled scan, which
+# posts any missing @codex review request. event-paths still proceeds.
+concurrency:
+  group: codex-gate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Same-repo PRs only. Reviews only if Codex submitted them. Schedule and
+    # dispatch scan for timeouts. Forks never get the PAT or a checkout.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      ) ||
+      (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check trigger PAT
+        id: pat
+        env:
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_TRIGGER_PAT}" ]; then
+            echo "::notice::CODEX_TRIGGER_PAT is not configured; skipping Codex gate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.pat.outputs.skip != 'true'
+        with:
+          # Trusted default-branch copy. Never run the PR head with the PAT.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Run Codex gate
+        if: steps.pat.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          set -euo pipefail
+          # First-merge bootstrap: this workflow ships in the PR, but the
+          # PAT job checks out the default branch so it never runs PR-head
+          # code. Until the script lands on main, skip with a notice.
+          if [ ! -f scripts/ci/codex_gate.py ]; then
+            echo "::notice::codex_gate.py is not on the default branch yet; skipping until first merge."
+            exit 0
+          fi
+          python3 -X utf8 -B scripts/ci/codex_gate.py
+
+  # Tests check out the PR tree (same-repo only, GITHUB_TOKEN, no PAT).
+  # The gate job above is the only job that sees CODEX_TRIGGER_PAT, and it
+  # never checks out PR or fork code.
+  event-paths:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Codex-gate tests
+        run: python3 -X utf8 -B tools/test_codex_gate.py
+      - name: Fixer event-matrix tests
+        run: python3 -X utf8 -B tools/test_claude_pr_fixer.py
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: "1.7.7"
+          ACTIONLINT_SHA256: "023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint -color .github/workflows/codex-gate.yml .github/workflows/claude.yml .github/workflows/ci.yml
