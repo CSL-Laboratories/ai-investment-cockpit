@@ -1009,30 +1009,53 @@ def already_cited_on_sha(
     return False
 
 
+def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
+    """GraphQL ids of threads that are still open on this scan."""
+    found: set[str] = set()
+    for thread in threads:
+        if thread.get("isResolved"):
+            continue
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if tid:
+            found.add(tid)
+    return frozenset(found)
+
+
 def resolved_count_today(
     comments: list[dict[str, Any]],
     now: datetime,
     actor_login: str = "",
+    unresolved_ids: frozenset[str] | None = None,
 ) -> int:
-    """Count PAT cite markers in the last 24h.
+    """Count unique completed PAT auto-resolves in the last 24h.
 
-    Cites are written immediately before ``resolveReviewThread``, so they
-    stamp the actual resolve time even if the success marker is delayed.
-    A later-day marker retry must not consume today's cap.
+    A PAT resolved marker in the window counts even when the cite is older,
+    so a delayed ``retry-resolve`` cannot hide from later scans. A PAT cite
+    whose thread is still open is a failed or in-flight attempt and does
+    not consume the cap — ``retry-resolve`` may complete it this scan. Unique
+    thread ids mean a same-day cite plus success marker charge once. A
+    later-day marker retry of an already-resolved thread is not a new
+    resolve. Missing timestamps fail closed (count).
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
-    count = 0
+    pending = unresolved_ids or frozenset()
+    seen: set[str] = set()
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
-        if not parse_cite_markers(body_of(comment)):
-            continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
-        if stamped is None or stamped >= start:
-            count += 1
-    return count
+        if stamped is not None and stamped < start:
+            continue
+        body = body_of(comment)
+        for tid, _sha in parse_resolved_markers(body):
+            if tid:
+                seen.add(tid)
+        for tid, _sha in parse_cite_markers(body):
+            if tid and tid not in pending:
+                seen.add(tid)
+    return len(seen)
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
@@ -1245,6 +1268,7 @@ def scan_pr(
         issue_comments + [c for t in threads for c in thread_comments(t)],
         now,
         actor_login=pat_login,
+        unresolved_ids=unresolved_thread_ids(threads),
     )
     for thread in threads:
         tid = log_thread_id(str(thread.get("id") or ""))

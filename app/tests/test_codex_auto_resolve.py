@@ -763,6 +763,95 @@ def test_old_cite_retry_mark_does_not_consume_today_cap():
     assert any("resolve=posted" in line for line in logs)
 
 
+def test_old_cite_retry_resolve_counts_today_via_resolved_marker():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body(), old),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.issue_comments[12] = [comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), NOW)]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_old_cite_retry_resolve_consumes_in_scan_cap():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body(), old),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_unresolved_cites_do_not_burn_daily_cap():
+    stuck = [
+        thread(
+            f"PRRT_old{i:02d}",
+            comments=[comment(PAT_LOGIN, mod.cite_marker(f"PRRT_old{i:02d}", SHA))],
+        )
+        for i in range(20)
+    ]
+    gh = ready_gh(
+        threads=[*stuck, thread()],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=20), gh, NOW)
+    assert THREAD in gh.resolves
+    assert any("resolve=posted" in line for line in logs)
+
+
+def test_same_day_retry_resolve_does_not_double_charge():
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD in gh.resolves
+    assert THREAD2 in gh.resolves
+    assert not any("skip=over-cap" in line for line in logs)
+
+
 def test_scan_skips_retry_mark_when_human_resolved():
     gh = ready_gh(
         threads=[
