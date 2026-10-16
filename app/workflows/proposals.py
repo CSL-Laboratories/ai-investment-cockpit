@@ -373,11 +373,7 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
 
 
 def fit_proposal_packet(state, event: MarketEvent, packet: Packet):
-    """Keep the subject event first and fit it under the proposal template + repair reserve.
-
-    Callers that must not spend deep budget on an unfit subject should check
-    ``subject_evidence_fits`` before ``DeepBudget.try_consume``.
-    """
+    """Keep the subject event first and fit it under the proposal template + repair reserve."""
     owned = [item for item in packet.items if item.event_id == event.id]
     others = [item for item in packet.items if item.event_id != event.id]
     ordered = Packet(items=tuple(owned + others))
@@ -390,8 +386,9 @@ def fit_proposal_packet(state, event: MarketEvent, packet: Packet):
     ), tmpl
 
 
-def subject_evidence_fits(state, event: MarketEvent, packet: Packet) -> bool:
-    """True when the subject's own packet item survives the proposal fit."""
+def subject_fits_context(state, event: MarketEvent, packet: Packet) -> bool:
+    """Pure preflight: does ``event``'s evidence survive the context cap? Lets the
+    caller defer BEFORE spending deep budget on a call that cannot be dispatched."""
     fit, _tmpl = fit_proposal_packet(state, event, packet)
     return any(item.event_id == event.id for item in fit.packet.items)
 
