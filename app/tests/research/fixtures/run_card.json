@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "run_id": "idea-1",
+  "status": "completed",
+  "point_in_time": true,
+  "started_at": "2026-01-01T00:00:00+00:00",
+  "ended_at": "2026-06-30T00:00:00+00:00",
+  "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "metrics_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "metrics": {"sharpe": 1.2, "annual_return": 0.08, "max_drawdown": -0.11},
+  "admits_order": true,
+  "side": "buy"
+}

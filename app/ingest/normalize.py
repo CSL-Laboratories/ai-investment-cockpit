@@ -19,8 +19,11 @@ import unicodedata
 # widened HERE and never by a module registering itself at import (that would make the allowlist's
 # contents import-order-dependent and un-greppable). "sec:edgar" = the edgar-morning-brew Delta
 # feed (ingest/edgar_brew.py); "finra" = short-interest/Reg SHO enrichment (W20,
-# ingest/finra_short_interest.py).
-ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra"}
+# ingest/finra_short_interest.py); "vibe-trading" = the optional research sidecar
+# (research/vibe_trading), untrusted like every other feed.
+ALLOWED_SOURCES = {
+    "alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra", "vibe-trading",
+}
 MAX_LEN = 4000
 MAX_SYMBOLS = 64
 _TICKER = re.compile(r"^[A-Z0-9.\-]{1,12}$")

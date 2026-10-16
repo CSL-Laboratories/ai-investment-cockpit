@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "etf": "SPY",
+  "as_of": "2026-06-30",
+  "constituents": [
+    {"symbol": "AAPL", "weight": 0.07},
+    {"symbol": "ZZZZ", "weight": 0.01}
+  ]
+}

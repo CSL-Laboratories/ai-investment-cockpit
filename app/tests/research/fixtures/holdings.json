@@ -1,0 +1,14 @@
+{
+  "status": "ok",
+  "ticker": "AAPL",
+  "diffs": [
+    {
+      "manager": "Example Capital",
+      "quarter": "2025Q4",
+      "prev_quarter": "2025Q3",
+      "shares": 1200,
+      "prev_shares": 1000,
+      "delta_shares": 200
+    }
+  ]
+}
