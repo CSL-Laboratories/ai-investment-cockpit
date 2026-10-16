@@ -23,27 +23,45 @@ and all product/safety gates remain unchanged.
 
 ## Review identity and recovery
 
-The public [Devin app metadata](https://api.github.com/apps/devin-ai-integration)
-returned numeric ID `811515`, slug `devin-ai-integration`, owner `usacognition` on
-2026-10-16. Both ID and slug must match, as must `Devin Review` and the expected
-head SHA. All pages and all attempts are requested (`filter=all`). The highest
-check-run ID is the current attempt; exact repeated IDs deduplicate, conflicting
-copies fail closed. A current queued/running check blocks an old successful one.
+The read-only Cockpit #147 evidence on 2026-10-16 established that Devin publishes
+commit statuses, not check runs. Head `c2708f2248a1e04bebf511c19007841b0aa18037`
+had `Devin Review` success status `56550390641`, after pending `56550267617`, from
+creator ID `158243242`, login `devin-ai-integration[bot]`, type `Bot`. It had no
+Devin app check run. The sanitized status payload is retained in
+`tools/fixtures/devin-cockpit-147-statuses.json`. App metadata alone did not prove
+the original check-run consumer could observe the provider.
+
+The gate requests every page of statuses on the exact commit SHA. Context and all
+three creator identity fields must match; the canonical API status URL must bind
+to the requested repository and SHA. The largest authenticated status ID is the
+current update, independent of response order. Identical repeated IDs deduplicate;
+conflicting copies, invalid IDs and unknown states fail closed. Current pending,
+failure or error blocks old success. Check runs are not an alternative success
+source. Display names, descriptions and target URLs never authorize passage.
+Before accepting success, the gate rereads the first page and requires it to match
+the scan; an insertion while traversing pages returns pending for the bounded poll
+to retry. Status reads are not an atomic snapshot and cannot exclude a new update
+after the final read. Direct Devin protection and the activation hold remain.
 
 Polling has a 120-second deadline, 30-second per-API timeout, and a five-minute job
-timeout. A failed check can be replaced by a new successful retry within the poll
+timeout. A failed status can be replaced by a new successful retry within the poll
 bound. A submitted PR review starts another bounded attempt. A completion after
 the bound requires the owner to rerun the failed `review-gate` job, or manually
 dispatch this workflow on the exact live PR branch with its PR number. Dispatch
 validates that the selected SHA still equals the live PR head. A new commit is not
-required. There is no claim of automatic recovery for every late check completion:
+required. There is no claim of automatic recovery for every late status completion:
 `check_run` workflows attach to the default-branch SHA and are deliberately not
 used to impersonate a successful PR status.
 
 The review workflow keeps #160's read-only `contents: read` and `checks: read`
 permissions; it adds no write token or permission. `checks: read` was itself new
-in original #160 and remains part of the owner's review of this proposal. API
-authorization or transport failures block; no permission is silently escalated.
+in original #160 and remains part of the owner's review of this proposal.
+[GitHub documents](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference)
+that public status reads need no additional statuses permission. This public repo
+uses the existing token without adding permissions or falling back to other
+credentials. API authorization, rate-limit or transport failures block. No
+private-repository support or hosted-token qualification is inferred from the
+local read-only API probe; permissions are never silently escalated.
 The policy script executes from the PR/queue base. The workflow YAML itself still
 comes from the PR/queue/dispatch ref, so a PR could replace that step or its check
 name. The platform aggregates also execute head code. Base checkout alone is not

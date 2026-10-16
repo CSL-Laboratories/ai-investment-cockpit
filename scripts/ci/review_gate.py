@@ -1,12 +1,14 @@
-"""Read-only Devin check gate. Fail closed on incomplete API evidence."""
+"""Read-only Devin status gate. Fail closed on incomplete API evidence."""
 import json
 import os
 import re
 import subprocess
 import time
 
-DEVIN_APP_ID = 811515  # api.github.com/apps/devin-ai-integration, verified 2026-10-16
-DEVIN_APP_SLUG = "devin-ai-integration"
+# Verified from Cockpit #147's commit statuses on 2026-10-16. The provider
+# publishes statuses, not check runs; an app metadata ID alone is not evidence.
+DEVIN_BOT_ID = 158243242
+DEVIN_BOT_LOGIN = "devin-ai-integration[bot]"
 
 
 class GateError(RuntimeError):
@@ -37,29 +39,44 @@ def pages(path, key=None, get=api):
 
 
 def check_state(repo, sha, get=api):
-    runs = pages(f"repos/{repo}/commits/{sha}/check-runs?filter=all", "check_runs", get)
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise GateError("An exact commit SHA is required")
+    path = f"repos/{repo}/commits/{sha}/statuses"
+    statuses = pages(path, get=get)
+    expected_url = f"https://api.github.com/repos/{repo}/statuses/{sha}"
     trusted = {}
-    for run in runs:
-        if (run.get("name") != "Devin Review" or run.get("head_sha") != sha
-                or run.get("app", {}).get("id") != DEVIN_APP_ID
-                or run.get("app", {}).get("slug") != DEVIN_APP_SLUG):
+    for status in statuses:
+        creator = status.get("creator") or {}
+        if (status.get("context") != "Devin Review"
+                or creator.get("id") != DEVIN_BOT_ID
+                or creator.get("login") != DEVIN_BOT_LOGIN
+                or creator.get("type") != "Bot"):
             continue
-        identifier = run.get("id")
-        if not isinstance(identifier, int) or identifier <= 0:
-            raise GateError("Invalid Devin check ID")
-        if identifier in trusted and trusted[identifier] != run:
-            raise GateError("Conflicting duplicate Devin check ID")
-        trusted[identifier] = run
+        # Status responses do not have head_sha. Bind the API's canonical status
+        # URL as well as the requested commit endpoint; never trust target_url.
+        if status.get("url") != expected_url:
+            raise GateError("Devin status does not bind to the requested commit")
+        identifier = status.get("id")
+        if type(identifier) is not int or identifier <= 0:
+            raise GateError("Invalid Devin status ID")
+        if identifier in trusted and trusted[identifier] != status:
+            raise GateError("Conflicting duplicate Devin status ID")
+        trusted[identifier] = status
     if not trusted:
         return "pending"
-    # New check-run IDs supersede previous attempts; a re-request on the same ID
-    # updates that run's status. Never search historical attempts for success.
+    # Status updates create new IDs. Select the latest authenticated publisher
+    # record regardless of page/order; never search old attempts for success or
+    # accept check-run success as a fallback for a missing/current failed status.
     current = trusted[max(trusted)]
-    if current.get("status") in ("queued", "in_progress", "waiting", "pending", "requested"):
+    state = current.get("state")
+    if state not in ("success", "pending", "failure", "error"):
+        raise GateError("Unknown Devin status state")
+    # The status list has no total_count and new entries can shift page offsets.
+    # Confirm page one stayed stable before accepting success; otherwise let the
+    # bounded poll obtain a new scan. This is not an atomic provider snapshot.
+    if state == "success" and get(f"{path}?per_page=100&page=1") != statuses[:100]:
         return "pending"
-    if current.get("status") != "completed":
-        raise GateError("Unknown Devin check status")
-    return "success" if current.get("conclusion") == "success" else "failure"
+    return "failure" if state == "error" else state
 
 
 def queue_heads(repo, group, get=api):

@@ -175,7 +175,7 @@ Hosted split (PR #102):
 - Superseded runs of the same PR are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
 - Non-draft synchronize events wait in `settle` for 120 seconds. Paid jobs and required aggregates accept successful settle or an event's intentional skip; failure, cancellation, and unexpected skips block. The wait consumes hosted capacity and does not guarantee savings.
 - CI caches pip downloads, never virtualenvs. Each cell creates a fresh environment, installs direct pins, and runs `pip check`; one fresh no-cache retry handles install/cache failure. Direct pins are not a transitive hash lock.
-- Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin app check on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
+- Queue protection is staged: proposed stable checks are `linux-gates`, `queue-gates`, `rust-gates`, and `review-gate`. The latter verifies the current genuine Devin bot commit status on every exact required PR head, with bounded polling and manual same-head recovery. Existing required `linux-gates` and `Devin Review` remain unchanged. See [the rollout and owner decisions](docs/ci-queue-rollout.md); synthetic tests do not establish live queue enforcement.
 
 ## Review roles
 
