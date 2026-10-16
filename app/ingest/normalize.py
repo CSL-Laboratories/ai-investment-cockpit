@@ -150,27 +150,46 @@ def _load_native() -> None:
     NORMALIZE_BACKEND = "rust"
 
 
+def _utf8_text(value) -> bool:
+    """True for a real ``str`` PyO3 can take as ``&str``.
+
+    ``json.loads('"\\\\ud800"')`` yields a lone surrogate. That value is a ``str``, but
+    encoding it to UTF-8 raises ``UnicodeEncodeError``. The Python normalizer accepts
+    it (``json.dumps`` escapes it, and ``_safe_ref_component`` hashes with
+    ``surrogatepass``). Sending it to the extension crashes the feed item.
+    """
+    if type(value) is not str:
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _plain_json(value) -> bool:
-    if value is None or type(value) in (str, int, float, bool):
+    if value is None or type(value) in (int, float, bool):
         return True
+    if type(value) is str:
+        return _utf8_text(value)
     if type(value) in (list, tuple):
         return all(_plain_json(item) for item in value)
     if type(value) is dict:
-        return all(type(key) is str and _plain_json(item) for key, item in value.items())
+        return all(_utf8_text(key) and _plain_json(item) for key, item in value.items())
     return False
 
 
 def _plain_symbols(symbols) -> bool:
     if type(symbols) is str:
-        return True
+        return _utf8_text(symbols)
     if type(symbols) not in (list, tuple):
         return False
-    return all(type(item) is str for item in symbols)
+    return all(_utf8_text(item) for item in symbols)
 
 
 def escape_untrusted(text) -> str:
     native = _NATIVE
-    if native is not None and (text is None or text == "" or type(text) is str):
+    if native is not None and (text is None or text == "" or _utf8_text(text)):
         if text is None or text == "":
             return ""
         return native.escape_untrusted(text)
@@ -189,15 +208,15 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
     native = _NATIVE
     plain = (
         native is not None
-        and type(source) is str
+        and _utf8_text(source)
         and source in ALLOWED_SOURCES
-        and type(article_id) in (str, int)
+        and (type(article_id) is int or _utf8_text(article_id))
         and type(article_id) is not bool
         and _plain_symbols(symbols)
-        and type(headline) is str
-        and type(summary) is str
-        and type(event_type) is str
-        and (ts is None or type(ts) in (str, int, float))
+        and _utf8_text(headline)
+        and _utf8_text(summary)
+        and _utf8_text(event_type)
+        and (ts is None or type(ts) in (int, float) or _utf8_text(ts))
         and type(ts) is not bool
         and (raw is None or _plain_json(raw))
     )

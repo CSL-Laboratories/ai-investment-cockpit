@@ -95,8 +95,9 @@ fn push_u_escape(out: &mut String, unit: u32) {
     out.push_str(&format!("\\u{unit:04x}"));
 }
 
-/// Python `json.dumps` of a finite float: shortest round-trip, `e+`/`e-` with a
-/// two-digit exponent, and `.0` when the text would otherwise be an integer.
+/// Python `json.dumps` of a finite float: shortest round-trip, scientific notation
+/// when the decimal point is at or left of `10^-4` or right of 16 digits, `e+`/`e-`
+/// with at least two exponent digits, and `.0` when the text would otherwise be an integer.
 pub fn format_f64(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_string();
@@ -120,28 +121,102 @@ pub fn format_f64(value: f64) -> String {
     python_float_text(&printed)
 }
 
+/// Rewrite Ryu's shortest text with CPython's fixed/scientific cutoff.
+///
+/// `repr(float)` (what `json.dumps` calls) uses scientific notation when `decpt <= -4`
+/// or `decpt > 16`, where the value is `0.digits * 10^decpt`. Ryu switches later on
+/// the small side, so `0.00001` would otherwise stay fixed while Python emits `1e-05`
+/// and the raw-input hash would not match.
 fn python_float_text(printed: &str) -> String {
-    let Some((body, exp)) = printed.split_once(['e', 'E']) else {
-        // Integer-valued floats with no exponent (`9007199254740992`) gain `.0`.
-        // An exponent of its own already marks the token as a float (`1e+16`).
-        if printed.contains('.') {
-            return printed.to_string();
-        }
-        return if let Some(stripped) = printed.strip_prefix('-') {
-            format!("-{stripped}.0")
-        } else {
-            format!("{printed}.0")
-        };
+    let (negative, unsigned) = match printed.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, printed),
     };
-    let (sign, digits) = if let Some(rest) = exp.strip_prefix('-') {
-        ('-', rest)
-    } else if let Some(rest) = exp.strip_prefix('+') {
-        ('+', rest)
+    let Some((digits, decpt)) = significand(unsigned) else {
+        return printed.to_string();
+    };
+    let body = if decpt <= -4 || decpt > 16 {
+        scientific(&digits, decpt)
     } else {
-        ('+', exp)
+        fixed(&digits, decpt)
     };
-    let width = digits.len().max(2);
-    format!("{body}e{sign}{digits:0>width$}")
+    if negative {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
+/// Significant digits and Python's `decpt` for Ryu's fixed or scientific text.
+fn significand(unsigned: &str) -> Option<(String, i32)> {
+    if unsigned.is_empty() {
+        return None;
+    }
+    let (mantissa, exp) = if let Some((body, exp_text)) = unsigned.split_once(['e', 'E']) {
+        (body, exp_text.parse::<i32>().ok()?)
+    } else {
+        (unsigned, 0)
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
+        Some((int_part, frac_part)) => (int_part, frac_part),
+        None => (mantissa, ""),
+    };
+    if int_part.is_empty()
+        || !int_part.bytes().all(|byte| byte.is_ascii_digit())
+        || !frac_part.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut all = String::with_capacity(int_part.len() + frac_part.len());
+    all.push_str(int_part);
+    all.push_str(frac_part);
+    let lead = all.bytes().position(|byte| byte != b'0')?;
+    let point_index = i32::try_from(int_part.len()).ok()? + exp;
+    let decpt = point_index - i32::try_from(lead).ok()?;
+    let digits = all[lead..].trim_end_matches('0');
+    if digits.is_empty() {
+        return None;
+    }
+    Some((digits.to_string(), decpt))
+}
+
+fn scientific(digits: &str, decpt: i32) -> String {
+    let exp = decpt - 1;
+    let mut out = String::new();
+    let mut chars = digits.chars();
+    out.push(chars.next().expect("significand is non-empty"));
+    let rest: String = chars.collect();
+    if !rest.is_empty() {
+        out.push('.');
+        out.push_str(&rest);
+    }
+    let sign = if exp < 0 { '-' } else { '+' };
+    out.push_str(&format!("e{sign}{:02}", exp.unsigned_abs()));
+    out
+}
+
+fn fixed(digits: &str, decpt: i32) -> String {
+    if decpt <= 0 {
+        let mut out = String::from("0.");
+        for _ in 0..(-decpt) {
+            out.push('0');
+        }
+        out.push_str(digits);
+        return out;
+    }
+    let point = decpt as usize;
+    if point < digits.len() {
+        let mut out = String::new();
+        out.push_str(&digits[..point]);
+        out.push('.');
+        out.push_str(&digits[point..]);
+        out
+    } else {
+        let mut out = digits.to_string();
+        out.extend(std::iter::repeat('0').take(point - digits.len()));
+        out.push_str(".0");
+        out
+    }
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -174,16 +249,36 @@ mod tests {
             (0.1, "0.1"),
             (1.0, "1.0"),
             (-0.0, "-0.0"),
-            (1e16, "1e+16"),
-            (1e20, "1e+20"),
+            (1e-4, "0.0001"),
+            (1e-5, "1e-05"),
+            (-1e-5, "-1e-05"),
+            (9.9e-5, "9.9e-05"),
+            (1.23e-5, "1.23e-05"),
+            (1e-6, "1e-06"),
             (1e-7, "1e-07"),
+            (5e-324, "5e-324"),
+            (1e15, "1000000000000000.0"),
+            (1e16, "1e+16"),
+            (-1e16, "-1e+16"),
+            (1e20, "1e+20"),
             (1e100, "1e+100"),
+            (f64::MAX, "1.7976931348623157e+308"),
             (std::f64::consts::PI, "3.141592653589793"),
             (9007199254740992.0, "9007199254740992.0"),
         ];
         for (value, expected) in samples {
             assert_eq!(format_f64(value), expected, "{value}");
         }
+    }
+
+    #[test]
+    fn small_float_hash_matches_python_json() {
+        let value = Json::Object(vec![("price_change".into(), Json::Float(1e-5))]);
+        assert_eq!(dumps(&value), r#"{"price_change":1e-05}"#);
+        assert_eq!(
+            content_hash(&value),
+            "04b71df3954421435a67d28d917976e969f52155b9c8b1f7418c8ceb5a30d343"
+        );
     }
 
     #[test]

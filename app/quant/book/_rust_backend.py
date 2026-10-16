@@ -397,6 +397,9 @@ class LimitOrderBook:
         A bad op raises the same exception the single-call method would. Ops
         before it stay applied, including on any ``RestingOrder`` the caller
         already holds.
+
+        A generator costs one native call per op so a book read between yields
+        sees the earlier op. Pass a list when speed matters.
         """
         if isinstance(ops, (list, tuple)):
             return self._apply_sequence(list(ops))
@@ -445,11 +448,10 @@ class LimitOrderBook:
     def apply_quiet(self, ops) -> int:
         """Same sequence as ``apply_many``, returning only how many ops applied.
 
-        With no retained orders the native quiet path builds no result rows.
+        The quiet fast path exists only when nobody holds a ``RestingOrder``.
         Otherwise the rows still update retained orders, so a held
-        ``RestingOrder`` cannot go stale after a quiet reduce, cancel,
-        replace, or fill. A generator is applied one op at a time, same as
-        ``apply_many``.
+        object cannot go stale after a quiet reduce, cancel, replace, or fill.
+        A generator is applied one op at a time, same as ``apply_many``.
         """
         if not isinstance(ops, (list, tuple)):
             return len(self.apply_many(ops))
