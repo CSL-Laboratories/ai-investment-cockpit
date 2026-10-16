@@ -17,16 +17,19 @@ py=.venv/bin/python
 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || fetch=FAIL
 git fetch --quiet --prune origin || fetch=FAIL
 
-# Project virtualenv. A venv without a working pip (for example a half-built
-# one left by a failed `python3 -m venv`) is rebuilt, falling back to uv,
-# whose --seed adds pip.
-if [ ! -x "$py" ] || ! "$py" -m pip --version >/dev/null 2>&1; then
+# Project virtualenv. A venv that is unusable (no working pip, e.g. half-built
+# by a failed `python3 -m venv`) or older than Python 3.11 is rebuilt: first
+# with the host python3, then with uv, whose --seed adds pip and which can
+# fetch a Python >= 3.11 if the host's is too old.
+venv_ok() {
+  [ -x "$py" ] && "$py" -m pip --version >/dev/null 2>&1 &&
+    "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null
+}
+if ! venv_ok; then
   rm -rf .venv
-  { python3 -m venv .venv 2>/dev/null && "$py" -m pip --version >/dev/null 2>&1; } ||
-    { rm -rf .venv; uv venv --quiet --seed .venv; } || venv=FAIL
-fi
-if [ "$venv" = ok ] && ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-  venv="FAIL(python<3.11)"
+  { python3 -m venv .venv 2>/dev/null && venv_ok; } ||
+    { rm -rf .venv; uv venv --quiet --seed --python '>=3.11' .venv 2>/dev/null && venv_ok; } ||
+    venv="FAIL(no usable python>=3.11)"
 fi
 
 # Every declared requirement and everything it depends on, including the
@@ -46,23 +49,24 @@ with open("app/pyproject.toml", "rb") as f:
 with open("app/benchmarks/requirements.txt") as f:
     reqs += [l for l in (x.split("#")[0].strip() for x in f) if l]
 
-problems, seen = [], set()
+problems, seen = {}, set()
 
 def need(req, extra=""):
     r = Requirement(req)
     if r.marker and not r.marker.evaluate({"extra": extra}):
         return
+    try:
+        dist = distribution(r.name)
+    except PackageNotFoundError:
+        problems[f"{r.name} missing"] = None
+        return
+    # Check every incoming constraint; `seen` only stops repeated recursion.
+    if r.specifier and not r.specifier.contains(dist.version, prereleases=True):
+        problems[f"{r.name} {dist.version} not {r.specifier}"] = None
     key = (r.name.lower(), frozenset(r.extras))
     if key in seen:
         return
     seen.add(key)
-    try:
-        dist = distribution(r.name)
-    except PackageNotFoundError:
-        problems.append(f"{r.name} missing")
-        return
-    if r.specifier and not r.specifier.contains(dist.version, prereleases=True):
-        problems.append(f"{r.name} {dist.version} not {r.specifier}")
     # Walk the whole closure: unconditional requirements (extra "") plus
     # those of each requested extra, with platform markers evaluated.
     for ctx in ("", *r.extras):
