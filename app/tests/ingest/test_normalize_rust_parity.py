@@ -251,26 +251,46 @@ def test_direct_content_hash_accepts_default_str_values():
     class Plain(dict):
         pass
 
-    class SameItems(dict):
-        def items(self):
-            return dict.items(self)
-
     nested = 0
     for _ in range(1100):
         nested = [nested]
     plain = {"x": nested}
-    for raw in (Plain(plain), SameItems(plain)):
-        assert cockpit_quant.content_hash(raw) == cockpit_quant.content_hash(plain)
-        got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", raw)
-        assert got[5] == cockpit_quant.content_hash(plain)
+    assert cockpit_quant.content_hash(Plain(plain)) == cockpit_quant.content_hash(plain)
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Plain(plain))
+    assert got[5] == cockpit_quant.content_hash(plain)
     deep = 0
     for _ in range(3000):
         deep = [deep]
-    for raw in (Plain({"x": deep}), SameItems({"x": deep})):
-        with pytest.raises(ValueError, match="JSON nesting too deep"):
-            cockpit_quant.content_hash(raw)
-        with pytest.raises(ValueError, match="JSON nesting too deep"):
-            cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", raw)
+    with pytest.raises(ValueError, match="JSON nesting too deep"):
+        cockpit_quant.content_hash(Plain({"x": deep}))
+    with pytest.raises(ValueError, match="JSON nesting too deep"):
+        cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Plain({"x": deep}))
+
+    class Lists(dict):
+        def items(self):
+            return [[key, value] for key, value in dict.items(self)]
+
+    listed = Lists({"x": 1})
+    with pytest.raises(ValueError):
+        python_content_hash(listed)
+    with pytest.raises(ValueError):
+        cockpit_quant.content_hash(Lists({"x": 1}))
+    with pytest.raises(ValueError):
+        cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Lists({"x": 1}))
+
+    class Flip(dict):
+        def items(self):
+            pairs = list(dict.items(self))
+            self["x"] = 2
+            return pairs
+
+    assert cockpit_quant.content_hash(Flip({"x": 1})) == python_content_hash(Flip({"x": 1}))
+    event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=None, event_type="news", raw=Flip({"x": 1}),
+    )
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Flip({"x": 1}))
+    assert got[5] == event["content_hash"]
 
 
 def test_deep_plain_dict_subclass_stays_native():

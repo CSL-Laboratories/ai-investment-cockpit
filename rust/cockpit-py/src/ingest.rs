@@ -104,10 +104,11 @@ fn read_dict(
     let Ok(dict) = obj.downcast::<PyDict>() else {
         return Err(ReadError::Py(invalid("dict subclass")));
     };
-    // `dict.iter()` reads the stored entries. `json.dumps` calls `items()`.
-    // When that view is the same objects, keep the native depth limit.
-    // A real override falls through to `json.dumps`.
-    if !obj.get_type().is(&PyDict::type_object(obj.py())) && !items_match_storage(obj, &dict) {
+    // `dict.iter()` reads stored entries. `json.dumps` calls `items()`.
+    // Only an inherited `dict.items` is the same view. Calling an override
+    // here would change a stateful dict before the fallback dump, and a
+    // list-shaped item would be accepted where Python rejects it.
+    if !obj.get_type().is(&PyDict::type_object(obj.py())) && !items_are_inherited(obj) {
         return Err(ReadError::Py(invalid("dict subclass")));
     }
     let id = enter_container(obj, visiting, depth)?;
@@ -135,34 +136,44 @@ fn read_dict(
 }
 
 #[inline(never)]
-fn items_match_storage(obj: &Bound<'_, PyAny>, dict: &Bound<'_, PyDict>) -> bool {
-    // A bool, not a `PyErr`: the error type is large, and this frame is live
-    // only for the check. Nested values are compared by identity so the walk
-    // does not recurse into them.
-    let Ok(items) = obj.call_method0("items") else {
-        return false;
-    };
-    let Ok(mut reported) = items.try_iter() else {
-        return false;
-    };
-    let mut stored = dict.iter();
-    loop {
-        match (reported.next(), stored.next()) {
-            (None, None) => return true,
-            (Some(Ok(pair)), Some((stored_key, stored_value))) => {
-                let Ok(key) = pair.get_item(0) else {
-                    return false;
-                };
-                let Ok(value) = pair.get_item(1) else {
-                    return false;
-                };
-                if !key.is(&stored_key) || !value.is(&stored_value) {
-                    return false;
-                }
-            }
-            _ => return false,
+fn items_are_inherited(obj: &Bound<'_, PyAny>) -> bool {
+    // Presence in a class or instance dict, not `==`. An override can define
+    // `__eq__` so that it compares equal to `dict.items` and still returns
+    // different pairs. This check never calls `items()`.
+    let dict_type = PyDict::type_object(obj.py());
+    if let Ok(instance_dict) = obj.getattr("__dict__") {
+        match mapping_contains(&instance_dict, "items") {
+            Some(true) | None => return false,
+            Some(false) => {}
         }
     }
+    let Ok(mro) = obj.get_type().getattr("__mro__") else {
+        return false;
+    };
+    let Ok(classes) = mro.try_iter() else {
+        return false;
+    };
+    for cls in classes {
+        let Ok(cls) = cls else {
+            return false;
+        };
+        if cls.is(&dict_type) {
+            return true;
+        }
+        let Ok(cls_dict) = cls.getattr("__dict__") else {
+            return false;
+        };
+        match mapping_contains(&cls_dict, "items") {
+            Some(true) | None => return false,
+            Some(false) => {}
+        }
+    }
+    false
+}
+
+fn mapping_contains(mapping: &Bound<'_, PyAny>, key: &str) -> Option<bool> {
+    let flag = mapping.call_method1("__contains__", (key,)).ok()?;
+    flag.is_truthy().ok()
 }
 
 fn enter_container(
