@@ -483,6 +483,8 @@ def normalize_run_card(payload: dict, *, config_point_in_time: bool) -> dict | N
         return None
     if str(payload.get("schema_version", "")) != "1.0":
         return None
+    if payload.get("status") is not None and not _trace_status_ok(payload.get("status")):
+        return None
     traces = payload.get("tool_traces") if type(payload.get("tool_traces")) is list else []
     if any(type(trace) is dict and trace.get("tool") == "backtest"
            and not _trace_status_ok(trace.get("status"))

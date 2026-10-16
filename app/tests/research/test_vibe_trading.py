@@ -563,6 +563,16 @@ def test_holdings_mismatching_ticker_are_quarantined():
     assert project_holdings(payload, ticker="AAPL")
 
 
+def test_failed_run_card_status_is_quarantined():
+    card = _load("run_card.json")
+    assert "status" not in card
+    assert normalize_run_card(card, config_point_in_time=True) is not None
+    card["status"] = "failed"
+    assert normalize_run_card(card, config_point_in_time=True) is None
+    card["status"] = "ok"
+    assert normalize_run_card(card, config_point_in_time=True) is not None
+
+
 def test_malformed_backtest_trace_status_quarantines_the_card():
     card = _load("run_card.json")
     card["tool_traces"][0]["status"] = []
