@@ -2,7 +2,9 @@
 
 use std::ffi::CString;
 
-use cockpit_ingest::{content_hash, escape_untrusted, market_event, source_allowlisted, Json};
+use cockpit_ingest::{
+    content_hash, escape_untrusted, market_event, source_allowlisted, Json, MAX_LEN,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
@@ -109,53 +111,67 @@ fn contains_unassigned(py: Python<'_>, text: &str) -> PyResult<bool> {
     checker.bind(py).call1((text,))?.extract()
 }
 
-fn event_via_python(
+fn role_pattern(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    static PATTERN: GILOnceCell<Py<PyAny>> = GILOnceCell::new();
+    let compiled = PATTERN.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+        let pattern = concat!(
+            r"(?i)\b(?:system|assistant|human|developer|user|tool|function)\s*:",
+            r"|</?untrusted-content|<\|im_(?:start|end)\|>|\[/?INST\]|###\s*instruction"
+        );
+        Ok(py
+            .import("re")?
+            .getattr("compile")?
+            .call1((pattern,))?
+            .unbind())
+    })?;
+    Ok(compiled.clone_ref(py))
+}
+
+/// NFKC and role-marker replacement for text this interpreter has not assigned.
+///
+/// Uses the stdlib `unicodedata` and `re` modules. The wheel does not import
+/// `ingest.normalize`, so a standalone install still returns escaped text.
+fn escape_with_python_unicode(py: Python<'_>, text: &str) -> PyResult<String> {
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    let folded: String = py
+        .import("unicodedata")?
+        .getattr("normalize")?
+        .call1(("NFKC", text))?
+        .extract()?;
+    let marked: String = role_pattern(py)?
+        .bind(py)
+        .call_method1("sub", ("[role-marker]", &folded))?
+        .extract()?;
+    let mut escaped = String::with_capacity(marked.len());
+    for ch in marked.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            other => escaped.push(other),
+        }
+    }
+    Ok(escaped.chars().take(MAX_LEN).collect())
+}
+
+fn overlay_python_text(
     py: Python<'_>,
-    source: &str,
-    article_id: &str,
-    symbols: &Bound<'_, PyAny>,
+    mut parts: EventOut,
     headline: &str,
     summary: &str,
     event_type: &str,
-    raw: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<EventOut> {
-    let func = py
-        .import("ingest.normalize")?
-        .getattr("python_to_market_event")?;
-    let kwargs = PyDict::new(py);
-    kwargs.set_item("source", source)?;
-    kwargs.set_item("article_id", article_id)?;
-    kwargs.set_item("symbols", symbols)?;
-    kwargs.set_item("headline", headline)?;
-    kwargs.set_item("summary", summary)?;
-    kwargs.set_item("ts", py.None())?;
-    kwargs.set_item("event_type", event_type)?;
-    if let Some(raw) = raw {
-        kwargs.set_item("raw", raw)?;
-    }
-    let event = func.call((), Some(&kwargs))?.downcast_into::<PyDict>()?;
-    let raw_input = event
-        .get_item("raw_input")?
-        .ok_or_else(|| invalid("missing raw_input"))?;
-    let dumps = py.import("json")?.getattr("dumps")?;
-    let dump_kwargs = PyDict::new(py);
-    dump_kwargs.set_item("sort_keys", true)?;
-    dump_kwargs.set_item("separators", (",", ":"))?;
-    let raw_json: String = dumps.call((raw_input,), Some(&dump_kwargs))?.extract()?;
-    let take = |key: &str| -> PyResult<Bound<'_, PyAny>> {
-        event
-            .get_item(key)?
-            .ok_or_else(|| invalid(format!("missing {key}")))
+    let escaped_type = escape_with_python_unicode(py, event_type)?;
+    parts.0 = if escaped_type.is_empty() {
+        "news".to_string()
+    } else {
+        escaped_type
     };
-    Ok((
-        take("event_type")?.extract()?,
-        take("symbols")?.extract()?,
-        take("headline")?.extract()?,
-        take("summary")?.extract()?,
-        take("raw_ref")?.extract()?,
-        take("content_hash")?.extract()?,
-        raw_json,
-    ))
+    parts.2 = escape_with_python_unicode(py, headline)?;
+    parts.3 = escape_with_python_unicode(py, summary)?;
+    Ok(parts)
 }
 
 fn needs_python_unicode(py: Python<'_>, parts: &[&str]) -> PyResult<bool> {
@@ -171,11 +187,7 @@ fn needs_python_unicode(py: Python<'_>, parts: &[&str]) -> PyResult<bool> {
 #[pyo3(name = "escape_untrusted")]
 fn escape_untrusted_py(py: Python<'_>, text: &str) -> PyResult<String> {
     if contains_unassigned(py, text)? {
-        return py
-            .import("ingest.normalize")?
-            .getattr("python_escape_untrusted")?
-            .call1((text,))?
-            .extract();
+        return escape_with_python_unicode(py, text);
     }
     Ok(escape_untrusted(text))
 }
@@ -199,14 +211,10 @@ fn market_event_py(
     raw: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<EventOut> {
     ensure_source(source)?;
-    if needs_python_unicode(py, &[headline, summary, event_type])? {
-        return event_via_python(
-            py, source, article_id, symbols, headline, summary, event_type, raw,
-        );
-    }
+    let skewed = needs_python_unicode(py, &[headline, summary, event_type])?;
     let (csv, items) = read_symbols(symbols)?;
     let raw_json = raw.map(read_json).transpose()?;
-    Ok(pack(market_event(
+    let parts = pack(market_event(
         source,
         article_id,
         csv.as_deref(),
@@ -215,7 +223,11 @@ fn market_event_py(
         summary,
         event_type,
         raw_json.as_ref(),
-    )))
+    ));
+    if skewed {
+        return overlay_python_text(py, parts, headline, summary, event_type);
+    }
+    Ok(parts)
 }
 
 #[pyfunction]
@@ -229,16 +241,22 @@ fn market_event_many(
     let mut out = Vec::with_capacity(rows.len());
     for (source, article_id, symbols, headline, summary, event_type) in rows {
         if needs_python_unicode(py, &[&headline, &summary, &event_type])? {
-            let symbols_obj = PyList::new(py, &symbols)?.into_any();
-            out.push(event_via_python(
-                py,
+            let parts = pack(market_event(
                 &source,
                 &article_id,
-                &symbols_obj,
+                None,
+                &symbols,
                 &headline,
                 &summary,
                 &event_type,
                 None,
+            ));
+            out.push(overlay_python_text(
+                py,
+                parts,
+                &headline,
+                &summary,
+                &event_type,
             )?);
         } else {
             out.push(pack(market_event(
