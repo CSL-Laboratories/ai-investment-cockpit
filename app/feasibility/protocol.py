@@ -10,7 +10,6 @@ feed, or mutate freeze/evaluation/cases.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,7 @@ import jsonschema
 
 from feasibility.evaluate import EVALUATION_PATH, load_evaluation
 from feasibility.inspect import CASES_PATH, load_cases
-from feasibility.validate import FREEZE_PATH, FeasibilityError
+from feasibility.validate import FREEZE_PATH, FeasibilityError, sha256_file
 
 PROTOCOL_VERSION = "feasibility.protocol.v1"
 PROTOCOL_CLAIM_ID = "RW-30"
@@ -45,10 +44,6 @@ _HERE = Path(__file__).resolve().parent
 PROTOCOL_PATH = _HERE / "protocol.v1.json"
 PROTOCOL_SCHEMA_PATH = _HERE.parent / "schemas" / "json" / "FeasibilityProtocol.schema.json"
 REPO_ROOT = _HERE.parents[1]
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def validate_protocol(payload: dict[str, Any]) -> None:
