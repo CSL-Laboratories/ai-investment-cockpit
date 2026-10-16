@@ -107,8 +107,11 @@ provisioned.
    test that asserts an unconfigured default.
 5. Keep the repository private and commit only when the operator asks.
 6. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes (one push per
-   iteration when possible); mark ready **once**; never merge or rebase `main`
-   into a branch unless there is a real conflict; never edit
+   iteration when possible); mark ready **once**, after validation and only when
+   no owner hold remains. Never merge a PR, rebase, or force-push. Avoid routine
+   base merges; a normal base merge is allowed for a real conflict or an
+   owner-approved dependency integration even without a text conflict. Record
+   the reason and rerun the combined gates. Never edit
    `.github/workflows/**` unless a Linear issue explicitly assigned by a human
    asks for it; bots mark a PR ready with their own identity, never
    `GITHUB_TOKEN`.
@@ -273,7 +276,7 @@ median slowdown, after sample spread, is above 10%. It does not fail
 
 Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
 
-Open PRs as drafts, batch pushes, and mark ready once. Never merge or rebase `main` into a working branch unless there is a real conflict. Bots convert draft → ready with their own App identity, not `GITHUB_TOKEN`.
+Open PRs as drafts, batch pushes, and mark ready once after validation and only when no owner hold remains. Never merge PRs, rebase, or force-push. Normal base merges are limited to real conflicts or owner-approved dependency integration (including integration without a text conflict); record the reason and rerun the combined gates. Bots convert draft → ready with their own App identity, not `GITHUB_TOKEN`.
 
 Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 

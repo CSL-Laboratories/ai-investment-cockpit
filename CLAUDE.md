@@ -80,8 +80,11 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
 7. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes; mark ready
-   once; never merge or rebase `main` into a branch unless there is a real
-   conflict; never edit `.github/workflows/**` unless a Linear issue
+   once after validation and only when no owner hold remains. Never merge a
+   PR, rebase, or force-push. Avoid routine base merges; a normal base merge
+   is allowed for a real conflict or an owner-approved dependency integration,
+   even without a text conflict. Record the reason and rerun the combined gates.
+   Never edit `.github/workflows/**` unless a Linear issue
    explicitly assigned by a human asks for it; bots mark ready with their own
    identity, never `GITHUB_TOKEN`.
 
