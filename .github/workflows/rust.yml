@@ -195,7 +195,7 @@ jobs:
         needs.settle.result == 'success' ||
         (needs.settle.result == 'skipped' &&
           (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
-      )
+      ) && needs.filter.outputs.has-cells == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -236,7 +236,7 @@ jobs:
 
   rust-gates:
     name: rust-gates
-    needs: [filter, rust-book]
+    needs: [filter, settle, rust-book]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -250,11 +250,14 @@ jobs:
           FILTER_RESULT: ${{ needs.filter.result }}
           REQUIRED: ${{ needs.filter.outputs.has-cells }}
           RESULTS: ${{ toJSON(needs.rust-book.result) }}
+          SETTLE_RESULT: ${{ needs.settle.result }}
+          SETTLE_EXPECTED: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true }}
         run: |
           python3 - <<'PY'
           import json, os
-          from tools.required_ci_gate import gate
-          passed = gate(os.environ['FILTER_RESULT'], os.environ['REQUIRED'],
-                        [json.loads(os.environ['RESULTS'])])
+          from tools.required_ci_gate import gate, settled
+          passed = (settled(os.environ['SETTLE_RESULT'], os.environ['SETTLE_EXPECTED'])
+                    and gate(os.environ['FILTER_RESULT'], os.environ['REQUIRED'],
+                             [json.loads(os.environ['RESULTS'])]))
           raise SystemExit(0 if passed else 'Required Rust gate failed closed')
           PY

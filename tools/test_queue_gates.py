@@ -9,7 +9,7 @@ import unittest
 
 import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.required_ci_gate import gate
+from tools.required_ci_gate import gate, settled
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +38,7 @@ class QueueGateTests(unittest.TestCase):
 
     def test_actual_queue_aggregate_code(self):
         doc = workflow('ci.yml')['jobs']['queue-gates']
-        self.assertEqual(doc['needs'], ['filter', 'linux', 'windows'])
+        self.assertEqual(doc['needs'], ['filter', 'settle', 'linux', 'windows'])
         self.assertIn('always()', doc['if'])
         script = doc['steps'][-1]['run']
         for required, win_required, linux, windows, expected in [
@@ -54,21 +54,40 @@ class QueueGateTests(unittest.TestCase):
             with self.subTest(required=required, linux=linux, windows=windows):
                 result = execute(script, {'FILTER_RESULT': 'success', 'REQUIRED': required,
                                  'WINDOWS_REQUIRED': win_required, 'LINUX_RESULT': linux,
-                                 'WINDOWS_RESULT': windows})
+                                 'WINDOWS_RESULT': windows, 'SETTLE_RESULT': 'skipped',
+                                 'SETTLE_EXPECTED': 'false'})
                 self.assertEqual(result.returncode == 0, expected, result.stderr)
 
     def test_actual_rust_aggregate_code(self):
         doc = workflow('rust.yml')
         self.assertNotIn('paths', doc['on']['pull_request'])
         job = doc['jobs']['rust-gates']
-        self.assertEqual(job['needs'], ['filter', 'rust-book'])
+        self.assertEqual(job['needs'], ['filter', 'settle', 'rust-book'])
         self.assertEqual(job['if'], 'always()')
         for required, result, expected in [('true', 'success', True), ('true', 'skipped', False),
                                             ('true', 'cancelled', False), ('true', 'failure', False),
                                             ('false', 'skipped', True), ('', 'skipped', False)]:
             actual = execute(job['steps'][-1]['run'], {'FILTER_RESULT': 'success',
-                             'REQUIRED': required, 'RESULTS': json.dumps(result)})
+                             'REQUIRED': required, 'RESULTS': json.dumps(result),
+                             'SETTLE_RESULT': 'skipped', 'SETTLE_EXPECTED': 'false'})
             self.assertEqual(actual.returncode == 0, expected, actual.stderr)
+
+    def test_settle_combines_with_actual_queue_and_rust_gates(self):
+        for result in ('success', 'failure', 'cancelled', 'skipped', '', 'pending'):
+            for expected in ('true', 'false', ''):
+                accept = expected in ('true', 'false') and (
+                    result == 'success' or (result == 'skipped' and expected == 'false'))
+                self.assertEqual(settled(result, expected), accept)
+                for required in ('true', 'false'):
+                    work = 'success' if required == 'true' else 'skipped'
+                    env = {'FILTER_RESULT': 'success', 'REQUIRED': required,
+                           'WINDOWS_REQUIRED': 'true', 'LINUX_RESULT': work,
+                           'WINDOWS_RESULT': work, 'RESULTS': json.dumps(work),
+                           'SETTLE_RESULT': result, 'SETTLE_EXPECTED': expected}
+                    for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
+                        script = workflow(filename)['jobs'][job]['steps'][-1]['run']
+                        with self.subTest(job=job, settle=result, expected=expected, required=required):
+                            self.assertEqual(execute(script, env).returncode == 0, accept)
 
     def test_actual_rust_path_and_platform_matrix(self):
         step = next(s for s in workflow('rust.yml')['jobs']['filter']['steps'] if s.get('id') == 'gate')

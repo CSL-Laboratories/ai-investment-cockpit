@@ -52,6 +52,7 @@ def evaluate(expression, **overrides):
         'inputs.merge_sha': '',
         'needs.filter.outputs.run-tests': 'true',
         'needs.filter.outputs.run-macos': 'true',
+        'needs.filter.outputs.has-cells': 'true',
     }
     values.update(overrides)
     expression = expression.strip().removeprefix('${{').removesuffix('}}').strip()
