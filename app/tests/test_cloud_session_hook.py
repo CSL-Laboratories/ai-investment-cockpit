@@ -9,6 +9,7 @@ the cloud VM (bash, ``sha256sum``, a POSIX venv layout).
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -21,10 +22,17 @@ ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / ".claude" / "hooks" / "session-start.sh"
 STAMP = Path(".venv") / ".cloud-deps.sha256"
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "linux" or not shutil.which("bash") or not shutil.which("sha256sum"),
-    reason="cloud-session hook is Linux-only",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        sys.platform != "linux" or not shutil.which("bash") or not shutil.which("sha256sum"),
+        reason="cloud-session hook is Linux-only",
+    ),
+    # The stub venv wraps this interpreter, and the hook requires `python -m pip`.
+    pytest.mark.skipif(
+        importlib.util.find_spec("pip") is None,
+        reason="test interpreter has no pip (e.g. a uv venv made without --seed)",
+    ),
+]
 
 PY = sys.executable
 GOOD = f'#!/bin/sh\nexec "{PY}" "$@"\n'
