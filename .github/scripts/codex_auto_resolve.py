@@ -38,6 +38,7 @@ CODEX_BOTS = frozenset({"chatgpt-codex-connector[bot]", "chatgpt-codex-connector
 VERDICT_PREFIX = "codex-thread-verdict"
 CITE_PREFIX = "codex-thread-cited"
 RESOLVED_PREFIX = "codex-thread-resolved"
+SKIP_PREFIX = "codex-thread-skipped"
 VERDICT_ACTIONS = ("RESOLVE", "DECIDE", "MISSING", "AMBIGUOUS")
 SELF_CHECK_NAMES = frozenset({"codex auto-resolve", "resolve"})
 LINUX_GATES_NAMES = frozenset({"linux-gates"})
@@ -68,6 +69,10 @@ HTML_RESOLVED_RE = re.compile(
 )
 HTML_CITE_RE = re.compile(
     r"<!--\s*codex-thread-cited:([A-Za-z0-9_=-]{1,128}):"
+    r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
+)
+HTML_SKIP_RE = re.compile(
+    r"<!--\s*codex-thread-skipped:([A-Za-z0-9_=-]{1,128}):"
     r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
 )
 RESOLVED_AT_RE = re.compile(r"^RESOLVED_AT:\s*(\S+)\s*$", re.MULTILINE)
@@ -338,6 +343,16 @@ def cite_marker(thread_id: str, sha: str) -> str:
     return f"<!-- {CITE_PREFIX}:{tid}:{digest} -->"
 
 
+def skip_marker(thread_id: str, sha: str) -> str:
+    tid = safe_thread_id(thread_id)
+    digest = safe_sha(sha)
+    if not tid:
+        raise ValueError("unsafe thread id")
+    if not digest:
+        raise ValueError("unsafe sha")
+    return f"<!-- {SKIP_PREFIX}:{tid}:{digest} -->"
+
+
 def mediation_verdict_instructions(thread_id: str) -> str:
     """Snippet for #124's ``@codex review`` prompt. Shared with recursion CSL-178."""
     tid = safe_thread_id(thread_id) or "<thread-id>"
@@ -485,6 +500,16 @@ def parse_cite_markers(text: str | None) -> list[tuple[str, str]]:
     return found
 
 
+def parse_skip_markers(text: str | None) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    for match in HTML_SKIP_RE.finditer(text or ""):
+        tid = safe_thread_id(match.group(1))
+        digest = safe_sha(match.group(2))
+        if tid and digest:
+            found.append((tid, digest))
+    return found
+
+
 def has_gate_verdict_only(text: str | None) -> bool:
     """``CODEX-GATE: READY`` alone is not a per-thread resolve."""
     if parse_thread_verdicts(text):
@@ -625,7 +650,7 @@ def sanitize_ruling_excerpt(text: str, limit: int = 240) -> str:
     """Drop HTML comments and receipt prefixes so a copied ruling cannot mint markers."""
     cleaned = HTML_COMMENT_RE.sub("", text or "")
     cleaned = RESOLVED_AT_RE.sub("", cleaned)
-    for prefix in (CITE_PREFIX, RESOLVED_PREFIX, VERDICT_PREFIX):
+    for prefix in (CITE_PREFIX, RESOLVED_PREFIX, SKIP_PREFIX, VERDICT_PREFIX):
         cleaned = cleaned.replace(prefix, "")
     excerpt = " ".join(cleaned.split())
     if limit > 0 and len(excerpt) > limit:
@@ -1095,30 +1120,6 @@ def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
     return frozenset(found)
 
 
-def known_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
-    found: set[str] = set()
-    for thread in threads:
-        tid = safe_thread_id(str(thread.get("id") or ""))
-        if tid:
-            found.add(tid)
-    return frozenset(found)
-
-
-def pat_resolved_thread_ids(threads: list[dict[str, Any]], actor_login: str) -> frozenset[str]:
-    found: set[str] = set()
-    if not actor_login:
-        return frozenset()
-    for thread in threads:
-        if not thread.get("isResolved"):
-            continue
-        if not login_matches(resolved_by_login(thread), actor_login):
-            continue
-        tid = safe_thread_id(str(thread.get("id") or ""))
-        if tid:
-            found.add(tid)
-    return frozenset(found)
-
-
 def resolved_count_today(
     threads: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
@@ -1133,22 +1134,21 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt and GitHub
-    attributes the thread's ``resolvedBy`` to the PAT, so two unmarked
-    PAT resolves of a reopened thread cannot hide behind one thread id.
-    A PAT cite on a human-resolved thread does not consume the cap. A
-    failed cite plus a later unmarked PAT success on another head
-    over-counts (fail closed). Missing timestamps fail closed.
+    per ``(thread id, sha)`` when that pair has no receipt and no PAT
+    skip marker, so a later human resolve cannot erase a PAT success
+    whose receipt failed. A human Resolve that raced the mutation posts
+    ``codex-thread-skipped`` so that cite does not consume the cap. A
+    failed skip post over-counts (fail closed). Missing timestamps fail
+    closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
-    known = known_thread_ids(threads)
-    pat_resolved = pat_resolved_thread_ids(threads, actor_login)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_window: set[tuple[str, str]] = set()
     all_marker_pairs: set[tuple[str, str]] = set()
+    skip_pairs: set[tuple[str, str]] = set()
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1159,6 +1159,9 @@ def resolved_count_today(
         for tid, digest in parse_cite_markers(body):
             if tid and digest and in_window:
                 cite_window.add((tid, digest))
+        for tid, digest in parse_skip_markers(body):
+            if tid and digest and in_window:
+                skip_pairs.add((tid, digest))
         resolved_at = parse_resolved_at(body)
         for tid, digest in parse_resolved_markers(body):
             if not tid or not digest:
@@ -1175,9 +1178,7 @@ def resolved_count_today(
     unmarked: set[tuple[str, str]] = set()
     for pair in cite_window:
         tid, _digest = pair
-        if tid in pending or pair in all_marker_pairs:
-            continue
-        if tid in known and tid not in pat_resolved:
+        if tid in pending or pair in all_marker_pairs or pair in skip_pairs:
             continue
         unmarked.add(pair)
     return len(counted) + len(unmarked)
@@ -1332,6 +1333,7 @@ def reply_and_resolve(
     # the resolve to the PAT identity.
     actor = pat_login or cfg.pat_login
     if not actor or not login_matches(resolved_by_login(thread), actor):
+        publish_skip_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "already-resolved"
     stamp = now or utcnow()
     if publish_resolved_marker(
@@ -1346,17 +1348,30 @@ def reply_and_resolve(
     return "posted-unmarked"
 
 
-def publish_resolved_marker(
+def publish_skip_marker(
     gh: GitHub,
     cfg: Config,
     *,
     number: int,
     thread_id: str,
     sha: str,
-    resolved_at: datetime | None = None,
 ) -> bool:
-    """Post ``codex-thread-resolved``. False if both issue and thread paths fail."""
-    body = build_success_comment(thread_id, sha, resolved_at)
+    """Post ``codex-thread-skipped`` so a human-raced cite does not fill the cap."""
+    try:
+        body = skip_marker(thread_id, sha)
+    except ValueError:
+        return False
+    return _post_audit_comment(gh, cfg, number=number, thread_id=thread_id, body=body)
+
+
+def _post_audit_comment(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread_id: str,
+    body: str,
+) -> bool:
     try:
         gh.rest(
             f"repos/{cfg.repository}/issues/{number}/comments",
@@ -1376,6 +1391,20 @@ def publish_resolved_marker(
         return True
     except Exception:
         return False
+
+
+def publish_resolved_marker(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread_id: str,
+    sha: str,
+    resolved_at: datetime | None = None,
+) -> bool:
+    """Post ``codex-thread-resolved``. False if both issue and thread paths fail."""
+    body = build_success_comment(thread_id, sha, resolved_at)
+    return _post_audit_comment(gh, cfg, number=number, thread_id=thread_id, body=body)
 
 
 def scan_pr(

@@ -866,7 +866,22 @@ def test_old_cite_retry_mark_marker_does_not_count_today():
     assert any("resolve=posted" in line for line in logs)
 
 
-def test_human_resolved_unmarked_cite_does_not_count():
+def test_human_resolved_skipped_cite_does_not_count():
+    threads = [
+        thread(
+            THREAD,
+            resolved=True,
+            resolved_by="alice",
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                comment(PAT_LOGIN, mod.skip_marker(THREAD, SHA)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 0
+
+
+def test_unmarked_pat_success_then_human_resolve_still_counts():
     threads = [
         thread(
             THREAD,
@@ -875,10 +890,32 @@ def test_human_resolved_unmarked_cite_does_not_count():
             comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
         )
     ]
-    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 0
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
 
 
-def test_human_resolved_unmarked_cite_does_not_consume_cap():
+def test_human_resolved_skipped_cite_does_not_consume_cap():
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by="alice",
+                comments=[
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                    comment(PAT_LOGIN, mod.skip_marker(THREAD, SHA)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 in gh.resolves
+    assert any("resolve=posted" in line for line in logs)
+    assert not any("skip=over-cap" in line for line in logs)
+
+
+def test_unmarked_pat_success_then_human_resolve_consumes_cap():
     gh = ready_gh(
         threads=[
             thread(
@@ -892,9 +929,8 @@ def test_human_resolved_unmarked_cite_does_not_consume_cap():
         reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
     )
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
-    assert THREAD2 in gh.resolves
-    assert any("resolve=posted" in line for line in logs)
-    assert not any("skip=over-cap" in line for line in logs)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
 
 
 def test_unmarked_prior_head_cite_plus_later_marker_fail_closed():
@@ -1099,10 +1135,11 @@ def test_human_resolve_race_does_not_publish_receipt():
     gh.resolve_by_login = "alice"
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW, remaining_run=remaining)
     assert gh.resolves == [THREAD]
-    assert gh.issue_posts == []
     assert remaining == [2]
     assert any("skip=already-resolved" in line for line in logs)
     assert not any("resolve=posted" in line for line in logs)
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
 
 
 def test_missing_resolved_by_after_mutation_does_not_publish_receipt():
@@ -1110,7 +1147,8 @@ def test_missing_resolved_by_after_mutation_does_not_publish_receipt():
     gh.resolve_by_login = ""
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == [THREAD]
-    assert gh.issue_posts == []
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
     assert any("skip=already-resolved" in line for line in logs)
 
 
@@ -1186,9 +1224,10 @@ def test_retry_resolve_human_race_does_not_publish_receipt():
     remaining = [3]
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW, remaining_run=remaining)
     assert gh.resolves == [THREAD]
-    assert gh.issue_posts == []
     assert remaining == [3]
     assert any("skip=already-resolved" in line for line in logs)
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
 
 
 def test_idempotent_second_run():
