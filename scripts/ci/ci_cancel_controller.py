@@ -220,7 +220,8 @@ def reconcile(api, repo, event_name, event):
             continue
         for run, identity in identified:
             if (not belongs(identity, live) or identity[2] != workflow_id
-                    or run.get('status') not in ACTIVE or identity[4] == live[4]):
+                    or identity[1] != 1 or run.get('status') not in ACTIVE
+                    or identity[4] == live[4]):
                 continue
             if strict_ancestor(api, repo, identity[4], live[4]):
                 plans.append((identity, witness_id))
@@ -242,6 +243,12 @@ def reconcile(api, repo, event_name, event):
             continue
         fresh = run_snapshot(api, repo, identity[2], live[2])
         identified = [(run, run_identity(run, repo, repo_id, workflows)) for run in fresh]
+        fresh_targets = [(run, found) for run, found in identified
+                         if run['id'] == identity[0]]
+        if len(fresh_targets) != 1 or fresh_targets[0][1] != identity:
+            raise Refused('Target identity/attempt changed in final snapshot')
+        if fresh_targets[0][0].get('status') not in ACTIVE:
+            continue
         if current_witness(identified, live, identity[2]) != witness_id:
             raise Refused('Current-head successor changed before cancellation')
         if live_pr(api, repo, repo_id, live[0]) != live:

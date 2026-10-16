@@ -164,6 +164,48 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(identity[4], payload['pull_requests'][0]['head']['sha'])
         self.assertEqual(identity[6], 166)
 
+    def test_initial_old_head_manual_rerun_is_never_a_target(self):
+        api = FakeGitHub()
+        api.runs[0]['run_attempt'] = 2
+        self.assertEqual(api.reconcile(), [])
+        self.assertEqual(api.cancelled, [])
+
+    def test_target_rerun_after_get_is_rejected_by_final_snapshot(self):
+        api = FakeGitHub()
+        def race(path, value):
+            if path.endswith('/actions/runs/1'):
+                previous = copy.deepcopy(value)
+                api.runs[0]['run_attempt'] = 2
+                return previous  # GET returned attempt 1; refresh will observe 2.
+            return value
+        api.hook = race
+        with self.assertRaises(m.Refused):
+            api.reconcile()
+        self.assertEqual(api.cancelled, [])
+
+    def test_final_snapshot_target_must_exist_be_unchanged_and_active(self):
+        for change in ('missing', 'branch', 'completed'):
+            api = FakeGitHub()
+            def race(path, value, change=change, api=api):
+                if path.endswith('/actions/runs/1'):
+                    previous = copy.deepcopy(value)
+                    if change == 'missing':
+                        api.runs.pop(0)
+                    elif change == 'branch':
+                        api.runs[0]['head_branch'] = 'other'
+                    else:
+                        api.runs[0].update(status='completed', conclusion='cancelled')
+                    return previous
+                return value
+            api.hook = race
+            with self.subTest(change=change):
+                if change == 'completed':
+                    self.assertEqual(api.reconcile(), [])
+                else:
+                    with self.assertRaises(m.Refused):
+                        api.reconcile()
+                self.assertEqual(api.cancelled, [])
+
     def test_older_id_rerun_has_no_assumed_ordering(self):
         api = FakeGitHub()
         api.runs.append(run(3, B, status='completed', conclusion='success'))
