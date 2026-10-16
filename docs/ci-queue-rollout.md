@@ -46,10 +46,13 @@ in original #160 and remains part of the owner's review of this proposal. API
 authorization or transport failures block; no permission is silently escalated.
 The policy script executes from the PR/queue base, never from an unreviewed head.
 
-Queue discovery paginates the base-to-group comparison and each ordinary commit's
-associated PRs. Every ordinary commit must map uniquely to an open non-draft PR
+Queue discovery paginates the base-to-group comparison and each constituent commit's
+associated PRs. Every constituent commit must map uniquely to an open non-draft PR
 on the target base whose exact live head is included in the group. Queue-created
-merge commits need no separate review. Missing, stale, ambiguous, truncated or
+merges are exempt only when their SHA is the exact merge-group head attested by
+the GitHub event and they have multiple parents. PR-authored merge heads require
+review coverage; intermediate merges without a unique PR mapping block. Parent
+count alone never identifies a queue-created commit. Missing, stale, ambiguous, truncated or
 over-limit evidence blocks. This conservative mapping still needs a live canary
 with the repository's actual queue merge strategy; synthetic tests are not proof
 that every GitHub queue topology maps successfully.

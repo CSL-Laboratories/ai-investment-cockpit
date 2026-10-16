@@ -69,15 +69,18 @@ def queue_heads(repo, group, get=api):
     shas = {commit["sha"] for commit in commits}
     if not shas or head not in shas:
         raise GateError("Missing merge-group commit evidence")
-    # Queue-created merge commits need no separate review. Every ordinary commit
-    # must belong to an open PR whose exact live head is included in the group.
+    # Only the exact synthetic merge head attested by the merge_group event is
+    # exempt. Parent count cannot distinguish a queue merge from a PR-authored
+    # conflict-resolution merge. Every other commit, including merge-only PR
+    # heads and intermediate merges, must have unambiguous review coverage.
     if any(not c.get("parents") for c in commits):
         raise GateError("Missing commit ancestry")
-    ordinary = [c for c in commits if len(c.get("parents", [])) == 1]
-    if not ordinary:
+    constituents = [c for c in commits
+                    if c["sha"] != head or len(c["parents"]) < 2]
+    if not constituents:
         raise GateError("No constituent PR commits found")
     heads = set()
-    for commit in ordinary:
+    for commit in constituents:
         associated = pages(f"repos/{repo}/commits/{commit['sha']}/pulls", get=get)
         candidates = {pr["number"] for pr in associated
                       if pr.get("state") == "open" and pr.get("base", {}).get("ref") == branch
