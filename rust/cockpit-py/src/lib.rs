@@ -1,10 +1,13 @@
-//! Python bindings for the FIFO book. The wrapper in `quant.book._rust_backend`
-//! turns these tuples into the dataclasses the rest of the engine already uses.
+//! Python bindings for the FIFO book, the fee schedule, and PnL attribution.
+//! The wrappers in `quant` turn these tuples back into the dataclasses the rest
+//! of the engine already uses.
 
 use cockpit_book::{match_order, Aggressive, Book, BookError, Order, SelfTrade, Side, TimeInForce};
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::PyInt;
+
+mod costs;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
@@ -327,5 +330,6 @@ fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("NotFound", m.py().get_type::<NotFound>())?;
     m.add("IntegrityError", m.py().get_type::<IntegrityError>())?;
     m.add("BookValueError", m.py().get_type::<BookValueError>())?;
+    costs::register(m)?;
     Ok(())
 }
