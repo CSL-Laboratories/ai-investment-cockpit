@@ -361,8 +361,25 @@ class ThreadVerdict:
     source: str = ""
 
 
-def _fence_marker(stripped: str) -> tuple[str, int, str]:
-    """Return (character, run length, rest) for a fence line, else empty."""
+def _fence_marker(line: str) -> tuple[str, int, str]:
+    """Return (character, run length, rest) for a fence line, else empty.
+
+    CommonMark allows at most three leading spaces on a fence delimiter.
+    Four spaces (or a leading tab) is an indented code line, not a closer.
+    """
+    indent = 0
+    index = 0
+    while index < len(line) and indent < 4:
+        if line[index] == " ":
+            indent += 1
+            index += 1
+            continue
+        if line[index] == "\t":
+            return "", 0, ""
+        break
+    if indent >= 4:
+        return "", 0, ""
+    stripped = line[index:]
     if not stripped or stripped[0] not in "`~":
         return "", 0, ""
     char = stripped[0]
@@ -383,7 +400,7 @@ def strip_quoted_and_fenced(text: str) -> str:
     fence_len = 0
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
-        char, run, rest = _fence_marker(stripped)
+        char, run, rest = _fence_marker(line)
         if char:
             if not fence_char:
                 fence_char = char
@@ -1012,21 +1029,6 @@ def already_resolved_on_sha(
     return False
 
 
-def thread_has_resolved_marker(
-    comments: list[dict[str, Any]],
-    thread_id: str,
-    actor_login: str = "",
-) -> bool:
-    if not actor_login:
-        return False
-    for comment in comments:
-        if not login_matches(login_of(comment), actor_login):
-            continue
-        if any(tid == thread_id for tid, _sha in parse_resolved_markers(body_of(comment))):
-            return True
-    return False
-
-
 def cite_sha_for_thread(
     comments: list[dict[str, Any]],
     thread_id: str,
@@ -1214,12 +1216,13 @@ def classify_thread(
     # resolved but the audit marker never landed, retry the marker only
     # when GitHub attributes the resolve to the PAT identity.
     if thread.get("isResolved"):
-        if thread_has_resolved_marker(comments, thread_id, actor_login=pat_login):
+        cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
+        if cite_sha and already_resolved_on_sha(
+            comments, thread_id, cite_sha, actor_login=pat_login
+        ):
             return "already-resolved", None
-        if pat_login and login_matches(resolved_by_login(thread), pat_login):
-            cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
-            if cite_sha:
-                return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
+        if pat_login and login_matches(resolved_by_login(thread), pat_login) and cite_sha:
+            return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
     if already_resolved_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
         return "already-marked", None

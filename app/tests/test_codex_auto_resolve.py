@@ -347,6 +347,12 @@ def test_quoted_and_fenced_verdicts_cannot_authorize():
     assert mod.parse_thread_verdicts(mixed_backtick) == []
     assert mod.parse_thread_verdicts(mixed_tilde) == []
     assert mod.parse_thread_verdicts(nested_longer) == []
+    indented_closer = f"```\n    ```\n{verdict_body()}\n```\n"
+    assert mod.parse_thread_verdicts(indented_closer) == []
+    three_space_closer = f"```\n   ```\n{verdict_body()}\n"
+    assert mod.parse_thread_verdicts(three_space_closer) == [
+        mod.ThreadVerdict(THREAD, SHA, "RESOLVE", source="block")
+    ]
 
 
 def test_login_aliases_accept_graphql_and_rest():
@@ -501,6 +507,26 @@ def test_classify_retry_mark_when_resolved_without_audit_marker():
     )
     assert reason == "retry-mark"
     assert verdict is not None and verdict.sha == SHA
+
+
+def test_retry_mark_targets_latest_cited_head():
+    t = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA)),
+            comment(CODEX, verdict_body(sha=SHA2)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA2, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "retry-mark"
+    assert verdict is not None and verdict.sha == SHA2
 
 
 def test_human_resolve_after_cite_does_not_retry_mark():
