@@ -48,11 +48,12 @@ would make the exactness test above flap rather than fail.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from quant.costs import FeeSchedule, fee_for_fill
-from quant.events import Fill, Liquidity, PriceScale
+from quant.costs import FeeSchedule, _default_context, fee_for_fill
+from quant.events import Fill, Liquidity, PriceScale, Side
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,10 @@ class PnLTracker:
     """Running cash from fills, maintained independently of the three attribution terms so
     ``mark_to_market`` is a genuinely separate calculation for the exactness test to check
     against — not the same expression rearranged."""
+    _core: object | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._core = _make_pnl_core(self.schedule)
 
     def mark(self, mid_ticks: float | None, ts: int | None = None) -> None:
         """Mark the CURRENT position to a new mid, accruing inventory drift and borrow.
@@ -142,6 +147,17 @@ class PnLTracker:
         telescopes, so the endpoints are what matter — but it does coarsen the equity curve,
         and drawdown measured on a coarse curve understates the real one.
         """
+        if (
+            self._core is not None
+            and _default_context()
+            and _rust_mid_ok(mid_ticks)
+            and (ts is None or _fits_i64(ts))
+        ):
+            _rust_mark(self, mid_ticks, ts)
+            return
+        if mid_ticks is not None:
+            # Python now owns the ledger; the native core would restore stale state.
+            self._core = None
         if mid_ticks is None:
             return
         # A mid can sit on a half tick, so it is not a price on the grid and ``to_decimal``
@@ -166,6 +182,16 @@ class PnLTracker:
         inventory to a price move that had not happened yet, and the exactness identity in
         the module docstring would stop holding.
         """
+        if (
+            self._core is not None
+            and _default_context()
+            and _rust_fill_ok(fill, mid_ticks)
+            and _fits_i64(self.position + fill.signed_qty)
+        ):
+            _rust_on_fill(self, fill, mid_ticks)
+            return
+        # Python now owns the ledger; the native core would restore stale state.
+        self._core = None
         if mid_ticks is not None:
             self.mark(mid_ticks, fill.ingest_ts)
 
@@ -204,3 +230,101 @@ class PnLTracker:
         itself. Gross, i.e. before fees — fees are a separate ledger, not a price effect.
         """
         return self._cash + (Decimal(self.position) * (self._last_mid or Decimal("0")))
+
+
+_I64_MAX = 2**63 - 1
+
+
+def _pnl_backend() -> str:
+    try:
+        import cockpit_quant as native
+    except ImportError:
+        return "python"
+    return "rust" if hasattr(native, "PnlCore") else "python"
+
+
+PNL_BACKEND = _pnl_backend()
+
+
+def _make_pnl_core(schedule: FeeSchedule):
+    if PNL_BACKEND != "rust":
+        return None
+    import cockpit_quant as native
+    return native.PnlCore(
+        format(schedule.maker_rebate_per_share, "f"),
+        format(schedule.taker_fee_per_share, "f"),
+        format(schedule.sec_fee_rate, "f"),
+        format(schedule.taf_per_share, "f"),
+        format(schedule.taf_cap, "f"),
+        format(schedule.clearing_per_share, "f"),
+        format(schedule.borrow_rate_annual, "f"),
+    )
+
+
+def _fits_i64(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and -_I64_MAX - 1 <= value <= _I64_MAX
+
+
+def _rust_mid_ok(mid_ticks: float | None) -> bool:
+    """Finite int/float mids. Integers skip ``math.isfinite`` because it overflows past the float range."""
+    if mid_ticks is None or isinstance(mid_ticks, bool) or not isinstance(mid_ticks, (int, float)):
+        return False
+    if isinstance(mid_ticks, int):
+        return True
+    return math.isfinite(mid_ticks)
+
+
+def _rust_fill_ok(fill: Fill, mid_ticks: float | None) -> bool:
+    if mid_ticks is not None and not _rust_mid_ok(mid_ticks):
+        return False
+    return all(_fits_i64(value) for value in (fill.qty, fill.price_ticks, fill.signed_qty, fill.ingest_ts))
+
+
+def _elapsed(last_ts: int | None, ts: int | None) -> str | None:
+    if ts is None or last_ts is None:
+        return None
+    return str((ts - last_ts) / 1_000_000_000)
+
+
+def _load(tracker: PnLTracker, state: tuple) -> None:
+    spread, drift, fees, realized, position, fills, maker, taker, last_mid, last_ts, cash = state
+    tracker.spread_capture = Decimal(spread)
+    tracker.inventory_drift = Decimal(drift)
+    tracker.fees = Decimal(fees)
+    tracker.realized_notional = Decimal(realized)
+    tracker.position = int(position)
+    tracker.fills = int(fills)
+    tracker.maker_fills = int(maker)
+    tracker.taker_fills = int(taker)
+    tracker._last_mid = None if last_mid is None else Decimal(last_mid)
+    tracker._last_ts = None if last_ts is None else int(last_ts)
+    tracker._cash = Decimal(cash)
+
+
+def _rust_mark(tracker: PnLTracker, mid_ticks: float, ts: int | None) -> None:
+    state = tracker._core.mark(
+        str(mid_ticks), format(tracker.scale.tick_size, "f"), ts, _elapsed(tracker._last_ts, ts),
+    )
+    _load(tracker, state)
+
+
+def _rust_on_fill(tracker: PnLTracker, fill: Fill, mid_ticks: float | None) -> None:
+    elapsed = None
+    ingest_ts = None
+    mid_text = None
+    if mid_ticks is not None:
+        mid_text = str(mid_ticks)
+        ingest_ts = fill.ingest_ts
+        elapsed = _elapsed(tracker._last_ts, fill.ingest_ts)
+    state = tracker._core.on_fill(
+        fill.side is Side.SELL,
+        fill.qty,
+        fill.price_ticks,
+        fill.liquidity is Liquidity.MAKER,
+        fill.signed_qty,
+        format(tracker.scale.tick_size, "f"),
+        ingest_ts,
+        mid_text,
+        elapsed,
+    )
+    _load(tracker, state)
