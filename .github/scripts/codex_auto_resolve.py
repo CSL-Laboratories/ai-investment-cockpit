@@ -1265,6 +1265,7 @@ def scan_pr(
             except Exception:
                 marked = False
             if marked:
+                posted_today += 1
                 logs.append(
                     f"codex-auto-resolve: pr={number} thread={tid} retry-mark=posted sha={mark_sha}"
                 )
