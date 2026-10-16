@@ -314,7 +314,6 @@ class _CompleteSubmissionsFetcher:
 
     def get_json(self, url):
         from filings.edgar.fetch import pad_cik
-        from filings.edgar.submissions_poll import PROCESS_FORMS
 
         document = self._delegate.get_json(url)
         recent = (document.get("filings") or {}).get("recent") if isinstance(document, dict) else None
@@ -333,6 +332,13 @@ class _CompleteSubmissionsFetcher:
         baseline = self._baselines.load(cik)
         if cik not in self._strict_ciks or baseline is None:
             return document
+        return self._enforce_submissions_freshness(document, recent, baseline)
+
+    def _enforce_submissions_freshness(self, document, recent, baseline):
+        """Raise on strict-CIK submissions responses that cannot prove strategy freshness;
+        a missing saved boundary is left to the vendored poller's boundary-missing fault."""
+        from filings.edgar.submissions_poll import PROCESS_FORMS
+
         accessions = recent.get("accessionNumber")
         count = len(accessions) if isinstance(accessions, list) else -1
         if (
