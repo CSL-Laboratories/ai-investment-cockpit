@@ -287,6 +287,8 @@ def _native_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, secon
         return _USE_PYTHON
     if isinstance(seconds, float) and not math.isfinite(seconds):
         return _USE_PYTHON
+    if isinstance(seconds, Decimal) and not seconds.is_finite():
+        return _USE_PYTHON
     return Decimal(native.borrow_cost(
         format(schedule.borrow_rate_annual, "f"),
         format(short_notional, "f"),

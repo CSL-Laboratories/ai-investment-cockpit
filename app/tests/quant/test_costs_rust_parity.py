@@ -129,6 +129,15 @@ def test_nonfinite_mids_stay_on_the_python_path():
         assert accelerated.fills == reference.fills == 1
 
 
+def test_huge_integer_mid_does_not_overflow_the_finite_check():
+    """``math.isfinite`` raises OverflowError for ints past the float range."""
+    accelerated, reference = _trackers(ZERO_FEES)
+    mid = 10**309
+    accelerated.mark(mid, ts=0)
+    reference.mark(mid, ts=0)
+    _assert_same_tracker(accelerated, reference)
+
+
 def test_position_overflow_keeps_the_python_ledger():
     """A fill that would overflow i64 must not half-apply fees in the native core."""
     qty = 2**62
@@ -164,7 +173,10 @@ def test_pnl_custom_decimal_context_matches_python():
 
 def test_nonfinite_borrow_seconds_stay_on_the_python_path():
     """Non-finite seconds must not hit Rust's Dec::parse ValueError."""
-    for seconds in (float("nan"), float("inf"), float("-inf")):
+    for seconds in (
+        float("nan"), float("inf"), float("-inf"),
+        Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity"),
+    ):
         try:
             expected = python_borrow_cost(
                 SCHEDULE, short_notional=Decimal("1000000"), seconds=seconds,
