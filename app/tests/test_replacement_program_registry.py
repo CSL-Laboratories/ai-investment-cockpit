@@ -75,3 +75,23 @@ def test_registry_cli_rejects_invalid_contract_records(tmp_path: Path, mutation:
     assert "replacement-program: FAIL: contract" in result.stderr
     assert "Traceback" not in result.stderr
     assert "replacement-program: PASS" not in result.stdout
+
+
+@pytest.mark.parametrize("field", ["authority", "acceptance_receipt", "superseded_acceptance_receipt"])
+@pytest.mark.parametrize("value", [None, True, 1, "accepted", [], [{}]])
+def test_registry_cli_rejects_malformed_authority_objects(tmp_path: Path, field: str, value: object) -> None:
+    program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
+    target = program if field == "authority" else program["authority"]
+    target[field] = value
+    candidate = tmp_path / "program.json"
+    candidate.write_text(json.dumps(program), encoding="utf-8")
+    result = subprocess.run(
+        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "replacement-program: FAIL:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "replacement-program: PASS" not in result.stdout

@@ -257,12 +257,19 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(program.get("controlling_issue") == "CSL-212", "missing CSL-212 lineage")
     _require(program.get("source_commit") == "73ab78d9d69494c757cec875855121b1d29320a4", "stale source commit")
     authority = program.get("authority", {})
-    _require(set(authority) == EXPECTED_AUTHORITY_KEYS, "authority keys changed")
+    _require(
+        isinstance(authority, dict) and set(authority) == EXPECTED_AUTHORITY_KEYS,
+        "authority keys changed",
+    )
     _require(authority.get("current_runtime_invariants_preserved") is True, "runtime invariants not preserved")
     _require(authority.get("live_authority_granted") is False, "program grants live authority")
     _require(authority.get("contract_acceptance") == "accepted_human_digest_receipt", "contract acceptance changed")
     accepted_receipt = authority.get("acceptance_receipt", {})
-    _require(set(accepted_receipt) == EXPECTED_ACCEPTED_RECEIPT_KEYS, "accepted receipt fields changed")
+    _require(
+        isinstance(accepted_receipt, dict)
+        and set(accepted_receipt) == EXPECTED_ACCEPTED_RECEIPT_KEYS,
+        "accepted receipt fields changed",
+    )
     _require(accepted_receipt.get("linear_issue") == "CSL-212", "accepted receipt issue mismatch")
     _require(
         accepted_receipt.get("human_linear_comment_id")
@@ -315,7 +322,10 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     )
 
     receipt = authority.get("superseded_acceptance_receipt", {})
-    _require(set(receipt) == EXPECTED_SUPERSEDED_RECEIPT_KEYS, "superseded receipt fields changed")
+    _require(
+        isinstance(receipt, dict) and set(receipt) == EXPECTED_SUPERSEDED_RECEIPT_KEYS,
+        "superseded receipt fields changed",
+    )
     _require(receipt.get("linear_issue") == "CSL-212", "superseded receipt issue mismatch")
     _require(receipt.get("human_linear_comment_id") == "736a6b55-2b20-463c-86e1-9553a5692996", "superseded human comment mismatch")
     _require(receipt.get("mirror_comment_id") == "15c6f540-3686-49eb-a9e7-d93083313e85", "superseded mirror mismatch")

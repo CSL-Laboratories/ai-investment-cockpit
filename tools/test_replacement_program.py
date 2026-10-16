@@ -22,6 +22,22 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
+    def test_authority_and_receipts_reject_non_objects_cleanly(self) -> None:
+        for field, message in (
+            ("authority", "authority keys changed"),
+            ("acceptance_receipt", "accepted receipt fields changed"),
+            ("superseded_acceptance_receipt", "superseded receipt fields changed"),
+        ):
+            original = self.program if field == "authority" else self.program["authority"]
+            for value in (None, True, 1, "accepted", [], [{}], list(original[field])):
+                candidate = copy.deepcopy(self.program)
+                target = candidate if field == "authority" else candidate["authority"]
+                target[field] = value
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(
+                    CHECKER.ContractError, message
+                ):
+                    CHECKER.validate(candidate)
+
     def test_contract_records_reject_arbitrary_metadata(self) -> None:
         for index in range(len(self.program["contracts"])):
             for field, value in (("live_authority_granted", True), ("annotation", False)):
