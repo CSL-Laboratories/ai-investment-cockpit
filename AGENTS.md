@@ -176,7 +176,7 @@ Hosted split (PR #102):
 - **Devin** is the GitHub PR code reviewer (findings). It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
-  1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: FIX|READY|MEDIATE`. See Code Review Rules.
+  1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
@@ -184,9 +184,10 @@ Hosted split (PR #102):
 ## Review loop
 
 Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
-`ci:full` / human handoff and a compatibility fixer fallback. Devin findings
+`ci:full` / human handoff only. Devin findings
 trigger Claude directly without waiting for Codex. All Claude jobs share one
-per-PR lock; the automated Devin fixer stops at eight consecutive Claude
+per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
+requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
 commits. Stuck threads are also picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
 (CSL-86 / PR #124), which asks Codex to mediate (`@codex review`, no
@@ -204,12 +205,11 @@ These rules apply to the **CI/fixer gate** `@codex review` (comment marker
 `<!-- codex-gate:<sha> -->`). After reviewing that request, **end the review
 body with exactly one verdict line**:
 
-    CODEX-GATE: FIX
     CODEX-GATE: READY
     CODEX-GATE: MEDIATE
 
-- `FIX` — unresolved Devin findings remain; run one batched Claude PR Fixer
-  pass (`devin-review-fix`). Human-only findings need a human `@claude` mention.
+- Legacy `CODEX-GATE: FIX` verdicts are ignored. Human-only findings need a human `@claude` mention.
+  Devin submitted reviews trigger fixes directly; Codex never dispatches the fixer.
 - `READY` — findings are settled or none remain; apply the `ci:full` label
   so the hosted Windows/macOS matrix runs once.
 - `MEDIATE` — Devin and Claude disagree or a thread needs a human. File or
@@ -218,14 +218,16 @@ body with exactly one verdict line**:
   Skip if the PR is already approved. Do not wait for stuck-thread-watch (it
   only flags a needs-human phrase or a 6-hour-old Claude reply).
 
-Do not omit the verdict line. Do not put more than one. The gate's 20-minute
-timeout treats a missing verdict as `FIX` (compatibility fallback). There is
-no daily dispatch cap. Locked live-head and unresolved-finding checks skip
-obsolete queued events. No success marker suppresses retries after failures or new findings.
+If fixes remain, leave advisory findings without a gate verdict. READY and
+MEDIATE are the only actionable verdicts; missing verdicts never time out
+into fixer dispatch. Recovery scans retry missing requests and those two
+verdicts only. There is no daily fixer dispatch cap. Locked live-head and
+unresolved-finding checks skip obsolete queued events; failed runs remain
+retryable through a new Devin submitted review or authorized manual dispatch.
 
 If this `@codex review` is a stuck-thread mediation (the comment contains
 `<!-- codex-mediation:`), do **not** add a `CODEX-GATE:` line. The gate
-ignores those reviews and will not fail-open to FIX on them.
+ignores those reviews and never dispatches a fixer from them.
 
 ## Automations
 

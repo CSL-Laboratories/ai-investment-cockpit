@@ -2,12 +2,9 @@
 # this must not spend Blacksmith minutes. Missing CODEX_TRIGGER_PAT is a
 # notice skip, not a failure.
 #
-# Posts one `@codex review` per head SHA, parses CODEX-GATE: FIX|READY|MEDIATE,
-# dispatches one batched Claude fixer, labels ci:full, or files/updates one
-# Linear needs-decision issue per PR (MEDIATE; skip if already approved).
-# 20-minute timeout fail-opens to FIX.
-# No daily dispatch cap. Direct Devin events do not wait for this gate.
-# claude.yml serializes per PR and enforces the eight-commit loop guard.
+# Posts one `@codex review` per head SHA and handles READY/full CI or
+# MEDIATE/Linear only. FIX and missing verdicts never dispatch Claude.
+# Devin submitted reviews and authorized human requests drive the fixer.
 name: Codex CI/fixer gate
 
 on:
@@ -16,7 +13,7 @@ on:
   pull_request_review:
     types: [submitted]
   schedule:
-    # Check 20-minute timeouts. Odd minute to miss the cron stampede.
+    # Recover dropped requests and retry READY/MEDIATE side effects only.
     - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
     inputs:
@@ -32,7 +29,7 @@ permissions:
   issues: read
 
 # One group for the whole repo so a review and a scheduled scan cannot both
-# dispatch FIX for the same SHA. GitHub keeps one running + one pending run
+# apply a verdict twice for the same SHA. GitHub keeps one running + one pending run
 # per group; a displaced PR-open recovers on the next scheduled scan, which
 # posts any missing @codex review request. event-paths still proceeds.
 concurrency:
@@ -42,7 +39,7 @@ concurrency:
 jobs:
   gate:
     # Same-repo PRs only. Reviews only if Codex submitted them. Schedule and
-    # dispatch scan for timeouts. Forks never get the PAT or a checkout.
+    # dispatch scan for recoverable requests and verdicts. Forks never get the PAT or a checkout.
     if: >-
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch' ||

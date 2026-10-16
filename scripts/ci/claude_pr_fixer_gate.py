@@ -139,10 +139,9 @@ def job_level_admits(
         comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
         user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
         return bool(
-            (trusted_devin(user) and trusted_devin(sender))
-            or (event.get("action", "created") == "created"
-                and not is_bot_actor(user, sender)
-                and contains_at_claude(comment.get("body")))
+            event.get("action", "created") == "created"
+            and not is_bot_actor(user, sender)
+            and contains_at_claude(comment.get("body"))
         )
     if event_name == "pull_request_review":
         review = event.get("review") if isinstance(event.get("review"), dict) else {}
@@ -262,12 +261,6 @@ def evaluate(
         and str(review.get("state") or "").lower() in DEVIN_STATES
     ):
         # Actionable unresolved findings are rechecked under the per-PR lock.
-        devin = "true"
-    if (event_name == "pull_request_review_comment" and open_same_writer
-            and event.get("action") in {"created", "edited"}
-            and trusted_devin(comment.get("user"))
-            and trusted_devin(event.get("sender"))
-            and safe_head_sha(comment.get("commit_id")) == head_sha):
         devin = "true"
     if event_name in DISPATCH_EVENTS and open_same_writer:
         if dispatch_job_name(event) == FIXER_DISPATCH:

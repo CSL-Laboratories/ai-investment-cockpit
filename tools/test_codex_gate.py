@@ -227,7 +227,7 @@ class VerdictDecisionTests(unittest.TestCase):
     def test_fix_ready_mediate(self) -> None:
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: FIX", reviews=[], comments=[], day="2026-10-15"),
-            "FIX",
+            "skip-retired-fix",
         )
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[], comments=[], day="2026-10-15"),
@@ -242,7 +242,7 @@ class VerdictDecisionTests(unittest.TestCase):
         acted = [comment(mod.action_marker(SHA, "FIX"))]
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: FIX", reviews=[], comments=acted, day="2026-10-15"),
-            "skip-already-fix",
+            "skip-retired-fix",
         )
         cap = [
             comment(mod.fixer_run_marker("2026-10-15", f"{i:040x}"))
@@ -250,12 +250,22 @@ class VerdictDecisionTests(unittest.TestCase):
         ]
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: FIX", reviews=[], comments=cap, day="2026-10-15"),
-            "FIX",
+            "skip-retired-fix",
         )
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[], comments=cap, day="2026-10-15"),
             "READY",
         )
+
+    def test_legacy_fix_marker_cannot_suppress_ready_or_mediate(self) -> None:
+        comments = [comment(mod.action_marker(SHA, "FIX"))]
+        for verdict in ("READY", "MEDIATE"):
+            self.assertEqual(mod.decide_verdict(sha=SHA,
+                review_body="CODEX-GATE: " + verdict, reviews=[],
+                comments=comments, day="2026-10-15"), verdict)
+            self.assertEqual(mod.decide_recovery(sha=SHA,
+                reviews=[review("CODEX-GATE: " + verdict)], comments=comments,
+                now=datetime(2026, 10, 15, tzinfo=timezone.utc), day="2026-10-15"), verdict)
 
     def test_mediation_review_without_gate_line_is_skipped(self) -> None:
         comments = [
@@ -283,24 +293,31 @@ class TimeoutDecisionTests(unittest.TestCase):
 
     def test_waiting_under_20_minutes(self) -> None:
         self.assertEqual(
-            mod.decide_timeout(
+            mod.decide_recovery(
                 sha=SHA, comments=[self._request(19)], reviews=[], now=self.now, day="2026-10-15"
             ),
-            "skip-waiting",
+            "skip-no-verdict",
         )
 
-    def test_timeout_without_verdict_is_fix(self) -> None:
+    def test_old_request_without_verdict_never_fixes(self) -> None:
         self.assertEqual(
-            mod.decide_timeout(
+            mod.decide_recovery(
                 sha=SHA, comments=[self._request(20)], reviews=[], now=self.now, day="2026-10-15"
             ),
-            "FIX",
+            "skip-no-verdict",
         )
+
+    def test_elapsed_time_never_authorizes_fixer(self) -> None:
+        for minutes in (0, 19, 20, 60, 1440, 10080):
+            for reviews in ([], [review("CODEX-GATE: FIX")]):
+                result = mod.decide_recovery(sha=SHA, comments=[self._request(minutes)],
+                    reviews=reviews, now=self.now, day="2026-10-15")
+                self.assertIn(result, {"skip-no-verdict", "skip-retired-fix"})
 
     def test_timeout_respects_codex_verdict(self) -> None:
         reviews = [review("looks good\nCODEX-GATE: READY")]
         self.assertEqual(
-            mod.decide_timeout(
+            mod.decide_recovery(
                 sha=SHA, comments=[self._request(30)], reviews=reviews, now=self.now, day="2026-10-15"
             ),
             "READY",
@@ -311,11 +328,11 @@ class TimeoutDecisionTests(unittest.TestCase):
             comment(mod.fixer_run_marker("2026-10-15", f"{i:040x}")) for i in range(3)
         ]
         self.assertEqual(
-            mod.decide_timeout(sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"),
-            "FIX",
+            mod.decide_recovery(sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"),
+            "skip-no-verdict",
         )
 
-    def test_timeout_still_fires_when_mediation_prompt_is_newest(self) -> None:
+    def test_old_request_with_mediation_prompt_never_fixes(self) -> None:
         comments = [
             self._request(30),
             comment(
@@ -324,10 +341,10 @@ class TimeoutDecisionTests(unittest.TestCase):
             ),
         ]
         self.assertEqual(
-            mod.decide_timeout(
+            mod.decide_recovery(
                 sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"
             ),
-            "FIX",
+            "skip-no-verdict",
         )
 
 
@@ -346,19 +363,17 @@ class ApplyVerdictTests(unittest.TestCase):
             day="2026-10-15",
             post_comment=posted.append,
             add_label=labels.append,
-            dispatch_fixer=lambda: dispatched.append("fixer"),
             file_decision=lambda: (mediated.append("linear") or "https://linear.app/issue/CSL-1"),
         )
         return logs, posted, labels, dispatched, mediated  # type: ignore[return-value]
 
-    def test_fix_dispatches(self) -> None:
+    def test_fix_never_dispatches_or_posts_terminal_marker(self) -> None:
         logs, posted, labels, dispatched, mediated = self._apply("FIX")
-        self.assertTrue(any("dispatched-fixer" in line for line in logs))
-        self.assertEqual(dispatched, ["fixer"])
+        self.assertTrue(any("skip-retired-fix" in line for line in logs))
+        self.assertEqual(dispatched, [])
+        self.assertEqual(posted, [])
         self.assertEqual(labels, [])
         self.assertEqual(mediated, [])
-        self.assertIn("codex-gate-action:" + SHA + ":FIX", posted[0])
-        self.assertIn("codex-fixer-run:2026-10-15", posted[0])
 
     def test_ready_labels(self) -> None:
         _, posted, labels, dispatched, mediated = self._apply("READY")
@@ -388,7 +403,6 @@ class ApplyVerdictTests(unittest.TestCase):
             day="2026-10-15",
             post_comment=posted.append,
             add_label=lambda _n: None,
-            dispatch_fixer=lambda: None,
             file_decision=lambda: (mediated.append("linear") or "https://linear.app/issue/CSL-1"),
             pr_approved=True,
         )
@@ -409,7 +423,6 @@ class ApplyVerdictTests(unittest.TestCase):
             day="2026-10-15",
             post_comment=posted.append,
             add_label=lambda _n: None,
-            dispatch_fixer=lambda: None,
             file_decision=lambda: "",
         )
         self.assertEqual(len(posted), 1)
@@ -427,7 +440,6 @@ class ApplyVerdictTests(unittest.TestCase):
             day="2026-10-15",
             post_comment=posted2.append,
             add_label=lambda _n: None,
-            dispatch_fixer=lambda: None,
             file_decision=lambda: "",
         )
         self.assertEqual(posted2, [])
@@ -443,20 +455,19 @@ class ApplyVerdictTests(unittest.TestCase):
     def test_failed_side_effect_does_not_mark(self) -> None:
         posted: list[str] = []
 
-        def boom() -> None:
+        def boom(_label: str) -> None:
             raise OSError("dispatch failed")
 
         with self.assertRaises(OSError):
             mod.apply_verdict(
-                "FIX",
+                "READY",
                 repository=REPO,
                 pr_number="42",
                 sha=SHA,
                 comments=[],
                 day="2026-10-15",
                 post_comment=posted.append,
-                add_label=lambda _n: None,
-                dispatch_fixer=boom,
+                add_label=boom,
                 file_decision=lambda: "",
             )
         self.assertEqual(posted, [])
@@ -496,7 +507,7 @@ class RunTests(unittest.TestCase):
         self.assertIn(mod.gate_marker(SHA), body)
         self.assertIn("@codex review", body)
         self.assertNotIn("@claude", body)
-        self.assertIn("CODEX-GATE: FIX", body)
+        self.assertNotIn("CODEX-GATE: FIX", body)
         self.assertIn("Linear needs-decision", body)
         self.assertNotIn("stuck-thread-watch", body)
 
@@ -511,7 +522,7 @@ class RunTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(gh.posts), 1)
 
-    def test_codex_review_fix_dispatches(self) -> None:
+    def test_codex_review_fix_is_ignored(self) -> None:
         gh = FakeGH()
         event = {
             "review": review("findings remain\nCODEX-GATE: FIX"),
@@ -525,8 +536,30 @@ class RunTests(unittest.TestCase):
             gh=gh,
         )
         self.assertEqual(rc, 0)
-        self.assertEqual(gh.dispatches, [("devin-review-fix", {"pr_number": "42"}, REPO)])
+        self.assertEqual(gh.dispatches, [])
         self.assertFalse(any("/labels" in path for path, _ in gh.posts))
+
+    def test_retired_fix_and_old_request_never_post_or_dispatch(self) -> None:
+        gh = FakeGH()
+        gh.comments = [comment(mod.gate_marker(SHA), created="2026-10-01T00:00:00Z")]
+        for event_name, event in (
+            ("pull_request_review", {"review": review("CODEX-GATE: FIX"), "pull_request": pr_payload()}),
+            ("workflow_dispatch", {"inputs": {"pr_number": "42"}}),
+        ):
+            self.assertEqual(mod.run(event_name=event_name, event=event, repository=REPO,
+                pat="stub-token", gh=gh, now=datetime(2026, 10, 15, tzinfo=timezone.utc)), 0)
+            self.assertEqual(gh.dispatches, [])
+            self.assertEqual(gh.posts, [])
+
+    def test_stale_or_unpinned_codex_review_cannot_trigger_ready(self) -> None:
+        for sha in ("b" * 40, ""):
+            gh = FakeGH()
+            self.assertEqual(mod.run(event_name="pull_request_review",
+                event={"review": review("CODEX-GATE: READY", sha=sha), "pull_request": pr_payload()},
+                repository=REPO, pat="stub-token", gh=gh), 0)
+            self.assertEqual(gh.posts, [])
+            self.assertEqual(gh.dispatches, [])
+            self.assertEqual(mod.verdict_from_reviews([review("CODEX-GATE: READY", sha=sha)], SHA), "")
 
     def test_non_codex_review_is_ignored(self) -> None:
         gh = FakeGH()
@@ -629,7 +662,7 @@ class RunTests(unittest.TestCase):
             gh=gh,
         )
         self.assertEqual(rc, 0)
-        self.assertEqual(gh.dispatches, [("devin-review-fix", {"pr_number": "42"}, REPO)])
+        self.assertEqual(gh.dispatches, [])
 
     def test_new_sha_clears_prior_ready_label(self) -> None:
         gh = FakeGH()

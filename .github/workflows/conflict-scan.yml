@@ -353,6 +353,7 @@ jobs:
     concurrency:
       # Same per-PR group as the @claude/Devin fixers: serializes every Claude push to this branch.
       group: claude-${{ matrix.pr.number }}
+      queue: max
       cancel-in-progress: false
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 30

@@ -1340,17 +1340,21 @@ class DirectDevinRoutingTests(unittest.TestCase):
         event["action"] = "edited"
         self.assertEqual(decide("pull_request_review", event)["devin"], "false")
 
-    def test_current_devin_review_comments_and_edits_are_admitted(self) -> None:
+    def test_devin_comments_replies_and_edits_never_start_fixer(self) -> None:
+        # Devin emits a burst of inline comments, then one submitted review.
+        # Replies/edits must not queue another fixer or displace a human request.
         for action in ("created", "edited"):
-            event = self._review()
-            event["action"] = action
-            event["comment"] = event.pop("review")
-            self.assertTrue(gate.job_level_admits("pull_request_review_comment", event))
-            self.assertEqual(decide("pull_request_review_comment", event)["devin"], "true")
-            event["comment"]["commit_id"] = "b" * 40
-            self.assertEqual(decide("pull_request_review_comment", event)["devin"], "false")
-            event["sender"]["id"] = 1
-            self.assertFalse(gate.job_level_admits("pull_request_review_comment", event))
+            for reply in (False, True):
+                event = self._review()
+                event["action"] = action
+                event["comment"] = event.pop("review")
+                event["comment"]["body"] = "@claude quoted finding"
+                if reply:
+                    event["comment"]["in_reply_to_id"] = 99
+                self.assertFalse(gate.job_level_admits("pull_request_review_comment", event))
+                result = decide("pull_request_review_comment", event)
+                self.assertEqual(result["devin"], "false")
+                self.assertEqual(result["mention"], "false")
 
 
 class FixerPreflightTests(unittest.TestCase):
@@ -1439,7 +1443,78 @@ class FixerPreflightTests(unittest.TestCase):
         job = text.split('  devin-review-fix:', 1)[1]
         self.assertLess(job.index('id: preflight'), job.index('uses: actions/checkout'))
         self.assertIn("github.event_name == 'pull_request_review' ||", job)
-        self.assertIn("github.event_name == 'pull_request_review_comment' ||", job)
+        self.assertNotIn("github.event_name == 'pull_request_review_comment' ||", job)
+
+
+class FixerQueueTests(unittest.TestCase):
+    @staticmethod
+    def validate(text: str, jobs: dict[str, str]) -> None:
+        import re
+        # Parse only the bounded job header; no optional YAML dependency.
+        for job, group in jobs.items():
+            header = text.split(f"\n  {job}:\n", 1)[1].split("    steps:", 1)[0]
+            concurrency = header.split("    concurrency:\n", 1)[1]
+            lines = []
+            for line in concurrency.splitlines():
+                if line and not line.startswith("      "):
+                    break
+                if line.strip() and not line.strip().startswith("#"):
+                    lines.append(line.strip())
+            assert sorted(lines) == sorted([f"group: {group}", "queue: max", "cancel-in-progress: false"]), lines
+        assert len(re.findall(r"^\s*queue:", text, re.M)) == len(jobs)
+
+    def test_all_writers_share_bounded_max_queue(self) -> None:
+        self.validate(WORKFLOW_PATH.read_text(), {
+            "claude-mention": "claude-${{ needs.resolve-pr.outputs.pr_number }}",
+            "devin-review-fix": "claude-${{ needs.resolve-pr.outputs.pr_number }}",
+        })
+        # The read-only scan has its own concurrency group, excluded here.
+        scan = SCAN_WORKFLOW_PATH.read_text()
+        self.validate(scan, {"conflict-resolve": "claude-${{ matrix.pr.number }}"})
+
+    def test_bad_queue_cancellation_and_group_are_rejected(self) -> None:
+        text = WORKFLOW_PATH.read_text()
+        jobs = {"claude-mention": "claude-${{ needs.resolve-pr.outputs.pr_number }}",
+                "devin-review-fix": "claude-${{ needs.resolve-pr.outputs.pr_number }}"}
+        for old, new in (("queue: max", "queue: invalid"),
+                         ("cancel-in-progress: false", "cancel-in-progress: true"),
+                         ("group: claude-${{", "group: other-${{")):
+            with self.assertRaises(AssertionError):
+                self.validate(text.replace(old, new, 1), jobs)
+
+    def test_actionlint_exception_is_exact_and_path_scoped(self) -> None:
+        exe = shutil.which("actionlint")
+        if not exe:
+            self.skipTest("actionlint not on PATH")
+        config = (ROOT / ".github/actionlint.yaml").read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            (root / ".github/actionlint.yaml").write_text(config)
+            template = """name: queue control
+on: push
+jobs:
+  test:
+    concurrency:
+      group: example
+      queue: max
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+"""
+            for filename, body, passes in (
+                ("claude.yml", template, True),
+                ("conflict-scan.yml", template, True),
+                ("other.yml", template, False),
+                ("claude.yml", template.replace("queue: max", "unexpected: max"), False),
+            ):
+                path = workflows / filename
+                path.write_text(body)
+                result = subprocess.run([exe, str(path)], cwd=root, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
