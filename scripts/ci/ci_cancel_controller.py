@@ -90,6 +90,8 @@ def run_identity(run, repo, repo_id, workflows):
             or not same_repo(run.get('head_repository'), repo, repo_id)):
         return None
     pr = association(run, repo, repo_id)
+    # Branch plus ancestry cannot bind an unlinked run to one PR (PRs may share
+    # a head branch), so a missing PR link is never inferred.
     if pr is None:
         return None
     return (run['id'], run['run_attempt'], run['workflow_id'], path, run['head_sha'],
