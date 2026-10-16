@@ -943,16 +943,33 @@ def fetch_pat_login(gh: GitHub, cfg: Config) -> str:
     return str(viewer.get("login") or "").strip()
 
 
-def already_resolved_on_sha(comments: list[dict[str, Any]], thread_id: str, sha: str) -> bool:
+def already_resolved_on_sha(
+    comments: list[dict[str, Any]],
+    thread_id: str,
+    sha: str,
+    actor_login: str = "",
+) -> bool:
+    if not actor_login:
+        return False
     needle = (thread_id, sha)
     for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
         if needle in parse_resolved_markers(body_of(comment)):
             return True
     return False
 
 
-def thread_has_resolved_marker(comments: list[dict[str, Any]], thread_id: str) -> bool:
+def thread_has_resolved_marker(
+    comments: list[dict[str, Any]],
+    thread_id: str,
+    actor_login: str = "",
+) -> bool:
+    if not actor_login:
+        return False
     for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
         if any(tid == thread_id for tid, _sha in parse_resolved_markers(body_of(comment))):
             return True
     return False
@@ -992,10 +1009,18 @@ def already_cited_on_sha(
     return False
 
 
-def resolved_count_today(comments: list[dict[str, Any]], now: datetime) -> int:
+def resolved_count_today(
+    comments: list[dict[str, Any]],
+    now: datetime,
+    actor_login: str = "",
+) -> int:
+    if not actor_login:
+        return 0
     start = now - timedelta(hours=24)
     count = 0
     for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
         if not parse_resolved_markers(body_of(comment)):
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
@@ -1056,14 +1081,14 @@ def classify_thread(
     # resolved but the audit marker never landed, retry the marker only
     # when GitHub attributes the resolve to the PAT identity.
     if thread.get("isResolved"):
-        if thread_has_resolved_marker(comments, thread_id):
+        if thread_has_resolved_marker(comments, thread_id, actor_login=pat_login):
             return "already-resolved", None
         if pat_login and login_matches(resolved_by_login(thread), pat_login):
             cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
             if cite_sha:
                 return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
-    if already_resolved_on_sha(comments, thread_id, head_sha):
+    if already_resolved_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
         return "already-marked", None
     if path_is_protected(str(thread.get("path") or "")):
         return "protected-path", None
@@ -1203,14 +1228,15 @@ def scan_pr(
     reviews = list_reviews(gh, cfg, number)
     items = all_codex_items(threads, issue_comments, reviews)
     latest = latest_verdicts(items)
-    posted_today = resolved_count_today(
-        issue_comments + [c for t in threads for c in thread_comments(t)],
-        now,
-    )
     if not cfg.codex_pat:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-secret")
         return logs
     pat_login = cfg.pat_login or fetch_pat_login(gh, cfg)
+    posted_today = resolved_count_today(
+        issue_comments + [c for t in threads for c in thread_comments(t)],
+        now,
+        actor_login=pat_login,
+    )
     for thread in threads:
         tid = log_thread_id(str(thread.get("id") or ""))
         if thread_comments_truncated(thread):
