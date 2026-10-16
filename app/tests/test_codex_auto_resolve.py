@@ -282,6 +282,10 @@ def test_marker_round_trip():
     assert html == f"<!-- codex-thread-verdict:{THREAD} -->"
     parsed = mod.parse_thread_verdicts(verdict_body())
     assert parsed == [mod.ThreadVerdict(THREAD, SHA, "RESOLVE", source="block")]
+    success = mod.build_success_comment(THREAD, SHA, NOW)
+    assert mod.resolved_marker(THREAD, SHA) in success
+    assert f"RESOLVED_AT: {NOW.strftime('%Y-%m-%dT%H:%M:%SZ')}" in success
+    assert mod.parse_resolved_at(success) == NOW
 
 
 def test_marker_rejects_unsafe_id():
@@ -741,6 +745,7 @@ def test_retry_mark_posts_missing_audit_marker_without_unresolve():
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
     assert gh.issue_posts and THREAD in gh.issue_posts[0][1]
+    assert f"RESOLVED_AT: {NOW.strftime('%Y-%m-%dT%H:%M:%SZ')}" in gh.issue_posts[0][1]
     assert any("retry-mark=posted" in line for line in logs)
 
 
@@ -793,6 +798,7 @@ def test_old_cite_retry_mark_does_not_consume_today_cap():
     assert THREAD2 in gh.resolves
     assert any("retry-mark=posted" in line for line in logs)
     assert any("resolve=posted" in line for line in logs)
+    assert f"RESOLVED_AT: {old.strftime('%Y-%m-%dT%H:%M:%SZ')}" in gh.issue_posts[0][1]
 
 
 def test_old_cite_retry_mark_marker_does_not_count_today():
@@ -975,7 +981,7 @@ def test_mutation_error_aborts_remaining_scan():
     gh.resolve_errors_left = 1
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
     assert gh.resolves == []
-    assert any("skip=error" in line for line in logs)
+    assert any("skip=resolve-error" in line for line in logs)
     assert any("skip=abort-scan" in line for line in logs)
 
 
@@ -1060,7 +1066,7 @@ def test_daily_cap():
     prior = [
         comment(
             PAT_LOGIN,
-            mod.cite_marker(f"PRRT_old{i:02d}", SHA),
+            mod.build_success_comment(f"PRRT_old{i:02d}", SHA, NOW - timedelta(minutes=i)),
             NOW - timedelta(minutes=i),
         )
         for i in range(20)
@@ -1069,6 +1075,64 @@ def test_daily_cap():
     gh.issue_comments[12] = prior
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=20), gh, NOW)
     assert gh.resolves == []
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_indeterminate_resolve_consumes_same_scan_cap():
+    gh = ready_gh(
+        threads=[
+            thread(comments=[comment(CODEX, verdict_body())]),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.fail_resolve = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=resolve-error" in line for line in logs)
+    assert any("skip=abort-scan" in line for line in logs)
+
+
+def test_old_cite_retry_resolve_persists_in_next_scan_cap():
+    old = NOW - timedelta(hours=48)
+    first = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    mod.scan_pr(first.pr_by_number[12], cfg(max_per_pr_per_day=1), first, NOW)
+    assert first.resolves == [THREAD]
+    success_body = first.issue_posts[0][1]
+    second = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                    comment(PAT_LOGIN, success_body),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body(), old),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    logs = mod.scan_pr(second.pr_by_number[12], cfg(max_per_pr_per_day=1), second, NOW)
+    assert second.resolves == []
     assert any("skip=over-cap" in line for line in logs)
 
 
@@ -1177,6 +1241,22 @@ def test_reply_cites_ruling_and_sha():
     assert "Fix already present" in body
     assert mod.cite_marker(THREAD, SHA) in body
     assert mod.resolved_marker(THREAD, SHA) not in body
+
+
+def test_ruling_excerpt_strips_receipt_markers():
+    planted = (
+        verdict_body()
+        + "\n"
+        + mod.resolved_marker(THREAD, SHA)
+        + "\nRESOLVED_AT: 2026-10-15T19:00:00Z\n"
+        + mod.cite_marker(THREAD2, SHA)
+        + "\n"
+    )
+    text = mod.ruling_excerpt([comment(CODEX, planted)], THREAD, SHA, 400)
+    assert "<!--" not in text
+    assert "RESOLVED_AT:" not in text
+    assert THREAD not in text
+    assert "The fix is in." in text
 
 
 def test_reply_strips_receipt_markers_from_excerpt():

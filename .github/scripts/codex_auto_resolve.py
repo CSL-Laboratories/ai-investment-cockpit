@@ -68,6 +68,7 @@ HTML_CITE_RE = re.compile(
     r"<!--\s*codex-thread-cited:([A-Za-z0-9_=-]{1,128}):"
     r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
 )
+RESOLVED_AT_RE = re.compile(r"^RESOLVED_AT:\s*(\S+)\s*$", re.MULTILINE)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{1,128}$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
@@ -231,6 +232,17 @@ def parse_dt(value: str | None) -> datetime | None:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     return stamp.astimezone(timezone.utc)
+
+
+def format_resolved_at(stamp: datetime) -> str:
+    return stamp.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_resolved_at(text: str | None) -> datetime | None:
+    match = RESOLVED_AT_RE.search(text or "")
+    if not match:
+        return None
+    return parse_dt(match.group(1))
 
 
 def safe_sha(value: str | None) -> str:
@@ -610,6 +622,7 @@ def required_checks_green(rollup: dict[str, Any] | None) -> tuple[bool, str]:
 def sanitize_ruling_excerpt(text: str, limit: int = 240) -> str:
     """Drop HTML comments and receipt prefixes so a copied ruling cannot mint markers."""
     cleaned = HTML_COMMENT_RE.sub("", text or "")
+    cleaned = RESOLVED_AT_RE.sub("", cleaned)
     for prefix in (CITE_PREFIX, RESOLVED_PREFIX, VERDICT_PREFIX):
         cleaned = cleaned.replace(prefix, "")
     excerpt = " ".join(cleaned.split())
@@ -637,14 +650,20 @@ def build_resolve_reply(thread_id: str, sha: str, ruling_excerpt: str = "") -> s
     return "\n".join(lines) + "\n"
 
 
-def build_success_comment(thread_id: str, sha: str) -> str:
+def build_success_comment(
+    thread_id: str,
+    sha: str,
+    resolved_at: datetime | None = None,
+) -> str:
     digest = safe_sha(sha)
     tid = safe_thread_id(thread_id)
     if not digest or not tid:
         raise ValueError("unsafe success ids")
     short = digest[:12]
+    when = resolved_at or utcnow()
     return (
         f"{resolved_marker(tid, digest)}\n"
+        f"RESOLVED_AT: {format_resolved_at(when)}\n"
         f"Auto-resolved thread `{tid}` on head `{short}` after an on-thread "
         f"Codex citation.\n"
     )
@@ -1056,8 +1075,29 @@ def already_cited_on_sha(
     return False
 
 
+def cite_time_for_thread(
+    comments: list[dict[str, Any]],
+    thread_id: str,
+    actor_login: str = "",
+) -> datetime | None:
+    tid = safe_thread_id(thread_id)
+    if not actor_login or not tid:
+        return None
+    latest: datetime | None = None
+    for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
+        if not any(marker_tid == tid for marker_tid, _sha in parse_cite_markers(body_of(comment))):
+            continue
+        stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
+        if stamped is None:
+            continue
+        if latest is None or stamped > latest:
+            latest = stamped
+    return latest
+
+
 def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
-    """GraphQL ids of threads that are still open on this scan."""
     found: set[str] = set()
     for thread in threads:
         if thread.get("isResolved"):
@@ -1069,56 +1109,64 @@ def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
 
 
 def resolved_count_today(
-    comments: list[dict[str, Any]],
+    threads: list[dict[str, Any]],
+    issue_comments: list[dict[str, Any]],
     now: datetime,
     actor_login: str = "",
-    unresolved_ids: frozenset[str] | None = None,
 ) -> int:
-    """Count unique completed PAT auto-resolves in the last 24h.
+    """Count unique PAT-attributed successful resolves in the last 24h.
 
-    A completed resolve is a ``(thread id, sha)`` pair whose PAT cite and
-    resolved marker both fall in the window. A cite on a still-open thread
-    is in-flight and does not count. A failed cite on an earlier head does
-    not extra-charge once a later head's marker is in the window. A marker
-    whose matching cite is older than 24h is a late receipt / retry-mark
-    and does not consume today's cap; a delayed ``retry-resolve`` is charged
-    in-scan via ``posted_today``. Posted-unmarked resolves count at most
-    once per thread when that pair has no receipt and the thread has no
-    in-window marker (a failed earlier cite cannot be distinguished from a
-    successful unmarked reopen without a receipt). Missing timestamps
-    fail closed (count).
+    A completed resolve is a ``(thread id, sha)`` pair from a PAT success
+    marker whose ``RESOLVED_AT`` falls in the window (new resolve / delayed
+    ``retry-resolve``), or a legacy marker whose comment time and matching
+    PAT cite both fall in the window. Marker retries copy the original cite
+    time into ``RESOLVED_AT`` so they do not consume a later day's cap.
+    Failed cites on still-open threads do not count. Unmarked cites count
+    at most once per thread when that pair has no receipt and the thread
+    has no in-window marker (a failed earlier cite cannot be distinguished
+    from a successful unmarked reopen without a receipt). Missing
+    timestamps fail closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
-    pending = unresolved_ids or frozenset()
+    pending = unresolved_thread_ids(threads)
+    all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_window: set[tuple[str, str]] = set()
-    marker_window: set[tuple[str, str]] = set()
-    marker_pairs: set[tuple[str, str]] = set()
+    all_marker_pairs: set[tuple[str, str]] = set()
     marker_tids_window: set[str] = set()
-    for comment in comments:
+    markers: list[tuple[str, str, datetime | None, bool]] = []
+    for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
-        in_window = stamped is None or stamped >= start
         body = body_of(comment)
-        for tid, digest in parse_resolved_markers(body):
-            if tid and digest:
-                marker_pairs.add((tid, digest))
-                if in_window:
-                    marker_window.add((tid, digest))
-                    marker_tids_window.add(tid)
+        in_window = stamped is None or stamped >= start
         for tid, digest in parse_cite_markers(body):
             if tid and digest and in_window:
                 cite_window.add((tid, digest))
-    completed = marker_window & cite_window
+        resolved_at = parse_resolved_at(body)
+        for tid, digest in parse_resolved_markers(body):
+            if not tid or not digest:
+                continue
+            all_marker_pairs.add((tid, digest))
+            effective = resolved_at or stamped
+            markers.append((tid, digest, effective, resolved_at is not None))
+            if effective is None or effective >= start:
+                marker_tids_window.add(tid)
+    counted: set[tuple[str, str]] = set()
+    for tid, digest, effective, has_resolved_at in markers:
+        if effective is not None and effective < start:
+            continue
+        if has_resolved_at or (tid, digest) in cite_window:
+            counted.add((tid, digest))
     unmarked: set[str] = set()
     for pair in cite_window:
         tid, _digest = pair
-        if tid in pending or pair in marker_pairs or tid in marker_tids_window:
+        if tid in pending or pair in all_marker_pairs or tid in marker_tids_window:
             continue
         unmarked.add(tid)
-    return len(completed) + len(unmarked)
+    return len(counted) + len(unmarked)
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
@@ -1135,8 +1183,18 @@ def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit:
             latest = (stamp, body_of(item))
     if latest is None:
         return ""
-    text = " ".join(latest[1].split())
-    return text[:limit]
+    return sanitize_ruling_text(latest[1])[:limit]
+
+
+def sanitize_ruling_text(text: str | None) -> str:
+    """Drop HTML comments and ``RESOLVED_AT`` lines before citing a ruling.
+
+    The citation is PAT-authored. Copying a ``codex-thread-resolved`` (or cite)
+    marker from Codex would make the next scan trust a forged receipt.
+    """
+    cleaned = HTML_COMMENT_RE.sub(" ", text or "")
+    cleaned = RESOLVED_AT_RE.sub(" ", cleaned)
+    return " ".join(cleaned.split())
 
 
 def newest_for_thread(verdicts: list[StampedVerdict], head_sha: str) -> StampedVerdict:
@@ -1213,6 +1271,7 @@ def reply_and_resolve(
     sha: str,
     excerpt: str,
     retry: bool = False,
+    now: datetime | None = None,
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1238,18 +1297,29 @@ def reply_and_resolve(
         ok, _reason = required_checks_green(rollup)
         if not ok:
             return _reason
-    resolved = gh.graphql(
-        RESOLVE_THREAD,
-        {"id": thread_id},
-        token=cfg.codex_pat,
-    )
+    try:
+        resolved = gh.graphql(
+            RESOLVE_THREAD,
+            {"id": thread_id},
+            token=cfg.codex_pat,
+        )
+    except Exception:
+        return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
     echoed = str(thread.get("id") or "")
     if echoed != thread_id:
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
-    if publish_resolved_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha):
+    stamp = now or utcnow()
+    if publish_resolved_marker(
+        gh,
+        cfg,
+        number=number,
+        thread_id=thread_id,
+        sha=sha,
+        resolved_at=stamp,
+    ):
         return "posted"
     return "posted-unmarked"
 
@@ -1261,13 +1331,15 @@ def publish_resolved_marker(
     number: int,
     thread_id: str,
     sha: str,
+    resolved_at: datetime | None = None,
 ) -> bool:
     """Post ``codex-thread-resolved``. False if both issue and thread paths fail."""
+    body = build_success_comment(thread_id, sha, resolved_at)
     try:
         gh.rest(
             f"repos/{cfg.repository}/issues/{number}/comments",
             method="POST",
-            body={"body": build_success_comment(thread_id, sha)},
+            body={"body": body},
             token=cfg.codex_pat,
         )
         return True
@@ -1276,7 +1348,7 @@ def publish_resolved_marker(
     try:
         gh.graphql(
             REPLY_THREAD,
-            {"threadId": thread_id, "body": build_success_comment(thread_id, sha)},
+            {"threadId": thread_id, "body": body},
             token=cfg.codex_pat,
         )
         return True
@@ -1329,10 +1401,10 @@ def scan_pr(
         logs.append(f"codex-auto-resolve: pr={number} skip=no-pat-login")
         return logs
     posted_today = resolved_count_today(
-        issue_comments + [c for t in threads for c in thread_comments(t)],
+        threads,
+        issue_comments,
         now,
         actor_login=pat_login,
-        unresolved_ids=unresolved_thread_ids(threads),
     )
     abort_scan = False
     for thread in threads:
@@ -1352,6 +1424,12 @@ def scan_pr(
         )
         if reason == "retry-mark":
             mark_sha = (verdict.sha if verdict else "") or head_sha
+            comments = thread_comments(thread) + issue_comments
+            cite_when = cite_time_for_thread(
+                comments,
+                str(thread.get("id") or ""),
+                actor_login=pat_login,
+            )
             try:
                 marked = publish_resolved_marker(
                     gh,
@@ -1359,6 +1437,7 @@ def scan_pr(
                     number=number,
                     thread_id=str(thread.get("id") or ""),
                     sha=mark_sha,
+                    resolved_at=cite_when,
                 )
             except Exception:
                 marked = False
@@ -1388,6 +1467,7 @@ def scan_pr(
                 sha=head_sha,
                 excerpt=excerpt,
                 retry=reason == "retry-resolve",
+                now=now,
             )
         except Exception:
             result = "error"
@@ -1395,12 +1475,18 @@ def scan_pr(
             abort_scan = True
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=error")
             continue
-        if result in {"posted", "posted-unmarked"}:
+        if result in {"posted", "posted-unmarked", "resolve-error"}:
             posted_today += 1
             remaining[0] -= 1
-            logs.append(
-                f"codex-auto-resolve: pr={number} thread={tid} resolve={result} sha={head_sha}"
-            )
+            if result == "resolve-error":
+                abort_scan = True
+                logs.append(
+                    f"codex-auto-resolve: pr={number} thread={tid} skip=resolve-error sha={head_sha}"
+                )
+            else:
+                logs.append(
+                    f"codex-auto-resolve: pr={number} thread={tid} resolve={result} sha={head_sha}"
+                )
         else:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={result}")
     return logs
