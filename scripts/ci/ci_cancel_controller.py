@@ -90,12 +90,8 @@ def run_identity(run, repo, repo_id, workflows, live=None):
             or not same_repo(run.get('head_repository'), repo, repo_id)):
         return None
     pr = association(run, repo, repo_id)
-    if (pr is None and live is not None and run.get('pull_requests') == []
-            and run['head_sha'] != live[4] and run.get('head_branch') == live[2]):
-        # GitHub drops the PR link from runs whose SHA is no longer the PR head.
-        # Branch plus same-repository head, live PR identity and the strict
-        # ancestor compare stand in; the current-head witness stays strict.
-        pr = {'number': live[0], 'id': live[1], 'base': {'ref': live[3]}}
+    # Branch plus ancestry cannot bind an unlinked run to one PR (PRs may share
+    # a head branch), so a missing PR link is never inferred.
     if pr is None:
         return None
     return (run['id'], run['run_attempt'], run['workflow_id'], path, run['head_sha'],

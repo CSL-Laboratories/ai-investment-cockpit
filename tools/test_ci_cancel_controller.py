@@ -164,10 +164,11 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(identity[4], payload['pull_requests'][0]['head']['sha'])
         self.assertEqual(identity[6], 166)
 
-    def test_ancestor_run_with_dropped_pr_link_is_still_cancelled(self):
+    def test_ancestor_run_with_dropped_pr_link_is_never_cancelled(self):
         api = FakeGitHub()
-        api.runs[0]['pull_requests'] = []  # GitHub drops the link once the head moves.
-        self.assertEqual(api.reconcile(), [1])
+        api.runs[0]['pull_requests'] = []  # Unlinked: could belong to another PR.
+        self.assertEqual(api.reconcile(), [])
+        self.assertEqual(api.cancelled, [])
 
     def test_current_head_witness_still_requires_pr_link(self):
         api = FakeGitHub()
