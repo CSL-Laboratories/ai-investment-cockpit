@@ -68,6 +68,7 @@ HTML_CITE_RE = re.compile(
     r"<!--\s*codex-thread-cited:([A-Za-z0-9_=-]{1,128}):"
     r"([0-9a-fA-F]{40}|[0-9a-fA-F]{64})\s*-->"
 )
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SAFE_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9_=-]{1,128}$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 SAFE_PR_RE = re.compile(r"^[1-9][0-9]{0,8}$")
@@ -348,13 +349,17 @@ class ThreadVerdict:
     source: str = ""
 
 
+def _is_fence_opener(stripped: str) -> bool:
+    return stripped.startswith("```") or stripped.startswith("~~~")
+
+
 def strip_quoted_and_fenced(text: str) -> str:
     """Drop quoted lines and fenced code so echoed verdicts cannot authorize."""
     kept: list[str] = []
     in_fence = False
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
-        if stripped.startswith("```"):
+        if _is_fence_opener(stripped):
             in_fence = not in_fence
             continue
         if in_fence or stripped.startswith(">"):
@@ -569,15 +574,24 @@ def required_checks_green(rollup: dict[str, Any] | None) -> tuple[bool, str]:
     return False, f"checks={state.lower()}"
 
 
+def sanitize_ruling_excerpt(text: str, limit: int = 240) -> str:
+    """Drop HTML comments and receipt prefixes so a copied ruling cannot mint markers."""
+    cleaned = HTML_COMMENT_RE.sub("", text or "")
+    for prefix in (CITE_PREFIX, RESOLVED_PREFIX, VERDICT_PREFIX):
+        cleaned = cleaned.replace(prefix, "")
+    excerpt = " ".join(cleaned.split())
+    if limit > 0 and len(excerpt) > limit:
+        excerpt = excerpt[: max(limit - 3, 0)] + "..."
+    return excerpt
+
+
 def build_resolve_reply(thread_id: str, sha: str, ruling_excerpt: str = "") -> str:
     digest = safe_sha(sha)
     tid = safe_thread_id(thread_id)
     if not digest or not tid:
         raise ValueError("unsafe reply ids")
     short = digest[:12]
-    excerpt = " ".join((ruling_excerpt or "").split())
-    if len(excerpt) > 240:
-        excerpt = excerpt[:237] + "..."
+    excerpt = sanitize_ruling_excerpt(ruling_excerpt, 240)
     lines = [
         cite_marker(tid, digest),
         f"Codex ruled the fix is already present on head `{short}` and no "
@@ -1033,15 +1047,16 @@ def resolved_count_today(
     so a delayed ``retry-resolve`` cannot hide from later scans. A PAT cite
     whose thread is still open is a failed or in-flight attempt and does
     not consume the cap — ``retry-resolve`` may complete it this scan. Unique
-    thread ids mean a same-day cite plus success marker charge once. A
-    later-day marker retry of an already-resolved thread is not a new
-    resolve. Missing timestamps fail closed (count).
+    ``(thread id, sha)`` pairs mean a same-day cite plus success marker
+    charge once, while a reopen-and-resolve on a new head the same day
+    charges again. A later-day marker retry of an already-resolved thread
+    is not a new resolve. Missing timestamps fail closed (count).
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_ids or frozenset()
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
@@ -1049,12 +1064,12 @@ def resolved_count_today(
         if stamped is not None and stamped < start:
             continue
         body = body_of(comment)
-        for tid, _sha in parse_resolved_markers(body):
-            if tid:
-                seen.add(tid)
-        for tid, _sha in parse_cite_markers(body):
-            if tid and tid not in pending:
-                seen.add(tid)
+        for tid, digest in parse_resolved_markers(body):
+            if tid and digest:
+                seen.add((tid, digest))
+        for tid, digest in parse_cite_markers(body):
+            if tid and digest and tid not in pending:
+                seen.add((tid, digest))
     return len(seen)
 
 
@@ -1270,8 +1285,12 @@ def scan_pr(
         actor_login=pat_login,
         unresolved_ids=unresolved_thread_ids(threads),
     )
+    abort_scan = False
     for thread in threads:
         tid = log_thread_id(str(thread.get("id") or ""))
+        if abort_scan:
+            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=abort-scan")
+            continue
         if thread_comments_truncated(thread):
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=truncated-comments")
             continue
@@ -1323,6 +1342,10 @@ def scan_pr(
             )
         except Exception:
             result = "error"
+        if result == "error":
+            abort_scan = True
+            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=error")
+            continue
         if result in {"posted", "posted-unmarked"}:
             posted_today += 1
             remaining[0] -= 1

@@ -125,6 +125,7 @@ class FakeGitHub(mod.GitHub):
         self.replies: list[tuple[str, str]] = []
         self.issue_posts: list[tuple[int, str]] = []
         self.fail_resolve = False
+        self.resolve_errors_left = 0
         self.fail_reply = False
         self.fail_issue_post = False
         self.fail_viewer = False
@@ -149,7 +150,9 @@ class FakeGitHub(mod.GitHub):
         if "resolveReviewThread" in query:
             if token != "pat":
                 raise AssertionError("resolve must use CODEX_TRIGGER_PAT")
-            if self.fail_resolve:
+            if self.fail_resolve or self.resolve_errors_left:
+                if self.resolve_errors_left:
+                    self.resolve_errors_left -= 1
                 raise RuntimeError("github graphql errors")
             tid = str(variables["id"])
             self.resolves.append(tid)
@@ -330,8 +333,10 @@ def test_mixed_actions_in_block_are_ambiguous():
 def test_quoted_and_fenced_verdicts_cannot_authorize():
     quoted = "\n".join(f"> {line}" for line in verdict_body().splitlines())
     fenced = f"```\n{verdict_body()}\n```\n"
+    tilde = f"~~~\n{verdict_body()}\n~~~\n"
     assert mod.parse_thread_verdicts(quoted) == []
     assert mod.parse_thread_verdicts(fenced) == []
+    assert mod.parse_thread_verdicts(tilde) == []
 
 
 def test_login_aliases_accept_graphql_and_rest():
@@ -852,6 +857,40 @@ def test_same_day_retry_resolve_does_not_double_charge():
     assert not any("skip=over-cap" in line for line in logs)
 
 
+def test_reopen_resolve_on_new_head_counts_separately():
+    gh = ready_gh(
+        threads=[thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))])],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    gh.issue_comments[12] = [
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+        comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA)),
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+        comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2)),
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_mutation_error_aborts_remaining_scan():
+    gh = ready_gh(
+        threads=[
+            thread(),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.resolve_errors_left = 1
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=error" in line for line in logs)
+    assert any("skip=abort-scan" in line for line in logs)
+
+
 def test_scan_skips_retry_mark_when_human_resolved():
     gh = ready_gh(
         threads=[
@@ -1052,6 +1091,17 @@ def test_reply_cites_ruling_and_sha():
     assert mod.resolved_marker(THREAD, SHA) not in body
 
 
+def test_reply_strips_receipt_markers_from_excerpt():
+    dirty = (
+        f"Looks good {mod.resolved_marker(THREAD, SHA)} "
+        f"{mod.cite_marker(THREAD2, SHA2)}"
+    )
+    body = mod.build_resolve_reply(THREAD, SHA, dirty)
+    assert mod.parse_resolved_markers(body) == []
+    assert mod.parse_cite_markers(body) == [(THREAD, SHA)]
+    assert THREAD2 not in body
+
+
 def test_mediation_instructions_forbid_self_resolve():
     text = mod.mediation_verdict_instructions(THREAD)
     assert "do **not** call resolvereviewthread" in text.lower()
@@ -1077,7 +1127,7 @@ def test_workflow_structure():
     assert "pull_request_review:" not in text
     assert "pull_request_review_comment:" not in text
     assert "issue_comment:" not in text
-    assert "workflow_dispatch:" in text
+    assert "workflow_dispatch:" not in text
     assert "runs-on: ubuntu-latest" in text
     assert "blacksmith-" not in text
     assert "python -m pytest" not in text

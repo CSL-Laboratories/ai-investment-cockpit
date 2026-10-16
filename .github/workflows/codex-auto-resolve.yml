@@ -21,21 +21,16 @@
 #
 # Review/comment events are intentionally omitted: GitHub would run this YAML
 # from the PR head, so a same-repo edit of this file would receive the PAT.
-# schedule and workflow_dispatch always run the default-branch copy.
+# schedule always runs the default-branch copy. workflow_dispatch is omitted
+# because a writer can dispatch a non-default --ref and that YAML would see
+# CODEX_TRIGGER_PAT.
 name: Codex auto-resolve
 
 on:
   schedule:
-    # Codex reviews do not start this workflow. The next cron (or a manual
-    # dispatch) scans open PRs. Offset from the gate (7/17/27/...) and
-    # stuck-thread watch (23 */2).
+    # Codex reviews do not start this workflow. The next cron scans open PRs.
+    # Offset from the gate (7/17/27/...) and stuck-thread watch (23 */2).
     - cron: "11,31,51 * * * *"
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "Only scan this PR number (optional)"
-        required: false
-        default: ""
 
 env:
   MAX_RESOLVES_PER_PR_PER_DAY: "20"
@@ -56,9 +51,9 @@ concurrency:
 
 jobs:
   resolve:
-    # Default-branch copy only (schedule / workflow_dispatch).
-    # Forks are skipped in the script via isCrossRepository.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Default-branch copy only (schedule). Forks are skipped in the script
+    # via isCrossRepository.
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -95,7 +90,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
-          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
           set -euo pipefail
           # First-merge bootstrap: this workflow ships in the PR, but the
