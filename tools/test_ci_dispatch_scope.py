@@ -173,9 +173,9 @@ class DispatchScopeTests(unittest.TestCase):
                 self.assertEqual(doc['jobs'][job]['needs'], ['filter', 'settle'])
                 self.assertIn('always() && !cancelled()',
                               ' '.join(doc['jobs'][job]['if'].split()))
-        self.assertEqual(self.ci['jobs']['filter']['needs'] if 'needs' in self.ci['jobs']['filter'] else None, None)
-        self.assertNotIn('settle', self.ci['jobs']['macos']['needs'])
-        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'linux'])
+        self.assertEqual(self.ci['jobs']['filter'].get('needs'), None)
+        self.assertIn('settle', self.ci['jobs']['macos']['needs'])
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'settle', 'linux'])
         self.assertNotIn('settle', self.rust['jobs']['filter'].get('needs', []))
 
     def test_linux_gate_fails_closed(self):
@@ -187,9 +187,11 @@ class DispatchScopeTests(unittest.TestCase):
                 with self.subTest(filter=filter_result, linux=linux_result):
                     result = subprocess.run(['bash', '-c', gate['steps'][0]['run']],
                                             capture_output=True, check=False, env={**os.environ,
-                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result})
+                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
+                                            'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
+                                            'RUN_TESTS': 'true'})
                     self.assertEqual(result.returncode == 0,
-                                     filter_result == 'success' and linux_result in ('success', 'skipped'))
+                                     filter_result == 'success' and linux_result == 'success')
 
     def test_dispatch_runs_linux_and_drafts_keep_existing_guard(self):
         for doc in (self.ci, self.rust):

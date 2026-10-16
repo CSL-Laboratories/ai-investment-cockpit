@@ -148,9 +148,9 @@ jobs:
               fh.write("\nEOF\n")
           PY
 
-  # Free GitHub-hosted debounce. Only non-draft pull_request synchronize waits
-  # here; a newer push cancels this run before rust-book bills. Other events
-  # skip this job so they do not wait.
+  # GitHub-hosted debounce; requires corrected #157 cross-head PR concurrency.
+  # Only non-draft synchronize waits. Other events intentionally skip settle.
+  # Waiting consumes hosted capacity and does not guarantee billing savings.
   settle:
     name: settle
     if: github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true
@@ -163,7 +163,14 @@ jobs:
   rust-book:
     name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
     needs: [filter, settle]
-    if: always() && !cancelled() && needs.filter.result == 'success'
+    if: >
+      always() && !cancelled() &&
+      needs.filter.result == 'success' &&
+      (
+        needs.settle.result == 'success' ||
+        (needs.settle.result == 'skipped' &&
+          (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
+      )
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
