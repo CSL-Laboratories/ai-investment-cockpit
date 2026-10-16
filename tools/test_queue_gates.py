@@ -21,7 +21,7 @@ def workflow(name):
 def execute(script, env):
     source = script.split("<<'PY'", 1)[1].rsplit('PY', 1)[0]
     return subprocess.run([sys.executable, '-c', source],
-                          env={**os.environ, 'WORKFLOW_CANCELLED': 'false', **env},
+                          env={**os.environ, **env},
                           cwd=ROOT, capture_output=True, text=True)
 
 
@@ -41,7 +41,7 @@ class QueueGateTests(unittest.TestCase):
         doc = workflow('ci.yml')['jobs']['queue-gates']
         self.assertEqual(doc['needs'], ['filter', 'settle', 'linux', 'windows'])
         self.assertIn('always()', doc['if'])
-        script = doc['steps'][-1]['run']
+        script = doc['steps'][-2]['run']
         for required, win_required, linux, windows, expected in [
             ('true', 'true', 'success', 'success', True),
             ('true', 'true', 'success', 'failure', False),
@@ -68,7 +68,7 @@ class QueueGateTests(unittest.TestCase):
         for required, result, expected in [('true', 'success', True), ('true', 'skipped', False),
                                             ('true', 'cancelled', False), ('true', 'failure', False),
                                             ('false', 'skipped', True), ('', 'skipped', False)]:
-            actual = execute(job['steps'][-1]['run'], {'FILTER_RESULT': 'success',
+            actual = execute(job['steps'][-2]['run'], {'FILTER_RESULT': 'success',
                              'REQUIRED': required, 'RESULTS': json.dumps(result),
                              'SETTLE_RESULT': 'skipped', 'SETTLE_EXPECTED': 'false'})
             self.assertEqual(actual.returncode == 0, expected, actual.stderr)
@@ -86,21 +86,28 @@ class QueueGateTests(unittest.TestCase):
                            'WINDOWS_RESULT': work, 'RESULTS': json.dumps(work),
                            'SETTLE_RESULT': result, 'SETTLE_EXPECTED': expected}
                     for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
-                        script = workflow(filename)['jobs'][job]['steps'][-1]['run']
+                        script = workflow(filename)['jobs'][job]['steps'][-2]['run']
                         with self.subTest(job=job, settle=result, expected=expected, required=required):
                             self.assertEqual(execute(script, env).returncode == 0, accept)
 
     def test_cancelled_workflow_cannot_pass_even_after_successful_dependencies(self):
-        for cancelled in ('true', ''):
-            for required in ('true', 'false'):
-                work = 'success' if required == 'true' else 'skipped'
-                env = {'WORKFLOW_CANCELLED': cancelled, 'FILTER_RESULT': 'success',
-                       'REQUIRED': required, 'WINDOWS_REQUIRED': 'true', 'LINUX_RESULT': work,
-                       'WINDOWS_RESULT': work, 'RESULTS': json.dumps(work),
-                       'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'false'}
-                for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
-                    script = workflow(filename)['jobs'][job]['steps'][-1]['run']
-                    self.assertNotEqual(execute(script, env).returncode, 0)
+        from test_ci_dispatch_scope import evaluate
+        from unittest.mock import patch
+        for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
+            doc = workflow(filename)['jobs'][job]
+            with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+                evaluate(doc['if'])
+                expression, environment = evaluator.call_args.args
+            environment['cancelled'] = lambda: True
+            self.assertTrue(eval(expression, environment))
+            cancellation = doc['steps'][-1]
+            with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+                evaluate(cancellation['if'])
+                expression, environment = evaluator.call_args.args
+            environment['cancelled'] = lambda: True
+            self.assertTrue(eval(expression, environment))
+            result = subprocess.run(['bash', '-c', cancellation['run']], capture_output=True)
+            self.assertEqual(result.returncode, 1)
 
     def test_actual_rust_path_and_platform_matrix(self):
         step = next(s for s in workflow('rust.yml')['jobs']['filter']['steps'] if s.get('id') == 'gate')
