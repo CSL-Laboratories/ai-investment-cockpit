@@ -1,9 +1,17 @@
 {
-  "status": "ok",
-  "etf": "SPY",
+  "ok": true,
+  "mode": "holdings",
+  "market": "US",
+  "source": "sec_nport",
   "as_of": "2026-06-30",
-  "constituents": [
-    {"symbol": "AAPL", "weight": 0.07},
-    {"symbol": "ZZZZ", "weight": 0.01}
-  ]
+  "coverage": "full_portfolio",
+  "paging": {"offset": 0, "count": 2, "next_offset": null},
+  "data": {
+    "symbol": "IVV",
+    "holdings_in_filing": 503,
+    "holdings": [
+      {"ticker": "AAPL", "name": "APPLE INC", "pct_of_net_assets": 7.0, "value_usd": 1},
+      {"ticker": "ZZZZ", "name": "OUTSIDE", "pct_of_net_assets": 1.0, "value_usd": 1}
+    ]
+  }
 }

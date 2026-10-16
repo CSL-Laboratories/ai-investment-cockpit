@@ -1,14 +1,22 @@
 {
-  "status": "ok",
-  "ticker": "AAPL",
-  "diffs": [
-    {
-      "manager": "Example Capital",
-      "quarter": "2025Q4",
-      "prev_quarter": "2025Q3",
-      "shares": 1200,
-      "prev_shares": 1000,
-      "delta_shares": 200
-    }
-  ]
+  "ok": true,
+  "market": "US",
+  "source": "sec_edgar_13f",
+  "mode": "ticker_holders",
+  "paging": {"offset": 0, "count": 1, "next_offset": null},
+  "data": {
+    "ticker": "AAPL",
+    "cusip": "037833100",
+    "quarter": "2025Q4",
+    "period_end": "2025-12-31",
+    "holders": [
+      {
+        "cik": "0001067983",
+        "manager": "Example Capital",
+        "held": true,
+        "value_usd": 1500000,
+        "shares": 1200
+      }
+    ]
+  }
 }

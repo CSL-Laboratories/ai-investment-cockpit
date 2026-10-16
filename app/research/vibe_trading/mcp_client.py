@@ -12,13 +12,20 @@ import os
 import queue
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 
 from research.vibe_trading.policy import assert_callable, prepare_arguments
 
 _MAX_BODY = 8_000_000
-_KEEP_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT")
+# HOME is not inherited: a shared home is how file-backed keyrings and the sidecar
+# config dir would see cockpit credentials. A scratch HOME is set per spawn.
+# VIBE_TRADING_ALLOWED_RUN_ROOTS is the sidecar's own run-root allowlist.
+_KEEP_ENV = (
+    "PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT",
+    "VIBE_TRADING_ALLOWED_RUN_ROOTS",
+)
 
 
 class SidecarUnavailable(Exception):
@@ -38,42 +45,25 @@ def _child_env() -> dict[str, str]:
 
 
 def _write_message(stdin, payload: dict) -> None:
+    # MCP stdio is newline-delimited JSON-RPC (not LSP Content-Length). FastMCP
+    # rejects a Content-Length header as invalid JSON and then waits forever.
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-    stdin.write(header + body)
+    if len(body) > _MAX_BODY:
+        raise SidecarProtocolError("sidecar request exceeded max body")
+    stdin.write(body + b"\n")
     stdin.flush()
 
 
 def _read_message(stdout) -> dict:
-    headers: dict[str, str] = {}
-    while True:
-        line = stdout.readline()
-        if not line:
-            raise SidecarProtocolError("sidecar closed stdout")
-        if line in (b"\r\n", b"\n"):
-            break
-        if line.endswith(b"\r\n"):
-            line = line[:-2]
-        elif line.endswith(b"\n"):
-            line = line[:-1]
-        key, sep, value = line.partition(b":")
-        if not sep:
-            raise SidecarProtocolError("sidecar header had no separator")
-        headers[key.decode("ascii", "replace").strip().lower()] = value.decode(
-            "ascii", "replace").strip()
+    line = stdout.readline()
+    if not line:
+        raise SidecarProtocolError("sidecar closed stdout")
+    if len(line) > _MAX_BODY:
+        raise SidecarProtocolError("sidecar line exceeded max body")
     try:
-        length = int(headers.get("content-length", "0"))
+        parsed = json.loads(line)
     except ValueError as exc:
-        raise SidecarProtocolError("sidecar content-length was not an integer") from exc
-    if length <= 0 or length > _MAX_BODY:
-        raise SidecarProtocolError("sidecar content-length out of range")
-    body = stdout.read(length)
-    if len(body) != length:
-        raise SidecarProtocolError("sidecar body ended early")
-    try:
-        parsed = json.loads(body)
-    except ValueError as exc:
-        raise SidecarProtocolError("sidecar body was not JSON") from exc
+        raise SidecarProtocolError("sidecar line was not JSON") from exc
     if type(parsed) is not dict:
         raise SidecarProtocolError("sidecar body was not an object")
     return parsed
@@ -126,12 +116,21 @@ class StdioMcpClient:
         return self._exchange(resolved, tool, cleaned)
 
     def _exchange(self, resolved: str, tool: str, arguments: dict) -> dict:
+        scratch = tempfile.mkdtemp(prefix="vibe-trading-home-")
+        try:
+            return self._exchange_in(resolved, tool, arguments, scratch)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+
+    def _exchange_in(self, resolved: str, tool: str, arguments: dict, scratch: str) -> dict:
+        env = _child_env()
+        env["HOME"] = scratch
         proc = subprocess.Popen(
             [resolved],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            env=_child_env(),
+            env=env,
             shell=False,
         )
         messages: queue.Queue = queue.Queue()

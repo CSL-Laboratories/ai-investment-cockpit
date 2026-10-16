@@ -43,9 +43,9 @@ _ARG_KEYS = {
     "alpha_zoo": frozenset({"action", "zoo", "theme", "alpha_id", "limit"}),
     "alpha_bench": frozenset({"zoo", "alpha_id", "universe", "period", "top", "horizon"}),
     "backtest": frozenset({"run_dir"}),
-    "get_institutional_holdings": frozenset({"ticker", "manager"}),
-    "etf_holdings": frozenset({"symbol"}),
-    "prediction_market": frozenset({"action", "query", "contract_id", "limit"}),
+    "get_institutional_holdings": frozenset({"mode", "ticker", "manager", "cusip", "quarter", "top_n"}),
+    "etf_holdings": frozenset({"mode", "symbol", "query", "top_n", "limit"}),
+    "prediction_market": frozenset({"mode", "query", "status", "limit"}),
 }
 
 _STRATEGY_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -71,7 +71,7 @@ def is_trading_tool(name: str) -> bool:
         return True
     lowered = name.lower()
     if lowered in _UNREACHABLE or lowered.startswith((
-        "trading_", "broker_", "connector_", "order_",
+        "trading_", "broker_", "connector_", "order_", "etoro_",
     )):
         return True
     return any(token in lowered for token in _ORDER_NAMES)

@@ -64,6 +64,7 @@ FEED_FINNHUB = "finnhub"
 FEED_EDGAR = "sec:edgar"
 FEED_CALENDAR = "calendar"
 FEED_FINRA = "finra"
+FEED_VIBE_TRADING = "vibe-trading"
 
 # Restart backoff for a stream reader whose consumer returned or exhausted its own reconnect
 # budget. The consumer (``ingest/alpaca_news.py``) already does fine-grained exponential backoff

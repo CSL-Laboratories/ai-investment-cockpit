@@ -19,13 +19,23 @@ from sqlalchemy import select
 from config.settings import Mode, Settings
 from core.clock import FrozenClock
 from ingest.normalize import ALLOWED_SOURCES
+from main import build_ingest_runner
+from orchestrator.ingest_runner import FEED_VIBE_TRADING, IngestRunner
+from orchestrator.scheduler import INGEST_CRON
 from orchestrator.state import OrchestratorState
 from research.vibe_trading.adapter import ResearchAdapter, ResearchRequest
+from research.vibe_trading.features import (
+    categorise,
+    normalize_run_card,
+    project_alpha_bench,
+    _finite,
+)
 from research.vibe_trading.mcp_client import (
     SidecarUnavailable,
     StdioMcpClient,
     _child_env,
 )
+from research.vibe_trading.poller import VibeTradingPoller
 from research.vibe_trading.policy import (
     RESEARCH_TOOLS,
     SidecarToolDenied,
@@ -36,7 +46,7 @@ from research.vibe_trading.policy import (
 from schemas.models.audit_entry import AuditEntry
 from storage.engine import create_all, make_engine, make_session_factory
 from workflows.context_limit import estimate_tokens
-from workflows.events import events_in_window
+from workflows.events import events_in_window, resolve_raw
 from workflows.packets import build_packet
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -124,9 +134,11 @@ def test_missing_binary_is_unavailable_and_does_not_raise(monkeypatch):
     assert batch.calls[0]["usd"] is None
 
 
-def test_features_land_in_a_decision_packet(state):
+def test_features_land_in_a_decision_packet(state, tmp_path):
     transport = FakeSidecar(_responses())
-    result = ResearchAdapter(_settings(), transport=transport).publish(state)
+    result = ResearchAdapter(_settings(), transport=transport).publish(
+        state, parquet_root=tmp_path / "raw",
+    )
     assert result.status == "ok"
     assert result.stored
     window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
@@ -137,8 +149,10 @@ def test_features_land_in_a_decision_packet(state):
     assert "category=alive category_source=recomputed" in text
     assert "category=reversed category_source=recomputed" in text
     assert "alive=1 reversed=1 dead=1" in text
+    assert "counts_scope=returned_top" in text
+    assert "survivorship_bias=true" in text
     assert "13f ticker=AAPL" in text
-    assert "delta_shares=200" in text
+    assert "shares=1200" in text
     assert "etf=SPY" in text
     assert "AAPL:0.0700" in text
     assert "ZZZZ" not in text
@@ -147,10 +161,15 @@ def test_features_land_in_a_decision_packet(state):
     assert "[role-marker]" in text
     assert all(row.event_type.startswith("signal:") for row in window)
     assert all(row.source == "vibe-trading" for row in window)
+    assert all(
+        not event.headline.startswith("alpha_") or event.symbol == ""
+        for event in window
+    )
     tools = [tool for tool, _args in transport.calls]
     assert tools == [call[0] for call in ResearchAdapter(_settings()).plan()]
     assert "backtest" not in tools
     assert "trading_orders" not in tools
+    assert all(row.raw_ref.startswith("parquet://") for row in result.stored)
 
 
 def test_raw_payload_is_kept_out_of_the_headline():
@@ -179,7 +198,9 @@ def test_token_budget_trims_instead_of_overflowing(tmp_path):
         vibe_trading_etfs="", vibe_trading_event_queries="", watchlist="AAPL",
         vibe_trading_max_symbols=0, vibe_trading_token_budget=400,
     )
-    result = ResearchAdapter(settings, transport=transport).publish(_state(tmp_path, settings))
+    result = ResearchAdapter(settings, transport=transport).publish(
+        _state(tmp_path, settings), parquet_root=tmp_path / "raw",
+    )
     packet = build_packet(result.stored)
     assert result.dropped > 0
     assert result.stored
@@ -196,13 +217,15 @@ def test_context_cap_overrides_a_larger_research_budget(tmp_path):
     )
     result = ResearchAdapter(
         settings, transport=FakeSidecar({"alpha_bench": payload}),
-    ).publish(_state(tmp_path, settings))
+    ).publish(_state(tmp_path, settings), parquet_root=tmp_path / "raw")
     packet = build_packet(result.stored)
     assert estimate_tokens(packet.prompt_block()) <= 80
 
 
-def test_sidecar_calls_are_audited_as_unpriced_cost(state):
-    ResearchAdapter(_settings(), transport=FakeSidecar(_responses())).publish(state)
+def test_sidecar_calls_are_audited_as_unpriced_cost(state, tmp_path):
+    ResearchAdapter(_settings(), transport=FakeSidecar(_responses())).publish(
+        state, parquet_root=tmp_path / "raw",
+    )
     with state.session_factory() as session:
         rows = session.execute(
             select(AuditEntry).where(AuditEntry.event_type == "sidecar_call")
@@ -219,10 +242,10 @@ def test_sidecar_calls_are_audited_as_unpriced_cost(state):
     assert payload["output_tokens"] >= 0
 
 
-def test_republish_dedupes_the_same_feature(state):
+def test_republish_dedupes_the_same_feature(state, tmp_path):
     adapter = ResearchAdapter(_settings(), transport=FakeSidecar(_responses()))
-    first = adapter.publish(state)
-    second = adapter.publish(state)
+    first = adapter.publish(state, parquet_root=tmp_path / "raw")
+    second = adapter.publish(state, parquet_root=tmp_path / "raw")
     assert first.stored
     assert second.stored == ()
 
@@ -245,8 +268,11 @@ def test_plan_ignores_execution_mode():
         "prediction_market",
         "prediction_market",
     ]
-    assert paper[1][1] == {"ticker": "AAPL"}
-    assert paper[2][1] == {"ticker": "MSFT"}
+    assert paper[1][1] == {"mode": "ticker_holders", "ticker": "AAPL"}
+    assert paper[2][1] == {"mode": "ticker_holders", "ticker": "MSFT"}
+    assert paper[3][1] == {"mode": "holdings", "symbol": "SPY"}
+    assert paper[4][1]["mode"] == "search"
+    assert "action" not in paper[4][1]
 
 
 def test_trading_tools_are_denied_before_any_transport():
@@ -257,6 +283,7 @@ def test_trading_tools_are_denied_before_any_transport():
     denied = (
         "trading_orders", "trading_account", "trading_positions", "trading_history",
         "write_file", "run_swarm", "read_file", "broker_submit",
+        "etoro_place_order", "etoro_execute_write",
     )
     for name in denied:
         assert is_trading_tool(name)
@@ -281,6 +308,8 @@ def test_allowlist_cannot_reenable_a_trading_tool(monkeypatch):
 @pytest.mark.parametrize("engine", [
     "from brokers.gateway import OrderGateway\n",
     "import importlib\nimportlib.import_module('brokers.gateway')\n",
+    "getattr(mod, 'place_' + 'order')\n",
+    "exec('place_order()')\n",
 ])
 def test_backtest_refuses_an_engine_that_imports_the_order_path(tmp_path, engine):
     run = _stage_run(tmp_path, engine=engine)
@@ -355,9 +384,12 @@ def test_stdio_client_roundtrip_and_scrubbed_env(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("COCKPIT_WATCHLIST", "AAPL")
     monkeypatch.setenv("ALPACA_API_KEY", "should-not-pass")
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path / "runs"))
     env = _child_env()
     assert "COCKPIT_WATCHLIST" not in env
     assert "ALPACA_API_KEY" not in env
+    assert "HOME" not in env
+    assert env["VIBE_TRADING_ALLOWED_RUN_ROOTS"] == str(tmp_path / "runs")
     payload = StdioMcpClient("vibe-trading-mcp", timeout_s=5).call(
         "alpha_zoo", {"action": "health"},
     )
@@ -372,6 +404,147 @@ def test_stdio_client_rejects_a_path_command():
 def test_settings_reject_a_shell_command():
     with pytest.raises(ValueError):
         _settings(vibe_trading_command="vibe-trading-mcp && true")
+
+
+def test_publish_without_parquet_root_does_not_persist(state):
+    result = ResearchAdapter(_settings(), transport=FakeSidecar(_responses())).publish(state)
+    assert result.stored == ()
+    assert events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1)) == []
+
+
+def test_published_refs_are_groundable(state, tmp_path):
+    root = tmp_path / "raw"
+    result = ResearchAdapter(_settings(), transport=FakeSidecar(_responses())).publish(
+        state, parquet_root=root,
+    )
+    assert result.stored
+    for row in result.stored:
+        assert row.raw_ref.startswith("parquet://")
+        assert resolve_raw(root, row.raw_ref, state=state, row=row)
+
+
+def test_alpha_bench_ignores_envelope_zoo_counts():
+    payload = {
+        "status": "ok",
+        "alive": 99,
+        "reversed": 98,
+        "dead": 97,
+        "n_alphas_tested": 101,
+        "top": [{
+            "id": "alpha101_006",
+            "ic_mean": 0.041,
+            "ic_std": 0.01,
+            "ir": 0.82,
+            "ic_positive_ratio": 0.7,
+            "ic_count": 100,
+            "category": "dead",
+        }],
+    }
+    lines = project_alpha_bench(
+        payload, zoo="alpha101", universe="sp500", period="2018-2025",
+        symbols=("AAPL", "MSFT"),
+    )
+    summary = lines[0].text
+    assert "alive=1 reversed=0 dead=0 tested=101" in summary
+    assert "counts_scope=returned_top" in summary
+    assert "survivorship_bias=true" in summary
+    assert "99" not in summary
+    assert all(line.symbols == () for line in lines)
+
+
+def test_categorise_skips_overflowing_numbers():
+    assert _finite(10 ** 1000) is None
+    assert categorise({"ic_mean": 10 ** 1000}) is None
+    assert categorise({"ic_mean": float("inf")}) is None
+
+
+def test_run_card_normalizes_mixed_timezone_windows():
+    card = _load("run_card.json")
+    card["tool_traces"][0]["started_at"] = "2026-01-01T00:00:00"
+    card["tool_traces"][0]["ended_at"] = "2026-06-30T00:00:00-04:00"
+    out = normalize_run_card(card, config_point_in_time=True)
+    assert out is not None
+    assert out["pit_source"] == "staged_config"
+
+
+def test_run_card_inverted_mixed_timezone_is_quarantined_not_a_typeerror():
+    card = _load("run_card.json")
+    card["tool_traces"][0]["started_at"] = "2026-06-30T00:00:00-04:00"
+    card["tool_traces"][0]["ended_at"] = "2026-06-30T00:00:00Z"
+    assert normalize_run_card(card, config_point_in_time=True) is None
+
+
+def test_run_card_without_explicit_pit_uses_staged_config():
+    card = _load("run_card.json")
+    assert "point_in_time" not in card
+    assert normalize_run_card(card, config_point_in_time=True) is not None
+    assert normalize_run_card(card, config_point_in_time=False) is None
+
+
+def test_backtest_refuses_a_sibling_module_that_calls_getattr(tmp_path):
+    run = _stage_run(tmp_path, engine="def signal(panel):\n    return panel\n")
+    (run / "helper.py").write_text("getattr(__builtins__, 'exec')\n", encoding="utf-8")
+    transport = FakeSidecar({"backtest": {"status": "ok", "run_dir": str(run)}})
+    batch = ResearchAdapter(
+        _settings(watchlist="", vibe_trading_etfs="", vibe_trading_event_queries="",
+                  vibe_trading_max_symbols=0),
+        transport=transport,
+    ).collect(ResearchRequest(strategy_id="idea-1", run_root=str(tmp_path)))
+    assert "backtest" not in [tool for tool, _args in transport.calls]
+    assert any(call["tool"] == "backtest" and call["status"] == "denied" for call in batch.calls)
+
+
+def test_collect_skips_remaining_tools_after_the_pass_deadline(monkeypatch):
+    now = [1_000.0]
+    monkeypatch.setattr("research.vibe_trading.adapter.time.monotonic", lambda: now[0])
+
+    class Slow:
+        def call(self, tool, arguments):
+            now[0] += 10
+            return {"status": "ok", "top": []}
+
+    settings = _settings(vibe_trading_timeout_seconds=1)
+    batch = ResearchAdapter(settings, transport=Slow()).collect()
+    statuses = [call["status"] for call in batch.calls]
+    assert statuses[0] in {"ok", "quarantined"}
+    assert "unavailable" in statuses[1:]
+
+
+def test_build_ingest_runner_registers_vibe_only_when_enabled(tmp_path):
+    enabled = _settings()
+    disabled = _settings(vibe_trading_enabled=False)
+    on = build_ingest_runner(
+        _state(tmp_path, enabled, name="on.db"),
+        parquet_root=tmp_path / "raw-on",
+        fetchers={},
+        settings=enabled,
+    )
+    off = build_ingest_runner(
+        _state(tmp_path, disabled, name="off.db"),
+        parquet_root=tmp_path / "raw-off",
+        fetchers={},
+        settings=disabled,
+    )
+    assert FEED_VIBE_TRADING in on.polls
+    assert FEED_VIBE_TRADING not in off.polls
+    assert INGEST_CRON[FEED_VIBE_TRADING]["hour"] == 8
+
+
+def test_vibe_poller_persists_parquet_backed_events(tmp_path):
+    settings = _settings()
+    state = _state(tmp_path, settings, name="poller.db")
+    root = tmp_path / "raw"
+    adapter = ResearchAdapter(settings, transport=FakeSidecar(_responses()))
+    runner = IngestRunner(state, parquet_root=root, clock=FrozenClock(NOW))
+    runner.add_poller(FEED_VIBE_TRADING, VibeTradingPoller(adapter, state=state))
+    out = runner.poll(FEED_VIBE_TRADING)
+    assert out["status"] == "ok"
+    assert out["emitted"] > 0
+    window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
+    assert window
+    assert all(row.source == "vibe-trading" for row in window)
+    assert all(row.raw_ref.startswith("parquet://") for row in window)
+    assert resolve_raw(root, window[0].raw_ref, state=state, row=window[0])
 
 
 def _stage_run(root: Path, *, engine: str, point_in_time: bool = True) -> Path:
@@ -392,21 +565,13 @@ import json
 import sys
 
 def read_msg():
-    headers = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if not line:
-            raise SystemExit(0)
-        if line in (b"\\r\\n", b"\\n"):
-            break
-        key, _, value = line.partition(b":")
-        headers[key.decode().lower().strip()] = value.strip()
-    length = int(headers["content-length"])
-    return json.loads(sys.stdin.buffer.read(length))
+    line = sys.stdin.buffer.readline()
+    if not line:
+        raise SystemExit(0)
+    return json.loads(line)
 
 def write_msg(payload):
-    body = json.dumps(payload).encode()
-    sys.stdout.buffer.write(f"Content-Length: {len(body)}\\r\\n\\r\\n".encode() + body)
+    sys.stdout.buffer.write(json.dumps(payload).encode() + b"\\n")
     sys.stdout.buffer.flush()
 
 while True:

@@ -27,7 +27,7 @@ from research.vibe_trading.features import (
     project_holdings,
     project_run_card,
     read_run_card,
-    scan_signal_engine,
+    scan_run_tree,
     to_events,
     trim_lines,
     normalize_run_card,
@@ -113,11 +113,11 @@ class ResearchAdapter:
         )]
         symbols = tuple(sorted(settings.watchlist_symbols))[:int(settings.vibe_trading_max_symbols)]
         for symbol in symbols:
-            calls.append(("get_institutional_holdings", {"ticker": symbol}))
+            calls.append(("get_institutional_holdings", {"mode": "ticker_holders", "ticker": symbol}))
         for etf in settings.vibe_trading_etf_symbols:
-            calls.append(("etf_holdings", {"symbol": etf}))
+            calls.append(("etf_holdings", {"mode": "holdings", "symbol": etf}))
         for query in settings.vibe_trading_event_query_list:
-            calls.append(("prediction_market", {"action": "search", "query": query, "limit": 5}))
+            calls.append(("prediction_market", {"mode": "search", "query": query, "limit": 5}))
         return tuple(calls)
 
     def collect(self, request: ResearchRequest | None = None, *,
@@ -155,9 +155,15 @@ class ResearchAdapter:
 
     def publish(self, state, request: ResearchRequest | None = None, *,
                 parquet_root=None) -> PublishResult:
-        """Persist the batch through the existing ingest path so the next decision window sees it."""
+        """Persist the batch through the existing ingest path so the next decision window sees it.
+
+        Grounding refuses non-parquet refs, so a publish that would feed proposals
+        requires a parquet root. The ingest poller always passes the composed root.
+        """
         batch = self.collect(request, audit=state.audit, clock=state.clock)
         if not batch.events:
+            return PublishResult(batch.status, (), batch.calls, batch.dropped)
+        if parquet_root is None:
             return PublishResult(batch.status, (), batch.calls, batch.dropped)
         stored = persist_events(
             state, list(batch.events), parquet_root=parquet_root, clock=state.clock,
@@ -168,28 +174,34 @@ class ResearchAdapter:
         settings = self._settings
         symbols = tuple(sorted(settings.watchlist_symbols))
         universe = frozenset(symbols)
-        feature_symbols = symbols[:64]
         attempts: list[_Attempt] = []
-        for tool, args in self.plan(request):
-            payload, attempt = self._invoke(tool, args)
+        planned = self.plan(request)
+        deadline = time.monotonic() + float(settings.vibe_trading_timeout_seconds)
+        for tool, args in planned:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                attempts.append(_Attempt(tool, "unavailable", 0, args, []))
+                continue
+            payload, attempt = self._invoke(tool, args, timeout_s=remaining)
             if payload is not None and attempt.status == "ok":
-                attempt.lines = self._project(
-                    tool, args, payload, feature_symbols=feature_symbols, universe=universe,
-                )
+                attempt.lines = self._project(tool, args, payload, universe=universe)
                 if not attempt.lines:
                     attempt.status = "quarantined"
             attempts.append(attempt)
         if request.strategy_id is not None or request.run_root is not None:
-            attempts.append(self._vet(request, universe))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                attempts.append(_Attempt("backtest", "unavailable", 0, {}, []))
+            else:
+                attempts.append(self._vet(request, universe, timeout_s=remaining))
         return attempts
 
     @staticmethod
-    def _project(tool: str, args: dict, payload: dict, *, feature_symbols: tuple[str, ...],
+    def _project(tool: str, args: dict, payload: dict, *,
                  universe: frozenset[str]) -> list[FeatureLine]:
         if tool == "alpha_bench":
             return project_alpha_bench(
                 payload, zoo=args["zoo"], universe=args["universe"], period=args["period"],
-                symbols=feature_symbols,
             )
         if tool == "get_institutional_holdings":
             return project_holdings(payload, ticker=args["ticker"])
@@ -199,7 +211,8 @@ class ResearchAdapter:
             return project_contracts(payload)
         return []
 
-    def _vet(self, request: ResearchRequest, universe: frozenset[str]) -> _Attempt:
+    def _vet(self, request: ResearchRequest, universe: frozenset[str],
+             timeout_s: float | None = None) -> _Attempt:
         started = time.monotonic()
         try:
             strategy_id = assert_strategy_id(request.strategy_id or "")
@@ -209,16 +222,15 @@ class ResearchAdapter:
         except SidecarToolDenied:
             return _Attempt("backtest", "denied", _millis(started), {}, [])
         config_path = run_dir / "config.json"
-        engine_path = run_dir / "code" / "signal_engine.py"
         config = load_research_config(config_path)
         if config is None:
             return _Attempt("backtest", "quarantined", _millis(started), {}, [])
-        reason = scan_signal_engine(engine_path)
+        reason = scan_run_tree(run_dir)
         if reason is not None:
             status = "denied" if ("forbidden" in reason or "order" in reason) else "quarantined"
             return _Attempt("backtest", status, _millis(started), {}, [])
         args = {"run_dir": str(run_dir)}
-        payload, attempt = self._invoke("backtest", args)
+        payload, attempt = self._invoke("backtest", args, timeout_s=timeout_s)
         if payload is None or attempt.status != "ok" or payload.get("status") != "ok":
             attempt.status = "unavailable" if attempt.status == "unavailable" else "quarantined"
             attempt.lines = []
@@ -242,7 +254,8 @@ class ResearchAdapter:
         )]
         return attempt
 
-    def _invoke(self, tool: str, arguments: dict) -> tuple[dict | None, _Attempt]:
+    def _invoke(self, tool: str, arguments: dict, timeout_s: float | None = None
+                ) -> tuple[dict | None, _Attempt]:
         started = time.monotonic()
         try:
             cleaned = prepare_arguments(tool, arguments)
@@ -251,7 +264,7 @@ class ResearchAdapter:
         if self._down:
             return None, _Attempt(tool, "unavailable", _millis(started), cleaned, [])
         try:
-            payload = self._client_for().call(tool, cleaned)
+            payload = self._call(tool, cleaned, timeout_s=timeout_s)
         except SidecarToolDenied:
             return None, _Attempt(tool, "denied", _millis(started), cleaned, [])
         except SidecarUnavailable as exc:
@@ -264,6 +277,17 @@ class ResearchAdapter:
         if type(payload) is not dict:
             return None, _Attempt(tool, "quarantined", _millis(started), cleaned, [])
         return payload, _Attempt(tool, "ok", _millis(started), cleaned, [])
+
+    def _call(self, tool: str, arguments: dict, timeout_s: float | None = None):
+        client = self._client_for()
+        saved = getattr(client, "_timeout_s", None)
+        if timeout_s is not None and saved is not None:
+            client._timeout_s = timeout_s
+        try:
+            return client.call(tool, arguments)
+        finally:
+            if timeout_s is not None and saved is not None:
+                client._timeout_s = saved
 
     def _client_for(self):
         if self._transport is not None:

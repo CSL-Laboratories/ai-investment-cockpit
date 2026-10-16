@@ -3,12 +3,9 @@
   "zoo": "alpha101",
   "universe": "sp500",
   "period": "2018-2025",
-  "n_alphas_tested": 3,
+  "n_alphas_tested": 101,
   "n_skipped": 0,
-  "alive": 1,
-  "reversed": 1,
-  "dead": 1,
-  "rows": [
+  "top": [
     {
       "id": "alpha101_006",
       "ic_mean": 0.041,
