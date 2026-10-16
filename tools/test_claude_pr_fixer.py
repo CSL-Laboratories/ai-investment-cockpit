@@ -25,7 +25,7 @@ GATE_PATH = ROOT / "scripts" / "ci" / "claude_pr_fixer_gate.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "claude.yml"
 SCAN_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "conflict-scan.yml"
 HEREDOC = "CLAUDE_PR_FIXER_GATE"
-SCAN_CRON = 'cron: "11,41 * * * *"'
+SCAN_CRON = 'cron: "7 */2 * * *"'
 REPO = "acme/example"
 
 
@@ -651,6 +651,22 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("github.event.issue.pull_request", resolve)
         self.assertIn("head_sha: ${{ steps.pr.outputs.head_sha }}", resolve)
 
+    def test_all_jobs_use_github_hosted_runners(self) -> None:
+        for name in (
+            "resolve-pr",
+            "event-paths",
+            "forward-conflict-scan",
+            "claude-mention",
+            "devin-review-fix",
+        ):
+            header = self._job(name).split("steps:")[0]
+            runners = [
+                line.strip()
+                for line in header.splitlines()
+                if line.strip().startswith("runs-on:")
+            ]
+            self.assertEqual(runners, ["runs-on: ubuntu-latest"], name)
+
     def _job(self, name: str) -> str:
         marker = f"  {name}:"
         start = self.text.find(marker)
@@ -1127,6 +1143,7 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertNotIn("\n  conflict-scan:\n", self.fixer)
         self.assertNotIn("\n  conflict-resolve:\n", self.fixer)
         self.assertIn(SCAN_CRON, scan_on)
+        self.assertNotIn('cron: "11,41 * * * *"', scan_on)
         self.assertIn("workflow_dispatch:", scan_on)
         on_block = scan_on.split("\non:", 1)[1].split("\npermissions:", 1)[0]
         on_keys = [
@@ -1138,15 +1155,40 @@ class ConflictJobStructureTests(unittest.TestCase):
 
     def test_triggers_are_bounded(self) -> None:
         self.assertIn(SCAN_CRON, self.text)
+        self.assertNotIn('cron: "11,41 * * * *"', self.text)
         self.assertIn("workflow_dispatch:", self.text)
         scan = self._job("conflict-scan")
         self.assertIn("contents: read", scan)
         self.assertNotIn("write", scan.split("steps:")[0])
         self.assertIn("GH_TOKEN: ${{ github.token }}", scan)
         self.assertIn("actions: read", scan)
+        self.assertIn("runs-on: ubuntu-latest", scan.split("steps:")[0])
+        self.assertNotIn("blacksmith", scan.split("steps:")[0])
+        self.assertIn("github.event_name == 'workflow_dispatch'", scan)
+        self.assertIn("github.event.inputs.pr_number", scan)
+        self.assertIn("cancel-in-progress: false", scan)
+
+    def test_manual_dispatch_runs_scan_and_resolve(self) -> None:
+        scan_header = self._job("conflict-scan").split("steps:", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch'", scan_header)
+        resolve_header = self._job("conflict-resolve").split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", resolve_header)
+        self.assertNotIn("github.event_name != 'workflow_dispatch'", resolve_header)
+        self.assertNotIn("github.event_name == 'schedule'", resolve_header)
+        original = self.text
+        self.text = self.fixer
+        try:
+            forward = self._job("forward-conflict-scan")
+        finally:
+            self.text = original
+        self.assertIn("gh workflow run conflict-scan.yml", forward)
+        self.assertIn("github.event.inputs.job != 'devin-review-fix'", forward)
+        self.assertIn("actions: write", forward)
 
     def test_resolver_keeps_protections(self) -> None:
         job = self._job("conflict-resolve")
+        self.assertIn("runs-on: ubuntu-latest", job.split("steps:")[0])
+        self.assertNotIn("blacksmith", job.split("steps:")[0])
         self.assertIn("group: claude-${{ matrix.pr.number }}", job)
         self.assertIn("cancel-in-progress: false", job)
         self.assertIn("max-parallel: 1", job)
