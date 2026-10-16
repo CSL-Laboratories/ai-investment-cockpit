@@ -39,12 +39,16 @@ RESOLVED_PREFIX = "codex-thread-resolved"
 VERDICT_ACTIONS = ("RESOLVE", "DECIDE", "MISSING", "AMBIGUOUS")
 SELF_CHECK_NAMES = frozenset({"codex auto-resolve", "resolve"})
 LINUX_GATES_NAMES = frozenset({"linux-gates"})
+# Over-protect order/risk/audit surfaces. Prefixes cover trees; names
+# match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
     "app/risk/",
     "app/brokers/",
     "app/orchestrator/",
-    "app/storage/audit.py",
+    "app/quant/execution/",
+    "app/storage/",
 )
+PROTECTED_PATH_NAMES = frozenset({"order.py", "audit_entry.py"})
 VERDICT_BLOCK_RE = re.compile(
     r"<!--\s*" + VERDICT_PREFIX + r":(?P<tid>[A-Za-z0-9_=-]{1,128})\s*-->"
     r"(?P<body>.*?)(?=<!--\s*" + VERDICT_PREFIX + r":|\Z)",
@@ -487,6 +491,9 @@ def path_is_protected(path: str) -> bool:
     text = (path or "").replace("\\", "/").lstrip("./")
     if not text:
         return False
+    name = text.rsplit("/", 1)[-1].lower()
+    if name in PROTECTED_PATH_NAMES:
+        return True
     for prefix in PROTECTED_PATH_PREFIXES:
         if prefix.endswith("/"):
             if text == prefix[:-1] or text.startswith(prefix):
@@ -980,6 +987,9 @@ def classify_thread(
     thread_id = safe_thread_id(str(thread.get("id") or ""))
     if not thread_id:
         return "bad-thread-id", None
+    # Intentional limit: a thread resolved on one head is never reopened
+    # when the head moves, even if the cited fix later regresses. A human
+    # (or a new review comment) has to reopen it.
     if thread.get("isResolved"):
         return "already-resolved", None
     comments = thread_comments(thread) + issue_comments

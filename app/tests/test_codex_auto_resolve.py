@@ -881,17 +881,58 @@ def test_newer_headless_verdict_cancels_older_resolve():
     assert verdict is not None and verdict.verdict == "AMBIGUOUS"
 
 
-def test_protected_path_never_resolves():
+def test_path_is_protected_over_protects_order_audit_surfaces():
+    assert mod.path_is_protected("app/quant/execution/sim_venue.py")
+    assert mod.path_is_protected("app/storage/parquet_store.py")
+    assert mod.path_is_protected("app/schemas/models/order.py")
+    assert mod.path_is_protected("app/schemas/models/audit_entry.py")
+    assert not mod.path_is_protected("app/quant/costs.py")
+    assert not mod.path_is_protected("AGENTS.md")
+    assert not mod.path_is_protected("")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "app/risk/limits.py",
+        "app/brokers/gateway.py",
+        "app/orchestrator/app.py",
+        "app/quant/execution/autoloop.py",
+        "app/storage/engine.py",
+        "app/storage/audit.py",
+        "app/schemas/models/order.py",
+        "app/schemas/models/audit_entry.py",
+        "order.py",
+        "audit_entry.py",
+    ],
+)
+def test_protected_path_never_resolves(path: str):
     t = thread(comments=[comment(CODEX, verdict_body())])
-    t["path"] = "app/risk/limits.py"
+    t["path"] = path
     latest = mod.latest_verdicts(mod.thread_comments(t))
     reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
     assert reason == "protected-path"
     gh = ready_gh(threads=[t], reviews=[comment(CODEX, verdict_body())])
-    gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["path"] = "app/risk/limits.py"
+    gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["path"] = path
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
     assert any("skip=protected-path" in line for line in logs)
+
+
+def test_unprotected_docs_path_can_resolve():
+    t = thread(comments=[comment(CODEX, verdict_body())])
+    t["path"] = "AGENTS.md"
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "resolve"
+
+
+def test_resolved_thread_stays_resolved_on_new_head():
+    """A thread closed on SHA is not reopened when the head moves to SHA2."""
+    t = thread(resolved=True, comments=[comment(CODEX, verdict_body())])
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(t, head_sha=SHA2, latest=latest, issue_comments=[])
+    assert reason == "already-resolved"
 
 
 def test_fork_pr_skipped():

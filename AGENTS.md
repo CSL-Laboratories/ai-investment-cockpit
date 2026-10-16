@@ -237,7 +237,7 @@ Shared with recursion (CSL-178). Codex emits one structured block **per review t
 - `RESOLVE` = the fix is already on that exact head and no owner/human decision is needed.
 - `DECIDE` = an owner/human decision is needed. `MISSING` = the fix is not on that head. `AMBIGUOUS` = Codex cannot tell. If unsure, `AMBIGUOUS`.
 - `CODEX-GATE: READY` is not a per-thread resolve. A line-only `CODEX-THREAD` without the HTML opener, a missing `HEAD`, or an unknown action fails closed to `AMBIGUOUS` (no resolve).
-- `DECIDE` / `MISSING` / `AMBIGUOUS` stick for that head; a later `RESOLVE` cannot override. Threads on `app/risk/`, `app/brokers/`, `app/orchestrator/`, or `app/storage/audit.py` never auto-resolve. `linux-gates` must be `SUCCESS`. The workflow runs from the default branch only (cron / `workflow_dispatch`).
+- `DECIDE` / `MISSING` / `AMBIGUOUS` stick for that head; a later `RESOLVE` cannot override. Threads on `app/risk/`, `app/brokers/`, `app/orchestrator/`, `app/quant/execution/`, `app/storage/`, or files named `order.py` / `audit_entry.py` never auto-resolve. `linux-gates` must be `SUCCESS`. The workflow runs from the default branch only (cron / `workflow_dispatch`). Auto-resolve does **not** unresolve a thread when the head moves; a later regression stays resolved until a human or a new review comment reopens it.
 
 The workflow cites the ruling on the thread, then resolves, then posts `<!-- codex-thread-resolved:<thread_id>:<sha> -->`. #131 has merged. After #124 lands, those prompts should keep "do not resolve/push/merge yourself" and append this block. Helper: `mediation_verdict_instructions()` in `.github/scripts/codex_auto_resolve.py`. This consumer does not post `@codex review`.
 
