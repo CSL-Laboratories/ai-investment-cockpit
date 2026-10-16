@@ -36,7 +36,8 @@ from workflows.budget import (
     rank_candidates,
 )
 from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
-from workflows.context_limit import context_token_cap, estimate_tokens, fit_packet
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
@@ -252,7 +253,8 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     tmpl = load_prompt("triage_batch")
     overhead = estimate_tokens(tmpl.render(
         batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
-    fit = fit_packet(packet, reserved_tokens=overhead, cap=context_token_cap(state.settings))
+    fit = fit_packet(
+        packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
     if fit.dropped:
         dropped_ids = {item.event_id for item in fit.dropped}
         for ev in list(survivors):

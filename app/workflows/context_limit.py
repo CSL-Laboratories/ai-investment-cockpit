@@ -34,6 +34,17 @@ def estimate_tokens(text: str) -> int:
     return (len(text.encode("utf-8")) + 1) // 2
 
 
+def repair_reserve_tokens() -> int:
+    """Estimated tokens ``call_agent`` holds back for a worst-case repair suffix.
+
+    Callers add this to the template overhead given to ``fit_packet`` so a packet
+    sheds tail items instead of being refused by the call gate near the cap.
+    """
+    from agent_runner.runner import worst_case_repair_overhead
+
+    return estimate_tokens(worst_case_repair_overhead())
+
+
 def context_token_cap(settings) -> int:
     """The configured cap, or the default when the value is missing or illegal.
 
