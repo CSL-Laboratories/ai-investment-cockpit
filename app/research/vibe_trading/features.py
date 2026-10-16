@@ -247,6 +247,9 @@ def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine]:
     if not _ok(payload):
         return []
     data = _data(payload)
+    returned = data.get("ticker") if type(data.get("ticker")) is str else payload.get("ticker")
+    if type(returned) is str and returned.strip().upper() != ticker.upper():
+        return []
     quarter = data.get("quarter") if type(data.get("quarter")) is str else payload.get("quarter")
     if type(quarter) is not str or _QUARTER.fullmatch(quarter) is None:
         quarter = ""
@@ -292,10 +295,10 @@ def _holding_weight(row: dict) -> float | None:
     if weight is not None and 0 <= weight <= 1:
         return weight
     pct = _finite(row.get("pct_of_net_assets"))
-    if pct is None:
+    if pct is None or pct < 0:
         return None
-    # N-PORT pctVal is already a percent (0.5329 == 0.5329%), not a 0-1 weight.
-    fraction = pct / 100.0 if pct > 1 else pct
+    # N-PORT pctVal is always a percent (0.5329 == 0.5329%), never a 0-1 weight.
+    fraction = pct / 100.0
     if not 0 <= fraction <= 1:
         return None
     return fraction
@@ -366,22 +369,17 @@ def _event_probability(row: dict) -> float | None:
     markets = row.get("markets")
     if type(markets) is not list:
         return None
+    found = None
     for market in markets:
         if type(market) is not dict:
             continue
         nested = _finite(market.get("implied_probability"))
-        if nested is not None and 0 <= nested <= 1:
-            return nested
-        outcomes = market.get("outcomes")
-        if type(outcomes) is not list:
+        if nested is None or not 0 <= nested <= 1:
             continue
-        for outcome in outcomes:
-            if type(outcome) is not dict:
-                continue
-            nested = _finite(outcome.get("implied_probability"))
-            if nested is not None and 0 <= nested <= 1:
-                return nested
-    return None
+        if found is not None:
+            return None
+        found = nested
+    return found
 
 
 def project_contracts(payload: dict) -> list[FeatureLine]:
@@ -424,6 +422,12 @@ def project_contracts(payload: dict) -> list[FeatureLine]:
     return lines
 
 
+def _trace_status_ok(status) -> bool:
+    if status is None:
+        return True
+    return type(status) is str and status in {"ok", "completed", "success"}
+
+
 def _metrics_hash(payload: dict, metrics: dict) -> str | None:
     hashes = payload.get("hashes") if type(payload.get("hashes")) is dict else {}
     direct = payload.get("metrics_sha256") or hashes.get("metrics") or hashes.get("metrics_sha256")
@@ -448,7 +452,7 @@ def _run_card_window(payload: dict) -> tuple[str | None, str | None]:
     for trace in traces:
         if type(trace) is not dict or trace.get("tool") != "backtest":
             continue
-        if trace.get("status") not in {None, "ok", "completed", "success"}:
+        if not _trace_status_ok(trace.get("status")):
             return None, None
         started = started or trace.get("started_at")
         ended = ended or trace.get("ended_at")
@@ -481,7 +485,7 @@ def normalize_run_card(payload: dict, *, config_point_in_time: bool) -> dict | N
         return None
     traces = payload.get("tool_traces") if type(payload.get("tool_traces")) is list else []
     if any(type(trace) is dict and trace.get("tool") == "backtest"
-           and trace.get("status") not in {None, "ok", "completed", "success"}
+           and not _trace_status_ok(trace.get("status"))
            for trace in traces):
         return None
     reproducibility = (

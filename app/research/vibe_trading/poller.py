@@ -19,6 +19,8 @@ class VibeTradingPoller:
     def poll(self, now, on_event) -> int:
         del now
         batch = self._adapter.collect(audit=self._state.audit, clock=self._state.clock)
+        if batch.status != "ok" and not batch.events:
+            raise RuntimeError(f"vibe-trading collect status={batch.status}")
         emitted = 0
         for event in batch.events:
             try:

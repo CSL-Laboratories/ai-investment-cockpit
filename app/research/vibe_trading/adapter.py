@@ -125,6 +125,7 @@ class ResearchAdapter:
         request = request or ResearchRequest()
         if not getattr(self._settings, "vibe_trading_enabled", False):
             return ResearchBatch("disabled", (), (), 0)
+        self._down = False
         attempts = self._run(request)
         ts = self._timestamp(clock)
         budget = min(

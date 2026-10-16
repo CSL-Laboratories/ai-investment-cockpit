@@ -85,9 +85,16 @@ class FakeSidecar:
 
 def _responses():
     bench = _load("alpha_bench.json")
-    holdings = _load("holdings.json")
     etf = _load("etf.json")
     prediction = _load("prediction.json")
+
+    def holdings(arguments):
+        payload = json.loads(json.dumps(_load("holdings.json")))
+        ticker = arguments.get("ticker")
+        if type(ticker) is str:
+            payload["data"]["ticker"] = ticker
+        return payload
+
     return {
         "alpha_bench": bench,
         "get_institutional_holdings": holdings,
@@ -385,10 +392,12 @@ def test_stdio_client_roundtrip_and_scrubbed_env(tmp_path, monkeypatch):
     monkeypatch.setenv("COCKPIT_WATCHLIST", "AAPL")
     monkeypatch.setenv("ALPACA_API_KEY", "should-not-pass")
     monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path / "runs"))
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "cockpit-tmp"))
     env = _child_env()
     assert "COCKPIT_WATCHLIST" not in env
     assert "ALPACA_API_KEY" not in env
     assert "HOME" not in env
+    assert "TMPDIR" not in env
     assert env["VIBE_TRADING_ALLOWED_RUN_ROOTS"] == str(tmp_path / "runs")
     payload = StdioMcpClient("vibe-trading-mcp", timeout_s=5).call(
         "alpha_zoo", {"action": "health"},
@@ -528,6 +537,95 @@ def test_build_ingest_runner_registers_vibe_only_when_enabled(tmp_path):
     assert FEED_VIBE_TRADING in on.polls
     assert FEED_VIBE_TRADING not in off.polls
     assert INGEST_CRON[FEED_VIBE_TRADING]["hour"] == 8
+
+
+def test_etf_percent_weights_are_always_divided_by_one_hundred():
+    from research.vibe_trading.features import _holding_weight, project_etf
+
+    assert _holding_weight({"pct_of_net_assets": 0.5329}) == pytest.approx(0.005329)
+    assert _holding_weight({"pct_of_net_assets": 7.0}) == pytest.approx(0.07)
+    payload = {
+        "ok": True,
+        "as_of": "2026-06-30",
+        "data": {"holdings": [
+            {"ticker": "AAPL", "pct_of_net_assets": 0.70},
+        ]},
+    }
+    lines = project_etf(payload, etf="SPY", universe=frozenset({"AAPL"}))
+    assert "AAPL:0.0070" in lines[0].text
+
+
+def test_holdings_mismatching_ticker_are_quarantined():
+    from research.vibe_trading.features import project_holdings
+
+    payload = _load("holdings.json")
+    assert project_holdings(payload, ticker="MSFT") == []
+    assert project_holdings(payload, ticker="AAPL")
+
+
+def test_malformed_backtest_trace_status_quarantines_the_card():
+    card = _load("run_card.json")
+    card["tool_traces"][0]["status"] = []
+    assert normalize_run_card(card, config_point_in_time=True) is None
+
+
+def test_outcome_odds_are_not_an_event_probability():
+    from research.vibe_trading.features import project_contracts
+
+    payload = {
+        "ok": True,
+        "data": {"events": [{
+            "event_id": "fed-cut-2026",
+            "title": "Fed cut by December",
+            "end_date": "2026-07-01T00:00:00Z",
+            "markets": [{"outcomes": [
+                {"name": "No", "implied_probability": 0.60},
+                {"name": "Yes", "implied_probability": 0.40},
+            ]}],
+        }]},
+    }
+    lines = project_contracts(payload)
+    assert lines
+    assert "implied_probability=" not in lines[0].text
+
+
+def test_collect_retries_after_a_missing_binary_pass():
+    class Flaky:
+        def __init__(self):
+            self.calls = 0
+
+        def call(self, tool, arguments):
+            self.calls += 1
+            if self.calls == 1:
+                from research.vibe_trading.mcp_client import SidecarUnavailable
+                raise SidecarUnavailable("missing")
+            return {"status": "ok", "top": []}
+
+    settings = _settings(
+        vibe_trading_etfs="", vibe_trading_event_queries="", watchlist="",
+        vibe_trading_max_symbols=0,
+    )
+    adapter = ResearchAdapter(settings, transport=Flaky())
+    first = adapter.collect()
+    assert first.status == "unavailable"
+    second = adapter.collect()
+    assert second.status in {"ok", "quarantined"}
+
+
+def test_poller_surfaces_an_unavailable_collection(tmp_path):
+    settings = _settings()
+    state = _state(tmp_path, settings, name="down.db")
+    class Down:
+        def call(self, tool, arguments):
+            from research.vibe_trading.mcp_client import SidecarUnavailable
+            raise SidecarUnavailable("missing")
+
+    adapter = ResearchAdapter(settings, transport=Down())
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=FrozenClock(NOW))
+    runner.add_poller(FEED_VIBE_TRADING, VibeTradingPoller(adapter, state=state))
+    out = runner.poll(FEED_VIBE_TRADING)
+    assert out["status"] == "error"
+    assert "unavailable" in out["error"]
 
 
 def test_vibe_poller_persists_parquet_backed_events(tmp_path):

@@ -23,7 +23,7 @@ _MAX_BODY = 8_000_000
 # config dir would see cockpit credentials. A scratch HOME is set per spawn.
 # VIBE_TRADING_ALLOWED_RUN_ROOTS is the sidecar's own run-root allowlist.
 _KEEP_ENV = (
-    "PATH", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT",
+    "PATH", "LANG", "LC_ALL", "SYSTEMROOT",
     "VIBE_TRADING_ALLOWED_RUN_ROOTS",
 )
 
@@ -55,7 +55,7 @@ def _write_message(stdin, payload: dict) -> None:
 
 
 def _read_message(stdout) -> dict:
-    line = stdout.readline()
+    line = stdout.readline(_MAX_BODY + 1)
     if not line:
         raise SidecarProtocolError("sidecar closed stdout")
     if len(line) > _MAX_BODY:
@@ -125,6 +125,9 @@ class StdioMcpClient:
     def _exchange_in(self, resolved: str, tool: str, arguments: dict, scratch: str) -> dict:
         env = _child_env()
         env["HOME"] = scratch
+        env["TMPDIR"] = scratch
+        env["TEMP"] = scratch
+        env["TMP"] = scratch
         proc = subprocess.Popen(
             [resolved],
             stdin=subprocess.PIPE,
