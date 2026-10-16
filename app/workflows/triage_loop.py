@@ -396,16 +396,20 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     degraded = False
     escalated: list[str] = []
     fn = propose_fn if propose_fn is not None else draft_proposal
+    # Preflight uses the default draft_proposal template, so it only applies to that
+    # handler or a wrapper that declares it (build_services' ``_propose`` does); other
+    # injected handlers may use a different template and must still be called.
+    preflight = propose_fn is None or getattr(
+        propose_fn, "uses_draft_proposal_template", False)
     for cand in rank_candidates(cands):
         ev = cand["_event"]
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
             continue
-        if (cand["holdings_match"] or cand["symbol"] in watchlist) \
+        if preflight and (cand["holdings_match"] or cand["symbol"] in watchlist) \
                 and not subject_fits_context(state, ev, packet):
-            # Preflight is independent of propose_fn identity: production
-            # build_services wraps draft_proposal, so `fn is draft_proposal`
-            # would skip this and spend budget on a call that cannot dispatch.
+            # Production build_services wraps draft_proposal, so the wrapper
+            # declares the marker rather than relying on `fn is draft_proposal`.
             _defer(state, dispositions, ev, "context_limit")
             continue
         try:

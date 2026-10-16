@@ -484,6 +484,8 @@ def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path)
     def _propose(st_, clock_, **kw):
         return draft_proposal(st_, clock_, **kw)
 
+    _propose.uses_draft_proposal_template = True  # as build_services' wrapper does
+
     transport = FakeTransport([envelope(_triage_body([
         _scored(ev.raw_ref, "AAPL", "urgent", 90),
     ]))])
