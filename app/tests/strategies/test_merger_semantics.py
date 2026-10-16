@@ -1194,3 +1194,26 @@ def test_shared_sentence_fragments_match_fresh_split():
             assert _matcher_result(_derive_eligibility, text, amended=amended) == _matcher_result(
                 _derive_eligibility, text, amended=amended, fragments=fragments
             )
+
+
+def test_sentence_fragments_must_come_from_the_same_text():
+    """CSL-247: ``fragments`` must be ``_sentence_fragments`` of the matched text.
+
+    A shorter list can only lose evidence, so prefix and empty lists still fail
+    closed. A list split from a different string is not detected and can force a
+    positive assertion the text does not make — callers must pass their own split.
+    """
+    text = _FRAGMENT_PARITY_CASES[0]
+    dated = _FRAGMENT_PARITY_CASES[8]
+    for fragments in ([], _sentence_fragments(text)[:2]):
+        with pytest.raises(SemanticEvidenceUnavailable):
+            _derive_eligibility(text, amended=False, fragments=fragments)
+    for fragments in ([], _sentence_fragments(dated)[:2]):
+        with pytest.raises(SemanticEvidenceUnavailable):
+            _unique_match(
+                _OUTSIDE_DATE, dated, field="outside date", fragments=fragments
+            )
+    assert _asserted(_REMAINS_PENDING, text, fragments=[]) is False
+    # Documented contract hazard: a foreign split asserts what the text lacks.
+    foreign = _sentence_fragments("the merger remains pending.")
+    assert _asserted(_REMAINS_PENDING, "no deal here.", fragments=foreign) is True
