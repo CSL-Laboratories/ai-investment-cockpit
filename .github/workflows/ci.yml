@@ -19,34 +19,68 @@ name: ci
 #                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
 #                  rounding error next to the $50 budget.
 #
+# Ordinary labeled/unlabeled events do not start this workflow, so they cannot
+# post a skipped or successful linux-gates over a real result. `ci:full` and
+# `enhancement` re-trigger via ci-label-retrigger.yml (workflow_dispatch); that
+# companion has no job named linux-gates. Draft PRs skip the test matrix; the
+# linux-gates aggregator still runs and fails closed until ready_for_review.
+# Non-test jobs (filter, linux-gates) use ubuntu-latest; the public repo does
+# not pay for those minutes. The Python linux/windows matrix stays on Blacksmith.
+#
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   schedule:
     # 07:17 UTC: US night / EU morning, off the hour to miss the cron stampede.
     - cron: "17 7 * * *"
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Hosted platform scope (label retriggers may request Linux only)
+        type: choice
+        options: [full, linux]
+        default: full
+        required: false
+      pr_number:
+        description: PR identity for label retriggers (omit for manual branch runs)
+        type: string
+        default: ""
+      pr_head_sha:
+        description: Expected PR head for a label retrigger
+        type: string
+        default: ""
+      merge_sha:
+        description: Immutable PR merge candidate for a label retrigger
+        type: string
+        default: ""
 
+# Manual/API dispatch defaults to full; enhancement-only label reruns request
+# scope=linux without changing Linux gates or ordinary PR platform selection.
 permissions:
   contents: read
 
-# A newer run for the same ref supersedes the run it interrupted. Nightly has its
+# A newer run for the same PR head supersedes the run it interrupted; an old
+# label dispatch cannot cancel a newer head before its filter validates context.
+# Plain branch runs still supersede by ref. Nightly has its
 # own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
+# Draft synchronize uses a separate group so its fail-closed aggregator cannot
+# cancel a ready_for_review matrix (or vice versa).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'default' }}
+  group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
   cancel-in-progress: true
 
 jobs:
   filter:
     name: filter
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft != true
     permissions:
       contents: read
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       run-tests: ${{ steps.decide.outputs.run-tests }}
@@ -54,7 +88,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+      - name: Validate label dispatch context
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          # Plain manual/API dispatch retains the selected branch and full default.
+          if [ -z "$PR_NUMBER$PR_HEAD_SHA$MERGE_SHA" ]; then
+            exit 0
+          fi
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          # A branch advance between label event and dispatch must fail closed.
+          [ "$GITHUB_SHA" = "$PR_HEAD_SHA" ]
+          [ "$(git rev-parse HEAD)" = "$MERGE_SHA" ]
+          [ "$(git rev-parse HEAD^2)" = "$PR_HEAD_SHA" ]
       - name: Decide whether code gates must run
         id: decide
         env:
@@ -159,36 +213,44 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
+      - name: CI dispatch scope regressions
+        run: python -X utf8 -B tools/test_ci_dispatch_scope.py
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
-  # when Linux was skipped because the change is docs-only. Configure branch
-  # protection / rulesets to require exactly this name: linux-gates
+  # when filter ran and Linux was skipped because the change is docs-only.
+  # This job never skips on pull_request/push/dispatch: a skipped required check
+  # is treated as success. Drafts skip filter, so the script fails closed until
+  # ready_for_review. Ordinary labels never start this workflow.
+  # Configure branch protection / rulesets to require exactly this name: linux-gates
   linux-gates:
     name: linux-gates
     permissions:
       contents: read
     needs: [filter, linux]
     if: always() && !cancelled() && github.event_name != 'schedule'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Required Linux gate
+        env:
+          FILTER_RESULT: ${{ needs.filter.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
         run: |
           set -euo pipefail
-          filter="${{ needs.filter.result }}"
-          linux="${{ needs.linux.result }}"
-          echo "filter=${filter} linux=${linux}"
-          if [ "$filter" != "success" ]; then
+          echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT}"
+          if [ "$FILTER_RESULT" != "success" ]; then
             echo "filter job did not succeed"
             exit 1
           fi
-          if [ "$linux" = "success" ] || [ "$linux" = "skipped" ]; then
+          if [ "$LINUX_RESULT" = "success" ] || [ "$LINUX_RESULT" = "skipped" ]; then
             exit 0
           fi
-          echo "linux matrix result=${linux}"
+          echo "linux matrix result=${LINUX_RESULT}"
           exit 1
 
   windows:
@@ -199,7 +261,7 @@ jobs:
     if: >
       needs.filter.outputs.run-tests == 'true' &&
       (
-        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
         (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
       )
@@ -212,6 +274,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
@@ -222,7 +286,7 @@ jobs:
       contents: read
     needs: filter
     if: >
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
       (github.event_name == 'schedule' && needs.filter.outputs.run-macos == 'true') ||
       (
         github.event_name == 'pull_request' &&
@@ -236,6 +300,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
       - uses: ./.github/actions/run-gates
         with:
           python-version: "3.12"
