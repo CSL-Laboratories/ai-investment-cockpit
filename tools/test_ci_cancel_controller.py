@@ -164,6 +164,71 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(identity[4], payload['pull_requests'][0]['head']['sha'])
         self.assertEqual(identity[6], 166)
 
+    def test_same_branch_ancestor_without_proven_pr_identity_is_excluded(self):
+        api = FakeGitHub()
+        api.runs[0]['pull_requests'] = []  # Could belong to an earlier PR on a reused branch.
+        self.assertEqual(api.reconcile(), [])
+        self.assertEqual(api.cancelled, [])
+
+    def test_current_head_witness_still_requires_pr_link(self):
+        api = FakeGitHub()
+        api.event['workflow_run'] = copy.deepcopy(api.runs[0])
+        api.runs[1]['pull_requests'] = []
+        self.assertEqual(api.reconcile(), [])
+
+    def test_only_incidental_run_timestamp_churn_is_ignored(self):
+        api = FakeGitHub()
+        seen = []
+        def churn(path, value):
+            if '/workflows/11/runs?' in path and 'page=1' in path:
+                seen.append(path)
+                if len(seen) > 1:
+                    value = copy.deepcopy(value)
+                    value['workflow_runs'][0]['updated_at'] = 'later'
+                    value['workflow_runs'][0]['run_started_at'] = 'later'
+            return value
+        api.hook = churn
+        self.assertEqual(api.reconcile(), [1])
+
+    def test_final_snapshot_second_read_retains_all_decisive_evidence(self):
+        changes = [lambda p: p['workflow_runs'][1].update(status='completed', conclusion='cancelled'),
+                   lambda p: p['workflow_runs'][1].update(conclusion='failure'),
+                   lambda p: p['workflow_runs'][0].update(run_attempt=2),
+                   lambda p: p['workflow_runs'][0].update(path='.github/workflows/other.yml'),
+                   lambda p: p['workflow_runs'][0].update(event='workflow_dispatch'),
+                   lambda p: p['workflow_runs'][0]['repository'].update(id=99),
+                   lambda p: p['workflow_runs'][0]['pull_requests'][0].update(number=41),
+                   lambda p: p['workflow_runs'][0]['pull_requests'][0].update(updated_at='nested'),
+                   lambda p: p.update(extra_metadata='changed')]
+        for change in changes:
+            api = FakeGitHub()
+            seen = 0
+            def churn(path, value, change=change):
+                nonlocal seen
+                if '/workflows/11/runs?' in path and 'page=1' in path:
+                    seen += 1
+                    if seen == 4:  # The second read of the final pre-cancel snapshot.
+                        value = copy.deepcopy(value)
+                        change(value)
+                return value
+            api.hook = churn
+            with self.subTest(change=change), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+
+    def test_actual_old_run_keeps_pr_identity_while_association_head_moves(self):
+        payload = json.loads((ROOT / 'tools/fixtures/ci_cancel_controller_old_run.json').read_text())
+        repo = payload['repository']['full_name']
+        identity = m.run_identity(payload, repo, payload['repository']['id'],
+                                  {payload['path']: payload['workflow_id']})
+        self.assertIsNotNone(identity)
+        self.assertEqual(identity[0], 38974752708)
+        self.assertEqual(identity[6], 162)
+        self.assertNotEqual(identity[4], payload['pull_requests'][0]['head']['sha'])
+        live = (162, 4893762625, 'codex/csl-255-157-reviewed', 'main',
+                payload['pull_requests'][0]['head']['sha'])
+        self.assertTrue(m.belongs(identity, live))
+
     def test_initial_old_head_manual_rerun_is_never_a_target(self):
         api = FakeGitHub()
         api.runs[0]['run_attempt'] = 2

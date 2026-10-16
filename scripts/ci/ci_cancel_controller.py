@@ -118,6 +118,16 @@ def belongs(identity, live):
     return identity is not None and (identity[6], identity[7], identity[5], identity[8]) == live[:4]
 
 
+def stable(data):
+    """Compare complete evidence except incidental top-level run timestamps."""
+    if not isinstance(data, dict) or not isinstance(data.get('workflow_runs'), list):
+        return None
+    return {**data, 'workflow_runs': [
+        {key: value for key, value in run.items()
+         if key not in ('updated_at', 'run_started_at')}
+        if isinstance(run, dict) else run for run in data['workflow_runs']]}
+
+
 def run_snapshot(api, repo, workflow_id, branch):
     """Read all matching runs before any mutation; reject capped/changing pages."""
     query = urlencode({'event': 'pull_request', 'branch': branch, 'per_page': 100})
@@ -147,7 +157,7 @@ def run_snapshot(api, repo, workflow_id, branch):
                 raise Refused('Incomplete run pagination')
             # Listing must remain stable through discovery. Per-run revalidation
             # below catches later status/attempt changes without trusting order.
-            if api.read(f'{path}&page=1') != first:
+            if stable(api.read(f'{path}&page=1')) != stable(first):
                 raise Refused('Run snapshot changed during pagination')
             return rows
     raise Refused('Run pagination bound exceeded')
