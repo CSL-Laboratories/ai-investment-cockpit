@@ -343,6 +343,29 @@ def test_symbol_lists_stop_at_the_same_bound_as_python():
     assert batched[0][1] == ["AAPL"]
 
 
+def test_native_symbol_lists_drop_entries_python_rejects():
+    """A non-string inside the first 64 is skipped, not a batch-level error."""
+    import cockpit_quant
+
+    class Ticker(str):
+        pass
+
+    symbols = [None, "AAPL", Ticker("IBM"), "\ud800", 1, "msft"]
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=symbols,
+        headline="h", summary="s", ts=None, event_type="news",
+    )
+    assert python_to_market_event(**kwargs)["symbols"] == ["AAPL", "MSFT"]
+    direct = cockpit_quant.market_event("finnhub", "1", symbols, "h", "s", "news")
+    assert direct[1] == ["AAPL", "MSFT"]
+    batched = cockpit_quant.market_event_many([
+        ("finnhub", "1", symbols, "h", "s", "news"),
+        ("finnhub", "2", [None, "not a ticker"], "h", "s", "news"),
+    ])
+    assert batched[0][1] == ["AAPL", "MSFT"]
+    assert batched[1][1] == []
+
+
 def test_batched_events_match_single_calls():
     import cockpit_quant
 

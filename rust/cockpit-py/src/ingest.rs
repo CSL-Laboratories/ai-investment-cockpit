@@ -78,8 +78,18 @@ fn read_symbols(
     let seq = symbols.downcast::<PySequence>()?;
     let n = std::cmp::min(seq.len()?, MAX_SYMBOLS);
     let mut items = Vec::with_capacity(n);
+    let str_type = PyString::type_object(py);
     for index in 0..n {
-        items.push(seq.get_item(index)?.extract()?);
+        // `_canonical_ticker` keeps an exact `str` and drops everything else.
+        // Extracting each entry as `String` turned `None` into a TypeError and
+        // aborted `market_event_many`.
+        let item = seq.get_item(index)?;
+        if !item.get_type().is(&str_type) {
+            continue;
+        }
+        if let Ok(text) = item.extract::<String>() {
+            items.push(text);
+        }
     }
     Ok((None, items))
 }
