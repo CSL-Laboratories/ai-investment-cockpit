@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".github" / "scripts" / "codex_auto_resolve.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "codex-auto-resolve.yml"
 CODEX = "chatgpt-codex-connector[bot]"
+PAT_LOGIN = "github-actions[bot]"
 SHA = "a" * 40
 SHA2 = "b" * 40
 NOW = datetime(2026, 10, 15, 19, 0, tzinfo=timezone.utc)
@@ -68,8 +69,9 @@ def thread(
     comments: list[dict] | None = None,
     resolved: bool = False,
     truncated: bool = False,
+    resolved_by: str = "",
 ) -> dict:
-    return {
+    payload = {
         "id": thread_id,
         "isResolved": resolved,
         "path": "AGENTS.md",
@@ -78,6 +80,9 @@ def thread(
             "pageInfo": {"hasNextPage": truncated, "endCursor": None},
         },
     }
+    if resolved_by:
+        payload["resolvedBy"] = {"login": resolved_by}
+    return payload
 
 
 def verdict_body(kind: str = "RESOLVE", sha: str = SHA, tid: str = THREAD, extra: str = "") -> str:
@@ -122,6 +127,7 @@ class FakeGitHub(mod.GitHub):
         self.fail_resolve = False
         self.fail_reply = False
         self.fail_issue_post = False
+        self.viewer_login = PAT_LOGIN
 
     def _unused(self, *args, **kwargs):
         raise AssertionError("real gh invoked")
@@ -133,6 +139,10 @@ class FakeGitHub(mod.GitHub):
         return self.head_by_number.get(number) or SHA
 
     def graphql(self, query: str, variables: dict, token: str | None = None) -> object:
+        if "viewer { login }" in " ".join(query.split()):
+            if token != "pat":
+                raise AssertionError("viewer login must use CODEX_TRIGGER_PAT")
+            return {"viewer": {"login": self.viewer_login}}
         if "resolveReviewThread" in query:
             if token != "pat":
                 raise AssertionError("resolve must use CODEX_TRIGGER_PAT")
@@ -433,26 +443,74 @@ def test_classify_already_resolved_and_marked():
 def test_classify_retry_mark_when_resolved_without_audit_marker():
     t = thread(
         resolved=True,
+        resolved_by=PAT_LOGIN,
         comments=[
             comment(CODEX, verdict_body()),
-            comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
         ],
     )
     latest = mod.latest_verdicts(mod.thread_comments(t))
-    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
     assert reason == "retry-mark"
     assert verdict is not None and verdict.sha == SHA
+
+
+def test_human_resolve_after_cite_does_not_retry_mark():
+    t = thread(
+        resolved=True,
+        resolved_by="alice",
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "already-resolved"
+
+
+def test_forged_cite_does_not_retry_mark():
+    t = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("alice", mod.cite_marker(THREAD, SHA)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "already-resolved"
+
+    forged_issue = thread(resolved=True, resolved_by=PAT_LOGIN, comments=[comment(CODEX, verdict_body())])
+    latest = mod.latest_verdicts(mod.thread_comments(forged_issue))
+    reason, _ = mod.classify_thread(
+        forged_issue,
+        head_sha=SHA,
+        latest=latest,
+        issue_comments=[comment("alice", mod.cite_marker(THREAD, SHA))],
+        pat_login=PAT_LOGIN,
+    )
+    assert reason == "already-resolved"
 
 
 def test_classify_retry_resolve_when_already_cited():
     t = thread(
         comments=[
             comment(CODEX, verdict_body()),
-            comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
         ]
     )
     latest = mod.latest_verdicts(mod.thread_comments(t))
-    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
     assert reason == "retry-resolve"
     assert verdict is not None and verdict.verdict == "RESOLVE"
 
@@ -592,9 +650,10 @@ def test_retry_mark_posts_missing_audit_marker_without_unresolve():
         threads=[
             thread(
                 resolved=True,
+                resolved_by=PAT_LOGIN,
                 comments=[
                     comment(CODEX, verdict_body()),
-                    comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
                 ],
             )
         ],
@@ -606,13 +665,51 @@ def test_retry_mark_posts_missing_audit_marker_without_unresolve():
     assert any("retry-mark=posted" in line for line in logs)
 
 
+def test_scan_skips_retry_mark_when_human_resolved():
+    gh = ready_gh(
+        threads=[
+            thread(
+                resolved=True,
+                resolved_by="alice",
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert any("already-resolved" in line for line in logs)
+
+
+def test_scan_skips_retry_mark_for_forged_cite():
+    gh = ready_gh(
+        threads=[
+            thread(
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[comment(CODEX, verdict_body())],
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    gh.issue_comments[12] = [comment("alice", mod.cite_marker(THREAD, SHA))]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert any("already-resolved" in line for line in logs)
+
+
 def test_retry_resolve_skips_second_cite():
     gh = ready_gh(
         threads=[
             thread(
                 comments=[
                     comment(CODEX, verdict_body()),
-                    comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
                 ]
             )
         ],

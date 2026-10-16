@@ -101,6 +101,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
         nodes {
           id
           isResolved
+          resolvedBy { login }
           path
           comments(first: 80) {
             pageInfo { hasNextPage endCursor }
@@ -116,6 +117,11 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
       }
     }
   }
+}
+"""
+GITHUB_GRAPHQL_VIEWER = """
+query {
+  viewer { login }
 }
 """
 GITHUB_GRAPHQL_HEAD = """
@@ -608,6 +614,7 @@ class Config:
     quote_limit: int = 240
     github_token: str = ""
     codex_pat: str = ""
+    pat_login: str = ""
     event_name: str = ""
     event_path: str = ""
 
@@ -914,6 +921,28 @@ def all_codex_items(
     return items
 
 
+def login_matches(left: str, right: str) -> bool:
+    return bool(login_aliases(left) & login_aliases(right))
+
+
+def resolved_by_login(thread: dict[str, Any]) -> str:
+    node = thread.get("resolvedBy")
+    if isinstance(node, dict):
+        return str(node.get("login") or "")
+    return ""
+
+
+def fetch_pat_login(gh: GitHub, cfg: Config) -> str:
+    try:
+        data = gh.graphql(GITHUB_GRAPHQL_VIEWER, {}, token=cfg.codex_pat)
+    except Exception:
+        return ""
+    viewer = data.get("viewer") if isinstance(data, dict) else None
+    if not isinstance(viewer, dict):
+        return ""
+    return str(viewer.get("login") or "").strip()
+
+
 def already_resolved_on_sha(comments: list[dict[str, Any]], thread_id: str, sha: str) -> bool:
     needle = (thread_id, sha)
     for comment in comments:
@@ -929,18 +958,35 @@ def thread_has_resolved_marker(comments: list[dict[str, Any]], thread_id: str) -
     return False
 
 
-def cite_sha_for_thread(comments: list[dict[str, Any]], thread_id: str) -> str:
+def cite_sha_for_thread(
+    comments: list[dict[str, Any]],
+    thread_id: str,
+    actor_login: str = "",
+) -> str:
+    if not actor_login:
+        return ""
     digest = ""
     for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
         for tid, sha in parse_cite_markers(body_of(comment)):
             if tid == thread_id:
                 digest = sha
     return digest
 
 
-def already_cited_on_sha(comments: list[dict[str, Any]], thread_id: str, sha: str) -> bool:
+def already_cited_on_sha(
+    comments: list[dict[str, Any]],
+    thread_id: str,
+    sha: str,
+    actor_login: str = "",
+) -> bool:
+    if not actor_login:
+        return False
     needle = (thread_id, sha)
     for comment in comments:
+        if not login_matches(login_of(comment), actor_login):
+            continue
         if needle in parse_cite_markers(body_of(comment)):
             return True
     return False
@@ -998,6 +1044,7 @@ def classify_thread(
     head_sha: str,
     latest: dict[tuple[str, str], StampedVerdict],
     issue_comments: list[dict[str, Any]],
+    pat_login: str = "",
 ) -> tuple[str, ThreadVerdict | None]:
     thread_id = safe_thread_id(str(thread.get("id") or ""))
     if not thread_id:
@@ -1006,13 +1053,15 @@ def classify_thread(
     # Intentional limit: a thread resolved on one head is never reopened
     # when the head moves, even if the cited fix later regresses. A human
     # (or a new review comment) has to reopen it. If we already cited and
-    # resolved but the audit marker never landed, retry the marker only.
+    # resolved but the audit marker never landed, retry the marker only
+    # when GitHub attributes the resolve to the PAT identity.
     if thread.get("isResolved"):
         if thread_has_resolved_marker(comments, thread_id):
             return "already-resolved", None
-        cite_sha = cite_sha_for_thread(comments, thread_id)
-        if cite_sha:
-            return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
+        if pat_login and login_matches(resolved_by_login(thread), pat_login):
+            cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
+            if cite_sha:
+                return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
     if already_resolved_on_sha(comments, thread_id, head_sha):
         return "already-marked", None
@@ -1032,7 +1081,7 @@ def classify_thread(
     if stamped.verdict.verdict != "RESOLVE":
         return stamped.verdict.verdict.lower(), stamped.verdict
     comments = thread_comments(thread)
-    if already_cited_on_sha(comments, thread_id, head_sha):
+    if already_cited_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
         return "retry-resolve", stamped.verdict
     return "resolve", stamped.verdict
 
@@ -1161,13 +1210,18 @@ def scan_pr(
     if not cfg.codex_pat:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-secret")
         return logs
+    pat_login = cfg.pat_login or fetch_pat_login(gh, cfg)
     for thread in threads:
         tid = log_thread_id(str(thread.get("id") or ""))
         if thread_comments_truncated(thread):
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=truncated-comments")
             continue
         reason, verdict = classify_thread(
-            thread, head_sha=head_sha, latest=latest, issue_comments=issue_comments
+            thread,
+            head_sha=head_sha,
+            latest=latest,
+            issue_comments=issue_comments,
+            pat_login=pat_login,
         )
         if reason == "retry-mark":
             mark_sha = (verdict.sha if verdict else "") or head_sha
