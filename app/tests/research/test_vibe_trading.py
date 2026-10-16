@@ -491,6 +491,12 @@ def test_categorise_skips_overflowing_numbers():
     }) is None
 
 
+def test_categorise_subnormal_std_is_not_dead():
+    row = {"ic_mean": 0.05, "ic_std": 5e-324, "ic_positive_ratio": 0.7, "ic_count": 100}
+    assert categorise(row) == ("alive", "recomputed")
+    assert categorise({**row, "ic_mean": -0.05}) == ("reversed", "recomputed")
+
+
 def test_collect_quarantines_an_overflowing_bench_row_without_aborting():
     payload = _load("alpha_bench.json")
     payload["top"] = [{

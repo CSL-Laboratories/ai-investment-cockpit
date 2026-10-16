@@ -107,20 +107,12 @@ def categorise(row: dict) -> tuple[str, str] | None:
         count_ok = True
     stats_present = ic_std is not None and pos is not None and count_ok
     if stats_present:
-        try:
-            if ic_std <= 0:
-                t_stat = 0.0
-            else:
-                denom = ic_std / math.sqrt(count)
-                t_stat = 0.0 if denom == 0 else ic_mean / denom
-        except (OverflowError, ZeroDivisionError, ValueError):
-            return None
-        t_stat = _finite(t_stat)
-        if t_stat is None:
-            return None
-        if ic_mean > 0.02 and pos >= 0.55 and abs(t_stat) > 2:
+        # |t| > 2  <=>  |ic_mean| * sqrt(n) > 2 * ic_std. Avoids dividing by an
+        # underflowing denominator when ic_std is subnormal.
+        t_big = ic_std > 0 and abs(ic_mean) * math.sqrt(count) > 2 * ic_std
+        if ic_mean > 0.02 and pos >= 0.55 and t_big:
             return "alive", "recomputed"
-        if ic_mean < -0.02 and abs(t_stat) > 2:
+        if ic_mean < -0.02 and t_big:
             return "reversed", "recomputed"
         return "dead", "recomputed"
     label = row.get("category")
