@@ -20,7 +20,8 @@ def workflow(name):
 
 def execute(script, env):
     source = script.split("<<'PY'", 1)[1].rsplit('PY', 1)[0]
-    return subprocess.run([sys.executable, '-c', source], env={**os.environ, **env},
+    return subprocess.run([sys.executable, '-c', source],
+                          env={**os.environ, 'WORKFLOW_CANCELLED': 'false', **env},
                           cwd=ROOT, capture_output=True, text=True)
 
 
@@ -88,6 +89,18 @@ class QueueGateTests(unittest.TestCase):
                         script = workflow(filename)['jobs'][job]['steps'][-1]['run']
                         with self.subTest(job=job, settle=result, expected=expected, required=required):
                             self.assertEqual(execute(script, env).returncode == 0, accept)
+
+    def test_cancelled_workflow_cannot_pass_even_after_successful_dependencies(self):
+        for cancelled in ('true', ''):
+            for required in ('true', 'false'):
+                work = 'success' if required == 'true' else 'skipped'
+                env = {'WORKFLOW_CANCELLED': cancelled, 'FILTER_RESULT': 'success',
+                       'REQUIRED': required, 'WINDOWS_REQUIRED': 'true', 'LINUX_RESULT': work,
+                       'WINDOWS_RESULT': work, 'RESULTS': json.dumps(work),
+                       'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'false'}
+                for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
+                    script = workflow(filename)['jobs'][job]['steps'][-1]['run']
+                    self.assertNotEqual(execute(script, env).returncode, 0)
 
     def test_actual_rust_path_and_platform_matrix(self):
         step = next(s for s in workflow('rust.yml')['jobs']['filter']['steps'] if s.get('id') == 'gate')
