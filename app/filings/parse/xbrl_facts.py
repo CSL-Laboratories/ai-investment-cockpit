@@ -27,7 +27,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from filings.edgar.companyfacts import iter_facts
-from filings.parse._html import verbatim
+from filings.parse._html import in_spans, ix_hidden_spans, verbatim
 from filings.parse.models import InlineFact, ParsedFact
 
 # ---------------------------------------------------------------------------------------
@@ -140,9 +140,6 @@ _NONFRACTION_RE = re.compile(
 )
 _ATTR_RE = re.compile(rb'([\w:-]+)\s*=\s*"([^"]*)"')
 
-_HIDDEN_RE = re.compile(rb"<ix:hidden\b.*?</ix:hidden>", re.IGNORECASE | re.DOTALL)
-
-
 def parse_contexts(
     raw: bytes,
 ) -> dict[str, tuple[date | None, date | None, date | None, bool, bool]]:
@@ -166,10 +163,6 @@ def parse_contexts(
             bool(_SCENARIO_RE.search(body)),
         )
     return out
-
-
-def _hidden_spans(raw: bytes) -> list[tuple[int, int]]:
-    return [(m.start(), m.end()) for m in _HIDDEN_RE.finditer(raw)]
 
 
 def _parse_displayed(text: str, scale: int, sign: int) -> Decimal | None:
@@ -202,14 +195,11 @@ def iter_inline_facts(
     """
     if contexts is None:
         contexts = parse_contexts(raw)
-    hidden = _hidden_spans(raw)
-
-    def in_hidden(pos: int) -> bool:
-        return any(a <= pos < b for a, b in hidden)
+    hidden = ix_hidden_spans(raw)
 
     out: list[InlineFact] = []
     for m in _NONFRACTION_RE.finditer(raw):
-        if in_hidden(m.start()):
+        if in_spans(hidden, m.start()):
             continue
         attrs = {
             k.decode("latin-1"): v.decode("latin-1")

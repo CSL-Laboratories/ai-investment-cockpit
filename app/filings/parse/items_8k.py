@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 
 from filings.parse._html import runs as html_runs
+from filings.parse._segment import dedupe_unit_id, next_boundary, runs_in_span
 from filings.parse.models import ParsedFiling, ParsedUnit, ParseError, TextRun
 
 # "Item 5.07. Submission of Matters ..." — code = <digits>.<digits>, title follows.
@@ -58,20 +59,13 @@ def parse_8k(
 
     boundaries = sorted({o for o, *_ in markers} | {len(raw)})
 
-    def next_boundary(after: int) -> int:
-        for b in boundaries:
-            if b > after:
-                return b
-        return len(raw)
-
     units: list[ParsedUnit] = []
     seen: dict[str, int] = {}
     for offset, _idx, code, title in markers:
-        end = next_boundary(offset)
+        end = next_boundary(boundaries, offset, len(raw))
         base_id = f"item_{code}"
-        seen[base_id] = seen.get(base_id, 0) + 1
-        unit_id = base_id if seen[base_id] == 1 else f"{base_id}#{seen[base_id]}"
-        item_runs = tuple(r for r in text_runs if offset <= r.byte_start < end)
+        unit_id = dedupe_unit_id(seen, base_id)
+        item_runs = runs_in_span(text_runs, offset, end)
         units.append(
             ParsedUnit(
                 unit_id=unit_id,

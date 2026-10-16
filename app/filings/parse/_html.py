@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 from filings.parse.models import TextRun
 
@@ -83,10 +83,24 @@ def clean(chunk: bytes) -> str:
     return re.sub(r"\s+", " ", html.unescape(chunk.decode("utf-8", errors="replace"))).strip()
 
 
+def ix_hidden_spans(raw: bytes) -> list[tuple[int, int]]:
+    """Byte spans of the ``<ix:hidden>`` blocks — non-displayed inline-XBRL content.
+
+    Shared with ``xbrl_facts``, which excludes hidden-block facts so a citation always
+    anchors to a *displayed* number.
+    """
+    return [(m.start(), m.end()) for m in _HIDDEN_RE.finditer(raw)]
+
+
 def _hidden_spans(raw: bytes) -> list[tuple[int, int]]:
-    spans = [(m.start(), m.end()) for m in _HIDDEN_RE.finditer(raw)]
+    spans = ix_hidden_spans(raw)
     spans += [(m.start(), m.end()) for m in _CODE_BLOCK_RE.finditer(raw)]   # BUG-070
     return spans
+
+
+def in_spans(spans: Sequence[tuple[int, int]], pos: int) -> bool:
+    """True when byte offset ``pos`` lies inside one of the ``[start, end)`` spans."""
+    return any(a <= pos < b for a, b in spans)
 
 
 def iter_runs(raw: bytes, *, skip_hidden: bool = True) -> Iterator[TextRun]:
@@ -98,21 +112,18 @@ def iter_runs(raw: bytes, *, skip_hidden: bool = True) -> Iterator[TextRun]:
     """
     hidden = _hidden_spans(raw) if skip_hidden else []
 
-    def in_hidden(pos: int) -> bool:
-        return any(a <= pos < b for a, b in hidden)
-
     pos = 0
     for m in _TAG_RE.finditer(raw):
         if m.start() > pos:
             chunk = raw[pos:m.start()]
-            if not in_hidden(pos):
+            if not in_spans(hidden, pos):
                 text = clean(chunk)
                 if text and not _WS_ONLY.match(text):
                     yield TextRun(byte_start=pos, byte_end=m.start(), text=text)
         pos = m.end()
     if pos < len(raw):
         chunk = raw[pos:]
-        if not in_hidden(pos):
+        if not in_spans(hidden, pos):
             text = clean(chunk)
             if text and not _WS_ONLY.match(text):
                 yield TextRun(byte_start=pos, byte_end=len(raw), text=text)

@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 
 from filings.parse._html import runs as html_runs
+from filings.parse._segment import dedupe_unit_id, next_boundary, runs_in_span
 from filings.parse.models import ParsedFiling, ParsedUnit, ParseError, TextRun
 
 # A body item heading: item number + optional letter suffix, a dot, then title text in the
@@ -150,26 +151,17 @@ def parse_10kq(
     # Boundaries that close a section: every item heading start AND every part header start.
     boundaries = sorted({o for o, *_ in item_markers} | set(part_offsets) | {len(raw)})
 
-    def next_boundary(after: int) -> int:
-        for b in boundaries:
-            if b > after:
-                return b
-        return len(raw)
-
     units: list[ParsedUnit] = []
     seen_ids: dict[str, int] = {}
     for offset, _run_idx, num, suffix, title in item_markers:
-        end = next_boundary(offset)
+        end = next_boundary(boundaries, offset, len(raw))
         part = _part_for_offset(offset, part_runs)
         item_label = f"{num}{suffix}"
         base_id = f"part{part}_item{item_label}" if part else f"item{item_label}"
         # Disambiguate a rare exact-repeat within the same part (append an index).
-        seen_ids[base_id] = seen_ids.get(base_id, 0) + 1
-        unit_id = base_id if seen_ids[base_id] == 1 else f"{base_id}#{seen_ids[base_id]}"
+        unit_id = dedupe_unit_id(seen_ids, base_id)
 
-        section_runs = tuple(
-            r for r in text_runs if offset <= r.byte_start < end
-        )
+        section_runs = runs_in_span(text_runs, offset, end)
         units.append(
             ParsedUnit(
                 unit_id=unit_id,
