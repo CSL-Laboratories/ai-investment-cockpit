@@ -172,6 +172,31 @@ fn escape_with_python_unicode(py: Python<'_>, text: &str) -> PyResult<String> {
     Ok(escaped.chars().take(MAX_LEN).collect())
 }
 
+/// `json.dumps(..., default=str)` image for a raw value `read_json` cannot take.
+///
+/// Matches `python_to_market_event`: one compact dump is the stored image and
+/// the SHA-256 input. Used when unassigned text used to delegate the whole
+/// event to Python.
+fn python_canonical_raw(py: Python<'_>, raw: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("sort_keys", true)?;
+    kwargs.set_item("separators", (",", ":"))?;
+    kwargs.set_item("ensure_ascii", true)?;
+    kwargs.set_item("default", py.eval(c"str", None, None)?)?;
+    let raw_json: String = py
+        .import("json")?
+        .getattr("dumps")?
+        .call((raw,), Some(&kwargs))?
+        .extract()?;
+    let digest: String = py
+        .import("hashlib")?
+        .getattr("sha256")?
+        .call1((raw_json.as_bytes(),))?
+        .call_method0("hexdigest")?
+        .extract()?;
+    Ok((raw_json, digest))
+}
+
 fn overlay_python_text(
     py: Python<'_>,
     mut parts: EventOut,
@@ -228,9 +253,17 @@ fn market_event_py(
 ) -> PyResult<EventOut> {
     ensure_source(source)?;
     let skewed = needs_python_unicode(py, &[headline, summary, event_type])?;
+    let python_raw = match raw {
+        Some(raw) if skewed && read_json(raw).is_err() => Some(python_canonical_raw(py, raw)?),
+        _ => None,
+    };
     let (csv, items) = read_symbols(py, symbols)?;
-    let raw_json = raw.map(read_json).transpose()?;
-    let parts = pack(market_event(
+    let raw_json = if python_raw.is_some() {
+        None
+    } else {
+        raw.map(read_json).transpose()?
+    };
+    let mut parts = pack(market_event(
         source,
         article_id,
         csv.as_deref(),
@@ -241,7 +274,11 @@ fn market_event_py(
         raw_json.as_ref(),
     ));
     if skewed {
-        return overlay_python_text(py, parts, headline, summary, event_type);
+        parts = overlay_python_text(py, parts, headline, summary, event_type)?;
+    }
+    if let Some((raw_json, digest)) = python_raw {
+        parts.5 = digest;
+        parts.6 = raw_json;
     }
     Ok(parts)
 }
