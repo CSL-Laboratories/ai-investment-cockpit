@@ -30,6 +30,21 @@ are never reopened for qualification. No persistent account access, credentials,
 paid provider API or expanded model tool allowlist is introduced. The Git hook
 configuration exists only in the disposable runner checkout.
 
+This hook is a reliability control for the authorized fixer, not a security
+boundary against hostile code executing as the runner user. Existing acceptance
+gates execute PR code with that user's filesystem access; an adversarial test
+could alter the hook or Git configuration. Edit/Write denials reduce accidental
+model edits but do not isolate shell subprocesses. A separately trusted publisher
+would require a broader security design; no such isolation is claimed here.
+
+The handback is a PR-level notice to the author. It does not impersonate a Claude
+thread reply or make the stuck-thread watcher classify a no-Claude thread as
+stuck. Automatic mediation of workflow failures needs a separate actor-trust and
+routing decision. The author must relay such blockers to Linear; transient
+failures remain eligible for a fresh bounded retry rather than a needs-human
+receipt. One audit is intentional even after model success, which alone cannot
+prove every per-root receipt was valid.
+
 ## Mediation and implementation remain separate
 
 Devin submitted reviews and authorized human requests drive Claude. Codex
