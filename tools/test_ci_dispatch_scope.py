@@ -32,6 +32,7 @@ def evaluate(expression, **overrides):
         'github.event.before': 'e' * 40,
         'github.event.action': 'synchronize',
         'github.workflow': 'ci',
+        'github.run_id': 12345,
         'github.sha': 'a' * 40,
         'github.ref': 'refs/pull/149/merge',
         'github.repository': 'owner/repo',
@@ -364,9 +365,10 @@ class DispatchScopeTests(unittest.TestCase):
                 self.assertEqual(len(cells(event, DIFF_BASE=ancestor, DIFF_HEAD=docs_base)), 4)
                 self.assertEqual(len(cells(event, DIFF_BASE='0' * 40)), 4)
 
-    def test_pr_concurrency_cancels_old_heads_but_isolates_drafts(self):
+    def test_pr_concurrency_queues_old_heads_but_isolates_drafts(self):
         for doc in (self.ci, self.rust):
-            self.assertEqual(doc['concurrency']['cancel-in-progress'], 'true')
+            self.assertFalse(evaluate(doc['concurrency']['cancel-in-progress']))
+            self.assertEqual(evaluate(doc['concurrency']['queue']), 'max')
             normal = concurrency_group(doc)
             # The action and resolved merge/head SHA must not partition normal
             # PR work: opened -> synchronize -> ready all supersede old work.
