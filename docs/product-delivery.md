@@ -18,8 +18,9 @@ labels, not unclaimed work-package IDs or permission to deploy/spend/run a pilot
 
 Every implementation claim must identify a user-visible outcome, the existing
 application paths it extends, the replaced path it retires, production reachability
-evidence and required safety/platform gates. Claim one bounded package in REGISTER
-before code. Split a slice into such packages when necessary; do not create one
+evidence and required safety/platform gates. Claim one bounded package by
+assigning the `CSL-N` issue and moving it to In Progress before code; record
+the work ID and branch in REGISTER. Split a slice into such packages when necessary; do not create one
 unreviewable rewrite or leave duplicate production and test-only workflows alive.
 
 | Sequence | Delivery slice | Concrete result and acceptance |

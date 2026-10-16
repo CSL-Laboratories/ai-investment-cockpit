@@ -6,7 +6,9 @@ last-verified: 2026-08-18
 related: [security-architecture, prompt-injection-defense, draft-discord-control-plane, build-scaffold-ultracode, ultracode-build-playbook, enhancements-and-additions, research-report, research-supplement]
 ---
 
-> **[LIVE]** STILL LIVE — the SEC-* findings register. Claims go in [[REGISTER]]; the write-ups stay here.
+> **[LIVE]** STILL LIVE — the SEC-* findings register. Claim by assigning the
+> `CSL-N` issue and moving it to In Progress; record the work ID and branch in
+> [[REGISTER]]; the write-ups stay here.
 
 > **Current deployment posture (2026-08-17):** the deterministic security mechanisms and
 > regression suite are locally green, but the cockpit remains paper-first and not production
