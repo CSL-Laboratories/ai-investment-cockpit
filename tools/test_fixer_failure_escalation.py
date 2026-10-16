@@ -42,7 +42,7 @@ class EvidenceTests(unittest.TestCase):
                     "event": "pull_request_review", "status": "completed", "conclusion": "failure",
                     "head_sha": HEAD, "head_branch": "fix", "repository": {"full_name": REPO},
                     "head_repository": {"full_name": REPO}, "pull_requests": [{"number": 7}]}
-        self.job = {"id": 123, "run_id": 10, "name": "devin-review-fix", "status": "completed", "conclusion": "failure",
+        self.job = {"id": 123, "run_id": 10, "run_attempt": 1, "name": "devin-review-fix", "status": "completed", "conclusion": "failure",
                     "steps": [{"number": 8, "name": m.CONTEXT_PREFIX + HEAD + ":" + self.key["fingerprint"], "conclusion": "success"},
                               {"number": 9, "name": "Run anthropics/claude-code-action@v1", "conclusion": "failure"}]}
         self.calls = []
@@ -125,7 +125,7 @@ class EvidenceTests(unittest.TestCase):
                 self.run[key] = old
 
     def test_wrong_job_context_terminal_only_failure_and_noop_action_refused(self):
-        for change in ({"name": "claude-mention"}, {"run_id": 44}, {"status": "in_progress"}, {"conclusion": "success"}):
+        for change in ({"name": "claude-mention"}, {"run_id": 44}, {"run_attempt": 2}, {"status": "in_progress"}, {"conclusion": "success"}):
             old = copy.deepcopy(self.job)
             self.job.update(change)
             self.assertEqual(self.collect(), {})
@@ -141,6 +141,8 @@ class EvidenceTests(unittest.TestCase):
     def test_timeout_is_failure_but_human_or_concurrency_cancellation_is_not(self):
         self.run["conclusion"] = self.job["conclusion"] = self.job["steps"][1]["conclusion"] = "timed_out"
         self.assertEqual(set(self.collect()), {"thread1"})
+        self.job["steps"][1]["conclusion"] = "cancelled"
+        self.assertEqual(set(self.collect()), {"thread1"})  # parent job/run independently prove timeout
         self.run["conclusion"] = self.job["conclusion"] = self.job["steps"][1]["conclusion"] = "cancelled"
         self.assertEqual(self.collect(), {})
 
@@ -233,17 +235,26 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(set(self.collect(read)), {"thread1"})
 
     def test_real_reader_budget_allows_initial_evidence_and_four_fresh_rechecks(self):
+        import io
+        import subprocess
         from types import SimpleNamespace
-        def transport(args, **kwargs):
-            body = json.loads(kwargs["input"]) if kwargs.get("input") else None
-            return SimpleNamespace(stdout=json.dumps(self.read(args[2], body)))
-        with patch.dict(m.os.environ, {"GH_TOKEN": "fixture"}), patch.object(m.subprocess, "run", side_effect=transport):
-            reader = m.Reader()
-            evidence = m.Evidence(REPO, 7, reader.read)
-            self.assertTrue(evidence.collect())
-            for _ in range(4):
-                self.assertTrue(evidence.fresh())
-            self.assertLessEqual(reader.calls, 60)
+        for denied_public in (False, True):
+            def transport(args, denied_public=denied_public, **kwargs):
+                if denied_public and "/actions/" in args[2]:
+                    raise subprocess.CalledProcessError(1, "gh", stderr="(HTTP 403)")
+                body = json.loads(kwargs["input"]) if kwargs.get("input") else None
+                return SimpleNamespace(stdout=json.dumps(self.read(args[2], body)))
+            def public_transport(request, **_kwargs):
+                self.assertIsNone(request.get_header("Authorization"))
+                return io.BytesIO(json.dumps(self.read(request.full_url.removeprefix("https://api.github.com/"))).encode())
+            with patch.dict(m.os.environ, {"GH_TOKEN": "fixture"}), patch.object(m.subprocess, "run", side_effect=transport), patch.object(m.urllib.request, "urlopen", side_effect=public_transport):
+                reader = m.Reader()
+                evidence = m.Evidence(REPO, 7, reader.read)
+                self.assertTrue(evidence.collect())
+                for _ in range(4):
+                    self.assertTrue(evidence.fresh())
+                self.assertLessEqual(reader.calls, 60)
+                self.assertEqual(reader.public_anonymous, denied_public)
 
     def test_bounded_retry_and_compare_http_status_preservation(self):
         import subprocess
@@ -265,11 +276,38 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(m.receipts.attempt_count(self.history, m.receipts.attempt_key("b" * 40, self.items)), 0)
 
     def test_workflow_emits_context_from_actual_locked_eligibility_and_embeds_consumer(self):
+        import re
         import textwrap
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
         self.assertEqual(text.count('name: "Fixer attempt ${{ steps.eligibility.outputs.attempt_key }}"'), 1)
         embedded = textwrap.dedent(text.split("<<'CLAUDE_FIXER_RECEIPTS'\n")[1].split("          CLAUDE_FIXER_RECEIPTS")[0]).rstrip()
         self.assertEqual(embedded, (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
+        # Parse the supported indentation/step schema without adding a YAML
+        # dependency to the existing standard-library-only event-path job.
+        job = re.split(r"\n  [A-Za-z0-9_-]+:\n", text.split("\n  devin-review-fix:\n", 1)[1])[0]
+        header, steps_text = job.split("    steps:\n", 1)
+        self.assertNotRegex(header, r"(?m)^    (name|strategy|uses):")
+        steps = re.split(r"(?m)^      - ", steps_text)[1:]
+        action = [(i, s) for i, s in enumerate(steps) if f"        uses: {m.ACTION_USES}\n" in s]
+        context = [(i, s) for i, s in enumerate(steps) if s.startswith('name: "Fixer attempt ${{ steps.eligibility.outputs.attempt_key }}"\n')]
+        eligibility = [s for s in steps if "        id: eligibility\n" in s or s.startswith("id: eligibility\n")]
+        self.assertEqual(len(action), 1)
+        self.assertEqual(len(context), 1)
+        self.assertEqual(len(eligibility), 1)
+        self.assertTrue(action[0][1].startswith("id: claude\n"))
+        self.assertNotRegex(action[0][1], r"(?m)^        name:")
+        self.assertIn("        id: push_guard\n", context[0][1])
+        self.assertLess(context[0][0], action[0][0])
+        watcher = (ROOT / ".github/workflows/stuck-thread-watch.yml").read_text()
+        self.assertIn("contents: read", watcher)
+        self.assertIn("GH_TOKEN: ${{ github.token }}", watcher)
+        self.assertIn("uses: actions/checkout@v4", watcher)
+        if "sparse-checkout:" in watcher:
+            sparse = watcher.split("          sparse-checkout: |\n", 1)[1].split("          sparse-checkout-cone-mode:", 1)[0]
+            for source in (".github/scripts/stuck_thread_watch.py", "scripts/ci/fixer_failure_escalation.py", "scripts/ci/claude_fixer_receipts.py"):
+                self.assertIn("            " + source + "\n", sparse)
+            self.assertIn("ref: ${{ github.event.repository.default_branch }}", watcher)
+            self.assertIn("persist-credentials: false", watcher)
 
 
 if __name__ == "__main__":

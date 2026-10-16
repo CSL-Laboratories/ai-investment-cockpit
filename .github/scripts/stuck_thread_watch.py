@@ -545,7 +545,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
     devin = quote_untrusted(item.devin_body, cfg.quote_limit)
     claude = quote_untrusted(item.claude_body, cfg.quote_limit)
     evidence = ("\n### Workflow failure evidence\n\n" + item.failure_evidence + "\n") if item.failure_evidence else ""
-    return (
+    body = (
         f"@codex review\n\n"
         f"{marker(item.thread_id)}\n\n"
         f"Linear-first (CSL-88): work from the CSL Linear issue; check it and its "
@@ -564,6 +564,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
         f"### Devin's finding\n\n```text\n{devin}\n```\n\n"
         f"### Claude's reply\n\n```text\n{claude}\n```\n{evidence}"
     )
+    return re.sub(r"@(?=claude\b)", "@ ", body, flags=re.IGNORECASE) if item.failure_evidence else body
 
 
 def build_linear_title(repo: str, number: int) -> str:
@@ -604,9 +605,9 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
                 "",
                 f"```text\n{quote_untrusted(item.devin_body, cfg.quote_limit)}\n```",
                 "",
-                "What Claude said",
+                "Workflow failure evidence" if item.failure_evidence else "What Claude said",
                 "",
-                f"```text\n{quote_untrusted(item.claude_body, cfg.quote_limit)}\n```",
+                item.failure_evidence if item.failure_evidence else f"```text\n{quote_untrusted(item.claude_body, cfg.quote_limit)}\n```",
                 "",
             ]
         )
@@ -1072,7 +1073,7 @@ def mediate_pr(
     # exists yet (retry after a Linear outage on an earlier scan).
     actionable = eligible[:remaining]
     unmediated = [item for item in stuck if not item.already_mediated]
-    if cfg.file_linear and stuck and not failure_unknown:
+    if cfg.file_linear and stuck:
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
@@ -1080,7 +1081,9 @@ def mediate_pr(
                 generated = build_linear_description(stuck, cfg)
                 existing = linear_find_existing(linear, cfg, number)
                 recover_missing = not unmediated and existing is None
-                if not actionable and not recover_missing:
+                if failure_unknown and existing and "(exhausted-fixer-failed)" in str(existing.get("description") or ""):
+                    logs.append(f"stuck-thread-watch: pr={number} linear=preserved-failure-handoff")
+                elif not actionable and not recover_missing:
                     logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
                 elif rollup_is_current(existing, generated, cfg.repository, number):
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
@@ -1169,10 +1172,16 @@ def load_failure_collector():
     import importlib.util
     from pathlib import Path
     path = Path(__file__).resolve().parents[2] / "scripts/ci/fixer_failure_escalation.py"
-    spec = importlib.util.spec_from_file_location("fixer_failure_escalation", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.collect
+    try:
+        spec = importlib.util.spec_from_file_location("fixer_failure_escalation", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.collect
+    except (OSError, ImportError, ValueError, AttributeError, SyntaxError, TypeError):
+        print("::notice::Failure intake unavailable; ordinary watcher routes remain enabled.")
+        def unavailable(*_args):
+            raise RuntimeError("failure intake unavailable")
+        return unavailable
 
 def main() -> int:
     return run(failure_collector=load_failure_collector())

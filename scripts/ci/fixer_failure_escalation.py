@@ -23,6 +23,7 @@ receipts = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(receipts)
 CONTEXT_PREFIX = "Fixer attempt "
 WORKFLOW = ".github/workflows/claude.yml"
+ACTION_USES = "anthropics/claude-code-action@v1"
 FAILURES = {"failure", "timed_out"}
 
 
@@ -40,6 +41,7 @@ class Reader:
     def __init__(self):
         self.deadline = time.monotonic() + 60
         self.calls = 0
+        self.public_anonymous = False
 
     def read(self, path, body=None, *, public=False, retry=True, anonymous=False):
         self.calls += 1
@@ -48,7 +50,7 @@ class Reader:
             raise Unverified("evidence read budget exhausted")
         timeout = min(10, remaining)
         try:
-            if public and (anonymous or not os.environ.get("GH_TOKEN")):
+            if public and (anonymous or self.public_anonymous or not os.environ.get("GH_TOKEN")):
                 # Only public Actions metadata, after repository visibility check.
                 # No PAT, credential forwarding, permission change or log download.
                 request = urllib.request.Request(
@@ -76,6 +78,7 @@ class Reader:
                 # The repository was independently verified public. Read only
                 # this public metadata without a token if the scoped token
                 # cannot read it; never change scopes or select another PAT.
+                self.public_anonymous = True
                 return self.read(path, body, public=True, retry=retry, anonymous=True)
             if retry and (status == 429 or status in {500, 502, 503, 504}):
                 time.sleep(min(1, max(0, self.deadline - time.monotonic())))
@@ -227,14 +230,17 @@ def failed_run(read, repo, number, state, run_id, attempt, workflow_id):
     if len(matching) != 1:
         return None
     job = matching[0]
-    if (job.get("run_id") != run_id or job.get("status") != "completed"
+    if (job.get("run_id") != run_id or job.get("run_attempt") != attempt or job.get("status") != "completed"
             or job.get("conclusion") not in FAILURES or type(job.get("id")) is not int):
         return None
     steps = job.get("steps") or []
     context = [s for s in steps if s.get("name") == CONTEXT_PREFIX + key["head"] + ":" + key["fingerprint"]]
-    action = [s for s in steps if s.get("name") == "Run anthropics/claude-code-action@v1"]
+    action = [s for s in steps if s.get("name") == f"Run {ACTION_USES}"]
+    action_failed = len(action) == 1 and (action[0].get("conclusion") in FAILURES or (
+        action[0].get("conclusion") == "cancelled" and job.get("conclusion") == "timed_out"
+        and run.get("conclusion") == "timed_out"))
     if (len(context) != 1 or context[0].get("conclusion") != "success"
-            or len(action) != 1 or action[0].get("conclusion") not in FAILURES
+            or not action_failed
             or context[0].get("number", 0) >= action[0].get("number", 0)):
         return None
     return f"https://github.com/{repo}/actions/runs/{run_id}/attempts/{attempt}#job-{job['id']}"

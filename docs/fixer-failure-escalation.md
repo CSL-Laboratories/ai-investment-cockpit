@@ -19,16 +19,23 @@ writer queue, delivery identities and mediation markers remain in use.
    run of `.github/workflows/claude.yml` in this repository, for this PR, branch
    and exact head. Its `devin-review-fix` job succeeded at the guard-install step
    named `Fixer attempt <head>:<finding-fingerprint>` before the Claude action
-   failed or timed out. Human/concurrency cancellations do not qualify.
+   failed or timed out. A cancelled action step qualifies only when both its
+   parent job and run independently timed out. Human/concurrency cancellations
+   do not qualify.
    GitHub attempt/job metadata supplies
    this binding independently of comment prose. A terminal-post failure alone,
    successful/skipped validation-only run, wrong attempt, missing context or
-   pre-model failure cannot qualify.
+   failure before the action step cannot qualify. An action failure can itself
+   occur during authentication/setup: this proves a failed fixer action, not
+   that the model ran.
 4. The workflow blob on that head must match the current default-branch blob.
    Modified PR workflows and older workflow versions are not retroactively
-   qualified. Public repository visibility is established before Actions
+   qualified. This compares current head/default blobs, not the historical
+   merge-ref definition executed by the run. The default branch is trusted.
+   Public repository visibility is established before Actions
    metadata reads. Prefer the existing read token; if its public-metadata read
-   is forbidden, use the independently public endpoint without credentials.
+   is forbidden, use the independently public endpoint without credentials
+   and remember that choice for subsequent public reads in this collection.
    Existing authenticated reads handle PR/finding data;
    no new token, permission, logs, artifacts or model output are needed.
 5. Before delivery, recheck the current finding set, exhausted budget and PR
@@ -39,7 +46,10 @@ writer queue, delivery identities and mediation markers remain in use.
    bounded observation, not an
    atomic cross-workflow lock; a writer or review change can race the final
    read. Mediation conveys evidence and requests inspection, never a fix or
-   readiness verdict.
+   readiness verdict. A mediation comment can itself queue a skipped Claude
+   workflow; a later finding then waits for another cycle. Caps are maxima,
+   not a promise of three deliveries per cycle. Failure mediation neutralizes
+   literal Claude mentions in quoted findings and paths to avoid dispatch.
 
 Each PR adapter has a shared 60-read/60-second ceiling, at most five pages per
 comment/thread connection and at most three candidate run attempts. Denial,
@@ -48,7 +58,8 @@ exhaustion stop new failure admissions for that PR and retry on a later watcher
 cycle. A 429 or transient server failure receives at most one bounded retry;
 primary public rate limiting defers to a later cycle. Incomplete failure
 evidence does not suppress ordinary Claude-thread mediation or Recursion's
-existing resolver. Existing Linear roll-ups and human notes are preserved
+existing resolver, even if the collector cannot load. Ordinary Linear routing
+continues. Existing failure Linear roll-ups and human notes are preserved
 while failure evidence is stale/unavailable; no partial checklist replaces them.
 Only complete evidence enters existing per-thread deduplication and caps.
 
@@ -71,7 +82,10 @@ do not import moving upstream branches or rewrite their history.
 
 CSL-255 owns CI cost/queue changes. This patch does not rely on proposed
 merge-queue or `review-gate` behavior, change required checks, or alter cost,
-filters/concurrency/debounce policy. Compose shared `claude.yml` changes with
+concurrency/debounce policy. It adds only the new source/test paths to existing
+lightweight event-path checks. Recursion's default-branch sparse checkout also
+includes the adapter and receipt consumer; token grants, checkout ref and
+persist-credentials remain unchanged. Compose shared `claude.yml` changes with
 that owner and CSL-89 before landing. Cloud bootstrap #156/#212 is separate.
 
 Offline tests cover provenance, races, no false handled receipts, caps,

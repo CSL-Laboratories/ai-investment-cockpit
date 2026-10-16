@@ -4,7 +4,7 @@ import hashlib
 import importlib.util
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +19,7 @@ else:
     watcher = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = watcher
     spec.loader.exec_module(watcher)
-    now = datetime(2026, 10, 15, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
     def config(**changes):
         from dataclasses import replace
@@ -141,6 +141,25 @@ class WatcherTests(unittest.TestCase):
         self.setup_scan()
         self.assertEqual(self.scan(lambda *_: (self.evidence, {})), [])
 
+    def test_failure_mediation_cannot_dispatch_claude_through_quoted_text_or_path(self):
+        self.setup_scan()
+        body = BODY + "\nExample: @Claude do a fix."
+        self.proofs["PRRT_0"]["fingerprint"] = hashlib.sha256(body.encode()).hexdigest()
+        if RECURSION:
+            from dataclasses import replace
+            thread = self.pull.threads[0]
+            thread = replace(thread, path="@claude.py", comments=(replace(thread.comments[0], body=body),))
+            self.pull = replace(self.pull, threads=(thread,))
+            self.github.pulls[self.pull.number] = self.pull
+        else:
+            thread = self.pull["reviewThreads"]["nodes"][0]
+            thread["path"] = "@claude.py"
+            thread["comments"]["nodes"][0]["body"] = body
+        posted = self.scan()
+        self.assertEqual(len(posted), 1)
+        self.assertNotRegex(posted[0], r"(?i)@claude\b")
+        self.assertIn("@codex review", posted[0])
+
     def test_changed_quote_does_not_attach_proof_to_old_thread_snapshot(self):
         self.setup_scan()
         self.proofs["PRRT_0"]["fingerprint"] = "f" * 64
@@ -151,6 +170,18 @@ class WatcherTests(unittest.TestCase):
         checks = iter((True, False))
         self.evidence.fresh = lambda: next(checks)
         self.assertEqual(self.scan(), [])
+
+    def test_new_run_after_first_delivery_defers_remaining_threads(self):
+        self.setup_scan(3)
+        self.evidence.fresh = lambda: not (self.github.comments if RECURSION else self.github.posts)
+        self.assertEqual(len(self.scan()), 1)
+
+    def test_missing_adapter_import_does_not_crash_the_watcher(self):
+        from unittest.mock import patch
+        with patch("importlib.util.spec_from_file_location", side_effect=FileNotFoundError):
+            collector = m.load_failure_collector()
+        self.setup_scan()
+        self.assertEqual(self.scan(collector), [])
 
     def test_unavailable_evidence_never_becomes_a_delivery(self):
         self.setup_scan()
@@ -171,6 +202,17 @@ class WatcherTests(unittest.TestCase):
         def denied(*_):
             raise RuntimeError("public metadata unavailable")
         self.assertEqual(len(self.scan(denied)), 1)
+        from dataclasses import replace
+        from unittest.mock import patch
+        if RECURSION:
+            linear = f.FakeLinear()
+            m.scan(f.cfg(), self.github, linear, failure_collector=denied)
+            self.assertEqual(len(linear.created), 1)
+        else:
+            config = replace(self.cfg, file_linear=True, linear_api_key="fixture")
+            with patch.object(m, "linear_find_existing", return_value=None), patch.object(m, "upsert_linear_issue", return_value="https://linear.app/fixture") as upsert:
+                m.mediate_pr(self.pull, config, self.github, object(), f.NOW, failure_collector=denied)
+                upsert.assert_called_once()
 
     @unittest.skipUnless(RECURSION, "Recursion owns the existing citation resolver")
     def test_unavailable_failure_intake_does_not_suppress_existing_resolver(self):
@@ -208,6 +250,19 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(len(linear.created), 1)
         self.assertEqual(linear.canceled, [])
         self.assertIn("Keep the operator's decision.", linear.updated[-1][1])
+        # A new head can rearm the fixer budget before this thread resolves.
+        # Absence of a new exhausted failure is not resolution of the handoff.
+        m.scan(self.cfg, self.github, linear, failure_collector=lambda *_: (self.evidence, {}))
+        self.assertEqual(linear.canceled, [])
+        self.pull = replace(self.pull, review_decision="APPROVED", head_oid=f.HEAD,
+                            approved_head_oids=(f.HEAD,), checks_state="SUCCESS", required_checks_green=True)
+        self.github.pulls[self.pull.number] = self.pull
+        m.scan(self.cfg, self.github, linear, failure_collector=lambda *_: (self.evidence, {}))
+        self.assertEqual(linear.canceled, [])
+        self.pull = replace(self.pull, threads=(replace(self.pull.threads[0], is_resolved=True),))
+        self.github.pulls[self.pull.number] = self.pull
+        m.scan(self.cfg, self.github, linear, failure_collector=lambda *_: (self.evidence, {}))
+        self.assertEqual(linear.canceled, ["iss_1"])
 
     def test_existing_marker_deduplicates_failure_delivery(self):
         marker = m.mediation_marker("PRRT_0") if RECURSION else m.marker("PRRT_0")
