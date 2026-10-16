@@ -866,6 +866,39 @@ def test_old_cite_retry_mark_marker_does_not_count_today():
     assert any("resolve=posted" in line for line in logs)
 
 
+def test_later_cite_after_skip_counts():
+    earlier = NOW - timedelta(hours=1)
+    threads = [
+        thread(
+            THREAD,
+            resolved=True,
+            resolved_by=PAT_LOGIN,
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), earlier),
+                comment(PAT_LOGIN, mod.skip_marker(THREAD, SHA), earlier),
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
+
+
+def test_cite_before_skip_does_not_count():
+    earlier = NOW - timedelta(hours=1)
+    threads = [
+        thread(
+            THREAD,
+            resolved=True,
+            resolved_by="alice",
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), earlier),
+                comment(PAT_LOGIN, mod.skip_marker(THREAD, SHA)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 0
+
+
 def test_human_resolved_skipped_cite_does_not_count():
     threads = [
         thread(
@@ -1143,13 +1176,15 @@ def test_human_resolve_race_does_not_publish_receipt():
 
 
 def test_missing_resolved_by_after_mutation_does_not_publish_receipt():
+    remaining = [1]
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     gh.resolve_by_login = ""
-    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW, remaining_run=remaining)
     assert gh.resolves == [THREAD]
+    assert remaining == [0]
     assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
-    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
-    assert any("skip=already-resolved" in line for line in logs)
+    assert not any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
+    assert any("resolve=posted-unmarked" in line for line in logs)
 
 
 def test_scan_skips_retry_mark_when_human_resolved():

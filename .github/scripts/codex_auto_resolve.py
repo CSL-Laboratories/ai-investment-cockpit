@@ -1134,21 +1134,21 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt and no PAT
-    skip marker, so a later human resolve cannot erase a PAT success
-    whose receipt failed. A human Resolve that raced the mutation posts
-    ``codex-thread-skipped`` so that cite does not consume the cap. A
-    failed skip post over-counts (fail closed). Missing timestamps fail
-    closed.
+    per ``(thread id, sha)`` when that pair has no receipt. A PAT skip
+    marker hides that pair unless a later PAT cite is strictly newer, so
+    a retry-resolve success cannot be erased by an earlier human race.
+    Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
+    A missing resolver does not skip (fail closed). A failed skip post
+    over-counts. Missing timestamps fail closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
-    cite_window: set[tuple[str, str]] = set()
+    cite_times: dict[tuple[str, str], datetime | None] = {}
+    skip_times: dict[tuple[str, str], datetime | None] = {}
     all_marker_pairs: set[tuple[str, str]] = set()
-    skip_pairs: set[tuple[str, str]] = set()
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1158,10 +1158,10 @@ def resolved_count_today(
         in_window = stamped is None or stamped >= start
         for tid, digest in parse_cite_markers(body):
             if tid and digest and in_window:
-                cite_window.add((tid, digest))
+                _stamp_latest(cite_times, (tid, digest), stamped)
         for tid, digest in parse_skip_markers(body):
             if tid and digest and in_window:
-                skip_pairs.add((tid, digest))
+                _stamp_latest(skip_times, (tid, digest), stamped)
         resolved_at = parse_resolved_at(body)
         for tid, digest in parse_resolved_markers(body):
             if not tid or not digest:
@@ -1170,18 +1170,38 @@ def resolved_count_today(
             effective = resolved_at or stamped
             markers.append((tid, digest, effective, resolved_at is not None))
     counted: set[tuple[str, str]] = set()
+    cite_window = set(cite_times)
     for tid, digest, effective, has_resolved_at in markers:
         if effective is not None and effective < start:
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
     unmarked: set[tuple[str, str]] = set()
-    for pair in cite_window:
+    for pair, cite_when in cite_times.items():
         tid, _digest = pair
-        if tid in pending or pair in all_marker_pairs or pair in skip_pairs:
+        if tid in pending or pair in all_marker_pairs:
             continue
+        if pair in skip_times:
+            skip_when = skip_times[pair]
+            if skip_when is None or cite_when is None or cite_when <= skip_when:
+                continue
         unmarked.add(pair)
     return len(counted) + len(unmarked)
+
+
+def _stamp_latest(
+    store: dict[tuple[str, str], datetime | None],
+    pair: tuple[str, str],
+    stamped: datetime | None,
+) -> None:
+    if pair not in store:
+        store[pair] = stamped
+        return
+    known = store[pair]
+    if known is None:
+        return
+    if stamped is None or stamped > known:
+        store[pair] = stamped
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
@@ -1332,9 +1352,14 @@ def reply_and_resolve(
     # receipt (and a cap charge). Fail closed unless GitHub attributes
     # the resolve to the PAT identity.
     actor = pat_login or cfg.pat_login
-    if not actor or not login_matches(resolved_by_login(thread), actor):
+    resolver = resolved_by_login(thread)
+    if resolver and actor and not login_matches(resolver, actor):
         publish_skip_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "already-resolved"
+    if not actor or not login_matches(resolver, actor):
+        # Missing resolvedBy cannot be distinguished from a PAT success.
+        # Do not post a skip (that would exempt the pair from the cap).
+        return "posted-unmarked"
     stamp = now or utcnow()
     if publish_resolved_marker(
         gh,
@@ -1345,7 +1370,24 @@ def reply_and_resolve(
         resolved_at=stamp,
     ):
         return "posted"
+    publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
     return "posted-unmarked"
+
+
+def publish_cite_marker(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread_id: str,
+    sha: str,
+) -> bool:
+    """Refresh the PAT cite so it outranks an earlier skip on this pair."""
+    try:
+        body = cite_marker(thread_id, sha)
+    except ValueError:
+        return False
+    return _post_audit_comment(gh, cfg, number=number, thread_id=thread_id, body=body)
 
 
 def publish_skip_marker(
