@@ -45,10 +45,10 @@ PROTECTED_PATH_PREFIXES = (
     "app/risk/",
     "app/brokers/",
     "app/orchestrator/",
-    "app/quant/execution/",
     "app/storage/",
+    "app/quant/execution/",
 )
-PROTECTED_PATH_NAMES = frozenset({"order.py", "audit_entry.py"})
+PROTECTED_BASENAMES = frozenset({"order.py", "audit_entry.py"})
 VERDICT_BLOCK_RE = re.compile(
     r"<!--\s*" + VERDICT_PREFIX + r":(?P<tid>[A-Za-z0-9_=-]{1,128})\s*-->"
     r"(?P<body>.*?)(?=<!--\s*" + VERDICT_PREFIX + r":|\Z)",
@@ -491,8 +491,7 @@ def path_is_protected(path: str) -> bool:
     text = (path or "").replace("\\", "/").lstrip("./")
     if not text:
         return False
-    name = text.rsplit("/", 1)[-1].lower()
-    if name in PROTECTED_PATH_NAMES:
+    if text.rsplit("/", 1)[-1].lower() in PROTECTED_BASENAMES:
         return True
     for prefix in PROTECTED_PATH_PREFIXES:
         if prefix.endswith("/"):
