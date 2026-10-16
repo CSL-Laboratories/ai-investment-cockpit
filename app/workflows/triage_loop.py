@@ -42,7 +42,7 @@ from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import draft_proposal
+from workflows.proposals import draft_proposal, subject_fits_context
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
@@ -396,10 +396,21 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     degraded = False
     escalated: list[str] = []
     fn = propose_fn if propose_fn is not None else draft_proposal
+    # Preflight uses the default draft_proposal template, so it only applies to that
+    # handler or a wrapper that declares it (build_services' ``_propose`` does); other
+    # injected handlers may use a different template and must still be called.
+    preflight = propose_fn is None or getattr(
+        propose_fn, "uses_draft_proposal_template", False)
     for cand in rank_candidates(cands):
         ev = cand["_event"]
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
+            continue
+        if preflight and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+                and not subject_fits_context(state, ev, packet):
+            # Production build_services wraps draft_proposal, so the wrapper
+            # declares the marker rather than relying on `fn is draft_proposal`.
+            _defer(state, dispositions, ev, "context_limit")
             continue
         try:
             consumed = budget.try_consume(
@@ -416,6 +427,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
                          watchlist=watchlist, decision_weight=cand["score"])
+            if outcome.status == "context_limited":
+                # No model call: the subject item did not fit. Do not count a
+                # job or mark escalated — retry on the next loop (Inv 7).
+                _defer(state, dispositions, ev, "context_limit")
+                continue
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True

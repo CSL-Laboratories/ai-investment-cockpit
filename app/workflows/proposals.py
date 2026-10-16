@@ -65,7 +65,7 @@ from workflows.scrubber import scrub_output_fields
 
 @dataclass(frozen=True)
 class ProposalOutcome:
-    status: str  # drafted | flagged | needs_human | quarantined | degraded
+    status: str  # drafted | flagged | needs_human | quarantined | degraded | context_limited
     proposal: dict | None
     record: ProposalRecord | None
     risk_decision: RiskDecision | None
@@ -372,6 +372,27 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
     return record
 
 
+def fit_proposal_packet(state, event: MarketEvent, packet: Packet):
+    """Keep the subject event first and fit it under the proposal template + repair reserve."""
+    owned = [item for item in packet.items if item.event_id == event.id]
+    others = [item for item in packet.items if item.event_id != event.id]
+    ordered = Packet(items=tuple(owned + others))
+    tmpl = load_prompt("trade_proposal")
+    overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
+    return fit_packet(
+        ordered,
+        reserved_tokens=overhead + repair_reserve_tokens(),
+        cap=context_token_cap(state.settings),
+    ), tmpl
+
+
+def subject_fits_context(state, event: MarketEvent, packet: Packet) -> bool:
+    """Pure preflight: does ``event``'s evidence survive the context cap? Lets the
+    caller defer BEFORE spending deep budget on a call that cannot be dispatched."""
+    fit, _tmpl = fit_proposal_packet(state, event, packet)
+    return any(item.event_id == event.id for item in fit.packet.items)
+
+
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None, book_fn=None,
                    observation_fn=None, metrics_fn=None,
@@ -400,14 +421,16 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     # ---- ONE decision call (trade_proposal.v1, schema TradeProposal) --------------------
     # Keep the subject event's items first so the token cap sheds other symbols' tail
     # before it sheds the evidence this proposal is allowed to cite (SEC-14).
-    owned = [item for item in packet.items if item.event_id == event.id]
-    others = [item for item in packet.items if item.event_id != event.id]
-    packet = Packet(items=tuple(owned + others))
-    tmpl = load_prompt("trade_proposal")
-    overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
-    fit = fit_packet(
-        packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
+    fit, tmpl = fit_proposal_packet(state, event, packet)
     packet = fit.packet
+    if not any(item.event_id == event.id for item in packet.items):
+        # Template + repair fit, but the subject evidence does not. An empty
+        # decision call would draft without citations; grounding then flags and
+        # triage_loop would mark the event escalated (never retried). Defer.
+        return ProposalOutcome(
+            "context_limited", None, None, None, None, None,
+            ("subject evidence does not fit the context cap",),
+        )
     prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
     result, job = call_agent(
         state, alias="decision", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,

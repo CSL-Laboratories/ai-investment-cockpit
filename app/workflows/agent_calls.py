@@ -213,9 +213,17 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         # Price each subprocess call on its own rate tier, then add. Summing tokens
         # first would push two short Haiku 5.5 calls over the 100k long-context line.
         # A Jev success has one raw body (its usage block) and no repair.
-        quotes = [_quote_raw(pinned, result.raw, estimated_input)]
+        # A repair appends the validation reason; when vendor usage is missing, price
+        # that second call with the reserved worst-case suffix, not the first prompt.
+        first_estimate = estimated_input
+        repair_estimate = estimated_input + estimate_tokens(worst_case_repair_overhead())
         if result.prior_raw:
-            quotes.append(_quote_raw(pinned, result.prior_raw, estimated_input))
+            quotes = [
+                _quote_raw(pinned, result.prior_raw, first_estimate),
+                _quote_raw(pinned, result.raw, repair_estimate),
+            ]
+        else:
+            quotes = [_quote_raw(pinned, result.raw, first_estimate)]
         quote = sum_quotes(quotes)
     else:
         quote = quote_cost(
