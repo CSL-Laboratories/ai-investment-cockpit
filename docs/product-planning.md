@@ -1189,10 +1189,12 @@ pass; the canonical nine-invariant block and Codex boundary are unchanged, and t
 application/CI diff is empty. The runtime matrix was not rerun for documentation-only
 changes. Interview checkpoints remain in branch history.
 
-After the PR merges, the next development step is a bounded REGISTER claim for delivery
-slice A: strategy feasibility and evaluator/reference qualification, informed by actual
-delivered/empty run artifacts. Later slices provide connected implementation and the
-required release evidence; do not restart the product grill. If resuming before merge,
+After the PR merges, the next development step is a bounded Linear claim
+(assign the `CSL-N` issue and move it to In Progress, then record the work
+ID and branch in REGISTER) for delivery slice A: strategy feasibility and
+evaluator/reference qualification, informed by actual delivered/empty run
+artifacts. Later slices provide connected implementation and the required
+release evidence; do not restart the product grill. If resuming before merge,
 finish the already authorized merge after verifying the PR head and required checks.
 
 ## Post-grill owner directions
