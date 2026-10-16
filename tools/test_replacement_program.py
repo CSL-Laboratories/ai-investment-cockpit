@@ -24,8 +24,10 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][0].pop("research_budget"),
             lambda p: p["outcomes"][0].pop("discretion_class"),
             lambda p: p["contracts"][0].update(sha256="0" * 64),
+            lambda p: p["contracts"].pop(),
             lambda p: p["outcomes"][0]["dependencies"].append("O9"),
             lambda p: p["outcomes"][0]["evidence"].update(claimed="release_qualified"),
+            lambda p: p["outcomes"][0]["evidence"].update(not_claimed=["release_qualified"]),
             lambda p: p["outcomes"][0].pop("independent_verification"),
             lambda p: p["authority"].update(live_authority_granted=True),
         ]

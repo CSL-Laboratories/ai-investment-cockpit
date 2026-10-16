@@ -5,28 +5,46 @@ review may overlap; implementation consumes only accepted contract fragments.
 
 ## Outcome order
 
-1. **O1 Successor product and economic contract:** freeze first-user, markets,
+### O1
+
+**Successor product and economic contract:** freeze first-user, markets,
    measurable value, month slice, non-goals and evidence/release semantics.
-2. **O2 Multi-market evidence and replay plane:** consumes O1 source and value
+### O2
+
+**Multi-market evidence and replay plane:** consumes O1 source and value
    clauses; freezes point-in-time data, provenance, replay and market-semantic input.
-3. **O3 Instrument, portfolio and accounting semantics:** consumes O1 and O2;
+### O3
+
+**Instrument, portfolio and accounting semantics:** consumes O1 and O2;
    freezes stocks/event contracts, cash, collateral, fees, fills, resolution,
    positions, attribution, reconciliation and recovery truth.
-4. **O4 Strategy research and economic qualification laboratory:** consumes O1 to
+### O4
+
+**Strategy research and economic qualification laboratory:** consumes O1 to
    O3; freezes baselines, tuning/evaluation split, cost/yield/risk measures and
    promotion protocols.
-5. **O5 Provider-neutral decision laboratory:** consumes O1, O2 and O4; compares
+### O5
+
+**Provider-neutral decision laboratory:** consumes O1, O2 and O4; compares
    installed decision routes without granting order authority.
-6. **O6 Configurable authority, execution and recovery:** consumes O1, O3, O4 and
+### O6
+
+**Configurable authority, execution and recovery:** consumes O1, O3, O4 and
    O5 evidence; freezes non-widening compliance profiles, action semantics,
    reconciliation, intervention and staged authorization.
-7. **O7 GUI and CLI operator product:** consumes O1, O2, O3 and O6 public service
+### O7
+
+**GUI and CLI operator product:** consumes O1, O2, O3 and O6 public service
    contracts; exposes evidence, strategies, positions, budgets, refusals, health,
    interventions and audit without a privileged order path.
-8. **O8 Migration and performance frontier:** consumes frozen fragments from O2 to
+### O8
+
+**Migration and performance frontier:** consumes frozen fragments from O2 to
    O7; classifies legacy components and measures matched end-to-end candidates before
    selecting replacement language, storage or topology.
-9. **O9 Qualification, packaging and release evidence:** consumes all accepted
+### O9
+
+**Qualification, packaging and release evidence:** consumes all accepted
    outcome contracts; binds exact-candidate qualification, packaging, recovery,
    compatibility and release evidence.
 

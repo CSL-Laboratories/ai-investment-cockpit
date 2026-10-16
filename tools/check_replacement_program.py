@@ -25,6 +25,12 @@ MATURITY = (
     "limited_live_qualified",
     "release_qualified",
 )
+EXPECTED_CONTRACTS = {
+    "docs/replacement/SUCCESSOR-PRODUCT.md",
+    "docs/replacement/ISSUE-CONTRACT.md",
+    "docs/replacement/MONTH-PROGRAM.md",
+    "docs/replacement/SCOPE-AUDIT.md",
+}
 REQUIRED_OUTCOME_FIELDS = {
     "key",
     "linear_issue",
@@ -38,6 +44,7 @@ REQUIRED_OUTCOME_FIELDS = {
     "research_basis",
     "research_budget",
     "dependencies",
+    "dependency_contracts",
     "authority_boundary",
     "discretion_class",
     "falsifiers",
@@ -78,6 +85,9 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
 
     contracts = program.get("contracts")
     _require(isinstance(contracts, list) and contracts, "contracts missing")
+    contract_paths = [item.get("path") for item in contracts]
+    _require(len(contract_paths) == len(set(contract_paths)), "duplicate contract path")
+    _require(set(contract_paths) == EXPECTED_CONTRACTS, "missing or unexpected contract path")
     for contract in contracts:
         rel = contract.get("path")
         expected = contract.get("sha256")
@@ -103,7 +113,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(isinstance(issue, str) and re.fullmatch(r"CSL-[0-9]+", issue) is not None, f"{key} invalid Linear issue")
         _require(issue not in issues, f"duplicate Linear issue: {issue}")
         issues.add(issue)
-        for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions"}:
+        for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "dependency_contracts", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions"}:
             _require(_nonempty(item[field]), f"{key} empty {field}")
         _require(item["discretion_class"] in {"bounded_autonomy", "collaborative_judgment", "human_gated"}, f"{key} invalid discretion class")
         _require(isinstance(item["research_budget"], str) and "stop" in item["research_budget"].lower(), f"{key} research budget lacks stop condition")
@@ -111,6 +121,11 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(isinstance(deps, list), f"{key} dependencies must be a list")
         for dep in deps:
             _require(dep in seen, f"{key} unresolved or cyclic dependency: {dep}")
+        refs = item["dependency_contracts"]
+        _require(isinstance(refs, list) and [ref.get("outcome") for ref in refs] == deps, f"{key} dependency fragments mismatch")
+        for ref in refs:
+            _require(ref.get("fragment") == f"docs/replacement/MONTH-PROGRAM.md#{ref['outcome'].lower()}", f"{key} invalid dependency fragment")
+            _require(ref.get("status") == "pending_human_digest_receipt" and ref.get("accepted_digest") is None, f"{key} inferred dependency acceptance")
         seen.add(key)
         for field in ("non_goals", "inherited_decisions", "falsifiers", "deliverables"):
             _require(isinstance(item[field], list) and item[field], f"{key} empty {field}")
@@ -123,7 +138,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(claimed in MATURITY, f"{key} invalid claimed maturity")
         _require(isinstance(not_claimed, list) and not_claimed, f"{key} missing unclaimed levels")
         claimed_index = MATURITY.index(claimed)
-        _require(all(level in MATURITY and MATURITY.index(level) > claimed_index for level in not_claimed), f"{key} invalid evidence promotion")
+        _require(not_claimed == list(MATURITY[claimed_index + 1 :]), f"{key} invalid evidence promotion")
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -136,6 +151,7 @@ def load(path: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
+    parser.add_argument("--outcome", choices=[f"O{i}" for i in range(1, 10)])
     args = parser.parse_args(argv)
     try:
         validate(load(args.program))

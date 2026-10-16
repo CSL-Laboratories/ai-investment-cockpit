@@ -20,7 +20,7 @@
     },
     {
       "path": "docs/replacement/MONTH-PROGRAM.md",
-      "sha256": "c3013d800d45304c2a6da96155d9795cf07f84593de5e5b29d768c299ac12df5"
+      "sha256": "114e4af6b417ceaa100912b6cda860a95c85d6d9a7cff12487d25056daa59601"
     },
     {
       "path": "docs/replacement/SCOPE-AUDIT.md",
@@ -53,7 +53,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o1_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O1",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -68,7 +68,8 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": []
     },
     {
       "key": "O2",
@@ -97,7 +98,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o2_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O2",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -112,7 +113,15 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O3",
@@ -142,7 +151,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o3_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O3",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -157,7 +166,21 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O4",
@@ -188,7 +211,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o4_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O4",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -203,7 +226,27 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O5",
@@ -234,7 +277,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o5_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O5",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -249,7 +292,27 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O6",
@@ -281,7 +344,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o6_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O6",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -296,7 +359,33 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O7",
@@ -328,7 +417,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o7_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O7",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -343,7 +432,33 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O8",
@@ -377,7 +492,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o8_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O8",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -392,7 +507,45 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O7",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o7",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     },
     {
       "key": "O9",
@@ -428,7 +581,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_o9_contract.py --candidate <FULL_SHA>",
+      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O9",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -443,7 +596,57 @@
           "limited_live_qualified",
           "release_qualified"
         ]
-      }
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O7",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o7",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        },
+        {
+          "outcome": "O8",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o8",
+          "accepted_digest": null,
+          "status": "pending_human_digest_receipt"
+        }
+      ]
     }
   ]
 }
