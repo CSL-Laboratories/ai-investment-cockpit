@@ -183,7 +183,10 @@ def test_circular_raw_raises_instead_of_overflowing():
     nested = 0
     for _ in range(3000):
         nested = [nested]
-    assert cockpit_quant.content_hash(nested) == python_content_hash(nested)
+    with pytest.raises(ValueError, match="JSON nesting too deep"):
+        cockpit_quant.content_hash(nested)
+    with pytest.raises(ValueError, match="JSON nesting too deep"):
+        cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", nested)
 
 
 def test_direct_content_hash_accepts_default_str_values():

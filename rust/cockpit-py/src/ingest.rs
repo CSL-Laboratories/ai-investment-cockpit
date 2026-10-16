@@ -296,20 +296,30 @@ fn escape_untrusted_py(py: Python<'_>, text: &str) -> PyResult<String> {
     Ok(escape_untrusted(text))
 }
 
+fn structural_json_limit(err: &PyErr) -> bool {
+    let text = err.to_string();
+    text.contains("Circular reference detected") || text.contains("JSON nesting too deep")
+}
+
 #[pyfunction]
 #[pyo3(name = "content_hash")]
 fn content_hash_py(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<String> {
-    if let Ok(parsed) = read_json(value) {
-        return Ok(content_hash(&parsed));
+    match read_json(value) {
+        Ok(parsed) => Ok(content_hash(&parsed)),
+        Err(err) if structural_json_limit(&err) => Err(err),
+        Err(_) => {
+            // `python_content_hash` hashes one `default=str` dump. That is not
+            // the detached raw image `market_event` stores after `json.loads`.
+            // A cycle or a too-deep tree stays on the Rust error: Python 3.11's
+            // `json.dumps` recurses and raises `RecursionError` instead.
+            let raw_json: String = py
+                .import("json")?
+                .getattr("dumps")?
+                .call((value,), Some(&json_dump_kwargs(py)?))?
+                .extract()?;
+            sha256_hex(py, &raw_json)
+        }
     }
-    // `python_content_hash` hashes one `default=str` dump. That is not the
-    // detached raw image `market_event` stores after `json.loads`.
-    let raw_json: String = py
-        .import("json")?
-        .getattr("dumps")?
-        .call((value,), Some(&json_dump_kwargs(py)?))?
-        .extract()?;
-    sha256_hex(py, &raw_json)
 }
 
 #[pyfunction]
@@ -333,6 +343,7 @@ fn market_event_py(
         None => (None, None),
         Some(raw) => match read_json(raw) {
             Ok(value) => (None, Some(value)),
+            Err(err) if structural_json_limit(&err) => return Err(err),
             Err(_) => (Some(python_canonical_raw(py, raw)?), None),
         },
     };
