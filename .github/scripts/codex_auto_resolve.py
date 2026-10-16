@@ -13,6 +13,8 @@ Resolve when every condition holds:
   the mutation — never resolve on a stale SHA)
 * no owner/human decision is needed (``DECIDE`` / ``MISSING`` / ``AMBIGUOUS``
   / malformed / mixed markers fail closed and leave the needs-decision path)
+* no later trusted human thread reply after the ``RESOLVE`` stamp (the
+  thread tail is re-fetched before cite and before ``resolveReviewThread``)
 * required checks on that head are green (``isRequired`` contexts, ignoring
   this workflow's own in-progress check)
 
@@ -52,6 +54,9 @@ PROTECTED_PATH_PREFIXES = (
     "app/quant/execution/",
 )
 PROTECTED_BASENAMES = frozenset({"order.py", "audit_entry.py"})
+HUMAN_ASSOCIATIONS = frozenset(
+    {"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"}
+)
 VERDICT_BLOCK_RE = re.compile(
     r"<!--\s*" + VERDICT_PREFIX + r":(?P<tid>[A-Za-z0-9_=-]{1,128})\s*-->"
     r"(?P<body>.*?)(?=<!--\s*" + VERDICT_PREFIX + r":|\Z)",
@@ -119,6 +124,7 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
               url
               body
               createdAt
+              authorAssociation
               author { login }
             }
           }
@@ -196,6 +202,22 @@ query($id: ID!, $cursor: String!) {
           url
           body
           createdAt
+          authorAssociation
+          author { login }
+        }
+      }
+    }
+  }
+}
+"""
+GITHUB_GRAPHQL_THREAD_TAIL = """
+query($id: ID!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(last: 40) {
+        nodes {
+          createdAt
+          authorAssociation
           author { login }
         }
       }
@@ -299,6 +321,36 @@ def is_codex(login: str) -> bool:
     for item in CODEX_BOTS:
         wanted |= login_aliases(item)
     return bool(login_aliases(login) & wanted)
+
+
+def is_bot_login(login: str) -> bool:
+    name = (login or "").strip()
+    return name.lower().endswith("[bot]") or is_codex(name)
+
+
+def is_trusted_human(comment: dict[str, Any], pat_login: str = "") -> bool:
+    login = login_of(comment)
+    if not login or is_bot_login(login) or login_matches(login, pat_login):
+        return False
+    assoc = str(
+        comment.get("authorAssociation") or comment.get("author_association") or "OWNER"
+    ).upper()
+    return assoc in HUMAN_ASSOCIATIONS
+
+
+def later_human_veto(
+    comments: list[dict[str, Any]],
+    after: datetime,
+    pat_login: str = "",
+) -> bool:
+    """True when a trusted human commented after the Codex RESOLVE stamp."""
+    for comment in comments:
+        if not is_trusted_human(comment, pat_login):
+            continue
+        when = parse_dt(comment.get("createdAt") or comment.get("created_at"))
+        if when is None or when > after:
+            return True
+    return False
 
 
 def notice(message: str) -> None:
@@ -1272,9 +1324,41 @@ def classify_thread(
     if stamped.verdict.verdict != "RESOLVE":
         return stamped.verdict.verdict.lower(), stamped.verdict
     comments = thread_comments(thread)
+    if later_human_veto(comments, stamped.when, pat_login):
+        return "human-veto", stamped.verdict
     if already_cited_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
         return "retry-resolve", stamped.verdict
     return "resolve", stamped.verdict
+
+
+def thread_tail_vetoes(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    thread_id: str,
+    after: datetime | None,
+    pat_login: str,
+) -> bool:
+    """True when the live tail has a later trusted human reply, or the recheck cannot run."""
+    if after is None:
+        return True
+    try:
+        tail = gh.graphql(
+            GITHUB_GRAPHQL_THREAD_TAIL,
+            {"id": thread_id},
+            token=cfg.github_token or cfg.codex_pat,
+        )
+    except Exception:
+        return True
+    node = tail.get("node") if isinstance(tail, dict) else None
+    comments: list[dict[str, Any]] = []
+    if isinstance(node, dict):
+        comments = [
+            item
+            for item in ((node.get("comments") or {}).get("nodes") or [])
+            if isinstance(item, dict)
+        ]
+    return later_human_veto(comments, after, pat_login)
 
 
 def reply_and_resolve(
@@ -1288,6 +1372,7 @@ def reply_and_resolve(
     retry: bool = False,
     now: datetime | None = None,
     pat_login: str = "",
+    after: datetime | None = None,
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1295,6 +1380,11 @@ def reply_and_resolve(
     ok, _reason = required_checks_green(rollup)
     if not ok:
         return _reason
+    actor = pat_login or cfg.pat_login
+    if thread_tail_vetoes(
+        gh, cfg, thread_id=thread_id, after=after, pat_login=actor
+    ):
+        return "human-veto"
     if not retry:
         try:
             gh.graphql(
@@ -1313,6 +1403,10 @@ def reply_and_resolve(
         ok, _reason = required_checks_green(rollup)
         if not ok:
             return _reason
+        if thread_tail_vetoes(
+            gh, cfg, thread_id=thread_id, after=after, pat_login=actor
+        ):
+            return "human-veto"
     try:
         resolved = gh.graphql(
             RESOLVE_THREAD,
@@ -1511,6 +1605,7 @@ def scan_pr(
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=over-cap")
             continue
         excerpt = ruling_excerpt(items, verdict.thread_id if verdict else tid, head_sha, cfg.quote_limit)
+        stamped = latest.get((str(thread.get("id") or ""), head_sha))
         try:
             result = reply_and_resolve(
                 gh,
@@ -1522,6 +1617,7 @@ def scan_pr(
                 retry=reason == "retry-resolve",
                 now=now,
                 pat_login=pat_login,
+                after=stamped.when if stamped is not None else None,
             )
         except Exception:
             result = "error"

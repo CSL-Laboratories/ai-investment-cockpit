@@ -51,8 +51,15 @@ def cfg(**overrides) -> object:
     return mod.Config(**values)
 
 
-def comment(login: str, body: str, created: datetime | None = None) -> dict:
+def comment(
+    login: str,
+    body: str,
+    created: datetime | None = None,
+    association: str | None = None,
+) -> dict:
     stamp = (created or NOW).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if association is None:
+        association = "NONE" if login.lower().endswith("[bot]") else "OWNER"
     return {
         "author": {"login": login},
         "user": {"login": login},
@@ -61,6 +68,8 @@ def comment(login: str, body: str, created: datetime | None = None) -> dict:
         "created_at": stamp,
         "submittedAt": stamp,
         "submitted_at": stamp,
+        "authorAssociation": association,
+        "author_association": association,
     }
 
 
@@ -132,6 +141,10 @@ class FakeGitHub(mod.GitHub):
         self.viewer_login = PAT_LOGIN
         self.resolve_by_login: str | None = PAT_LOGIN
         self.resolve_by_queue: list[str | None] = []
+        self.thread_tails: dict[str, list[dict]] = {}
+        self.thread_tail_queue: dict[str, list[list[dict]]] = {}
+        self.fail_thread_tail = False
+        self.thread_tail_calls = 0
 
     def _unused(self, *args, **kwargs):
         raise AssertionError("real gh invoked")
@@ -141,6 +154,17 @@ class FakeGitHub(mod.GitHub):
         if queued:
             return queued.pop(0)
         return self.head_by_number.get(number) or SHA
+
+    def _comments_for_thread(self, tid: str) -> list[dict]:
+        for pr in self.pr_by_number.values():
+            for node in ((pr.get("reviewThreads") or {}).get("nodes") or []):
+                if isinstance(node, dict) and str(node.get("id") or "") == tid:
+                    return [
+                        item
+                        for item in ((node.get("comments") or {}).get("nodes") or [])
+                        if isinstance(item, dict)
+                    ]
+        return []
 
     def graphql(self, query: str, variables: dict, token: str | None = None) -> object:
         if "viewer { login }" in " ".join(query.split()):
@@ -169,6 +193,19 @@ class FakeGitHub(mod.GitHub):
             else:
                 thread_payload["resolvedBy"] = None
             return {"resolveReviewThread": {"thread": thread_payload}}
+        if "comments(last: 40)" in query:
+            self.thread_tail_calls += 1
+            if self.fail_thread_tail:
+                raise RuntimeError("github graphql errors")
+            tid = str(variables["id"])
+            queued = self.thread_tail_queue.get(tid)
+            if queued:
+                nodes = list(queued.pop(0))
+            elif tid in self.thread_tails:
+                nodes = list(self.thread_tails[tid])
+            else:
+                nodes = self._comments_for_thread(tid)
+            return {"node": {"comments": {"nodes": nodes}}}
         if "addPullRequestReviewThreadReply" in query:
             if token != "pat":
                 raise AssertionError("reply must use CODEX_TRIGGER_PAT")
@@ -1738,3 +1775,167 @@ def test_closed_pr_during_head_refresh_does_not_resolve():
     logs = mod.scan_pr(pr_payload(threads=[thread()]), cfg(), gh, NOW)
     assert gh.resolves == []
     assert any("skip=closed-or-draft" in line or "stale-sha" in line for line in logs)
+
+
+def _latest_from_thread(t: dict, extra: list[dict] | None = None):
+    items = mod.thread_comments(t) + (extra or [])
+    return mod.latest_verdicts(items)
+
+
+def test_classify_later_owner_reply_is_human_veto():
+    later = NOW + timedelta(seconds=5)
+    t = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("alice", "this still needs a human decision", later),
+        ]
+    )
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-veto"
+    assert verdict is not None and verdict.verdict == "RESOLVE"
+
+
+def test_classify_earlier_human_finding_does_not_veto():
+    t = thread(
+        comments=[
+            comment("alice", "please fix", NOW - timedelta(seconds=30)),
+            comment(CODEX, verdict_body()),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "resolve"
+
+
+def test_classify_later_bot_reply_does_not_veto():
+    t = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("devin-ai-integration[bot]", "still looking", NOW + timedelta(seconds=5)),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "resolve"
+
+
+def test_classify_untrusted_association_does_not_veto():
+    t = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment(
+                "newbie",
+                "please keep this open",
+                NOW + timedelta(seconds=5),
+                association="FIRST_TIME_CONTRIBUTOR",
+            ),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "resolve"
+
+
+def test_classify_missing_timestamp_human_is_veto():
+    human = comment("alice", "hold", NOW + timedelta(seconds=5))
+    human["createdAt"] = ""
+    human["created_at"] = ""
+    t = thread(comments=[comment(CODEX, verdict_body()), human])
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-veto"
+
+
+def test_classify_retry_resolve_later_human_is_veto():
+    t = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            comment("alice", "leave this open", NOW + timedelta(seconds=5)),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-veto"
+
+
+def test_scan_skips_later_owner_reply():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment("alice", "this still needs a human decision", NOW + timedelta(seconds=5)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_rechecks_thread_tail_before_cite():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tails[THREAD] = [
+        comment("alice", "this still needs a human decision", NOW + timedelta(seconds=2)),
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.thread_tail_calls >= 1
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_rechecks_thread_tail_after_cite_before_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tail_queue[THREAD] = [
+        [],
+        [comment("alice", "stop", NOW + timedelta(seconds=2))],
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies  # cite already posted
+    assert gh.thread_tail_calls >= 2
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_tail_error_is_human_veto():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.fail_thread_tail = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_reply_and_resolve_without_stamp_is_human_veto():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    result = mod.reply_and_resolve(
+        gh,
+        cfg(),
+        number=12,
+        thread_id=THREAD,
+        sha=SHA,
+        excerpt="x",
+        pat_login=PAT_LOGIN,
+        after=None,
+    )
+    assert result == "human-veto"
+    assert gh.resolves == []
+
+
+def test_scan_resolves_still_revalidates_empty_tail():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert gh.thread_tail_calls >= 2
+    assert any("resolve=posted" in line for line in logs)
