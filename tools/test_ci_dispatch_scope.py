@@ -39,6 +39,9 @@ def evaluate(expression, **overrides):
         'github.event.pull_request.labels.*.name': [],
         'github.event.label.name': '',
         'github.event.pull_request.number': 149,
+        'github.event.action': '',
+        'needs.filter.result': 'success',
+        'needs.settle.result': 'success',
         'inputs.scope': '',
         'inputs.pr_number': '',
         'inputs.pr_head_sha': '',
@@ -50,12 +53,18 @@ def evaluate(expression, **overrides):
     expression = expression.strip().removeprefix('${{').removesuffix('}}').strip()
     tokens = '|'.join(re.escape(k) for k in sorted(values, key=len, reverse=True))
     expression = re.sub(tokens, lambda m: repr(values[m.group()]), expression)
+    expression = re.sub(r'!cancelled\(\)', ' (not cancelled()) ', expression)
     expression = expression.replace('&&', ' and ').replace('||', ' or ')
     expression = re.sub(r'\btrue\b', 'True', expression)
     expression = re.sub(r'\bfalse\b', 'False', expression)
     # Expressions under test only use literals, comparisons, boolean operators,
     # and contains. No arbitrary external input reaches this evaluation.
-    return eval(expression, {'__builtins__': {}, 'contains': lambda a, b: b in a})
+    return eval(expression, {
+        '__builtins__': {},
+        'contains': lambda a, b: b in a,
+        'always': lambda: True,
+        'cancelled': lambda: False,
+    })
 
 
 class DispatchScopeTests(unittest.TestCase):
@@ -131,6 +140,37 @@ class DispatchScopeTests(unittest.TestCase):
                                  + ['macos'] * rust_mac)
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
+
+    def test_settle_debounce_gates_blacksmith_only_on_pr_synchronize(self):
+        for doc, billed in ((self.ci, ('linux', 'windows', 'benchmarks')),
+                            (self.rust, ('rust-book',))):
+            settle = doc['jobs']['settle']
+            self.assertEqual(settle['runs-on'], 'ubuntu-latest')
+            self.assertEqual(settle['steps'][0]['run'], 'sleep 120')
+            self.assertTrue(evaluate(settle['if'], **{
+                'github.event_name': 'pull_request',
+                'github.event.action': 'synchronize',
+                'github.event.pull_request.draft': False}))
+            for event, action, draft in [
+                ('pull_request', 'opened', False),
+                ('pull_request', 'reopened', False),
+                ('pull_request', 'ready_for_review', False),
+                ('pull_request', 'synchronize', True),
+                ('push', 'synchronize', False),
+                ('workflow_dispatch', 'synchronize', False),
+                ('schedule', 'synchronize', False),
+            ]:
+                self.assertFalse(evaluate(settle['if'], **{
+                    'github.event_name': event, 'github.event.action': action,
+                    'github.event.pull_request.draft': draft}))
+            for job in billed:
+                self.assertEqual(doc['jobs'][job]['needs'], ['filter', 'settle'])
+                self.assertIn('always() && !cancelled()',
+                              ' '.join(doc['jobs'][job]['if'].split()))
+        self.assertEqual(self.ci['jobs']['filter']['needs'] if 'needs' in self.ci['jobs']['filter'] else None, None)
+        self.assertNotIn('settle', self.ci['jobs']['macos']['needs'])
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'linux'])
+        self.assertNotIn('settle', self.rust['jobs']['filter'].get('needs', []))
 
     def test_linux_gate_fails_closed(self):
         gate = self.ci['jobs']['linux-gates']

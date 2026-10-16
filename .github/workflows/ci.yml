@@ -196,12 +196,26 @@ jobs:
           done <<< "$files"
           emit "$run_tests" false
 
+  # Free GitHub-hosted debounce. Only non-draft pull_request synchronize waits
+  # here; a newer push cancels this run before Blacksmith jobs start. Other
+  # events skip this job so they do not wait.
+  settle:
+    name: settle
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for a follow-up push to cancel this run
+        run: sleep 120
+
   linux:
     name: linux
     permissions:
       contents: read
-    needs: filter
-    if: needs.filter.outputs.run-tests == 'true'
+    needs: [filter, settle]
+    if: always() && !cancelled() && needs.filter.outputs.run-tests == 'true'
     # Optional hosted Linux diagnostic for the two CPython versions DEC-09 covers.
     # fail-fast is off so every requested cell reports. Does not replace the local
     # Ubuntu/WSL2 cells.
@@ -257,8 +271,9 @@ jobs:
     name: windows
     permissions:
       contents: read
-    needs: filter
+    needs: [filter, settle]
     if: >
+      always() && !cancelled() &&
       needs.filter.outputs.run-tests == 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
@@ -314,8 +329,8 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    needs: filter
-    if: github.event_name == 'pull_request' && needs.filter.outputs.run-tests == 'true'
+    needs: [filter, settle]
+    if: always() && !cancelled() && github.event_name == 'pull_request' && needs.filter.outputs.run-tests == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     steps:
