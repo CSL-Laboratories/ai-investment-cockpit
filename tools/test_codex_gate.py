@@ -43,12 +43,17 @@ mod = load_gate()
 _remote_state = patch.object(mod.FIXER_RECEIPTS, "live_state", return_value=([], []))
 
 
+_sleep = patch.object(mod.FIXER_RECEIPTS.time, "sleep")
+
+
 def setUpModule():
     _remote_state.start()
+    _sleep.start()
 
 
 def tearDownModule():
     _remote_state.stop()
+    _sleep.stop()
 
 
 def pr_payload(
@@ -1567,6 +1572,65 @@ class PausedReadinessTests(unittest.TestCase):
     def act(self, gh, verdict="READY"):
         return mod._act(verdict, REPO, "42", SHA, gh.comments, "2026-10-16", gh)
 
+    def test_known_label_rejection_retries_but_transport_stays_uncertain(self):
+        for error, settled in [(subprocess.CalledProcessError(1, ["gh"], stderr="gh: denied (HTTP 403)"), True),
+                               (subprocess.CalledProcessError(1, ["gh"], stderr="gh: failure (HTTP 500)"), False),
+                               (OSError("connection lost"), False)]:
+            gh = FakeGH(); original = gh.post
+            def fail_label(path, body):
+                if path.endswith("/labels"):
+                    raise error
+                return original(path, body)
+            with patch.object(gh, "post", side_effect=fail_label):
+                with self.assertRaises(type(error)):
+                    self.act(gh)
+            self.assertEqual(mod.FIXER_RECEIPTS.pending_ci_intent(gh.events, gh.comments) is None, settled)
+            if settled:
+                self.act(gh)
+                self.assertTrue(mod.FIXER_RECEIPTS.label_event_id(gh.events))
+
+    def test_rejection_receipt_failure_keeps_intent_uncertain(self):
+        gh = FakeGH(); original = gh.post_read_token
+        def fail_rejection(path, body):
+            if "claude-fixer-ci-rejected:" in body.get("body", ""):
+                raise OSError("receipt endpoint unavailable")
+            return original(path, body)
+        with patch.object(gh, "post", side_effect=subprocess.CalledProcessError(1, "gh", stderr="(HTTP 403)")), patch.object(gh, "post_read_token", side_effect=fail_rejection):
+            with self.assertRaises(OSError):
+                self.act(gh)
+        self.assertTrue(mod.FIXER_RECEIPTS.pending_ci_intent(gh.events, gh.comments))
+
+    def test_human_removal_preserved_only_for_observed_head(self):
+        gh = FakeGH(); self.act(gh); gh.delete(f"repos/{REPO}/issues/42/labels/ci:full")
+        self.assertIn("preserve-human", self.act(gh)[0])
+        newsha = "b" * 40
+        gh.prs = [pr_payload(head_sha=newsha)]
+        mod._act("READY", REPO, "42", newsha, gh.comments, "x", gh)
+        self.assertTrue(mod.FIXER_RECEIPTS.label_event_id(gh.events))
+
+    def test_recovery_isolates_first_pr_api_error(self):
+        gh = FakeGH(); gh.prs = [pr_payload(number=42), pr_payload(number=43)]
+        original = gh.get
+        def fail_first(path):
+            if "/issues/42/comments" in path:
+                raise OSError("first PR unavailable")
+            return original(path)
+        with patch.object(gh, "get", side_effect=fail_first):
+            logs = mod._handle_recovery({}, "schedule", REPO, gh, datetime.now(timezone.utc), "x")
+        self.assertTrue(any("pr=42 recovery=api-error" in line for line in logs))
+        self.assertTrue(any("pr=43" in line for line in logs))
+
+    def test_stale_label_listing_error_does_not_prevent_review_request(self):
+        gh = FakeGH(); original = gh.get
+        def fail_events(path):
+            if "/events" in path:
+                raise ValueError("bad events")
+            return original(path)
+        with patch.object(gh, "get", side_effect=fail_events):
+            logs = mod._post_request_if_needed(gh, REPO, pr_payload(), [], clear_stale_ready=True)
+        self.assertTrue(any("clear-label=error" in line for line in logs))
+        self.assertTrue(any("request=posted" in line for line in logs))
+
     def test_mediate_then_human_clears_allows_samehead_ready(self):
         gh = FakeGH()
         gh.comments = [comment(mod.action_marker(SHA, "MEDIATE"))]
@@ -1633,6 +1697,10 @@ class PausedReadinessTests(unittest.TestCase):
         gh.delete(f"repos/{REPO}/issues/42/labels/ci:full")
         self.assertIn("preserve-human", self.act(gh)[0])
         self.assertEqual(len(gh.posts), before)
+        observations = sum("claude-fixer-ci-removal:" in c["body"] for c in gh.comments)
+        self.assertEqual(observations, 1)
+        self.act(gh)
+        self.assertEqual(sum("claude-fixer-ci-removal:" in c["body"] for c in gh.comments), 1)
 
     def test_stale_event_cannot_revoke_new_head_label(self):
         gh = FakeGH(); self.act(gh)

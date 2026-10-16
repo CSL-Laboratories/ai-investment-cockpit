@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import uuid
+import time
 
 DEVIN_ID = 158243242
 CLAUDE_ID = 209825114
@@ -265,7 +266,7 @@ def label_event_id(events: list[dict]) -> int:
     return latest.get("id", 0) if latest.get("event") == "labeled" else 0
 
 
-def ci_label_decision(events, comments):
+def ci_label_decision(events, comments, head=None):
     relevant = sorted((e for e in events if e.get("event") in {"labeled", "unlabeled"}
         and (e.get("label") or {}).get("name") == "ci:full" and type(e.get("id")) is int), key=lambda e: e["id"])
     if not relevant:
@@ -278,7 +279,20 @@ def ci_label_decision(events, comments):
         bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
         and any(type(r.get("event")) is int and r["event"] == prior.get("id")
                 for r in records(str(c.get("body") or ""), "ci-invalidated")) for c in comments)
+    observed = [r for c in comments if bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
+                for r in records(str(c.get("body") or ""), "ci-removal")
+                if r.get("event") == latest["id"] and SHA_RE.fullmatch(str(r.get("head") or ""))]
+    if head and observed and all(r["head"] != head for r in observed):
+        return "allow"
     return "allow" if proven else "preserve-human-removal"
+
+
+def known_label_rejection(error):
+    """Only an explicit server rejection proves this POST did not mutate."""
+    if not isinstance(error, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"\(HTTP (400|401|403|404|409|422|429)\)", str(error.stderr or ""))
+    return int(match.group(1)) if match else None
 
 
 def begin_ci_intent(repo, number, head, events, post_comment):
@@ -293,6 +307,8 @@ def begin_ci_intent(repo, number, head, events, post_comment):
 
 def pending_ci_intent(events, comments):
     trusted = [c for c in comments if bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)]
+    rejected = {r.get("nonce") for c in trusted for r in records(str(c.get("body") or ""), "ci-rejected")
+                if r.get("status") in {400, 401, 403, 404, 409, 422, 429}}
     owned = {r.get("nonce") for c in trusted for r in records(str(c.get("body") or ""), "ci-owned")
              if SHA_RE.fullmatch(str(r.get("head") or "")) and type(r.get("event")) is int and r["event"] > 0}
     for comment in trusted:
@@ -311,15 +327,18 @@ def pending_ci_intent(events, comments):
                               and (e.get("label") or {}).get("name") == "ci:full"
                               and bot(e.get("actor") or {}, "github-actions[bot]", ACTIONS_ID)
                               and any(e["id"] > event_id for event_id in rollback_events) for e in events)
-            if nonce not in owned and not superseded and not rolled_back:
+            if nonce not in owned and nonce not in rejected and not superseded and not rolled_back:
                 return nonce
     return None
 
 
-def record_ci_ownership(repo, number, head, before_id, writer, get_pages, post_comment, proof=None, intent=None):
+def record_ci_ownership(repo, number, head, before_id, writer, get_pages, post_comment, proof=None, intent=None, sleep=None):
     # Bound immediate event visibility retries. A later invocation must not
     # infer attribution from a PAT actor: its durable intent stays uncertain.
-    for _ in range(3):
+    sleep = sleep or time.sleep
+    for attempt in range(3):
+        if attempt:
+            sleep(1 << (attempt - 1))
         events = get_pages(f"repos/{repo}/issues/{number}/events")
         current = label_event_id(events)
         if current:

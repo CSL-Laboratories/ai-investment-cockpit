@@ -42,12 +42,30 @@ def reply(data, user=None):
 
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
+        sleeper = patch.object(m.time, "sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
         self.items = findings([thread()])
         self.receipt = {"root": 1, "fingerprint": self.items[0]["fingerprint"],
                         "status": "addressed", "base": A, "commit": B}
 
     def pending(self, comments, compare=lambda base, tip: "ahead", manual=False):
         return m.pending_findings(self.items, comments, C, compare, lambda user: "write", manual)
+
+    def test_rejections_and_head_observations_require_trusted_provenance(self):
+        import subprocess
+        for status in (400, 401, 403, 404, 409, 422, 429):
+            self.assertEqual(m.known_label_rejection(subprocess.CalledProcessError(1, "gh", stderr=f"(HTTP {status})")), status)
+        for status in (408, 500, 503):
+            self.assertIsNone(m.known_label_rejection(subprocess.CalledProcessError(1, "gh", stderr=f"(HTTP {status})")))
+        self.assertIsNone(m.known_label_rejection(OSError("HTTP 403")))
+        removal = {"id": 9, "event": "unlabeled", "label": {"name": "ci:full"}}
+        observed = {"body": m.marker("ci-removal", {"head": A, "event": 9}),
+                    "user": actor("github-actions[bot]", m.ACTIONS_ID)}
+        self.assertEqual(m.ci_label_decision([removal], [observed], A), "preserve-human-removal")
+        self.assertEqual(m.ci_label_decision([removal], [observed], B), "allow")
+        self.assertEqual(m.ci_label_decision([removal], [observed | {"user": actor("other", 9)}], B), "preserve-human-removal")
+        self.assertEqual(m.ci_label_decision([removal | {"id": 10}], [observed], B), "preserve-human-removal")
 
     def test_durable_intent_uncertainty_restart_and_manual_reconciliation(self):
         comments = []
@@ -72,6 +90,7 @@ class ReceiptTests(unittest.TestCase):
         with patch.object(m, "pages", side_effect=[[], [], [late]]) as fetch:
             m.record_ci_ownership("a/b", 1, A, 0, "writer", fetch, post, intent=intent)
         self.assertEqual(fetch.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [1, 2])
         self.assertIsNone(m.pending_ci_intent([late], comments))
 
     def test_same_second_correction_uses_monotonic_comment_id(self):
@@ -83,6 +102,8 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(self.pending([receipt, follow | {"id": 100}]), [])
         edited = follow | {"id": 99, "created_at": "2026-10-15T01:00:00Z", "updated_at": receipt["created_at"]}
         self.assertTrue(self.pending([receipt, edited]))
+        first = m.attempt_key(C, self.pending([receipt, edited]))
+        self.assertEqual(first, m.attempt_key(C, self.pending([receipt, edited, edited | {"id": 98}])))
 
     def test_inline_indented_receipts_and_quoted_writer_correction(self):
         for body in ("Fixed. " + m.marker("result", self.receipt), "  " + m.marker("result", self.receipt)):
@@ -166,6 +187,9 @@ class ReceiptTests(unittest.TestCase):
 
 class AttemptTests(unittest.TestCase):
     def setUp(self):
+        sleeper = patch.object(m.time, "sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
         self.items = findings([thread()])
         self.key = m.attempt_key(A, self.items)
 
@@ -251,6 +275,9 @@ class AttemptTests(unittest.TestCase):
 
 class ReadinessTests(unittest.TestCase):
     def setUp(self):
+        sleeper = patch.object(m.time, "sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
         self.items = findings([thread()])
         self.pause = {"id": 10, "user": actor("github-actions[bot]", m.ACTIONS_ID),
                       "body": m.marker("paused", m.attempt_key(A, self.items))}

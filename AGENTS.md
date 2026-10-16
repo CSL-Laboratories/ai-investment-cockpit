@@ -296,16 +296,29 @@ MEDIATE retains trusted deduplication. Existing clean labels cause no repeated
 label writes or READY comments. `ci:full` requests CI, not merge approval.
 
 Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
-head changes. Only that event can be revoked. Human removals and later re-adds
-are preserved; ambiguous ownership requires manual action. GitHub has no atomic
+head changes. Only that event can be revoked. Human removals are observed with a trusted head-bound receipt and preserved
+on that head. A fresh verified READY on a different head may request CI again;
+The observation binds the first verified head where the gate sees the removal,
+not a reconstructed historical head. If removal on A is first seen on B, B is
+conservatively preserved; a later head may request CI. This also covers legacy
+removal history without inventing ownership.
+Later re-adds are preserved; ambiguous ownership requires manual action. GitHub has no atomic
 compare-and-delete, so a human change between the final check and deletion is an
 unavoidable narrow race, not an atomic guarantee.
 
-Before adding a label, the gate records a trusted intent. It retries immediate
-label-event visibility three times. If ownership remains unknown or recording
+Before adding a label, the gate records a trusted intent. It retries label-event visibility three times with one- and two-second waits. If ownership remains unknown or recording
 proof fails, the intent blocks subsequent READY processing, even after a restart.
 It never infers ownership from the PAT owner's name. Inspect the label and
 manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.
 The removal must be later than the intent's timestamp (same-second ambiguity
 remains blocked). Legacy labels without ownership proof are not automatically
 removed. API failures report uncertain cleanup rather than claiming absence.
+
+An explicit HTTP 400/401/403/404/409/422/429 label-write rejection settles only
+that intent and permits retry. Transport errors, timeouts, and server failures
+remain uncertain; failure to record rejection also retains the blocker. A failed
+PR reconciliation does not prevent scheduled recovery of other PRs.
+Same-second review edits are conservatively eligible when ordering is ambiguous;
+identical follow-up content retains the same findings fingerprint and three-attempt
+budget. Same-second human removal cannot prove intent ordering: remove/re-add
+in a later second to reconcile. Event IDs and comment IDs are never compared.

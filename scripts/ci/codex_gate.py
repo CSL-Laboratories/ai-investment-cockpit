@@ -913,7 +913,7 @@ class GitHub:
             text=True,
             env=env,
             input=input_text,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
     def writer_login(self) -> str:
@@ -1122,22 +1122,22 @@ def _clear_stale_ready(
     logs: list[str] = []
     if not sha:
         return logs
-    raw = strict_items(gh, f"repos/{repository}/issues/{number}/comments")
-    event = FIXER_RECEIPTS.label_event_id(strict_items(gh, f"repos/{repository}/issues/{number}/events"))
-    stale_owned = any(FIXER_RECEIPTS.bot(c.get("user") or {}, "github-actions[bot]", FIXER_RECEIPTS.ACTIONS_ID)
-        and any(r.get("head") != sha and FIXER_RECEIPTS.SHA_RE.fullmatch(str(r.get("head") or ""))
-                and r.get("event") == event and event > 0
-                for r in FIXER_RECEIPTS.records(str(c.get("body") or ""), "ci-owned")) for c in raw)
-    if not stale_owned:
-        return logs
     try:
+        raw = strict_items(gh, f"repos/{repository}/issues/{number}/comments")
+        event = FIXER_RECEIPTS.label_event_id(strict_items(gh, f"repos/{repository}/issues/{number}/events"))
+        stale_owned = any(FIXER_RECEIPTS.bot(c.get("user") or {}, "github-actions[bot]", FIXER_RECEIPTS.ACTIONS_ID)
+            and any(r.get("head") != sha and FIXER_RECEIPTS.SHA_RE.fullmatch(str(r.get("head") or ""))
+                    and r.get("event") == event and event > 0
+                    for r in FIXER_RECEIPTS.records(str(c.get("body") or ""), "ci-owned")) for c in raw)
+        if not stale_owned:
+            return logs
         owned = FIXER_RECEIPTS.revoke_owned_ci(repository, number, sha,
             lambda path: strict_items(gh, path),
             lambda repo, num: gh.delete_read_token(f"repos/{repo}/issues/{num}/labels/{CI_FULL_LABEL}"),
             lambda repo, num, body: gh.post_read_token(f"repos/{repo}/issues/{num}/comments", {"body": body}))
         if owned:
             logs.append(f"codex-gate: pr={number} cleared={CI_FULL_LABEL}")
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, ValueError):
         logs.append(f"codex-gate: pr={number} clear-label=error")
     return logs
 
@@ -1235,26 +1235,29 @@ def _handle_recovery(
         if not same_repo_open_pr(pr, repository):
             logs.append(f"codex-gate: pr={number} recovery=skip-ineligible-pr")
             continue
-        sha = safe_sha((pr.get("head") or {}).get("sha"))
-        authors = marker_authors(gh)
-        comments = trusted_comments(_issue_comments(gh, repository, number), authors)
-        request_logs = _post_request_if_needed(
-            gh,
-            repository,
-            pr,
-            comments,
-            clear_stale_ready=True,
-            only_gate_owned_label=True,
-        )
-        logs.extend(request_logs)
-        # A displaced PR-open run recovers here. A new request has no verdict yet.
-        if any("request=posted" in line for line in request_logs):
-            continue
-        reviews = _reviews(gh, repository, number)
-        verdict = decide_recovery(
-            sha=sha, comments=comments, reviews=reviews, now=now, day=day
-        )
-        logs.extend(_act(verdict, repository, number, sha, comments, day, gh, reviews))
+        try:
+            sha = safe_sha((pr.get("head") or {}).get("sha"))
+            authors = marker_authors(gh)
+            comments = trusted_comments(_issue_comments(gh, repository, number), authors)
+            request_logs = _post_request_if_needed(
+                gh,
+                repository,
+                pr,
+                comments,
+                clear_stale_ready=True,
+                only_gate_owned_label=True,
+            )
+            logs.extend(request_logs)
+            # A displaced PR-open run recovers here. A new request has no verdict yet.
+            if any("request=posted" in line for line in request_logs):
+                continue
+            reviews = _reviews(gh, repository, number)
+            verdict = decide_recovery(
+                sha=sha, comments=comments, reviews=reviews, now=now, day=day
+            )
+            logs.extend(_act(verdict, repository, number, sha, comments, day, gh, reviews))
+        except (OSError, ValueError, subprocess.CalledProcessError):
+            logs.append(f"codex-gate: pr={number} recovery=api-error-retry")
     return logs or ["codex-gate: recovery=no-open-prs"]
 
 
@@ -1296,8 +1299,16 @@ def _act(
         events = get_pages(f"repos/{repository}/issues/{number}/events")
         if FIXER_RECEIPTS.pending_ci_intent(events, comments):
             return [f"codex-gate: pr={number} skip=unknown-label-ownership; manually remove/re-add ci:full to reconcile"]
-        decision = FIXER_RECEIPTS.ci_label_decision(events, comments)
+        decision = FIXER_RECEIPTS.ci_label_decision(events, comments, sha)
         if decision == "preserve-human-removal":
+            removal = max((e["id"] for e in events if e.get("event") == "unlabeled"
+                           and (e.get("label") or {}).get("name") == CI_FULL_LABEL and type(e.get("id")) is int), default=0)
+            observed = any(FIXER_RECEIPTS.bot(c.get("user") or {}, "github-actions[bot]", FIXER_RECEIPTS.ACTIONS_ID)
+                and any(r.get("event") == removal and r.get("head") == sha
+                        for r in FIXER_RECEIPTS.records(str(c.get("body") or ""), "ci-removal")) for c in comments)
+            if not observed:
+                gh.post_read_token(f"repos/{repository}/issues/{number}/comments",
+                    {"body": FIXER_RECEIPTS.marker("ci-removal", {"head": sha, "event": removal})})
             return [f"codex-gate: pr={number} skip=preserve-human-label-removal"]
         if decision == "present":
             return [f"codex-gate: pr={number} ready-already-present"]
@@ -1311,7 +1322,14 @@ def _act(
         before = FIXER_RECEIPTS.label_event_id(events)
         intent = FIXER_RECEIPTS.begin_ci_intent(repository, number, sha, events,
             lambda repo, num, body: gh.post_read_token(f"repos/{repo}/issues/{num}/comments", {"body": body})) if not before else None
-        gh.post(f"repos/{repository}/issues/{number}/labels", {"labels": [name]})
+        try:
+            gh.post(f"repos/{repository}/issues/{number}/labels", {"labels": [name]})
+        except Exception as error:
+            status = FIXER_RECEIPTS.known_label_rejection(error)
+            if intent and status:
+                gh.post_read_token(f"repos/{repository}/issues/{number}/comments",
+                    {"body": FIXER_RECEIPTS.marker("ci-rejected", {"nonce": intent["nonce"], "status": status})})
+            raise
         proof = []
         try:
             FIXER_RECEIPTS.record_ci_ownership(repository, number, sha, before, gh.writer_login(),
