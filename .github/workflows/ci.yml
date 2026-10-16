@@ -64,22 +64,16 @@ on:
 permissions:
   contents: read
 
-# Newer runs of the same PR cancel superseded heads (cancel-in-progress). The
-# group is the PR number (or ref for branch runs), not the head SHA: a SHA
-# suffix made every push a new group, so old runs kept billing. Suffixes are
-# nightly | label-<expected-head>-<scope> | manual-<scope> | queue | draft | default.
-# Label workflow_dispatch keeps its expected head and scope because
-# `gh workflow run --ref` resolves to the current head; a stale label rerun
-# must not cancel that head's PR run or newer label run. Scope isolation also
-# prevents a delayed enhancement/Linux request cancelling a full request on
-# the same head. Filter still
-# fail-closes stale dispatch context before billed matrix work. Nightly has
-# its own group so it cannot cancel a main-push Linux/Windows run (or vice
-# versa). Draft synchronize uses a separate group so its fail-closed
-# aggregator cannot cancel a ready_for_review matrix (or vice versa).
+# Ordinary PR heads share one group, but arrival order cannot cancel a newer
+# head: queue up to 100 pending runs and let the default-branch companion cancel
+# only verified strict ancestors of the live head. Until that policy lands on
+# main, old work may finish before the current run; no status is fabricated.
+# Label dispatches retain expected-head/scope identity; manual scopes, nightly,
+# drafts and queue runs stay isolated and keep their existing non-PR policy.
 concurrency:
   group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'max' || 'single' }}
 
 jobs:
   filter:
@@ -252,6 +246,7 @@ jobs:
         run: |
           python -X utf8 -B tools/test_ci_dispatch_scope.py
           python -X utf8 -B tools/test_ci_settle.py
+          python -X utf8 -B tools/test_ci_cancel_controller.py
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
   # when filter ran and Linux was skipped because the change is docs-only.
