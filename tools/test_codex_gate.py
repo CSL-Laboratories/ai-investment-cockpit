@@ -104,6 +104,10 @@ class FakeGH:
         self.prs: list[dict[str, Any]] = []
         self.events: list[dict[str, Any]] = []
         self.fail_workflow = False
+        self.writer = "github-actions[bot]"
+
+    def writer_login(self) -> str:
+        return self.writer
 
     def get(self, path: str) -> Any:
         if path.rstrip("/") in {"user", "/user"} or path.endswith("/user"):
@@ -138,6 +142,52 @@ class FakeGH:
         if self.fail_workflow:
             raise OSError("workflow missing")
         self.workflows.append((workflow, fields))
+
+
+class WriterIdentityTests(unittest.TestCase):
+    def test_writer_login_uses_write_token(self) -> None:
+        gh = mod.GitHub("reader", "writer")
+        with patch.object(gh, "_run", return_value='{"login": "trigger-author"}') as run:
+            self.assertEqual(gh.writer_login(), "trigger-author")
+        run.assert_called_once_with(["api", "user"], token="writer")
+
+    def test_failed_writer_lookup_does_not_trust_reader(self) -> None:
+        gh = FakeGH()
+        buf = io.StringIO()
+        with patch.dict(os.environ, {"CODEX_GATE_LOGINS": ""}), \
+             patch.object(gh, "writer_login", side_effect=OSError("lookup failed")), \
+             patch.object(gh, "get") as get, patch("sys.stdout", buf):
+            authors = mod.marker_authors(gh)
+        self.assertEqual(authors, frozenset({"github-actions[bot]"}))
+        get.assert_not_called()
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_pat_request_marker_prevents_duplicate_request(self) -> None:
+        gh = FakeGH()
+        gh.writer = "trigger-author"
+        gh.comments = [comment(mod.build_request_comment(SHA), login=gh.writer)]
+        with patch.dict(os.environ, {"CODEX_GATE_LOGINS": ""}):
+            rc = mod.run(event_name="pull_request", event={"pull_request": pr_payload()},
+                         repository=REPO, pat="not-a-real-secret", gh=gh)
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.posts, [])
+        self.assertEqual(gh.dispatches, [])
+
+    def test_pat_action_marker_prevents_repeat_fixer(self) -> None:
+        gh = FakeGH()
+        gh.writer = "trigger-author"
+        gh.prs = [pr_payload()]
+        gh.comments = [
+            comment(mod.build_request_comment(SHA), "2026-10-15T11:00:00Z", gh.writer),
+            comment(mod.action_marker(SHA, "FIX"), "2026-10-15T11:30:00Z", gh.writer),
+        ]
+        with patch.dict(os.environ, {"CODEX_GATE_LOGINS": ""}):
+            rc = mod.run(event_name="schedule", event={}, repository=REPO,
+                         pat="not-a-real-secret", gh=gh,
+                         now=datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(rc, 0)
+        self.assertEqual(gh.posts, [])
+        self.assertEqual(gh.dispatches, [])
 
 
 class ParseVerdictTests(unittest.TestCase):
@@ -449,6 +499,7 @@ class RunTests(unittest.TestCase):
         body = gh.posts[0][1]["body"]
         self.assertIn(mod.gate_marker(SHA), body)
         self.assertIn("@codex review", body)
+        self.assertNotIn("@claude", body)
         self.assertIn("CODEX-GATE: FIX", body)
         self.assertIn("Linear needs-decision", body)
         self.assertNotIn("stuck-thread-watch", body)
