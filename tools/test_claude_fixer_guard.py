@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -111,12 +112,29 @@ class GuardTests(unittest.TestCase):
                                  ({"is_error": True}, "model-error")]:
             data = {"type": "result", "subtype": "success", "num_turns": 12} | record
             self.execution.write_text(json.dumps([data]))
-            body = m.terminal(CONFIG, self.state, str(self.execution), "success")
+            for outcome in ("failure", "cancelled", "success"):
+                self.assertEqual(m.execution_reason(str(self.execution), outcome), expected)
+            body = m.terminal(CONFIG, self.state, str(self.execution), "failure")
             self.assertIn(expected, body)
             self.assertNotIn("PRIVATE", body)
             self.assertIn("three-attempt", body)
         self.assertEqual(m.execution_reason("", "failure"), "model-step-failed-or-timed-out")
         self.assertEqual(m.execution_reason("", "success"), "execution-result-unavailable")
+
+    def test_remote_named_terminal_is_a_hook_invocation_not_a_terminal_command(self):
+        (self.path / "context.json").write_text(json.dumps(CONFIG))
+        with patch.object(m, "__file__", str(self.path / "pre-push")), \
+                patch.object(sys, "argv", ["pre-push", "terminal", "https://example.invalid/repo"]), \
+                patch.object(sys, "stdin") as stdin, patch.object(m, "terminal") as terminal:
+            stdin.read.return_value = f"HEAD {B} refs/heads/fix {A}"
+            self.assertEqual(m.main(), 1)
+            terminal.assert_not_called()
+        self.assertEqual(json.loads(self.state.read_text()), {})
+
+    def test_turn_exhaustion_has_priority_over_recovered_denial(self):
+        self.execution.write_text(json.dumps({"type": "result", "num_turns": 38,
+                                             "permission_denials": ["private"]}))
+        self.assertEqual(m.execution_reason(str(self.execution), "failure"), "turn-limit")
 
     def test_comment_denial_keeps_summary_and_returns_failure(self):
         (self.path / "context.json").write_text(json.dumps(CONFIG))
@@ -275,6 +293,10 @@ class WorkflowTests(unittest.TestCase):
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
             for command in ("fetch", "pull", "rebase", "merge", "config"):
                 self.assertNotIn(f"Bash(git {command}", allow)
+            pushes = re.findall(r"Bash\(git push[^)]*\)", allow)
+            self.assertEqual(pushes, ["Bash(git push origin HEAD:refs/heads/${{ steps.preflight.outputs.head_ref }})"])
+            for bypass in ("Bash(git -", "Bash(git remote", "--no-verify", "--force", "--dry-run"):
+                self.assertNotIn(bypass, "\n".join(re.findall(r"Bash\(git [^)]*\)", allow)))
             self.assertIn("If push is rejected or uncertain, STOP", body)
             self.assertIn("before emitting any addressed receipt", body)
             self.assertIn("has no Linear, Context7 or Parallel tools", body)
@@ -408,13 +430,20 @@ class TerminalReceiptIntegrationTests(unittest.TestCase):
             read = m.bounded_reader()
             for _ in range(40):
                 read("fixture")
-            with self.assertRaisesRegex(ValueError, "budget"):
+            with self.assertRaisesRegex(m.AuditReadError, "budget"):
                 read("fixture")
         with patch.object(m.time, "monotonic", side_effect=[0, 71]), patch.object(m, "api") as api:
             read = m.bounded_reader()
-            with self.assertRaisesRegex(ValueError, "budget"):
+            with self.assertRaisesRegex(m.AuditReadError, "budget"):
                 read("fixture")
             api.assert_not_called()
+
+    def test_reader_decode_and_budget_errors_are_global_unverified(self):
+        def exhausted(_):
+            raise m.AuditReadError("budget")
+        self.assertIn("audit: unverified", self.audit(exhausted))
+        with patch.object(m, "api", side_effect=ValueError("bad JSON")), self.assertRaises(m.AuditReadError):
+            m.bounded_reader()("fixture")
 
     def test_install_captures_context_and_workflow_uses_trusted_consumer(self):
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")

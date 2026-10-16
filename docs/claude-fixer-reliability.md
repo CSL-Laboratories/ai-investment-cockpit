@@ -100,3 +100,23 @@ Sources: [Git pre-push contract](https://git-scm.com/docs/githooks#_pre_push),
 [Actions timeout syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepstimeout-minutes),
 [#116 Codex event](https://github.com/CSL-Laboratories/ai-investment-cockpit/actions/runs/38944245119),
 [#147 receipt](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/147#discussion_r4297849933).
+
+## Independent subscription review follow-up
+
+An independent, tool-disabled Claude Max source review found that failed model
+steps masked execution-file reasons and Git remote names could collide with
+the hook's maintenance modes. The audit now reads coarse result fields even
+after step failure, prioritizes turn exhaustion over recovered denials, and
+uses step failure only as a fallback. Install/terminal modes require exactly
+one argument; a two-argument Git hook invocation always goes through target
+validation. Read-budget and JSON decode failures remain globally unverified
+instead of being mistaken for an observation-history change. Regression tests
+cover these paths and the exact ordinary-push allowlist (including negative
+force/no-verify/config/remote/dry-run controls).
+
+Receipt reconciliation is a current snapshot and can include a valid receipt
+that predates this run. It is not attribution of a fix to the current model
+invocation. A missing guarded attempt remains unverified; neither local hook
+configuration nor the shared runner identity is a hostile-code boundary.
+This change does not alter checkout credential wiring or promise resistance
+to code that changes hooks or uses the existing runner credential directly.
