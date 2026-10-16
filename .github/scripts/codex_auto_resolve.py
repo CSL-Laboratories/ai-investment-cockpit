@@ -356,13 +356,18 @@ def _is_fence_opener(stripped: str) -> bool:
 def strip_quoted_and_fenced(text: str) -> str:
     """Drop quoted lines and fenced code so echoed verdicts cannot authorize."""
     kept: list[str] = []
-    in_fence = False
+    fence = ""
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
         if _is_fence_opener(stripped):
-            in_fence = not in_fence
-            continue
-        if in_fence or stripped.startswith(">"):
+            marker = stripped[:3]
+            if not fence:
+                fence = marker
+                continue
+            if marker == fence:
+                fence = ""
+                continue
+        if fence or stripped.startswith(">"):
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -1043,34 +1048,44 @@ def resolved_count_today(
 ) -> int:
     """Count unique completed PAT auto-resolves in the last 24h.
 
-    A PAT resolved marker in the window counts even when the cite is older,
-    so a delayed ``retry-resolve`` cannot hide from later scans. A PAT cite
-    whose thread is still open is a failed or in-flight attempt and does
-    not consume the cap — ``retry-resolve`` may complete it this scan. Unique
-    ``(thread id, sha)`` pairs mean a same-day cite plus success marker
-    charge once, while a reopen-and-resolve on a new head the same day
-    charges again. A later-day marker retry of an already-resolved thread
-    is not a new resolve. Missing timestamps fail closed (count).
+    A completed resolve is a ``(thread id, sha)`` pair whose PAT cite and
+    resolved marker both fall in the window. A cite on a still-open thread
+    is in-flight and does not count. A failed cite on an earlier head does
+    not extra-charge once a later head resolves the same thread. A marker
+    whose matching cite is older than 24h is a late receipt / retry-mark
+    and does not consume today's cap; the resolving scan already charged
+    via ``posted_today``. Posted-unmarked resolves (cite in window, thread
+    closed, no marker for that thread) count once per thread. Missing
+    timestamps fail closed (count).
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_ids or frozenset()
-    seen: set[tuple[str, str]] = set()
+    cite_window: set[tuple[str, str]] = set()
+    marker_window: set[tuple[str, str]] = set()
+    marker_tids: set[str] = set()
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
-        if stamped is not None and stamped < start:
-            continue
+        in_window = stamped is None or stamped >= start
         body = body_of(comment)
         for tid, digest in parse_resolved_markers(body):
             if tid and digest:
-                seen.add((tid, digest))
+                marker_tids.add(tid)
+                if in_window:
+                    marker_window.add((tid, digest))
         for tid, digest in parse_cite_markers(body):
-            if tid and digest and tid not in pending:
-                seen.add((tid, digest))
-    return len(seen)
+            if tid and digest and in_window:
+                cite_window.add((tid, digest))
+    completed = marker_window & cite_window
+    unmarked: set[str] = set()
+    for tid, _digest in cite_window:
+        if tid in pending or tid in marker_tids:
+            continue
+        unmarked.add(tid)
+    return len(completed) + len(unmarked)
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:

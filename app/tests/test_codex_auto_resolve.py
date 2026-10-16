@@ -337,6 +337,10 @@ def test_quoted_and_fenced_verdicts_cannot_authorize():
     assert mod.parse_thread_verdicts(quoted) == []
     assert mod.parse_thread_verdicts(fenced) == []
     assert mod.parse_thread_verdicts(tilde) == []
+    mixed_backtick = f"```\n~~~\n{verdict_body()}\n~~~\n```\n"
+    mixed_tilde = f"~~~\n```\n{verdict_body()}\n```\n~~~\n"
+    assert mod.parse_thread_verdicts(mixed_backtick) == []
+    assert mod.parse_thread_verdicts(mixed_tilde) == []
 
 
 def test_login_aliases_accept_graphql_and_rest():
@@ -768,7 +772,7 @@ def test_old_cite_retry_mark_does_not_consume_today_cap():
     assert any("resolve=posted" in line for line in logs)
 
 
-def test_old_cite_retry_resolve_counts_today_via_resolved_marker():
+def test_old_cite_retry_mark_marker_does_not_count_today():
     old = NOW - timedelta(hours=48)
     gh = ready_gh(
         threads=[
@@ -790,8 +794,24 @@ def test_old_cite_retry_resolve_counts_today_via_resolved_marker():
     )
     gh.issue_comments[12] = [comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), NOW)]
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
-    assert THREAD2 not in gh.resolves
-    assert any("skip=over-cap" in line for line in logs)
+    assert THREAD2 in gh.resolves
+    assert any("resolve=posted" in line for line in logs)
+
+
+def test_failed_cite_on_prior_head_does_not_extra_charge():
+    gh = ready_gh(
+        threads=[thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))])],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    gh.issue_comments[12] = [
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+        comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2)),
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD2 in gh.resolves
+    assert any("resolve=posted" in line for line in logs)
+    assert not any("skip=over-cap" in line for line in logs)
 
 
 def test_old_cite_retry_resolve_consumes_in_scan_cap():
