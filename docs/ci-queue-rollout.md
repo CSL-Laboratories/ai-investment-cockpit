@@ -44,7 +44,20 @@ The review workflow keeps #160's read-only `contents: read` and `checks: read`
 permissions; it adds no write token or permission. `checks: read` was itself new
 in original #160 and remains part of the owner's review of this proposal. API
 authorization or transport failures block; no permission is silently escalated.
-The policy script executes from the PR/queue base, never from an unreviewed head.
+The policy script executes from the PR/queue base. The workflow YAML itself still
+comes from the PR/queue/dispatch ref, so a PR could replace that step or its check
+name. The platform aggregates also execute head code. Base checkout alone is not
+an independent protection boundary. Keep direct `Devin Review` required; do not
+replace it with `review-gate` under this proposal. A separately approved protected
+required workflow or equivalent owner-enforced control over workflow/policy edits
+is necessary before considering replacement. This change creates no such control
+and changes no ruleset, CODEOWNERS, or permissions.
+
+On a PR head, a later Linux-scope dispatch can report a narrower successful
+`queue-gates` result after a full-scope failure. Inspect the actual full platform
+checks when assessing PR diagnostics. An enforced merge-group run must independently
+require both Windows cells on its distinct merge-group SHA; PR dispatch results
+are not evidence for queue enforcement.
 
 Queue discovery paginates the base-to-group comparison and each constituent commit's
 associated PRs. Every constituent commit must map uniquely to an open non-draft PR
@@ -68,7 +81,9 @@ that every GitHub queue topology maps successfully.
    bootstrap success.
 3. The owner reviews read permissions, the exact check names above, app provenance,
    base policy loading and review/queue diagnostics. Preserve current direct Devin
-   protection until the replacement is proven. No role, receipt, trust or fixer
+   protection. Replacing it remains blocked on a separately approved protected
+   workflow/policy control; a green canary alone cannot establish that control.
+   No role, receipt, trust or fixer
    policy is replaced by these aggregates.
 4. After explicit owner approval, configure required checks/queue enforcement and
    run a controlled live queue canary. Confirm the required checks bind to the
