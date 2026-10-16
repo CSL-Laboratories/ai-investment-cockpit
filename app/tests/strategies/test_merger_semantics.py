@@ -32,14 +32,25 @@ from strategies.merger_edge import (
 )
 from strategies.merger_semantics import (
     _CASH,
+    _CLOSED,
+    _DEFINITIVE,
+    _EXPECTED_DATE,
+    _FAILED,
+    _OUTSIDE_DATE,
+    _REMAINS_PENDING,
     CashMergerSemanticVerifier,
     SemanticEvidenceUnavailable,
+    _asserted,
+    _assertion_matches,
     _combined_source_text,
     _derive_eligibility,
     _require_strategy_eligible,
+    _sentence_fragments,
     _text,
+    _unique_match,
     record_selection_commitment,
 )
+from strategies.semantic_text import MARKUP_BOUNDARY
 from tests.strategies.test_merger_edge import (
     ACCESSION,
     CIK,
@@ -1121,3 +1132,62 @@ def _candidate(row):
     }
 
 MAX_SELECTION_STALE_QUOTE_AGE = timedelta(minutes=6)
+
+
+_FRAGMENT_PARITY_CASES = (
+    "each outstanding share of the company's common stock will be converted into the "
+    "right to receive $85.00 in cash per share. the shares trade on nasdaq.",
+    "each share of common stock will be converted into the right to receive $10.00 "
+    "in cash per share. each share of common stock will be converted into the right "
+    "to receive $12.00 in cash per share.",
+    "the company entered into a definitive agreement and plan of merger. "
+    "the merger remains pending.",
+    "the merger was completed on april 15, 2027. par value $0.001 per share.",
+    "the merger agreement was terminated. transaction will not proceed.",
+    "if the merger was completed? the merger was completed on june 1, 2027.",
+    "it is not true that the merger was completed.",
+    "expected resolution date is march 1, 2027. outside date is june 1, 2027.",
+    "expected resolution date is 2027-03-01 and expected resolution date is 2027-04-02.",
+    "no definitive merger. non-binding offer.",
+    "each outstanding share of common stock will be converted into the right to "
+    "receive $190.00 in cash per share, with no fractional shares issued.",
+    "the merger was completed" + MARKUP_BOUNDARY + "on april 15, 2027.",
+)
+
+
+def _matcher_result(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except SemanticEvidenceUnavailable as exc:
+        return (type(exc).__name__, str(exc))
+
+
+def test_shared_sentence_fragments_match_fresh_split():
+    """CSL-247: a shared fragment list must match a fresh per-pattern split."""
+    patterns = (
+        _CASH, _DEFINITIVE, _CLOSED, _FAILED, _REMAINS_PENDING,
+        _EXPECTED_DATE, _OUTSIDE_DATE,
+    )
+    for text in _FRAGMENT_PARITY_CASES:
+        fragments = _sentence_fragments(text)
+        for pattern in patterns:
+            assert [
+                match.group(0) for match in _assertion_matches(pattern, text)
+            ] == [
+                match.group(0)
+                for match in _assertion_matches(pattern, text, fragments=fragments)
+            ]
+            assert _asserted(pattern, text) == _asserted(
+                pattern, text, fragments=fragments
+            )
+        for pattern, field in (
+            (_EXPECTED_DATE, "expected resolution date"),
+            (_OUTSIDE_DATE, "outside date"),
+        ):
+            assert _matcher_result(_unique_match, pattern, text, field=field) == _matcher_result(
+                _unique_match, pattern, text, field=field, fragments=fragments
+            )
+        for amended in (False, True):
+            assert _matcher_result(_derive_eligibility, text, amended=amended) == _matcher_result(
+                _derive_eligibility, text, amended=amended, fragments=fragments
+            )
