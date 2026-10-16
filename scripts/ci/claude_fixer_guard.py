@@ -28,6 +28,10 @@ def api(path, timeout=30):
     return json.loads(command(["gh", "api", path], timeout=timeout))
 
 
+class AuditReadError(RuntimeError):
+    """Read failures must not be confused with observation validation."""
+
+
 def bounded_reader():
     deadline = time.monotonic() + 70
     calls = 0
@@ -36,8 +40,11 @@ def bounded_reader():
         remaining = deadline - time.monotonic()
         calls += 1
         if remaining <= 0 or calls > 40:
-            raise ValueError("terminal read budget exhausted")
-        return api(path, timeout=min(10, remaining))
+            raise AuditReadError("terminal read budget exhausted")
+        try:
+            return api(path, timeout=min(10, remaining))
+        except ValueError as error:
+            raise AuditReadError("invalid terminal API response") from error
     return read
 
 
@@ -89,7 +96,7 @@ def receipt_audit(config, read, consumer):
             raise ValueError("head changed during receipt audit")
         details = "; ".join(f"{r['root']}={r['status']}" for r in reports)
         return f"Per-root receipt audit at `{head}`: {details}."
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+    except (AuditReadError, OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
         return "Per-root receipt audit: unverified (read, context, snapshot or bounded-budget failure)."
 
 
@@ -142,27 +149,26 @@ def guard(config, updates, remote, state_path, read=api, git=command):
 
 def execution_reason(path, outcome):
     """Read only coarse result fields; never echo model text or command inputs."""
-    if outcome != "success":
-        return "model-step-failed-or-timed-out"
+    fallback = "execution-result-unavailable" if outcome == "success" else "model-step-failed-or-timed-out"
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         items = data if isinstance(data, list) else [data]
         results = [r for r in items if isinstance(r, dict) and r.get("type") == "result"]
         if not results:
-            return "execution-result-unavailable"
+            return fallback
         for result in results:
+            turns = result.get("num_turns")
+            if (type(turns) is int and turns > 30) or result.get("subtype") == "error_max_turns":
+                return "turn-limit"
             if result.get("permission_denials"):
                 return "command-denied"
-            turns = result.get("num_turns")
             if type(turns) is not int or turns < 0:
-                return "execution-result-unavailable"
-            if turns > 30 or result.get("subtype") == "error_max_turns":
-                return "turn-limit"
+                return fallback
             if result.get("is_error") or result.get("subtype") != "success":
                 return "model-error"
-        return "model-completed"
+        return "model-completed" if outcome == "success" else fallback
     except (OSError, ValueError, TypeError):
-        return "execution-result-unavailable"
+        return fallback
 
 
 def terminal(config, state_path, execution, outcome, read=api, consumer=None):
@@ -178,13 +184,14 @@ def terminal(config, state_path, execution, outcome, read=api, consumer=None):
             live_compare = read(f"repos/{config['repo']}/compare/{candidate}...{live}")
             if base_compare.get("status") == "ahead" and live_compare.get("status") in {"ahead", "identical"}:
                 pushed = candidate
-    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
+    except (AuditReadError, OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
         pass  # Unknown is not successful, and never a needs-human result receipt.
     return (f"Claude fixer terminal audit: {reason}. Checkout `{config['base']}`. "
             f"Guarded candidate reachable on the live PR: `{pushed}`.\n\n"
             + receipt_audit(config, read, consumer) + "\n\n"
             "This audit is not an addressed or needs-human finding receipt. "
-            "Receipt evidence concerns captured roots only, not current eligibility or READY. "
+            "Receipt evidence is a current snapshot for captured roots and may predate this run; "
+            "it does not prove this run fixed them or establish current eligibility or READY. "
             "A fresh authorized run must recheck genuine unresolved, current findings "
             "and existing author permissions, three-attempt budget and eight-commit guard. "
             "Do not reopen resolved findings or retry this checkout. No fetch, rebase or merge recovery. "
@@ -195,7 +202,7 @@ def main():
     directory = Path(__file__).resolve().parent
     config_path, state_path = directory / "context.json", directory / "attempt.json"
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
-    if mode == "install":
+    if mode == "install" and len(sys.argv) == 2:
         config = {key: os.environ[env] for key, env in (
             ("repo", "REPO"), ("number", "PR_NUMBER"),
             ("base", "HEAD_SHA"), ("ref", "HEAD_REF"))}
@@ -206,7 +213,7 @@ def main():
         command(["git", "config", "--local", "core.hooksPath", str(directory)])
         return 0
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if mode == "terminal":
+    if mode == "terminal" and len(sys.argv) == 2:
         consumer = None
         try:
             spec = importlib.util.spec_from_file_location("workflow_receipts", directory / "receipts.py")
@@ -232,6 +239,8 @@ def main():
             return 1
         return 0
     try:
+        if len(sys.argv) != 3:
+            raise ValueError("invalid hook invocation")
         guard(config, sys.stdin.read(), mode, state_path)
     except (OSError, ValueError, subprocess.SubprocessError):
         print("Claude fixer push stopped: stale/invalid head, unavailable read, or attempt already used. "
