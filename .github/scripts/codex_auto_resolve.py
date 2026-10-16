@@ -199,7 +199,7 @@ query($id: ID!, $cursor: String!) {
 RESOLVE_THREAD = """
 mutation($id: ID!) {
   resolveReviewThread(input: {threadId: $id}) {
-    thread { id isResolved }
+    thread { id isResolved resolvedBy { login } }
   }
 }
 """
@@ -1254,6 +1254,7 @@ def reply_and_resolve(
     excerpt: str,
     retry: bool = False,
     now: datetime | None = None,
+    actor_login: str = "",
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1293,6 +1294,11 @@ def reply_and_resolve(
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
+    actor = actor_login or cfg.pat_login or fetch_pat_login(gh, cfg)
+    if not actor or not login_matches(resolved_by_login(thread), actor):
+        # Concurrent human resolve is a successful no-op. Do not mint a
+        # PAT receipt or consume the daily cap for someone else's click.
+        return "foreign-resolve"
     stamp = now or utcnow()
     if publish_resolved_marker(
         gh,
@@ -1450,6 +1456,7 @@ def scan_pr(
                 excerpt=excerpt,
                 retry=reason == "retry-resolve",
                 now=now,
+                actor_login=pat_login,
             )
         except Exception:
             result = "error"

@@ -130,6 +130,8 @@ class FakeGitHub(mod.GitHub):
         self.fail_issue_post = False
         self.fail_viewer = False
         self.viewer_login = PAT_LOGIN
+        self.mutate_resolved_by = PAT_LOGIN
+        self.resolved_by_queue: list[str] | None = None
 
     def _unused(self, *args, **kwargs):
         raise AssertionError("real gh invoked")
@@ -156,7 +158,14 @@ class FakeGitHub(mod.GitHub):
                 raise RuntimeError("github graphql errors")
             tid = str(variables["id"])
             self.resolves.append(tid)
-            return {"resolveReviewThread": {"thread": {"id": tid, "isResolved": True}}}
+            thread = {"id": tid, "isResolved": True}
+            if self.resolved_by_queue is not None:
+                who = self.resolved_by_queue.pop(0) if self.resolved_by_queue else PAT_LOGIN
+            else:
+                who = self.mutate_resolved_by
+            if who:
+                thread["resolvedBy"] = {"login": who}
+            return {"resolveReviewThread": {"thread": thread}}
         if "addPullRequestReviewThreadReply" in query:
             if token != "pat":
                 raise AssertionError("reply must use CODEX_TRIGGER_PAT")
@@ -601,6 +610,43 @@ def test_classify_retry_resolve_when_already_cited():
     )
     assert reason == "retry-resolve"
     assert verdict is not None and verdict.verdict == "RESOLVE"
+
+
+def test_human_resolve_during_mutation_does_not_claim_receipt():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.mutate_resolved_by = "alice"
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert gh.issue_posts == []
+    assert not any(mod.RESOLVED_PREFIX in body for _tid, body in gh.replies)
+    assert any("skip=foreign-resolve" in line for line in logs)
+
+
+def test_human_resolve_during_mutation_does_not_consume_cap():
+    gh = ready_gh(
+        threads=[
+            thread(),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.resolved_by_queue = ["alice"]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 in gh.resolves
+    assert any("skip=foreign-resolve" in line for line in logs)
+    assert any("resolve=posted" in line for line in logs)
+
+
+def test_missing_resolved_by_after_mutation_does_not_claim_receipt():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.mutate_resolved_by = ""
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert gh.issue_posts == []
+    assert any("skip=foreign-resolve" in line for line in logs)
 
 
 def test_scan_resolves_when_safe():
@@ -1329,6 +1375,7 @@ def test_script_never_posts_codex_review_or_pushes():
     assert "git push" not in text
     assert "mergePullRequest" not in text
     assert "resolveReviewThread" in text
+    assert "resolvedBy { login }" in text
     assert "CODEX_TRIGGER_PAT" in text
 
 
