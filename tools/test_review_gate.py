@@ -39,7 +39,8 @@ class ReviewGateTests(unittest.TestCase):
                              ('app', {'id': DEVIN_APP_ID, 'slug': 'impostor'}),
                              ('head_sha', 'b' * 40), ('name', 'review-gate')]:
             with self.subTest(field=field, value=value):
-                candidate = run(); candidate[field] = value
+                candidate = run()
+                candidate[field] = value
                 self.assertEqual(self.check([candidate]), 'pending')
 
     def test_newest_failure_overrides_old_success_in_any_api_order(self):
@@ -114,7 +115,8 @@ class ReviewGateTests(unittest.TestCase):
         with self.assertRaises(GateError):
             targets('owner/repo', 'workflow_dispatch', event, 'b' * 40, Mock(return_value=pr()))
         for field, value in [('state', 'closed'), ('draft', True)]:
-            candidate = pr(); candidate[field] = value
+            candidate = pr()
+            candidate[field] = value
             with self.assertRaises(GateError):
                 targets('owner/repo', 'workflow_dispatch', event, SHA, Mock(return_value=candidate))
 
@@ -135,8 +137,10 @@ class ReviewGateTests(unittest.TestCase):
                 return pr() if live is None else live
             return get
         self.assertEqual(queue_heads('owner/repo', group, fixture()), [SHA])
-        other = copy.deepcopy(pr()); other['number'] = 43
-        stale = copy.deepcopy(pr()); stale['head']['sha'] = 'new-head'
+        other = copy.deepcopy(pr())
+        other['number'] = 43
+        stale = copy.deepcopy(pr())
+        stale['head']['sha'] = 'new-head'
         for get in [fixture([]), fixture([pr(), other]), fixture(live=stale)]:
             with self.assertRaises(GateError):
                 queue_heads('owner/repo', group, get)
