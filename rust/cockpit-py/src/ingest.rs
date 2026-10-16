@@ -7,11 +7,11 @@ use cockpit_ingest::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::PyTypeInfo;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{
     PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySequence, PyString, PyTuple,
 };
+use pyo3::PyTypeInfo;
 
 fn invalid(message: impl Into<String>) -> PyErr {
     PyValueError::new_err(message.into())
