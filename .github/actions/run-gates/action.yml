@@ -13,15 +13,36 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
         cache: pip
-        cache-dependency-path: |
-          app/pyproject.toml
-          .github/actions/run-gates/action.yml
-    - name: Install runtime and validation dependencies
-      # Match app/pyproject.toml, including real Discord command-tree coverage. Its
-      # absent-dependency fallback runs in an isolated subprocess in the same suite.
-      working-directory: app
+        cache-dependency-path: .github/actions/run-gates/requirements.txt
+    - name: Restore CI virtualenv
+      id: venv-cache
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: run-gates-${{ runner.os }}-${{ runner.arch }}-CPython${{ inputs.python-version }}-${{ hashFiles('.github/actions/run-gates/requirements.txt') }}
+    - name: Create venv and install pinned dependencies
+      if: steps.venv-cache.outputs.cache-hit != 'true'
       shell: bash
-      run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
+      env:
+        PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      run: |
+        set -euo pipefail
+        python -m venv .venv
+        if [ -x .venv/bin/python ]; then
+          venv_py=.venv/bin/python
+        else
+          venv_py=.venv/Scripts/python.exe
+        fi
+        "$venv_py" -m pip install -r .github/actions/run-gates/requirements.txt
+    - name: Put the CI virtualenv on PATH
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -d .venv/bin ]; then
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+        else
+          echo "$GITHUB_WORKSPACE/.venv/Scripts" >> "$GITHUB_PATH"
+        fi
     - name: Lint
       working-directory: app
       shell: bash
