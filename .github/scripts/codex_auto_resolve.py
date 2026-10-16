@@ -922,6 +922,22 @@ def already_resolved_on_sha(comments: list[dict[str, Any]], thread_id: str, sha:
     return False
 
 
+def thread_has_resolved_marker(comments: list[dict[str, Any]], thread_id: str) -> bool:
+    for comment in comments:
+        if any(tid == thread_id for tid, _sha in parse_resolved_markers(body_of(comment))):
+            return True
+    return False
+
+
+def cite_sha_for_thread(comments: list[dict[str, Any]], thread_id: str) -> str:
+    digest = ""
+    for comment in comments:
+        for tid, sha in parse_cite_markers(body_of(comment)):
+            if tid == thread_id:
+                digest = sha
+    return digest
+
+
 def already_cited_on_sha(comments: list[dict[str, Any]], thread_id: str, sha: str) -> bool:
     needle = (thread_id, sha)
     for comment in comments:
@@ -986,12 +1002,18 @@ def classify_thread(
     thread_id = safe_thread_id(str(thread.get("id") or ""))
     if not thread_id:
         return "bad-thread-id", None
+    comments = thread_comments(thread) + issue_comments
     # Intentional limit: a thread resolved on one head is never reopened
     # when the head moves, even if the cited fix later regresses. A human
-    # (or a new review comment) has to reopen it.
+    # (or a new review comment) has to reopen it. If we already cited and
+    # resolved but the audit marker never landed, retry the marker only.
     if thread.get("isResolved"):
+        if thread_has_resolved_marker(comments, thread_id):
+            return "already-resolved", None
+        cite_sha = cite_sha_for_thread(comments, thread_id)
+        if cite_sha:
+            return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
-    comments = thread_comments(thread) + issue_comments
     if already_resolved_on_sha(comments, thread_id, head_sha):
         return "already-marked", None
     if path_is_protected(str(thread.get("path") or "")):
@@ -1060,6 +1082,20 @@ def reply_and_resolve(
         return "resolve-error"
     if thread.get("isResolved") is False:
         return "resolve-error"
+    if publish_resolved_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha):
+        return "posted"
+    return "posted-unmarked"
+
+
+def publish_resolved_marker(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread_id: str,
+    sha: str,
+) -> bool:
+    """Post ``codex-thread-resolved``. False if both issue and thread paths fail."""
     try:
         gh.rest(
             f"repos/{cfg.repository}/issues/{number}/comments",
@@ -1067,16 +1103,18 @@ def reply_and_resolve(
             body={"body": build_success_comment(thread_id, sha)},
             token=cfg.codex_pat,
         )
+        return True
     except Exception:
-        try:
-            gh.graphql(
-                REPLY_THREAD,
-                {"threadId": thread_id, "body": build_success_comment(thread_id, sha)},
-                token=cfg.codex_pat,
-            )
-        except Exception:
-            return "posted-unmarked"
-    return "posted"
+        pass
+    try:
+        gh.graphql(
+            REPLY_THREAD,
+            {"threadId": thread_id, "body": build_success_comment(thread_id, sha)},
+            token=cfg.codex_pat,
+        )
+        return True
+    except Exception:
+        return False
 
 
 def scan_pr(
@@ -1131,6 +1169,25 @@ def scan_pr(
         reason, verdict = classify_thread(
             thread, head_sha=head_sha, latest=latest, issue_comments=issue_comments
         )
+        if reason == "retry-mark":
+            mark_sha = (verdict.sha if verdict else "") or head_sha
+            try:
+                marked = publish_resolved_marker(
+                    gh,
+                    cfg,
+                    number=number,
+                    thread_id=str(thread.get("id") or ""),
+                    sha=mark_sha,
+                )
+            except Exception:
+                marked = False
+            if marked:
+                logs.append(
+                    f"codex-auto-resolve: pr={number} thread={tid} retry-mark=posted sha={mark_sha}"
+                )
+            else:
+                logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=posted-unmarked")
+            continue
         if reason not in {"resolve", "retry-resolve"}:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={reason}")
             continue
@@ -1153,10 +1210,12 @@ def scan_pr(
             )
         except Exception:
             result = "error"
-        if result == "posted":
+        if result in {"posted", "posted-unmarked"}:
             posted_today += 1
             remaining[0] -= 1
-            logs.append(f"codex-auto-resolve: pr={number} thread={tid} resolve=posted sha={head_sha}")
+            logs.append(
+                f"codex-auto-resolve: pr={number} thread={tid} resolve={result} sha={head_sha}"
+            )
         else:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={result}")
     return logs

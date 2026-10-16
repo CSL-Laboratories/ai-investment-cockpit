@@ -144,10 +144,10 @@ class FakeGitHub(mod.GitHub):
         if "addPullRequestReviewThreadReply" in query:
             if token != "pat":
                 raise AssertionError("reply must use CODEX_TRIGGER_PAT")
-            if self.fail_reply:
+            body = str(variables["body"])
+            if self.fail_reply or (self.fail_issue_post and mod.RESOLVED_PREFIX in body):
                 raise RuntimeError("github graphql errors")
             tid = str(variables["threadId"])
-            body = str(variables["body"])
             self.replies.append((tid, body))
             return {
                 "addPullRequestReviewThreadReply": {
@@ -430,6 +430,20 @@ def test_classify_already_resolved_and_marked():
     assert reason == "already-marked"
 
 
+def test_classify_retry_mark_when_resolved_without_audit_marker():
+    t = thread(
+        resolved=True,
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "retry-mark"
+    assert verdict is not None and verdict.sha == SHA
+
+
 def test_classify_retry_resolve_when_already_cited():
     t = thread(
         comments=[
@@ -552,6 +566,44 @@ def test_reply_failure_does_not_resolve():
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
     assert any("skip=reply-error" in line for line in logs)
+
+
+def test_posted_unmarked_counts_against_run_cap():
+    remaining = [1]
+    first = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    first.fail_issue_post = True
+    logs = mod.scan_pr(first.pr_by_number[12], cfg(), first, NOW, remaining_run=remaining)
+    assert first.resolves == [THREAD]
+    assert remaining == [0]
+    assert any("resolve=posted-unmarked" in line for line in logs)
+
+    second = ready_gh(
+        number=13,
+        threads=[thread(thread_id=THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))])],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(second.pr_by_number[13], cfg(pr_number="13"), second, NOW, remaining_run=remaining)
+    assert second.resolves == []
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_retry_mark_posts_missing_audit_marker_without_unresolve():
+    gh = ready_gh(
+        threads=[
+            thread(
+                resolved=True,
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment("github-actions[bot]", mod.cite_marker(THREAD, SHA)),
+                ],
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts and THREAD in gh.issue_posts[0][1]
+    assert any("retry-mark=posted" in line for line in logs)
 
 
 def test_retry_resolve_skips_second_cite():
