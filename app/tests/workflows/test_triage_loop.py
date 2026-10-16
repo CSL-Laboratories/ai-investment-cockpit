@@ -31,7 +31,10 @@ from workflows.constants import (
     EVENT_ESCALATION_DEFERRED,
     EVENT_TRIAGE_BATCH,
 )
+from workflows.context_limit import estimate_tokens, repair_reserve_tokens
 from workflows.events import persist_events
+from workflows.packets import build_packet
+from workflows.prompts import load_prompt
 from workflows.proposals import ProposalOutcome
 from workflows.triage_loop import triage_loop
 
@@ -447,6 +450,44 @@ def test_context_limited_proposal_is_deferred_not_escalated(st, clock, tmp_path)
     assert ev.id not in result["escalated"]
     batch = _payloads(st, EVENT_TRIAGE_BATCH)[-1]
     assert batch["dispositions"][ev.id] == "deferred"
+    assert any(
+        p["event_id"] == ev.id and p["reason"] == "context_limit"
+        for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+    )
+
+
+def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path):
+    """Triage can fit an article the proposal template cannot; do not spend budget."""
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    packet = build_packet(rows)
+    article = estimate_tokens(packet.items[0].text)
+    reserve = repair_reserve_tokens()
+    triage_oh = estimate_tokens(load_prompt("triage_batch").render(
+        batch_id="tb-x",
+        window_start=(NOW - timedelta(minutes=30)).isoformat(),
+        window_end=NOW.isoformat(),
+        packet_block="",
+    ))
+    proposal_oh = estimate_tokens(load_prompt("trade_proposal").render(
+        symbol="AAPL", packet_block="",
+    ))
+    cap = triage_oh + reserve + article + 80
+    assert cap < proposal_oh + reserve + article
+    st.settings.context_token_cap = cap
+    transport = FakeTransport([envelope(_triage_body([
+        _scored(ev.raw_ref, "AAPL", "urgent", 90),
+    ]))])
+    result = triage_loop(
+        st, clock, transport=transport, parquet_root=tmp_path / "raw",
+        holdings_symbols=HOLDINGS,
+    )
+    assert result["status"] == "ok"
+    assert ev.id in result["deferred"]
+    assert ev.id not in result["escalated"]
+    assert _payloads(st, EVENT_DEEP_ESCALATION) == []
+    assert len(transport.calls) == 1
     assert any(
         p["event_id"] == ev.id and p["reason"] == "context_limit"
         for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
