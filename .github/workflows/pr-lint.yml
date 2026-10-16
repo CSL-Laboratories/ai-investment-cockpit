@@ -14,7 +14,7 @@ concurrency:
 jobs:
   linear-key:
     name: Linear key in branch or title
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Require CSL-<n> in branch name or PR title

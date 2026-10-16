@@ -70,11 +70,15 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
-   scope and its deterministic gate before writing code.
+   scope and its deterministic gate before writing code. Decision or direction
+   work: see `AGENTS.md` Linear-first (assignee Parallel Task API brief; Grok Bots
+   do not research or resolve those issues).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
-   (research → architecture → build → security → enhancements).
+   (research → architecture → build → security → enhancements). Recorded
+   architecture and direction live in `docs/adr/` and the linked Linear
+   `decision` issues.
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
 
@@ -117,3 +121,17 @@ forces its import to fail and covers the fallback without skipping either path.
   A general `app/surfaces/` abstraction is not merged.
 - **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
   `docs/research/agent-swarm-rebase-2026-09-14.md`.
+
+## Review loop
+
+Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
+[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
+which asks Codex to mediate (`@codex review`) and records one Linear Triage
+`needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
+updated in place. Shared keys with the Codex CI/fixer gate:
+`<!-- stuck-pr-threads:owner/repo#N -->` and
+`<!-- codex-gate-mediate:owner/repo:N -->`. Adopt an existing roll-up only by
+the `stuck-pr-threads` HTML marker, never by title. Write Linear only when at
+least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT`
+checks, or to create a missing roll-up after an earlier Linear outage. Humans
+decide. The watcher never resolves threads, pushes, or merges.
