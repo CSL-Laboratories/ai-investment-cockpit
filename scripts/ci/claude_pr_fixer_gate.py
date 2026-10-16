@@ -26,6 +26,7 @@ DEVIN_STATES = frozenset({"commented", "changes_requested"})
 MENTION_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
 DISPATCH_EVENTS = frozenset({"repository_dispatch", "workflow_dispatch"})
 FIXER_DISPATCH = "devin-review-fix"
+CODEX_GATE_PREFIX = "<!-- codex-gate:"
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@claude(?![A-Za-z0-9_])")
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._/-]+$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
@@ -73,6 +74,11 @@ def contains_at_claude(text: str | None) -> bool:
     return "@claude" in (text or "").lower()
 
 
+def is_codex_gate_request(text: str | None) -> bool:
+    """Mirror startsWith: reserve the generated request prefix, ignoring case."""
+    return (text or "").lower().startswith(CODEX_GATE_PREFIX)
+
+
 def is_bot_actor(user: dict[str, Any] | None, sender: dict[str, Any] | None = None) -> bool:
     """True when the comment user or event sender is a GitHub App/bot."""
     for blob in (user, sender):
@@ -115,11 +121,16 @@ def job_level_admits(
             issue.get("pull_request")
             and not is_bot_actor(user, sender)
             and contains_at_claude(comment.get("body"))
+            and not is_codex_gate_request(comment.get("body"))
         )
     if event_name == "pull_request_review_comment":
         comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
         user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
-        return bool(not is_bot_actor(user, sender) and contains_at_claude(comment.get("body")))
+        return bool(
+            not is_bot_actor(user, sender)
+            and contains_at_claude(comment.get("body"))
+            and not is_codex_gate_request(comment.get("body"))
+        )
     if event_name == "pull_request_review":
         review = event.get("review") if isinstance(event.get("review"), dict) else {}
         user = review.get("user") if isinstance(review.get("user"), dict) else {}
@@ -218,6 +229,7 @@ def evaluate(
         event_name in MENTION_EVENTS
         and open_same_writer
         and is_whole_word_mention(comment.get("body"))
+        and not is_codex_gate_request(comment.get("body"))
         and is_human((comment.get("user") or {}).get("type"))
     ):
         commenter_perm = _permission(lookup, commenter, cache)

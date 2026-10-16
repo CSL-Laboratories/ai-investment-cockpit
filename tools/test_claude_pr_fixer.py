@@ -446,6 +446,57 @@ class JobLevelIfTests(unittest.TestCase):
         )
 
 
+class CodexGateMentionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        path = ROOT / "scripts" / "ci" / "codex_gate.py"
+        spec = importlib.util.spec_from_file_location("codex_gate", path)
+        assert spec and spec.loader
+        cls.codex = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.codex)
+
+    def assert_comment_route(self, body: str | None, admitted: bool) -> None:
+        for event_name in ("issue_comment", "pull_request_review_comment"):
+            with self.subTest(event_name=event_name, body=body):
+                event = {
+                    "comment": comment(body=body),
+                    "sender": {"login": "alice", "type": "User"},
+                    "issue": {"number": 42, "pull_request": {"url": "x"}},
+                    "pull_request": pr_payload(),
+                }
+                self.assertEqual(gate.job_level_admits(event_name, event), admitted)
+                result = decide(event_name, event)
+                self.assertEqual(result["mention"], "true" if admitted else "false")
+                self.assertEqual(result["devin"], "false")
+
+    def test_generated_codex_requests_skip_both_comment_routes(self) -> None:
+        for size in (40, 64):
+            body = self.codex.build_request_comment("a" * size)
+            self.assertTrue(gate.is_codex_gate_request(body))
+            self.assert_comment_route(body, False)
+
+    def test_legacy_requests_with_claude_literal_are_skipped(self) -> None:
+        for prefix in ("<!-- codex-gate:", "<!-- CODEX-GATE:"):
+            for size in (40, 64):
+                body = (f"{prefix}{'a' * size} -->\n@codex review\n\n"
+                        "Human-only findings need a human @claude mention, not FIX.")
+                self.assert_comment_route(body, False)
+
+    def test_human_requests_may_reference_codex_and_quote_gate_markers(self) -> None:
+        for body in (
+            "please @claude fix the lint",
+            "@claude fix the problem reported by @codex review",
+            "Please @claude inspect this quoted request:\n"
+            f"<!-- codex-gate:{'a' * 40} -->\n@codex review",
+            "<!-- unrelated-marker -->\n@claude fix the lint",
+        ):
+            self.assert_comment_route(body, True)
+
+    def test_empty_comments_are_skipped(self) -> None:
+        for body in (None, ""):
+            self.assert_comment_route(body, False)
+
+
 class WorkflowStructureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -489,6 +540,15 @@ class WorkflowStructureTests(unittest.TestCase):
             "github.event_name == 'pull_request_review_comment' ||",
             resolve.replace("\n", " "),
         )
+
+    def test_codex_gate_filter_is_on_both_comment_branches(self) -> None:
+        condition = self._job("resolve-pr").split("runs-on:", 1)[0]
+        guard = "!startsWith(github.event.comment.body, '<!-- codex-gate:')"
+        self.assertEqual(condition.count(guard), 2)
+        for event_name in ("issue_comment", "pull_request_review_comment"):
+            branch = condition.split(f"github.event_name == '{event_name}'", 1)[1]
+            branch = branch.split(") ||", 1)[0]
+            self.assertIn(guard, branch)
 
     def test_every_privileged_checkout_uses_pr_head_sha(self) -> None:
         mention = self._job("claude-mention")
