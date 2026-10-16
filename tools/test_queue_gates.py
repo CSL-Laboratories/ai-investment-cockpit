@@ -91,17 +91,17 @@ class QueueGateTests(unittest.TestCase):
                             self.assertEqual(execute(script, env).returncode == 0, accept)
 
     def test_cancelled_workflow_cannot_pass_even_after_successful_dependencies(self):
-        from test_ci_dispatch_scope import evaluate
+        from tools.test_ci_dispatch_scope import evaluate
         from unittest.mock import patch
         for filename, job in [('ci.yml', 'queue-gates'), ('rust.yml', 'rust-gates')]:
             doc = workflow(filename)['jobs'][job]
-            with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+            with patch('tools.test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
                 evaluate(doc['if'])
                 expression, environment = evaluator.call_args.args
             environment['cancelled'] = lambda: True
             self.assertTrue(eval(expression, environment))
             cancellation = doc['steps'][-1]
-            with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+            with patch('tools.test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
                 evaluate(cancellation['if'])
                 expression, environment = evaluator.call_args.args
             environment['cancelled'] = lambda: True
