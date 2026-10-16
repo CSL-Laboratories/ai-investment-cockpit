@@ -43,7 +43,16 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][5].update(discretion_class="bounded_autonomy"),
             lambda p: p["research_evidence"]["authority_compliance"].update(status="running"),
             lambda p: p["research_evidence"]["authority_compliance"].update(claim="live_qualified"),
+            lambda p: p["research_evidence"]["authority_compliance"].update(owner_direction="Live authority is granted now."),
+            lambda p: p["research_evidence"]["authority_compliance"].update(not_claimed=[]),
             lambda p: p["research_evidence"]["authority_compliance"].update(sha256="0" * 64),
+            lambda p: p["outcomes"][0].update(authoritative_clause="missing.md#nope"),
+            lambda p: p["outcomes"][0]["evidence"].update(
+                claimed="human_decided", not_claimed=list(CHECKER.MATURITY[3:])
+            ),
+            lambda p: p["outcomes"][0]["evidence"].update(
+                claimed="limited_live_qualified", not_claimed=["release_qualified"]
+            ),
         ]
         for mutation in mutations:
             candidate = copy.deepcopy(self.program)

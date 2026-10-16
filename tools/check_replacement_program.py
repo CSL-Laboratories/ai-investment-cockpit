@@ -66,6 +66,19 @@ REQUIRED_STOP_CONDITION = (
     "decisions and the smallest next experiments; continuation requires a human "
     "Linear receipt."
 )
+REQUIRED_RESEARCH_DIRECTION = (
+    "A is the qualification reference; C bounded direct authorization is a "
+    "candidate future target pending a human-authored final-digest receipt and "
+    "separate accepted gates."
+)
+REQUIRED_RESEARCH_EXCLUSIONS = {
+    "legal_advice",
+    "account_or_venue_eligibility",
+    "provider_permission",
+    "live_authority",
+    "economic_qualification",
+    "release_qualification",
+}
 REQUIRED_OUTCOME_FIELDS = {
     "key",
     "linear_issue",
@@ -153,13 +166,19 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(research.get("status") == "completed", "authority research incomplete")
     _require(research.get("research_cutoff") == "2026-10-16", "authority research cutoff missing")
     _require(research.get("claim") == "research_input_only", "authority research over-promoted")
+    _require(research.get("owner_direction") == REQUIRED_RESEARCH_DIRECTION, "authority research direction changed")
+    _require(set(research.get("not_claimed", [])) == REQUIRED_RESEARCH_EXCLUSIONS, "authority research exclusions changed")
     research_path = research.get("reconciliation_path")
     _require(research_path == "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md", "authority reconciliation path mismatch")
     research_file = root / research_path
     _require(research_file.is_file(), "authority reconciliation file missing")
     _require(re.fullmatch(r"[0-9a-f]{64}", research.get("sha256", "")) is not None, "authority reconciliation digest invalid")
     _require(_digest(research_file) == research["sha256"], "authority reconciliation digest mismatch")
-    _require(receipt.get("authority_research_sha256") == research["sha256"], "superseded research digest mismatch")
+    _require(
+        receipt.get("authority_research_sha256")
+        == "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938",
+        "superseded research digest changed",
+    )
 
     contracts = program.get("contracts")
     _require(isinstance(contracts, list) and contracts, "contracts missing")
@@ -189,6 +208,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(keys == expected_keys, "outcomes must be ordered O1 through O9")
     issues: set[str] = set()
     seen: set[str] = set()
+    month_program = (root / "docs" / "replacement" / "MONTH-PROGRAM.md").read_text(encoding="utf-8")
     for item in outcomes:
         key = item["key"]
         _require(set(item) == REQUIRED_OUTCOME_FIELDS, f"{key} outcome fields changed")
@@ -197,6 +217,9 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(isinstance(issue, str) and re.fullmatch(r"CSL-[0-9]+", issue) is not None, f"{key} invalid Linear issue")
         _require(issue not in issues, f"duplicate Linear issue: {issue}")
         issues.add(issue)
+        expected_clause = f"docs/replacement/MONTH-PROGRAM.md#{key.lower()}"
+        _require(item["authoritative_clause"] == expected_clause, f"{key} authoritative clause changed")
+        _require(re.search(rf"^### {re.escape(key)}(?:\\s|$)", month_program, re.MULTILINE) is not None, f"{key} authoritative heading missing")
         for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "dependency_contracts", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions", "research_budget", "independent_verification"}:
             _require(_nonempty(item[field]), f"{key} empty {field}")
         _require(item["discretion_class"] == EXPECTED_DISCRETION[key], f"{key} discretion class changed")
@@ -232,6 +255,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         claimed = evidence.get("claimed")
         not_claimed = evidence.get("not_claimed")
         _require(claimed in MATURITY, f"{key} invalid claimed maturity")
+        _require(claimed == "researched", f"{key} unsupported evidence maturity")
         _require(_nonempty_list(not_claimed), f"{key} missing unclaimed levels")
         claimed_index = MATURITY.index(claimed)
         _require(not_claimed == list(MATURITY[claimed_index + 1 :]), f"{key} invalid evidence promotion")

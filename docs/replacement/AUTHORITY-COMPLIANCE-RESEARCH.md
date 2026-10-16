@@ -6,7 +6,7 @@
 **Status:** research input to O1, O5, O6, O7 and O9; not legal advice,
 eligibility approval, a frozen authority contract, or live authorization.
 
-## Question and owner decision
+## Question and candidate direction
 
 The research compared three execution-authority profiles for a United States
 individual using a personal account across stocks and regulated event markets:
@@ -15,23 +15,25 @@ individual using a personal account across stocks and regulated event markets:
 |---|---|---|
 | A, proposal-only | A deterministic authorizer independently permits or rejects the exact model proposal. | Authorizer correctness, independent account inputs and adapter behavior. |
 | B, model-assisted policy | Deterministic logic combines constrained model assessments with immutable hard limits. | A evidence plus model calibration, failure handling and correlated-error analysis. |
-| C, bounded direct authorization | A model authorizes an exact order with an expiring capability inside a separately approved envelope; an independent monitor enforces that envelope. | Containment, aggregate accounting, revocation, recovery and justification for delegated judgment. |
+| C, bounded direct authorization | A model authorizes an exact order with an expiring capability inside a separately approved envelope; an independent monitor enforces that envelope, then submits only through risk pass, mode, approval and `OrderGateway`. | Containment, aggregate accounting, revocation, recovery and justification for delegated judgment. |
 
-Lucas selected C as the eventual first-live product target, subject to separately
-accepted testing, eligibility, venue, recovery and release gates. A remains the
-reference qualification profile. The product must support A, B and C as separate,
-signed profiles rather than one global autonomy switch. This owner direction does
-not amend current runtime authority.
+Profile C is the candidate eventual first-live product target, subject to separately
+accepted testing, eligibility, venue, recovery and release gates. It remains a
+recommendation until a human-authored CSL-212 comment accepts the final digest set.
+A remains the reference qualification profile. The product must support A, B and C
+as separate, signed profiles rather than one global autonomy switch. This candidate
+direction does not amend current runtime authority.
 
 ## Contract consequences
 
 1. **Separate permission from intelligence.** A typed answer, probability,
    confidence, provider response or tool call is evidence in a decision request,
    never a credential or authority grant.
-2. **Use one independent enforcement boundary.** Every profile, strategy and
-   operator surface uses the sole approved execution path. C delegates bounded
+2. **Use one independent enforcement boundary.** Every profile, C included, submits
+   only through risk pass, mode, approval and `OrderGateway`. C delegates bounded
    business judgment; it does not delegate legal eligibility, profile
-   administration, credential custody or the ability to weaken hard floors.
+   administration, credential custody or the ability to weaken hard floors. C
+   cannot send live orders until a separate reviewed implementation amendment.
 3. **Make profiles restrictive and signed.** A profile pins legal/account scope,
    jurisdiction, account, asset and contract families, venue and adapter,
    environment, authority class, provider/model version, permitted actions,

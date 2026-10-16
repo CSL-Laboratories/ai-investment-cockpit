@@ -872,7 +872,7 @@
       "research_cutoff": "2026-10-16",
       "claim": "research_input_only",
       "reconciliation_path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
-      "owner_direction": "A is the qualification reference; C bounded direct authorization is the future target only after separate accepted gates.",
+      "owner_direction": "A is the qualification reference; C bounded direct authorization is a candidate future target pending a human-authored final-digest receipt and separate accepted gates.",
       "not_claimed": [
         "legal_advice",
         "account_or_venue_eligibility",
@@ -881,7 +881,7 @@
         "economic_qualification",
         "release_qualification"
       ],
-      "sha256": "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938"
+      "sha256": "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6"
     }
   }
 }
