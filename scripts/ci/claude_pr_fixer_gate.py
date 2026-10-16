@@ -20,6 +20,7 @@ from typing import Any, Callable
 WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
 SAFE_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 DEVIN_BOT = "devin-ai-integration[bot]"
+DEVIN_ID = 158243242
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 ALLOWED_REVIEW_BOTS = frozenset({DEVIN_BOT, CODEX_BOT})
 DEVIN_STATES = frozenset({"commented", "changes_requested"})
@@ -97,6 +98,11 @@ def is_bot_actor(user: dict[str, Any] | None, sender: dict[str, Any] | None = No
     return False
 
 
+def trusted_devin(user: dict[str, Any] | None) -> bool:
+    return bool(user and user.get("login") == DEVIN_BOT
+                and user.get("type") == "Bot" and user.get("id") == DEVIN_ID)
+
+
 def dispatch_job_name(event: dict[str, Any], dispatch_job: str = "") -> str:
     if dispatch_job:
         return dispatch_job
@@ -125,6 +131,7 @@ def job_level_admits(
         user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
         return bool(
             issue.get("pull_request")
+            and event.get("action", "created") == "created"
             and not is_bot_actor(user, sender)
             and contains_at_claude(comment.get("body"))
         )
@@ -132,7 +139,8 @@ def job_level_admits(
         comment = event.get("comment") if isinstance(event.get("comment"), dict) else {}
         user = comment.get("user") if isinstance(comment.get("user"), dict) else {}
         return bool(
-            not is_bot_actor(user, sender)
+            event.get("action", "created") == "created"
+            and not is_bot_actor(user, sender)
             and contains_at_claude(comment.get("body"))
         )
     if event_name == "pull_request_review":
@@ -231,6 +239,7 @@ def evaluate(
     mention = "false"
     if (
         event_name in MENTION_EVENTS
+        and event.get("action", "created") == "created"
         and open_same_writer
         and is_whole_word_mention(comment.get("body"))
         and not is_legacy_codex_gate_request(comment.get("body"))
@@ -245,11 +254,16 @@ def evaluate(
     if (
         event_name == "pull_request_review"
         and open_same_writer
-        and (review.get("user") or {}).get("login") == DEVIN_BOT
+        and trusted_devin(review.get("user"))
+        and trusted_devin(event.get("sender"))
+        and event.get("action") == "submitted"
+        and safe_head_sha(review.get("commit_id"))
+        and isinstance(review.get("id"), int)
+        and not isinstance(review.get("id"), bool)
+        and review["id"] > 0
         and str(review.get("state") or "").lower() in DEVIN_STATES
     ):
-        # Authorization still computed for Devin reviews. The workflow job `if`
-        # runs the fixer only on dispatch (Codex FIX / timeout), not per review.
+        # Actionable unresolved findings are rechecked under the per-PR lock.
         devin = "true"
     if event_name in DISPATCH_EVENTS and open_same_writer:
         if dispatch_job_name(event) == FIXER_DISPATCH:
