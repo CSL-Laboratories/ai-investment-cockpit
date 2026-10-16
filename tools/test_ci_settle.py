@@ -60,7 +60,7 @@ class SettleTests(unittest.TestCase):
         for expected, settle, run_tests, linux in itertools.product(
             ('true', 'false'), ('success', 'failure', 'cancelled', 'skipped'),
             ('true', 'false', ''), ('success', 'failure', 'cancelled', 'skipped')):
-            env = {**os.environ, 'WORKFLOW_CANCELLED': 'false', 'FILTER_RESULT': 'success', 'SETTLE_RESULT': settle,
+            env = {**os.environ, 'FILTER_RESULT': 'success', 'SETTLE_RESULT': settle,
                    'SETTLE_EXPECTED': expected, 'RUN_TESTS': run_tests, 'LINUX_RESULT': linux}
             result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, check=False)
             accepted = ((settle == 'success' or (settle == 'skipped' and expected == 'false'))
@@ -76,12 +76,14 @@ class SettleTests(unittest.TestCase):
             expression, environment = evaluator.call_args.args
         environment['cancelled'] = lambda: True
         self.assertTrue(eval(expression, environment))
-        for cancelled in ('true', ''):
-            result = subprocess.run(['bash', '-c', gate['steps'][0]['run']], capture_output=True,
-                env={**os.environ, 'WORKFLOW_CANCELLED': cancelled, 'FILTER_RESULT': 'success',
-                     'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
-                     'RUN_TESTS': 'true', 'LINUX_RESULT': 'success'})
-            self.assertEqual(result.returncode, 1)
+        cancellation = gate['steps'][-1]
+        with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+            evaluate(cancellation['if'])
+            expression, environment = evaluator.call_args.args
+        environment['cancelled'] = lambda: True
+        self.assertTrue(eval(expression, environment))
+        result = subprocess.run(['bash', '-c', cancellation['run']], capture_output=True)
+        self.assertEqual(result.returncode, 1)
 
     def test_known_non_synchronize_paths_are_not_accidentally_suppressed(self):
         for event, action, expected in [
