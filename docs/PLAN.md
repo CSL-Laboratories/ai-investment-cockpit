@@ -7,12 +7,14 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-15
+last-verified: 2026-10-15
 ---
 
 # The plan
 
-### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — claimed 2026-09-15
+Reconciled 2026-10-15 against `origin/main` `4a4308d`. Headings and status sentences that still described a merged package as claimed or unmerged are updated. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. Historical intake text that a later sentence already marks as pre-merge stays as the implementation record. This pass does not close an empirical, paper-day, witness, selection, or pre-live gate.
+
+### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 
 Seventh slice A package: record the Tuesday 2026-09-15 GET-only W-24
 board (empty / date-not-ready; pool 199, supported 32, cash 0,
@@ -24,8 +26,9 @@ gate. No labelling, watchlist seed, activation, order-path edit, or
 empirical PASS. Empty-run cites `screens[-1]`.
 Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
 `app/tests/feasibility/test_screens.py`. RW-32 is not reused.
+Merged [PR #99](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/99) (`33156c9`) on 2026-09-16.
 
-### RW-36 slice A 2026-09-15 GET-only screen intake — claimed 2026-09-15
+### RW-36 slice A 2026-09-15 GET-only screen intake — merged 2026-09-16
 
 Sixth slice A package: record the 2026-09-15 GET-only W-24 board
 (empty / date-not-ready; pool 199, supported 31, cash 1 BOW,
@@ -37,8 +40,9 @@ edit, or empirical PASS. Empty-run already cites `screens[-1]`.
 Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
 `app/tests/feasibility/test_screens.py`. RW-32 remains the remote seal
 package and is not reused.
+Merged [PR #98](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/98) (`5a963ff`) on 2026-09-16.
 
-### RW-35 slice B empty-run research update — claimed 2026-09-15
+### RW-35 slice B empty-run research update — merged 2026-09-15
 
 Useful-research increment through the existing composition, not another
 feasibility ledger. The latest GET-only board (now the RW-37
@@ -47,8 +51,9 @@ update naming why the screen produced no eligible paper candidate. Code:
 `app/research/empty_run.py`, `app/workflows/research_update.py`. Tests:
 `app/tests/workflows/test_research_update.py`. No order-path edit, no soak,
 no empirical PASS. RW-32 remains the remote seal package and is not reused.
+Merged with RW-34 in [PR #97](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/97) (`8beb271`) on 2026-09-15.
 
-### RW-34 bounded Cloud JSON-child adapter — claimed 2026-09-15
+### RW-34 bounded Cloud JSON-child adapter — merged 2026-09-15
 
 First Cloud qualification package after RW-33. Cursor-native Task and installed
 CLIs were inventoried and remain unqualified where they cannot pin
@@ -57,12 +62,13 @@ JSON child with a controller in `docs/research/swarm-tools/bounded_job.py`.
 Tests: `app/tests/swarm/test_bounded_job.py`. Preview helper stays disabled.
 No production authority change. Native Windows 3.11/3.12 are green on
 `d1c58c6`; that is not a four-cell DEC-09 attestation. No empirical PASS.
+Merged with RW-35 in [PR #97](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/97) (`8beb271`) on 2026-09-15.
 
 ### RW-25 product contract — ratified 2026-09-09
 
 Lucas authorized the product grill, a WIP branch and local documentation commits,
-with publication/merge after the rounds finish. RW-25 is claimed on
-`work/rw25-product-grill` from `db354a2`. PD-048 records final adoption after the
+then publication. RW-25 was claimed on
+`work/rw25-product-grill` from `db354a2` and merged in PR #85 (`e4e9844`) on 2026-09-10. PD-048 records final adoption after the
 47 scope/process decisions through Round 9; the grill rounds are complete.
 Documentation delivery: [PR #85](https://github.com/NotSkittlz/ai-investment-cockpit/pull/85).
 
@@ -105,7 +111,7 @@ remain until their own reviewed implementation amendments. Historical milestone 
 and evidence below are retained as the implementation record, not acceptance of the
 new product. Begin the next implementation work with a bounded claim from slice A.
 
-### RW-31 slice A screen intake and cohort/label plan — claimed 2026-09-12
+### RW-31 slice A screen intake and cohort/label plan — merged 2026-09-12
 
 Fifth slice A package: record the 2026-09-12 GET-only W-24 board
 (empty / date-not-ready; pool 197, supported 32, cash 0, selection-ready
@@ -115,6 +121,7 @@ Do not lower the 30-identity gate. No labelling, watchlist seed,
 activation, order-path edit, or empirical PASS.
 Claim: [[REGISTER]]. Code: `app/feasibility/screens.py`. Tests:
 `app/tests/feasibility/test_screens.py`.
+Squash-merged [PR #94](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/94) (`f24f9a8`) on 2026-09-12.
 
 ### RW-30 slice A pre-measurement protocol freeze — merged 2026-09-12
 
@@ -156,14 +163,17 @@ document. Merged [PR #89](https://github.com/NotSkittlz/ai-investment-cockpit/pu
 No activation, no order-path edit. Claim: [[REGISTER]]. Code:
 `app/feasibility/`. Tests: `app/tests/feasibility/`.
 
-### RW-26 slice A feasibility inventory — claimed 2026-09-11
+### RW-26 slice A feasibility inventory — merged 2026-09-11
 
 First bounded slice A package after the swarm pipeline smoke. Research
 inventory only (paths + a proposed in-repo shortlist). Claim:
 [[REGISTER]]. Briefs: `docs/research/swarm-briefs/rw26-*.md`. No
 qualify/reject, no activation, no order-path edit, no empirical PASS.
+PR #88 merged into the swarm-host branch; the inventory note on main matches that branch tip and arrived with the RW-27 squash `179b40d`.
 
-### Cursor Cloud process rebase — RW-33, 2026-09-14
+### Cursor Cloud process rebase — RW-33, merged 2026-09-15
+
+Merged [PR #96](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/96) (`cfb4f7c`) on 2026-09-15 from `codex/swarm-rebase-2026-09-14` (`cd8c86c`). No empirical PASS.
 
 Owner-directed process amendment: Cursor Cloud Head with scoped native sessions,
 qualified Codex/OpenCode development routes and distinct-family synthesis replaces
@@ -179,10 +189,12 @@ the next useful research increment under A/B; preserve C/D authority-review gate
 Market soaks and DEC-09 remain operator-host activities. Historical Devin process
 notes retain their evidence with a current amendment pointer.
 
-### BUG-159 watch-only durability D1–D4 — claimed 2026-09-08
+### BUG-159 watch-only durability D1–D4 — merged 2026-09-08
 
-The bounded fail-closed package is claimed on `fix/bug159-watchonly-durability`
-from merged main `abbaf3f` (PR #82). Its primary contract is
+The bounded fail-closed package was claimed on `fix/bug159-watchonly-durability`
+(head `d076b50a74d723fe521766adb5cb14115b9310ee`) from merged main `abbaf3f` (PR #82)
+and merged in [PR #83](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/83)
+(`9c61dcf`) on 2026-09-08. GitHub deleted the branch ref the same minute. Its primary contract is
 [[evidence/astra-watchonly-claim-shape-2026-09-06]] and its fixture ownership map
 is [[evidence/astra-watchonly-claim-shape-2026-09-06/fixture-contracts]].
 
@@ -218,10 +230,12 @@ not claim atomicity against an unrestricted concurrent SQL writer committing aft
 Crash, legacy, integrity, or unproven shutdown startup holds have no automatic release in
 this package; clean genesis and provably closed-session restarts remain required controls.
 
-### RW-24 reliability follow-up — implemented, 2026-09-07
+### RW-24 reliability follow-up — merged 2026-09-08
 
 RW-23's 11 repairs and RW-24's two further fixes, measured triage optimization and
-Discord validation coverage are committed on `codex/audit-reliability-2026-09-07`.
+Discord validation coverage were committed on `codex/audit-reliability-2026-09-07`
+(head `f3f315fc2b0da76c89a6da27ef2bcb23e8eef744`) and merged in [PR #81](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/81)
+(`5d50b25`) on 2026-09-08. GitHub deleted that branch ref on 2026-09-10.
 Independent authority review passed. Intake: [[evidence/rw24-reliability-2026-09-07]].
 The replay fixture and fractional-quantity status regressions found in the first
 completed matrix are repaired and independently reviewed. All four DEC-09 cells pass
@@ -229,14 +243,14 @@ against `fa3cc1c`: Windows 3.11/3.12 each 3,107 passed / 4 skipped; Ubuntu WSL2
 3.11/3.12 each 3,105 passed / 6 skipped. Every cell passes all 233 required cases.
 Final validation: [[evidence/rw23-rw24-local-matrix-2026-09-08/README]].
 
-### RW-23 audit repair delivery — 2026-09-07
+### RW-23 audit repair delivery — merged 2026-09-08
 
 The operator authorized BUG-146 through BUG-156 repairs and local commits in slices from
 merged main `c231dc2`. This is one bounded correctness package extending existing authority,
 workflow, ingest and simulation paths; its seven intake answers and validation record are in
 [[evidence/rw23-audit-repair-2026-09-07]]. No new capability or empirical gate is introduced.
 Further reliability/performance work follows a measured review and its own scope entry.
-RW-22 has merged in PR #80; older branch-status text below records its pre-merge state.
+RW-23 and RW-24 merged together in PR #81 (`5d50b25`). RW-22 has merged in PR #80; older branch-status text below records its pre-merge state.
 
 > **This is the only document that defines what we are building next and in what order.**
 > Everything else is either a live register ([[REGISTER]], [[security-hardening-backlog]]),
@@ -347,7 +361,7 @@ classified `socket_subscribe`, failed closed, and published a verified tombstone
 frames, zero REST, and no retry. Mid-stream subscription-control frames were journaled but not
 re-validated (`BUG-112`). The repair merged as PR #56 (main `38eab5a2`). Because the operator
 repeatedly missed sealed window starts, per-window unattended-launch tooling followed on
-`work/rw19-autolaunch`: a strictly read-only fail-closed safety-preflight generator, a one-shot
+`work/rw19-autolaunch` and merged in [PR #57](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/57) (`1199a75`, head `dbe38ae`): a strictly read-only fail-closed safety-preflight generator, a one-shot
 no-retry launcher with an outcome state machine and contained rehearsal mode, and a per-window
 Task Scheduler script — adversarially reviewed (four P1 probe-blindness defects found and fixed
 with regressions) and validated on the Windows `.venv` runtime that executes it, with WSL cells
@@ -447,8 +461,9 @@ Engine 1 makes Engine 2 safer and better-informed. It never makes it *profitable
 
 ### BUG-113 durable watch-only generation — merged in PR #59
 
-The bounded hardening package is claimed on
-`work/bug113-durable-watch-only-generation` from clean merged main `987842b8`. It closes a
+The bounded hardening package was claimed on
+`work/bug113-durable-watch-only-generation` from clean merged main `987842b8` and later
+merged in PR #59. It closes a
 restart hole found in the 2026-08-30 repository audit without enabling a new authority rung.
 
 1. **Operator change:** a vendor-limit blackout remains visibly fail-closed after process
@@ -1225,10 +1240,10 @@ not a code failure or a current blocker under `DEC-09`. This is not an activatio
 review, provider/cost authorization, and real Object Lock delete/shadow/retention/rollback
 evidence remain open.
 
-### RW-19 plan-bound news-reconnect hardening — claimed 2026-08-24
+### RW-19 plan-bound news-reconnect hardening — merged 2026-08-24; evidence pending
 
-The offline package is claimed on `work/rw19-plan-bound-news-reconnect` from clean merged main
-`e09349829d23cf4e95f25536685d462428da1502`. It does not run another Alpaca capture. It prepares
+The offline package was claimed on `work/rw19-plan-bound-news-reconnect` (head `1f121a8`) from clean merged main
+`e09349829d23cf4e95f25536685d462428da1502` and merged in [PR #55](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/55) (`9c6d21e`) on 2026-08-24. `DEC-07` stays open. It does not run another Alpaca capture. It prepares
 one prospective evidence-grade command so a later, separately authorized attempt cannot silently
 discard completed rows, paginate without a resource bound, publish into the repository, or be
 treated as closing `RW-19`/`DEC-07` merely because it completed.

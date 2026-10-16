@@ -1,0 +1,16 @@
+[package]
+name = "cockpit-py"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "PyO3 bindings for the cockpit FIFO book"
+license = "UNLICENSED"
+
+[lib]
+name = "cockpit_quant"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23.5", features = ["extension-module"] }
+cockpit-book = { path = "../cockpit-book" }
+cockpit-costs = { path = "../cockpit-costs" }

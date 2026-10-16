@@ -311,6 +311,28 @@ class DevinMatrixTests(unittest.TestCase):
             self.assertEqual(got["head_ref"], "", name)
             self.assertEqual(got["devin"], "false", name)
 
+    def test_repository_dispatch_sets_devin(self) -> None:
+        event = {"action": "devin-review-fix", "client_payload": {"pr_number": 42}}
+        got = decide("repository_dispatch", event, pr=pr_payload())
+        self.assertEqual(got["devin"], "true")
+        self.assertEqual(got["mention"], "false")
+        self.assertEqual(got["head_sha"], "a" * 40)
+
+    def test_workflow_dispatch_fixer_sets_devin(self) -> None:
+        event = {"inputs": {"job": "devin-review-fix", "pr_number": "42"}}
+        got = decide("workflow_dispatch", event, pr=pr_payload())
+        self.assertEqual(got["devin"], "true")
+
+    def test_workflow_dispatch_conflict_scan_does_not_set_devin(self) -> None:
+        event = {"inputs": {"job": "conflict-scan"}}
+        got = decide("workflow_dispatch", event, pr=pr_payload())
+        self.assertEqual(got["devin"], "false")
+
+    def test_codex_review_does_not_set_devin(self) -> None:
+        event = self._review()
+        event["review"]["user"]["login"] = "chatgpt-codex-connector[bot]"
+        self.assertEqual(decide("pull_request_review", event)["devin"], "false")
+
 
 class WholeWordTests(unittest.TestCase):
     def test_patterns(self) -> None:
@@ -321,6 +343,107 @@ class WholeWordTests(unittest.TestCase):
         self.assertFalse(gate.is_whole_word_mention("claude"))
         self.assertFalse(gate.is_whole_word_mention(""))
         self.assertFalse(gate.is_whole_word_mention(None))
+
+
+class JobLevelIfTests(unittest.TestCase):
+    """Runner gate: skipped events must not allocate a resolve-pr runner."""
+
+    BOTS = (
+        "claude[bot]",
+        "cursor[bot]",
+        "github-actions[bot]",
+        "blacksmith-sh[bot]",
+        "dependabot[bot]",
+    )
+
+    def test_human_claude_comment_on_pr_is_admitted(self) -> None:
+        event = {
+            "comment": comment(body="please @claude fix"),
+            "sender": {"login": "alice", "type": "User"},
+            "issue": {"number": 42, "pull_request": {"url": "x"}},
+        }
+        self.assertTrue(gate.job_level_admits("issue_comment", event))
+
+    def test_plain_issue_is_not_admitted(self) -> None:
+        event = {
+            "comment": comment(body="@claude"),
+            "sender": {"login": "alice", "type": "User"},
+            "issue": {"number": 42},
+        }
+        self.assertFalse(gate.job_level_admits("issue_comment", event))
+
+    def test_bot_comment_senders_are_skipped(self) -> None:
+        for login in self.BOTS:
+            event = {
+                "comment": comment(body="@claude please", user_type="Bot", login=login),
+                "sender": {"login": login, "type": "Bot"},
+                "issue": {"number": 42, "pull_request": {"url": "x"}},
+            }
+            self.assertFalse(gate.job_level_admits("issue_comment", event), login)
+
+    def test_bot_review_comments_are_skipped_even_with_mention(self) -> None:
+        for login in self.BOTS:
+            event = {
+                "comment": comment(body="@claude", user_type="Bot", login=login),
+                "sender": {"login": login, "type": "Bot"},
+                "pull_request": pr_payload(),
+            }
+            self.assertFalse(
+                gate.job_level_admits("pull_request_review_comment", event), login
+            )
+
+    def test_human_review_comment_without_mention_is_skipped(self) -> None:
+        event = {
+            "comment": comment(body="nits"),
+            "sender": {"login": "alice", "type": "User"},
+        }
+        self.assertFalse(gate.job_level_admits("pull_request_review_comment", event))
+
+    def test_devin_and_codex_reviews_are_admitted(self) -> None:
+        for login in ("devin-ai-integration[bot]", "chatgpt-codex-connector[bot]"):
+            event = {
+                "action": "submitted",
+                "review": {"user": {"login": login, "type": "Bot"}, "state": "commented"},
+                "sender": {"login": login, "type": "Bot"},
+            }
+            self.assertTrue(gate.job_level_admits("pull_request_review", event), login)
+
+    def test_other_bot_reviews_are_skipped(self) -> None:
+        for login in self.BOTS:
+            event = {
+                "action": "submitted",
+                "review": {"user": {"login": login, "type": "Bot"}},
+                "sender": {"login": login, "type": "Bot"},
+            }
+            self.assertFalse(gate.job_level_admits("pull_request_review", event), login)
+
+    def test_human_review_is_not_admitted(self) -> None:
+        event = {
+            "action": "submitted",
+            "review": {"user": {"login": "alice", "type": "User"}},
+            "sender": {"login": "alice", "type": "User"},
+        }
+        self.assertFalse(gate.job_level_admits("pull_request_review", event))
+
+    def test_fixer_dispatch_is_admitted(self) -> None:
+        self.assertTrue(
+            gate.job_level_admits(
+                "repository_dispatch", {"action": "devin-review-fix"}
+            )
+        )
+        self.assertTrue(
+            gate.job_level_admits(
+                "workflow_dispatch", {"inputs": {"job": "devin-review-fix"}}
+            )
+        )
+        self.assertFalse(
+            gate.job_level_admits(
+                "workflow_dispatch", {"inputs": {"job": "conflict-scan"}}
+            )
+        )
+        self.assertFalse(
+            gate.job_level_admits("repository_dispatch", {"action": "other"})
+        )
 
 
 class WorkflowStructureTests(unittest.TestCase):
@@ -346,8 +469,26 @@ class WorkflowStructureTests(unittest.TestCase):
         devin = self._job("devin-review-fix")
         self.assertIn("needs.resolve-pr.outputs.mention == 'true'", mention)
         self.assertIn("needs.resolve-pr.outputs.same_repo == 'true'", mention)
+        self.assertNotIn("repository_dispatch", mention)
+        self.assertNotIn("fixer-run", mention)
         self.assertIn("needs.resolve-pr.outputs.devin == 'true'", devin)
         self.assertIn("needs.resolve-pr.outputs.same_repo == 'true'", devin)
+        self.assertIn("github.event_name == 'repository_dispatch'", devin)
+        self.assertIn("github.event.action == 'devin-review-fix'", devin)
+        self.assertIn("github.event.inputs.job == 'devin-review-fix'", devin)
+
+    def test_resolve_pr_if_skips_bot_senders_and_bot_review_comments(self) -> None:
+        resolve = self._job("resolve-pr")
+        self.assertIn("github.event.sender.type != 'Bot'", resolve)
+        self.assertIn("github.event.comment.user.type != 'Bot'", resolve)
+        self.assertIn("contains(github.event.comment.body, '@claude')", resolve)
+        self.assertIn("devin-ai-integration[bot]", resolve)
+        self.assertIn("chatgpt-codex-connector[bot]", resolve)
+        self.assertIn("repository_dispatch", resolve)
+        self.assertNotIn(
+            "github.event_name == 'pull_request_review_comment' ||",
+            resolve.replace("\n", " "),
+        )
 
     def test_every_privileged_checkout_uses_pr_head_sha(self) -> None:
         mention = self._job("claude-mention")
@@ -861,6 +1002,8 @@ class ConflictScanTests(unittest.TestCase):
 
         self.assertTrue(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "issue_comment"}])))
         self.assertTrue(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "pull_request_review"}])))
+        self.assertTrue(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "repository_dispatch"}])))
+        self.assertTrue(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "workflow_dispatch"}])))
         self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 1, "event": "issue_comment"}])))
         self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "schedule"}])))
         self.assertFalse(self.mod.fixer_busy(REPO, "1", make([{"id": 2, "event": "pull_request"}])))
@@ -1063,6 +1206,21 @@ class FixerLoopCapTests(unittest.TestCase):
         self.assertIn("devin-ai-integration[bot]", job)
         self.assertIn(".commit_id == ", job)
         self.assertIn("Devin review of head is pending", job)
+
+
+class ConflictResolvePushSkipTests(unittest.TestCase):
+    """CSL-107: claude-code-action@v1 rejects push; skip resolve on that event."""
+
+    def test_resolver_job_skips_push(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = text.index("  conflict-resolve:\n")
+        nxt = text.find("\n  ", start + len("  conflict-resolve:"))
+        while nxt != -1 and text[nxt + 3 : nxt + 4] in (" ", "\t"):
+            nxt = text.find("\n  ", nxt + 1)
+        job = text[start:] if nxt == -1 else text[start:nxt]
+        header = job.split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", header)
+        self.assertIn("needs.conflict-scan.outputs.count != '0'", header)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,126 @@
+name: rust
+
+# CSL-42: Rust book, costs, and PnL. This job builds the crate, runs its tests,
+# installs the PyO3 extension, and re-runs the Python tests against that extension.
+#
+# Hosted cells follow the split already used by ci.yml:
+#   linux   — Python 3.11 and 3.12 whenever this path filter runs
+#   windows — Python 3.11 and 3.12 on push to main, workflow_dispatch, or the
+#             pull_request label ci:full
+#   macos   — Python 3.12 on workflow_dispatch or the pull_request label ci:full
+# Nightly macOS stays in ci.yml (07:17 UTC, skipped when main was idle 24h) and
+# is not duplicated here.
+#
+# The platform gate lives in `filter`. A job-level `if` cannot read `matrix`
+# (GitHub evaluates it before the matrix exists, and the run fails with zero
+# jobs). `filter` emits only the cells that should start.
+#
+# This workflow does not replace linux-gates or the DEC-09 local matrix (native
+# Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
+# brokers, live capital, or the order path. Landing any edit under
+# .github/workflows/ still needs Lucas's sign-off.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - "rust/**"
+      - "app/quant/book/**"
+      - "app/quant/costs.py"
+      - "app/quant/pnl.py"
+      - "app/tests/quant/book/**"
+      - "app/tests/quant/test_pnl.py"
+      - "app/tests/quant/test_costs_rust_parity.py"
+      - "app/tests/quant/test_w21_cost_model.py"
+      - ".github/workflows/rust.yml"
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "app/quant/book/**"
+      - "app/quant/costs.py"
+      - "app/quant/pnl.py"
+      - "app/tests/quant/book/**"
+      - "app/tests/quant/test_pnl.py"
+      - "app/tests/quant/test_costs_rust_parity.py"
+      - "app/tests/quant/test_w21_cost_model.py"
+      - ".github/workflows/rust.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  filter:
+    name: filter
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.gate.outputs.matrix }}
+    steps:
+      - name: Choose hosted cells
+        id: gate
+        env:
+          RUN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_MACOS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          include = [
+              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
+              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
+          ]
+          if os.environ["RUN_WINDOWS"] == "true":
+              include.extend([
+                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+              ])
+          if os.environ["RUN_MACOS"] == "true":
+              include.append(
+                  {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write("matrix<<EOF\n")
+              fh.write(json.dumps({"include": include}))
+              fh.write("\nEOF\n")
+          PY
+
+  rust-book:
+    name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
+    needs: filter
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.filter.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
+          # makes rustup download a second toolchain and then test 1.83.0.
+          toolchain: "1.83.0"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Rust tests
+        working-directory: rust
+        run: cargo test --workspace
+      - name: Build the Python extension
+        run: |
+          python -m pip install -U pip maturin
+          python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
+          python -c "import glob, subprocess, sys; wheels = glob.glob('rust/target/wheels/cockpit_quant-*.whl'); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *wheels])"
+      - name: Python book tests against the extension
+        working-directory: app
+        run: |
+          python -m pip install pytest keyring
+          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_verify.py tests/test_invariants.py
+      - name: Benchmark Rust against the Python reference
+        run: |
+          python rust/bench_compare.py
+          python rust/bench_costs.py
