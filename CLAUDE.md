@@ -79,6 +79,11 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    `decision` issues.
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+7. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes; mark ready
+   once; never merge or rebase `main` into a branch unless there is a real
+   conflict; never edit `.github/workflows/**` unless a Linear issue
+   explicitly assigned by a human asks for it; bots mark ready with their own
+   identity, never `GITHUB_TOKEN`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.

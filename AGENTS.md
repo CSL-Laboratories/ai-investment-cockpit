@@ -106,8 +106,14 @@ provisioned.
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
 5. Keep the repository private and commit only when the operator asks.
-6. Any order-path change needs an adversarial-review round.
-7. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+6. **CI etiquette (CSL-255):** open PRs as drafts; batch pushes (one push per
+   iteration when possible); mark ready **once**; never merge or rebase `main`
+   into a branch unless there is a real conflict; never edit
+   `.github/workflows/**` unless a Linear issue explicitly assigned by a human
+   asks for it; bots mark a PR ready with their own identity, never
+   `GITHUB_TOKEN`.
+7. Any order-path change needs an adversarial-review round.
+8. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
    Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
    hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
@@ -266,6 +272,8 @@ median slowdown, after sample spread, is above 10%. It does not fail
 ## Guardrails (MUST)
 
 Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacksmith runner labels, caching, concurrency), Devin configuration, repo rulesets, or the MCP server list, unless a Linear issue explicitly assigned by a human asks for it.
+
+Open PRs as drafts, batch pushes, and mark ready once. Never merge or rebase `main` into a working branch unless there is a real conflict. Bots convert draft → ready with their own App identity, not `GITHUB_TOKEN`.
 
 Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 
