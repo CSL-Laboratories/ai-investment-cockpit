@@ -65,7 +65,7 @@ from workflows.scrubber import scrub_output_fields
 
 @dataclass(frozen=True)
 class ProposalOutcome:
-    status: str  # drafted | flagged | needs_human | quarantined | degraded
+    status: str  # drafted | flagged | needs_human | quarantined | degraded | context_limited
     proposal: dict | None
     record: ProposalRecord | None
     risk_decision: RiskDecision | None
@@ -406,6 +406,14 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     fit = fit_packet(
         packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
     packet = fit.packet
+    if not any(item.event_id == event.id for item in packet.items):
+        # Template + repair fit, but the subject evidence does not. An empty
+        # decision call would draft without citations; grounding then flags and
+        # triage_loop would mark the event escalated (never retried). Defer.
+        return ProposalOutcome(
+            "context_limited", None, None, None, None, None,
+            ("subject evidence does not fit the context cap",),
+        )
     prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
     result, job = call_agent(
         state, alias="decision", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,

@@ -121,9 +121,10 @@ def test_fit_with_repair_reserve_sheds_items_the_call_gate_would_refuse():
     assert fit_packet(packet, reserved_tokens=reserved, cap=cap).dropped == ()
     fit = fit_packet(packet, reserved_tokens=reserved + repair_reserve_tokens(), cap=cap)
     assert fit.dropped and fit.packet.items
-    assert fit.estimated_tokens + 0 <= cap
+    assert fit.estimated_tokens <= cap
 
 
+def test_fit_packet_is_identity_under_the_cap():
     packet = Packet(items=(_item(1, 20),))
     fit = fit_packet(packet, reserved_tokens=5, cap=10_000)
     assert fit.fits and fit.dropped == ()
@@ -447,3 +448,54 @@ def test_sum_quotes_does_not_reapply_the_long_context_tier():
     assert added.input_tokens == 160_000
     assert Decimal(added.usd) == Decimal(short.usd) * 2
     assert Decimal(added.usd) != Decimal(retiered.usd)
+
+
+def test_sum_quotes_is_input_output_only_when_every_call_has_output():
+    vendor = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=8_000, output_tokens=1_000,
+        input_token_source="vendor",
+    )
+    estimate = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=8_000, output_tokens=None,
+        input_token_source="estimate",
+    )
+    mixed = sum_quotes([vendor, estimate])
+    assert vendor.usd_scope == "input_output"
+    assert estimate.usd_scope == "input_only"
+    assert mixed.usd_scope == "input_only"
+    assert mixed.input_token_source == "mixed"
+    assert mixed.output_tokens == 1_000
+    both = sum_quotes([vendor, vendor])
+    assert both.usd_scope == "input_output"
+    assert both.output_tokens == 2_000
+
+
+def test_repaired_job_without_vendor_usage_prices_the_repair_prompt(st):
+    """A missing envelope must not price the repair call as the first prompt."""
+    invalid = {"question": "q?", "pattern": "nope"}
+    first = envelope(invalid, session_id="s1")
+    second = envelope(VALID, session_id="s2")
+    transport = FakeTransport([first, second])
+    prompt = "short original"
+    result, job = _call(st, transport, prompt=prompt)
+    assert result.status == OK and result.repaired is True
+    first_est = estimate_tokens(prompt)
+    repair_est = first_est + estimate_tokens(worst_case_repair_overhead())
+    per_first = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=first_est, output_tokens=None,
+        input_token_source="estimate",
+    )
+    per_repair = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=repair_est, output_tokens=None,
+        input_token_source="estimate",
+    )
+    doubled_first = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=first_est * 2, output_tokens=None,
+        input_token_source="estimate",
+    )
+    cost = _events(st)[0].payload["cost"]
+    assert cost["input_token_source"] == "estimate"
+    assert cost["input_tokens"] == first_est + repair_est
+    assert Decimal(cost["usd"]) == Decimal(per_first.usd) + Decimal(per_repair.usd)
+    assert Decimal(cost["usd"]) != Decimal(doubled_first.usd)
+    assert job.usage_estimate == Decimal(cost["usd"])

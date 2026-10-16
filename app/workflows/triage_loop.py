@@ -416,6 +416,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
                          watchlist=watchlist)
+            if outcome.status == "context_limited":
+                # No model call: the subject item did not fit. Do not count a
+                # job or mark escalated — retry on the next loop (Inv 7).
+                _defer(state, dispositions, ev, "context_limit")
+                continue
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True

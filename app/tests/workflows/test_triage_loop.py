@@ -421,3 +421,33 @@ def test_degraded_batch_does_not_re_escalate_already_escalated_events(st, clock,
     assert first not in drafted2, "an already-escalated event was re-drafted (duplicate order)"
     assert set(drafted2) == {by["AAPL"].id, by["MSFT"].id} - {first}, \
         "the genuinely deferred event must still be picked up"
+
+
+def test_context_limited_proposal_is_deferred_not_escalated(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    calls = []
+
+    def limited_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome(status="context_limited")
+
+    result = triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=limited_propose,
+    )
+    assert result["status"] == "ok"
+    assert calls == [ev.id]
+    assert ev.id in result["deferred"]
+    assert ev.id not in result["escalated"]
+    batch = _payloads(st, EVENT_TRIAGE_BATCH)[-1]
+    assert batch["dispositions"][ev.id] == "deferred"
+    assert any(
+        p["event_id"] == ev.id and p["reason"] == "context_limit"
+        for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+    )
