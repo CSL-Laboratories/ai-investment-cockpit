@@ -134,6 +134,16 @@ REQUIRED_RESEARCH_EXCLUSIONS = {
     "economic_qualification",
     "release_qualification",
 }
+EXPECTED_AUTHORITY_RESEARCH_KEYS = {
+    "run_id",
+    "status",
+    "research_cutoff",
+    "claim",
+    "reconciliation_path",
+    "owner_direction",
+    "not_claimed",
+    "sha256",
+}
 REQUIRED_OUTCOME_FIELDS = {
     "key",
     "linear_issue",
@@ -318,6 +328,10 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     )
 
     research = program.get("research_evidence", {}).get("authority_compliance", {})
+    _require(
+        isinstance(research, dict) and set(research) == EXPECTED_AUTHORITY_RESEARCH_KEYS,
+        "authority research fields changed",
+    )
     _require(research.get("run_id") == "trun_db705696fec649d8ad991d8f8f7b7813", "authority research run missing")
     _require(research.get("status") == "completed", "authority research incomplete")
     _require(research.get("research_cutoff") == "2026-10-16", "authority research cutoff missing")

@@ -22,6 +22,36 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
+    def test_authority_research_rejects_extra_claims(self) -> None:
+        for field, value in (
+            ("live_authority_granted", True),
+            ("live_trading", True),
+            ("unreviewed_annotation", False),
+        ):
+            candidate = copy.deepcopy(self.program)
+            candidate["research_evidence"]["authority_compliance"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                CHECKER.ContractError, "authority research fields changed"
+            ):
+                CHECKER.validate(candidate)
+
+    def test_authority_research_requires_exact_object_shape(self) -> None:
+        research = self.program["research_evidence"]["authority_compliance"]
+        for field in research:
+            candidate = copy.deepcopy(self.program)
+            candidate["research_evidence"]["authority_compliance"].pop(field)
+            with self.subTest(missing=field), self.assertRaisesRegex(
+                CHECKER.ContractError, "authority research fields changed"
+            ):
+                CHECKER.validate(candidate)
+        for value in (None, list(research), "research_input_only"):
+            candidate = copy.deepcopy(self.program)
+            candidate["research_evidence"]["authority_compliance"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(
+                CHECKER.ContractError, "authority research fields changed"
+            ):
+                CHECKER.validate(candidate)
+
     def test_plan_records_acceptance_without_promoting_outcomes(self) -> None:
         plan = (ROOT / "docs" / "PLAN.md").read_text(encoding="utf-8")
         replacement = plan.split("# The plan\n", 1)[1].split("\n---\n", 1)[0]
