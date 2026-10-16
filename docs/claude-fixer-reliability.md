@@ -14,6 +14,23 @@ the full candidate but explicitly does not claim the push has succeeded.
 Receipt parsing and authentication are unchanged: model prose is not evidence
 of completion, and the workflow audit never creates an addressed receipt.
 
+The terminal audit reconciles actual PR review replies against the captured
+per-root context using the workflow-owned copy of the existing receipt consumer.
+It reports verified addressed receipts separately from human handoffs, missing
+receipts, invalid/superseded receipts and changed roots. Full SHA, authenticated
+Claude numeric identity, body fingerprint, captured base and remote ancestry are
+required. A reachable push with an abbreviated receipt is reported as invalid;
+the workflow does not repair or author that receipt. This is deterministic
+reconciliation of observed output, not proof that a model will produce it.
+
+Reconciliation is read-only and does not change eligibility, reservations,
+resolution or READY. It checks at most 50 captured roots and five comment pages;
+all terminal reads share a 40-call/70-second budget with a final live-head check.
+Incomplete reads, duplicate snapshots, changed heads, denied access and exhausted
+budgets report unverified. Mention runs without captured context say not
+applicable. Results describe the observed context, not an atomic current-thread
+decision; future runs still recheck resolved/outdated findings and later replies.
+
 An `always()` step records a terminal audit after model failure, denied commands,
 turn exhaustion or missing execution output. It independently checks the guarded
 candidate's remote ancestry and posts a PR notice. If the comment API fails,

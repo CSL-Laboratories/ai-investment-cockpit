@@ -280,5 +280,176 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("has no Linear, Context7 or Parallel tools", body)
 
 
+class TerminalReceiptIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("receipt_fixtures", ROOT / "tools/test_claude_fixer_receipts.py")
+        self.fixtures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.fixtures)
+        self.consumer = self.fixtures.m
+        self.roots = self.fixtures.root_comments([self.fixtures.thread()])
+        items = self.fixtures.findings([self.fixtures.thread()])
+        if hasattr(self.fixtures, "prepare"):
+            items = self.fixtures.prepare(items)
+        self.item = {**items[0], "base": A}
+        self.config = CONFIG | {"receipts": [self.item]}
+        self.receipt = {**self.item, "status": "addressed", "commit": B}
+        self.comments = self.roots + [self.reply(self.receipt)]
+
+    def reply(self, receipt):
+        return self.fixtures.reply(receipt) | {"id": 900}
+
+    def read(self, path):
+        if "/compare/" in path:
+            return {"status": "identical" if path.endswith(f"{B}...{B}") else "ahead"}
+        if "/comments?" in path:
+            return self.comments
+        if "/collaborators/" in path:
+            return {"permission": "write"}
+        return pr(B)
+
+    def audit(self, read=None):
+        return m.receipt_audit(self.config, read or self.read, self.consumer)
+
+    def test_full_sha_producer_shape_reconciles_but_short_output_does_not(self):
+        self.assertIn("1=verified-addressed", self.audit())
+        self.comments = self.roots + [self.reply(self.receipt | {"commit": "d5194ed"})]
+        self.assertIn("1=invalid-or-superseded", self.audit())
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "attempt.json"
+            state.write_text(json.dumps({"candidate": B}))
+            body = m.terminal(self.config, state, "", "failure", self.read, self.consumer)
+        self.assertIn(f"live PR: `{B}`", body)
+        self.assertIn("1=invalid-or-superseded", body)
+        self.assertNotIn("claude-fixer-result:", body)
+
+    def test_missing_invalid_forged_and_unpushed_receipts_are_not_verified(self):
+        self.comments = self.roots
+        self.assertIn("1=missing", self.audit())
+        for change in ({"commit": A}, {"commit": "z" * 40}, {"base": C}, {"fingerprint": "0" * 64}):
+            with self.subTest(change=change):
+                self.comments = self.roots + [self.reply(self.receipt | change)]
+                # A no-op compare must never be reported as ahead.
+                def read(path):
+                    if "/compare/" in path and path.endswith(f"{A}...{A}"):
+                        return {"status": "identical"}
+                    return self.read(path)
+                self.assertNotIn("=verified-", self.audit(read))
+        for user in (self.fixtures.actor("github-actions[bot]", self.consumer.ACTIONS_ID),
+                     self.fixtures.actor("claude[bot]", 1)):
+            self.comments = self.roots + [self.reply(self.receipt) | {"user": user}]
+            self.assertIn("1=invalid-or-superseded", self.audit())
+        self.comments = self.roots + [self.reply(self.receipt)]
+        self.assertIn("1=invalid-or-superseded", self.audit(
+            lambda p: {"status": "diverged"} if "/compare/" in p else self.read(p)))
+
+    def test_handoff_is_reported_separately_and_root_edits_are_not_verified(self):
+        self.comments = self.roots + [self.reply(self.receipt | {"status": "needs-human"})]
+        self.assertIn("1=verified-needs-human", self.audit())
+        self.comments[0] = self.comments[0] | {"body": "changed"}
+        self.assertIn("1=root-changed-or-unverified", self.audit())
+
+    def test_meaningful_followup_invalidates_captured_receipt(self):
+        self.comments.append({"id": 901, "in_reply_to_id": 1,
+                              "user": {"id": 12, "login": "writer", "type": "User"},
+                              "created_at": "2026-10-16T02:00:00Z", "body": "This still fails."})
+        self.assertNotIn("=verified-", self.audit())
+
+    def test_read_denial_page_cap_duplicate_snapshot_and_head_race_stay_unverified(self):
+        def denied(_):
+            raise subprocess.CalledProcessError(1, "gh")
+        self.assertIn("audit: unverified", self.audit(denied))
+        reads = []
+        def pages(path):
+            reads.append(path)
+            return [{}] * 100 if "/comments?" in path else self.read(path)
+        self.assertIn("audit: unverified", self.audit(pages))
+        self.assertEqual(sum("/comments?" in p for p in reads), 5)
+        self.comments += self.comments
+        self.assertIn("audit: unverified", self.audit())
+        self.comments = self.roots + [self.reply(self.receipt)]
+        heads = iter([B, C])
+        def race(path):
+            return pr(next(heads)) if path.endswith("/pulls/7") else self.read(path)
+        self.assertIn("audit: unverified", self.audit(race))
+
+    def test_invalid_compare_objects_differ_from_access_failure(self):
+        for code, expected in ((404, "1=invalid-or-superseded"), (422, "1=invalid-or-superseded"),
+                               (403, "audit: unverified"), (500, "audit: unverified")):
+            def read(path, code=code):
+                if "/compare/" in path:
+                    raise subprocess.CalledProcessError(1, "gh", stderr=f"(HTTP {code})")
+                return self.read(path)
+            self.assertIn(expected, self.audit(read))
+
+    def test_v3_generation_and_observation_remain_required(self):
+        if "v" not in self.item:
+            return
+        for key in ("v", "generation", "observation"):
+            self.comments = self.roots + [self.reply(self.receipt | {key: "wrong"})]
+            self.assertIn("1=invalid-or-superseded", self.audit())
+
+    def test_mixed_roots_and_complete_pagination_report_each_root(self):
+        threads = [self.fixtures.thread(root=2)]
+        items = self.fixtures.findings(threads)
+        if hasattr(self.fixtures, "prepare"):
+            items = self.fixtures.prepare(items)
+        self.config["receipts"].append({**items[0], "base": A})
+        self.comments += self.fixtures.root_comments(threads)
+        def paged(path):
+            if "/comments?" in path and path.endswith("page=1"):
+                return [{"id": 1000 + i, "body": "unrelated"} for i in range(100)]
+            return self.read(path)
+        body = self.audit(paged)
+        self.assertIn("1=verified-addressed", body)
+        self.assertIn("2=missing", body)
+
+    def test_terminal_read_count_and_wall_budget_are_enforced(self):
+        with patch.object(m.time, "monotonic", return_value=0), patch.object(m, "api", return_value={}):
+            read = m.bounded_reader()
+            for _ in range(40):
+                read("fixture")
+            with self.assertRaisesRegex(ValueError, "budget"):
+                read("fixture")
+        with patch.object(m.time, "monotonic", side_effect=[0, 71]), patch.object(m, "api") as api:
+            read = m.bounded_reader()
+            with self.assertRaisesRegex(ValueError, "budget"):
+                read("fixture")
+            api.assert_not_called()
+
+    def test_install_captures_context_and_workflow_uses_trusted_consumer(self):
+        text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
+        self.assertIn('cat > "$RUNNER_TEMP/claude-fixer-guard/receipts.py"', text)
+        self.assertIn('python3 "$RUNNER_TEMP/claude-fixer-guard/receipts.py"', text)
+        self.assertEqual(text.count("RECEIPT_CONTEXT: ${{ steps.eligibility.outputs.receipt_context }}"), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            script = path / "pre-push"
+            script.write_text("fixture")
+            with patch.object(m, "__file__", str(script)), patch.object(sys, "argv", ["pre-push", "install"]), \
+                    patch.object(m, "command"), patch.dict(os.environ, {
+                        "REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": A, "HEAD_REF": "fix",
+                        "RECEIPT_CONTEXT": json.dumps([self.item])}):
+                self.assertEqual(m.main(), 0)
+            self.assertEqual(json.loads((path / "context.json").read_text())["receipts"], [self.item])
+
+    def test_terminal_entry_point_posts_reconciliation_without_handled_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            (path / "receipts.py").write_text((ROOT / "scripts/ci/claude_fixer_receipts.py").read_text())
+            (path / "context.json").write_text(json.dumps(self.config))
+            (path / "attempt.json").write_text(json.dumps({"candidate": B}))
+            with patch.object(m, "__file__", str(path / "pre-push")), \
+                    patch.object(sys, "argv", ["pre-push", "terminal"]), \
+                    patch.object(m, "api", side_effect=lambda p, timeout=30: self.read(p)), \
+                    patch.object(m, "command", return_value="") as post, \
+                    patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(path / "summary"), "MODEL_OUTCOME": "failure"}), \
+                    patch("builtins.print"):
+                self.assertEqual(m.main(), 0)
+            body = json.loads(post.call_args.kwargs["input"])["body"]
+            self.assertIn("1=verified-addressed", body)
+            self.assertNotIn("claude-fixer-result:", body)
+            self.assertEqual((path / "summary").read_text().strip(), body.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

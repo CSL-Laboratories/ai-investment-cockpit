@@ -6,11 +6,13 @@ No fetch, retry, history repair, new credential, or handled-result receipt.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
@@ -18,11 +20,77 @@ REF = re.compile(r"(?!.*\.\.)[A-Za-z0-9._/-]+\Z")
 
 
 def command(args, **kwargs):
-    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, timeout=30, **kwargs).strip()
+    kwargs.setdefault("timeout", 30)
+    return subprocess.check_output(args, text=True, stderr=subprocess.PIPE, **kwargs).strip()
 
 
-def api(path):
-    return json.loads(command(["gh", "api", path]))
+def api(path, timeout=30):
+    return json.loads(command(["gh", "api", path], timeout=timeout))
+
+
+def bounded_reader():
+    deadline = time.monotonic() + 70
+    calls = 0
+    def read(path):
+        nonlocal calls
+        remaining = deadline - time.monotonic()
+        calls += 1
+        if remaining <= 0 or calls > 40:
+            raise ValueError("terminal read budget exhausted")
+        return api(path, timeout=min(10, remaining))
+    return read
+
+
+def receipt_audit(config, read, consumer):
+    items = config.get("receipts", [])
+    if isinstance(items, list) and not items:
+        return "Per-root receipt audit: not applicable (no captured receipt context)."
+    try:
+        if consumer is None or not isinstance(items, list) or len(items) > 50:
+            raise ValueError("receipt context unavailable or over limit")
+        roots = set()
+        for item in items:
+            rid = item.get("root")
+            if (type(rid) is not int or rid <= 0 or rid in roots
+                    or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("fingerprint") or ""))
+                    or item.get("base") != config["base"]):
+                raise ValueError("invalid captured receipt context")
+            roots.add(rid)
+        head = current_pr(config, read)
+        comments = []
+        for page in range(1, 6):
+            batch = read(f"repos/{config['repo']}/pulls/{config['number']}/comments?per_page=100&page={page}")
+            if not isinstance(batch, list) or any(not isinstance(c, dict) for c in batch):
+                raise ValueError("invalid comment snapshot")
+            comments.extend(batch)
+            if len(batch) < 100:
+                break
+        else:
+            raise ValueError("comment page limit reached")
+        ids = [c.get("id") for c in comments]
+        if any(type(cid) is not int or cid <= 0 for cid in ids) or len(set(ids)) != len(ids):
+            raise ValueError("inconsistent comment snapshot")
+        cache = {}
+        def cached(path):
+            if path not in cache:
+                cache[path] = read(path)
+            return cache[path]
+        def compare(base, tip):
+            try:
+                return cached(f"repos/{config['repo']}/compare/{base}...{tip}")["status"]
+            except subprocess.CalledProcessError as error:
+                if re.search(r"\(HTTP (?:404|422)\)", str(error.stderr or "")):
+                    return "invalid"
+                raise
+        def permission(login):
+            return cached(f"repos/{config['repo']}/collaborators/{login}/permission")["permission"]
+        reports = consumer.terminal_receipts(items, comments, head, compare, permission)
+        if current_pr(config, read) != head:
+            raise ValueError("head changed during receipt audit")
+        details = "; ".join(f"{r['root']}={r['status']}" for r in reports)
+        return f"Per-root receipt audit at `{head}`: {details}."
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+        return "Per-root receipt audit: unverified (read, context, snapshot or bounded-budget failure)."
 
 
 def validate(config):
@@ -97,7 +165,7 @@ def execution_reason(path, outcome):
         return "execution-result-unavailable"
 
 
-def terminal(config, state_path, execution, outcome, read=api):
+def terminal(config, state_path, execution, outcome, read=api, consumer=None):
     validate(config)
     reason = execution_reason(execution, outcome)
     pushed = "unverified"
@@ -114,8 +182,9 @@ def terminal(config, state_path, execution, outcome, read=api):
         pass  # Unknown is not successful, and never a needs-human result receipt.
     return (f"Claude fixer terminal audit: {reason}. Checkout `{config['base']}`. "
             f"Guarded candidate reachable on the live PR: `{pushed}`.\n\n"
+            + receipt_audit(config, read, consumer) + "\n\n"
             "This audit is not an addressed or needs-human finding receipt. "
-            "If no verified per-root fix receipt exists, work remains pending. "
+            "Receipt evidence concerns captured roots only, not current eligibility or READY. "
             "A fresh authorized run must recheck genuine unresolved, current findings "
             "and existing author permissions, three-attempt budget and eight-commit guard. "
             "Do not reopen resolved findings or retry this checkout. No fetch, rebase or merge recovery. "
@@ -131,13 +200,22 @@ def main():
             ("repo", "REPO"), ("number", "PR_NUMBER"),
             ("base", "HEAD_SHA"), ("ref", "HEAD_REF"))}
         validate(config)
+        config["receipts"] = json.loads(os.environ.get("RECEIPT_CONTEXT") or "[]")
         config_path.write_text(json.dumps(config), encoding="utf-8")
         Path(__file__).chmod(0o700)
         command(["git", "config", "--local", "core.hooksPath", str(directory)])
         return 0
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if mode == "terminal":
-        body = terminal(config, state_path, os.environ.get("EXECUTION_FILE", ""), os.environ.get("MODEL_OUTCOME", ""))
+        consumer = None
+        try:
+            spec = importlib.util.spec_from_file_location("workflow_receipts", directory / "receipts.py")
+            consumer = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(consumer)
+        except (OSError, ImportError, ValueError, AttributeError, SyntaxError, TypeError):
+            pass
+        body = terminal(config, state_path, os.environ.get("EXECUTION_FILE", ""),
+                        os.environ.get("MODEL_OUTCOME", ""), read=bounded_reader(), consumer=consumer)
         # Summary survives a denied/unavailable comment API. Do not log its error
         # payload or silently claim the remote handback was posted.
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
