@@ -1,0 +1,13 @@
+---
+description: Agent CI etiquette for pull requests and workflow files
+alwaysApply: true
+---
+
+# CI etiquette (CSL-255)
+
+- Open pull requests as **drafts**.
+- **Batch pushes.** Prefer one push per iteration; do not push every local commit.
+- Mark a PR **ready once**. Do not flip draft ↔ ready repeatedly.
+- Never merge or rebase `main` into a working branch unless there is a **real conflict**.
+- Never edit `.github/workflows/**` unless a Linear issue explicitly assigned by a human asks for it.
+- Bots mark a PR ready with **their own identity**, never `GITHUB_TOKEN`.
