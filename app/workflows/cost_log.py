@@ -65,6 +65,7 @@ def sum_quotes(quotes: list[CostQuote]) -> CostQuote:
     input_tokens = 0
     output_tokens = 0
     saw_output = False
+    all_output = True
     usd_total = Decimal("0")
     unpriced = False
     sources = set()
@@ -74,6 +75,8 @@ def sum_quotes(quotes: list[CostQuote]) -> CostQuote:
         if quote.output_tokens is not None:
             output_tokens += quote.output_tokens
             saw_output = True
+        else:
+            all_output = False
         sources.add(quote.input_token_source)
         tiers.append(quote.rate_tier)
         if quote.usd is None:
@@ -92,7 +95,7 @@ def sum_quotes(quotes: list[CostQuote]) -> CostQuote:
         rate_tier="unpriced" if unpriced else rate_tier,
         usd=None if unpriced else _usd(usd_total),
         usd_scope="unpriced" if unpriced else (
-            "input_output" if saw_output else "input_only"
+            "input_output" if all_output else "input_only"
         ),
     )
 

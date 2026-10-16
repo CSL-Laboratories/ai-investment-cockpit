@@ -42,7 +42,7 @@ from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import draft_proposal
+from workflows.proposals import draft_proposal, subject_fits_context
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
@@ -401,6 +401,12 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
             continue
+        if fn is draft_proposal and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+                and not subject_fits_context(state, ev, packet):
+            # Preflight before spending: an unfit subject makes no model call, so
+            # it must not consume a daily deep-escalation unit on each retry.
+            _defer(state, dispositions, ev, "context_limit")
+            continue
         try:
             consumed = budget.try_consume(
                 day=day, event_id=ev.id, symbol=cand["symbol"],
@@ -416,6 +422,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
                          watchlist=watchlist)
+            if outcome.status == "context_limited":
+                # No model call: the subject item did not fit. Do not count a
+                # job or mark escalated — retry on the next loop (Inv 7).
+                _defer(state, dispositions, ev, "context_limit")
+                continue
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True
