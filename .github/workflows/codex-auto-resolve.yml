@@ -1,11 +1,15 @@
 # Codex auto-resolve for review threads (CSL-179).
 # GitHub-hosted ubuntu-latest on purpose: do not spend Blacksmith minutes.
 # Parses the shared per-thread marker contract (recursion CSL-178 uses the same):
-#   <!-- codex-thread-verdict:<thread_id>:<sha>:RESOLVE|KEEP -->
-#   CODEX-THREAD: RESOLVE|KEEP thread=<thread_id> sha=<sha>
-# RESOLVE + current head SHA + green required checks → GraphQL resolveReviewThread
-# and a short reply citing the ruling. KEEP / missing fix / ambiguous / stale SHA
-# leave the Linear needs-decision path in place.
+#
+#   <!-- codex-thread-verdict:<thread_id> -->
+#   CODEX-THREAD: RESOLVE|DECIDE|MISSING|AMBIGUOUS
+#   HEAD: <full 40-character commit SHA>
+#
+# RESOLVE + current head SHA + green required checks → cite on the thread,
+# then GraphQL resolveReviewThread, then a success marker. DECIDE / MISSING /
+# AMBIGUOUS / stale SHA / pending required checks leave the Linear
+# needs-decision path in place.
 #
 # Does not post @codex review (that is #124 / #131). Never pushes or merges.
 # Missing CODEX_TRIGGER_PAT is a ::notice:: skip, not a failure.
@@ -14,14 +18,15 @@
 # CODEX_TRIGGER_PAT — the same PAT that posts @codex review for the gate and
 # stuck-thread watcher. GITHUB_TOKEN is read-only. The PAT identity is what
 # GitHub records as resolving the thread.
+#
+# issue_comment is intentionally not a trigger: that payload has no head.repo,
+# so a fork PR comment could otherwise admit a PAT job.
 name: Codex auto-resolve
 
 on:
   pull_request_review:
     types: [submitted]
   pull_request_review_comment:
-    types: [created]
-  issue_comment:
     types: [created]
   schedule:
     # Catch Codex reviews that land a few minutes after @codex review.
@@ -44,6 +49,8 @@ permissions:
   contents: read
   pull-requests: read
   issues: read
+  checks: read
+  statuses: read
 
 concurrency:
   group: codex-auto-resolve
@@ -51,7 +58,7 @@ concurrency:
 
 jobs:
   resolve:
-    # Same-repo only. Comment/review events only if Codex posted them.
+    # Same-repo only. Review events only if Codex posted them.
     # Forks never get the PAT or a checkout of untrusted code.
     if: >-
       github.event_name == 'schedule' ||
@@ -65,11 +72,6 @@ jobs:
         github.event_name == 'pull_request_review_comment' &&
         github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
         github.event.pull_request.head.repo.full_name == github.repository
-      ) ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
       )
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -77,6 +79,8 @@ jobs:
       contents: read
       pull-requests: read
       issues: read
+      checks: read
+      statuses: read
     steps:
       - name: Check trigger PAT
         id: pat
@@ -105,7 +109,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
-          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.issue.number || github.event.pull_request.number || '' }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number || '' }}
         run: |
           set -euo pipefail
           # First-merge bootstrap: this workflow ships in the PR, but the
