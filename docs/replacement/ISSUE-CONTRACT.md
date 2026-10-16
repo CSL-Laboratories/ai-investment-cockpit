@@ -20,7 +20,10 @@ Every issue must state:
 9. **Discretion class**: bounded autonomy, collaborative judgment or human-gated.
 10. **Falsifiers**, including adverse and empty outcomes.
 11. **Deliverables** bound to an exact candidate.
-12. **Executable completion gate** and negative controls.
+12. **Executable completion gate** and negative controls. A parent that defines work
+    needed to build that gate must mark it `pending_outcome_artifact`, describe the
+    required exact-candidate command and fail-closed controls, and may not report it as
+    executable or PASS until the runner and oracle are checked in and independently run.
 13. **Independent verification owner and method**.
 14. **Evidence promotion** level claimed and every higher level not claimed.
 

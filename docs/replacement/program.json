@@ -16,7 +16,7 @@
     },
     {
       "path": "docs/replacement/ISSUE-CONTRACT.md",
-      "sha256": "e3faa52d96a689a73d5963383c5ded06c483eec700e1d4af7aec31b7f628768a"
+      "sha256": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094"
     },
     {
       "path": "docs/replacement/MONTH-PROGRAM.md",
@@ -53,7 +53,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O1",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -69,7 +69,8 @@
           "release_qualified"
         ]
       },
-      "dependency_contracts": []
+      "dependency_contracts": [],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O2",
@@ -98,7 +99,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O2",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -121,7 +122,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O3",
@@ -151,7 +153,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O3",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -180,7 +182,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O4",
@@ -211,7 +214,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O4",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -246,7 +249,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O5",
@@ -277,7 +281,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O5",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -312,7 +316,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O6",
@@ -344,7 +349,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O6",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -385,7 +390,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O7",
@@ -417,7 +423,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O7",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -458,7 +464,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O8",
@@ -492,7 +499,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O8",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -545,7 +552,8 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     },
     {
       "key": "O9",
@@ -581,7 +589,7 @@
       "deliverables": [
         "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
       ],
-      "completion_gate": "python -X utf8 -B tools/check_replacement_program.py --outcome O9",
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
       "evidence": {
         "claimed": "researched",
@@ -646,7 +654,9 @@
           "accepted_digest": null,
           "status": "pending_human_digest_receipt"
         }
-      ]
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
     }
-  ]
+  ],
+  "manifest_gate": "python -X utf8 -B tools/check_replacement_program.py"
 }

@@ -50,6 +50,7 @@ REQUIRED_OUTCOME_FIELDS = {
     "falsifiers",
     "deliverables",
     "completion_gate",
+    "completion_gate_status",
     "independent_verification",
     "evidence",
 }
@@ -131,6 +132,8 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
             _require(isinstance(item[field], list) and item[field], f"{key} empty {field}")
         verification = item["independent_verification"]
         _require(_nonempty(verification) and "independent" in verification.lower(), f"{key} missing independent verification")
+        _require(item["completion_gate_status"] == "pending_outcome_artifact", f"{key} completion gate status is unsupported")
+        _require("must be checked in" in item["completion_gate"].lower(), f"{key} completion gate falsely claims execution")
         evidence = item["evidence"]
         _require(isinstance(evidence, dict), f"{key} evidence must be an object")
         claimed = evidence.get("claimed")
@@ -151,7 +154,6 @@ def load(path: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--program", type=Path, default=DEFAULT_PROGRAM)
-    parser.add_argument("--outcome", choices=[f"O{i}" for i in range(1, 10)])
     args = parser.parse_args(argv)
     try:
         validate(load(args.program))
