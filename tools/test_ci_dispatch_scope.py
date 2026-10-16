@@ -88,9 +88,9 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertEqual(self.rust['on']['merge_group']['types'], ['checks_requested'])
         self.assertIn('MG_BASE', next(step['env'] for step in self.ci['jobs']['filter']['steps']
                                       if step.get('id') == 'decide'))
-        self.assertIn("github.event_name != 'push'", self.ci['jobs']['linux']['if'])
+        self.assertNotIn("github.event_name != 'push'", self.ci['jobs']['linux']['if'])
         self.assertIn("github.event_name == 'merge_group'", self.ci['jobs']['windows']['if'])
-        self.assertNotIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",
                          self.ci['jobs']['windows']['if'])
         self.assertEqual(self.rust['jobs']['rust-book']['if'],
                          "needs.filter.outputs.has-cells == 'true'")
@@ -150,7 +150,7 @@ class DispatchScopeTests(unittest.TestCase):
             ('pull_request', '', [], False, False, False, False),
             ('pull_request', '', ['enhancement'], False, False, False, False),
             ('pull_request', '', ['ci:full'], True, True, True, True),
-            ('push', '', [], False, False, False, False),
+            ('push', '', [], True, False, True, False),
             ('merge_group', '', [], True, False, True, False),
             ('schedule', '', [], False, True, False, False),
         ]:
@@ -160,25 +160,22 @@ class DispatchScopeTests(unittest.TestCase):
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)
-                self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), event != 'push')
+                self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), True)
                 env = {key: str(bool(evaluate(expr, **context))).lower()
                        for key, expr in rust_step['env'].items()}
                 self.assertEqual(env['RUN_WINDOWS'], str(rust_win).lower())
                 self.assertEqual(env['RUN_MACOS'], str(rust_mac).lower())
-                self.assertEqual(env['SKIP_CELLS'], str(event == 'push').lower())
-                self.assertEqual(env['CHECK_PATHS'], str(event == 'merge_group').lower())
+                self.assertEqual(env['SKIP_CELLS'], 'false')
+                self.assertEqual(env['CHECK_PATHS'], str(event != 'workflow_dispatch').lower())
                 run_env = {**os.environ, **env}
-                if event == 'merge_group':
+                if event != 'workflow_dispatch':
                     run_env['DIFF_FILES'] = 'rust/src/lib.rs'
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp) / 'output'
                     subprocess.run(['bash', '-eu', '-c', rust_step['run']], check=True,
                                    env={**run_env, 'GITHUB_OUTPUT': str(output)})
                     matrix = json.loads(output.read_text().splitlines()[1])['include']
-                if event == 'push':
-                    self.assertEqual(matrix, [])
-                else:
-                    self.assertEqual([c['os-name'] for c in matrix],
+                self.assertEqual([c['os-name'] for c in matrix],
                                      ['linux', 'linux'] + ['windows'] * (2 * rust_win)
                                      + ['macos'] * rust_mac)
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{

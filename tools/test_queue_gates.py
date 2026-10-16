@@ -1,0 +1,90 @@
+"""Exercise actual workflow aggregate scripts and path filter offline."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import yaml
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.required_ci_gate import gate
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def workflow(name):
+    return yaml.load((ROOT / '.github/workflows' / name).read_text(encoding='utf-8'), Loader=yaml.BaseLoader)
+
+
+def execute(script, env):
+    source = script.split("<<'PY'", 1)[1].rsplit('PY', 1)[0]
+    return subprocess.run([sys.executable, '-c', source], env={**os.environ, **env},
+                          cwd=ROOT, capture_output=True, text=True)
+
+
+class QueueGateTests(unittest.TestCase):
+    def test_exhaustive_aggregate_states(self):
+        states = ['success', 'failure', 'cancelled', 'skipped', '', 'pending', 'in_progress']
+        for filter_result in states:
+            for required in ['true', 'false', '', 'unknown']:
+                for first in states:
+                    for second in states:
+                        expected = (filter_result == 'success' and
+                                    ((required == 'true' and first == second == 'success') or
+                                     (required == 'false' and first == second == 'skipped')))
+                        self.assertEqual(gate(filter_result, required, [first, second]), expected)
+
+    def test_actual_queue_aggregate_code(self):
+        doc = workflow('ci.yml')['jobs']['queue-gates']
+        self.assertEqual(doc['needs'], ['filter', 'linux', 'windows'])
+        self.assertIn('always()', doc['if'])
+        script = doc['steps'][-1]['run']
+        for required, win_required, linux, windows, expected in [
+            ('true', 'true', 'success', 'success', True),
+            ('true', 'true', 'success', 'failure', False),
+            ('true', 'true', 'success', 'cancelled', False),
+            ('true', 'true', 'success', 'skipped', False),
+            ('true', 'true', 'success', 'pending', False),
+            ('true', 'false', 'success', 'skipped', True),
+            ('false', 'true', 'skipped', 'skipped', True),
+            ('', 'true', 'skipped', 'skipped', False),
+        ]:
+            with self.subTest(required=required, linux=linux, windows=windows):
+                result = execute(script, {'FILTER_RESULT': 'success', 'REQUIRED': required,
+                                 'WINDOWS_REQUIRED': win_required, 'LINUX_RESULT': linux,
+                                 'WINDOWS_RESULT': windows})
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+    def test_actual_rust_aggregate_code(self):
+        doc = workflow('rust.yml')
+        self.assertNotIn('paths', doc['on']['pull_request'])
+        job = doc['jobs']['rust-gates']
+        self.assertEqual(job['needs'], ['filter', 'rust-book'])
+        self.assertEqual(job['if'], 'always()')
+        for required, result, expected in [('true', 'success', True), ('true', 'skipped', False),
+                                            ('true', 'cancelled', False), ('true', 'failure', False),
+                                            ('false', 'skipped', True), ('', 'skipped', False)]:
+            actual = execute(job['steps'][-1]['run'], {'FILTER_RESULT': 'success',
+                             'REQUIRED': required, 'RESULTS': json.dumps(result)})
+            self.assertEqual(actual.returncode == 0, expected, actual.stderr)
+
+    def test_actual_rust_path_and_platform_matrix(self):
+        step = next(s for s in workflow('rust.yml')['jobs']['filter']['steps'] if s.get('id') == 'gate')
+        for path, windows, expected in [('docs/readme.md', 'true', []),
+                                       ('rust/src/lib.rs', 'true', ['linux', 'linux', 'windows', 'windows']),
+                                       ('.github/workflows/review-gate.yml', 'true', ['linux', 'linux', 'windows', 'windows']),
+                                       ('app/quant/pnl.py', 'false', ['linux', 'linux'])]:
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / 'output'
+                result = execute(step['run'], {'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
+                                 'DIFF_FILES': path, 'RUN_WINDOWS': windows, 'RUN_MACOS': 'false',
+                                 'GITHUB_OUTPUT': str(output)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                matrix = json.loads(output.read_text().splitlines()[1])['include']
+                self.assertEqual([cell['os-name'] for cell in matrix], expected)
+
+
+if __name__ == '__main__':
+    unittest.main()

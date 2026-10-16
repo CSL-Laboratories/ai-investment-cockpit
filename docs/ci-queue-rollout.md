@@ -1,0 +1,80 @@
+# CSL-255: staged queue rollout
+
+This change is preparation, not evidence of enforced queue protection. Existing
+repository rules remain untouched. The independent review found that the original
+#160 Linux aggregate did not require queue Windows or Rust, and its review check
+accepted an unrelated app's successful check or an obsolete successful attempt.
+
+## Proposed stable required checks
+
+| Exact check name | PR evidence | Merge-group evidence |
+| --- | --- | --- |
+| `linux-gates` | Linux 3.11/3.12, or explicit docs noop | Same |
+| `queue-gates` | Linux; also Windows for full requests | Linux and Windows 3.11/3.12 |
+| `rust-gates` | Every selected Rust cell or explicit irrelevant-path noop | Linux and Windows Rust 3.11/3.12, or explicit irrelevant-path noop |
+| `review-gate` | Current genuine Devin success on the exact live PR head | Same for every unambiguously identified constituent PR |
+
+Unknown filter outputs and pending, failed, cancelled, or unexpectedly skipped
+mandatory work cannot pass an aggregate. Drafts fail closed. All PRs report the
+Rust aggregate; the path filter runs inside the workflow. macOS remains best
+effort. Main push Linux, Windows and relevant Rust checks remain enabled until a
+separate owner-approved removal after queue enforcement is proven. Local DEC-09
+and all product/safety gates remain unchanged.
+
+## Review identity and recovery
+
+The public [Devin app metadata](https://api.github.com/apps/devin-ai-integration)
+returned numeric ID `811515`, slug `devin-ai-integration`, owner `usacognition` on
+2026-10-16. Both ID and slug must match, as must `Devin Review` and the expected
+head SHA. All pages and all attempts are requested (`filter=all`). The highest
+check-run ID is the current attempt; exact repeated IDs deduplicate, conflicting
+copies fail closed. A current queued/running check blocks an old successful one.
+
+Polling has a 120-second deadline, 30-second per-API timeout, and a five-minute job
+timeout. A failed check can be replaced by a new successful retry within the poll
+bound. A submitted PR review starts another bounded attempt. A completion after
+the bound requires the owner to rerun the failed `review-gate` job, or manually
+dispatch this workflow on the exact live PR branch with its PR number. Dispatch
+validates that the selected SHA still equals the live PR head. A new commit is not
+required. There is no claim of automatic recovery for every late check completion:
+`check_run` workflows attach to the default-branch SHA and are deliberately not
+used to impersonate a successful PR status.
+
+The review workflow keeps #160's read-only `contents: read` and `checks: read`
+permissions; it adds no write token or permission. `checks: read` was itself new
+in original #160 and remains part of the owner's review of this proposal. API
+authorization or transport failures block; no permission is silently escalated.
+The policy script executes from the PR/queue base, never from an unreviewed head.
+
+Queue discovery paginates the base-to-group comparison and each ordinary commit's
+associated PRs. Every ordinary commit must map uniquely to an open non-draft PR
+on the target base whose exact live head is included in the group. Queue-created
+merge commits need no separate review. Missing, stale, ambiguous, truncated or
+over-limit evidence blocks. This conservative mapping still needs a live canary
+with the repository's actual queue merge strategy; synthetic tests are not proof
+that every GitHub queue topology maps successfully.
+
+## Activation sequence and owner decisions
+
+1. Integrate corrected #157, #158, #159, #160, then #161; run the combined tree's
+   tests and all changed workflows through actionlint. Preserve the #159 settle
+   dependency in every aggregate, including intentional docs noops.
+2. Land the policy under the existing protection (currently `linux-gates` and
+   `Devin Review`). Do not require the new base-loaded `review-gate` before its
+   policy script exists on main; its deliberate missing-script failure is not a
+   bootstrap success.
+3. The owner reviews read permissions, the exact check names above, app provenance,
+   base policy loading and review/queue diagnostics. Preserve current direct Devin
+   protection until the replacement is proven. No role, receipt, trust or fixer
+   policy is replaced by these aggregates.
+4. After explicit owner approval, configure required checks/queue enforcement and
+   run a controlled live queue canary. Confirm the required checks bind to the
+   merge-group SHA; demonstrate Windows/Rust pending, failure and cancellation
+   blocking, docs noops, multiple PRs, and late review recovery. Live negative
+   tests and repository settings changes are not authorized by this draft.
+5. Only after that evidence may the owner approve a separate proposal removing
+   redundant main push jobs. Keep the fallback throughout this staged rollout.
+
+The public repository's standard Ubuntu control jobs are unbilled but consume
+runner capacity. Neither polling changes nor queue preparation guarantees savings
+against the $100/month Blacksmith target. Do not trade validation for that target.

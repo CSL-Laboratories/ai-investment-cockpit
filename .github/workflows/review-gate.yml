@@ -1,56 +1,41 @@
 name: review-gate
 
-# Never path-skipped. Required check name: review-gate.
-# On pull_request, pass only if the Devin Review check succeeded on the head SHA.
-# Polls so a later Devin completion is observed without a check_run trigger
-# (a skipped required check on unrelated check_run events would pass).
-# On merge_group, pass: the PR already needed this check to enter the queue.
-
+# Required on PRs and queue groups; never path-skipped. Read-only permissions.
+# Manual recovery: rerun after Devin finishes, or dispatch on the live PR branch.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted]
   merge_group:
     types: [checks_requested]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number; select its exact live head branch before dispatch
+        required: true
+        type: string
 
 permissions:
   contents: read
   checks: read
 
 concurrency:
-  group: review-gate-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  group: review-gate-${{ github.event.pull_request.number || inputs.pr_number || github.event.merge_group.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
   review-gate:
     name: review-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
-      - name: Require Devin Review on the PR head
+      - uses: actions/checkout@v4
+        with:
+          # Run the reviewed policy from the base; a PR cannot supply its own gate.
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Require current authenticated Devin Review on every PR head
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_NAME: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "merge_group" ]; then
-            echo "merge_group: review-gate passes"
-            exit 0
-          fi
-          echo "Waiting for Devin Review success on ${SHA}"
-          for _ in $(seq 1 80); do
-            mapfile -t conclusions < <(gh api --paginate "repos/${REPO}/commits/${SHA}/check-runs?per_page=100" \
-              --jq '.check_runs[] | select(.name == "Devin Review") | .conclusion')
-            if printf '%s\n' "${conclusions[@]-}" | grep -qx success; then
-              echo "Devin Review succeeded on ${SHA}"
-              exit 0
-            fi
-            if printf '%s\n' "${conclusions[@]-}" | grep -Eqx 'failure|cancelled|timed_out|startup_failure'; then
-              echo "::error::Devin Review did not succeed on ${SHA} (conclusion=$(printf '%s ' "${conclusions[@]}"))"
-              exit 1
-            fi
-            sleep 15
-          done
-          echo "::error::Devin Review did not succeed on ${SHA} within the poll window"
-          exit 1
+        run: python3 -X utf8 -B scripts/ci/review_gate.py

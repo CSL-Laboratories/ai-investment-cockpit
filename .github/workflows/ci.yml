@@ -8,9 +8,9 @@ name: ci
 #
 # Hosted split (cost: keep ordinary PR spend on Blacksmith Linux 2 vCPU):
 #   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
-#                  (PR, merge_group, dispatch; not on push to main)
+#                  (PR, merge_group, dispatch, and retained main push fallback)
 #   windows      — merge_group, workflow_dispatch, or PR label `ci:full`
-#                  (not on push to main)
+#                  (main push fallback retained until queue canary is approved)
 #   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
 #                  workflow_dispatch. GitHub-hosted macos-latest (no Blacksmith macOS).
 #                  Not on ordinary main pushes: ~$0.93/run would dominate a ~$50 budget.
@@ -284,6 +284,7 @@ jobs:
           SETTLE_EXPECTED: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true }}
           RUN_TESTS: ${{ needs.filter.outputs.run-tests }}
           LINUX_RESULT: ${{ needs.linux.result }}
+          RUN_TESTS: ${{ needs.filter.outputs.run-tests }}
         run: |
           set -euo pipefail
           echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT}"
@@ -307,6 +308,38 @@ jobs:
           echo "linux matrix result=${LINUX_RESULT}"
           exit 1
 
+  # Stable required status on every PR and merge group. Ordinary PRs prove
+  # Linux here; queue/main/full requests additionally require both Windows cells.
+  queue-gates:
+    name: queue-gates
+    needs: [filter, linux, windows]
+    if: always() && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          persist-credentials: false
+      - name: Require all mandatory platform cells
+        env:
+          FILTER_RESULT: ${{ needs.filter.result }}
+          REQUIRED: ${{ needs.filter.outputs.run-tests }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          WINDOWS_REQUIRED: ${{ github.event_name == 'merge_group' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from tools.required_ci_gate import gate
+          env = os.environ
+          required = env['REQUIRED']
+          windows_required = 'true' if required == 'true' and env['WINDOWS_REQUIRED'] == 'true' else 'false'
+          passed = (gate(env['FILTER_RESULT'], required, [env['LINUX_RESULT']])
+                    and gate(env['FILTER_RESULT'], windows_required, [env['WINDOWS_RESULT']]))
+          raise SystemExit(0 if passed else 'Mandatory platform gate failed closed')
+          PY
+
   windows:
     name: windows
     permissions:
@@ -324,6 +357,7 @@ jobs:
       (
         (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
         (github.event_name == 'merge_group') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
       )
     # Hosted Windows supplements, but does not replace, the DEC-09 native-Windows cells.
