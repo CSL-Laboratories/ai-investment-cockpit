@@ -20,14 +20,13 @@ only. freeze.v1.json is not mutated.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 
-from feasibility.validate import FROZEN_IDS, FREEZE_PATH, FeasibilityError, load_freeze
+from feasibility.validate import FROZEN_IDS, FREEZE_PATH, FeasibilityError, load_freeze, sha256_file
 
 METRICS_VERSION = "feasibility.metrics.v1"
 EVALUATION_VERSION = "feasibility.evaluation.v1"
@@ -58,10 +57,6 @@ MISSING_EVIDENCE = (
     "cash_merger: W-23 empirical evidence gate is still open (prospective cohort / current eligible target).",
     "cef_discount: daily NAV data contract is not authorized; below-NAV is not expected return.",
 )
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def freeze_document_sha256() -> str:
