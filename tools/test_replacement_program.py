@@ -22,6 +22,40 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
+    def test_enclosing_schemas_reject_extra_claims(self) -> None:
+        for container in (None, "research_evidence"):
+            for field, value in (
+                ("live_authority_granted", True),
+                ("unreviewed_research", {"claim": "live_qualified"}),
+                ("unreviewed_annotation", False),
+            ):
+                candidate = copy.deepcopy(self.program)
+                target = candidate if container is None else candidate[container]
+                target[field] = value
+                with self.subTest(container=container, field=field), self.assertRaisesRegex(
+                    CHECKER.ContractError, "fields changed"
+                ):
+                    CHECKER.validate(candidate)
+
+    def test_enclosing_schemas_require_exact_object_shape(self) -> None:
+        for container in (None, "research_evidence"):
+            original = self.program if container is None else self.program[container]
+            replacements = [None, list(original), "accepted_contract", True, 1]
+            replacements.extend(
+                {key: value for key, value in original.items() if key != missing}
+                for missing in original
+            )
+            for replacement in replacements:
+                candidate = copy.deepcopy(self.program)
+                if container is None:
+                    candidate = replacement
+                else:
+                    candidate[container] = replacement
+                with self.subTest(container=container, replacement=replacement), self.assertRaisesRegex(
+                    CHECKER.ContractError, "fields changed"
+                ):
+                    CHECKER.validate(candidate)
+
     def test_authority_research_rejects_extra_claims(self) -> None:
         for field, value in (
             ("live_authority_granted", True),

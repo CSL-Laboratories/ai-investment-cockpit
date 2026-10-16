@@ -31,6 +31,19 @@ EXPECTED_CONTRACTS = {
     "docs/replacement/MONTH-PROGRAM.md",
     "docs/replacement/SCOPE-AUDIT.md",
 }
+EXPECTED_PROGRAM_KEYS = {
+    "schema_version",
+    "program_id",
+    "status",
+    "controlling_issue",
+    "source_commit",
+    "authority",
+    "contracts",
+    "outcomes",
+    "manifest_gate",
+    "research_evidence",
+}
+EXPECTED_RESEARCH_EVIDENCE_KEYS = {"authority_compliance"}
 EXPECTED_AUTHORITY_KEYS = {
     "current_runtime_invariants_preserved",
     "live_authority_granted",
@@ -234,6 +247,10 @@ def _month_projection(document: str) -> dict[str, tuple[str, list[str]]]:
 
 
 def validate(program: dict[str, Any], root: Path = ROOT) -> None:
+    _require(
+        isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
+        "program fields changed",
+    )
     _require(program.get("schema_version") == 1, "unsupported schema_version")
     _require(program.get("program_id") == "cockpit.replacement.2026-10", "wrong program_id")
     _require(program.get("status") == "accepted_contract", "program contract acceptance changed")
@@ -327,7 +344,13 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         "acceptance exclusions changed",
     )
 
-    research = program.get("research_evidence", {}).get("authority_compliance", {})
+    research_evidence = program["research_evidence"]
+    _require(
+        isinstance(research_evidence, dict)
+        and set(research_evidence) == EXPECTED_RESEARCH_EVIDENCE_KEYS,
+        "research evidence fields changed",
+    )
+    research = research_evidence["authority_compliance"]
     _require(
         isinstance(research, dict) and set(research) == EXPECTED_AUTHORITY_RESEARCH_KEYS,
         "authority research fields changed",
