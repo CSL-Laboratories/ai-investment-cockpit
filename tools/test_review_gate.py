@@ -1,21 +1,31 @@
 """Executable read-only gate tests. No GitHub requests or hosted runs."""
 import copy
-from pathlib import Path
+import json
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.ci.review_gate import (DEVIN_APP_ID, DEVIN_APP_SLUG, GateError,
-                                    check_state, pages, queue_heads, targets,
-                                    wait_for_review)
+from scripts.ci.review_gate import (
+    DEVIN_BOT_ID,
+    DEVIN_BOT_LOGIN,
+    GateError,
+    check_state,
+    pages,
+    queue_heads,
+    targets,
+    wait_for_review,
+)
 
 SHA = 'a' * 40
 
 
-def run(identifier=1, status='completed', conclusion='success', **kwargs):
-    return dict(id=identifier, name='Devin Review', head_sha=SHA, status=status,
-                conclusion=conclusion, app={'id': DEVIN_APP_ID, 'slug': DEVIN_APP_SLUG}, **kwargs)
+def status(identifier=1, state='success', **kwargs):
+    return dict(id=identifier, context='Devin Review', state=state,
+                url=f'https://api.github.com/repos/owner/repo/statuses/{SHA}',
+                creator={'id': DEVIN_BOT_ID, 'login': DEVIN_BOT_LOGIN, 'type': 'Bot'},
+                **kwargs)
 
 
 def pr():
@@ -25,59 +35,129 @@ def pr():
 
 
 class ReviewGateTests(unittest.TestCase):
-    def check(self, runs):
-        get = Mock(return_value={'check_runs': runs})
+    def check(self, statuses):
+        get = Mock(return_value=statuses)
         result = check_state('owner/repo', SHA, get)
-        self.assertIn('filter=all', get.call_args.args[0])
+        self.assertEqual(get.call_args.args[0],
+                         f'repos/owner/repo/commits/{SHA}/statuses?per_page=100&page=1')
         return result
 
     def test_genuine_success(self):
-        self.assertEqual(self.check([run()]), 'success')
+        self.assertEqual(self.check([status()]), 'success')
 
-    def test_wrong_app_name_slug_sha(self):
-        for field, value in [('app', {'id': 999, 'slug': DEVIN_APP_SLUG}),
-                             ('app', {'id': DEVIN_APP_ID, 'slug': 'impostor'}),
-                             ('head_sha', 'b' * 40), ('name', 'review-gate')]:
+    def test_observed_cockpit_status_payload(self):
+        # Sanitized read-only API capture, 2026-10-16; no live calls in tests.
+        rows = json.loads((Path(__file__).parent / 'fixtures' /
+                           'devin-cockpit-147-statuses.json').read_text(encoding='utf-8-sig'))
+        sha = 'c2708f2248a1e04bebf511c19007841b0aa18037'
+        for ordered in [rows, list(reversed(rows))]:
+            self.assertEqual(check_state('CSL-Laboratories/ai-investment-cockpit', sha,
+                                          Mock(return_value=ordered)), 'success')
+
+    def test_wrong_creator_and_context_never_authorize(self):
+        for field, value in [('id', 999), ('login', 'impostor'), ('type', 'User')]:
             with self.subTest(field=field, value=value):
-                candidate = run()
-                candidate[field] = value
+                candidate = status()
+                candidate['creator'][field] = value
                 self.assertEqual(self.check([candidate]), 'pending')
+        candidate = status()
+        candidate['context'] = 'review-gate'
+        self.assertEqual(self.check([candidate]), 'pending')
+        candidate['creator'] = None
+        self.assertEqual(self.check([candidate]), 'pending')
+
+    def test_exact_head_and_repo_binding(self):
+        for url in [None, '', f'https://api.github.com/repos/owner/repo/statuses/{"b" * 40}',
+                    f'https://api.github.com/repos/other/repo/statuses/{SHA}',
+                    f'https://evil.invalid/repos/owner/repo/statuses/{SHA}']:
+            candidate = status()
+            candidate['url'] = url
+            with self.subTest(url=url), self.assertRaises(GateError):
+                self.check([candidate])
+        for sha in ['main', SHA[:12], SHA + '/statuses']:
+            get = Mock()
+            with self.assertRaises(GateError):
+                check_state('owner/repo', sha, get)
+            get.assert_not_called()
+
+    def test_check_run_success_is_not_a_fallback(self):
+        check = {'id': 999, 'name': 'Devin Review', 'status': 'completed',
+                 'conclusion': 'success', 'head_sha': SHA,
+                 'app': {'id': 811515, 'slug': 'devin-ai-integration'}}
+        self.assertEqual(self.check([check]), 'pending')
+        self.assertEqual(self.check([status(state='pending'), check]), 'pending')
+        self.assertEqual(self.check([status(state='failure'), check]), 'failure')
+
+    def test_wrong_creator_newer_success_cannot_override_pending(self):
+        impostor = status(2)
+        impostor['creator']['id'] = 999
+        self.assertEqual(self.check([status(state='pending'), impostor]), 'pending')
 
     def test_newest_failure_overrides_old_success_in_any_api_order(self):
-        for runs in ([run(), run(2, conclusion='failure')],
-                     [run(2, conclusion='failure'), run()]):
-            self.assertEqual(self.check(runs), 'failure')
+        for rows in ([status(), status(2, 'failure')],
+                     [status(2, 'failure'), status()]):
+            self.assertEqual(self.check(rows), 'failure')
 
     def test_newest_pending_blocks_old_success(self):
-        for status in ['queued', 'in_progress', 'waiting', 'pending', 'requested']:
-            with self.subTest(status=status):
-                self.assertEqual(self.check([run(), run(2, status, None)]), 'pending')
+        for rows in ([status(), status(2, 'pending')],
+                     [status(2, 'pending'), status()]):
+            self.assertEqual(self.check(rows), 'pending')
 
-    def test_every_non_success_completion_blocks(self):
-        for conclusion in [None, 'failure', 'cancelled', 'timed_out', 'startup_failure',
-                           'neutral', 'skipped', 'action_required', 'stale', 'unknown']:
-            with self.subTest(conclusion=conclusion):
-                self.assertEqual(self.check([run(conclusion=conclusion)]), 'failure')
+    def test_failure_and_error_block(self):
+        for state in ['failure', 'error']:
+            with self.subTest(state=state):
+                self.assertEqual(self.check([status(), status(2, state)]), 'failure')
 
     def test_retry_success_supersedes_failed_attempt(self):
-        self.assertEqual(self.check([run(conclusion='failure'), run(2)]), 'success')
+        self.assertEqual(self.check([status(state='failure'), status(2)]), 'success')
 
     def test_identical_duplicates_deduplicate_conflicting_duplicates_block(self):
-        self.assertEqual(self.check([run(), run()]), 'success')
+        self.assertEqual(self.check([status(), status()]), 'success')
         with self.assertRaises(GateError):
-            self.check([run(), run(conclusion='failure')])
+            self.check([status(), status(state='failure')])
 
     def test_unknown_status_blocks(self):
-        with self.assertRaises(GateError):
-            self.check([run(status='unknown')])
+        for state in [None, 'unknown', 'cancelled', 'skipped', 'neutral', 'completed']:
+            with self.subTest(state=state), self.assertRaises(GateError):
+                self.check([status(state=state)])
 
-    def test_paginated_check_and_api_error(self):
-        get = Mock(side_effect=[{'check_runs': [run(i) for i in range(1, 101)]},
-                                {'check_runs': [run(101, conclusion='failure')]}])
+    def test_invalid_id_blocks(self):
+        for identifier in [None, True, 0, -1, '123', 1.0]:
+            with self.subTest(identifier=identifier), self.assertRaises(GateError):
+                self.check([status(identifier)])
+
+    def test_paginated_status_and_api_error(self):
+        get = Mock(side_effect=[[status(i) for i in range(1, 101)],
+                                [status(101, 'failure')]])
         self.assertEqual(check_state('owner/repo', SHA, get), 'failure')
         self.assertIn('page=2', get.call_args.args[0])
         with self.assertRaises(OSError):
             check_state('owner/repo', SHA, Mock(side_effect=OSError('unavailable')))
+
+    def test_later_page_error_cannot_accept_earlier_success(self):
+        get = Mock(side_effect=[[status(i) for i in range(1, 101)], OSError('forbidden')])
+        with self.assertRaises(OSError):
+            check_state('owner/repo', SHA, get)
+
+    def test_new_pending_inserted_during_pagination_blocks_old_success(self):
+        original = [status(i) for i in range(100, 0, -1)]
+        current = [status(101, 'pending'), *original[:99]]
+        get = Mock(side_effect=[original, [original[-1]], current])
+        self.assertEqual(check_state('owner/repo', SHA, get), 'pending')
+        self.assertIn('page=1', get.call_args.args[0])
+
+    def test_stable_paginated_success_and_confirmation_error(self):
+        original = [status(i) for i in range(100, 0, -1)]
+        get = Mock(side_effect=[original, [], original])
+        self.assertEqual(check_state('owner/repo', SHA, get), 'success')
+        with self.assertRaises(OSError):
+            check_state('owner/repo', SHA,
+                        Mock(side_effect=[[status()], OSError('unavailable')]))
+
+    def test_empty_or_malformed_status_evidence(self):
+        self.assertEqual(self.check([]), 'pending')
+        with self.assertRaises(GateError):
+            self.check({'statuses': [status()]})
 
     def test_pagination_bound_blocks(self):
         with self.assertRaises(GateError):
