@@ -413,7 +413,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if cand["holdings_match"] or cand["symbol"] in watchlist:
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist)
+                         watchlist=watchlist, decision_weight=cand["score"])
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True

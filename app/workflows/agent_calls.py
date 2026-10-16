@@ -35,6 +35,7 @@ from schemas.models.agent_job import AgentJob
 from workflows.constants import EVENT_AGENT_JOB
 from workflows.context_limit import context_token_cap, estimate_tokens
 from workflows.cost_log import parse_vendor_usage, quote_cost, sum_quotes
+from workflows.jev import evaluate_decision, jev_weight
 from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
@@ -76,9 +77,28 @@ def _provisioned_secret_values() -> list[str]:
     return values
 
 
+def _jev_eligible(selected: str, job_class: str, mode, weight, settings, packet) -> bool:
+    """Jev is a paper/read-only decision route, never a live or triage route."""
+    if job_class != "decision" or packet is None:
+        return False
+    mode_value = str(getattr(mode, "value", mode)).strip().lower()
+    if mode_value not in {"read_only", "paper"}:
+        return False
+    if selected == "jev":
+        return True
+    if selected != "auto":
+        return False
+    number = jev_weight(weight)
+    if number is None:
+        return False
+    ceiling = Decimal(int(getattr(settings, "jev_max_weight", 70)))
+    return number <= ceiling
+
+
 def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: str,
                schema_name: str, input_refs: dict, transport=None, timeout_s: float = 120.0,
-               max_turns: int = 6):
+               max_turns: int = 6, decision_weight=None, jev_packet=None,
+               jev_symbol=None, jev_client=None):
     """Run one tool-starved decision-stage agent and persist its AgentJob row.
 
     Returns ``(AgentResult, AgentJob)``. On ``limit_hit``/``timeout`` the L8 watch-only
@@ -87,51 +107,55 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     usage window before we observe the result. Callers must inspect ``result.status`` and
     degrade (defer events, never drop them — Inv 7)."""
     selected_runtime = configured_decision_runtime(state.settings)
-    runtime = runtime_for(alias, selected_runtime)
+    resolved_runtime = runtime_for(alias, selected_runtime)
     mode = ModeLadder(state).current()
-    if not runtime_allowed_for_mode(runtime, mode):
+    if not runtime_allowed_for_mode(resolved_runtime, mode):
         raise RuntimeError(
-            f"decision runtime {runtime!r} is not allowed in mode {mode.value!r}; "
-            "Codex is limited to human-gated read_only/paper work"
+            f"decision runtime {resolved_runtime!r} is not allowed in mode {mode.value!r}; "
+            "Codex and Jev are limited to human-gated read_only/paper work"
         )
-    job_class = job_class_for(alias, runtime)
+    # Jev is HTTP, not a CLI. Fallback and every non-decision job stay on Claude.
+    cli_runtime = "claude" if resolved_runtime == "jev" else resolved_runtime
+    job_class = job_class_for(alias, cli_runtime)
     model_id = None
-    pinned = pinned_model_for(alias, runtime)
+    pinned = pinned_model_for(alias, cli_runtime)
     # Trading decisions on Claude use the allowlisted Haiku id (4.5 fallback,
     # 5.5 when configured). Auto/live already refused a non-Claude runtime above.
-    if job_class == "decision" and runtime == "claude":
+    if job_class == "decision" and cli_runtime == "claude":
         model_id, pinned = resolve_decision_claude(
             getattr(state.settings, "decision_model", pinned)
         )
+    jev_attempt = None
+    if _jev_eligible(
+        selected_runtime, job_class, mode, decision_weight, state.settings, jev_packet,
+    ):
+        jev_attempt = evaluate_decision(
+            state.settings, jev_packet, symbol=jev_symbol, schema=load_schema(schema_name),
+            client=jev_client, secret_values=_provisioned_secret_values(),
+        )
+    jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
-    estimated_input = estimate_tokens(prompt)
-    # Reserve headroom for `_repair`, which appends up to 500 *characters* of rejection
-    # text (UTF-8, so 4 bytes each) plus a fixed instruction. Checking only the first
-    # prompt would let a near-cap call dispatch an over-cap repair.
-    context_limited = estimated_input + estimate_tokens(worst_case_repair_overhead()) > cap
+    if jev_accepted:
+        # Jev already trimmed to its own caps and does not run a CLI repair.
+        estimated_input = jev_attempt.estimated_input
+        context_limited = False
+    else:
+        estimated_input = estimate_tokens(prompt)
+        # Reserve headroom for `_repair`, which appends up to 500 *characters* of
+        # rejection text (UTF-8, so 4 bytes each) plus a fixed instruction.
+        context_limited = (
+            estimated_input + estimate_tokens(worst_case_repair_overhead()) > cap
+        )
     engine = BreakerEngine(state)
-    # SEC-23: stamp the generation the analysis is minted under (pre-call window).
+    # SEC-23: stamp the generation the producing runtime is minted under.
+    runtime = "jev" if jev_accepted else cli_runtime
+    if jev_accepted:
+        pinned = jev_attempt.model_pinned
     generation = state.usage.window(runtime).generation
     job_id = new_id("job")
     pinned_cwd = getattr(state.settings, "decision_agent_cwd", None)
-    spec = AgentSpec(
-        job_id=job_id,
-        runtime=runtime,
-        model_alias=alias,
-        prompt=prompt,
-        schema=load_schema(schema_name),
-        schema_path=schema_path(schema_name),
-        max_turns=max_turns,
-        allowed_tools=[],            # SEC-06: decision stages are tool-starved
-        timeout_s=timeout_s,
-        decision_stage=True,
-        cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
-        model_id=model_id,
-    )
     started = state.clock.now()
-    # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd, and — SEC-05 —
-    # refuses to spawn a decision job under the orchestrator's privileged token when a low-priv
-    # account is configured (the transport must launch the child under it). All fail-closed.
+
     def admit_health_fault(vendor, health_state, error):
         engine.enter_watch_only(
             vendor,
@@ -140,10 +164,30 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             state=health_state,
         )
 
-    if context_limited:
+    if jev_accepted:
+        # Typed answers already schema-validated. Do not spawn a CLI.
+        result = AgentResult(status=OK, validated=jev_attempt.proposal, raw=jev_attempt.raw)
+    elif context_limited:
         # Our cap, not a vendor limit: do not spawn and do not open watch-only.
         result = AgentResult(status=ERROR, error="context_limit")
     else:
+        # W11: the runner inspects the ACTUAL argv (tools/MCP), asserts the pinned cwd,
+        # and — SEC-05 — refuses to spawn a decision job under the orchestrator's
+        # privileged token when a low-priv account is configured. All fail-closed.
+        spec = AgentSpec(
+            job_id=job_id,
+            runtime=cli_runtime,
+            model_alias=alias,
+            prompt=prompt,
+            schema=load_schema(schema_name),
+            schema_path=schema_path(schema_name),
+            max_turns=max_turns,
+            allowed_tools=[],            # SEC-06: decision stages are tool-starved
+            timeout_s=timeout_s,
+            decision_stage=True,
+            cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
+            model_id=model_id,
+        )
         result = run_agent(spec, transport=transport, usage=state.usage,
                            secret_values=_provisioned_secret_values(),  # BUG-092: Inv 4
                            pinned_cwd=pinned_cwd,
@@ -154,12 +198,21 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
 
     refs = dict(input_refs or {})
     refs["_generation"] = generation
+    if jev_accepted:
+        refs["decision_route"] = "jev"
+        refs["raw_refs"] = list(jev_attempt.sent_refs)
+        prior = refs.get("context_dropped", 0)
+        if type(prior) is int and prior >= 0:
+            refs["context_dropped"] = prior + jev_attempt.dropped
+    elif jev_attempt is not None:
+        refs["decision_route"] = "jev_fallback"
     dropped_raw = refs.get("context_dropped", 0)
     context_dropped = dropped_raw if type(dropped_raw) is int and dropped_raw >= 0 else 0
     sent = not context_limited and result.dispatched
     if sent:
         # Price each subprocess call on its own rate tier, then add. Summing tokens
         # first would push two short Haiku 5.5 calls over the 100k long-context line.
+        # A Jev success has one raw body (its usage block) and no repair.
         quotes = [_quote_raw(pinned, result.raw, estimated_input)]
         if result.prior_raw:
             quotes.append(_quote_raw(pinned, result.prior_raw, estimated_input))
@@ -169,17 +222,27 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             pinned, input_tokens=estimated_input, output_tokens=None,
             input_token_source="estimate",
         )
+    jev_extra = None
+    if jev_attempt is not None and not jev_accepted and jev_attempt.usd is not None:
+        jev_extra = Decimal(jev_attempt.usd)
     if not sent:
-        usage_estimate = Decimal("0")
+        usage_estimate = jev_extra if jev_extra is not None else Decimal("0")
         cost = quote.as_payload()
         cost["usd"] = "0.00000000"
         cost["usd_scope"] = "not_sent"
         cost["billed"] = False
         cost["refused"] = "context_limit" if context_limited else (result.error or "not_sent")
     else:
-        usage_estimate = Decimal(quote.usd) if quote.usd is not None else None
+        if quote.usd is None:
+            usage_estimate = jev_extra
+        elif jev_extra is not None:
+            usage_estimate = Decimal(quote.usd) + jev_extra
+        else:
+            usage_estimate = Decimal(quote.usd)
         cost = quote.as_payload()
         cost["billed"] = True
+    if jev_accepted and jev_attempt.response_model not in {None, pinned}:
+        cost["response_model"] = jev_attempt.response_model
     cost["context_token_cap"] = cap
     cost["context_dropped"] = context_dropped
     job_status = _STATUS_MAP.get(result.status, "failed")
@@ -199,19 +262,21 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         completed_at=completed,
         created_at=started,
     )
+    payload = {
+        "status": job_status, "model": alias, "runtime": runtime,
+        "model_pinned": pinned, "job_class": job_class,
+        "prompt_template": prompt_ref, "schema_id": schema_name,
+        "result_status": result.status, "generation": generation,
+        "cost": cost,
+        # Fixed internal tokens only; never model/feed text. This makes timeout and
+        # quarantine causes observable without reading a CLI session transcript.
+        "result_error": result.error,
+        "repaired": bool(getattr(result, "repaired", False)),
+    }
+    if jev_attempt is not None and not jev_accepted:
+        payload["jev_attempt"] = jev_attempt.audit_payload()
     state.audit.record_state_change(
-        job, EVENT_AGENT_JOB, actor="agent_calls",
-        payload={
-            "status": job_status, "model": alias, "runtime": runtime,
-            "model_pinned": pinned, "job_class": job_class,
-            "prompt_template": prompt_ref, "schema_id": schema_name,
-            "result_status": result.status, "generation": generation,
-            "cost": cost,
-            # Fixed internal tokens only; never model/feed text. This makes timeout and
-            # quarantine causes observable without reading a CLI session transcript.
-            "result_error": result.error,
-            "repaired": bool(getattr(result, "repaired", False)),
-        },
+        job, EVENT_AGENT_JOB, actor="agent_calls", payload=payload,
     )
 
     return result, job

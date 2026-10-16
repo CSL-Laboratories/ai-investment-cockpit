@@ -45,7 +45,7 @@ class _MarketData:
 
 
 def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
-             execution_verdict=None, edge_provider=None, generation=0):
+             execution_verdict=None, edge_provider=None, generation=0, input_refs=None):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -70,7 +70,8 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
     job = AgentJob(
         id=new_id("job"), runtime=runtime, model="deep", model_pinned="pinned",
         prompt_template="trade_proposal.v1", prompt_hash="h" * 16,
-        input_refs={"_generation": generation}, schema_id="TradeProposal", status="done",
+        input_refs={"_generation": generation, **(input_refs or {})},
+        schema_id="TradeProposal", status="done",
         created_at=st.clock.now(),
     )
     st.audit.record_state_change(
@@ -179,6 +180,61 @@ def test_runtime_mismatch_cannot_enter_paper_order_path(st, monkeypatch):
     else:  # pragma: no cover - explicit safety assertion
         raise AssertionError("a proposal from the non-selected runtime must not reach paper broker")
     assert client.submitted == []
+
+
+def test_jev_proposal_round_trips_when_jev_is_configured(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="jev", selected_runtime="jev")
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-jev-approved",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
+
+
+def test_auto_accepts_the_runtime_that_produced_the_proposal(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="jev", selected_runtime="auto")
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-auto-jev",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
+
+
+def test_jev_selection_refuses_an_older_claude_proposal(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="claude", selected_runtime="jev")
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-jev-stale-claude",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:  # pragma: no cover - explicit safety assertion
+        raise AssertionError("an older Claude proposal must not run under explicit jev")
+    assert client.submitted == []
+
+
+def test_jev_fallback_claude_proposal_can_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, runtime="claude", selected_runtime="jev",
+        input_refs={"decision_route": "jev_fallback"},
+    )
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-jev-fallback",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
 
 
 def test_approval_refuses_stale_agent_generation(st):

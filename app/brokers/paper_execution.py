@@ -21,7 +21,7 @@ from bridge.operators import is_authorized
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.order_state_machine import transition
 from brokers.paper_performance import EASTERN, reconstruct_paper_performance
-from config.models import configured_decision_runtime
+from config.models import configured_decision_runtime, paper_job_runtime_allowed
 from core.proposal_authority import proposal_payload_hash
 from quant.events import to_ns
 from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThresholds
@@ -490,8 +490,14 @@ class PaperExecutionService:
                 "order_not_submittable", f"order state {order.state!r} is not submittable"
             )
         selected_runtime = configured_decision_runtime(self.state.settings)
-        if (agent_job.status != "done" or agent_job.runtime not in {"claude", "codex"}
-                or agent_job.runtime != selected_runtime):
+        route = None
+        if isinstance(agent_job.input_refs, dict):
+            raw_route = agent_job.input_refs.get("decision_route")
+            if isinstance(raw_route, str):
+                route = raw_route
+        if agent_job.status != "done" or not paper_job_runtime_allowed(
+            agent_job.runtime, selected_runtime, route,
+        ):
             raise PaperExecutionError(
                 "runtime_not_allowed",
                 "paper execution requires a successful proposal from the currently configured "

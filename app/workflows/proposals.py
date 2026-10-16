@@ -380,7 +380,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    borrow_quote: BorrowQuote | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
-                   account: str = "paper") -> ProposalOutcome:
+                   account: str = "paper",
+                   decision_weight=None,
+                   jev_client=None) -> ProposalOutcome:
     """Draft ONE trade proposal for ``event`` over the dispatched ``packet``.
 
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
@@ -411,6 +413,10 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs),
                     "context_dropped": len(fit.dropped)},
         transport=transport,
+        decision_weight=decision_weight,
+        jev_packet=packet,
+        jev_symbol=event.symbol,
+        jev_client=jev_client,
     )
     if result.status in (LIMIT_HIT, TIMEOUT):
         return ProposalOutcome("degraded", None, None, None, None, None,

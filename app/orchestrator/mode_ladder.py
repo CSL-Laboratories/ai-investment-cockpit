@@ -240,9 +240,11 @@ class ModeLadder:
                 from config.models import configured_decision_runtime
 
                 runtime = configured_decision_runtime(self.st.settings)
-                if runtime != "claude":
+                # ``auto`` resolves to Claude on this rung. Explicit jev stays paper-only.
+                if runtime not in {"claude", "auto"}:
                     raise IllegalTransition(
-                        "review_live requires COCKPIT_DECISION_RUNTIME=claude; "
+                        "review_live requires COCKPIT_DECISION_RUNTIME=claude or auto "
+                        "(auto stays on Claude in live modes); "
                         f"configured runtime is {runtime!r}"
                     )
             if not legal_transition(src, target):

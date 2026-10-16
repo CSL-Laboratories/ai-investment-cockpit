@@ -21,11 +21,15 @@ _USD_QUANTUM = Decimal("0.00000001")
 _HAIKU_45 = (Decimal("1"), Decimal("5"), "haiku-4.5")
 _HAIKU_55_SHORT = (Decimal("0.10"), Decimal("0.50"), "haiku-5.5-short")
 _HAIKU_55_LONG = (Decimal("0.50"), Decimal("2.50"), "haiku-5.5-long")
+# TypeSafe Jev: $0.042 per million input tokens, output free. Both pins share it.
+_JEV = (Decimal("0.042"), Decimal("0"), "jev")
 
 _FLAT_RATES = {
     "claude-haiku-4-5": _HAIKU_45,
     "claude-haiku-4-5-20251001": _HAIKU_45,
     "haiku": _HAIKU_45,
+    "jev-1.13.0": _JEV,
+    "jev-1.14.0": _JEV,
 }
 
 

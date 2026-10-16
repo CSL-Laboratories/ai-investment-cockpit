@@ -32,8 +32,16 @@ from enum import Enum
 from config.models import (
     DEFAULT_CONTEXT_TOKEN_CAP,
     DEFAULT_DECISION_MODEL,
+    DEFAULT_JEV_MAX_WEIGHT,
+    DEFAULT_JEV_MIN_CONFIDENCE,
+    DEFAULT_JEV_MODEL,
+    DEFAULT_JEV_REQUEST_TOKEN_CAP,
+    DEFAULT_JEV_STATE_TOKEN_CAP,
     DECISION_MODEL_PINS,
     HAIKU_55_LONG_CONTEXT_TOKENS,
+    JEV_MODEL_PINS,
+    JEV_REQUEST_HARD_LIMIT,
+    JEV_STATE_HARD_LIMIT,
 )
 from pathlib import Path
 
@@ -73,8 +81,10 @@ _SECRETISH_ALLOWED = frozenset({
     "COCKPIT_AUDIT_LOG_CHANNEL_ID", "COCKPIT_BRIEF_CHANNEL_ID",
     "COCKPIT_ALERTS_CHANNEL_ID", "COCKPIT_PROPOSALS_CHANNEL_ID",
     "COCKPIT_SYSTEM_CHANNEL_ID",
-    # A numeric prompt-size limit (CSL-42), not a credential.
+    # Numeric prompt-size limits (CSL-42 / CSL-191), not credentials.
     "COCKPIT_CONTEXT_TOKEN_CAP",
+    "COCKPIT_JEV_STATE_TOKEN_CAP",
+    "COCKPIT_JEV_REQUEST_TOKEN_CAP",
 })
 
 # Static operator-configured paper universe.  This is intentionally conservative: a bounded
@@ -200,6 +210,11 @@ class DecisionRuntime(str, Enum):
 
     claude = "claude"
     codex = "codex"
+    # Structured-decision HTTP runtime (TypeSafe). Paper/read-only only.
+    jev = "jev"
+    # Paper/read-only router: Jev when the decision is light enough and fits,
+    # otherwise Claude. Live and auto-trading modes resolve to Claude.
+    auto = "auto"
 
 
 class Settings(BaseSettings):
@@ -332,10 +347,11 @@ class Settings(BaseSettings):
 
     # ---- SEC-05/06 decision-agent starvation (W11) ------------------------------------
     # Provider for triage, deep proposal, grounding, briefing, and fresh-interrogation jobs.
-    # Both providers share schema validation -> repair once -> quarantine. Codex additionally
-    # runs under the hardened tool-free/read-only/ephemeral CLI profile in agent_runner/runner.py.
-    # This switch is valid only for read_only/paper human-gated work; it cannot relax the
-    # Claude-only auto/live runtime pin. Env: COCKPIT_DECISION_RUNTIME.
+    # Claude and Codex share schema validation -> repair once -> quarantine. Codex
+    # runs under the hardened tool-free/read-only/ephemeral CLI profile. ``jev`` is
+    # the TypeSafe HTTP decision API (paper/read-only proposals only). ``auto`` may
+    # send a light paper/read-only decision to Jev and otherwise uses Claude.
+    # Neither jev nor auto can arm a live/auto rung. Env: COCKPIT_DECISION_RUNTIME.
     decision_runtime: DecisionRuntime = DecisionRuntime.claude
     # Trading-decision Claude model (CSL-42 / CSL-98). Allowlist only: Haiku 4.5 is the
     # fallback; set claude-haiku-5-5 when that id is available on the Claude CLI. This
@@ -359,6 +375,36 @@ class Settings(BaseSettings):
         if key not in DECISION_MODEL_PINS:
             allowed = ", ".join(sorted(DECISION_MODEL_PINS))
             raise ValueError(f"decision_model must be one of: {allowed}")
+        return key
+
+    # Pinned TypeSafe model for Jev decisions. ``jev-latest`` is rejected.
+    # Env: COCKPIT_JEV_MODEL.
+    jev_model: str = DEFAULT_JEV_MODEL
+    # State + one question, strictly under Jev's 32_000 token limit.
+    # Env: COCKPIT_JEV_STATE_TOKEN_CAP.
+    jev_state_token_cap: int = Field(
+        default=DEFAULT_JEV_STATE_TOKEN_CAP, ge=1, le=JEV_STATE_HARD_LIMIT - 1,
+    )
+    # Whole Jev request, strictly under the 64_000 token limit.
+    # Env: COCKPIT_JEV_REQUEST_TOKEN_CAP.
+    jev_request_token_cap: int = Field(
+        default=DEFAULT_JEV_REQUEST_TOKEN_CAP, ge=1, le=JEV_REQUEST_HARD_LIMIT - 1,
+    )
+    # ``auto`` sends a paper/read-only decision to Jev only when its triage
+    # score is at or below this. Missing scores stay on Claude.
+    # Env: COCKPIT_JEV_MAX_WEIGHT.
+    jev_max_weight: int = Field(default=DEFAULT_JEV_MAX_WEIGHT, ge=0, le=100)
+    # Minimum choice confidence. Below this, the decision falls back to Claude.
+    # Env: COCKPIT_JEV_MIN_CONFIDENCE.
+    jev_min_confidence: Decimal = Field(default=Decimal(DEFAULT_JEV_MIN_CONFIDENCE), ge=0, le=1)
+
+    @field_validator("jev_model")
+    @classmethod
+    def _validate_jev_model(cls, value):
+        key = str(value).strip()
+        if key not in JEV_MODEL_PINS:
+            allowed = ", ".join(sorted(JEV_MODEL_PINS))
+            raise ValueError(f"jev_model must be one of: {allowed}")
         return key
 
     # The separate LOW-PRIVILEGE Windows account decision-stage subprocesses run under. When set,
