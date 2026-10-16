@@ -7,7 +7,7 @@ last-verified: 2026-10-15
 
 # Docs index
 
-## Replacement product candidate — CSL-212
+## Accepted replacement product contract — CSL-212
 
 Lucas directed a full Cockpit product reset on 2026-10-16. Start replacement
 planning at [docs/replacement/README.md](replacement/README.md). The September
@@ -15,7 +15,8 @@ planning at [docs/replacement/README.md](replacement/README.md). The September
 research and safety material remains evidence to classify rather than accepted
 successor architecture.
 
-The replacement candidate does not change current runtime authority, the nine
+The replacement contract is accepted; outcome artifacts and all implementation,
+empirical and release gates remain pending. Acceptance does not change current runtime authority, the nine
 invariants, credentials, order routing, or live-trading controls. A PR, merge, test
 or contract decision is not empirical acceptance.
 
