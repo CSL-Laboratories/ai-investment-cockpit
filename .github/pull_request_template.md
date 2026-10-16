@@ -1,5 +1,6 @@
 Fixes CSL-___
 <!-- Linear magic word: replace ___ with the real issue number. A branch name alone does not move the issue to Done. -->
+Touches other repos? (link the cross-repo Linear issue)
 
 ## Summary
 <!-- What changed and why. -->

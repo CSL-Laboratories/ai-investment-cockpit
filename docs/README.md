@@ -283,6 +283,7 @@ defects got fixed twice on two branches.
 |---|---|
 | [[PLAN]] | MVP, milestones, intake gate, scope boundaries |
 | [[REGISTER]] | Every open ID and who has it |
+| [[adr/README]] | Architecture decision records. Written when a Linear `decision` issue closes; cite any `DEC-xx` from [[REGISTER]] |
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |

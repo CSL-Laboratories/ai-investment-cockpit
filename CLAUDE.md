@@ -112,9 +112,12 @@ threads.
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
-   (research → architecture → build → security → enhancements).
+   (research → architecture → build → security → enhancements). Recorded
+   architecture and direction live in `docs/adr/` and the linked Linear
+   `decision` issues.
 6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
-   title. Message convention: `CSL-N: fix(RW-xx): …` or `CSL-N: feat(W-xx): …`.
+   title. Message convention: `CSL-N: feat(RW-xx): …` / `CSL-N: fix(RW-xx): …` /
+   `CSL-N: docs(RW-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.

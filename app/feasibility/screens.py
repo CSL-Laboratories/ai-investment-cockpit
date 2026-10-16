@@ -10,7 +10,6 @@ measurement.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,7 @@ import jsonschema
 from feasibility.evaluate import EVALUATION_PATH, load_evaluation
 from feasibility.inspect import CASES_PATH, load_cases
 from feasibility.protocol import JUDGE_FIELDS, PROTOCOL_PATH, load_protocol
-from feasibility.validate import FREEZE_PATH, FeasibilityError
+from feasibility.validate import FREEZE_PATH, FeasibilityError, sha256_file
 
 SCREENS_VERSION = "feasibility.screens.v1"
 SCREENS_CLAIM_ID = "RW-37"
@@ -157,10 +156,6 @@ _HERE = Path(__file__).resolve().parent
 SCREENS_PATH = _HERE / "screens.v1.json"
 SCREENS_SCHEMA_PATH = _HERE.parent / "schemas" / "json" / "FeasibilityScreens.schema.json"
 REPO_ROOT = _HERE.parents[1]
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _require_pin(payload: dict[str, Any], field: str, path: Path, expected: str, label: str) -> None:
