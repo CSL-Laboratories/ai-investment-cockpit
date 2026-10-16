@@ -437,6 +437,40 @@ def test_failed_match_resyncs_retained_orders():
     assert ask.qty == 0
 
 
+def test_batch_full_fill_reuses_the_id_on_a_new_order():
+    """A full fill retires the held ask. The remainder is a new buy under that id."""
+    rust = LimitOrderBook("FILL")
+    python = PythonLimitOrderBook("FILL")
+    held = rust.add(order_id="X", side=Side.SELL, price_ticks=100, qty=4, owner="mm", seq=1, ts=1)
+    py = python.add(order_id="X", side=Side.SELL, price_ticks=100, qty=4, owner="mm", seq=1, ts=1)
+    rust.apply_many([("m", "X", "buy", 10, 100, "day", "other", "allow", 2, 2)])
+    match(
+        python,
+        AggressiveOrder(
+            order_id="X", side=Side.BUY, qty=10, price_ticks=100, owner="other",
+            stp=SelfTradePrevention.ALLOW,
+        ),
+    )
+    rested = rust.get("X")
+    py_rested = python.get("X")
+    assert held.qty == py.qty == 0
+    assert held.side is py.side is Side.SELL
+    assert rested is not held and py_rested is not py
+    assert rested.side is py_rested.side is Side.BUY
+    assert rested.qty == py_rested.qty == 6
+
+
+def test_remember_callback_does_not_keep_the_book():
+    book = LimitOrderBook("WEAK")
+    order = book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=1, seq=1, ts=1)
+    callback = book._live["a"].__callback__
+    assert callback is not None
+    held = [cell.cell_contents for cell in callback.__closure__ or ()]
+    held.extend(callback.__defaults__ or ())
+    assert book not in held
+    assert order not in held
+
+
 def test_batch_stp_cancel_plus_failed_remainder_keeps_held_qty():
     """A self-trade cancel before a duplicate remainder is not a fill."""
     rust = LimitOrderBook("STP")

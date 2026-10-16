@@ -159,7 +159,7 @@ jobs:
       # workflow, and it does not add Windows or macOS cells.
       - name: Install the Rust toolchain for batch parity
         if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09
         with:
           toolchain: "1.83.0"
       - name: Batch parity against the Rust extension
