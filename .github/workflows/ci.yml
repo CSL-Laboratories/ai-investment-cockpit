@@ -261,6 +261,7 @@ jobs:
         run: |
           python -X utf8 -B tools/test_ci_dispatch_scope.py
           python -X utf8 -B tools/test_ci_settle.py
+          python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
   # when filter ran and Linux was skipped because the change is docs-only.
