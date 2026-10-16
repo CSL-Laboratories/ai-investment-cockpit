@@ -361,25 +361,21 @@ class ThreadVerdict:
     source: str = ""
 
 
-def _fence_marker(line: str) -> tuple[str, int, str]:
-    """Return (character, run length, rest) for a fence line, else empty.
-
-    CommonMark allows at most three leading spaces on a fence delimiter.
-    Four spaces (or a leading tab) is an indented code line, not a closer.
-    """
-    indent = 0
-    index = 0
-    while index < len(line) and indent < 4:
-        if line[index] == " ":
-            indent += 1
-            index += 1
+def _fence_indent(line: str) -> tuple[int, str]:
+    """Leading spaces before fence content. A tab is indent 4 (not a fence)."""
+    n = 0
+    for index, char in enumerate(line):
+        if char == " ":
+            n += 1
             continue
-        if line[index] == "\t":
-            return "", 0, ""
-        break
-    if indent >= 4:
-        return "", 0, ""
-    stripped = line[index:]
+        if char == "\t":
+            return 4, line[index + 1 :]
+        return n, line[index:]
+    return n, ""
+
+
+def _fence_marker(stripped: str) -> tuple[str, int, str]:
+    """Return (character, run length, rest) for a fence line, else empty."""
     if not stripped or stripped[0] not in "`~":
         return "", 0, ""
     char = stripped[0]
@@ -399,18 +395,19 @@ def strip_quoted_and_fenced(text: str) -> str:
     fence_char = ""
     fence_len = 0
     for line in (text or "").replace("\r\n", "\n").split("\n"):
-        stripped = line.lstrip()
-        char, run, rest = _fence_marker(line)
+        indent, rest = _fence_indent(line)
+        char, run, after = _fence_marker(rest) if indent <= 3 else ("", 0, "")
         if char:
             if not fence_char:
                 fence_char = char
                 fence_len = run
                 continue
-            if char == fence_char and run >= fence_len and not rest.strip():
+            if char == fence_char and run >= fence_len and not after.strip():
                 fence_char = ""
                 fence_len = 0
                 continue
-        if fence_char or stripped.startswith(">"):
+        stripped = line.lstrip()
+        if fence_char or stripped.startswith(">") or indent >= 4:
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -1110,8 +1107,10 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt and the thread
-    has no in-window marker. Missing timestamps fail closed.
+    at most once per thread when that pair has no receipt and the thread
+    has no in-window marker (a failed earlier cite cannot be distinguished
+    from a successful unmarked reopen without a receipt). Missing
+    timestamps fail closed.
     """
     if not actor_login:
         return 0
@@ -1146,12 +1145,13 @@ def resolved_count_today(
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
+    unmarked: set[str] = set()
     for pair in cite_window:
         tid, _digest = pair
         if tid in pending or pair in all_marker_pairs or tid in marker_tids_window:
             continue
-        counted.add(pair)
-    return len(counted)
+        unmarked.add(tid)
+    return len(counted) + len(unmarked)
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
