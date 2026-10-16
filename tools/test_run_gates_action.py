@@ -4,11 +4,15 @@ Run: python -m unittest tools.test_run_gates_action -v
 """
 import importlib.util
 from pathlib import Path
+import os
+import stat
 import subprocess
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
+ORIGINAL_RUN = subprocess.run
 ROOT = Path(__file__).resolve().parents[1]
 ACTION = ROOT / '.github' / 'actions' / 'run-gates' / 'action.yml'
 REQUIREMENTS = ROOT / '.github' / 'actions' / 'run-gates' / 'requirements.txt'
@@ -136,11 +140,48 @@ class FreshEnvironmentTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_symlink_environment_is_not_cleared(self):
-        with patch.object(Path, 'is_symlink', return_value=True):
+        with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_mode=stat.S_IFLNK)):
             with self.assertRaises(ValueError):
                 INSTALLER.install(self.root)
         self.builder.assert_not_called()
         self.run.assert_not_called()
+
+    def test_windows_reparse_point_is_rejected_on_python_311(self):
+        junction = SimpleNamespace(st_mode=stat.S_IFDIR,
+                                   st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        with patch.object(Path, 'lstat', return_value=junction):
+            with self.assertRaises(ValueError):
+                INSTALLER.install(self.root)
+        self.builder.assert_not_called()
+        self.run.assert_not_called()
+
+    def test_resolved_environment_must_match_checkout_child(self):
+        with patch.object(Path, 'resolve', side_effect=[self.root / 'elsewhere', self.root]):
+            with self.assertRaises(ValueError):
+                INSTALLER.install(self.root)
+        self.builder.assert_not_called()
+
+    def test_retry_revalidates_environment_before_clearing(self):
+        self.run.side_effect = subprocess.CalledProcessError(1, 'pip')
+        with patch.object(INSTALLER, 'validate_environment',
+                          side_effect=[None, ValueError('became a junction')]) as validate:
+            with self.assertRaises(ValueError):
+                INSTALLER.install(self.root)
+        self.assertEqual(validate.call_count, 2)
+        self.assertEqual(self.builder.call_count, 1)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows directory junction fixture')
+    def test_real_windows_junction_preserves_target(self):
+        target = self.root / 'protected'
+        target.mkdir()
+        sentinel = target / 'keep.txt'
+        sentinel.write_text('must survive')
+        ORIGINAL_RUN(['cmd.exe', '/c', 'mklink', '/J', str(self.root / '.venv'),
+                      str(target)], check=True, capture_output=True)
+        with self.assertRaises(ValueError):
+            INSTALLER.install(self.root)
+        self.builder.assert_not_called()
+        self.assertEqual(sentinel.read_text(), 'must survive')
 
     def test_unix_interpreter_is_used_when_present(self):
         python = self.root / '.venv/bin/python'
