@@ -1,5 +1,6 @@
 //! PyO3 entry points for the raw/normalized market-event adapter.
 
+use std::collections::HashSet;
 use std::ffi::CString;
 
 use cockpit_ingest::{
@@ -17,7 +18,18 @@ fn invalid(message: impl Into<String>) -> PyErr {
     PyValueError::new_err(message.into())
 }
 
+const MAX_JSON_DEPTH: u32 = 2048;
+
 fn read_json(obj: &Bound<'_, PyAny>) -> PyResult<Json> {
+    let mut visiting = HashSet::new();
+    read_json_at(obj, &mut visiting, 0)
+}
+
+fn read_json_at(
+    obj: &Bound<'_, PyAny>,
+    visiting: &mut HashSet<usize>,
+    depth: u32,
+) -> PyResult<Json> {
     if obj.is_none() {
         return Ok(Json::Null);
     }
@@ -45,23 +57,54 @@ fn read_json(obj: &Bound<'_, PyAny>) -> PyResult<Json> {
         return Ok(Json::Str(obj.extract()?));
     }
     if let Ok(dict) = obj.downcast::<PyDict>() {
+        let id = enter_container(obj, visiting, depth)?;
         let mut entries = Vec::new();
         for (key, value) in dict.iter() {
             let key: String = key
                 .extract()
                 .map_err(|_| invalid("json object key must be a str"))?;
-            entries.push((key, read_json(&value)?));
+            match read_json_at(&value, visiting, depth + 1) {
+                Ok(parsed) => entries.push((key, parsed)),
+                Err(err) => {
+                    visiting.remove(&id);
+                    return Err(err);
+                }
+            }
         }
+        visiting.remove(&id);
         return Ok(Json::Object(entries));
     }
     if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+        let id = enter_container(obj, visiting, depth)?;
         let mut items = Vec::new();
         for item in obj.try_iter()? {
-            items.push(read_json(&item?)?);
+            match read_json_at(&item?, visiting, depth + 1) {
+                Ok(parsed) => items.push(parsed),
+                Err(err) => {
+                    visiting.remove(&id);
+                    return Err(err);
+                }
+            }
         }
+        visiting.remove(&id);
         return Ok(Json::Array(items));
     }
     Err(invalid("unsupported json value"))
+}
+
+fn enter_container(
+    obj: &Bound<'_, PyAny>,
+    visiting: &mut HashSet<usize>,
+    depth: u32,
+) -> PyResult<usize> {
+    if depth >= MAX_JSON_DEPTH {
+        return Err(invalid("JSON nesting too deep"));
+    }
+    let id = obj.as_ptr() as usize;
+    if !visiting.insert(id) {
+        return Err(invalid("Circular reference detected"));
+    }
+    Ok(id)
 }
 
 fn read_symbols(
