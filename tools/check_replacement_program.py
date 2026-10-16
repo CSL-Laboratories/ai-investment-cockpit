@@ -515,10 +515,19 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(not_claimed == list(MATURITY[claimed_index + 1 :]), f"{key} invalid evidence promotion")
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object key: {key!r}")
+        result[key] = value
+    return result
+
+
 def load(path: Path) -> dict[str, Any]:
     try:
         with path.open(encoding="utf-8") as handle:
-            data = json.load(handle)
+            data = json.load(handle, object_pairs_hook=_unique_object)
     except (ValueError, RecursionError) as exc:
         # Scoped to decoding: includes UnicodeDecodeError, JSONDecodeError and
         # Python's integer/nesting limits without hiding validator programming errors.

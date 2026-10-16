@@ -141,6 +141,30 @@ def test_registry_cli_normalizes_parser_failures(tmp_path: Path, payload: bytes)
         env={**os.environ, "PYTHONINTMAXSTRDIGITS": "4300"},
     )
     assert result.returncode == 1
-    assert "replacement-program: FAIL: invalid program input:" in result.stderr
+    assert "replacement-program: FAIL:" in result.stderr
+    assert "invalid program input:" in result.stderr or "program root must be an object" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "replacement-program: PASS" not in result.stdout
+
+
+@pytest.mark.parametrize("field,value", [
+    ("schema_version", "1"),
+    ("live_authority_granted", "true"),
+    ("live_authority_granted", "false"),
+    ("not_granted", "[]"),
+    ("intended_outcome", '"Live execution approved"'),
+])
+def test_registry_cli_rejects_duplicate_keys(tmp_path: Path, field: str, value: str) -> None:
+    payload = (ROOT / "docs/replacement/program.json").read_text(encoding="utf-8")
+    key = json.dumps(field) + ":"
+    assert key in payload
+    candidate = tmp_path / "program.json"
+    candidate.write_text(payload.replace(key, f"{key} {value}, {key}", 1), encoding="utf-8")
+    result = subprocess.run(
+        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "replacement-program: FAIL: invalid program input: duplicate object key:" in result.stderr
     assert "Traceback" not in result.stderr
     assert "replacement-program: PASS" not in result.stdout

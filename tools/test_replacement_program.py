@@ -94,12 +94,36 @@ class ReplacementProgramTests(unittest.TestCase):
                     CHECKER.validate(replace_node(self.program, path, value))
 
     def test_loader_normalizes_malformed_text_and_parser_limits(self) -> None:
-        payloads = (b"\xff", b"{", b"[" * 10000 + b"0" + b"]" * 10000)
+        payloads = (b"\xff", b"{")
         with tempfile.TemporaryDirectory() as tmp:
             candidate = Path(tmp) / "program.json"
             for payload in payloads:
                 candidate.write_bytes(payload)
                 with self.subTest(prefix=payload[:20]), self.assertRaisesRegex(CHECKER.ContractError, "invalid program input"):
+                    CHECKER.load(candidate)
+
+    def test_loader_rejects_deep_array_root_on_any_parser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "program.json"
+            candidate.write_bytes(b"[" * 10000 + b"0" + b"]" * 10000)
+            # Some interpreters decode deeply nested arrays; root shape still rejects them.
+            with self.assertRaisesRegex(CHECKER.ContractError, "invalid program input|program root must be an object"):
+                CHECKER.load(candidate)
+
+    def test_loader_rejects_duplicate_keys_at_every_object_depth(self) -> None:
+        payloads = (
+            b'{"x": true, "x": false}',
+            b'{"x": false, "x": true}',
+            b'{"x": false, "x": false}',
+            b'{"nested": {"x": true, "x": false}}',
+            b'{"items": [{"x": true, "x": false}]}',
+            b'{"x": true, "\\u0078": false}',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "program.json"
+            for payload in payloads:
+                candidate.write_bytes(payload)
+                with self.subTest(payload=payload), self.assertRaisesRegex(CHECKER.ContractError, "duplicate object key"):
                     CHECKER.load(candidate)
 
     def test_deep_outcome_serialization_rejects_cleanly(self) -> None:
