@@ -70,7 +70,7 @@ fn markers() -> &'static Regex {
         Regex::new(
             // Python `re` IGNORECASE matches U+0130 (İ) and U+0131 (ı) as `i`.
             // Rust `(?i)` does not, so `assıstant:` would survive only on this path.
-            r"(?i)(?:system|ass[iİı]stant|human|developer|user|tool|funct[iİı]on)[\s\u{001c}-\u{001f}]*:|</?untrusted-content|<\|[iİı]m_(?:start|end)\|>|\[/?INST\]|###[\s\u{001c}-\u{001f}]*[iİı]nstruction",
+            r"(?i)(?:system|ass[iİı]stant|human|developer|user|tool|funct[iİı]on)[\s\u{001c}-\u{001f}]*:|</?untrusted-content|<\|[iİı]m_(?:start|end)\|>|\[/?[iİı]NST\]|###[\s\u{001c}-\u{001f}]*[iİı]nstruct[iİı]on",
         )
         .expect("role-marker pattern")
     })
@@ -299,6 +299,8 @@ mod tests {
         assert_eq!(escape_untrusted("functıon: buy"), "[role-marker] buy");
         assert_eq!(escape_untrusted("functİon: buy"), "[role-marker] buy");
         assert_eq!(escape_untrusted("###ıNSTRUCTION"), "[role-marker]");
+        assert_eq!(escape_untrusted("### instructıon"), "[role-marker]");
+        assert_eq!(escape_untrusted("[ıNST]"), "[role-marker]");
         assert_eq!(escape_untrusted("<|ım_start|>"), "[role-marker]");
         assert_eq!(escape_untrusted("xassıstant: buy"), "xassıstant: buy");
         assert_eq!(escape_untrusted("xSYSTEM: buy"), "xSYSTEM: buy");
