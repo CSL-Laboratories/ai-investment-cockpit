@@ -16,6 +16,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 
 from ingest.dedup import Dedup
@@ -107,9 +108,12 @@ def categorise(row: dict) -> tuple[str, str] | None:
         count_ok = True
     stats_present = ic_std is not None and pos is not None and count_ok
     if stats_present:
-        # |t| > 2  <=>  |ic_mean| * sqrt(n) > 2 * ic_std. Avoids dividing by an
-        # underflowing denominator when ic_std is subnormal.
-        t_big = ic_std > 0 and abs(ic_mean) * math.sqrt(count) > 2 * ic_std
+        # |t| > 2  <=>  ic_mean^2 * n > 4 * ic_std^2. Exact rational arithmetic
+        # avoids both underflowing denominators (subnormal ic_std) and
+        # overflowing products (huge finite stats).
+        t_big = ic_std > 0 and (
+            Fraction(ic_mean) ** 2 * count > 4 * Fraction(ic_std) ** 2
+        )
         if ic_mean > 0.02 and pos >= 0.55 and t_big:
             return "alive", "recomputed"
         if ic_mean < -0.02 and t_big:
