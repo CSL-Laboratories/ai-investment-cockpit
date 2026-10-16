@@ -49,6 +49,31 @@ class ReceiptTests(unittest.TestCase):
     def pending(self, comments, compare=lambda base, tip: "ahead", manual=False):
         return m.pending_findings(self.items, comments, C, compare, lambda user: "write", manual)
 
+    def test_durable_intent_uncertainty_restart_and_manual_reconciliation(self):
+        comments = []
+        def post(repo, number, body):
+            comments.append({"body": body, "created_at": "2026-10-16T06:00:00Z", "user": actor("github-actions[bot]", m.ACTIONS_ID)})
+        intent = m.begin_ci_intent("a/b", 1, A, [], post)
+        self.assertEqual(m.pending_ci_intent([], comments), intent["nonce"])
+        late = {"id": 2, "event": "labeled", "label": {"name": "ci:full"}, "actor": {"login": "writer"}}
+        # Delayed visibility on a later invocation cannot adopt ambiguous PAT ownership.
+        self.assertEqual(m.pending_ci_intent([late], comments), intent["nonce"])
+        forged = {"body": m.marker("ci-owned", {"head": A, "event": 2, "nonce": intent["nonce"]}), "user": actor("other", 9)}
+        self.assertEqual(m.pending_ci_intent([late], comments + [forged]), intent["nonce"])
+        removed = late | {"id": 3, "event": "unlabeled", "created_at": "2026-10-16T06:00:01Z"}
+        self.assertEqual(m.pending_ci_intent([late, removed | {"created_at": "2026-10-16T05:59:59Z"}], comments), intent["nonce"])
+        self.assertEqual(m.pending_ci_intent([late, removed | {"created_at": "2026-10-16T06:00:00Z"}], comments), intent["nonce"])
+        self.assertIsNone(m.pending_ci_intent([late, removed], comments))
+        self.assertIsNone(m.pending_ci_intent([late, removed, late | {"id": 4}], comments))
+        post("a/b", 1, m.marker("ci-invalidated", {"head": A, "event": 2, "nonce": intent["nonce"]}))
+        rollback = removed | {"created_at": "2026-10-16T06:00:00Z", "actor": actor("github-actions[bot]", m.ACTIONS_ID)}
+        self.assertIsNone(m.pending_ci_intent([late, rollback], comments))
+        self.assertEqual(m.pending_ci_intent([late, rollback | {"actor": actor("other", 9)}], comments), intent["nonce"])
+        with patch.object(m, "pages", side_effect=[[], [], [late]]) as fetch:
+            m.record_ci_ownership("a/b", 1, A, 0, "writer", fetch, post, intent=intent)
+        self.assertEqual(fetch.call_count, 3)
+        self.assertIsNone(m.pending_ci_intent([late], comments))
+
     def test_same_second_correction_uses_monotonic_comment_id(self):
         receipt = reply(self.receipt | {"status": "needs-human"}) | {"id": 100}
         follow = {"id": 101, "in_reply_to_id": 1, "created_at": receipt["created_at"],
@@ -56,6 +81,8 @@ class ReceiptTests(unittest.TestCase):
         self.assertTrue(self.pending([receipt, follow]))
         self.assertEqual(self.pending([receipt, follow | {"id": 99}]), [])
         self.assertEqual(self.pending([receipt, follow | {"id": 100}]), [])
+        edited = follow | {"id": 99, "created_at": "2026-10-15T01:00:00Z", "updated_at": receipt["created_at"]}
+        self.assertTrue(self.pending([receipt, edited]))
 
     def test_inline_indented_receipts_and_quoted_writer_correction(self):
         for body in ("Fixed. " + m.marker("result", self.receipt), "  " + m.marker("result", self.receipt)):
@@ -157,13 +184,17 @@ class AttemptTests(unittest.TestCase):
     def runtime(self, count, manual=False, post_error=False, loop_count="0", clean=False, compare_error=None):
         threads = {"data": {"repository": {"pullRequest": {"reviewThreads": {
             "nodes": [] if clean else [thread()], "pageInfo": {"hasNextPage": False}}}}}}
+        def api_response(path):
+            if "/compare/" in path and compare_error:
+                raise compare_error
+            return {"state": "open", "head": {"sha": A, "repo": {"full_name": "o/r"}}}
         with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
             "REPO": "o/r", "PR_NUMBER": "1", "FIXER_HEAD_SHA": A,
             "LOOP_COMMIT_COUNT": loop_count, "MANUAL_RETRY": "true" if manual else "false", "GITHUB_OUTPUT": str(Path(d) / "out"),
             "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1"}), \
                 patch.object(m.subprocess, "check_output", return_value=json.dumps(threads)), \
                 patch.object(m, "pages", side_effect=[root_comments([thread()]) + ([reply({"root": 1, "fingerprint": self.items[0]["fingerprint"], "base": A, "commit": B, "status": "addressed"})] if compare_error else []), self.attempts(count)]), \
-                patch.object(m, "api", side_effect=compare_error), \
+                patch.object(m, "api", side_effect=api_response), \
                 patch.object(m, "revoke_owned_ci"), \
                 patch.object(m, "post", side_effect=OSError("write failed") if post_error else None) as post:
             if post_error:
@@ -228,9 +259,9 @@ class ReadinessTests(unittest.TestCase):
     def test_active_pause_changed_findings_resolved_handoff_and_forgery(self):
         with patch.object(m, "live_state", return_value=(self.items, self.items)) as live:
             self.assertTrue(m.readiness_blocked("o/r", "1", A, [self.pause], lambda p: self.pr))
-            self.assertFalse(m.readiness_blocked("o/r", "1", A, [self.pause | {"user": actor("github-actions[bot]", 1)}], lambda p: self.pr))
+            self.assertTrue(m.readiness_blocked("o/r", "1", A, [], lambda p: self.pr))
             live.return_value = (findings([thread(root=2)]), findings([thread(root=2)]))
-            self.assertFalse(m.readiness_blocked("o/r", "1", A, [self.pause], lambda p: self.pr))
+            self.assertTrue(m.readiness_blocked("o/r", "1", A, [self.pause], lambda p: self.pr))
             live.return_value = ([], [])
             self.assertFalse(m.readiness_blocked("o/r", "1", A, [self.pause], lambda p: self.pr))
             live.return_value = ([], self.items)
@@ -247,7 +278,7 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(m.latest_pause_id(attempts[:2], A), 0)
         with patch.object(m, "live_state", return_value=(self.items, self.items)):
             self.assertTrue(m.readiness_blocked("o/r", "1", A, attempts, lambda p: self.pr))
-            self.assertFalse(m.readiness_blocked("o/r", "1", A, attempts[:2], lambda p: self.pr))
+            self.assertTrue(m.readiness_blocked("o/r", "1", A, attempts[:2], lambda p: self.pr))
 
     def test_exact_label_event_ownership_preserves_human_override(self):
         event = {"id": 7, "event": "labeled", "label": {"name": "ci:full"}, "actor": {"login": "writer"}}
@@ -265,6 +296,38 @@ class ReadinessTests(unittest.TestCase):
             m.record_ci_ownership("o/r", "1", A, 0, "writer", lambda p: [event | {"actor": {"login": "human"}}], lambda *args: None)
         with self.assertRaises(OSError):
             m.revoke_owned_ci("o/r", "1", A, lambda p: (_ for _ in ()).throw(OSError("page failure")))
+
+    def test_event_lag_is_unknown_and_cross_head_ownership_revokes(self):
+        with self.assertRaises(ValueError):
+            m.record_ci_ownership("o/r", "1", A, 0, "writer", lambda p: [], lambda *args: self.fail("must not post"))
+        event = {"id": 7, "event": "labeled", "label": {"name": "ci:full"}}
+        owned = {"user": actor("github-actions[bot]", m.ACTIONS_ID), "body": m.marker("ci-owned", {"head": A, "event": 7})}
+        deleted = []
+        self.assertTrue(m.revoke_owned_ci("o/r", "1", B,
+            lambda p: [owned] if p.endswith("comments") else [event], lambda *args: deleted.append(True), lambda *args: None))
+        self.assertEqual(deleted, [True])
+
+    def test_label_removal_classification_preserves_human_and_unknown(self):
+        labeled = {"id": 7, "event": "labeled", "label": {"name": "ci:full"}}
+        removed = {"id": 8, "event": "unlabeled", "label": {"name": "ci:full"},
+                   "actor": actor("github-actions[bot]", m.ACTIONS_ID)}
+        invalidated = {"user": actor("github-actions[bot]", m.ACTIONS_ID), "body": m.marker("ci-invalidated", {"head": A, "event": 7})}
+        self.assertEqual(m.ci_label_decision([], []), "allow")
+        self.assertEqual(m.ci_label_decision([labeled], []), "present")
+        self.assertEqual(m.ci_label_decision([labeled, removed], [invalidated]), "allow")
+        self.assertEqual(m.ci_label_decision([labeled, removed], []), "preserve-human-removal")
+        for user in ({"login": "writer", "type": "User"}, {}, actor("github-actions[bot]", 1)):
+            self.assertEqual(m.ci_label_decision([labeled, removed | {"actor": user}], [invalidated]), "preserve-human-removal")
+
+    def test_live_pending_revokes_before_handoff_only_early_return(self):
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "REPO": "o/r", "PR_NUMBER": "1", "FIXER_HEAD_SHA": A,
+                "MANUAL_RETRY": "false", "GITHUB_OUTPUT": str(Path(d)/"out")}), \
+                patch.object(m, "live_state", return_value=([], self.items)), \
+                patch.object(m, "api", return_value=self.pr), patch.object(m, "revoke_owned_ci") as revoke:
+            m.main()
+            self.assertIn("skip=true", (Path(d)/"out").read_text())
+            revoke.assert_called_once_with("o/r", "1", A)
 
     def test_ready_check_requires_trusted_exact_pause_generation(self):
         checked = {"id": 12, "user": actor("github-actions[bot]", m.ACTIONS_ID),

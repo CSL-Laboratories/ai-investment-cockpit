@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import uuid
 
 DEVIN_ID = 158243242
 CLAUDE_ID = 209825114
@@ -120,7 +121,10 @@ def newer_comment(comment, receipt):
     if stamp != previous:
         return stamp > previous
     cid, rid = comment.get("id"), receipt.get("id")
-    return type(cid) is int and type(rid) is int and cid > rid
+    edited = str(comment.get("updated_at") or "") > str(comment.get("created_at") or "")
+    # An edit to an older reply can share the receipt's second. IDs order
+    # creations only, so conservatively rearm a demonstrably edited reply.
+    return edited or (type(cid) is int and type(rid) is int and cid > rid)
 
 
 def pending_findings(items: list[dict], comments: list[dict], head: str, compare, permission, manual: bool = False) -> list[dict]:
@@ -261,17 +265,76 @@ def label_event_id(events: list[dict]) -> int:
     return latest.get("id", 0) if latest.get("event") == "labeled" else 0
 
 
-def record_ci_ownership(repo, number, head, before_id, writer, get_pages, post_comment, proof=None):
-    events = get_pages(f"repos/{repo}/issues/{number}/events")
-    current = label_event_id(events)
-    if current == before_id:
-        return False  # Pre-existing label, including a human override, is not ours.
+def ci_label_decision(events, comments):
+    relevant = sorted((e for e in events if e.get("event") in {"labeled", "unlabeled"}
+        and (e.get("label") or {}).get("name") == "ci:full" and type(e.get("id")) is int), key=lambda e: e["id"])
+    if not relevant:
+        return "allow"
+    latest = relevant[-1]
+    if latest["event"] == "labeled":
+        return "present"
+    prior = next((e for e in reversed(relevant[:-1]) if e["event"] == "labeled"), {})
+    proven = bot(latest.get("actor") or {}, "github-actions[bot]", ACTIONS_ID) and any(
+        bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
+        and any(type(r.get("event")) is int and r["event"] == prior.get("id")
+                for r in records(str(c.get("body") or ""), "ci-invalidated")) for c in comments)
+    return "allow" if proven else "preserve-human-removal"
+
+
+def begin_ci_intent(repo, number, head, events, post_comment):
+    """Persist uncertainty before mutation; intent alone is never ownership."""
+    after = max((e["id"] for e in events if type(e.get("id")) is int
+                 and e.get("event") in {"labeled", "unlabeled"}
+                 and (e.get("label") or {}).get("name") == "ci:full"), default=0)
+    intent = {"head": head, "nonce": uuid.uuid4().hex, "after": after}
+    post_comment(repo, number, marker("ci-intent", intent))
+    return intent
+
+
+def pending_ci_intent(events, comments):
+    trusted = [c for c in comments if bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)]
+    owned = {r.get("nonce") for c in trusted for r in records(str(c.get("body") or ""), "ci-owned")
+             if SHA_RE.fullmatch(str(r.get("head") or "")) and type(r.get("event")) is int and r["event"] > 0}
+    for comment in trusted:
+        for intent in records(str(comment.get("body") or ""), "ci-intent"):
+            nonce, after = intent.get("nonce"), intent.get("after")
+            if not re.fullmatch(r"[0-9a-f]{32}", str(nonce or "")) or not SHA_RE.fullmatch(str(intent.get("head") or "")) or type(after) is not int or after < 0:
+                continue
+            superseded = any(type(e.get("id")) is int and e["id"] > after
+                             and e.get("event") == "unlabeled"
+                             and bool(comment.get("created_at"))
+                             and str(e.get("created_at") or "") > str(comment["created_at"])
+                             and (e.get("label") or {}).get("name") == "ci:full" for e in events)
+            rollback_events = {r["event"] for c in trusted for r in records(str(c.get("body") or ""), "ci-invalidated")
+                               if r.get("nonce") == nonce and type(r.get("event")) is int and r["event"] > after}
+            rolled_back = any(type(e.get("id")) is int and e.get("event") == "unlabeled"
+                              and (e.get("label") or {}).get("name") == "ci:full"
+                              and bot(e.get("actor") or {}, "github-actions[bot]", ACTIONS_ID)
+                              and any(e["id"] > event_id for event_id in rollback_events) for e in events)
+            if nonce not in owned and not superseded and not rolled_back:
+                return nonce
+    return None
+
+
+def record_ci_ownership(repo, number, head, before_id, writer, get_pages, post_comment, proof=None, intent=None):
+    # Bound immediate event visibility retries. A later invocation must not
+    # infer attribution from a PAT actor: its durable intent stays uncertain.
+    for _ in range(3):
+        events = get_pages(f"repos/{repo}/issues/{number}/events")
+        current = label_event_id(events)
+        if current:
+            break
+    if current and current == before_id:
+        return False  # Pre-existing labels are not ours.
     event = next((e for e in events if e.get("id") == current), {})
     if not current or (event.get("actor") or {}).get("login") != writer:
-        raise ValueError("ci:full ownership cannot be established")
+        raise ValueError("ci:full ownership unknown; manually remove/re-add ci:full to reconcile")
     if proof is not None:
         proof.append(current)
-    post_comment(repo, number, marker("ci-owned", {"head": head, "event": current}))
+    receipt = {"head": head, "event": current}
+    if intent is not None:
+        receipt["nonce"] = intent["nonce"]
+    post_comment(repo, number, marker("ci-owned", receipt))
     return True
 
 
@@ -293,7 +356,7 @@ def revoke_owned_ci(repo, number, head, get_pages=None, delete=None, post_commen
     if not current:
         return False
     owned = any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
-                and any(r.get("head") == head and type(r.get("event")) is int
+                and any(SHA_RE.fullmatch(str(r.get("head") or "")) and type(r.get("event")) is int
                         and r["event"] == current for r in records(str(c.get("body") or ""), "ci-owned"))
                 for c in comments)
     if owned:
@@ -356,29 +419,10 @@ def readiness_blocked(repo: str, number: str, head: str, comments: list[dict], r
             or (pr.get("head") or {}).get("sha") != head
             or ((pr.get("head") or {}).get("repo") or {}).get("full_name") != repo):
         return True
-    keys = [r for c in comments if bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
-            for r in records(str(c.get("body") or ""), "attempt") if r.get("head") == head]
-    exhausted = any(attempt_count(comments, {"head": head, "fingerprint": r.get("fingerprint")}) >= MAX_ATTEMPTS for r in keys)
-    if not latest_pause_id(comments, head) and not exhausted:
-        return False
-    automatic, unresolved = live_state(repo, number, head)
-    if not unresolved:
-        return False
-    # Explicit unresolved human handoffs remain a decision, not READY.
-    if {item["root"] for item in unresolved} - {item["root"] for item in automatic}:
-        return True
-    key = attempt_key(head, automatic)
-    if attempt_count(comments, key) >= MAX_ATTEMPTS:
-        return True
-    for comment in comments:
-        if not bot(comment.get("user") or {}, "github-actions[bot]", ACTIONS_ID):
-            continue
-        body = str(comment.get("body") or "")
-        if f"<!-- claude-fixer-loop-cap:{head} -->" in body:
-            return True
-        if any(all(record.get(k) == value for k, value in key.items()) for record in records(body, "paused")):
-            return True
-    return False
+    # READY concerns all unsettled findings, not merely automatic retry budget.
+    # The second view retains needs-human handoffs but excludes verified fixes.
+    _, unresolved = live_state(repo, number, head)
+    return bool(unresolved)
 
 
 def main() -> None:
@@ -387,6 +431,13 @@ def main() -> None:
         raise ValueError("unsafe head")
     manual = os.environ.get("MANUAL_RETRY") == "true"
     automatic, unresolved = live_state(repo, number, head)
+    if unresolved:
+        pr = api(f"repos/{repo}/pulls/{number}")
+        if (pr.get("state") != "open" or (pr.get("head") or {}).get("sha") != head
+                or ((pr.get("head") or {}).get("repo") or {}).get("full_name") != repo):
+            emit([], head, "stale-head")
+            return
+        revoke_owned_ci(repo, number, head)
     items = unresolved if manual else automatic
     if not items:
         emit([], head, "no-pending-findings")
@@ -399,7 +450,6 @@ def main() -> None:
         pause = f"<!-- claude-fixer-loop-cap:{head} -->"
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
             post(repo, number, pause + "\nClaude PR Fixer paused: eight consecutive Claude commits and pending Devin findings. A human needs to inspect them; a human commit resets this guard. Manual retry does not bypass it.")
-        revoke_owned_ci(repo, number, head)
         emit([], head, "loop-commit-limit")
         return
     key = attempt_key(head, items)
@@ -407,7 +457,6 @@ def main() -> None:
         pause = marker("paused", key)
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
             post(repo, number, pause + "\nClaude PR Fixer paused after three automatic attempts on this head and unchanged findings. Attempts include runs stopped by workflow validation before model execution. After activation, an authorized manual devin-review-fix workflow dispatch can retry; a new head or changed findings resets this budget. The eight-commit guard still applies.")
-        revoke_owned_ci(repo, number, head)
         emit([], head, "attempt-limit")
         return
     if not manual:

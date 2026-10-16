@@ -289,20 +289,23 @@ pending; authentication, transport, and server errors still fail closed. The
 eight-commit count is applied only after receipt-aware selection proves pending
 work remains, so a clean PR does not receive a misleading loop-cap pause.
 
-READY is reconciled against live fixer pauses before and after applying `ci:full`.
-Trusted Actions receipts bind gate-owned labels to their exact label-event IDs;
-a pause revokes only that label event, preserving later human remove/re-add
-changes. A same-head pause invalidates earlier READY state until a new trusted
-readiness check permits recovery. Obsolete finding fingerprints do not block
-forever; unresolved explicit human handoffs still require a decision. `ci:full`
-requests CI, not merge approval. GitHub has no atomic compare-and-delete, so a
-human label change between the final event check and deletion remains a narrow
-unavoidable race; no atomicity is claimed.
+READY is reconciled against live unresolved bug findings before and after applying
+`ci:full`, including explicit human handoffs. Verified addressed receipts count
+as handled. Historical READY audit comments never prevent a fresh reconciliation;
+MEDIATE retains trusted deduplication. Existing clean labels cause no repeated
+label writes or READY comments. `ci:full` requests CI, not merge approval.
 
-Legacy labels without a trusted ownership receipt are not automatically removed:
-ownership cannot be inferred from arbitrary prose or the PAT owner's name. If a
-GitHub API failure prevents ownership proof or rollback, inspect `ci:full`; the
-workflow reports cleanup uncertainty rather than claiming the label is absent.
-A revocation writes its trusted invalidation receipt before deleting the label,
-so a failed deletion remains retryable and repeated same-head pause cycles can
-recover after the findings are settled.
+Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
+head changes. Only that event can be revoked. Human removals and later re-adds
+are preserved; ambiguous ownership requires manual action. GitHub has no atomic
+compare-and-delete, so a human change between the final check and deletion is an
+unavoidable narrow race, not an atomic guarantee.
+
+Before adding a label, the gate records a trusted intent. It retries immediate
+label-event visibility three times. If ownership remains unknown or recording
+proof fails, the intent blocks subsequent READY processing, even after a restart.
+It never infers ownership from the PAT owner's name. Inspect the label and
+manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.
+The removal must be later than the intent's timestamp (same-second ambiguity
+remains blocked). Legacy labels without ownership proof are not automatically
+removed. API failures report uncertain cleanup rather than claiming absence.
