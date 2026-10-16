@@ -292,6 +292,31 @@ def test_direct_content_hash_accepts_default_str_values():
     got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Flip({"x": 1}))
     assert got[5] == event["content_hash"]
 
+    class Dyn(dict):
+        def __getattribute__(self, name):
+            if name == "items":
+                return lambda: [("reported", 2)]
+            return dict.__getattribute__(self, name)
+
+    assert cockpit_quant.content_hash(Dyn({"actual": 1})) == python_content_hash(Dyn({"actual": 1}))
+    assert cockpit_quant.content_hash(Dyn({"actual": 1})) != python_content_hash({"actual": 1})
+
+    class Once(list):
+        def __iter__(self):
+            self._n = getattr(self, "_n", 0) + 1
+            if self._n == 1:
+                yield datetime.date(2026, 10, 16)
+            else:
+                yield 1
+
+    assert cockpit_quant.content_hash(Once()) == python_content_hash(Once())
+    event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=None, event_type="news", raw=Once(),
+    )
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", Once())
+    assert got[5] == event["content_hash"]
+
 
 def test_deep_plain_dict_subclass_stays_native():
     import cockpit_quant

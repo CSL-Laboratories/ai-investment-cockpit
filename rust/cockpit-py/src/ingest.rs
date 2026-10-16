@@ -10,7 +10,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{
-    PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySequence, PyString, PyTuple,
+    PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySequence, PyString, PyTuple, PyType,
 };
 use pyo3::PyTypeInfo;
 
@@ -78,6 +78,11 @@ fn read_json_at(
         return read_dict(obj, visiting, depth);
     }
     if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
+        // A subclass iterator can yield an unsupported value and then different
+        // data. Decide before the first walk so the fallback dump is the only pass.
+        if sequence_needs_python(obj) {
+            return Err(ReadError::Py(invalid("sequence subclass")));
+        }
         let id = enter_container(obj, visiting, depth)?;
         let mut items = Vec::new();
         for item in obj.try_iter()? {
@@ -137,16 +142,27 @@ fn read_dict(
 
 #[inline(never)]
 fn items_are_inherited(obj: &Bound<'_, PyAny>) -> bool {
-    // Presence in a class or instance dict, not `==`. An override can define
-    // `__eq__` so that it compares equal to `dict.items` and still returns
-    // different pairs. This check never calls `items()`.
-    let dict_type = PyDict::type_object(obj.py());
-    if let Ok(instance_dict) = obj.getattr("__dict__") {
-        match mapping_contains(&instance_dict, "items") {
-            Some(true) | None => return false,
-            Some(false) => {}
-        }
+    // Class-dict presence, not `==` and not a call. `__getattribute__` can
+    // supply `items` without putting that name in the class dict.
+    inherited_slot(obj, "items", &PyDict::type_object(obj.py()))
+}
+
+#[inline(never)]
+fn sequence_needs_python(obj: &Bound<'_, PyAny>) -> bool {
+    let py = obj.py();
+    let ty = obj.get_type();
+    if ty.is(&PyList::type_object(py)) || ty.is(&PyTuple::type_object(py)) {
+        return false;
     }
+    let base = if obj.is_instance_of::<PyList>() {
+        PyList::type_object(py)
+    } else {
+        PyTuple::type_object(py)
+    };
+    !inherited_slot(obj, "__iter__", &base)
+}
+
+fn inherited_slot(obj: &Bound<'_, PyAny>, name: &str, base: &Bound<'_, PyType>) -> bool {
     let Ok(mro) = obj.get_type().getattr("__mro__") else {
         return false;
     };
@@ -157,18 +173,29 @@ fn items_are_inherited(obj: &Bound<'_, PyAny>) -> bool {
         let Ok(cls) = cls else {
             return false;
         };
-        if cls.is(&dict_type) {
-            return true;
+        if cls.is(base) {
+            return !instance_shadows(obj, name);
         }
         let Ok(cls_dict) = cls.getattr("__dict__") else {
             return false;
         };
-        match mapping_contains(&cls_dict, "items") {
+        match mapping_contains(&cls_dict, name) {
+            Some(true) | None => return false,
+            Some(false) => {}
+        }
+        match mapping_contains(&cls_dict, "__getattribute__") {
             Some(true) | None => return false,
             Some(false) => {}
         }
     }
     false
+}
+
+fn instance_shadows(obj: &Bound<'_, PyAny>, name: &str) -> bool {
+    let Ok(instance_dict) = obj.getattr("__dict__") else {
+        return false;
+    };
+    !matches!(mapping_contains(&instance_dict, name), Some(false))
 }
 
 fn mapping_contains(mapping: &Bound<'_, PyAny>, key: &str) -> Option<bool> {
