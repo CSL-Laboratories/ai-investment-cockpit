@@ -432,7 +432,7 @@ def test_classify_already_resolved_and_marked():
     marked = thread(
         comments=[
             comment(CODEX, verdict_body()),
-            comment("github-actions[bot]", mod.resolved_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA)),
         ]
     )
     latest = mod.latest_verdicts(mod.thread_comments(marked))
@@ -440,6 +440,18 @@ def test_classify_already_resolved_and_marked():
         marked, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
     )
     assert reason == "already-marked"
+
+    forged = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("alice", mod.resolved_marker(THREAD, SHA)),
+        ]
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(forged))
+    reason, _ = mod.classify_thread(
+        forged, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "resolve"
 
 
 def test_forged_resolved_marker_does_not_already_mark():
@@ -503,6 +515,22 @@ def test_forged_cite_does_not_retry_mark():
         t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
     )
     assert reason == "already-resolved"
+
+    forged_receipt = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            comment("alice", mod.resolved_marker(THREAD, SHA)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(forged_receipt))
+    reason, verdict = mod.classify_thread(
+        forged_receipt, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "retry-mark"
+    assert verdict is not None and verdict.sha == SHA
 
     forged_issue = thread(resolved=True, resolved_by=PAT_LOGIN, comments=[comment(CODEX, verdict_body())])
     latest = mod.latest_verdicts(mod.thread_comments(forged_issue))
@@ -761,7 +789,7 @@ def test_idempotent_second_run():
 def test_daily_cap():
     prior = [
         comment(
-            "github-actions[bot]",
+            PAT_LOGIN,
             mod.resolved_marker(f"PRRT_old{i:02d}", SHA),
             NOW - timedelta(minutes=i),
         )
@@ -774,7 +802,7 @@ def test_daily_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
-def test_forged_resolved_marker_does_not_burn_daily_cap():
+def test_forged_resolved_markers_do_not_burn_daily_cap():
     prior = [
         comment(
             "alice",

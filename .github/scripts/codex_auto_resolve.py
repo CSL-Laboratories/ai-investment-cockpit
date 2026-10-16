@@ -1010,7 +1010,9 @@ def already_cited_on_sha(
 
 
 def resolved_count_today(
-    comments: list[dict[str, Any]], now: datetime, actor_login: str = ""
+    comments: list[dict[str, Any]],
+    now: datetime,
+    actor_login: str = "",
 ) -> int:
     if not actor_login:
         return 0
