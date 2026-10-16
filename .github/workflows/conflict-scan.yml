@@ -455,6 +455,8 @@ jobs:
             BRANCH: ${{ matrix.pr.head_ref }}
             BASE: ${{ matrix.pr.base_ref }}
 
+            Linear-first (CSL-88): work from the CSL Linear issue; check it and its PR-sync comment for overlap first; post status and questions there; file new findings to Triage; use current docs (Context7) and web research (Parallel) before implementing.
+
             This same-repo PR (author has write access) conflicts with BASE. The workflow already ran
             git merge --no-ff --no-commit origin/BASE on BRANCH, so the working tree has an uncommitted
             in-progress merge (with conflict markers if it conflicted; if it merged cleanly it is still

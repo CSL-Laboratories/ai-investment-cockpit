@@ -524,6 +524,8 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
+        self.assertIn("Linear-first (CSL-88)", self.text)
+        self.assertGreaterEqual(self.text.count("Linear-first (CSL-88)"), 6)
 
     def test_tool_allowlist_and_denials(self) -> None:
         self.assertIn("--allowedTools", self.text)
@@ -686,6 +688,11 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("prompt: |", body, job)
             self.assertIn("commit SHA", body, job)
             self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
+            allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            self.assertIn("Bash(gh api repos/*/pulls/*/comments/*/replies:*)", allow, job)
+            self.assertNotIn("resolveReviewThread", allow, job)
+            self.assertNotIn("fix or a rationale", body, job)
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
             self.assertIn("UNTRUSTED DATA", body, job)
@@ -1068,6 +1075,9 @@ class ConflictJobStructureTests(unittest.TestCase):
             self.assertIn(f'"Edit({path})"', job)
             self.assertIn(f'"Write({path})"', job)
         self.assertIn("tools/test_claude_pr_fixer.py.", job.split("--allowedTools", 1)[0])
+        allow = job.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+        self.assertNotIn("comments/*/replies", allow)
+        self.assertNotIn("resolveReviewThread", allow)
         self.assertIn("Bash(git push origin HEAD:refs/heads/${{ matrix.pr.head_ref }})", job)
         self.assertNotIn("HEAD:refs/heads/*", job)
         self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
