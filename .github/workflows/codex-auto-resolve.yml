@@ -26,8 +26,9 @@ name: Codex auto-resolve
 
 on:
   schedule:
-    # Catch Codex reviews that land a few minutes after @codex review.
-    # Offset from the gate (7/17/27/...) and stuck-thread watch (23 */2).
+    # Codex reviews do not start this workflow. The next cron (or a manual
+    # dispatch) scans open PRs. Offset from the gate (7/17/27/...) and
+    # stuck-thread watch (23 */2).
     - cron: "11,31,51 * * * *"
   workflow_dispatch:
     inputs:

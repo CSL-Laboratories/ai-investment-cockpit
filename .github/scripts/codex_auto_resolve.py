@@ -954,6 +954,22 @@ def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit:
     return text[:limit]
 
 
+def newest_for_thread(verdicts: list[StampedVerdict], head_sha: str) -> StampedVerdict:
+    """Pick the newest ruling. On a timestamp tie, empty SHA vetoes; else prefer current head."""
+
+    def rank(item: StampedVerdict) -> tuple[datetime, int]:
+        sha = item.verdict.sha
+        if not sha:
+            tie = 2
+        elif sha == head_sha:
+            tie = 1
+        else:
+            tie = 0
+        return (item.when, tie)
+
+    return max(verdicts, key=rank)
+
+
 def classify_thread(
     thread: dict[str, Any],
     *,
@@ -974,7 +990,7 @@ def classify_thread(
     any_for_thread = [s for (tid, _sha), s in latest.items() if tid == thread_id]
     if not any_for_thread:
         return "no-verdict", None
-    newest = max(any_for_thread, key=lambda item: item.when)
+    newest = newest_for_thread(any_for_thread, head_sha)
     stamped = latest.get((thread_id, head_sha))
     if newest.verdict.sha != head_sha:
         if not newest.verdict.sha:

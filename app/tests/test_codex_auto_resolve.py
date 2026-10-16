@@ -834,6 +834,39 @@ def test_required_check_named_resolve_is_not_ignored():
     assert mod.required_checks_green(rollup) == (False, "checks=required-not-green")
 
 
+def test_same_second_current_head_beats_old_head():
+    old_head = comment(CODEX, verdict_body("RESOLVE", sha=SHA2), NOW)
+    current = comment(CODEX, verdict_body("RESOLVE", sha=SHA), NOW)
+    latest = mod.latest_verdicts([old_head, current])
+    t = thread(comments=[old_head, current])
+    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "resolve"
+    assert verdict is not None and verdict.sha == SHA
+
+
+def test_later_old_head_still_stale():
+    current = comment(CODEX, verdict_body("RESOLVE", sha=SHA), NOW - timedelta(seconds=1))
+    later_old = comment(CODEX, verdict_body("RESOLVE", sha=SHA2), NOW)
+    latest = mod.latest_verdicts([current, later_old])
+    t = thread(comments=[current, later_old])
+    reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "stale-sha"
+
+
+def test_same_second_headless_still_vetoes():
+    current = comment(CODEX, verdict_body("RESOLVE"), NOW)
+    headless = comment(
+        CODEX,
+        f"{mod.verdict_marker(THREAD)}\nCODEX-THREAD: DECIDE\n",
+        NOW,
+    )
+    latest = mod.latest_verdicts([current, headless])
+    t = thread(comments=[current, headless])
+    reason, verdict = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
+    assert reason == "ambiguous"
+    assert verdict is not None and verdict.verdict == "AMBIGUOUS"
+
+
 def test_newer_headless_verdict_cancels_older_resolve():
     older = comment(CODEX, verdict_body("RESOLVE"), NOW - timedelta(hours=1))
     newer = comment(
