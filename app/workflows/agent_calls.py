@@ -39,6 +39,7 @@ from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
 _STATUS_MAP = {OK: "done", NEEDS_HUMAN: "quarantined"}
+_REPAIR_OVERHEAD_CHARS = 700
 
 
 def _provisioned_secret_values() -> list[str]:
@@ -92,7 +93,9 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         )
     cap = context_token_cap(state.settings)
     estimated_input = estimate_tokens(prompt)
-    context_limited = estimated_input > cap
+    # Reserve headroom for the runner's repair call, which appends up to ~500 chars of
+    # rejection text plus an instruction to the same prompt.
+    context_limited = estimated_input + estimate_tokens("x" * _REPAIR_OVERHEAD_CHARS) > cap
     engine = BreakerEngine(state)
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
     generation = state.usage.window(runtime).generation
@@ -140,7 +143,15 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     refs["_generation"] = generation
     dropped_raw = refs.get("context_dropped", 0)
     context_dropped = dropped_raw if type(dropped_raw) is int and dropped_raw >= 0 else 0
-    vendor_usage = None if context_limited else parse_vendor_usage(result.raw or "")
+    sent = not context_limited and result.dispatched
+    vendor_usage = None if not sent else parse_vendor_usage(result.raw or "")
+    if vendor_usage is not None and result.prior_raw:
+        # A repair replaced the first response; that call was billed as well.
+        first = parse_vendor_usage(result.prior_raw)
+        vendor_usage = (
+            None if first is None
+            else (vendor_usage[0] + first[0], vendor_usage[1] + first[1])
+        )
     if vendor_usage is not None:
         quote = quote_cost(
             pinned, input_tokens=vendor_usage[0], output_tokens=vendor_usage[1],
@@ -151,13 +162,13 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             pinned, input_tokens=estimated_input, output_tokens=None,
             input_token_source="estimate",
         )
-    if context_limited:
+    if not sent:
         usage_estimate = Decimal("0")
         cost = quote.as_payload()
         cost["usd"] = "0.00000000"
         cost["usd_scope"] = "not_sent"
         cost["billed"] = False
-        cost["refused"] = "context_limit"
+        cost["refused"] = "context_limit" if context_limited else (result.error or "not_sent")
     else:
         usage_estimate = Decimal(quote.usd) if quote.usd is not None else None
         cost = quote.as_payload()

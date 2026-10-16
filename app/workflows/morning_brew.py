@@ -219,6 +219,10 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     packet = t_fit.packet
     kept_ids = {item.event_id for item in packet.items}
     dispatched = [ev for ev in dispatched if ev.id in kept_ids]
+    if not dispatched:
+        # The cap dropped every article: an empty triage would finalize the day's brief and
+        # strand them. Defer (consumed=False) without asking a model or recording a brief.
+        return _bail("deferred_context_limit", scored=[], degraded=False)
     t_prompt = t_tmpl.render(batch_id=batch_id, window_start=window_start,
                              window_end=window_end, packet_block=packet.prompt_block())
     t_result, _t_job = call_agent(

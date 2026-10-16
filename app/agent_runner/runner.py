@@ -411,7 +411,8 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     # dispatch a decision job to a known-degraded vendor. (WP5 resets the window.)
     if usage.is_open(spec.runtime):
         w = usage.window(spec.runtime)
-        return AgentResult(status=LIMIT_HIT, error="breaker_open", usage_state=w.state)
+        return AgentResult(status=LIMIT_HIT, error="breaker_open", usage_state=w.state,
+                           dispatched=False)
 
     argv = build_argv(spec, resume=resume)
     if spec.decision_stage:
@@ -446,10 +447,12 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
                 spec.job_id, spec.schema_path or "<inline>", _REASON_TAIL, str(reason))
 
     # one repair attempt, then quarantine (Inv 3)
-    return _repair(
+    repaired = _repair(
         spec, reason, transport, usage, session_id, secret_values, pinned_cwd,
         health_fault=health_fault,
     )
+    repaired.prior_raw = proc.stdout  # the first call was billed too
+    return repaired
 
 
 def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values,

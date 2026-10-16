@@ -73,6 +73,8 @@ _SECRETISH_ALLOWED = frozenset({
     "COCKPIT_AUDIT_LOG_CHANNEL_ID", "COCKPIT_BRIEF_CHANNEL_ID",
     "COCKPIT_ALERTS_CHANNEL_ID", "COCKPIT_PROPOSALS_CHANNEL_ID",
     "COCKPIT_SYSTEM_CHANNEL_ID",
+    # A numeric prompt-size limit (CSL-42), not a credential.
+    "COCKPIT_CONTEXT_TOKEN_CAP",
 })
 
 # Static operator-configured paper universe.  This is intentionally conservative: a bounded

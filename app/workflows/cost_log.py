@@ -101,9 +101,18 @@ def quote_cost(model_pinned: str, *, input_tokens: int, output_tokens: int | Non
 def _token_pair(usage: dict) -> tuple[int, int] | None:
     inp = usage.get("input_tokens")
     out = usage.get("output_tokens")
-    if type(inp) is int and type(out) is int and inp >= 0 and out >= 0:
-        return inp, out
-    return None
+    if not (type(inp) is int and type(out) is int and inp >= 0 and out >= 0):
+        return None
+    # Claude reports cached prompt tokens separately from input_tokens. Count them at the
+    # base rate (an upper bound) so cost and the long-context tier see the whole prompt.
+    for key in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+        extra = usage.get(key)
+        if extra is None:
+            continue
+        if type(extra) is not int or extra < 0:
+            return None
+        inp += extra
+    return inp, out
 
 
 def parse_vendor_usage(raw: str) -> tuple[int, int] | None:
