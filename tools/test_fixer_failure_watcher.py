@@ -228,6 +228,50 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(gh.resolves, ["PRRT_1"])
         self.assertEqual(len(gh.replies), 1)
 
+    def test_retained_failure_and_ordinary_linear_items_survive_two_rewrites(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        self.setup_scan()
+        def denied(*_):
+            raise RuntimeError("comment page limit")
+        if RECURSION:
+            linear = f.FakeLinear()
+            m.scan(f.cfg(), self.github, linear, failure_collector=lambda *_: (self.evidence, self.proofs))
+            marker = m.rollup_marker(self.pull)
+            linear.existing_descriptions[marker] = linear.created[0][1]
+            ordinary = f.thread(tid="PRRT_ordinary", comments=f.stuck_pair())
+            self.pull = replace(self.pull, threads=self.pull.threads + (ordinary,))
+            self.github.pulls[self.pull.number] = self.pull
+            for collector in (denied, lambda *_: (self.evidence, {})):
+                m.scan(f.cfg(), self.github, linear, failure_collector=collector)
+                rendered = linear.updated[-1][1]
+                self.assertIn("`stuck-fixer-handoff-open` <!-- thread:PRRT_0 -->", rendered)
+                self.assertIn("<!-- thread:PRRT_ordinary -->", rendered)
+                linear.existing_descriptions[marker] = rendered
+                self.assertEqual(linear.canceled, [])
+        else:
+            config = replace(self.cfg, file_linear=True, linear_api_key="fixture")
+            items, _ = m.select_stuck(self.pull, [], config, f.NOW, self.proofs)
+            existing = {"id": "issue", "description": m.build_linear_description(items, config) + "\nHuman notes remain."}
+            ordinary = f.thread(thread_id="PRRT_ordinary", comments=[
+                f.comment(f.DEVIN, "Other bug"), f.comment("claude[bot]", "needs a human")])
+            self.pull["reviewThreads"]["nodes"].append(ordinary)
+            def update(_query, variables):
+                existing["description"] = variables["input"]["description"]
+                return {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/fixture"}}}
+            linear = SimpleNamespace(graphql=update)
+            with patch.object(m, "linear_find_existing", return_value=existing):
+                for collector in (denied, lambda *_: (self.evidence, {})):
+                    m.mediate_pr(self.pull, config, self.github, linear, f.NOW, failure_collector=collector)
+                    self.assertEqual(existing["description"].count("<!-- fixer-failure-handoff:PRRT_0 -->"), 1)
+                    self.assertIn("Other bug", existing["description"])
+                    self.assertIn("**Stuck threads:** 2", existing["description"])
+                    self.assertIn("### 2.", existing["description"])
+                    self.assertIn("Human notes remain.", existing["description"])
+                self.pull["reviewThreads"]["nodes"][0]["isResolved"] = True
+                m.mediate_pr(self.pull, config, self.github, linear, f.NOW, failure_collector=denied)
+                self.assertNotIn("<!-- fixer-failure-handoff:PRRT_0 -->", existing["description"])
+
     @unittest.skipUnless(RECURSION, "Recursion owns cancellation and roll-up notes")
     def test_active_writer_preserves_existing_rollup_and_human_notes(self):
         self.setup_scan()

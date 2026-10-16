@@ -61,6 +61,10 @@ evidence does not suppress ordinary Claude-thread mediation or Recursion's
 existing resolver, even if the collector cannot load. Ordinary Linear routing
 continues. Existing failure Linear roll-ups and human notes are preserved
 while failure evidence is stale/unavailable; no partial checklist replaces them.
+Stored failure sections are retained independently when ordinary items change,
+including after a new head rearms the budget. They are removed on a later
+roll-up rewrite only when the watcher explicitly observes their thread resolved;
+they never admit a mediation action.
 Only complete evidence enters existing per-thread deduplication and caps.
 
 ## Repository-specific behavior

@@ -599,6 +599,7 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
             [
                 f"### {index}. `{loc}` ({item.reason})",
                 "",
+                f"<!-- fixer-failure-handoff:{item.thread_id} -->" if item.failure_evidence else "",
                 f"**Thread:** {item.thread_url}",
                 "",
                 "What Devin flagged",
@@ -641,6 +642,29 @@ def human_suffix(existing: str) -> str:
     if MANAGED_BEGIN in existing:
         return ""
     return _legacy_human_notes(existing)
+
+
+def retain_failure_handoffs(generated: str, existing: str, resolved_thread_ids=()) -> str:
+    """Keep historical handoff evidence for Linear only; never admit actions."""
+    pattern = re.compile(
+        r"^### \d+\. [^\n]*\(exhausted-fixer-failed\)\n\n"
+        r"<!-- fixer-failure-handoff:([A-Za-z0-9_=-]+) -->\n.*?"
+        r"(?=^### \d+\. |^\*Auto-filed by the in-repo stuck-thread watch)",
+        re.MULTILINE | re.DOTALL,
+    )
+    retained = [match.group(0) for match in pattern.finditer(managed_section(existing))
+                if match.group(1) not in resolved_thread_ids
+                and f"<!-- fixer-failure-handoff:{match.group(1)} -->" not in generated]
+    if retained:
+        count = re.search(r"^\*\*Stuck threads:\*\* (\d+)$", generated, re.MULTILINE)
+        if count:
+            offset = int(count.group(1))
+            retained = [re.sub(r"^### \d+\.", f"### {offset + index}.", block)
+                        for index, block in enumerate(retained, 1)]
+            generated = generated[:count.start(1)] + str(offset + len(retained)) + generated[count.end(1):]
+        footer = "*Auto-filed by the in-repo stuck-thread watch"
+        generated = generated.replace(footer, "".join(retained) + footer, 1)
+    return generated
 
 
 def merge_linear_description(generated: str, existing: str | None) -> str:
@@ -924,7 +948,7 @@ def linear_resolve_ids(linear: Linear, cfg: Config) -> dict[str, Any]:
     }
 
 
-def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -> str:
+def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=()) -> str:
     if not items:
         raise ValueError("no stuck threads")
     number = items[0].pr_number
@@ -933,6 +957,7 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config) -
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
+        generated = retain_failure_handoffs(generated, existing_desc, resolved_thread_ids)
         if rollup_is_current(existing, generated, cfg.repository, number):
             return "unchanged"
         description = with_shared_gate_key(
@@ -1043,19 +1068,18 @@ def mediate_pr(
             logs.append(f"stuck-thread-watch: pr={number} skip=approved")
             return logs
     comments = list_issue_comments(gh, cfg, number)
-    evidence, failures, failure_unknown = None, {}, False
+    evidence, failures = None, {}
     if failure_collector:
         try:
             evidence, failures = failure_collector(cfg.repository, number)
         except Exception:  # noqa: BLE001 - refuse new intake without suppressing ordinary mediation
-            failure_unknown = True
             logs.append(f"stuck-thread-watch: pr={number} failure-evidence=unverified")
     if failures:
         try:
             if not evidence.fresh():
-                failures, failure_unknown = {}, True
+                failures = {}
         except Exception:  # noqa: BLE001 - retain ordinary routing and the existing roll-up
-            failures, failure_unknown = {}, True
+            failures = {}
     stuck, audit = select_stuck(pr, comments, cfg, now, failures)
     logs.extend(f"stuck-thread-watch: {line}" for line in audit)
     posted_today = mediation_count_since(comments, now - timedelta(hours=24))
@@ -1081,14 +1105,16 @@ def mediate_pr(
                 generated = build_linear_description(stuck, cfg)
                 existing = linear_find_existing(linear, cfg, number)
                 recover_missing = not unmediated and existing is None
-                if failure_unknown and existing and "(exhausted-fixer-failed)" in str(existing.get("description") or ""):
-                    logs.append(f"stuck-thread-watch: pr={number} linear=preserved-failure-handoff")
-                elif not actionable and not recover_missing:
+                resolved_ids = {str(thread.get("id")) for thread in (pr.get("reviewThreads") or {}).get("nodes", [])
+                                if thread.get("isResolved") is True}
+                if existing:
+                    generated = retain_failure_handoffs(generated, str(existing.get("description") or ""), resolved_ids)
+                if not actionable and not recover_missing:
                     logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
                 elif rollup_is_current(existing, generated, cfg.repository, number):
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
                 else:
-                    url = upsert_linear_issue(linear, stuck, cfg)
+                    url = upsert_linear_issue(linear, stuck, cfg, resolved_thread_ids=resolved_ids)
                     logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} linear=error")
