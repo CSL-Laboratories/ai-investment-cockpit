@@ -216,7 +216,7 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         and _utf8_text(headline)
         and _utf8_text(summary)
         and _utf8_text(event_type)
-        and (ts is None or type(ts) in (str, int, float))
+        and (ts is None or type(ts) in (int, float) or _utf8_text(ts))
         and type(ts) is not bool
         and (raw is None or _plain_json(raw))
     )

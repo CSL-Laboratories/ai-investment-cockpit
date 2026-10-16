@@ -116,6 +116,29 @@ def test_small_floats_keep_the_python_audit_hash():
     assert event["content_hash"] == content_hash(event["raw_input"])
 
 
+def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
+    """``ts`` is applied in Python, but a lone surrogate must not take the native call."""
+    import ingest.normalize as mod
+
+    lone = "a\ud800"
+
+    def refuse_native(*_args, **_kwargs):
+        raise AssertionError("native market_event was called")
+
+    monkeypatch.setattr(mod._NATIVE, "market_event", refuse_native)
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=lone,
+    )
+    event = to_market_event(**kwargs)
+    assert event == python_to_market_event(**kwargs)
+    assert event["ts"] == lone
+
+    plain = dict(kwargs, ts="2020-01-01T00:00:00Z")
+    monkeypatch.undo()
+    assert to_market_event(**plain) == python_to_market_event(**plain)
+
+
 def test_lone_surrogate_stays_on_the_python_path():
     """A lone surrogate is a str PyO3 cannot encode. The Python path must take it."""
     lone = "a\ud800"
