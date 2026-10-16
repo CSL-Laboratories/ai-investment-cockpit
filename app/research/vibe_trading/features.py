@@ -99,9 +99,25 @@ def categorise(row: dict) -> tuple[str, str] | None:
     ic_std = _finite(row.get("ic_std"))
     pos = _finite(row.get("ic_positive_ratio"))
     count = row.get("ic_count")
-    stats_present = ic_std is not None and pos is not None and type(count) is int and count > 0
+    if count is None:
+        count_ok = False
+    elif type(count) is not int or not 1 <= count <= 1_000_000:
+        return None
+    else:
+        count_ok = True
+    stats_present = ic_std is not None and pos is not None and count_ok
     if stats_present:
-        t_stat = 0.0 if ic_std <= 0 else ic_mean / (ic_std / math.sqrt(count))
+        try:
+            if ic_std <= 0:
+                t_stat = 0.0
+            else:
+                denom = ic_std / math.sqrt(count)
+                t_stat = 0.0 if denom == 0 else ic_mean / denom
+        except (OverflowError, ZeroDivisionError, ValueError):
+            return None
+        t_stat = _finite(t_stat)
+        if t_stat is None:
+            return None
         if ic_mean > 0.02 and pos >= 0.55 and abs(t_stat) > 2:
             return "alive", "recomputed"
         if ic_mean < -0.02 and abs(t_stat) > 2:

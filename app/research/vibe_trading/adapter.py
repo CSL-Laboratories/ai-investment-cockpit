@@ -181,12 +181,17 @@ class ResearchAdapter:
                 continue
             payload, attempt = self._invoke(tool, args, timeout_s=remaining)
             if payload is not None and attempt.status == "ok":
-                projected = self._project(tool, args, payload, universe=universe)
-                if projected is None:
+                try:
+                    projected = self._project(tool, args, payload, universe=universe)
+                except (OverflowError, ZeroDivisionError, ValueError, TypeError):
                     attempt.status = "quarantined"
                     attempt.lines = []
                 else:
-                    attempt.lines = projected
+                    if projected is None:
+                        attempt.status = "quarantined"
+                        attempt.lines = []
+                    else:
+                        attempt.lines = projected
             attempts.append(attempt)
         if request.strategy_id is not None or request.run_root is not None:
             remaining = deadline - time.monotonic()

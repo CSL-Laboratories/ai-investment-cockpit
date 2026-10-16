@@ -483,6 +483,33 @@ def test_categorise_skips_overflowing_numbers():
     assert _finite(10 ** 1000) is None
     assert categorise({"ic_mean": 10 ** 1000}) is None
     assert categorise({"ic_mean": float("inf")}) is None
+    assert categorise({
+        "ic_mean": 0.05, "ic_std": 0.01, "ic_positive_ratio": 0.7, "ic_count": 10 ** 400,
+    }) is None
+    assert categorise({
+        "ic_mean": 0.05, "ic_std": 5e-324, "ic_positive_ratio": 0.7, "ic_count": 10 ** 300,
+    }) is None
+
+
+def test_collect_quarantines_an_overflowing_bench_row_without_aborting():
+    payload = _load("alpha_bench.json")
+    payload["top"] = [{
+        "id": "alpha101_overflow",
+        "ic_mean": 0.05,
+        "ic_std": 0.01,
+        "ic_positive_ratio": 0.7,
+        "ic_count": 10 ** 400,
+        "category": "alive",
+    }]
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="",
+    )
+    batch = ResearchAdapter(
+        settings, transport=FakeSidecar({"alpha_bench": payload}),
+    ).collect(clock=FrozenClock(NOW))
+    assert batch.status in {"ok", "quarantined"}
+    assert not any(event["headline"].startswith("alpha_factor") for event in batch.events)
 
 
 def test_run_card_normalizes_mixed_timezone_windows():
