@@ -29,8 +29,9 @@ if [ "$venv" = ok ] && ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 1
   venv="FAIL(python<3.11)"
 fi
 
-# Every declared requirement must be installed at an allowed version,
-# including the packages its extras pull in (e.g. uvicorn[standard]).
+# Every declared requirement and everything it depends on, including the
+# packages its extras pull in (e.g. uvicorn[standard]), must be installed at
+# an allowed version.
 verify_deps() {
   "$py" - <<'EOF'
 import sys, tomllib
@@ -62,10 +63,12 @@ def need(req, extra=""):
         return
     if r.specifier and not r.specifier.contains(dist.version, prereleases=True):
         problems.append(f"{r.name} {dist.version} not {r.specifier}")
-    for ex in r.extras:
+    # Walk the whole closure: unconditional requirements (extra "") plus
+    # those of each requested extra, with platform markers evaluated.
+    for ctx in ("", *r.extras):
         for sub in dist.requires or []:
             s = Requirement(sub)
-            if s.marker and s.marker.evaluate({"extra": ex}):
+            if s.marker is None or s.marker.evaluate({"extra": ctx}):
                 s.marker = None
                 need(str(s))
 
