@@ -361,25 +361,39 @@ class ThreadVerdict:
     source: str = ""
 
 
-def _is_fence_opener(stripped: str) -> bool:
-    return stripped.startswith("```") or stripped.startswith("~~~")
+def _fence_marker(stripped: str) -> tuple[str, int, str]:
+    """Return (character, run length, rest) for a fence line, else empty."""
+    if not stripped or stripped[0] not in "`~":
+        return "", 0, ""
+    char = stripped[0]
+    run = 0
+    for item in stripped:
+        if item != char:
+            break
+        run += 1
+    if run < 3:
+        return "", 0, ""
+    return char, run, stripped[run:]
 
 
 def strip_quoted_and_fenced(text: str) -> str:
     """Drop quoted lines and fenced code so echoed verdicts cannot authorize."""
     kept: list[str] = []
-    fence = ""
+    fence_char = ""
+    fence_len = 0
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
-        if _is_fence_opener(stripped):
-            marker = stripped[:3]
-            if not fence:
-                fence = marker
+        char, run, rest = _fence_marker(stripped)
+        if char:
+            if not fence_char:
+                fence_char = char
+                fence_len = run
                 continue
-            if marker == fence:
-                fence = ""
+            if char == fence_char and run >= fence_len and not rest.strip():
+                fence_char = ""
+                fence_len = 0
                 continue
-        if fence or stripped.startswith(">"):
+        if fence_char or stripped.startswith(">"):
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -1069,6 +1083,17 @@ def cite_time_for_thread(
     return latest
 
 
+def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
+    found: set[str] = set()
+    for thread in threads:
+        if thread.get("isResolved"):
+            continue
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if tid:
+            found.add(tid)
+    return frozenset(found)
+
+
 def resolved_count_today(
     threads: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
@@ -1082,15 +1107,18 @@ def resolved_count_today(
     ``retry-resolve``), or a legacy marker whose comment time and matching
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
-    Failed cites on still-open threads do not count. Unmarked PAT-resolved
-    threads with a recent PAT cite count once. Missing timestamps fail closed.
+    Failed cites on still-open threads do not count. Unmarked cites count
+    per ``(thread id, sha)`` when that pair has no receipt and the thread
+    has no in-window marker. Missing timestamps fail closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
+    pending = unresolved_thread_ids(threads)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_window: set[tuple[str, str]] = set()
-    marker_tids: set[str] = set()
+    all_marker_pairs: set[tuple[str, str]] = set()
+    marker_tids_window: set[str] = set()
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1105,27 +1133,22 @@ def resolved_count_today(
         for tid, digest in parse_resolved_markers(body):
             if not tid or not digest:
                 continue
-            marker_tids.add(tid)
-            markers.append((tid, digest, resolved_at or stamped, resolved_at is not None))
+            all_marker_pairs.add((tid, digest))
+            effective = resolved_at or stamped
+            markers.append((tid, digest, effective, resolved_at is not None))
+            if effective is None or effective >= start:
+                marker_tids_window.add(tid)
     counted: set[tuple[str, str]] = set()
     for tid, digest, effective, has_resolved_at in markers:
         if effective is not None and effective < start:
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
-    for thread in threads:
-        if not thread.get("isResolved"):
+    for pair in cite_window:
+        tid, _digest = pair
+        if tid in pending or pair in all_marker_pairs or tid in marker_tids_window:
             continue
-        if not login_matches(resolved_by_login(thread), actor_login):
-            continue
-        tid = safe_thread_id(str(thread.get("id") or ""))
-        if not tid or tid in marker_tids:
-            continue
-        comments = thread_comments(thread) + issue_comments
-        digest = cite_sha_for_thread(comments, tid, actor_login=actor_login)
-        cite_when = cite_time_for_thread(comments, tid, actor_login=actor_login)
-        if digest and cite_when is not None and cite_when >= start:
-            counted.add((tid, digest))
+        counted.add(pair)
     return len(counted)
 
 

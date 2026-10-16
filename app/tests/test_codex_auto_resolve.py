@@ -343,8 +343,10 @@ def test_quoted_and_fenced_verdicts_cannot_authorize():
     assert mod.parse_thread_verdicts(tilde) == []
     mixed_backtick = f"```\n~~~\n{verdict_body()}\n~~~\n```\n"
     mixed_tilde = f"~~~\n```\n{verdict_body()}\n```\n~~~\n"
+    nested_longer = f"````\n```\n{verdict_body()}\n```\n````\n"
     assert mod.parse_thread_verdicts(mixed_backtick) == []
     assert mod.parse_thread_verdicts(mixed_tilde) == []
+    assert mod.parse_thread_verdicts(nested_longer) == []
 
 
 def test_login_aliases_accept_graphql_and_rest():
@@ -818,6 +820,43 @@ def test_failed_cite_on_prior_head_does_not_extra_charge():
     assert THREAD2 in gh.resolves
     assert any("resolve=posted" in line for line in logs)
     assert not any("skip=over-cap" in line for line in logs)
+
+
+def test_unmarked_reopen_on_new_head_counts_separately_from_old_marker():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                    comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_two_unmarked_heads_count_separately():
+    gh = ready_gh(
+        threads=[thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))])],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    gh.issue_comments[12] = [
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
 
 
 def test_old_cite_retry_resolve_consumes_in_scan_cap():
