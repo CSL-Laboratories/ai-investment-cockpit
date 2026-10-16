@@ -105,6 +105,81 @@ def _assert_same_tracker(accelerated: PnLTracker, reference: PnLTracker) -> None
             assert value == other
 
 
+def test_nonfinite_mids_stay_on_the_python_path():
+    """NaN and ±Inf must not reach PnlCore, which rejects them as ValueError."""
+    for mid in (float("nan"), float("inf"), float("-inf")):
+        accelerated, reference = _trackers(ZERO_FEES)
+        try:
+            reference.mark(mid, ts=0)
+        except Exception as exc:
+            with pytest.raises(type(exc)):
+                accelerated.mark(mid, ts=0)
+            assert accelerated._core is None
+            continue
+        accelerated.mark(mid, ts=0)
+        assert accelerated._core is None
+        assert reference._last_mid is not None and accelerated._last_mid is not None
+        if reference._last_mid.is_nan():
+            assert accelerated._last_mid.is_nan()
+        else:
+            assert accelerated._last_mid == reference._last_mid
+        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+        assert accelerated.position == reference.position == 100
+        assert accelerated.fills == reference.fills == 1
+
+
+def test_position_overflow_keeps_the_python_ledger():
+    """A fill that would overflow i64 must not half-apply fees in the native core."""
+    qty = 2**62
+    accelerated, reference = _trackers(SCHEDULE)
+    accelerated.mark(100.0, ts=0)
+    reference.mark(100.0, ts=0)
+    accelerated.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=100.0)
+    reference.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=100.0)
+    assert accelerated.position == qty
+    assert accelerated._core is not None
+    accelerated.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=102.0)
+    reference.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=102.0)
+    _assert_same_tracker(accelerated, reference)
+    assert accelerated.position == 2**63
+    assert accelerated._core is None
+    accelerated.mark(102.0, ts=1)
+    reference.mark(102.0, ts=1)
+    _assert_same_tracker(accelerated, reference)
+
+
+def test_pnl_custom_decimal_context_matches_python():
+    """PnLTracker must honour a non-default context instead of 28-digit Rust arithmetic."""
+    with localcontext() as ctx:
+        ctx.prec = 6
+        accelerated, reference = _trackers(SCHEDULE)
+        accelerated.mark(10_000.5, ts=0)
+        reference.mark(10_000.5, ts=0)
+        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
+        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
+        _assert_same_tracker(accelerated, reference)
+        assert accelerated._core is None
+
+
+def test_nonfinite_borrow_seconds_stay_on_the_python_path():
+    """Non-finite seconds must not hit Rust's Dec::parse ValueError."""
+    for seconds in (float("nan"), float("inf"), float("-inf")):
+        try:
+            expected = python_borrow_cost(
+                SCHEDULE, short_notional=Decimal("1000000"), seconds=seconds,
+            )
+        except Exception as exc:
+            with pytest.raises(type(exc)):
+                SCHEDULE.borrow_cost(short_notional=Decimal("1000000"), seconds=seconds)
+            continue
+        got = SCHEDULE.borrow_cost(short_notional=Decimal("1000000"), seconds=seconds)
+        if expected.is_nan():
+            assert got.is_nan()
+        else:
+            assert got == expected
+
+
 def test_custom_decimal_context_matches_python():
     """A narrowed, re-rounded, or untrapped context must not keep Rust's fixed result."""
     one = Decimal("1")
