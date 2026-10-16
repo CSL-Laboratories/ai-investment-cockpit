@@ -1107,10 +1107,10 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    at most once per thread when that pair has no receipt and the thread
-    has no in-window marker (a failed earlier cite cannot be distinguished
-    from a successful unmarked reopen without a receipt). Missing
-    timestamps fail closed.
+    per ``(thread id, sha)`` when that pair has no receipt, so two
+    unmarked resolves of a reopened thread cannot hide behind one thread
+    id. A failed cite plus a later unmarked success on another head
+    over-counts (fail closed). Missing timestamps fail closed.
     """
     if not actor_login:
         return 0
@@ -1119,7 +1119,6 @@ def resolved_count_today(
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_window: set[tuple[str, str]] = set()
     all_marker_pairs: set[tuple[str, str]] = set()
-    marker_tids_window: set[str] = set()
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1137,20 +1136,18 @@ def resolved_count_today(
             all_marker_pairs.add((tid, digest))
             effective = resolved_at or stamped
             markers.append((tid, digest, effective, resolved_at is not None))
-            if effective is None or effective >= start:
-                marker_tids_window.add(tid)
     counted: set[tuple[str, str]] = set()
     for tid, digest, effective, has_resolved_at in markers:
         if effective is not None and effective < start:
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
-    unmarked: set[str] = set()
+    unmarked: set[tuple[str, str]] = set()
     for pair in cite_window:
         tid, _digest = pair
-        if tid in pending or pair in all_marker_pairs or tid in marker_tids_window:
+        if tid in pending or pair in all_marker_pairs:
             continue
-        unmarked.add(tid)
+        unmarked.add(pair)
     return len(counted) + len(unmarked)
 
 
