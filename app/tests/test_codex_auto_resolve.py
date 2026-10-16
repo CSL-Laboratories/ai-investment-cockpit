@@ -587,6 +587,52 @@ def test_retry_mark_latest_cite_when_old_marker_exists():
     assert verdict is not None and verdict.sha == SHA2
 
 
+def test_retry_mark_newer_thread_cite_beats_older_issue_cite():
+    t = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body(sha=SHA2)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, verdict = mod.classify_thread(
+        t,
+        head_sha=SHA2,
+        latest=latest,
+        issue_comments=[
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=1)),
+            comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), NOW - timedelta(hours=1)),
+        ],
+        pat_login=PAT_LOGIN,
+    )
+    assert reason == "retry-mark"
+    assert verdict is not None and verdict.sha == SHA2
+
+
+def test_retry_mark_newer_issue_cite_beats_older_thread_cite():
+    t = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body(sha=SHA2)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=1)),
+            comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), NOW - timedelta(hours=1)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, verdict = mod.classify_thread(
+        t,
+        head_sha=SHA2,
+        latest=latest,
+        issue_comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW)],
+        pat_login=PAT_LOGIN,
+    )
+    assert reason == "retry-mark"
+    assert verdict is not None and verdict.sha == SHA2
+
+
 def test_human_resolve_after_cite_does_not_retry_mark():
     t = thread(
         resolved=True,

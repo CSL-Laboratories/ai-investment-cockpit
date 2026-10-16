@@ -1112,15 +1112,26 @@ def cite_sha_for_thread(
     thread_id: str,
     actor_login: str = "",
 ) -> str:
+    """Latest PAT cite SHA for this thread, by comment ``createdAt`` (not list order)."""
     if not actor_login:
         return ""
     digest = ""
+    latest_when: datetime | None = None
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
+        sha_in_comment = ""
         for tid, sha in parse_cite_markers(body_of(comment)):
             if tid == thread_id:
-                digest = sha
+                sha_in_comment = sha
+        if not sha_in_comment:
+            continue
+        when = parse_dt(comment.get("createdAt") or comment.get("created_at"))
+        if when is None:
+            when = datetime.min.replace(tzinfo=timezone.utc)
+        if latest_when is None or when >= latest_when:
+            latest_when = when
+            digest = sha_in_comment
     return digest
 
 
