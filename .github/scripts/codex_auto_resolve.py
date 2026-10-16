@@ -349,25 +349,39 @@ class ThreadVerdict:
     source: str = ""
 
 
-def _is_fence_opener(stripped: str) -> bool:
-    return stripped.startswith("```") or stripped.startswith("~~~")
+def _fence_marker(stripped: str) -> tuple[str, int, str]:
+    """Return (character, run length, rest) for a fence line, else empty."""
+    if not stripped or stripped[0] not in "`~":
+        return "", 0, ""
+    char = stripped[0]
+    run = 0
+    for item in stripped:
+        if item != char:
+            break
+        run += 1
+    if run < 3:
+        return "", 0, ""
+    return char, run, stripped[run:]
 
 
 def strip_quoted_and_fenced(text: str) -> str:
     """Drop quoted lines and fenced code so echoed verdicts cannot authorize."""
     kept: list[str] = []
-    fence = ""
+    fence_char = ""
+    fence_len = 0
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
-        if _is_fence_opener(stripped):
-            marker = stripped[:3]
-            if not fence:
-                fence = marker
+        char, run, rest = _fence_marker(stripped)
+        if char:
+            if not fence_char:
+                fence_char = char
+                fence_len = run
                 continue
-            if marker == fence:
-                fence = ""
+            if char == fence_char and run >= fence_len and not rest.strip():
+                fence_char = ""
+                fence_len = 0
                 continue
-        if fence or stripped.startswith(">"):
+        if fence_char or stripped.startswith(">"):
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -1051,12 +1065,12 @@ def resolved_count_today(
     A completed resolve is a ``(thread id, sha)`` pair whose PAT cite and
     resolved marker both fall in the window. A cite on a still-open thread
     is in-flight and does not count. A failed cite on an earlier head does
-    not extra-charge once a later head resolves the same thread. A marker
+    not extra-charge once a later head's marker is in the window. A marker
     whose matching cite is older than 24h is a late receipt / retry-mark
-    and does not consume today's cap; the resolving scan already charged
-    via ``posted_today``. Posted-unmarked resolves (cite in window, thread
-    closed, no marker for that thread) count once per thread. Missing
-    timestamps fail closed (count).
+    and does not consume today's cap; a delayed ``retry-resolve`` is charged
+    in-scan via ``posted_today``. Posted-unmarked resolves count per
+    ``(thread id, sha)`` when that pair has no receipt and the thread has
+    no in-window marker. Missing timestamps fail closed (count).
     """
     if not actor_login:
         return 0
@@ -1064,7 +1078,8 @@ def resolved_count_today(
     pending = unresolved_ids or frozenset()
     cite_window: set[tuple[str, str]] = set()
     marker_window: set[tuple[str, str]] = set()
-    marker_tids: set[str] = set()
+    marker_pairs: set[tuple[str, str]] = set()
+    marker_tids_window: set[str] = set()
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
@@ -1073,18 +1088,20 @@ def resolved_count_today(
         body = body_of(comment)
         for tid, digest in parse_resolved_markers(body):
             if tid and digest:
-                marker_tids.add(tid)
+                marker_pairs.add((tid, digest))
                 if in_window:
                     marker_window.add((tid, digest))
+                    marker_tids_window.add(tid)
         for tid, digest in parse_cite_markers(body):
             if tid and digest and in_window:
                 cite_window.add((tid, digest))
     completed = marker_window & cite_window
-    unmarked: set[str] = set()
-    for tid, _digest in cite_window:
-        if tid in pending or tid in marker_tids:
+    unmarked: set[tuple[str, str]] = set()
+    for pair in cite_window:
+        tid, _digest = pair
+        if tid in pending or pair in marker_pairs or tid in marker_tids_window:
             continue
-        unmarked.add(tid)
+        unmarked.add(pair)
     return len(completed) + len(unmarked)
 
 
