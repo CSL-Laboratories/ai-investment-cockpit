@@ -208,6 +208,15 @@ def match(
     recv_ts = exchange_ts if recv_ts is None else recv_ts
     ingest_ts = recv_ts if ingest_ts is None else ingest_ts
 
+    # Rust books keep the walk on the native side. A Python book (no extension,
+    # or the explicit reference class) falls through to the implementation below.
+    if getattr(book, "_core", None) is not None:
+        from quant.book._rust_backend import match_core
+
+        return match_core(
+            book, order, seq=seq, exchange_ts=exchange_ts, recv_ts=recv_ts, ingest_ts=ingest_ts,
+        )
+
     result = MatchResult(status=MatchStatus.CANCELLED, remaining_qty=order.qty)
 
     # FOK is all-or-none and must be decided BEFORE any state changes: a partially executed

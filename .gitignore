@@ -43,3 +43,6 @@ Thumbs.db
 
 # Swarm run-scoped filings (hashes exported to a committed note)
 .swarm-runs/
+
+# Rust build output (CSL-42). Cargo.lock stays tracked.
+target/
