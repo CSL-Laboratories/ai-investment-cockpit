@@ -189,6 +189,55 @@ def test_cap_that_drops_every_article_defers_without_a_brief(st, clock, tmp_path
     assert _rows(st, BriefRecord) == []
 
 
+def test_summary_packet_tail_stays_deferred_not_scored(st, clock, tmp_path, monkeypatch):
+    """The morning_brief template is smaller than triage, so a real cap that
+    keeps both articles for triage also keeps them for the summary. Force the
+    brief fit to drop the tail and lock the disposition contract."""
+    events = [
+        _mk("mb-a", "AAPL", "AAPL beats expectations on strong demand"),
+        _mk("mb-m", "MSFT", "MSFT wins a large cloud contract"),
+    ]
+    stored = persist_events(st, events, parquet_root=tmp_path / "raw", clock=clock).stored
+    by = {r.symbol: r for r in stored}
+    from workflows.context_limit import PacketFit, fit_packet as real_fit
+    from workflows.packets import Packet
+
+    seen = {"n": 0}
+
+    def fake_fit(packet, *, reserved_tokens, cap):
+        seen["n"] += 1
+        if seen["n"] == 2 and len(packet.items) >= 2:
+            kept = Packet(items=packet.items[:-1])
+            dropped = packet.items[-1:]
+            return PacketFit(
+                packet=kept, dropped=dropped, estimated_tokens=reserved_tokens, cap=cap)
+        return real_fit(packet, reserved_tokens=reserved_tokens, cap=cap)
+
+    monkeypatch.setattr("workflows.morning_brew.fit_packet", fake_fit)
+    scored = [
+        {"article_id": by["AAPL"].raw_ref, "symbols": ["AAPL"],
+         "classification": "material", "score": 80, "rationale": "r"},
+        {"article_id": by["MSFT"].raw_ref, "symbols": ["MSFT"],
+         "classification": "material", "score": 75, "rationale": "r"},
+    ]
+    transport = FakeTransport([
+        envelope(_triage_body(scored)),
+        envelope(_brief_body([by["AAPL"].raw_ref])),
+    ])
+    result = morning_brew(
+        st, clock, transport=transport, parquet_root=tmp_path / "raw",
+        holdings_symbols=frozenset({"AAPL", "MSFT"}),
+    )
+    assert result["status"] == "ok"
+    assert len(_rows(st, BriefRecord)) == 1
+    batch = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload
+    assert batch["dispositions"][by["AAPL"].id] == "scored"
+    assert batch["dispositions"][by["MSFT"].id] == "deferred"
+    assert by["MSFT"].id in batch["deferred"]
+    assert batch["consumed"] is True
+    assert len(transport.calls) == 2
+
+
 def test_second_run_same_day_is_idempotent(st, clock, tmp_path):
     rows = _persist(st, clock, tmp_path)
     transport = FakeTransport([envelope(_triage_body(_scored(rows))),
