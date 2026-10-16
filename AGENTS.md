@@ -168,11 +168,11 @@ Hosted split (PR #102):
 
 - Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Enhancement-only label reruns request Linux scope; `ci:full` or enhancement on an already-`ci:full` PR requests the full matrix. Manual/API dispatch defaults to full; explicit `scope=linux` requests Linux only.
-- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate and share the ordinary PR concurrency group. A stale dispatched head fails closed; manual branch dispatch without PR context remains available.
+- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate and share the ordinary PR concurrency group for that head. Different PR heads are isolated so a stale label dispatch cannot cancel a newer head before validation. A stale dispatched head fails closed; manual branch dispatch without PR context remains available.
 - Windows runs on push to `main`, the `ci:full` label, and full manual dispatch (Blacksmith).
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
-- Superseded runs are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
+- Superseded runs for the same PR head are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
 
 ## Review roles
 

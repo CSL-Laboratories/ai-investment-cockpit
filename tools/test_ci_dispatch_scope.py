@@ -34,6 +34,7 @@ def evaluate(expression, **overrides):
         'github.ref': 'refs/pull/149/merge',
         'github.repository': 'owner/repo',
         'github.event.pull_request.head.repo.full_name': 'owner/repo',
+        'github.event.pull_request.head.sha': 'a' * 40,
         'github.event.pull_request.draft': False,
         'github.event.pull_request.labels.*.name': [],
         'github.event.label.name': '',
@@ -199,8 +200,18 @@ class DispatchScopeTests(unittest.TestCase):
             normal = group(doc)
             self.assertEqual(normal, group(doc, **{
                 'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
+                'inputs.pr_head_sha': 'a' * 40,
                 'github.ref': 'refs/heads/cursor/csl-202',
-                'github.event.pull_request.number': ''}))
+                'github.event.pull_request.number': '',
+                'github.event.pull_request.head.sha': ''}))
+            # Concurrency is evaluated before filter: stale A must not cancel B.
+            newer = group(doc, **{'github.event.pull_request.head.sha': 'b' * 40})
+            self.assertNotEqual(newer, group(doc, **{
+                'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
+                'inputs.pr_head_sha': 'a' * 40, 'github.sha': 'b' * 40,
+                'github.ref': 'refs/heads/cursor/csl-202',
+                'github.event.pull_request.number': '',
+                'github.event.pull_request.head.sha': ''}))
             self.assertNotEqual(normal, group(doc, **{
                 'github.event.pull_request.draft': True}))
             self.assertNotEqual(normal, group(doc, **{
