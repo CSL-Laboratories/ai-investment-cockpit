@@ -207,10 +207,14 @@ def test_summary_packet_tail_stays_deferred_not_scored(st, clock, tmp_path, monk
     def fake_fit(packet, *, reserved_tokens, cap):
         seen["n"] += 1
         if seen["n"] == 2 and len(packet.items) >= 2:
-            kept = Packet(items=packet.items[:-1])
-            dropped = packet.items[-1:]
-            return PacketFit(
-                packet=kept, dropped=dropped, estimated_tokens=reserved_tokens, cap=cap)
+            # Window order is not insertion order (ids are random), so drop
+            # MSFT by symbol rather than assuming it is packet.items[-1].
+            dropped = tuple(item for item in packet.items if item.symbol == "MSFT")
+            kept = tuple(item for item in packet.items if item.symbol != "MSFT")
+            if dropped and kept:
+                return PacketFit(
+                    packet=Packet(items=kept), dropped=dropped,
+                    estimated_tokens=reserved_tokens, cap=cap)
         return real_fit(packet, reserved_tokens=reserved_tokens, cap=cap)
 
     monkeypatch.setattr("workflows.morning_brew.fit_packet", fake_fit)
