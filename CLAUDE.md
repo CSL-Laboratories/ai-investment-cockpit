@@ -74,7 +74,9 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
-   (research → architecture → build → security → enhancements).
+   (research → architecture → build → security → enhancements). Recorded
+   architecture and direction live in `docs/adr/` and the linked Linear
+   `decision` issues.
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
 

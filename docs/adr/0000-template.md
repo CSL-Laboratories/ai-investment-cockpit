@@ -10,6 +10,7 @@ last-verified: YYYY-MM-DD
 - Status: Proposed | Accepted | Superseded by ADR-NNNN
 - Date: YYYY-MM-DD
 - Linear: CSL-___ (`decision`)
+- REGISTER: `DEC-xx` or `none`
 
 ## Context
 
