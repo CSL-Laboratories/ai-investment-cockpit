@@ -1,3 +1,10 @@
+---
+title: ADR-NNNN Title
+type: decision
+status: reference
+last-verified: YYYY-MM-DD
+---
+
 # ADR-NNNN: Title
 
 - Status: Proposed | Accepted | Superseded by ADR-NNNN
