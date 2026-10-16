@@ -6,8 +6,9 @@
 ## Linear-first operations (applies to every agent and Grok Bot)
 
 Linear is the basis of operations. Check Linear for overlapping issues and PRs
-before starting; work only from a Linear issue and keep it updated (bots and
-agents post status and PR links as issue comments). Every review request,
+before starting; work only from a Linear issue and keep it updated (agents
+with Linear access post status and PR links as issue comments; hosted Claude
+is GitHub-only). Every review request,
 blocker, or question directed at a person is an @mention on the matching CSL
 Linear issue — not GitHub alone. Automated GitHub workflows keep their
 existing channels (Codex gate, Linear PR-sync, Devin Review). Handles:

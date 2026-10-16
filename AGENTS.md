@@ -11,8 +11,11 @@ prompt governs.
 
 - Before starting work, check Linear for overlapping issues and PRs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
-  and PR links. Bots and agents post their own status updates and PR links as
-  comments on that issue.
+  and PR links. Agents and bots with Linear access post their own status
+  updates and PR links as comments on that issue. Hosted Claude
+  (`devin-review-fix`, `resolve-pr`) has no Linear access: it replies on
+  GitHub only (see **When Claude can't fix a review thread**); Linear PR-sync
+  and the stuck-thread watcher cover the Linear side.
 - Every review request, blocker, or question directed at a person must be an
   @mention comment on the matching CSL Linear issue so the Linear bot notifies
   them. A GitHub mention alone is not enough. Automated GitHub workflows keep
@@ -230,10 +233,12 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth
 
 Linear is the team's primary async channel, alongside Google Meet and Discord.
 
-- Agents working a CSL issue keep it current in Linear as work progresses:
-  status, a short progress comment at meaningful milestones (started, blocked,
-  PR opened, done), and the PR link, posted as a comment on that issue.
-  Operator soak runs are not told to post Linear milestone comments.
+- Agents with Linear access working a CSL issue keep it current in Linear as
+  work progresses: status, a short progress comment at meaningful milestones
+  (started, blocked, PR opened, done), and the PR link, posted as a comment
+  on that issue. Hosted Claude is exempt (GitHub-only; see **When Claude
+  can't fix a review thread**). Operator soak runs are not told to post
+  Linear milestone comments.
 - Every review request, blocker, or question directed at a person is an
   @mention comment on the matching CSL Linear issue (Chaandan
   `@chaandansaini101`, Samir `@samirshahahmed`, Lucas `@lucassalvador987`).
