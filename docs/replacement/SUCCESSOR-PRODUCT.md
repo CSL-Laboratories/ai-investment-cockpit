@@ -36,12 +36,13 @@ inferred from historical implementation.
   an architecture decision or authority grant.
 - Authority is expressed as audited compliance profiles. Proposal-only,
   model-assisted and bounded direct authorization are distinct profiles, not a
-  bypass switch. The eventual first live target is bounded direct authorization only
-  after separately accepted eligibility, replay, simulation, demo or paper, shadow,
-  limited-live, recovery and compliance gates.
+  bypass switch. The candidate eventual first-live profile is bounded direct
+  authorization only after separately accepted eligibility, replay, simulation, demo
+  or paper, shadow, limited-live, recovery and compliance gates.
   [The completed authority research](AUTHORITY-COMPLIANCE-RESEARCH.md) makes A
   proposal-only the reference qualification profile and C bounded direct
-  authorization the owner-selected future target. All profiles share one independent
+  authorization an owner-directed candidate future target pending a human-authored
+  CSL-212 receipt over the final digest set. All profiles share one independent
   enforcement and evidence layer. A provider response, typed decision or confidence
   value is an input, never permission. Profile C is not authorized by this contract
   and cannot create a second order path: any future implementation still uses the

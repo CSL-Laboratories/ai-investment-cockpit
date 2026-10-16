@@ -40,7 +40,7 @@
   "contracts": [
     {
       "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
-      "sha256": "0c779d8359fe2c71ea3386698d6d706dfc6816aade9cc3a1d63f4207e3926e48"
+      "sha256": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e"
     },
     {
       "path": "docs/replacement/ISSUE-CONTRACT.md",
@@ -48,11 +48,11 @@
     },
     {
       "path": "docs/replacement/MONTH-PROGRAM.md",
-      "sha256": "cd46235c7d562c2587d4eb4d8ea7557fa1958a12c4dd0e6dc45c5822eea3b41a"
+      "sha256": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001"
     },
     {
       "path": "docs/replacement/SCOPE-AUDIT.md",
-      "sha256": "49e331ae69d22d859b3b0f8451bd18f809715b021188c95ad55153036e51da14"
+      "sha256": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c"
     }
   ],
   "outcomes": [

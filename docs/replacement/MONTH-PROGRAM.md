@@ -33,8 +33,9 @@ review may overlap; implementation consumes only accepted contract fragments.
    O5 evidence; freezes non-widening compliance profiles, action semantics,
    reconciliation, intervention and staged authorization. It implements separate A
    proposal-only, B model-assisted and C bounded-direct profiles over one independent
-   enforcement layer, with A as the qualification reference and C only as the
-   owner-selected future target. It binds scope, expiry, cumulative budgets,
+   enforcement layer, with A as the qualification reference and C only as an
+   owner-directed candidate future target pending a human-authored CSL-212 receipt
+   over the final digest set. It binds scope, expiry, cumulative budgets,
    revocation, persistent stops, authoritative restart reconciliation and
    capability-specific evidence from the completed Parallel authority brief.
 ### O7

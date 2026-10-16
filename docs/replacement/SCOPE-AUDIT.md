@@ -63,7 +63,8 @@ Accepted initial constraints in this session:
 - team, institutional, multi-tenant and delegated-role scope deferred;
 - first event-market vertical slice: Kalshi demo;
 - second event-market candidate: Polymarket US Retail API after the core slice is stable;
-- first eventual live authority target: bounded direct authorization after accepted gates;
+- candidate first eventual live authority profile: bounded direct authorization after
+  accepted gates and a human-authored CSL-212 final-digest receipt;
 - paper/simulation/shadow are qualification stages, not the permanent product ceiling;
 - current runtime remains non-live; this audit grants no credential or authority change.
 

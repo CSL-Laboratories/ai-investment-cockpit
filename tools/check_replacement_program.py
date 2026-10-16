@@ -219,7 +219,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         issues.add(issue)
         expected_clause = f"docs/replacement/MONTH-PROGRAM.md#{key.lower()}"
         _require(item["authoritative_clause"] == expected_clause, f"{key} authoritative clause changed")
-        _require(re.search(rf"^### {re.escape(key)}(?:\\s|$)", month_program, re.MULTILINE) is not None, f"{key} authoritative heading missing")
+        _require(re.search(rf"^### {re.escape(key)}(?:\s|$)", month_program, re.MULTILINE) is not None, f"{key} authoritative heading missing")
         for field in REQUIRED_OUTCOME_FIELDS - {"dependencies", "dependency_contracts", "evidence", "falsifiers", "deliverables", "non_goals", "inherited_decisions", "research_budget", "independent_verification"}:
             _require(_nonempty(item[field]), f"{key} empty {field}")
         _require(item["discretion_class"] == EXPECTED_DISCRETION[key], f"{key} discretion class changed")
