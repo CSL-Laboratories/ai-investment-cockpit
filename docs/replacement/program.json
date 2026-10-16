@@ -1,0 +1,449 @@
+{
+  "schema_version": 1,
+  "program_id": "cockpit.replacement.2026-10",
+  "status": "candidate",
+  "controlling_issue": "CSL-212",
+  "source_commit": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "authority": {
+    "current_runtime_invariants_preserved": true,
+    "live_authority_granted": false,
+    "contract_acceptance": "pending_human_digest_receipt"
+  },
+  "contracts": [
+    {
+      "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
+      "sha256": "ef3c95c4baba9beff10444b6268963f56d1c83d5a570d6005ab0d3db72a30b03"
+    },
+    {
+      "path": "docs/replacement/ISSUE-CONTRACT.md",
+      "sha256": "e3faa52d96a689a73d5963383c5ded06c483eec700e1d4af7aec31b7f628768a"
+    },
+    {
+      "path": "docs/replacement/MONTH-PROGRAM.md",
+      "sha256": "c3013d800d45304c2a6da96155d9795cf07f84593de5e5b29d768c299ac12df5"
+    },
+    {
+      "path": "docs/replacement/SCOPE-AUDIT.md",
+      "sha256": "3936196bee6c160025144be2315476fcc65f271484a02cce4138f4150414ae7c"
+    }
+  ],
+  "outcomes": [
+    {
+      "key": "O1",
+      "linear_issue": "CSL-213",
+      "title": "Successor product and economic contract",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o1",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable successor product and economic contract contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o1_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O2",
+      "linear_issue": "CSL-214",
+      "title": "Multi-market evidence and replay plane",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o2",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable multi-market evidence and replay plane contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o2_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O3",
+      "linear_issue": "CSL-215",
+      "title": "Instrument, portfolio and accounting semantics",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o3",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable instrument, portfolio and accounting semantics contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O2"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o3_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O4",
+      "linear_issue": "CSL-216",
+      "title": "Strategy research and economic qualification laboratory",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o4",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable strategy research and economic qualification laboratory contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o4_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O5",
+      "linear_issue": "CSL-217",
+      "title": "Provider-neutral decision laboratory",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o5",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable provider-neutral decision laboratory contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O2",
+        "O4"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o5_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O6",
+      "linear_issue": "CSL-218",
+      "title": "Configurable authority, execution and recovery",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o6",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable configurable authority, execution and recovery contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O3",
+        "O4",
+        "O5"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o6_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O7",
+      "linear_issue": "CSL-219",
+      "title": "GUI and CLI operator product",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o7",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable gui and cli operator product contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3",
+        "O6"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o7_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O8",
+      "linear_issue": "CSL-220",
+      "title": "Migration and performance frontier",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o8",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable migration and performance frontier contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O2",
+        "O3",
+        "O4",
+        "O5",
+        "O6",
+        "O7"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o8_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    },
+    {
+      "key": "O9",
+      "linear_issue": "CSL-221",
+      "title": "Qualification, packaging and release evidence",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o9",
+      "current_state": "Inspected at source commit 73ab78d9d69494c757cec875855121b1d29320a4; replacement contract remains candidate.",
+      "intended_outcome": "Freeze the measurable qualification, packaging and release evidence contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3",
+        "O4",
+        "O5",
+        "O6",
+        "O7",
+        "O8"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "python -X utf8 -B tools/check_o9_contract.py --candidate <FULL_SHA>",
+      "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      }
+    }
+  ]
+}

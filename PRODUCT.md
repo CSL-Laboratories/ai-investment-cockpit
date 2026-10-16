@@ -1,10 +1,20 @@
 ---
-title: Cockpit product contract
-status: live
-last-verified: 2026-09-09
+title: Historical Cockpit product contract
+status: historical-for-replacement-planning
+last-verified: 2026-10-16
 ---
 
 # Cockpit product contract
+
+> **Replacement notice:** Lucas directed a full product reset under
+> [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212). The proposed
+> successor contract is under review in
+> [docs/replacement/SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md).
+> This September contract is retained as historical evidence and as a source of
+> candidate safeguards, not as the replacement product target. Current runtime
+> rules, nine invariants and pre-live controls remain authoritative until separately
+> reviewed implementation amendments; the successor direction itself grants no live
+> authority or empirical PASS.
 
 **Owner:** Lucas. **Planning package:** RW-25.
 **Stage:** ratified by Lucas on 2026-09-09 under PD-048 (final review Q37).

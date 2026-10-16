@@ -1,0 +1,55 @@
+# Candidate: Cockpit replacement month program
+
+The program is ordered by contract dependency, not calendar optimism. Research and
+review may overlap; implementation consumes only accepted contract fragments.
+
+## Outcome order
+
+1. **O1 Successor product and economic contract:** freeze first-user, markets,
+   measurable value, month slice, non-goals and evidence/release semantics.
+2. **O2 Multi-market evidence and replay plane:** consumes O1 source and value
+   clauses; freezes point-in-time data, provenance, replay and market-semantic input.
+3. **O3 Instrument, portfolio and accounting semantics:** consumes O1 and O2;
+   freezes stocks/event contracts, cash, collateral, fees, fills, resolution,
+   positions, attribution, reconciliation and recovery truth.
+4. **O4 Strategy research and economic qualification laboratory:** consumes O1 to
+   O3; freezes baselines, tuning/evaluation split, cost/yield/risk measures and
+   promotion protocols.
+5. **O5 Provider-neutral decision laboratory:** consumes O1, O2 and O4; compares
+   installed decision routes without granting order authority.
+6. **O6 Configurable authority, execution and recovery:** consumes O1, O3, O4 and
+   O5 evidence; freezes non-widening compliance profiles, action semantics,
+   reconciliation, intervention and staged authorization.
+7. **O7 GUI and CLI operator product:** consumes O1, O2, O3 and O6 public service
+   contracts; exposes evidence, strategies, positions, budgets, refusals, health,
+   interventions and audit without a privileged order path.
+8. **O8 Migration and performance frontier:** consumes frozen fragments from O2 to
+   O7; classifies legacy components and measures matched end-to-end candidates before
+   selecting replacement language, storage or topology.
+9. **O9 Qualification, packaging and release evidence:** consumes all accepted
+   outcome contracts; binds exact-candidate qualification, packaging, recovery,
+   compatibility and release evidence.
+
+No dependency may point to a later outcome. Related evidence may inform an earlier
+contract without becoming a hard reverse dependency.
+
+## Rolling checkpoints
+
+- **C0 Baseline reconciled:** repository, Linear, audit and owner decisions agree on
+  current versus historical state.
+- **C1 Contract candidates:** O1 to O3 and issue/evidence rules are reviewable.
+- **C2 Human receipts:** exact foundational digests are accepted or affected lines
+  remain visibly blocked.
+- **C3 Thin vertical slice:** selected O2 to O7 fragments compose through shared
+  identity, provenance, accounting, authority and recovery semantics.
+- **C4 Qualification:** exact candidates run declared replay, simulation, demo or
+  paper and failure protocols; unknowns remain visible.
+- **C5 Release decision:** O9 reports maturity per capability; a human decides scope.
+
+## Month completion
+
+Completion means each outcome has an evidence-backed maturity tier, every
+consequential decision has a receipt or visible block, implemented capabilities point
+to accepted contract digests, and deferred work has named dependencies. It does not
+mean every outcome is implemented, profitable, safe, eligible for live use or
+release-qualified.
