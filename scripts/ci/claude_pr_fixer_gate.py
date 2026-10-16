@@ -257,7 +257,10 @@ def evaluate(
         and trusted_devin(review.get("user"))
         and trusted_devin(event.get("sender"))
         and event.get("action") == "submitted"
-        and safe_head_sha(review.get("commit_id")) == head_sha
+        and safe_head_sha(review.get("commit_id"))
+        and isinstance(review.get("id"), int)
+        and not isinstance(review.get("id"), bool)
+        and review["id"] > 0
         and str(review.get("state") or "").lower() in DEVIN_STATES
     ):
         # Actionable unresolved findings are rechecked under the per-PR lock.

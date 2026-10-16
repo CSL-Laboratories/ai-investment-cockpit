@@ -202,8 +202,9 @@ The watcher never resolves threads, pushes, or merges.
 ## Code Review Rules
 
 These rules apply to the **CI/fixer gate** `@codex review` (comment marker
-`<!-- codex-gate:<sha> -->`). After reviewing that request, **end the review
-body with exactly one verdict line**:
+`<!-- codex-gate:<sha> -->`). When the head is ready for full CI or needs a
+human decision, **end the review body with exactly one applicable verdict
+line**. When fixes are still pending, leave advisory findings without a verdict:
 
     CODEX-GATE: READY
     CODEX-GATE: MEDIATE
