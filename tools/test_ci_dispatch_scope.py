@@ -197,26 +197,30 @@ class DispatchScopeTests(unittest.TestCase):
                           lambda match: str(evaluate(match[1], **context)),
                           doc['concurrency']['group'])
         for doc in (self.ci, self.rust):
+            group_expr = doc['concurrency']['group']
+            self.assertNotIn('pr_head_sha', group_expr)
+            self.assertNotIn('head.sha', group_expr)
+            self.assertEqual(doc['concurrency']['cancel-in-progress'], 'true')
             normal = group(doc)
+            # Label reruns share the PR-number group. A newer synchronize of
+            # the same PR cancels the superseded head, including a stale
+            # dispatch whose SHA no longer matches; filter still fail-closes
+            # that dispatch before billed matrix work.
             self.assertEqual(normal, group(doc, **{
                 'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
                 'inputs.pr_head_sha': 'a' * 40,
                 'github.ref': 'refs/heads/cursor/csl-202',
                 'github.event.pull_request.number': '',
                 'github.event.pull_request.head.sha': ''}))
-            # Concurrency is evaluated before filter: stale A must not cancel B.
-            newer = group(doc, **{'github.event.pull_request.head.sha': 'b' * 40})
-            self.assertNotEqual(newer, group(doc, **{
-                'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
-                'inputs.pr_head_sha': 'a' * 40, 'github.sha': 'b' * 40,
-                'github.ref': 'refs/heads/cursor/csl-202',
-                'github.event.pull_request.number': '',
-                'github.event.pull_request.head.sha': ''}))
+            self.assertEqual(normal, group(doc, **{
+                'github.event.pull_request.head.sha': 'b' * 40}))
             self.assertNotEqual(normal, group(doc, **{
                 'github.event.pull_request.draft': True}))
             self.assertNotEqual(normal, group(doc, **{
                 'github.event_name': 'workflow_dispatch', 'github.event.pull_request.number': '',
                 'github.ref': 'refs/heads/main'}))
+            self.assertNotEqual(normal, group(doc, **{
+                'github.event.pull_request.number': 150}))
         self.assertNotEqual(group(self.ci), group(self.ci, **{
             'github.event_name': 'schedule', 'github.event.pull_request.number': '',
             'github.ref': 'refs/heads/main'}))

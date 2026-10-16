@@ -78,8 +78,12 @@ permissions:
   contents: read
 
 concurrency:
-  # Same-head label reruns supersede PR runs; stale label context cannot cancel a newer head.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
+  # Same-PR label reruns share this group via inputs.pr_number so a newer
+  # synchronize cancels the superseded head. The head SHA is not in the group
+  # (that suffix prevented cancellation). Filter still fail-closes stale
+  # dispatch context before billed rust-book work. Draft synchronize stays in
+  # its own group so it cannot cancel a ready_for_review matrix.
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
   cancel-in-progress: true
 
 jobs:
