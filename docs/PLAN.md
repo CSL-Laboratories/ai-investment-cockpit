@@ -7,10 +7,22 @@ supersedes:
   - integration-and-remote-operations-plan
   - cockpit-review-and-integrated-plan
   - remaining-work-session-plan
-last-verified: 2026-09-15
+last-verified: 2026-10-16
 ---
 
 # The plan
+
+### RW-38 slice A daily NAV source contract — proposed 2026-10-16
+
+CSL-63 records the slice A memo after zero qualifying strategies.
+`qualify_count` stays 0. Four GET-only boards stay empty / date-not-ready
+with cohort 0≪30. The memo lists blocking evidence for each RW-27 name
+and proposes `RW-38`: Lucas authorizes or refuses a daily NAV source
+contract for `cef_discount`. The proposal is not an implementation claim
+and does not change delivery order. Do not start the contract, ingest a
+feed, lower the 30-identity gate, or edit the order path until Lucas
+authorizes the REGISTER row. Memo:
+[[research/csl-63-slice-a-memo-2026-10-16]]. Claim text: [[REGISTER]].
 
 ### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — claimed 2026-09-15
 
