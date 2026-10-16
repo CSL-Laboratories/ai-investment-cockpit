@@ -866,7 +866,7 @@ def test_old_cite_retry_mark_marker_does_not_count_today():
     assert any("resolve=posted" in line for line in logs)
 
 
-def test_human_resolved_unmarked_cite_does_not_count():
+def test_human_resolved_unmarked_cite_still_counts():
     threads = [
         thread(
             THREAD,
@@ -875,10 +875,10 @@ def test_human_resolved_unmarked_cite_does_not_count():
             comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
         )
     ]
-    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 0
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
 
 
-def test_human_resolved_unmarked_cite_does_not_consume_cap():
+def test_later_human_resolve_cannot_erase_unmarked_pat_success():
     gh = ready_gh(
         threads=[
             thread(
@@ -892,9 +892,8 @@ def test_human_resolved_unmarked_cite_does_not_consume_cap():
         reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
     )
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
-    assert THREAD2 in gh.resolves
-    assert any("resolve=posted" in line for line in logs)
-    assert not any("skip=over-cap" in line for line in logs)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
 
 
 def test_unmarked_prior_head_cite_plus_later_marker_fail_closed():
