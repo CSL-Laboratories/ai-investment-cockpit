@@ -38,11 +38,9 @@ def marker(kind: str, data: dict) -> str:
 def records(body: str, kind: str) -> list[dict]:
     found = []
     prefix = f"<!-- claude-fixer-{kind}:"
-    for line in body.splitlines():
-        if not line.startswith(prefix) or not line.endswith(" -->"):
-            continue
+    for match in re.finditer(re.escape(prefix) + r"(.*?)\s*-->", body, re.DOTALL):
         try:
-            value = json.loads(line[len(prefix):-4])
+            value = json.loads(match.group(1))
         except ValueError:
             continue
         if isinstance(value, dict):
@@ -54,7 +52,7 @@ def bot(user: dict, login: str, identity: int) -> bool:
     return user.get("login") == login and user.get("type") == "Bot" and user.get("id") == identity
 
 
-def findings(threads: list[dict]) -> list[dict]:
+def findings(threads: list[dict], comments: list[dict]) -> list[dict]:
     found = []
     for thread in threads:
         if thread.get("isResolved") is not False or thread.get("isOutdated") is not False:
@@ -67,6 +65,13 @@ def findings(threads: list[dict]) -> list[dict]:
         if author.get("__typename") != "Bot" or author.get("login") not in {"devin-ai-integration", "devin-ai-integration[bot]"}:
             continue
         body = str(root.get("body") or "")
+        # REST supplies immutable numeric bot identity, absent from Actor above.
+        corroborated = [c for c in comments if c.get("id") == root.get("databaseId")
+                        and not c.get("in_reply_to_id")
+                        and bot(c.get("user") or {}, "devin-ai-integration[bot]", DEVIN_ID)
+                        and c.get("body") == body]
+        if len(corroborated) != 1:
+            continue
         matches = METADATA_RE.findall(body)
         if len(matches) != 1:
             continue
@@ -84,7 +89,9 @@ def findings(threads: list[dict]) -> list[dict]:
 
 def substantive_followup(comment: dict, permission) -> bool:
     body = str(comment.get("body") or "").strip()
-    if not body or records(body, "result"):
+    # Quoting a prior receipt must not hide a new substantive correction.
+    body = re.sub(r"<!-- claude-fixer-result:.*?-->", "", body, flags=re.DOTALL).strip()
+    if not body or re.fullmatch(r"[\s>`]*", body):
         return False
     user = comment.get("user") or {}
     if bot(user, "devin-ai-integration[bot]", DEVIN_ID):
@@ -163,7 +170,7 @@ def attempt_count(comments: list[dict], key: dict) -> int:
 
 
 def api(path: str):
-    return json.loads(subprocess.check_output(["gh", "api", path], text=True))
+    return json.loads(subprocess.check_output(["gh", "api", path], text=True, stderr=subprocess.PIPE))
 
 
 def pages(path: str) -> list[dict]:
@@ -218,7 +225,14 @@ def main() -> None:
     def compare(base, tip):
         key = (base, tip)
         if key not in comparisons:
-            comparisons[key] = api(f"repos/{repo}/compare/{base}...{tip}")["status"]
+            try:
+                comparisons[key] = api(f"repos/{repo}/compare/{base}...{tip}")["status"]
+            except subprocess.CalledProcessError as error:
+                # A nonexistent/non-comparable SHA invalidates only this receipt.
+                # Authentication, rate-limit, transport and server errors still abort.
+                if not re.search(r"\(HTTP (?:404|422)\)", str(error.stderr or "")):
+                    raise
+                comparisons[key] = "invalid"
         return comparisons[key]
 
     def permission(login):
@@ -226,12 +240,22 @@ def main() -> None:
             permissions[login] = api(f"repos/{repo}/collaborators/{login}/permission")["permission"]
         return permissions[login]
 
-    items = pending_findings(findings(threads), pages(f"repos/{repo}/pulls/{number}/comments"), head, compare, permission, manual)
+    review_comments = pages(f"repos/{repo}/pulls/{number}/comments")
+    items = pending_findings(findings(threads, review_comments), review_comments, head, compare, permission, manual)
     if not items:
         emit([], head, "no-pending-findings")
         return
-    key = attempt_key(head, items)
+    count = os.environ["LOOP_COMMIT_COUNT"]
+    if not re.fullmatch(r"0|[1-9][0-9]*", count):
+        raise ValueError("invalid loop commit count")
     comments = pages(f"repos/{repo}/issues/{number}/comments")
+    if int(count) >= 8:
+        pause = f"<!-- claude-fixer-loop-cap:{head} -->"
+        if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
+            post(repo, number, pause + "\nClaude PR Fixer paused: eight consecutive Claude commits and pending Devin findings. A human needs to inspect them; a human commit resets this guard. Manual retry does not bypass it.")
+        emit([], head, "loop-commit-limit")
+        return
+    key = attempt_key(head, items)
     if not manual and attempt_count(comments, key) >= MAX_ATTEMPTS:
         pause = marker("paused", key)
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):

@@ -1254,10 +1254,10 @@ class FixerLoopCapTests(unittest.TestCase):
             posted = (d / "posted").read_text(encoding="utf-8") if (d / "posted").exists() else ""
             return out.read_text(encoding="utf-8"), posted
 
-    def test_eight_claude_commits_after_human_skips_and_comments(self) -> None:
+    def test_eight_claude_commits_count_without_premature_pause(self) -> None:
         out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 8, [])
-        self.assertIn("skip=true", out)
-        self.assertEqual(posted.count("posted"), 1)
+        self.assertIn("loop_commit_count=8", out)
+        self.assertEqual(posted, "")
 
     def test_seven_claude_commits_runs(self) -> None:
         out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 7, [])
@@ -1273,11 +1273,11 @@ class FixerLoopCapTests(unittest.TestCase):
         c = [("alice", "Alice"), ("claude[bot]", "claude[bot]"), ("github-actions[bot]", "github-actions[bot]"),
              ("claude[bot]", "claude[bot]"), ("claude[bot]", "claude[bot]")]
         out, _ = self._run(c + [("claude[bot]", "claude[bot]")] * 5, [])
-        self.assertIn("skip=true", out)
+        self.assertIn("loop_commit_count=8", out)
 
     def test_existing_marker_suppresses_duplicate_comment(self) -> None:
         out, posted = self._run([("claude[bot]", "claude[bot]")] * 8, ["<!-- claude-fixer-loop-cap:abc123 -->"])
-        self.assertIn("skip=true", out)
+        self.assertIn("loop_commit_count=8", out)
         self.assertEqual(posted, "")
 
     def test_fixer_steps_gated_on_cap(self) -> None:

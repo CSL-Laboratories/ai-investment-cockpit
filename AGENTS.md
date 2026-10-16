@@ -281,3 +281,10 @@ changed findings resets this budget; authorized manual `devin-review-fix` dispat
 can retry while the eight-commit guard remains. There is no daily cap. Reservations
 can include workflow-validation stops before model execution, so after activation
 an authorized manual retry may be needed. A paused attempt budget is never READY.
+
+Receipt parsing accepts inline or indented machine markers; quoted receipts do not
+hide a repository-writer correction. Root findings must also match the REST
+numeric Devin bot identity. Invalid compare SHAs (HTTP 404/422) leave findings
+pending; authentication, transport, and server errors still fail closed. The
+eight-commit count is applied only after receipt-aware selection proves pending
+work remains, so a clean PR does not receive a misleading loop-cap pause.
