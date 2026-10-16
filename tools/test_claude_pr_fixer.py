@@ -479,8 +479,18 @@ class CodexGateMentionTests(unittest.TestCase):
         for prefix in ("<!-- codex-gate:", "<!-- CODEX-GATE:"):
             for size in (40, 64):
                 body = (f"{prefix}{'a' * size} -->\n@codex review\n\n"
+                        "This is the Codex CI/fixer gate (CSL-103). "
                         "Human-only findings need a human @claude mention, not FIX.")
                 self.assert_comment_route(body, False)
+
+    def test_marker_first_human_requests_are_admitted(self) -> None:
+        marker = f"<!-- codex-gate:{'a' * 40} -->"
+        for body in (
+            marker + "\n@claude please investigate this gate request",
+            marker + "\n@claude inspect the result of @codex review",
+            marker + "\nThis is the Codex CI/fixer gate (CSL-103).\n@claude help",
+        ):
+            self.assert_comment_route(body, True)
 
     def test_human_requests_may_reference_codex_and_quote_gate_markers(self) -> None:
         for body in (
@@ -489,6 +499,7 @@ class CodexGateMentionTests(unittest.TestCase):
             "Please @claude inspect this quoted request:\n"
             f"<!-- codex-gate:{'a' * 40} -->\n@codex review",
             "<!-- unrelated-marker -->\n@claude fix the lint",
+            "This is the Codex CI/fixer gate (CSL-103). @codex review; @claude help",
         ):
             self.assert_comment_route(body, True)
 
@@ -543,12 +554,17 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_codex_gate_filter_is_on_both_comment_branches(self) -> None:
         condition = self._job("resolve-pr").split("runs-on:", 1)[0]
-        guard = "!startsWith(github.event.comment.body, '<!-- codex-gate:')"
+        guard = "!(startsWith(github.event.comment.body, '<!-- codex-gate:')"
         self.assertEqual(condition.count(guard), 2)
         for event_name in ("issue_comment", "pull_request_review_comment"):
             branch = condition.split(f"github.event_name == '{event_name}'", 1)[1]
             branch = branch.split(") ||", 1)[0]
             self.assertIn(guard, branch)
+            self.assertIn("contains(github.event.comment.body, '@codex review')", branch)
+            self.assertIn(
+                "contains(github.event.comment.body, 'This is the Codex CI/fixer gate (CSL-103).')",
+                branch,
+            )
 
     def test_every_privileged_checkout_uses_pr_head_sha(self) -> None:
         mention = self._job("claude-mention")

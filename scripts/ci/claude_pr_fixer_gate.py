@@ -27,6 +27,7 @@ MENTION_EVENTS = frozenset({"issue_comment", "pull_request_review_comment"})
 DISPATCH_EVENTS = frozenset({"repository_dispatch", "workflow_dispatch"})
 FIXER_DISPATCH = "devin-review-fix"
 CODEX_GATE_PREFIX = "<!-- codex-gate:"
+CODEX_GATE_SIGNATURE = "This is the Codex CI/fixer gate (CSL-103)."
 MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])@claude(?![A-Za-z0-9_])")
 SAFE_REF_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9._/-]+$")
 SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
@@ -75,8 +76,13 @@ def contains_at_claude(text: str | None) -> bool:
 
 
 def is_codex_gate_request(text: str | None) -> bool:
-    """Mirror startsWith: reserve the generated request prefix, ignoring case."""
-    return (text or "").lower().startswith(CODEX_GATE_PREFIX)
+    """Match generated gate requests, not a human merely quoting their marker."""
+    body = (text or "").lower()
+    return (
+        body.startswith(CODEX_GATE_PREFIX)
+        and "@codex review" in body
+        and CODEX_GATE_SIGNATURE.lower() in body
+    )
 
 
 def is_bot_actor(user: dict[str, Any] | None, sender: dict[str, Any] | None = None) -> bool:
