@@ -19,10 +19,15 @@ name = "cockpit-book"
 version = "0.1.0"
 
 [[package]]
+name = "cockpit-costs"
+version = "0.1.0"
+
+[[package]]
 name = "cockpit-py"
 version = "0.1.0"
 dependencies = [
  "cockpit-book",
+ "cockpit-costs",
  "pyo3",
 ]
 
