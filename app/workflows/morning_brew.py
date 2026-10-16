@@ -264,6 +264,11 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
     b_fit = fit_packet(
         brief_packet, reserved_tokens=b_overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
     brief_packet = b_fit.packet
+    brief_dropped_ids = {item.event_id for item in b_fit.dropped}
+    if brief_events and not brief_packet.items:
+        # Material/urgent evidence existed but none of it fit. An empty summary
+        # would finalize the day's brief and mark those events scored.
+        return _bail("deferred_context_limit", scored=scored_entries, degraded=False)
     b_prompt = b_tmpl.render(date=date, packet_block=brief_packet.prompt_block())
     b_result, b_job = call_agent(
         state, alias="summary", prompt_ref=b_tmpl.ref, prompt_hash=b_tmpl.sha256,
@@ -309,6 +314,11 @@ def morning_brew(state, clock=None, *, transport=None, deliver=None, parquet_roo
         # re-corroborated (a calendar row is its own calendar match) and fed to the triage
         # model — the deep-budget drain the pre-filter exists to stop.
         if dispositions.get(ev.id) == "prefiltered_ignore":
+            continue
+        if ev.id in brief_dropped_ids:
+            # Tail of the summary packet was never shown to the model. Leave it
+            # deferred so the next loop can retry (Inv 7); do not mark scored.
+            dispositions[ev.id] = "deferred"
             continue
         dispositions[ev.id] = "scored" if ev.id in class_by_event else "deferred"
     _audit_batch(state, batch_id=batch_id, window_start=window_start,
