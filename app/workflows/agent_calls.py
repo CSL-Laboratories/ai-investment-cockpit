@@ -18,7 +18,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
-from agent_runner.runner import run_agent
+from agent_runner.runner import run_agent, worst_case_repair_overhead
 from agent_runner.spec import AgentSpec
 from config.models import (
     configured_decision_runtime,
@@ -34,12 +34,24 @@ from orchestrator.mode_ladder import ModeLadder
 from schemas.models.agent_job import AgentJob
 from workflows.constants import EVENT_AGENT_JOB
 from workflows.context_limit import context_token_cap, estimate_tokens
-from workflows.cost_log import parse_vendor_usage, quote_cost
+from workflows.cost_log import parse_vendor_usage, quote_cost, sum_quotes
 from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
 _STATUS_MAP = {OK: "done", NEEDS_HUMAN: "quarantined"}
-_REPAIR_OVERHEAD_CHARS = 700
+
+
+def _quote_raw(pinned: str, raw: str, estimated_input: int):
+    vendor = parse_vendor_usage(raw or "")
+    if vendor is not None:
+        return quote_cost(
+            pinned, input_tokens=vendor[0], output_tokens=vendor[1],
+            input_token_source="vendor",
+        )
+    return quote_cost(
+        pinned, input_tokens=estimated_input, output_tokens=None,
+        input_token_source="estimate",
+    )
 
 
 def _provisioned_secret_values() -> list[str]:
@@ -93,9 +105,10 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         )
     cap = context_token_cap(state.settings)
     estimated_input = estimate_tokens(prompt)
-    # Reserve headroom for the runner's repair call, which appends up to ~500 chars of
-    # rejection text plus an instruction to the same prompt.
-    context_limited = estimated_input + estimate_tokens("x" * _REPAIR_OVERHEAD_CHARS) > cap
+    # Reserve headroom for `_repair`, which appends up to 500 *characters* of rejection
+    # text (UTF-8, so 4 bytes each) plus a fixed instruction. Checking only the first
+    # prompt would let a near-cap call dispatch an over-cap repair.
+    context_limited = estimated_input + estimate_tokens(worst_case_repair_overhead()) > cap
     engine = BreakerEngine(state)
     # SEC-23: stamp the generation the analysis is minted under (pre-call window).
     generation = state.usage.window(runtime).generation
@@ -144,19 +157,13 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     dropped_raw = refs.get("context_dropped", 0)
     context_dropped = dropped_raw if type(dropped_raw) is int and dropped_raw >= 0 else 0
     sent = not context_limited and result.dispatched
-    vendor_usage = None if not sent else parse_vendor_usage(result.raw or "")
-    if vendor_usage is not None and result.prior_raw:
-        # A repair replaced the first response; that call was billed as well.
-        first = parse_vendor_usage(result.prior_raw)
-        vendor_usage = (
-            None if first is None
-            else (vendor_usage[0] + first[0], vendor_usage[1] + first[1])
-        )
-    if vendor_usage is not None:
-        quote = quote_cost(
-            pinned, input_tokens=vendor_usage[0], output_tokens=vendor_usage[1],
-            input_token_source="vendor",
-        )
+    if sent:
+        # Price each subprocess call on its own rate tier, then add. Summing tokens
+        # first would push two short Haiku 5.5 calls over the 100k long-context line.
+        quotes = [_quote_raw(pinned, result.raw, estimated_input)]
+        if result.prior_raw:
+            quotes.append(_quote_raw(pinned, result.prior_raw, estimated_input))
+        quote = sum_quotes(quotes)
     else:
         quote = quote_cost(
             pinned, input_tokens=estimated_input, output_tokens=None,
