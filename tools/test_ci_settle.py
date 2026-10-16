@@ -60,7 +60,7 @@ class SettleTests(unittest.TestCase):
         for expected, settle, run_tests, linux in itertools.product(
             ('true', 'false'), ('success', 'failure', 'cancelled', 'skipped'),
             ('true', 'false', ''), ('success', 'failure', 'cancelled', 'skipped')):
-            env = {**os.environ, 'FILTER_RESULT': 'success', 'SETTLE_RESULT': settle,
+            env = {**os.environ, 'WORKFLOW_CANCELLED': 'false', 'FILTER_RESULT': 'success', 'SETTLE_RESULT': settle,
                    'SETTLE_EXPECTED': expected, 'RUN_TESTS': run_tests, 'LINUX_RESULT': linux}
             result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, check=False)
             accepted = ((settle == 'success' or (settle == 'skipped' and expected == 'false'))
@@ -68,6 +68,20 @@ class SettleTests(unittest.TestCase):
                              or (run_tests == 'false' and linux == 'skipped')))
             with self.subTest(expected=expected, settle=settle, run_tests=run_tests, linux=linux):
                 self.assertEqual(result.returncode, 0 if accepted else 1, result.stderr)
+
+    def test_cancellation_runs_and_fails_the_required_aggregate(self):
+        gate = self.ci['jobs']['linux-gates']
+        with patch('test_ci_dispatch_scope.eval', wraps=eval) as evaluator:
+            evaluate(gate['if'])
+            expression, environment = evaluator.call_args.args
+        environment['cancelled'] = lambda: True
+        self.assertTrue(eval(expression, environment))
+        for cancelled in ('true', ''):
+            result = subprocess.run(['bash', '-c', gate['steps'][0]['run']], capture_output=True,
+                env={**os.environ, 'WORKFLOW_CANCELLED': cancelled, 'FILTER_RESULT': 'success',
+                     'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
+                     'RUN_TESTS': 'true', 'LINUX_RESULT': 'success'})
+            self.assertEqual(result.returncode, 1)
 
     def test_known_non_synchronize_paths_are_not_accidentally_suppressed(self):
         for event, action, expected in [
