@@ -11,4 +11,4 @@ mod json;
 mod normalize;
 
 pub use json::{content_hash, dumps, Json};
-pub use normalize::{escape_untrusted, market_event, EventParts};
+pub use normalize::{escape_untrusted, market_event, source_allowlisted, EventParts};

@@ -1,9 +1,12 @@
 //! PyO3 entry points for the raw/normalized market-event adapter.
 
-use cockpit_ingest::{content_hash, escape_untrusted, market_event, Json};
+use std::ffi::CString;
+
+use cockpit_ingest::{content_hash, escape_untrusted, market_event, source_allowlisted, Json};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use pyo3::sync::GILOnceCell;
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PyString, PyTuple};
 
 fn invalid(message: impl Into<String>) -> PyErr {
     PyValueError::new_err(message.into())
@@ -77,10 +80,104 @@ fn pack(parts: cockpit_ingest::EventParts) -> EventOut {
     )
 }
 
+fn ensure_source(source: &str) -> PyResult<()> {
+    if source_allowlisted(source) {
+        return Ok(());
+    }
+    // Match Python `f"{source!r}"` for the feed names this gate sees.
+    let shown = source.replace('\\', "\\\\").replace('\'', "\\'");
+    Err(invalid(format!("source not allowlisted: '{shown}'")))
+}
+
+fn contains_unassigned(py: Python<'_>, text: &str) -> PyResult<bool> {
+    if text.is_ascii() {
+        return Ok(false);
+    }
+    static CHECK: GILOnceCell<Py<PyAny>> = GILOnceCell::new();
+    let checker = CHECK.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
+        let code = CString::new(
+            "import unicodedata\n\ndef has_unassigned(text):\n    return any(unicodedata.category(ch) == 'Cn' for ch in text)\n",
+        )?;
+        let module = PyModule::from_code(
+            py,
+            &code,
+            c"cockpit_unicode_gate.py",
+            c"cockpit_unicode_gate",
+        )?;
+        Ok(module.getattr("has_unassigned")?.unbind())
+    })?;
+    checker.bind(py).call1((text,))?.extract()
+}
+
+fn event_via_python(
+    py: Python<'_>,
+    source: &str,
+    article_id: &str,
+    symbols: &Bound<'_, PyAny>,
+    headline: &str,
+    summary: &str,
+    event_type: &str,
+    raw: Option<&Bound<'_, PyAny>>,
+) -> PyResult<EventOut> {
+    let func = py
+        .import("ingest.normalize")?
+        .getattr("python_to_market_event")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("source", source)?;
+    kwargs.set_item("article_id", article_id)?;
+    kwargs.set_item("symbols", symbols)?;
+    kwargs.set_item("headline", headline)?;
+    kwargs.set_item("summary", summary)?;
+    kwargs.set_item("ts", py.None())?;
+    kwargs.set_item("event_type", event_type)?;
+    if let Some(raw) = raw {
+        kwargs.set_item("raw", raw)?;
+    }
+    let event = func.call((), Some(&kwargs))?.downcast_into::<PyDict>()?;
+    let raw_input = event
+        .get_item("raw_input")?
+        .ok_or_else(|| invalid("missing raw_input"))?;
+    let dumps = py.import("json")?.getattr("dumps")?;
+    let dump_kwargs = PyDict::new(py);
+    dump_kwargs.set_item("sort_keys", true)?;
+    dump_kwargs.set_item("separators", (",", ":"))?;
+    let raw_json: String = dumps.call((raw_input,), Some(&dump_kwargs))?.extract()?;
+    let take = |key: &str| -> PyResult<Bound<'_, PyAny>> {
+        event
+            .get_item(key)?
+            .ok_or_else(|| invalid(format!("missing {key}")))
+    };
+    Ok((
+        take("event_type")?.extract()?,
+        take("symbols")?.extract()?,
+        take("headline")?.extract()?,
+        take("summary")?.extract()?,
+        take("raw_ref")?.extract()?,
+        take("content_hash")?.extract()?,
+        raw_json,
+    ))
+}
+
+fn needs_python_unicode(py: Python<'_>, parts: &[&str]) -> PyResult<bool> {
+    for part in parts {
+        if contains_unassigned(py, part)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[pyfunction]
 #[pyo3(name = "escape_untrusted")]
-fn escape_untrusted_py(text: &str) -> String {
-    escape_untrusted(text)
+fn escape_untrusted_py(py: Python<'_>, text: &str) -> PyResult<String> {
+    if contains_unassigned(py, text)? {
+        return py
+            .import("ingest.normalize")?
+            .getattr("python_escape_untrusted")?
+            .call1((text,))?
+            .extract();
+    }
+    Ok(escape_untrusted(text))
 }
 
 #[pyfunction]
@@ -92,6 +189,7 @@ fn content_hash_py(value: &Bound<'_, PyAny>) -> PyResult<String> {
 #[pyfunction]
 #[pyo3(name = "market_event", signature = (source, article_id, symbols, headline, summary, event_type, raw=None))]
 fn market_event_py(
+    py: Python<'_>,
     source: &str,
     article_id: &str,
     symbols: &Bound<'_, PyAny>,
@@ -100,6 +198,12 @@ fn market_event_py(
     event_type: &str,
     raw: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<EventOut> {
+    ensure_source(source)?;
+    if needs_python_unicode(py, &[headline, summary, event_type])? {
+        return event_via_python(
+            py, source, article_id, symbols, headline, summary, event_type, raw,
+        );
+    }
     let (csv, items) = read_symbols(symbols)?;
     let raw_json = raw.map(read_json).transpose()?;
     Ok(pack(market_event(
@@ -116,24 +220,40 @@ fn market_event_py(
 
 #[pyfunction]
 fn market_event_many(
+    py: Python<'_>,
     rows: Vec<(String, String, Vec<String>, String, String, String)>,
-) -> Vec<EventOut> {
-    rows.into_iter()
-        .map(
-            |(source, article_id, symbols, headline, summary, event_type)| {
-                pack(market_event(
-                    &source,
-                    &article_id,
-                    None,
-                    &symbols,
-                    &headline,
-                    &summary,
-                    &event_type,
-                    None,
-                ))
-            },
-        )
-        .collect()
+) -> PyResult<Vec<EventOut>> {
+    for (source, _, _, _, _, _) in &rows {
+        ensure_source(source)?;
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for (source, article_id, symbols, headline, summary, event_type) in rows {
+        if needs_python_unicode(py, &[&headline, &summary, &event_type])? {
+            let symbols_obj = PyList::new(py, &symbols)?.into_any();
+            out.push(event_via_python(
+                py,
+                &source,
+                &article_id,
+                &symbols_obj,
+                &headline,
+                &summary,
+                &event_type,
+                None,
+            )?);
+        } else {
+            out.push(pack(market_event(
+                &source,
+                &article_id,
+                None,
+                &symbols,
+                &headline,
+                &summary,
+                &event_type,
+                None,
+            )));
+        }
+    }
+    Ok(out)
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

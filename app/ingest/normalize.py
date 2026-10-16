@@ -150,6 +150,20 @@ def _load_native() -> None:
     NORMALIZE_BACKEND = "rust"
 
 
+def _runtime_unicode(text: str) -> bool:
+    """False when ``text`` holds a code point this interpreter has not assigned.
+
+    ``unicode-normalization`` 0.1.24 uses Unicode 16 tables. Python 3.11 and
+    3.12 use Unicode 14 and 15. U+1CCD6 is unassigned here, so NFKC leaves it
+    in place and the following ``SYSTEM:`` is still a role marker. The newer
+    Rust tables fold that scalar to ``A`` and the marker survives. Those
+    strings stay on the Python path.
+    """
+    if text.isascii():
+        return True
+    return all(unicodedata.category(ch) != "Cn" for ch in text)
+
+
 def _utf8_text(value) -> bool:
     """True for a real ``str`` PyO3 can take as ``&str``.
 
@@ -189,7 +203,9 @@ def _plain_symbols(symbols) -> bool:
 
 def escape_untrusted(text) -> str:
     native = _NATIVE
-    if native is not None and (text is None or text == "" or _utf8_text(text)):
+    if native is not None and (
+        text is None or text == "" or (_utf8_text(text) and _runtime_unicode(text))
+    ):
         if text is None or text == "":
             return ""
         return native.escape_untrusted(text)
@@ -214,8 +230,11 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         and type(article_id) is not bool
         and _plain_symbols(symbols)
         and _utf8_text(headline)
+        and _runtime_unicode(headline)
         and _utf8_text(summary)
+        and _runtime_unicode(summary)
         and _utf8_text(event_type)
+        and _runtime_unicode(event_type)
         and (ts is None or type(ts) in (int, float) or _utf8_text(ts))
         and type(ts) is not bool
         and (raw is None or _plain_json(raw))
