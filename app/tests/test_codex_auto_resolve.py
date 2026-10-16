@@ -713,28 +713,27 @@ def test_retry_mark_posts_missing_audit_marker_without_unresolve():
 
 
 def test_retry_mark_counts_toward_daily_cap():
-    retry = thread(
-        resolved=True,
-        resolved_by=PAT_LOGIN,
-        comments=[
-            comment(CODEX, verdict_body()),
-            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
-        ],
-    )
-    fresh = thread(
-        thread_id=THREAD2,
-        comments=[comment(CODEX, verdict_body(tid=THREAD2))],
-    )
     gh = ready_gh(
-        threads=[retry, fresh],
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
         reviews=[
             comment(CODEX, verdict_body()),
             comment(CODEX, verdict_body(tid=THREAD2)),
         ],
     )
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
-    assert any("retry-mark=posted" in line for line in logs)
     assert gh.resolves == []
+    assert any("retry-mark=posted" in line for line in logs)
     assert any("skip=over-cap" in line for line in logs)
 
 
