@@ -15,12 +15,101 @@ assert SPEC and SPEC.loader
 CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
 
+MALFORMED_VALUES = (None, True, False, 0, 1, 1.0, 1.5, "", "bad", [], {}, [None], [[]], [{}], {"x": []})
+
+
+def registry_nodes(value, path=()):
+    yield path, value
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from registry_nodes(child, (*path, key))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            yield from registry_nodes(child, (*path, index))
+
+
+def replace_node(program, path, value):
+    candidate = copy.deepcopy(program)
+    if not path:
+        return copy.deepcopy(value)
+    target = candidate
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = copy.deepcopy(value)
+    return candidate
+
+
 class ReplacementProgramTests(unittest.TestCase):
     def setUp(self) -> None:
         self.program = CHECKER.load(ROOT / "docs" / "replacement" / "program.json")
 
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
+
+    def test_registry_type_mutation_sweep_rejects_cleanly(self) -> None:
+        for path, original in registry_nodes(self.program):
+            for value in MALFORMED_VALUES:
+                if type(original) is type(value) and original == value:
+                    continue
+                with self.subTest(path=path, value=value), self.assertRaises(CHECKER.ContractError):
+                    CHECKER.validate(replace_node(self.program, path, value))
+
+    def test_exclusions_reject_objects_and_unhashable_members(self) -> None:
+        for path in (
+            ("authority", "acceptance_receipt", "not_granted"),
+            ("authority", "superseded_acceptance_receipt", "not_granted"),
+            ("research_evidence", "authority_compliance", "not_claimed"),
+        ):
+            original = self.program
+            for part in path:
+                original = original[part]
+            candidates = [{key: None for key in original}]
+            for index in range(len(original)):
+                for value in ([], {}, None, True, 1):
+                    changed = list(original)
+                    changed[index] = value
+                    candidates.append(changed)
+            for value in candidates:
+                with self.subTest(path=path, value=value), self.assertRaises(CHECKER.ContractError):
+                    CHECKER.validate(replace_node(self.program, path, value))
+
+    def test_manifest_gate_preserves_current_command(self) -> None:
+        self.assertEqual(self.program["manifest_gate"], "python -X utf8 -B tools/check_replacement_program.py")
+        for value in ("python -c 'print(1)'", self.program["manifest_gate"] + " --skip-checks"):
+            with self.subTest(value=value), self.assertRaisesRegex(CHECKER.ContractError, "manifest gate changed"):
+                CHECKER.validate(replace_node(self.program, ("manifest_gate",), value))
+
+    def test_sibling_fields_cannot_be_added_or_removed(self) -> None:
+        for path, original in registry_nodes(self.program):
+            if isinstance(original, dict):
+                variants = [dict(original, unreviewed_claim=True)]
+                variants.extend({k: v for k, v in original.items() if k != missing} for missing in original)
+            elif isinstance(original, list):
+                variants = [original + [{}]]
+                variants.extend(original[:index] + original[index + 1:] for index in range(len(original)))
+            else:
+                continue
+            for value in variants:
+                with self.subTest(path=path, value=value), self.assertRaises(CHECKER.ContractError):
+                    CHECKER.validate(replace_node(self.program, path, value))
+
+    def test_loader_normalizes_malformed_text_and_parser_limits(self) -> None:
+        payloads = (b"\xff", b"{", b"[" * 10000 + b"0" + b"]" * 10000)
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "program.json"
+            for payload in payloads:
+                candidate.write_bytes(payload)
+                with self.subTest(prefix=payload[:20]), self.assertRaisesRegex(CHECKER.ContractError, "invalid program input"):
+                    CHECKER.load(candidate)
+
+    def test_deep_outcome_serialization_rejects_cleanly(self) -> None:
+        candidate = copy.deepcopy(self.program)
+        nested = 0
+        for _ in range(10000):
+            nested = [nested]
+        candidate["outcomes"][0]["current_state"] = nested
+        with self.assertRaises(CHECKER.ContractError):
+            CHECKER.validate(candidate)
 
     def test_authority_and_receipts_reject_non_objects_cleanly(self) -> None:
         for field, message in (

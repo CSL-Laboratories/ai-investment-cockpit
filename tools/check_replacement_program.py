@@ -12,6 +12,8 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROGRAM = ROOT / "docs" / "replacement" / "program.json"
+# Existing registry command, pinned for annotation integrity, not new acceptance.
+EXPECTED_MANIFEST_GATE = "python -X utf8 -B tools/check_replacement_program.py"
 MATURITY = (
     "unresearched",
     "researched",
@@ -210,7 +212,10 @@ def _has_exact_outcome_heading(document: str, key: str) -> bool:
 
 
 def _outcome_digest(outcome: dict[str, Any]) -> str:
-    canonical = json.dumps(outcome, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    try:
+        canonical = json.dumps(outcome, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    except RecursionError as exc:
+        raise ContractError("outcome nesting exceeds serialization limit") from exc
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -251,7 +256,11 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         isinstance(program, dict) and set(program) == EXPECTED_PROGRAM_KEYS,
         "program fields changed",
     )
-    _require(program.get("schema_version") == 1, "unsupported schema_version")
+    _require(type(program["schema_version"]) is int and program["schema_version"] == 1, "unsupported schema_version")
+    _require(
+        _nonempty(program["manifest_gate"]) and program["manifest_gate"] == EXPECTED_MANIFEST_GATE,
+        "manifest gate changed",
+    )
     _require(program.get("program_id") == "cockpit.replacement.2026-10", "wrong program_id")
     _require(program.get("status") == "accepted_contract", "program contract acceptance changed")
     _require(program.get("controlling_issue") == "CSL-212", "missing CSL-212 lineage")
@@ -306,7 +315,8 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         "accepted research digest changed",
     )
     _require(
-        set(accepted_receipt.get("not_granted", []))
+        _nonempty_list(accepted_receipt["not_granted"])
+        and set(accepted_receipt["not_granted"])
         == {
             "implementation_completion",
             "empirical_pass",
@@ -339,7 +349,8 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         "superseded receipt reason changed",
     )
     _require(
-        set(receipt.get("not_granted", []))
+        _nonempty_list(receipt["not_granted"])
+        and set(receipt["not_granted"])
         == {
             "implementation_completion",
             "empirical_pass",
@@ -370,12 +381,20 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(research.get("research_cutoff") == "2026-10-16", "authority research cutoff missing")
     _require(research.get("claim") == "research_input_only", "authority research over-promoted")
     _require(research.get("owner_direction") == REQUIRED_RESEARCH_DIRECTION, "authority research direction changed")
-    _require(set(research.get("not_claimed", [])) == REQUIRED_RESEARCH_EXCLUSIONS, "authority research exclusions changed")
+    _require(
+        _nonempty_list(research["not_claimed"])
+        and set(research["not_claimed"]) == REQUIRED_RESEARCH_EXCLUSIONS,
+        "authority research exclusions changed",
+    )
     research_path = research.get("reconciliation_path")
     _require(research_path == "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md", "authority reconciliation path mismatch")
     research_file = root / research_path
     _require(research_file.is_file(), "authority reconciliation file missing")
-    _require(re.fullmatch(r"[0-9a-f]{64}", research.get("sha256", "")) is not None, "authority reconciliation digest invalid")
+    _require(
+        _nonempty(research["sha256"])
+        and re.fullmatch(r"[0-9a-f]{64}", research["sha256"]) is not None,
+        "authority reconciliation digest invalid",
+    )
     _require(_digest(research_file) == research["sha256"], "authority reconciliation digest mismatch")
     _require(
         _digest(research_file) == accepted_receipt["authority_research_sha256"],
@@ -420,6 +439,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
 
     outcomes = program.get("outcomes")
     _require(isinstance(outcomes, list) and len(outcomes) == 9, "exactly nine outcomes required")
+    _require(all(isinstance(item, dict) for item in outcomes), "outcomes must be objects")
     expected_keys = [f"O{i}" for i in range(1, 10)]
     keys = [item.get("key") for item in outcomes]
     _require(keys == expected_keys, "outcomes must be ordered O1 through O9")
@@ -456,11 +476,15 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(budget["quota_class"] == "one_bounded_reconciliation_pass", f"{key} research quota changed")
         _require(budget["stop_condition"] == REQUIRED_STOP_CONDITION, f"{key} research stop condition changed")
         deps = item["dependencies"]
-        _require(isinstance(deps, list), f"{key} dependencies must be a list")
+        _require(isinstance(deps, list) and all(_nonempty(dep) for dep in deps), f"{key} dependencies must be a string list")
         for dep in deps:
             _require(dep in seen, f"{key} unresolved or cyclic dependency: {dep}")
         refs = item["dependency_contracts"]
-        _require(isinstance(refs, list) and [ref.get("outcome") for ref in refs] == deps, f"{key} dependency fragments mismatch")
+        _require(
+            isinstance(refs, list) and all(isinstance(ref, dict) for ref in refs)
+            and [ref.get("outcome") for ref in refs] == deps,
+            f"{key} dependency fragments mismatch",
+        )
         for ref in refs:
             _require(ref.get("fragment") == f"docs/replacement/MONTH-PROGRAM.md#{ref['outcome'].lower()}", f"{key} invalid dependency fragment")
             _require(
@@ -492,8 +516,13 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
 
 
 def load(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (ValueError, RecursionError) as exc:
+        # Scoped to decoding: includes UnicodeDecodeError, JSONDecodeError and
+        # Python's integer/nesting limits without hiding validator programming errors.
+        raise ContractError(f"invalid program input: {exc}") from exc
     _require(isinstance(data, dict), "program root must be an object")
     return data
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -93,5 +94,53 @@ def test_registry_cli_rejects_malformed_authority_objects(tmp_path: Path, field:
     )
     assert result.returncode == 1
     assert "replacement-program: FAIL:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "replacement-program: PASS" not in result.stdout
+
+
+@pytest.mark.parametrize("path", [
+    ("authority", "acceptance_receipt", "not_granted"),
+    ("authority", "superseded_acceptance_receipt", "not_granted"),
+    ("research_evidence", "authority_compliance", "not_claimed"),
+    ("research_evidence", "authority_compliance", "sha256"),
+    *(("outcomes", index) for index in range(9)),
+    ("schema_version",),
+    ("manifest_gate",),
+])
+@pytest.mark.parametrize("value", [None, True, 1.0, "bad", [], {}, [{}]])
+def test_registry_cli_normalizes_malformed_boundaries(tmp_path: Path, path: tuple, value: object) -> None:
+    program = json.loads((ROOT / "docs/replacement/program.json").read_text(encoding="utf-8"))
+    target = program
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+    candidate = tmp_path / "program.json"
+    candidate.write_text(json.dumps(program), encoding="utf-8")
+    result = subprocess.run(
+        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert "replacement-program: FAIL:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "replacement-program: PASS" not in result.stdout
+
+
+@pytest.mark.parametrize("payload", [
+    pytest.param(b"\xff", id="invalid-utf8"),
+    pytest.param(b"{", id="invalid-json"),
+    pytest.param(b'{"x":' + b"9" * 5000 + b"}", id="oversized-integer"),
+    pytest.param(b"[" * 10000 + b"0" + b"]" * 10000, id="excessive-nesting"),
+])
+def test_registry_cli_normalizes_parser_failures(tmp_path: Path, payload: bytes) -> None:
+    candidate = tmp_path / "program.json"
+    candidate.write_bytes(payload)
+    result = subprocess.run(
+        (sys.executable, "tools/check_replacement_program.py", "--program", str(candidate)),
+        cwd=ROOT, capture_output=True, text=True,
+        env={**os.environ, "PYTHONINTMAXSTRDIGITS": "4300"},
+    )
+    assert result.returncode == 1
+    assert "replacement-program: FAIL: invalid program input:" in result.stderr
     assert "Traceback" not in result.stderr
     assert "replacement-program: PASS" not in result.stdout
