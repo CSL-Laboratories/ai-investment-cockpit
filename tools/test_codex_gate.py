@@ -21,6 +21,8 @@ GATE_PATH = ROOT / "scripts" / "ci" / "codex_gate.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "codex-gate.yml"
 CLAUDE_WORKFLOW = ROOT / ".github" / "workflows" / "claude.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+RUST_WORKFLOW = ROOT / ".github" / "workflows" / "rust.yml"
+PR_LINT_WORKFLOW = ROOT / ".github" / "workflows" / "pr-lint.yml"
 ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
 AGENTS = ROOT / "AGENTS.md"
 REPO = "acme/example"
@@ -1322,6 +1324,8 @@ class WorkflowStructureTests(unittest.TestCase):
         cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
         cls.claude = CLAUDE_WORKFLOW.read_text(encoding="utf-8")
         cls.ci = CI_WORKFLOW.read_text(encoding="utf-8")
+        cls.rust = RUST_WORKFLOW.read_text(encoding="utf-8")
+        cls.pr_lint = PR_LINT_WORKFLOW.read_text(encoding="utf-8")
         cls.actionlint = ACTIONLINT.read_text(encoding="utf-8")
         cls.agents = AGENTS.read_text(encoding="utf-8")
 
@@ -1363,8 +1367,42 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_windows_runner_is_2vcpu(self) -> None:
         self.assertIn("blacksmith-2vcpu-windows-2025", self.ci)
         self.assertNotIn("blacksmith-4vcpu-windows-2025", self.ci)
+        self.assertIn("blacksmith-2vcpu-windows-2025", self.rust)
+        self.assertNotIn("blacksmith-4vcpu-windows-2025", self.rust)
         self.assertIn("blacksmith-2vcpu-windows-2025", self.actionlint)
         self.assertNotIn("blacksmith-4vcpu-windows-2025", self.actionlint)
+
+    def test_rust_cache_and_label_skip(self) -> None:
+        self.assertIn("Swatinem/rust-cache@v2", self.rust)
+        self.assertIn("workspaces: rust", self.rust)
+        self.assertIn("github.event.label.name == 'ci:full'", self.rust)
+        self.assertIn("github.event.label.name == 'enhancement'", self.rust)
+
+    def test_ci_label_events_skip_linux_except_retrigger(self) -> None:
+        self.assertIn("github.event.label.name == 'ci:full'", self.ci)
+        self.assertIn("github.event.label.name == 'enhancement'", self.ci)
+        self.assertIn("github.event.action != 'labeled'", self.ci)
+        self.assertIn("tests skipped for a draft or non-retrigger label event", self.ci)
+        self.assertIn("name: linux-gates", self.ci)
+        self.assertIn("ready_for_review", self.ci)
+        self.assertIn("github.event.pull_request.draft != true", self.ci)
+
+    def test_non_test_jobs_use_github_hosted(self) -> None:
+        filter_job = self.ci.split("\n  linux:\n", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", filter_job)
+        gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", gates)
+        self.assertIn("name: linux-gates", self.ci)
+        rust_filter = self.rust.split("\n  rust-book:\n", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", rust_filter)
+        self.assertIn("github.event.pull_request.draft != true", self.rust)
+        self.assertIn("ready_for_review", self.rust)
+        linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
+        self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
+
+    def test_pr_lint_uses_github_hosted(self) -> None:
+        self.assertIn("runs-on: ubuntu-latest", self.pr_lint)
+        self.assertNotIn("blacksmith", self.pr_lint)
 
     def test_agents_code_review_rules(self) -> None:
         self.assertIn("## Code Review Rules", self.agents)

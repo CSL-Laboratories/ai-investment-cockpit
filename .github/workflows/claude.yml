@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "7,37 * * * *"
+    - cron: "7 */2 * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -78,7 +78,7 @@ jobs:
         github.event_name == 'workflow_dispatch' &&
         github.event.inputs.job == 'devin-review-fix'
       )
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     # GITHUB_TOKEN reads collaborator permission (needs only repo metadata,
     # granted with any read scope) and the PR payload. No write scopes here.
@@ -462,7 +462,7 @@ jobs:
 
   event-paths:
     if: github.event_name == 'pull_request'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -488,7 +488,7 @@ jobs:
     concurrency:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       cancel-in-progress: false
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -721,7 +721,7 @@ jobs:
     concurrency:
       group: claude-${{ needs.resolve-pr.outputs.pr_number }}
       cancel-in-progress: false
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -729,7 +729,7 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - name: Fixer loop cap (>=3 claude[bot] commits since last human commit)
+      - name: Fixer loop cap (>=8 claude[bot] commits since last human commit)
         id: cap
         env:
           GH_TOKEN: ${{ github.token }}
@@ -754,13 +754,13 @@ jobs:
             fi
           done < <(printf '%s\n' "$commits" | tac)
           echo "claude[bot] commits since last human commit: $count"
-          if [ "$count" -ge 3 ]; then
+          if [ "$count" -ge 8 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             marker="<!-- claude-fixer-loop-cap:$HEAD_SHA -->"
             # Buffer the full listing first: grep -q on a live pipe can SIGPIPE gh under pipefail.
             existing="$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" --jq '.[].body')"
             if ! grep -qF "$marker" <<< "$existing"; then
-              body="$marker"$'\n'"Claude PR Fixer paused: $count consecutive claude[bot] commits on this PR since the last human commit (cap is 3). A human needs to look at the remaining Devin findings; pushing a human commit re-arms the fixer."
+              body="$marker"$'\n'"Claude PR Fixer paused: $count consecutive claude[bot] commits on this PR since the last human commit (cap is 8). A human needs to look at the remaining Devin findings; pushing a human commit re-arms the fixer."
               gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
             fi
           else
@@ -979,13 +979,13 @@ jobs:
           CLAUDE_DENIALS_REPORT
 
   conflict-scan:
-    # Push to the default branch, a 30-minute schedule, or manual dispatch
+    # Push to the default branch, a 2-hour schedule, or manual dispatch
     # that is not the batched fixer (CSL-103).
     if: >-
       github.event_name == 'push' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.job != 'devin-review-fix')
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
       group: claude-conflict-scan
@@ -1038,7 +1038,7 @@ jobs:
           MERGEABLE_BUDGET_SECONDS = 120.0
           MAX_RETRY_REQUESTS = 100
           MAX_DETAIL_PRS = 200  # per scan; the window rotates every scan so no PR starves
-          ROTATION_SECONDS = 1800
+          ROTATION_SECONDS = 7200
           MAX_RUN_PAGES = 5
           FIXER_EVENTS = frozenset(
               {
@@ -1187,7 +1187,7 @@ jobs:
               computed lazily: retries share one time budget, never sleep after the last
               attempt, and stop after the deadline or once MAX_RETRY_REQUESTS retries are
               spent. At most MAX_DETAIL_PRS PRs are fetched per scan, from a window that
-              rotates with wall-clock time (one step per 30-minute schedule), so the scan
+              rotates with wall-clock time (one step per 2-hour schedule), so the scan
               stays bounded and every PR is reached within a few scans. Pending PRs are
               skipped.
               """
@@ -1313,7 +1313,7 @@ jobs:
       # Same per-PR group as the @claude/Devin fixers: serializes every Claude push to this branch.
       group: claude-${{ matrix.pr.number }}
       cancel-in-progress: false
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write

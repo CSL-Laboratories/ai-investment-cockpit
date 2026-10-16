@@ -19,12 +19,19 @@ name: ci
 #                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
 #                  rounding error next to the $50 budget.
 #
+# Label add/remove does not re-run the Linux matrix except `ci:full`
+# (Windows/macOS gate) and `enhancement` (manual re-trigger). Draft PRs skip
+# the test jobs. linux-gates still runs (GitHub-hosted) so the required check
+# reports success. Non-test jobs (filter, linux-gates) use ubuntu-latest;
+# the public repo does not pay for those minutes. The Python linux/windows
+# matrix stays on Blacksmith.
+#
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   push:
     branches: [main]
   schedule:
@@ -44,9 +51,22 @@ concurrency:
 jobs:
   filter:
     name: filter
+    if: >
+      github.event_name != 'pull_request' ||
+      (
+        github.event.pull_request.draft != true &&
+        (
+          (
+            github.event.action != 'labeled' &&
+            github.event.action != 'unlabeled'
+          ) ||
+          github.event.label.name == 'ci:full' ||
+          github.event.label.name == 'enhancement'
+        )
+      )
     permissions:
       contents: read
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       run-tests: ${{ steps.decide.outputs.run-tests }}
@@ -164,31 +184,40 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
-  # when Linux was skipped because the change is docs-only. Configure branch
-  # protection / rulesets to require exactly this name: linux-gates
+  # when Linux was skipped (docs-only, draft PR, or a non-retrigger label event).
+  # Configure branch protection / rulesets to require exactly this name: linux-gates
   linux-gates:
     name: linux-gates
     permissions:
       contents: read
     needs: [filter, linux]
     if: always() && !cancelled() && github.event_name != 'schedule'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Required Linux gate
+        env:
+          FILTER_RESULT: ${{ needs.filter.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           set -euo pipefail
-          filter="${{ needs.filter.result }}"
-          linux="${{ needs.linux.result }}"
-          echo "filter=${filter} linux=${linux}"
-          if [ "$filter" != "success" ]; then
+          echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT} action=${EVENT_ACTION} draft=${PR_DRAFT}"
+          if [ "$FILTER_RESULT" = "skipped" ] && [ "$EVENT_NAME" = "pull_request" ] && \
+             { [ "$PR_DRAFT" = "true" ] || [ "$EVENT_ACTION" = "labeled" ] || [ "$EVENT_ACTION" = "unlabeled" ]; }; then
+            echo "linux-gates: tests skipped for a draft or non-retrigger label event; required check passes."
+            exit 0
+          fi
+          if [ "$FILTER_RESULT" != "success" ]; then
             echo "filter job did not succeed"
             exit 1
           fi
-          if [ "$linux" = "success" ] || [ "$linux" = "skipped" ]; then
+          if [ "$LINUX_RESULT" = "success" ] || [ "$LINUX_RESULT" = "skipped" ]; then
             exit 0
           fi
-          echo "linux matrix result=${linux}"
+          echo "linux matrix result=${LINUX_RESULT}"
           exit 1
 
   windows:

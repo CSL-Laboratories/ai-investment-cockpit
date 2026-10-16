@@ -14,6 +14,10 @@ name: rust
 # The platform gate lives in `filter`. A job-level `if` cannot read `matrix`
 # (GitHub evaluates it before the matrix exists, and the run fails with zero
 # jobs). `filter` emits only the cells that should start.
+# Label add/remove does not start cells except `ci:full` and `enhancement`.
+# Draft PRs skip the test cells. `filter` is GitHub-hosted; rust-book stays
+# on Blacksmith. Windows cells use Blacksmith 2 vCPU (same as ci.yml).
+# Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
 #
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
 # Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
@@ -22,7 +26,7 @@ name: rust
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     paths:
       - "rust/**"
       - "app/quant/book/**"
@@ -57,7 +61,20 @@ concurrency:
 jobs:
   filter:
     name: filter
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: >
+      github.event_name != 'pull_request' ||
+      (
+        github.event.pull_request.draft != true &&
+        (
+          (
+            github.event.action != 'labeled' &&
+            github.event.action != 'unlabeled'
+          ) ||
+          github.event.label.name == 'ci:full' ||
+          github.event.label.name == 'enhancement'
+        )
+      )
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.gate.outputs.matrix }}
@@ -76,8 +93,8 @@ jobs:
           ]
           if os.environ["RUN_WINDOWS"] == "true":
               include.extend([
-                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
               ])
           if os.environ["RUN_MACOS"] == "true":
               include.append(
@@ -104,6 +121,9 @@ jobs:
           # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
           # makes rustup download a second toolchain and then test 1.83.0.
           toolchain: "1.83.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

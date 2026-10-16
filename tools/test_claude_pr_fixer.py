@@ -562,6 +562,19 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("github.event.issue.pull_request", resolve)
         self.assertIn("head_sha: ${{ steps.pr.outputs.head_sha }}", resolve)
 
+    def test_all_jobs_use_github_hosted_runners(self) -> None:
+        for name in (
+            "resolve-pr",
+            "event-paths",
+            "claude-mention",
+            "devin-review-fix",
+            "conflict-scan",
+            "conflict-resolve",
+        ):
+            header = self._job(name).split("steps:")[0]
+            self.assertIn("runs-on: ubuntu-latest", header, name)
+            self.assertNotIn("blacksmith-", header, name)
+
     def _job(self, name: str) -> str:
         marker = f"  {name}:"
         start = self.text.find(marker)
@@ -1026,13 +1039,16 @@ class ConflictJobStructureTests(unittest.TestCase):
         return WorkflowStructureTests._job(self, name)  # type: ignore[arg-type]
 
     def test_triggers_are_bounded(self) -> None:
-        self.assertIn('cron: "7,37 * * * *"', self.text)
+        self.assertIn('cron: "7 */2 * * *"', self.text)
+        self.assertNotIn('cron: "7,37 * * * *"', self.text)
         self.assertIn("workflow_dispatch:", self.text)
         scan = self._job("conflict-scan")
         self.assertIn("contents: read", scan)
         self.assertNotIn("write", scan.split("steps:")[0])
         self.assertIn("GH_TOKEN: ${{ github.token }}", scan)
         self.assertIn("actions: read", scan)
+        self.assertIn("runs-on: ubuntu-latest", scan.split("steps:")[0])
+        self.assertNotIn("blacksmith", scan.split("steps:")[0])
 
     def test_resolver_keeps_protections(self) -> None:
         job = self._job("conflict-resolve")
@@ -1138,29 +1154,35 @@ class FixerLoopCapTests(unittest.TestCase):
             posted = (d / "posted").read_text(encoding="utf-8") if (d / "posted").exists() else ""
             return out.read_text(encoding="utf-8"), posted
 
-    def test_three_claude_commits_after_human_skips_and_comments(self) -> None:
-        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 3, [])
+    def test_eight_claude_commits_after_human_skips_and_comments(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 8, [])
         self.assertIn("skip=true", out)
         self.assertEqual(posted.count("posted"), 1)
 
-    def test_two_claude_commits_runs(self) -> None:
-        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 2, [])
+    def test_seven_claude_commits_runs(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 7, [])
         self.assertIn("skip=false", out)
         self.assertEqual(posted, "")
 
     def test_human_commit_resets_streak(self) -> None:
-        c = [("claude[bot]", "claude[bot]")] * 3 + [("bob", "Bob")] + [("claude[bot]", "claude[bot]")] * 2
+        c = [("claude[bot]", "claude[bot]")] * 8 + [("bob", "Bob")] + [("claude[bot]", "claude[bot]")] * 7
         out, _ = self._run(c, [])
         self.assertIn("skip=false", out)
 
     def test_other_bot_does_not_reset_streak(self) -> None:
-        c = [("alice", "Alice"), ("claude[bot]", "claude[bot]"), ("github-actions[bot]", "github-actions[bot]"),
-             ("claude[bot]", "claude[bot]"), ("claude[bot]", "claude[bot]")]
+        c = (
+            [("alice", "Alice")]
+            + [("claude[bot]", "claude[bot]")] * 4
+            + [("github-actions[bot]", "github-actions[bot]")]
+            + [("claude[bot]", "claude[bot]")] * 4
+        )
         out, _ = self._run(c, [])
         self.assertIn("skip=true", out)
 
     def test_existing_marker_suppresses_duplicate_comment(self) -> None:
-        out, posted = self._run([("claude[bot]", "claude[bot]")] * 3, ["<!-- claude-fixer-loop-cap:abc123 -->"])
+        out, posted = self._run(
+            [("claude[bot]", "claude[bot]")] * 8, ["<!-- claude-fixer-loop-cap:abc123 -->"]
+        )
         self.assertIn("skip=true", out)
         self.assertEqual(posted, "")
 
