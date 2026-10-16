@@ -39,6 +39,8 @@ on:
       - "app/tests/quant/test_costs_rust_parity.py"
       - "app/tests/quant/test_w21_cost_model.py"
       - ".github/workflows/rust.yml"
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
     paths:
@@ -79,7 +81,8 @@ permissions:
 
 concurrency:
   # Same-head label reruns supersede PR runs; stale label context cannot cancel a newer head.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
+  # merge_group uses merge_group.head_ref so queue entries do not share a PR group.
+  group: rust-${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.event.merge_group.head_ref || (inputs.pr_number || github.event.pull_request.number || github.ref) }}-${{ github.event_name == 'merge_group' && 'merge' || (inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch') }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
   cancel-in-progress: true
 
 jobs:
@@ -90,6 +93,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.gate.outputs.matrix }}
+      has-cells: ${{ steps.gate.outputs.has-cells }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,33 +121,74 @@ jobs:
       - name: Choose hosted cells
         id: gate
         env:
-          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          SKIP_CELLS: ${{ github.event_name == 'push' }}
+          CHECK_PATHS: ${{ github.event_name == 'merge_group' }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
           RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
         run: |
+          set -euo pipefail
+          if [ "${CHECK_PATHS}" = "true" ] && [ -z "${DIFF_FILES+x}" ]; then
+            base="${{ github.event.merge_group.base_sha }}"
+            head="${{ github.event.merge_group.head_sha }}"
+            git fetch --depth=1 origin "$base" "$head" || true
+            DIFF_FILES="$(git diff --name-only "$base" "$head" || printf 'rust/\n')"
+            export DIFF_FILES
+          fi
           python3 - <<'PY'
           import json, os
-          include = [
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
-          ]
-          if os.environ["RUN_WINDOWS"] == "true":
-              include.extend([
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
-              ])
-          if os.environ["RUN_MACOS"] == "true":
-              include.append(
-                  {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
-              )
+
+          RUST_PATHS = (
+              "rust/",
+              "app/quant/book/",
+              "app/quant/costs.py",
+              "app/quant/pnl.py",
+              "app/tests/quant/book/",
+              "app/tests/quant/test_pnl.py",
+              "app/tests/quant/test_costs_rust_parity.py",
+              "app/tests/quant/test_w21_cost_model.py",
+              ".github/workflows/rust.yml",
+          )
+
+          def relevant(files):
+              for raw in files.splitlines():
+                  f = raw.strip()
+                  if not f:
+                      continue
+                  for prefix in RUST_PATHS:
+                      if prefix.endswith("/"):
+                          if f.startswith(prefix) or f == prefix.rstrip("/"):
+                              return True
+                      elif f == prefix:
+                          return True
+              return False
+
+          include = []
+          if os.environ.get("SKIP_CELLS") != "true" and (
+                  os.environ.get("CHECK_PATHS") != "true" or relevant(os.environ.get("DIFF_FILES", "rust/"))):
+              include = [
+                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
+                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
+              ]
+              if os.environ["RUN_WINDOWS"] == "true":
+                  include.extend([
+                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+                  ])
+              if os.environ["RUN_MACOS"] == "true":
+                  include.append(
+                      {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
+                  )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("matrix<<EOF\n")
               fh.write(json.dumps({"include": include}))
               fh.write("\nEOF\n")
+              fh.write(f"has-cells={'true' if include else 'false'}\n")
           PY
 
   rust-book:
     name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
     needs: filter
+    if: needs.filter.outputs.has-cells == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:

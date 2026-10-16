@@ -1,0 +1,56 @@
+name: review-gate
+
+# Never path-skipped. Required check name: review-gate.
+# On pull_request, pass only if the Devin Review check succeeded on the head SHA.
+# Polls so a later Devin completion is observed without a check_run trigger
+# (a skipped required check on unrelated check_run events would pass).
+# On merge_group, pass: the PR already needed this check to enter the queue.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-gate:
+    name: review-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Require Devin Review on the PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            echo "merge_group: review-gate passes"
+            exit 0
+          fi
+          echo "Waiting for Devin Review success on ${SHA}"
+          for _ in $(seq 1 80); do
+            mapfile -t conclusions < <(gh api --paginate "repos/${REPO}/commits/${SHA}/check-runs?per_page=100" \
+              --jq '.check_runs[] | select(.name == "Devin Review") | .conclusion')
+            if printf '%s\n' "${conclusions[@]-}" | grep -qx success; then
+              echo "Devin Review succeeded on ${SHA}"
+              exit 0
+            fi
+            if printf '%s\n' "${conclusions[@]-}" | grep -Eqx 'failure|cancelled|timed_out|startup_failure'; then
+              echo "::error::Devin Review did not succeed on ${SHA} (conclusion=$(printf '%s ' "${conclusions[@]}"))"
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Devin Review did not succeed on ${SHA} within the poll window"
+          exit 1
