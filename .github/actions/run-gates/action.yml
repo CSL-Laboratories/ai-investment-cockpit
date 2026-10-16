@@ -30,6 +30,9 @@ runs:
         else
           echo "$GITHUB_WORKSPACE/.venv/Scripts" >> "$GITHUB_PATH"
         fi
+    - name: Verify dependency installer regressions
+      shell: bash
+      run: python -X utf8 -B tools/test_run_gates_action.py
     - name: Lint
       working-directory: app
       shell: bash
