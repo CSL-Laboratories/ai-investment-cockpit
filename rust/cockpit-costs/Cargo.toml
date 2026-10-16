@@ -1,0 +1,9 @@
+[package]
+name = "cockpit-costs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Fee schedule and PnL attribution (QT-04). Paper simulator arithmetic only."
+license = "UNLICENSED"
+
+[dependencies]
