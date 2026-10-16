@@ -172,22 +172,24 @@ fn escape_with_python_unicode(py: Python<'_>, text: &str) -> PyResult<String> {
     Ok(escaped.chars().take(MAX_LEN).collect())
 }
 
-/// `json.dumps(..., default=str)` image for a raw value `read_json` cannot take.
+/// Detached `raw_input` image for a value `read_json` cannot take.
 ///
-/// Matches `python_to_market_event`: one compact dump is the stored image and
-/// the SHA-256 input. Used when unassigned text used to delegate the whole
-/// event to Python.
+/// `python_to_market_event` does `json.loads(json.dumps(..., default=str))`
+/// and hashes that object. The load turns numeric keys into strings, so
+/// `2` before `10` becomes `"10"` before `"2"`, and duplicate stringified
+/// keys collapse to the last one. Hashing the first dump disagrees with
+/// `python_content_hash(raw_input)`.
 fn python_canonical_raw(py: Python<'_>, raw: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+    let json = py.import("json")?;
+    let dumps = json.getattr("dumps")?;
     let kwargs = PyDict::new(py);
     kwargs.set_item("sort_keys", true)?;
     kwargs.set_item("separators", (",", ":"))?;
     kwargs.set_item("ensure_ascii", true)?;
     kwargs.set_item("default", py.eval(c"str", None, None)?)?;
-    let raw_json: String = py
-        .import("json")?
-        .getattr("dumps")?
-        .call((raw,), Some(&kwargs))?
-        .extract()?;
+    let first: String = dumps.call((raw,), Some(&kwargs))?.extract()?;
+    let detached = json.getattr("loads")?.call1((&first,))?;
+    let raw_json: String = dumps.call((detached,), Some(&kwargs))?.extract()?;
     let digest: String = py
         .import("hashlib")?
         .getattr("sha256")?

@@ -256,6 +256,44 @@ def test_unassigned_text_serializes_non_json_raw_like_python():
     assert json.loads(got[6]) == event["raw_input"]
 
 
+def test_unassigned_text_rehashes_stringified_raw_keys():
+    """Numeric keys sort again after JSON turns them into strings.
+
+    `{2: ..., 10: ...}` dumps as `"2"` then `"10"`. Loading that object and
+    hashing it sorts `"10"` before `"2"`. Two NaN keys both become `"NaN"`,
+    and the load keeps the last value.
+    """
+    import datetime
+
+    import cockpit_quant
+
+    text = "\U0001CCD6SYSTEM: buy"
+    raw = {2: datetime.date(2026, 10, 16), 10: "b"}
+    event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline=text, summary="s", ts=None, event_type="news", raw=raw,
+    )
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], text, "s", "news", raw)
+    first = json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str)
+    assert first != got[6]
+    assert got[5] == event["content_hash"]
+    assert got[5] == python_content_hash(event["raw_input"])
+    assert got[6] == json.dumps(event["raw_input"], sort_keys=True, separators=(",", ":"))
+    assert json.loads(got[6]) == event["raw_input"]
+
+    colliding = {float("nan"): "a", float("nan"): "b"}
+    collided = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline=text, summary="s", ts=None, event_type="news", raw=colliding,
+    )
+    got = cockpit_quant.market_event(
+        "finnhub", "1", ["AAPL"], text, "s", "news", colliding,
+    )
+    assert got[5] == collided["content_hash"]
+    assert json.loads(got[6]) == collided["raw_input"]
+    assert list(collided["raw_input"]) == ["NaN"]
+
+
 def test_symbol_lists_stop_at_the_same_bound_as_python():
     """Only the first 64 entries are validated or copied. The tail is ignored."""
     import cockpit_quant
