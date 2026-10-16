@@ -12,7 +12,7 @@
   "contracts": [
     {
       "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
-      "sha256": "801d11dc4ce01ece9ebfba99cb10e40e85cfffae79ee69853f3ef3b8fd73d320"
+      "sha256": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487"
     },
     {
       "path": "docs/replacement/ISSUE-CONTRACT.md",
@@ -20,7 +20,7 @@
     },
     {
       "path": "docs/replacement/MONTH-PROGRAM.md",
-      "sha256": "73a1e0a0809e94e83d26c36cc30c89a004db89f87a729b56c0b67a4e8e1f87ee"
+      "sha256": "cd46235c7d562c2587d4eb4d8ea7557fa1958a12c4dd0e6dc45c5822eea3b41a"
     },
     {
       "path": "docs/replacement/SCOPE-AUDIT.md",
@@ -42,7 +42,7 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
       "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
       "dependencies": [],
       "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
@@ -266,7 +266,7 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
       "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
       "dependencies": [
         "O1",
@@ -331,9 +331,11 @@
         "No live authority, credentials, capital movement or inferred acceptance."
       ],
       "inherited_decisions": [
-        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI.",
+        "A proposal-only is the qualification reference; C bounded direct authorization is the future target only after separate gates.",
+        "A, B and C are restrictive signed profiles over one independent enforcement layer, not a global autonomy switch."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
       "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
       "dependencies": [
         "O1",
@@ -344,10 +346,15 @@
       "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
       "discretion_class": "human_gated",
       "falsifiers": [
-        "Semantic drift, stale evidence, implicit promotion or widened authority."
+        "Any provider output, typed decision or confidence value becomes a credential or authority grant.",
+        "Any profile bypasses the sole execution path, weakens an applicable floor or silently widens legal/account/venue scope.",
+        "Expired or revoked authority works, aggregate caps can be split or raced, or a stop/restart loses unknown orders or fills.",
+        "Demo, paper, shadow, API success or model agreement is promoted to live eligibility or economic qualification."
       ],
       "deliverables": [
-        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+        "Versioned A/B/C profile schema with exact perimeter, expiry, cumulative budgets, stop/recovery ownership and evidence links.",
+        "Independent enforcement, atomic reservation/reconciliation and persistent stop/restart contracts.",
+        "Capability-scoped qualification matrix, adversarial negative controls and unresolved legal/venue/provider decision ledger."
       ],
       "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
       "independent_verification": "Independent verifier reruns the exact candidate and negative controls.",
@@ -407,7 +414,7 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
       "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
       "dependencies": [
         "O1",
@@ -569,7 +576,7 @@
       "inherited_decisions": [
         "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
       ],
-      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions.",
+      "research_basis": "Local audit and accepted source records; child issues must pin current official facts and API/library versions. Completed Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 is reconciled as research input only.",
       "research_budget": "One bounded reconciliation pass; stop at a reviewable candidate, falsifiers, unknowns and smallest experiments.",
       "dependencies": [
         "O1",
@@ -658,5 +665,24 @@
       "completion_gate_status": "pending_outcome_artifact"
     }
   ],
-  "manifest_gate": "python -X utf8 -B tools/check_replacement_program.py"
+  "manifest_gate": "python -X utf8 -B tools/check_replacement_program.py",
+  "research_evidence": {
+    "authority_compliance": {
+      "run_id": "trun_db705696fec649d8ad991d8f8f7b7813",
+      "status": "completed",
+      "research_cutoff": "2026-10-16",
+      "claim": "research_input_only",
+      "reconciliation_path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+      "owner_direction": "A is the qualification reference; C bounded direct authorization is the future target only after separate accepted gates.",
+      "not_claimed": [
+        "legal_advice",
+        "account_or_venue_eligibility",
+        "provider_permission",
+        "live_authority",
+        "economic_qualification",
+        "release_qualification"
+      ],
+      "sha256": "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938"
+    }
+  }
 }

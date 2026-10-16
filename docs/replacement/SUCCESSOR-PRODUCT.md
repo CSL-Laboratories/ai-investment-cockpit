@@ -39,6 +39,11 @@ inferred from historical implementation.
   bypass switch. The eventual first live target is bounded direct authorization only
   after separately accepted eligibility, replay, simulation, demo or paper, shadow,
   limited-live, recovery and compliance gates.
+  [The completed authority research](AUTHORITY-COMPLIANCE-RESEARCH.md) makes A
+  proposal-only the reference qualification profile and C bounded direct
+  authorization the owner-selected future target. All profiles share one independent
+  enforcement and evidence layer. A provider response, typed decision or confidence
+  value is an input, never permission.
 - A GUI and scriptable CLI use one versioned application/service API and the same
   authority checks. A TUI is optional and must be justified by measured operator
   value. No surface owns a privileged order path.
@@ -95,6 +100,14 @@ implemented:
 - raw inputs remain separate from summaries;
 - the current post-PDT risk model remains in force;
 - agents do not enable live trading or add live credentials.
+
+Future authority-profile amendments must separately bind the exact legal/account
+perimeter, venue and contract family, adapter/environment, provider/model version,
+permitted actions, expiry, cumulative budgets, information restrictions, stop and
+recovery owners, evidence dossier and human receipt. Stops survive restart; restart
+requires authoritative reconciliation and fresh authorization. Unknown eligibility,
+execution state or provider permission fails closed rather than selecting a more
+permissive profile.
 
 ## Acceptance boundary
 

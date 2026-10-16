@@ -12,8 +12,10 @@ Read in this order:
 1. [SUCCESSOR-PRODUCT.md](SUCCESSOR-PRODUCT.md) for product intent and non-goals.
 2. [SCOPE-AUDIT.md](SCOPE-AUDIT.md) for source archaeology and reusable contracts.
 3. [ISSUE-CONTRACT.md](ISSUE-CONTRACT.md) for research, discretion and evidence rules.
-4. [MONTH-PROGRAM.md](MONTH-PROGRAM.md) for outcome order and checkpoints.
-5. [program.json](program.json) for the machine-readable candidate.
+4. [AUTHORITY-COMPLIANCE-RESEARCH.md](AUTHORITY-COMPLIANCE-RESEARCH.md) for
+   the reconciled A/B/C authority research, owner direction and unresolved gaps.
+5. [MONTH-PROGRAM.md](MONTH-PROGRAM.md) for outcome order and checkpoints.
+6. [program.json](program.json) for the machine-readable candidate.
 
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until

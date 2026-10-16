@@ -30,6 +30,9 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][0]["evidence"].update(not_claimed=["release_qualified"]),
             lambda p: p["outcomes"][0].pop("independent_verification"),
             lambda p: p["authority"].update(live_authority_granted=True),
+            lambda p: p["research_evidence"]["authority_compliance"].update(status="running"),
+            lambda p: p["research_evidence"]["authority_compliance"].update(claim="live_qualified"),
+            lambda p: p["research_evidence"]["authority_compliance"].update(sha256="0" * 64),
         ]
         for mutation in mutations:
             candidate = copy.deepcopy(self.program)

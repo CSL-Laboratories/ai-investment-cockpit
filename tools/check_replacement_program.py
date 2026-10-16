@@ -84,6 +84,18 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(authority.get("live_authority_granted") is False, "candidate grants live authority")
     _require(authority.get("contract_acceptance") == "pending_human_digest_receipt", "contract acceptance inferred")
 
+    research = program.get("research_evidence", {}).get("authority_compliance", {})
+    _require(research.get("run_id") == "trun_db705696fec649d8ad991d8f8f7b7813", "authority research run missing")
+    _require(research.get("status") == "completed", "authority research incomplete")
+    _require(research.get("research_cutoff") == "2026-10-16", "authority research cutoff missing")
+    _require(research.get("claim") == "research_input_only", "authority research over-promoted")
+    research_path = research.get("reconciliation_path")
+    _require(research_path == "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md", "authority reconciliation path mismatch")
+    research_file = root / research_path
+    _require(research_file.is_file(), "authority reconciliation file missing")
+    _require(re.fullmatch(r"[0-9a-f]{64}", research.get("sha256", "")) is not None, "authority reconciliation digest invalid")
+    _require(_digest(research_file) == research["sha256"], "authority reconciliation digest mismatch")
+
     contracts = program.get("contracts")
     _require(isinstance(contracts, list) and contracts, "contracts missing")
     contract_paths = [item.get("path") for item in contracts]
