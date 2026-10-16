@@ -40,7 +40,6 @@ def evaluate(expression, **overrides):
         'github.event.pull_request.labels.*.name': [],
         'github.event.label.name': '',
         'github.event.pull_request.number': 149,
-        'github.event.action': '',
         'needs.filter.result': 'success',
         'needs.settle.result': 'success',
         'github.event.merge_group.head_ref': 'refs/heads/feature',
