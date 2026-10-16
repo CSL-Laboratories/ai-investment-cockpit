@@ -23,7 +23,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GATE_PATH = ROOT / "scripts" / "ci" / "claude_pr_fixer_gate.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "claude.yml"
+SCAN_WORKFLOW_PATH = ROOT / ".github" / "workflows" / "conflict-scan.yml"
 HEREDOC = "CLAUDE_PR_FIXER_GATE"
+SCAN_CRON = 'cron: "11,41 * * * *"'
 REPO = "acme/example"
 
 
@@ -522,6 +524,9 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_prompt_treats_review_and_files_as_untrusted(self) -> None:
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
+        self.assertIn("Linear-first (CSL-88)", self.text)
+        combined = self.text + "\n" + SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertGreaterEqual(combined.count("Linear-first (CSL-88)"), 6)
 
     def test_tool_allowlist_and_denials(self) -> None:
         self.assertIn("--allowedTools", self.text)
@@ -684,6 +689,11 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("prompt: |", body, job)
             self.assertIn("commit SHA", body, job)
             self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
+            allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            self.assertIn("Bash(gh api repos/*/pulls/*/comments/*/replies:*)", allow, job)
+            self.assertNotIn("resolveReviewThread", allow, job)
+            self.assertNotIn("fix or a rationale", body, job)
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
             self.assertIn("UNTRUSTED DATA", body, job)
@@ -710,9 +720,11 @@ class FixerGateAndPromptTests(unittest.TestCase):
 
     def test_embedded_denials_match_source(self) -> None:
         start = f"python3 - \"$EXECUTION_FILE\" <<'{DENIALS_HEREDOC}'\n"
-        self.assertEqual(self.text.count(start), 3)
+        combined = self.text + "\n" + SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertEqual(self.text.count(start), 2)
+        self.assertEqual(combined.count(start), 3)
         source = DENIALS_PATH.read_text(encoding="utf-8").rstrip("\n")
-        for chunk in self.text.split(start)[1:]:
+        for chunk in combined.split(start)[1:]:
             embedded = textwrap.dedent(chunk[: chunk.find(DENIALS_HEREDOC)]).rstrip("\n")
             self.assertEqual(embedded, source)
 
@@ -1002,7 +1014,7 @@ class ConflictScanTests(unittest.TestCase):
         self.assertIn("skip=protected-head", audit[0])
 
     def test_embedded_scan_matches_source(self) -> None:
-        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
         start = f"python3 - <<'{SCAN_HEREDOC}'\n"
         self.assertEqual(text.count(start), 1)
         chunk = text.split(start, 1)[1]
@@ -1013,13 +1025,33 @@ class ConflictScanTests(unittest.TestCase):
 class ConflictJobStructureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        cls.fixer = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     def _job(self, name: str) -> str:
         return WorkflowStructureTests._job(self, name)  # type: ignore[arg-type]
 
+    def test_schedule_lives_in_dedicated_workflow(self) -> None:
+        fixer_on = self.fixer.split("jobs:", 1)[0]
+        scan_on = self.text.split("jobs:", 1)[0]
+        self.assertNotIn("schedule:", fixer_on)
+        self.assertNotIn("\n  push:\n", fixer_on)
+        self.assertIn("workflow_dispatch:", fixer_on)
+        self.assertIn("repository_dispatch:", fixer_on)
+        self.assertNotIn("\n  conflict-scan:\n", self.fixer)
+        self.assertNotIn("\n  conflict-resolve:\n", self.fixer)
+        self.assertIn(SCAN_CRON, scan_on)
+        self.assertIn("workflow_dispatch:", scan_on)
+        on_block = scan_on.split("\non:", 1)[1].split("\npermissions:", 1)[0]
+        on_keys = [
+            line.strip().rstrip(":")
+            for line in on_block.splitlines()
+            if line.startswith("  ") and not line.startswith("    ") and line.rstrip().endswith(":")
+        ]
+        self.assertEqual(on_keys, ["push", "schedule", "workflow_dispatch"])
+
     def test_triggers_are_bounded(self) -> None:
-        self.assertIn('cron: "7,37 * * * *"', self.text)
+        self.assertIn(SCAN_CRON, self.text)
         self.assertIn("workflow_dispatch:", self.text)
         scan = self._job("conflict-scan")
         self.assertIn("contents: read", scan)
@@ -1044,6 +1076,9 @@ class ConflictJobStructureTests(unittest.TestCase):
             self.assertIn(f'"Edit({path})"', job)
             self.assertIn(f'"Write({path})"', job)
         self.assertIn("tools/test_claude_pr_fixer.py.", job.split("--allowedTools", 1)[0])
+        allow = job.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+        self.assertNotIn("comments/*/replies", allow)
+        self.assertNotIn("resolveReviewThread", allow)
         self.assertIn("Bash(git push origin HEAD:refs/heads/${{ matrix.pr.head_ref }})", job)
         self.assertNotIn("HEAD:refs/heads/*", job)
         self.assertIn("Bash(git rebase:*)", job.split("--disallowedTools", 1)[1])
@@ -1063,9 +1098,14 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("Never exit without either pushing or posting that comment", job)
 
     def test_comment_and_review_jobs_ignore_conflict_events(self) -> None:
-        resolve = self._job("resolve-pr")
-        self.assertNotIn("schedule", resolve)
-        self.assertNotIn("'push'", resolve)
+        original = self.text
+        self.text = self.fixer
+        try:
+            resolve = self._job("resolve-pr")
+            self.assertNotIn("schedule", resolve)
+            self.assertNotIn("'push'", resolve)
+        finally:
+            self.text = original
 
 
 class ActionlintTests(unittest.TestCase):
@@ -1074,7 +1114,7 @@ class ActionlintTests(unittest.TestCase):
         if not exe:
             self.skipTest("actionlint not on PATH")
         result = subprocess.run(
-            [exe, "-color", str(WORKFLOW_PATH)],
+            [exe, "-color", str(WORKFLOW_PATH), str(SCAN_WORKFLOW_PATH)],
             cwd=ROOT,
             check=False,
             capture_output=True,
@@ -1156,17 +1196,33 @@ class FixerLoopCapTests(unittest.TestCase):
 
     def test_fixer_steps_gated_on_cap(self) -> None:
         start = self.text.index("  devin-review-fix:\n")
-        job = self.text[start:self.text.index("\n  conflict-scan:\n", start)]
+        job = self.text[start:]
         steps = job.split("        id: cap\n", 1)[1].split("\n      - ")[1:]
         self.assertTrue(steps)
         for step in steps:
             self.assertIn("steps.cap.outputs.skip != 'true'", step)
 
     def test_conflict_resolve_waits_for_devin_on_claude_head(self) -> None:
-        job = self.text[self.text.index("  conflict-resolve:\n"):]
+        text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        job = text[text.index("  conflict-resolve:\n"):]
         self.assertIn("devin-ai-integration[bot]", job)
         self.assertIn(".commit_id == ", job)
         self.assertIn("Devin review of head is pending", job)
+
+
+class ConflictResolvePushSkipTests(unittest.TestCase):
+    """CSL-107: claude-code-action@v1 rejects push; skip resolve on that event."""
+
+    def test_resolver_job_skips_push(self) -> None:
+        text = SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        start = text.index("  conflict-resolve:\n")
+        nxt = text.find("\n  ", start + len("  conflict-resolve:"))
+        while nxt != -1 and text[nxt + 3 : nxt + 4] in (" ", "\t"):
+            nxt = text.find("\n  ", nxt + 1)
+        job = text[start:] if nxt == -1 else text[start:nxt]
+        header = job.split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", header)
+        self.assertIn("needs.conflict-scan.outputs.count != '0'", header)
 
 
 if __name__ == "__main__":
