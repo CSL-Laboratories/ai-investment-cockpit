@@ -229,6 +229,25 @@ def test_direct_content_hash_accepts_default_str_values():
     assert cockpit_quant.content_hash(lied) != python_content_hash(123)
     assert cockpit_quant.content_hash(2**65) == python_content_hash(2**65)
 
+    class Reported(dict):
+        def items(self):
+            return [("reported", 2)]
+
+    skewed = Reported({"actual": 1})
+    assert cockpit_quant.content_hash(skewed) == python_content_hash(skewed)
+    assert cockpit_quant.content_hash(skewed) != python_content_hash({"actual": 1})
+    nested = {"outer": skewed}
+    assert cockpit_quant.content_hash(nested) == python_content_hash(nested)
+    event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=None, event_type="news", raw=skewed,
+    )
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", skewed)
+    assert got[5] == event["content_hash"]
+    assert got[6] == json.dumps(
+        event["raw_input"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
     """``ts`` is applied in Python, but a lone surrogate must not take the native call."""

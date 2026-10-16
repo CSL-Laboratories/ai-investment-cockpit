@@ -72,7 +72,15 @@ fn read_json_at(
     if obj.is_instance_of::<PyString>() {
         return Ok(Json::Str(obj.extract()?));
     }
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if obj.is_instance_of::<PyDict>() {
+        // `dict.iter()` reads the underlying entries. `json.dumps` calls
+        // `items()`, which a subclass can override with different pairs.
+        if !obj.get_type().is(&PyDict::type_object(obj.py())) {
+            return Err(ReadError::Py(invalid("dict subclass")));
+        }
+        let Ok(dict) = obj.downcast::<PyDict>() else {
+            return Err(ReadError::Py(invalid("dict subclass")));
+        };
         let id = enter_container(obj, visiting, depth)?;
         let mut entries = Vec::new();
         for (key, value) in dict.iter() {
