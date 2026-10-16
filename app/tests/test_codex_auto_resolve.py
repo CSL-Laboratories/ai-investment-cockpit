@@ -587,23 +587,25 @@ def test_retry_mark_latest_cite_when_old_marker_exists():
     assert verdict is not None and verdict.sha == SHA2
 
 
-def test_retry_mark_newer_thread_cite_beats_older_issue_cite():
+def test_cite_sha_prefers_newer_timestamp_across_surfaces():
+    older_issue = comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=2))
+    newer_thread = comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW)
+    assert mod.cite_sha_for_thread([newer_thread, older_issue], THREAD, PAT_LOGIN) == SHA2
+    assert mod.cite_sha_for_thread([older_issue, newer_thread], THREAD, PAT_LOGIN) == SHA2
+
+
+def test_retry_mark_uses_newer_thread_cite_over_older_issue_cite():
     t = thread(
         resolved=True,
         resolved_by=PAT_LOGIN,
-        comments=[
-            comment(CODEX, verdict_body(sha=SHA2)),
-            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW),
-        ],
+        comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW)],
     )
-    latest = mod.latest_verdicts(mod.thread_comments(t))
     reason, verdict = mod.classify_thread(
         t,
         head_sha=SHA2,
-        latest=latest,
+        latest={},
         issue_comments=[
-            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=1)),
-            comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), NOW - timedelta(hours=1)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=2))
         ],
         pat_login=PAT_LOGIN,
     )
@@ -1276,6 +1278,7 @@ def test_missing_resolved_by_after_mutation_does_not_publish_receipt():
     assert remaining == [0]
     assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
     assert not any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
+    assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
     assert any("resolve=posted-unmarked" in line for line in logs)
 
 
