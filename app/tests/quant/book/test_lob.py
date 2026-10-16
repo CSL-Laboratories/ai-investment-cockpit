@@ -308,6 +308,42 @@ def test_snapshot_is_immutable_and_decoupled_from_later_book_mutation(book):
         snap.bids = ()
 
 
+def test_retained_orders_stay_live_across_reduce_cancel_and_replace(book):
+    """Callers keep the object ``add`` returned. ``reduce`` edits that object.
+
+    ``cancel`` returns it and leaves its qty alone. ``replace`` is cancel-plus-add,
+    so the old object stays at its old qty and the book holds a new one.
+    """
+    held = book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=1, ts=1)
+    assert book.get("a") is held
+    assert book.level(Side.BUY, 100).orders["a"] is held
+    assert book._index["a"] is held
+    assert book.our_orders()[0] is held
+
+    assert book.reduce("a", 3) is held
+    assert held.qty == 7
+    assert held.filled_qty == 3
+    assert book.level(Side.BUY, 100).orders["a"] is held
+    assert book.reduce("a", 7) is held
+    assert held.qty == 0
+    assert book.get("a") is None
+    book.check_integrity()
+
+    held = book.add(order_id="b", side=Side.BUY, price_ticks=100, qty=10, owner="mm")
+    assert book.cancel("b") is held
+    assert held.qty == 10
+    assert book.get("b") is None
+
+    held = book.add(order_id="c", side=Side.BUY, price_ticks=100, qty=10, owner="mm", seq=1, ts=1)
+    replaced = book.replace("c", new_qty=4, new_price_ticks=101, seq=8, ts=8)
+    assert replaced is not held
+    assert held.qty == 10
+    assert replaced.qty == 4
+    assert book.get("c") is replaced
+    assert book.level(Side.BUY, 101).orders["c"] is replaced
+    book.check_integrity()
+
+
 def test_snapshot_derived_statistics_agree_with_the_live_book(book):
     book.add(order_id="b", side=Side.BUY, price_ticks=100, qty=900)
     book.add(order_id="a", side=Side.SELL, price_ticks=102, qty=100)
