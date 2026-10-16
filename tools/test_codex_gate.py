@@ -23,6 +23,8 @@ CLAUDE_WORKFLOW = ROOT / ".github" / "workflows" / "claude.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 RUST_WORKFLOW = ROOT / ".github" / "workflows" / "rust.yml"
 PR_LINT_WORKFLOW = ROOT / ".github" / "workflows" / "pr-lint.yml"
+RETRIGGER_WORKFLOW = ROOT / ".github" / "workflows" / "ci-label-retrigger.yml"
+SCAN_WORKFLOW = ROOT / ".github" / "workflows" / "conflict-scan.yml"
 ACTIONLINT = ROOT / ".github" / "actionlint.yaml"
 AGENTS = ROOT / "AGENTS.md"
 REPO = "acme/example"
@@ -1326,6 +1328,8 @@ class WorkflowStructureTests(unittest.TestCase):
         cls.ci = CI_WORKFLOW.read_text(encoding="utf-8")
         cls.rust = RUST_WORKFLOW.read_text(encoding="utf-8")
         cls.pr_lint = PR_LINT_WORKFLOW.read_text(encoding="utf-8")
+        cls.retrigger = RETRIGGER_WORKFLOW.read_text(encoding="utf-8")
+        cls.scan = SCAN_WORKFLOW.read_text(encoding="utf-8")
         cls.actionlint = ACTIONLINT.read_text(encoding="utf-8")
         cls.agents = AGENTS.read_text(encoding="utf-8")
 
@@ -1375,20 +1379,36 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_rust_cache_and_label_skip(self) -> None:
         self.assertIn("Swatinem/rust-cache@v2", self.rust)
         self.assertIn("workspaces: rust", self.rust)
-        self.assertIn("github.event.label.name == 'ci:full'", self.rust)
-        self.assertIn("github.event.label.name == 'enhancement'", self.rust)
+        self.assertIn("ci:full", self.rust)
+        self.assertIn("github.event.label.name == 'enhancement'", self.retrigger)
 
-    def test_ci_label_events_skip_linux_except_retrigger(self) -> None:
-        self.assertIn("github.event.label.name == 'ci:full'", self.ci)
-        self.assertIn("github.event.label.name == 'enhancement'", self.ci)
-        self.assertIn("github.event.action != 'labeled'", self.ci)
-        self.assertIn("needs.filter.result != 'skipped'", self.ci)
-        self.assertNotIn("required check passes.", self.ci)
-        self.assertIn("name: linux-gates", self.ci)
-        self.assertIn("ready_for_review", self.ci)
+    def test_ci_label_events_do_not_start_required_check(self) -> None:
+        on = self.ci.split("jobs:", 1)[0]
+        self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", on)
+        self.assertNotIn("labeled, unlabeled", on)
+        rust_on = self.rust.split("jobs:", 1)[0]
+        self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", rust_on)
+        self.assertNotIn("labeled, unlabeled", rust_on)
         self.assertIn("github.event.pull_request.draft != true", self.ci)
-        self.assertIn("&& 'label'", self.ci)
         self.assertIn("&& 'draft'", self.ci)
+        self.assertNotIn("&& 'label'", self.ci)
+        gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
+        header = gates.split("steps:", 1)[0]
+        self.assertIn("name: linux-gates", self.ci)
+        self.assertIn("always() && !cancelled() && github.event_name != 'schedule'", header)
+        self.assertNotIn("needs.filter.result != 'skipped'", header)
+        self.assertIn('FILTER_RESULT" != "success"', gates)
+        self.assertNotIn("required check passes.", self.ci)
+        retrigger_jobs = self.retrigger.split("\njobs:\n", 1)[1]
+        self.assertNotIn("linux-gates:", retrigger_jobs)
+        self.assertNotIn("name: linux-gates", retrigger_jobs)
+        self.assertIn("github.event.label.name == 'ci:full'", self.retrigger)
+        self.assertIn("github.event.label.name == 'enhancement'", self.retrigger)
+        self.assertIn("gh workflow run ci.yml", self.retrigger)
+        self.assertIn("runs-on: ubuntu-latest", self.retrigger)
+        retrigger_on = self.retrigger.split("jobs:", 1)[0]
+        self.assertIn("types: [labeled]", retrigger_on)
+        self.assertNotIn("unlabeled", retrigger_on.split("jobs:", 1)[0].split("\non:", 1)[-1])
 
     def test_non_test_jobs_use_github_hosted(self) -> None:
         filter_job = self.ci.split("\n  linux:\n", 1)[0]
@@ -1400,8 +1420,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-latest", rust_filter)
         self.assertIn("github.event.pull_request.draft != true", self.rust)
         self.assertIn("ready_for_review", self.rust)
-        self.assertIn("&& 'label'", self.rust)
         self.assertIn("&& 'draft'", self.rust)
+        self.assertNotIn("&& 'label'", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
         self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
         claude_runners = [
@@ -1420,6 +1440,16 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertTrue(scan_runners)
         self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in scan_runners))
         self.assertIn('cron: "7 */2 * * *"', scan)
+        self.assertIn("workflow_dispatch:", scan)
+        scan_job = scan.split("\n  conflict-scan:\n", 1)[1].split("\n  conflict-resolve:\n", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch'", scan_job)
+        self.assertIn("github.event.inputs.pr_number", scan_job)
+        resolve = scan.split("\n  conflict-resolve:\n", 1)[1]
+        resolve_header = resolve.split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", resolve_header)
+        self.assertNotIn("github.event_name == 'schedule'", resolve_header)
+        self.assertIn("gh workflow run conflict-scan.yml", self.claude)
+        self.assertIn("forward-conflict-scan:", self.claude)
 
     def test_pr_lint_uses_github_hosted(self) -> None:
         self.assertIn("runs-on: ubuntu-latest", self.pr_lint)
@@ -1446,6 +1476,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
         self.assertIn("aggregator is GitHub-hosted", self.agents)
         self.assertIn("Python 3.11+3.12 matrix it wraps runs on Blacksmith", self.agents)
+        self.assertIn("fails closed until `ready_for_review`", self.agents)
+        self.assertIn("ci-label-retrigger.yml", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bots", claude)

@@ -166,11 +166,11 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 Hosted split (PR #102):
 
-- Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. A skipped or no-op run must not post a passing `linux-gates` over a real failure.
+- Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Windows runs on push to `main`, the `ci:full` label, and manual dispatch (Blacksmith).
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
-- Superseded runs are cancelled. Unrelated label events and drafts use a separate concurrency group so they cannot cancel an in-progress matrix.
+- Superseded runs are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
 
 ## Review roles
 

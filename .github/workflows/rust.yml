@@ -14,10 +14,10 @@ name: rust
 # The platform gate lives in `filter`. A job-level `if` cannot read `matrix`
 # (GitHub evaluates it before the matrix exists, and the run fails with zero
 # jobs). `filter` emits only the cells that should start.
-# Label add/remove does not start cells except `ci:full` and `enhancement`.
-# Those no-op events use a separate concurrency group so they cannot cancel
-# an in-progress rust-book matrix. Draft PRs skip the test cells until
-# ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
+# Ordinary labeled/unlabeled events do not start this workflow, so they cannot
+# cancel an in-progress rust-book matrix. `ci:full` and `enhancement` re-trigger
+# via ci-label-retrigger.yml (workflow_dispatch). Draft PRs skip the test cells
+# until ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
 # Windows cells use Blacksmith 2 vCPU (same as ci.yml).
 # Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
 #
@@ -28,7 +28,7 @@ name: rust
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "rust/**"
       - "app/quant/book/**"
@@ -57,25 +57,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full' && github.event.label.name != 'enhancement' && 'label') || 'default' }}
+  group: rust-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
   cancel-in-progress: true
 
 jobs:
   filter:
     name: filter
-    if: >
-      github.event_name != 'pull_request' ||
-      (
-        github.event.pull_request.draft != true &&
-        (
-          (
-            github.event.action != 'labeled' &&
-            github.event.action != 'unlabeled'
-          ) ||
-          github.event.label.name == 'ci:full' ||
-          github.event.label.name == 'enhancement'
-        )
-      )
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:

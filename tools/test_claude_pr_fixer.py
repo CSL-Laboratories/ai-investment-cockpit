@@ -569,6 +569,7 @@ class WorkflowStructureTests(unittest.TestCase):
         for name in (
             "resolve-pr",
             "event-paths",
+            "forward-conflict-scan",
             "claude-mention",
             "devin-review-fix",
         ):
@@ -1077,6 +1078,26 @@ class ConflictJobStructureTests(unittest.TestCase):
         self.assertIn("actions: read", scan)
         self.assertIn("runs-on: ubuntu-latest", scan.split("steps:")[0])
         self.assertNotIn("blacksmith", scan.split("steps:")[0])
+        self.assertIn("github.event_name == 'workflow_dispatch'", scan)
+        self.assertIn("github.event.inputs.pr_number", scan)
+        self.assertIn("cancel-in-progress: false", scan)
+
+    def test_manual_dispatch_runs_scan_and_resolve(self) -> None:
+        scan_header = self._job("conflict-scan").split("steps:", 1)[0]
+        self.assertIn("github.event_name == 'workflow_dispatch'", scan_header)
+        resolve_header = self._job("conflict-resolve").split("steps:", 1)[0]
+        self.assertIn("github.event_name != 'push'", resolve_header)
+        self.assertNotIn("github.event_name != 'workflow_dispatch'", resolve_header)
+        self.assertNotIn("github.event_name == 'schedule'", resolve_header)
+        original = self.text
+        self.text = self.fixer
+        try:
+            forward = self._job("forward-conflict-scan")
+        finally:
+            self.text = original
+        self.assertIn("gh workflow run conflict-scan.yml", forward)
+        self.assertIn("github.event.inputs.job != 'devin-review-fix'", forward)
+        self.assertIn("actions: write", forward)
 
     def test_resolver_keeps_protections(self) -> None:
         job = self._job("conflict-resolve")

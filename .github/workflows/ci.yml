@@ -19,11 +19,11 @@ name: ci
 #                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
 #                  rounding error next to the $50 budget.
 #
-# Label add/remove does not start this workflow's jobs except `ci:full`
-# (Windows/macOS gate) and `enhancement` (manual re-trigger). Those no-op
-# events use a separate concurrency group so they cannot cancel an in-progress
-# matrix or post a new linux-gates conclusion. Draft PRs skip filter and
-# linux-gates until ready_for_review; the aggregator never exits 0 for a skip.
+# Ordinary labeled/unlabeled events do not start this workflow, so they cannot
+# post a skipped or successful linux-gates over a real result. `ci:full` and
+# `enhancement` re-trigger via ci-label-retrigger.yml (workflow_dispatch); that
+# companion has no job named linux-gates. Draft PRs skip the test matrix; the
+# linux-gates aggregator still runs and fails closed until ready_for_review.
 # Non-test jobs (filter, linux-gates) use ubuntu-latest; the public repo does
 # not pay for those minutes. The Python linux/windows matrix stays on Blacksmith.
 #
@@ -32,7 +32,7 @@ name: ci
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   schedule:
@@ -45,29 +45,16 @@ permissions:
 
 # A newer run for the same ref supersedes the run it interrupted. Nightly has its
 # own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
+# Draft synchronize uses a separate group so its fail-closed aggregator cannot
+# cancel a ready_for_review matrix (or vice versa).
 concurrency:
-  # Unrelated label events and drafts must not share the default group:
-  # cancel-in-progress would kill an in-progress matrix, and a skipped
-  # aggregator must not replace that SHA's linux-gates conclusion.
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full' && github.event.label.name != 'enhancement' && 'label') || 'default' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
   cancel-in-progress: true
 
 jobs:
   filter:
     name: filter
-    if: >
-      github.event_name != 'pull_request' ||
-      (
-        github.event.pull_request.draft != true &&
-        (
-          (
-            github.event.action != 'labeled' &&
-            github.event.action != 'unlabeled'
-          ) ||
-          github.event.label.name == 'ci:full' ||
-          github.event.label.name == 'enhancement'
-        )
-      )
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft != true
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -189,15 +176,16 @@ jobs:
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
   # when filter ran and Linux was skipped because the change is docs-only.
-  # Drafts and non-retrigger label events skip this job (filter is skipped), so
-  # they do not post a new linux-gates conclusion over a real failure.
+  # This job never skips on pull_request/push/dispatch: a skipped required check
+  # is treated as success. Drafts skip filter, so the script fails closed until
+  # ready_for_review. Ordinary labels never start this workflow.
   # Configure branch protection / rulesets to require exactly this name: linux-gates
   linux-gates:
     name: linux-gates
     permissions:
       contents: read
     needs: [filter, linux]
-    if: always() && !cancelled() && github.event_name != 'schedule' && needs.filter.result != 'skipped'
+    if: always() && !cancelled() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
