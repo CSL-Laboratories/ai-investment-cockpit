@@ -70,6 +70,8 @@ def test_escape_and_hash_match_python():
         {"price_change": 1e15},
         {"price_change": 1e16},
         "é\U0001F600",
+        "a\x7fb",
+        {"note": "a\x7fb"},
         [float("nan"), float("inf"), float("-inf")],
     ]
     for value in structures:
@@ -131,6 +133,17 @@ def test_small_floats_keep_the_python_audit_hash():
     assert event == python_event
     assert event["content_hash"] == python_content_hash(event["raw_input"])
     assert event["content_hash"] == content_hash(event["raw_input"])
+
+
+def test_delete_character_keeps_the_python_audit_hash():
+    """Python `ensure_ascii` writes U+007F as ``\\u007f``. A literal DEL must not be hashed."""
+    raw = {"note": "a\x7fb"}
+    assert content_hash(raw) == python_content_hash(raw)
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=None, event_type="news", raw=raw,
+    )
+    assert to_market_event(**kwargs) == python_to_market_event(**kwargs)
 
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
