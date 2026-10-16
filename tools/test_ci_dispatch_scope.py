@@ -29,13 +29,19 @@ def evaluate(expression, **overrides):
     """
     values = {
         'github.event_name': 'pull_request',
+        'github.workflow': 'ci',
+        'github.sha': 'a' * 40,
         'github.ref': 'refs/pull/149/merge',
         'github.repository': 'owner/repo',
         'github.event.pull_request.head.repo.full_name': 'owner/repo',
         'github.event.pull_request.draft': False,
         'github.event.pull_request.labels.*.name': [],
         'github.event.label.name': '',
+        'github.event.pull_request.number': 149,
         'inputs.scope': '',
+        'inputs.pr_number': '',
+        'inputs.pr_head_sha': '',
+        'inputs.merge_sha': '',
         'needs.filter.outputs.run-tests': 'true',
         'needs.filter.outputs.run-macos': 'true',
     }
@@ -92,7 +98,8 @@ class DispatchScopeTests(unittest.TestCase):
                     self.assertEqual(evaluate(scope, **context), expected)
 
     def test_platform_conditions_and_actual_rust_matrix(self):
-        rust_step = self.rust['jobs']['filter']['steps'][0]
+        rust_step = next(step for step in self.rust['jobs']['filter']['steps']
+                         if step.get('id') == 'gate')
         for event, scope, labels, win, mac, rust_win, rust_mac in [
             ('workflow_dispatch', '', [], True, True, True, True),
             ('workflow_dispatch', 'full', [], True, True, True, True),
@@ -168,17 +175,87 @@ class DispatchScopeTests(unittest.TestCase):
                     gh.chmod(0o700)
                     env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'],
                            'CI_SCOPE': scope, 'HEAD_REF': 'cursor/csl-202', 'PR_NUMBER': '149',
+                           'PR_HEAD_SHA': 'a' * 40, 'MERGE_SHA': 'b' * 40,
                            'GITHUB_REPOSITORY': 'owner/repo', 'CHANGED': changed, 'CALLS': str(tmp/'calls')}
                     subprocess.run(['bash', '-c', self.step['run']], check=True, env=env)
                     calls = [json.loads(line) for line in (tmp/'calls').read_text().splitlines()]
                     self.assertEqual(calls, [['workflow', 'run', name, '--repo', 'owner/repo',
-                                             '--ref', 'cursor/csl-202', '-f', 'scope='+scope]
+                                             '--ref', 'cursor/csl-202', '-f', 'scope='+scope,
+                                             '-f', 'pr_number=149', '-f', 'pr_head_sha='+'a'*40,
+                                             '-f', 'merge_sha='+'b'*40]
                                             for name in expected])
                     (tmp/'calls').unlink()
                     rejected = subprocess.run(['bash', '-c', self.step['run']], env={**env, 'HEAD_REF': 'main'},
                                               capture_output=True)
                     self.assertNotEqual(rejected.returncode, 0)
                     self.assertFalse((tmp/'calls').exists())
+
+    def test_pr_and_dispatch_share_concurrency_but_drafts_and_nightly_do_not(self):
+        def group(doc, **context):
+            return re.sub(r'\$\{\{(.*?)\}\}',
+                          lambda match: str(evaluate(match[1], **context)),
+                          doc['concurrency']['group'])
+        for doc in (self.ci, self.rust):
+            normal = group(doc)
+            self.assertEqual(normal, group(doc, **{
+                'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
+                'github.ref': 'refs/heads/cursor/csl-202',
+                'github.event.pull_request.number': ''}))
+            self.assertNotEqual(normal, group(doc, **{
+                'github.event.pull_request.draft': True}))
+            self.assertNotEqual(normal, group(doc, **{
+                'github.event_name': 'workflow_dispatch', 'github.event.pull_request.number': '',
+                'github.ref': 'refs/heads/main'}))
+        self.assertNotEqual(group(self.ci), group(self.ci, **{
+            'github.event_name': 'schedule', 'github.event.pull_request.number': '',
+            'github.ref': 'refs/heads/main'}))
+
+    def test_merge_context_reaches_every_matrix_checkout(self):
+        for doc, jobs in ((self.ci, ('filter', 'linux', 'windows', 'macos')),
+                          (self.rust, ('filter', 'rust-book'))):
+            inputs = doc['on']['workflow_dispatch']['inputs']
+            for key in ('pr_number', 'pr_head_sha', 'merge_sha'):
+                self.assertEqual(inputs[key]['default'], '')
+            for job in jobs:
+                checkout = next(step for step in doc['jobs'][job]['steps']
+                                if step.get('uses') == 'actions/checkout@v4')
+                ref = checkout['with']['ref']
+                self.assertEqual(evaluate(ref), 'a' * 40)
+                self.assertEqual(evaluate(ref, **{'inputs.merge_sha': 'b' * 40}), 'b' * 40)
+            self.assertEqual(doc['jobs']['filter']['steps'][0]['with']['fetch-depth'], '2')
+        self.assertEqual(self.step['env']['PR_HEAD_SHA'], '${{ github.event.pull_request.head.sha }}')
+        self.assertEqual(self.step['env']['MERGE_SHA'], '${{ github.sha }}')
+
+    def test_actual_dispatch_context_validation_rejects_stale_and_partial_context(self):
+        scripts = [next(step['run'] for step in doc['jobs']['filter']['steps']
+                        if step.get('name') == 'Validate label dispatch context')
+                   for doc in (self.ci, self.rust)]
+        self.assertEqual(scripts[0], scripts[1])
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'user.name=CI Test',
+                    '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
+                    '-c', 'core.hooksPath=/dev/null', *args], cwd=tmp,
+                    text=True, stderr=subprocess.DEVNULL).strip()
+            git('init', '-b', 'main')
+            git('commit', '--allow-empty', '-m', 'base')
+            git('checkout', '-b', 'feature')
+            git('commit', '--allow-empty', '-m', 'head')
+            head = git('rev-parse', 'HEAD')
+            git('checkout', 'main')
+            git('merge', '--no-ff', 'feature', '-m', 'merge candidate')
+            merge = git('rev-parse', 'HEAD')
+            valid = {'PR_NUMBER': '149', 'PR_HEAD_SHA': head,
+                     'MERGE_SHA': merge, 'GITHUB_SHA': head}
+            for changes, expected in [({}, True), ({'GITHUB_SHA': 'f'*40}, False),
+                    ({'PR_HEAD_SHA': 'f'*40}, False), ({'MERGE_SHA': head}, False),
+                    ({'PR_NUMBER': ''}, False), ({'PR_NUMBER': '149;echo unsafe'}, False),
+                    ({'MERGE_SHA': ''}, False),
+                    ({'PR_NUMBER': '', 'PR_HEAD_SHA': '', 'MERGE_SHA': ''}, True)]:
+                with self.subTest(changes=changes):
+                    result = subprocess.run(['bash', '-c', scripts[0]], cwd=tmp,
+                        capture_output=True, env={**os.environ, **valid, **changes})
+                    self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
 if __name__ == '__main__':
