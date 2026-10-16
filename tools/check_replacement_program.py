@@ -126,7 +126,9 @@ def _digest(path: Path) -> str:
 
 
 def _has_exact_outcome_heading(document: str, key: str) -> bool:
-    return re.search(rf"^### {re.escape(key)}[ \t]*\r?$", document, re.MULTILINE) is not None
+    return re.search(
+        rf"^### {re.escape(key)}(?:[ \t]+#+)?[ \t]*\r?$", document, re.MULTILINE
+    ) is not None
 
 
 def validate(program: dict[str, Any], root: Path = ROOT) -> None:

@@ -21,6 +21,7 @@ class ReplacementProgramTests(unittest.TestCase):
 
     def test_outcome_heading_must_preserve_exact_fragment(self) -> None:
         self.assertTrue(CHECKER._has_exact_outcome_heading("### O1\n", "O1"))
+        self.assertTrue(CHECKER._has_exact_outcome_heading("### O1 ###\n", "O1"))
         self.assertFalse(CHECKER._has_exact_outcome_heading("### O1 retired\n", "O1"))
 
     def test_required_fail_closed_controls(self) -> None:
