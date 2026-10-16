@@ -1135,6 +1135,9 @@ MAX_SELECTION_STALE_QUOTE_AGE = timedelta(minutes=6)
 
 
 _FRAGMENT_PARITY_CASES = (
+    "the company entered into a definitive agreement and plan of merger. "
+    "each outstanding share of the company's common stock will be converted into the "
+    "right to receive $190.00 in cash per share. the shares are listed on nasdaq.",
     "each outstanding share of the company's common stock will be converted into the "
     "right to receive $85.00 in cash per share. the shares trade on nasdaq.",
     "each share of common stock will be converted into the right to receive $10.00 "
