@@ -871,6 +871,62 @@ def test_unmarked_reopen_on_new_head_counts_separately_from_old_marker():
     assert any("skip=over-cap" in line for line in logs)
 
 
+def test_unmarked_cite_after_in_window_receipt_counts_separately():
+    earlier = NOW - timedelta(hours=1)
+    threads = [
+        thread(
+            THREAD,
+            resolved=True,
+            resolved_by=PAT_LOGIN,
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), earlier),
+                comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), earlier),
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 2
+
+
+def test_unmarked_success_after_receipt_consumes_cap():
+    earlier = NOW - timedelta(hours=1)
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), earlier),
+                    comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA), earlier),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_failed_prior_cite_before_receipt_does_not_extra_charge_count():
+    threads = [
+        thread(
+            THREAD,
+            resolved=True,
+            resolved_by=PAT_LOGIN,
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
+                comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
+
+
 def test_failed_cite_plus_unmarked_success_charges_once():
     gh = ready_gh(
         threads=[

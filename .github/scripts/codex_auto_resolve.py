@@ -1106,20 +1106,24 @@ def resolved_count_today(
     ``retry-resolve``), or a legacy marker whose comment time and matching
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
-    Failed cites on still-open threads do not count. Unmarked cites count
-    at most once per thread when that pair has no receipt and the thread
-    has no in-window marker (a failed earlier cite cannot be distinguished
-    from a successful unmarked reopen without a receipt). Missing
-    timestamps fail closed.
+    Failed cites on still-open threads do not count. An unmarked cite is
+    skipped when that exact ``(thread id, sha)`` already has a receipt.
+    Unmarked completes with no in-window receipt count at most once per
+    thread (a failed earlier cite cannot be distinguished from a successful
+    unmarked reopen without a receipt). An unmarked cite strictly after
+    that thread's latest dated in-window receipt counts as its own head so
+    a later unmarked reopen cannot hide under an earlier receipt. A cite
+    at or before that receipt is treated as a failed earlier-head attempt
+    and does not extra-charge. Missing timestamps fail closed (count).
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
-    cite_window: set[tuple[str, str]] = set()
+    cite_times: dict[tuple[str, str], datetime | None] = {}
     all_marker_pairs: set[tuple[str, str]] = set()
-    marker_tids_window: set[str] = set()
+    marker_latest: dict[str, datetime] = {}
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1128,8 +1132,17 @@ def resolved_count_today(
         body = body_of(comment)
         in_window = stamped is None or stamped >= start
         for tid, digest in parse_cite_markers(body):
-            if tid and digest and in_window:
-                cite_window.add((tid, digest))
+            if not tid or not digest or not in_window:
+                continue
+            pair = (tid, digest)
+            if pair not in cite_times:
+                cite_times[pair] = stamped
+                continue
+            known = cite_times[pair]
+            if known is None:
+                continue
+            if stamped is None or stamped > known:
+                cite_times[pair] = stamped
         resolved_at = parse_resolved_at(body)
         for tid, digest in parse_resolved_markers(body):
             if not tid or not digest:
@@ -1137,21 +1150,30 @@ def resolved_count_today(
             all_marker_pairs.add((tid, digest))
             effective = resolved_at or stamped
             markers.append((tid, digest, effective, resolved_at is not None))
-            if effective is None or effective >= start:
-                marker_tids_window.add(tid)
+            if effective is not None and effective >= start:
+                latest = marker_latest.get(tid)
+                if latest is None or effective > latest:
+                    marker_latest[tid] = effective
+    cite_window = set(cite_times)
     counted: set[tuple[str, str]] = set()
     for tid, digest, effective, has_resolved_at in markers:
         if effective is not None and effective < start:
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
-    unmarked: set[str] = set()
-    for pair in cite_window:
+    unmarked_tids: set[str] = set()
+    unmarked_after: set[tuple[str, str]] = set()
+    for pair, when in cite_times.items():
         tid, _digest = pair
-        if tid in pending or pair in all_marker_pairs or tid in marker_tids_window:
+        if tid in pending or pair in all_marker_pairs:
             continue
-        unmarked.add(tid)
-    return len(counted) + len(unmarked)
+        latest = marker_latest.get(tid)
+        if latest is None:
+            unmarked_tids.add(tid)
+            continue
+        if when is None or when > latest:
+            unmarked_after.add(pair)
+    return len(counted) + len(unmarked_tids) + len(unmarked_after)
 
 
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
