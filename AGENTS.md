@@ -87,8 +87,10 @@ provisioned.
 ## Working conventions
 
 1. Read `docs/README.md` and the relevant plan before editing.
-2. Keep changes to one work package and add tests with the change.
-3. Use the project virtual environment. Create it once with `python -m venv .venv`
+2. Before proposing architecture or direction, read `docs/adr/` and the linked
+   decision issues; do not re-argue a recorded decision without new evidence.
+3. Keep changes to one work package and add tests with the change.
+4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
    `.github/workflows/ci.yml` and the command in `CLAUDE.md`), including `discord.py`.
@@ -103,9 +105,9 @@ provisioned.
    ~80 spurious `WinError 206` failures that are not real defects. Also clear any
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
-4. Keep the repository private and commit only when the operator asks.
-5. Any order-path change needs an adversarial-review round.
-6. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+5. Keep the repository private and commit only when the operator asks.
+6. Any order-path change needs an adversarial-review round.
+7. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
    Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
    hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
@@ -154,6 +156,7 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 - **When you are the assignee** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
 - The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
@@ -174,7 +177,7 @@ Hosted split (PR #102):
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: FIX|READY|MEDIATE`. See Code Review Rules.
-  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and the same Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>` (key `<!-- stuck-pr-threads:owner/repo#N -->`; skip if the PR is already approved; update the existing issue). That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
+  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
@@ -184,8 +187,12 @@ Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) overs
 fixer / `ci:full` / human handoff. Stuck threads are also picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
 (CSL-86 / PR #124), which asks Codex to mediate (`@codex review`, no
-`CODEX-GATE:` line) and records one Linear Triage `needs-decision` issue per
-PR (`Stuck PR threads: <repo>#<PR>`; skip if already approved). Humans decide.
+`CODEX-GATE:` line) and records one Linear Triage `needs-decision` roll-up per
+unapproved PR (`Stuck PR threads: <repo>#<PR>`), updated in place. Adopt an
+existing roll-up only by the `stuck-pr-threads` HTML marker, never by title.
+Write Linear only when at least one thread is actionable after the per-PR cap
+and `CODEX_TRIGGER_PAT` checks, or to create a missing roll-up after an earlier
+Linear outage. Humans decide.
 The watcher never resolves threads, pushes, or merges.
 
 ## Code Review Rules
@@ -237,7 +244,11 @@ The engine runs in **paper trading** by default. Live trading requires an explic
 
 ## Performance
 
-Flag speed regressions. A benchmark CI step is tracked in Linear; until it lands, note perf impact in the PR description for engine changes.
+Flag speed regressions. Pull requests run a non-blocking `benchmarks` job
+(`.github/workflows/ci.yml`, CSL-53) that times the order-path and model-output
+hot paths against the default-branch tree in the same job and warns when the
+median slowdown, after sample spread, is above 10%. It does not fail
+`linux-gates`. Still note perf impact in the PR description for engine changes.
 
 ## Guardrails (MUST)
 
