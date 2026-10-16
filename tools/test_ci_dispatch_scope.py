@@ -43,6 +43,9 @@ def evaluate(expression, **overrides):
         'github.event.action': '',
         'needs.filter.result': 'success',
         'needs.settle.result': 'success',
+        'github.event.merge_group.head_ref': 'refs/heads/feature',
+        'github.event.merge_group.base_sha': 'c' * 40,
+        'github.event.merge_group.head_sha': 'd' * 40,
         'inputs.scope': '',
         'inputs.pr_number': '',
         'inputs.pr_head_sha': '',
@@ -79,6 +82,30 @@ class DispatchScopeTests(unittest.TestCase):
         self.rust = workflow('rust.yml')
         self.label = workflow('ci-label-retrigger.yml')
         self.step = self.label['jobs']['retrigger']['steps'][0]
+
+    def test_merge_group_trigger_and_isolated_concurrency(self):
+        self.assertEqual(self.ci['on']['merge_group']['types'], ['checks_requested'])
+        self.assertEqual(self.rust['on']['merge_group']['types'], ['checks_requested'])
+        self.assertIn('MG_BASE', next(step['env'] for step in self.ci['jobs']['filter']['steps']
+                                      if step.get('id') == 'decide'))
+        self.assertIn("github.event_name != 'push'", self.ci['jobs']['linux']['if'])
+        self.assertIn("github.event_name == 'merge_group'", self.ci['jobs']['windows']['if'])
+        self.assertNotIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                         self.ci['jobs']['windows']['if'])
+        self.assertEqual(self.rust['jobs']['rust-book']['if'],
+                         "needs.filter.outputs.has-cells == 'true'")
+        def group(doc, **context):
+            return re.sub(r'\$\{\{(.*?)\}\}',
+                          lambda match: str(evaluate(match[1], **context)),
+                          doc['concurrency']['group'])
+        for doc in (self.ci, self.rust):
+            pr = group(doc)
+            queued = group(doc, **{'github.event_name': 'merge_group',
+                                   'github.event.pull_request.number': '',
+                                   'github.event.merge_group.head_ref': 'refs/heads/feature'})
+            self.assertNotEqual(pr, queued)
+            self.assertIn('merge', queued)
+            self.assertIn('refs/heads/feature', queued)
 
     def test_dispatch_defaults_and_existing_events(self):
         for doc in (self.ci, self.rust):
@@ -123,7 +150,8 @@ class DispatchScopeTests(unittest.TestCase):
             ('pull_request', '', [], False, False, False, False),
             ('pull_request', '', ['enhancement'], False, False, False, False),
             ('pull_request', '', ['ci:full'], True, True, True, True),
-            ('push', '', [], True, False, True, False),
+            ('push', '', [], False, False, False, False),
+            ('merge_group', '', [], True, False, True, False),
             ('schedule', '', [], False, True, False, False),
         ]:
             with self.subTest(event=event, scope=scope, labels=labels):
@@ -132,20 +160,39 @@ class DispatchScopeTests(unittest.TestCase):
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)
+                self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), event != 'push')
                 env = {key: str(bool(evaluate(expr, **context))).lower()
                        for key, expr in rust_step['env'].items()}
-                self.assertEqual(env, {'RUN_WINDOWS': str(rust_win).lower(),
-                                       'RUN_MACOS': str(rust_mac).lower()})
+                self.assertEqual(env['RUN_WINDOWS'], str(rust_win).lower())
+                self.assertEqual(env['RUN_MACOS'], str(rust_mac).lower())
+                self.assertEqual(env['SKIP_CELLS'], str(event == 'push').lower())
+                self.assertEqual(env['CHECK_PATHS'], str(event == 'merge_group').lower())
+                run_env = {**os.environ, **env}
+                if event == 'merge_group':
+                    run_env['DIFF_FILES'] = 'rust/src/lib.rs'
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp) / 'output'
                     subprocess.run(['bash', '-eu', '-c', rust_step['run']], check=True,
-                                   env={**os.environ, **env, 'GITHUB_OUTPUT': str(output)})
+                                   env={**run_env, 'GITHUB_OUTPUT': str(output)})
                     matrix = json.loads(output.read_text().splitlines()[1])['include']
-                self.assertEqual([c['os-name'] for c in matrix],
-                                 ['linux', 'linux'] + ['windows'] * (2 * rust_win)
-                                 + ['macos'] * rust_mac)
+                if event == 'push':
+                    self.assertEqual(matrix, [])
+                else:
+                    self.assertEqual([c['os-name'] for c in matrix],
+                                     ['linux', 'linux'] + ['windows'] * (2 * rust_win)
+                                     + ['macos'] * rust_mac)
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
+        rust_step = next(step for step in self.rust['jobs']['filter']['steps']
+                         if step.get('id') == 'gate')
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'output'
+            subprocess.run(['bash', '-eu', '-c', rust_step['run']], check=True,
+                           env={**os.environ, 'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
+                                'RUN_WINDOWS': 'true', 'RUN_MACOS': 'false',
+                                'DIFF_FILES': 'docs/example.md', 'GITHUB_OUTPUT': str(output)})
+            self.assertEqual(json.loads(output.read_text().splitlines()[1])['include'], [])
+            self.assertIn('has-cells=false', output.read_text())
 
     def test_settle_debounce_gates_blacksmith_only_on_pr_synchronize(self):
         for doc, billed in ((self.ci, ('linux', 'windows', 'benchmarks')),

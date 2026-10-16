@@ -8,7 +8,9 @@ name: ci
 #
 # Hosted split (cost: keep ordinary PR spend on Blacksmith Linux 2 vCPU):
 #   linux-gates  — required PR check; Linux 3.11+3.12, ruff + pytest
-#   windows      — push to main, workflow_dispatch, or PR label `ci:full`
+#                  (PR, merge_group, dispatch; not on push to main)
+#   windows      — merge_group, workflow_dispatch, or PR label `ci:full`
+#                  (not on push to main)
 #   macos        — nightly 07:17 UTC on main (skipped if idle 24h), ci:full, or
 #                  workflow_dispatch. GitHub-hosted macos-latest (no Blacksmith macOS).
 #                  Not on ordinary main pushes: ~$0.93/run would dominate a ~$50 budget.
@@ -33,6 +35,8 @@ name: ci
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
@@ -122,6 +126,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MG_BASE: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD: ${{ github.event.merge_group.head_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_HEAD: ${{ github.sha }}
         run: |
@@ -158,6 +164,9 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             BASE="$PR_BASE"
             HEAD="$PR_HEAD"
+          elif [ "$EVENT_NAME" = "merge_group" ]; then
+            BASE="$MG_BASE"
+            HEAD="$MG_HEAD"
           else
             BASE="$PUSH_BEFORE"
             HEAD="$PUSH_HEAD"
@@ -314,7 +323,7 @@ jobs:
       needs.filter.outputs.run-tests == 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'merge_group') ||
         (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
       )
     # Hosted Windows supplements, but does not replace, the DEC-09 native-Windows cells.
