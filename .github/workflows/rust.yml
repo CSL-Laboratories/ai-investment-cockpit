@@ -14,6 +14,12 @@ name: rust
 # The platform gate lives in `filter`. A job-level `if` cannot read `matrix`
 # (GitHub evaluates it before the matrix exists, and the run fails with zero
 # jobs). `filter` emits only the cells that should start.
+# Ordinary labeled/unlabeled events do not start this workflow, so they cannot
+# cancel an in-progress rust-book matrix. `ci:full` and `enhancement` re-trigger
+# via ci-label-retrigger.yml (workflow_dispatch). Draft PRs skip the test cells
+# until ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
+# Windows cells use Blacksmith 2 vCPU (same as ci.yml).
+# Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
 #
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
 # Windows + Ubuntu/WSL2, each on Python 3.11 and 3.12). It does not touch
@@ -22,7 +28,7 @@ name: rust
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "rust/**"
       - "app/quant/book/**"
@@ -52,27 +58,73 @@ on:
       - "app/tests/ingest/test_normalize_rust_parity.py"
       - ".github/workflows/rust.yml"
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Hosted platform scope (label retriggers may request Linux only)
+        type: choice
+        options: [full, linux]
+        default: full
+        required: false
+      pr_number:
+        description: PR identity for label retriggers (omit for manual branch runs)
+        type: string
+        default: ""
+      pr_head_sha:
+        description: Expected PR head for a label retrigger
+        type: string
+        default: ""
+      merge_sha:
+        description: Immutable PR merge candidate for a label retrigger
+        type: string
+        default: ""
 
+# Manual/API dispatch defaults to full; enhancement-only label reruns request
+# scope=linux without changing Linux gates or ordinary PR platform selection.
 permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.ref }}
+  # Same-head label reruns supersede PR runs; stale label context cannot cancel a newer head.
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
   cancel-in-progress: true
 
 jobs:
   filter:
     name: filter
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.gate.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+      - name: Validate label dispatch context
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
+          MERGE_SHA: ${{ inputs.merge_sha }}
+        run: |
+          set -euo pipefail
+          # Plain manual/API dispatch retains the selected branch and full default.
+          if [ -z "$PR_NUMBER$PR_HEAD_SHA$MERGE_SHA" ]; then
+            exit 0
+          fi
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          # A branch advance between label event and dispatch must fail closed.
+          [ "$GITHUB_SHA" = "$PR_HEAD_SHA" ]
+          [ "$(git rev-parse HEAD)" = "$MERGE_SHA" ]
+          [ "$(git rev-parse HEAD^2)" = "$PR_HEAD_SHA" ]
       - name: Choose hosted cells
         id: gate
         env:
-          RUN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
-          RUN_MACOS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
         run: |
           python3 - <<'PY'
           import json, os
@@ -82,8 +134,8 @@ jobs:
           ]
           if os.environ["RUN_WINDOWS"] == "true":
               include.extend([
-                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                  {"runner": "blacksmith-4vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
               ])
           if os.environ["RUN_MACOS"] == "true":
               include.append(
@@ -105,11 +157,16 @@ jobs:
       matrix: ${{ fromJson(needs.filter.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
           # makes rustup download a second toolchain and then test 1.83.0.
           toolchain: "1.83.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "11,41 * * * *"
+    - cron: "7 */2 * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -25,9 +25,9 @@ permissions:
 
 jobs:
   conflict-scan:
-    # Push to the default branch, a 30-minute schedule, or manual dispatch.
+    # Push to the default branch, a 2-hour schedule, or manual dispatch.
     if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
       group: claude-conflict-scan
@@ -46,7 +46,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ inputs.pr_number }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number || inputs.pr_number || '' }}
         run: |
           python3 - <<'CLAUDE_CONFLICT_SCAN'
           #!/usr/bin/env python3
@@ -80,7 +80,7 @@ jobs:
           MERGEABLE_BUDGET_SECONDS = 120.0
           MAX_RETRY_REQUESTS = 100
           MAX_DETAIL_PRS = 200  # per scan; the window rotates every scan so no PR starves
-          ROTATION_SECONDS = 1800
+          ROTATION_SECONDS = 7200
           MAX_RUN_PAGES = 5
           FIXER_EVENTS = frozenset(
               {
@@ -229,7 +229,7 @@ jobs:
               computed lazily: retries share one time budget, never sleep after the last
               attempt, and stop after the deadline or once MAX_RETRY_REQUESTS retries are
               spent. At most MAX_DETAIL_PRS PRs are fetched per scan, from a window that
-              rotates with wall-clock time (one step per 30-minute schedule), so the scan
+              rotates with wall-clock time (one step per 2-hour schedule), so the scan
               stays bounded and every PR is reached within a few scans. Pending PRs are
               skipped.
               """
@@ -355,7 +355,7 @@ jobs:
       group: claude-${{ matrix.pr.number }}
       queue: max
       cancel-in-progress: false
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
