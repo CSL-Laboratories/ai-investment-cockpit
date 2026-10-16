@@ -1404,6 +1404,22 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("&& 'draft'", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
         self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
+        claude_runners = [
+            line.strip()
+            for line in self.claude.splitlines()
+            if line.strip().startswith("runs-on:")
+        ]
+        self.assertTrue(claude_runners)
+        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in claude_runners))
+        scan = (ROOT / ".github" / "workflows" / "conflict-scan.yml").read_text(encoding="utf-8")
+        scan_runners = [
+            line.strip()
+            for line in scan.splitlines()
+            if line.strip().startswith("runs-on:")
+        ]
+        self.assertTrue(scan_runners)
+        self.assertTrue(all(r == "runs-on: ubuntu-latest" for r in scan_runners))
+        self.assertIn('cron: "7 */2 * * *"', scan)
 
     def test_pr_lint_uses_github_hosted(self) -> None:
         self.assertIn("runs-on: ubuntu-latest", self.pr_lint)
