@@ -52,7 +52,7 @@ def bot(user: dict, login: str, identity: int) -> bool:
     return user.get("login") == login and user.get("type") == "Bot" and user.get("id") == identity
 
 
-def findings(threads: list[dict], comments: list[dict]) -> list[dict]:
+def findings(threads: list[dict], comments: list[dict], strict_snapshot: bool = False) -> list[dict]:
     found = []
     for thread in threads:
         if thread.get("isResolved") is not False or thread.get("isOutdated") is not False:
@@ -65,13 +65,6 @@ def findings(threads: list[dict], comments: list[dict]) -> list[dict]:
         if author.get("__typename") != "Bot" or author.get("login") not in {"devin-ai-integration", "devin-ai-integration[bot]"}:
             continue
         body = str(root.get("body") or "")
-        # REST supplies immutable numeric bot identity, absent from Actor above.
-        corroborated = [c for c in comments if c.get("id") == root.get("databaseId")
-                        and not c.get("in_reply_to_id")
-                        and bot(c.get("user") or {}, "devin-ai-integration[bot]", DEVIN_ID)
-                        and c.get("body") == body]
-        if len(corroborated) != 1:
-            continue
         matches = METADATA_RE.findall(body)
         if len(matches) != 1:
             continue
@@ -80,6 +73,15 @@ def findings(threads: list[dict], comments: list[dict]) -> list[dict]:
         except ValueError:
             continue
         if not isinstance(metadata, dict) or metadata.get("kind") != "bug":
+            continue
+        # REST supplies immutable numeric bot identity, absent from Actor above.
+        corroborated = [c for c in comments if c.get("id") == root.get("databaseId")
+                        and not c.get("in_reply_to_id")
+                        and bot(c.get("user") or {}, "devin-ai-integration[bot]", DEVIN_ID)
+                        and c.get("body") == body]
+        if len(corroborated) != 1:
+            if strict_snapshot:
+                raise ValueError("inconsistent GraphQL/REST finding snapshot")
             continue
         root_id = root.get("databaseId")
         if type(root_id) is int and root_id > 0:
@@ -112,6 +114,15 @@ def substantive_followup(comment: dict, permission) -> bool:
     return permission(login) in {"write", "maintain", "admin"}
 
 
+def newer_comment(comment, receipt):
+    stamp = str(comment.get("updated_at") or comment.get("created_at") or "")
+    previous = str(receipt.get("created_at") or "")
+    if stamp != previous:
+        return stamp > previous
+    cid, rid = comment.get("id"), receipt.get("id")
+    return type(cid) is int and type(rid) is int and cid > rid
+
+
 def pending_findings(items: list[dict], comments: list[dict], head: str, compare, permission, manual: bool = False) -> list[dict]:
     pending = []
     for item in items:
@@ -139,7 +150,7 @@ def pending_findings(items: list[dict], comments: list[dict], head: str, compare
                     valid = compare(base, head) in {"ahead", "identical"}
                 if not valid:
                     continue
-                followups = [c for c in replies if str(c.get("updated_at") or c.get("created_at") or "") > stamp and substantive_followup(c, permission)]
+                followups = [c for c in replies if newer_comment(c, reply) and substantive_followup(c, permission)]
                 if followups:
                     generations.update(digest(str((c.get("user") or {}).get("login")) + "\n" + str(c.get("body") or "")) for c in followups)
                     continue
@@ -200,11 +211,7 @@ def emit(items: list[dict], head: str, reason: str = "") -> None:
     print(json.dumps(ids))
 
 
-def main() -> None:
-    repo, number, head = (os.environ[k] for k in ("REPO", "PR_NUMBER", "FIXER_HEAD_SHA"))
-    if not SHA_RE.fullmatch(head):
-        raise ValueError("unsafe head")
-    manual = os.environ.get("MANUAL_RETRY") == "true"
+def live_state(repo: str, number: str, head: str) -> tuple[list[dict], list[dict]]:
     owner, name = repo.split("/")
     threads, cursor = [], None
     while True:
@@ -241,7 +248,146 @@ def main() -> None:
         return permissions[login]
 
     review_comments = pages(f"repos/{repo}/pulls/{number}/comments")
-    items = pending_findings(findings(threads, review_comments), review_comments, head, compare, permission, manual)
+    roots = findings(threads, review_comments, strict_snapshot=True)
+    return (pending_findings(roots, review_comments, head, compare, permission, False),
+            pending_findings(roots, review_comments, head, compare, permission, True))
+
+
+def label_event_id(events: list[dict]) -> int:
+    relevant = [e for e in events if e.get("event") in {"labeled", "unlabeled"}
+                and (e.get("label") or {}).get("name") == "ci:full"
+                and type(e.get("id")) is int]
+    latest = max(relevant, key=lambda e: e["id"], default={})
+    return latest.get("id", 0) if latest.get("event") == "labeled" else 0
+
+
+def record_ci_ownership(repo, number, head, before_id, writer, get_pages, post_comment, proof=None):
+    events = get_pages(f"repos/{repo}/issues/{number}/events")
+    current = label_event_id(events)
+    if current == before_id:
+        return False  # Pre-existing label, including a human override, is not ours.
+    event = next((e for e in events if e.get("id") == current), {})
+    if not current or (event.get("actor") or {}).get("login") != writer:
+        raise ValueError("ci:full ownership cannot be established")
+    if proof is not None:
+        proof.append(current)
+    post_comment(repo, number, marker("ci-owned", {"head": head, "event": current}))
+    return True
+
+
+def rollback_ci_event(repo, number, event_id, get_pages, delete):
+    if event_id and label_event_id(get_pages(f"repos/{repo}/issues/{number}/events")) == event_id:
+        delete(repo, number)
+        return True
+    return False
+
+
+def delete_label(repo, number):
+    subprocess.check_call(["gh", "api", "-X", "DELETE", f"repos/{repo}/issues/{number}/labels/ci:full"], stdout=subprocess.DEVNULL)
+
+
+def revoke_owned_ci(repo, number, head, get_pages=None, delete=None, post_comment=None):
+    get_pages, delete = get_pages or pages, delete or delete_label
+    comments = get_pages(f"repos/{repo}/issues/{number}/comments")
+    current = label_event_id(get_pages(f"repos/{repo}/issues/{number}/events"))
+    if not current:
+        return False
+    owned = any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
+                and any(r.get("head") == head and type(r.get("event")) is int
+                        and r["event"] == current for r in records(str(c.get("body") or ""), "ci-owned"))
+                for c in comments)
+    if owned:
+        # GitHub has no compare-and-delete: a human relabel between this check
+        # and DELETE is an unavoidable micro-race, not an atomic guarantee.
+        # Invalidate before deletion: a failed delete remains retryable and a
+        # later clear cannot get stuck behind a stale checked READY generation.
+        (post_comment or post)(repo, number, marker("ci-invalidated", {"head": head, "event": current}))
+        delete(repo, number)
+    return owned
+
+
+def exhausted_attempt_id(comments, head):
+    groups = {}
+    for comment in comments:
+        cid = comment.get("id")
+        if type(cid) is not int or cid <= 0 or not bot(comment.get("user") or {}, "github-actions[bot]", ACTIONS_ID):
+            continue
+        for record in records(str(comment.get("body") or ""), "attempt"):
+            fingerprint = str(record.get("fingerprint") or "")
+            run, attempt = str(record.get("run") or ""), str(record.get("attempt") or "")
+            if record.get("head") != head or not DIGEST_RE.fullmatch(fingerprint) or not run.isdigit() or int(run) <= 0 or not attempt.isdigit() or int(attempt) <= 0:
+                continue
+            group = groups.setdefault(fingerprint, {})
+            key = (run, attempt)
+            group[key] = min(cid, group.get(key, cid))
+    return max((sorted(group.values())[MAX_ATTEMPTS - 1] for group in groups.values()
+                if len(group) >= MAX_ATTEMPTS), default=0)
+
+
+def latest_pause_id(comments: list[dict], head: str) -> int:
+    ids = []
+    for comment in comments:
+        if not bot(comment.get("user") or {}, "github-actions[bot]", ACTIONS_ID):
+            continue
+        body = str(comment.get("body") or "")
+        if (any(r.get("head") == head and DIGEST_RE.fullmatch(str(r.get("fingerprint") or ""))
+                for r in records(body, "paused"))
+                or any(r.get("head") == head and type(r.get("event")) is int and r["event"] > 0
+                       for r in records(body, "ci-invalidated"))
+                or f"<!-- claude-fixer-loop-cap:{head} -->" in body):
+            value = comment.get("id")
+            if type(value) is int and value > 0:
+                ids.append(value)
+    return max([exhausted_attempt_id(comments, head), *ids])
+
+
+def latest_ready_check(comments, head, pause):
+    return max((c["id"] for c in comments
+        if type(c.get("id")) is int and c["id"] > pause
+        and bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
+        and any(r.get("head") == head and r.get("pause") == pause
+                for r in records(str(c.get("body") or ""), "ci-checked"))), default=0)
+
+
+def readiness_blocked(repo: str, number: str, head: str, comments: list[dict], read_api=None) -> bool:
+    """Read-only reconciliation; an obsolete fingerprint alone never blocks READY."""
+    pr = (read_api or api)(f"repos/{repo}/pulls/{number}")
+    if (pr.get("state") != "open" or pr.get("draft") is not False
+            or (pr.get("head") or {}).get("sha") != head
+            or ((pr.get("head") or {}).get("repo") or {}).get("full_name") != repo):
+        return True
+    keys = [r for c in comments if bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID)
+            for r in records(str(c.get("body") or ""), "attempt") if r.get("head") == head]
+    exhausted = any(attempt_count(comments, {"head": head, "fingerprint": r.get("fingerprint")}) >= MAX_ATTEMPTS for r in keys)
+    if not latest_pause_id(comments, head) and not exhausted:
+        return False
+    automatic, unresolved = live_state(repo, number, head)
+    if not unresolved:
+        return False
+    # Explicit unresolved human handoffs remain a decision, not READY.
+    if {item["root"] for item in unresolved} - {item["root"] for item in automatic}:
+        return True
+    key = attempt_key(head, automatic)
+    if attempt_count(comments, key) >= MAX_ATTEMPTS:
+        return True
+    for comment in comments:
+        if not bot(comment.get("user") or {}, "github-actions[bot]", ACTIONS_ID):
+            continue
+        body = str(comment.get("body") or "")
+        if f"<!-- claude-fixer-loop-cap:{head} -->" in body:
+            return True
+        if any(all(record.get(k) == value for k, value in key.items()) for record in records(body, "paused")):
+            return True
+    return False
+
+
+def main() -> None:
+    repo, number, head = (os.environ[k] for k in ("REPO", "PR_NUMBER", "FIXER_HEAD_SHA"))
+    if not SHA_RE.fullmatch(head):
+        raise ValueError("unsafe head")
+    manual = os.environ.get("MANUAL_RETRY") == "true"
+    automatic, unresolved = live_state(repo, number, head)
+    items = unresolved if manual else automatic
     if not items:
         emit([], head, "no-pending-findings")
         return
@@ -253,6 +399,7 @@ def main() -> None:
         pause = f"<!-- claude-fixer-loop-cap:{head} -->"
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
             post(repo, number, pause + "\nClaude PR Fixer paused: eight consecutive Claude commits and pending Devin findings. A human needs to inspect them; a human commit resets this guard. Manual retry does not bypass it.")
+        revoke_owned_ci(repo, number, head)
         emit([], head, "loop-commit-limit")
         return
     key = attempt_key(head, items)
@@ -260,6 +407,7 @@ def main() -> None:
         pause = marker("paused", key)
         if not any(bot(c.get("user") or {}, "github-actions[bot]", ACTIONS_ID) and pause in str(c.get("body") or "") for c in comments):
             post(repo, number, pause + "\nClaude PR Fixer paused after three automatic attempts on this head and unchanged findings. Attempts include runs stopped by workflow validation before model execution. After activation, an authorized manual devin-review-fix workflow dispatch can retry; a new head or changed findings resets this budget. The eight-commit guard still applies.")
+        revoke_owned_ci(repo, number, head)
         emit([], head, "attempt-limit")
         return
     if not manual:

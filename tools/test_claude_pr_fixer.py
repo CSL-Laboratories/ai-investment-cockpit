@@ -581,7 +581,7 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_every_privileged_checkout_uses_pr_head_sha(self) -> None:
         mention = self._job("claude-mention")
         devin = self._job("devin-review-fix")
-        needle = "ref: ${{ needs.resolve-pr.outputs.head_sha }}"
+        needle = "ref: ${{ steps.preflight.outputs.head_sha }}"
         self.assertIn(needle, mention)
         self.assertIn("ref: ${{ steps.preflight.outputs.head_sha }}", devin)
         self.assertNotIn("ref: ${{ needs.resolve-pr.outputs.head_ref }}", mention)
@@ -595,7 +595,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn(attach, devin)
         push = (
             "Bash(git push origin HEAD:refs/heads/"
-            "${{ needs.resolve-pr.outputs.head_ref }})"
+            "${{ steps.preflight.outputs.head_ref }})"
         )
         self.assertIn(push, mention)
         self.assertIn(push.replace("needs.resolve-pr", "steps.preflight"), devin)
@@ -1407,6 +1407,25 @@ class FixerPreflightTests(unittest.TestCase):
             "GITHUB_OUTPUT": str(Path(d) / "out")}), patch.object(self.mod, "api", side_effect=[pr, {"permission": permission}, review]), patch.object(self.mod.subprocess, "check_output", side_effect=replies) as graphql:
             self.mod.main()
             return (Path(d) / "out").read_text(), graphql.call_count
+
+    def test_queued_human_mention_refreshes_head_and_revalidates_writer(self):
+        from unittest.mock import patch
+        for permission in ("write", "read"):
+            pr = dict(pr_payload(head_sha="b" * 40), draft=True)
+            with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+                "REPO": REPO, "PR_NUMBER": "42", "EXPECTED_HEAD_REF": "feature/fix",
+                "REQUEST_MODE": "mention", "MENTION_ACTOR": "alice", "GITHUB_OUTPUT": str(Path(d)/"out")}), \
+                    patch.object(self.mod, "api", side_effect=[pr, {"permission": "write"}, {"permission": permission}]), \
+                    patch.object(self.mod.subprocess, "check_output") as graphql:
+                self.mod.main()
+                output = (Path(d)/"out").read_text()
+            self.assertEqual(graphql.call_count, 0)
+            self.assertIn("skip=" + ("false" if permission == "write" else "true"), output)
+            if permission == "write":
+                self.assertIn("head_sha=" + "b" * 40, output)
+        mention = WORKFLOW_PATH.read_text().split("  claude-mention:",1)[1].split("  devin-review-fix:",1)[0]
+        self.assertLess(mention.index("id: preflight"), mention.index("uses: actions/checkout"))
+        self.assertNotIn("needs.resolve-pr.outputs.head_sha", mention)
 
     def test_locked_live_trust_and_sha_revalidated(self) -> None:
         for changes in ({"state": "closed"}, {"draft": True},

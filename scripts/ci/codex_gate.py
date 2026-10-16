@@ -18,6 +18,8 @@ Import from tests.
 from __future__ import annotations
 
 import json
+import importlib.util
+from pathlib import Path
 import os
 import re
 import subprocess
@@ -25,6 +27,25 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+
+def fixer_receipts():
+    spec = importlib.util.spec_from_file_location("claude_fixer_receipts", Path(__file__).with_name("claude_fixer_receipts.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+FIXER_RECEIPTS = fixer_receipts()
+
+
+def ready_comments(comments, sha):
+    pause = FIXER_RECEIPTS.latest_pause_id(comments, sha)
+    if not pause:
+        return comments
+    checked = FIXER_RECEIPTS.latest_ready_check(comments, sha, pause)
+    return [c for c in comments if not (any(m.group(1) == sha and m.group(2) == "READY" for m in ACTION_RE.finditer(str(c.get("body") or "")))
+            and (not checked or type(c.get("id")) is not int or c["id"] <= checked))]
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 CODEX_BOTS = frozenset({CODEX_BOT, "chatgpt-codex-connector"})
@@ -593,7 +614,7 @@ def decide_verdict(
     sha = safe_sha(sha)
     if not sha:
         return "skip-unsafe-sha"
-    existing = action_for_sha(comments, sha)
+    existing = action_for_sha(ready_comments(comments, sha), sha)
     if existing:
         return f"skip-already-{existing.lower()}"
     if latest_codex_prompt_is_mediation(comments) and not parse_verdict(review_body):
@@ -616,7 +637,7 @@ def decide_recovery(
     sha = safe_sha(sha)
     if not sha:
         return "skip-unsafe-sha"
-    existing = action_for_sha(comments, sha)
+    existing = action_for_sha(ready_comments(comments, sha), sha)
     if existing:
         return f"skip-already-{existing.lower()}"
     verdict = verdict_from_reviews(reviews, sha)
@@ -915,6 +936,11 @@ class GitHub:
         return json.loads(out) if out.strip() else {}
 
 
+    def post_read_token(self, path: str, body: dict[str, Any]) -> Any:
+        out = self._run(["api", path, "--method", "POST", "--input", "-"],
+                        token=self.read_token, input_text=json.dumps(body))
+        return json.loads(out) if out.strip() else {}
+
     def delete(self, path: str) -> None:
         self._run(["api", "-X", "DELETE", path], token=self.write_token)
 
@@ -992,7 +1018,7 @@ def run(
 
 
 def _issue_comments(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
-    return list_items(gh.get, f"repos/{repository}/issues/{number}/comments")
+    return strict_items(gh, f"repos/{repository}/issues/{number}/comments")
 
 
 def _reviews(gh: GitHub, repository: str, number: str) -> list[dict[str, Any]]:
@@ -1229,6 +1255,18 @@ def _handle_recovery(
     return logs or ["codex-gate: recovery=no-open-prs"]
 
 
+def strict_items(gh, path):
+    result, page = [], 1
+    while True:
+        batch = gh.get(f"{path}?per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise ValueError("invalid GitHub listing")
+        result.extend(batch)
+        if len(batch) < 100:
+            return result
+        page += 1
+
+
 def _act(
     verdict: str,
     repository: str,
@@ -1239,11 +1277,45 @@ def _act(
     gh: GitHub,
     reviews: list[dict[str, Any]] | None = None,
 ) -> list[str]:
+    get_pages = lambda path: strict_items(gh, path)
+    def revoke():
+        return FIXER_RECEIPTS.revoke_owned_ci(repository, number, sha, get_pages,
+            lambda repo, num: gh.delete(f"repos/{repo}/issues/{num}/labels/{CI_FULL_LABEL}"),
+            lambda repo, num, body: gh.post_read_token(f"repos/{repo}/issues/{num}/comments", {"body": body}))
+
+    if verdict in {"READY", "skip-already-ready"}:
+        comments = get_pages(f"repos/{repository}/issues/{number}/comments")
+        if FIXER_RECEIPTS.readiness_blocked(repository, number, sha, comments, gh.get):
+            revoke()
+            return [f"codex-gate: pr={number} skip=fixer-paused-or-stale"]
+
     def post_comment(body: str) -> None:
         gh.post(f"repos/{repository}/issues/{number}/comments", {"body": body})
 
     def add_label(name: str) -> None:
+        before = FIXER_RECEIPTS.label_event_id(get_pages(f"repos/{repository}/issues/{number}/events"))
         gh.post(f"repos/{repository}/issues/{number}/labels", {"labels": [name]})
+        proof = []
+        try:
+            FIXER_RECEIPTS.record_ci_ownership(repository, number, sha, before, gh.writer_login(),
+                get_pages, lambda repo, num, body: gh.post_read_token(f"repos/{repo}/issues/{num}/comments", {"body": body}), proof)
+            latest = get_pages(f"repos/{repository}/issues/{number}/comments")
+            if FIXER_RECEIPTS.readiness_blocked(repository, number, sha, latest, gh.get):
+                revoke()
+                raise ValueError("READY invalidated by concurrent fixer pause or head change")
+            pause = FIXER_RECEIPTS.latest_pause_id(latest, sha)
+            gh.post_read_token(f"repos/{repository}/issues/{number}/comments",
+                {"body": FIXER_RECEIPTS.marker("ci-checked", {"head": sha, "pause": pause})})
+        except Exception:
+            try:
+                if proof:
+                    FIXER_RECEIPTS.rollback_ci_event(repository, number, proof[-1], get_pages,
+                        lambda repo, num: gh.delete(f"repos/{repo}/issues/{num}/labels/{CI_FULL_LABEL}"))
+                else:
+                    notice("READY ownership unavailable; ci:full cleanup could not be confirmed")
+            except Exception:
+                notice("READY cleanup API failed; ci:full may remain and needs reconciliation")
+            raise
 
     def file_decision() -> str:
         key = os.environ.get("LINEAR_API_KEY", "").strip()

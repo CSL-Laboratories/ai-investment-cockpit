@@ -126,10 +126,19 @@ class FakeGH:
 
     def post(self, path: str, body: dict[str, Any]) -> Any:
         self.posts.append((path, body))
+        if path.endswith("/labels"):
+            self.events.append({"id": len(self.events) + 1, "event": "labeled", "label": {"name": "ci:full"}, "actor": {"login": self.writer}})
         return {"id": len(self.posts)}
+
+    def post_read_token(self, path, body):
+        self.comments.append({"id": max([1000] + [c.get("id", 0) for c in self.comments]) + 1, "body": body["body"],
+            "user": {"login": "github-actions[bot]", "type": "Bot", "id": 41898282}})
+        return self.comments[-1]
 
     def delete(self, path: str) -> None:
         self.deletes.append(path)
+        self.events.append({"id": max([0] + [e.get("id", 0) for e in self.events]) + 1,
+                            "event": "unlabeled", "label": {"name": "ci:full"}})
 
     def dispatch(self, event_type: str, payload: dict[str, Any], repository: str) -> None:
         self.dispatches.append((event_type, payload, repository))
@@ -1473,12 +1482,12 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bots", claude)
 
-    def test_pat_job_token_is_read_only_and_actionlint_is_checksummed(self) -> None:
+    def test_pat_job_token_has_narrow_receipt_scope_and_actionlint_is_checksummed(self) -> None:
         self.assertIn("contents: read", self.text)
         self.assertIn("pull-requests: read", self.text)
         self.assertIn("issues: read", self.text)
         self.assertNotIn("actions: write", self.text)
-        self.assertNotIn("issues: write", self.text)
+        self.assertEqual(self.text.count("issues: write"), 1)
         self.assertNotIn("pull-requests: write", self.text)
         self.assertIn("ACTIONLINT_SHA256", self.text)
         self.assertIn("sha256sum -c", self.text)
@@ -1529,6 +1538,114 @@ class CliSecretTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("::notice::", result.stdout)
         self.assertIn("CODEX_TRIGGER_PAT", result.stdout)
+
+
+class PausedReadinessTests(unittest.TestCase):
+    def pause(self):
+        helper = mod.FIXER_RECEIPTS
+        return {"id": 10, "user": {"login": "github-actions[bot]", "type": "Bot", "id": 41898282},
+                "body": helper.marker("paused", {"head": SHA, "fingerprint": "f" * 64})}
+
+    def act(self, gh, verdict="READY"):
+        return mod._act(verdict, REPO, "42", SHA, gh.comments, "2026-10-16", gh)
+
+    def test_ownership_write_permission_is_gate_job_only(self):
+        text = WORKFLOW_PATH.read_text()
+        top = text.split("jobs:", 1)[0]
+        self.assertIn("issues: read", top)
+        self.assertNotIn("issues: write", top)
+        gate = text.split("  gate:", 1)[1].split("  event-paths:", 1)[0]
+        self.assertIn("issues: write", gate)
+        self.assertIn("contents: read", gate)
+        self.assertIn("pull-requests: read", gate)
+        self.assertNotIn("issues: write", text.split("  event-paths:", 1)[1])
+
+    def test_ownership_receipt_uses_actions_token_not_pat(self):
+        gh = mod.GitHub(read_token="read-token-fixture", write_token="write-token-fixture")
+        with patch.object(gh, "_run", return_value='{"id":1}') as run:
+            gh.post_read_token("repos/acme/example/issues/42/comments", {"body": "receipt"})
+        self.assertEqual(run.call_args.kwargs["token"], "read-token-fixture")
+
+    def test_ready_old_marker_after_pause_is_not_terminal_without_checked_receipt(self):
+        comments = [self.pause(), {"id": 11, "body": mod.action_marker(SHA, "READY"), "user": {"login": "github-actions[bot]"}}]
+        self.assertEqual(mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[], comments=comments, day="x"), "READY")
+        checked = {"id": 12, "body": mod.FIXER_RECEIPTS.marker("ci-checked", {"head": SHA, "pause": 10}),
+                   "user": {"login": "github-actions[bot]", "type": "Bot", "id": 41898282}}
+        comments += [checked, comments[1] | {"id": 13}]
+        self.assertEqual(mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[], comments=comments, day="x"), "skip-already-ready")
+
+    def test_pause_before_ready_blocks_without_terminal_marker(self):
+        gh = FakeGH(); gh.comments = [self.pause()]
+        with patch.object(mod.FIXER_RECEIPTS, "readiness_blocked", return_value=True):
+            logs = self.act(gh)
+        self.assertIn("fixer-paused", logs[0])
+        self.assertFalse(gh.posts)
+
+    def test_pause_during_label_write_revokes_and_never_posts_ready(self):
+        gh = FakeGH()
+        with patch.object(mod.FIXER_RECEIPTS, "readiness_blocked", side_effect=[False, True]):
+            with self.assertRaises(ValueError):
+                self.act(gh)
+        self.assertEqual(len(gh.deletes), 1)
+        self.assertFalse(any("codex-gate-action:" in body.get("body", "") for _, body in gh.posts))
+
+    def test_pause_after_ready_revokes_owned_label_then_samehead_can_resume(self):
+        gh = FakeGH()
+        self.act(gh)
+        self.assertTrue(any("codex-gate-action:" in body.get("body", "") for _, body in gh.posts))
+        gh.comments.append(self.pause() | {"id": 2000})
+        with patch.object(mod.FIXER_RECEIPTS, "readiness_blocked", return_value=True):
+            self.act(gh, "skip-already-ready")
+        self.assertEqual(len(gh.deletes), 1)
+        with patch.object(mod.FIXER_RECEIPTS, "readiness_blocked", return_value=False):
+            self.act(gh)
+        self.assertEqual(sum("codex-gate-action:" in body.get("body", "") for _, body in gh.posts), 2)
+
+    def test_repeated_pause_lifecycle_same_original_marker_and_duplicate_events(self):
+        gh = FakeGH(); helper = mod.FIXER_RECEIPTS
+        items = [{"root": 1, "fingerprint": "e" * 64, "thread": "t"}]
+        pause = self.pause() | {"body": helper.marker("paused", helper.attempt_key(SHA, items))}
+        gh.comments = [pause]
+        with patch.object(helper, "live_state", return_value=([], [])) as live:
+            for cycle in range(2):
+                verdict = mod.decide_recovery(sha=SHA, comments=gh.comments,
+                    reviews=[{"user": {"login": mod.CODEX_BOT}, "commit_id": SHA, "body": "CODEX-GATE: READY"}], now=datetime.now(timezone.utc), day="x")
+                self.assertEqual(verdict, "READY")
+                self.act(gh, verdict)
+                terminal = {"id": max(c["id"] for c in gh.comments) + 1, "body": mod.action_marker(SHA, "READY"),
+                            "user": {"login": "github-actions[bot]"}}
+                gh.comments.append(terminal)
+                self.assertEqual(mod.decide_recovery(sha=SHA, comments=gh.comments, reviews=[], now=datetime.now(timezone.utc), day="x"), "skip-already-ready")
+                live.return_value = (items, items)
+                self.act(gh, "skip-already-ready")
+                self.assertEqual(helper.label_event_id(gh.events), 0)
+                live.return_value = ([], [])
+            self.assertEqual(len(gh.deletes), 2)
+
+    def test_ownership_post_failure_rolls_back_exact_label_event(self):
+        gh = FakeGH()
+        with patch.object(gh, "post_read_token", side_effect=OSError("receipt unavailable")):
+            with self.assertRaises(OSError):
+                self.act(gh)
+        self.assertEqual(len(gh.deletes), 1)
+        self.assertEqual(mod.FIXER_RECEIPTS.label_event_id(gh.events), 0)
+        self.assertFalse(any("codex-gate-action:" in b.get("body", "") for _,b in gh.posts))
+
+    def test_invalidation_post_failure_never_deletes_before_receipt(self):
+        gh = FakeGH(); self.act(gh)
+        with patch.object(mod.FIXER_RECEIPTS, "readiness_blocked", return_value=True), patch.object(gh, "post_read_token", side_effect=OSError("receipt unavailable")):
+            with self.assertRaises(OSError):
+                self.act(gh, "skip-already-ready")
+        self.assertFalse(gh.deletes)
+
+    def test_stale_head_and_event_pagination_fail_closed(self):
+        gh = FakeGH(); gh.prs = [pr_payload() | {"head": {"sha": "b" * 40, "repo": {"full_name": REPO}}}]
+        self.assertIn("stale", self.act(gh)[0]); self.assertFalse(gh.posts)
+        gh = FakeGH()
+        with patch.object(gh, "get", side_effect=OSError("pagination unavailable")):
+            with self.assertRaises(OSError):
+                self.act(gh)
+        self.assertFalse(gh.posts)
 
 
 if __name__ == "__main__":

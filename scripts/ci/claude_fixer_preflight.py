@@ -57,12 +57,13 @@ def api(path: str):
 
 def main() -> None:
     repo, number, expected_ref = (os.environ[k] for k in ("REPO", "PR_NUMBER", "EXPECTED_HEAD_REF"))
+    mention = os.environ.get("REQUEST_MODE") == "mention"
     pr = api(f"repos/{repo}/pulls/{number}")
     head = pr.get("head") or {}
     # Select the live checkout only after acquiring the shared PR lock. A queued
     # review may have observed an older head while the preceding fixer pushed.
     sha, ref = str(head.get("sha") or ""), str(head.get("ref") or "")
-    if (pr.get("state") != "open" or pr.get("draft") is not False
+    if (pr.get("state") != "open" or (not mention and pr.get("draft") is not False)
             or (head.get("repo") or {}).get("full_name") != repo
             or not SAFE_SHA_RE.fullmatch(sha) or not SAFE_REF_RE.fullmatch(ref)
             or ref in PROTECTED_REFS or ref != expected_ref):
@@ -71,6 +72,14 @@ def main() -> None:
     login = pr["user"]["login"]
     if api(f"repos/{repo}/collaborators/{login}/permission").get("permission") not in {"write", "maintain", "admin"}:
         emit("true")
+        return
+    if mention:
+        actor = os.environ.get("MENTION_ACTOR", "")
+        if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}", actor)
+                or api(f"repos/{repo}/collaborators/{actor}/permission").get("permission") not in {"write", "maintain", "admin"}):
+            emit("true")
+            return
+        emit("false", sha=sha, ref=ref)
         return
     review_id = os.environ.get("REVIEW_ID", "")
     if review_id:

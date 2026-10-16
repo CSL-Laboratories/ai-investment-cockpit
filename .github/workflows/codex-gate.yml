@@ -22,7 +22,8 @@ on:
         required: false
         default: ""
 
-# Writes go through CODEX_TRIGGER_PAT. GITHUB_TOKEN only reads.
+# Verdict requests/labels use CODEX_TRIGGER_PAT; the gate job may write only
+# trusted label-ownership receipts with GITHUB_TOKEN.
 permissions:
   contents: read
   pull-requests: read
@@ -38,6 +39,11 @@ concurrency:
 
 jobs:
   gate:
+    # Owner-approved: exact bot provenance for ownership/invalidation receipts.
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
     # Same-repo PRs only. Reviews only if Codex submitted them. Schedule and
     # dispatch scan for recoverable requests and verdicts. Forks never get the PAT or a checkout.
     if: >-
