@@ -881,7 +881,7 @@ def test_human_resolved_skipped_cite_does_not_count():
     assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 0
 
 
-def test_unmarked_pat_success_then_human_resolve_still_counts():
+def test_human_resolved_unmarked_cite_still_counts():
     threads = [
         thread(
             THREAD,
@@ -915,7 +915,7 @@ def test_human_resolved_skipped_cite_does_not_consume_cap():
     assert not any("skip=over-cap" in line for line in logs)
 
 
-def test_unmarked_pat_success_then_human_resolve_consumes_cap():
+def test_later_human_resolve_cannot_erase_unmarked_pat_success():
     gh = ready_gh(
         threads=[
             thread(
