@@ -615,13 +615,13 @@ def decide_verdict(
     if not sha:
         return "skip-unsafe-sha"
     existing = action_for_sha(ready_comments(comments, sha), sha)
-    if existing == "MEDIATE":
-        return "skip-already-mediate"
     if latest_codex_prompt_is_mediation(comments) and not parse_verdict(review_body):
         return "skip-mediation-review"
     verdict = parse_verdict(review_body) or verdict_from_reviews(reviews, sha)
     if not verdict:
         return "skip-no-verdict"
+    if verdict == "MEDIATE" and existing == "MEDIATE":
+        return "skip-already-mediate"
     return "skip-retired-fix" if verdict == "FIX" else verdict
 
 
@@ -638,9 +638,9 @@ def decide_recovery(
     if not sha:
         return "skip-unsafe-sha"
     existing = action_for_sha(ready_comments(comments, sha), sha)
-    if existing == "MEDIATE":
-        return "skip-already-mediate"
     verdict = verdict_from_reviews(reviews, sha)
+    if verdict == "MEDIATE" and existing == "MEDIATE":
+        return "skip-already-mediate"
     if verdict == "FIX":
         return "skip-retired-fix"
     return verdict or "skip-no-verdict"

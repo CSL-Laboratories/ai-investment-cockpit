@@ -1567,6 +1567,20 @@ class PausedReadinessTests(unittest.TestCase):
     def act(self, gh, verdict="READY"):
         return mod._act(verdict, REPO, "42", SHA, gh.comments, "2026-10-16", gh)
 
+    def test_mediate_then_human_clears_allows_samehead_ready(self):
+        gh = FakeGH()
+        gh.comments = [comment(mod.action_marker(SHA, "MEDIATE"))]
+        ready_review = review("CODEX-GATE: READY")
+        verdict = mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[ready_review], comments=gh.comments, day="x")
+        self.assertEqual(verdict, "READY")
+        self.assertEqual(mod.decide_recovery(sha=SHA, reviews=[ready_review], comments=gh.comments,
+                         now=datetime.now(timezone.utc), day="x"), "READY")
+        with patch.object(mod.FIXER_RECEIPTS, "live_state", return_value=([], [])):
+            self.act(gh, verdict)
+        self.assertTrue(mod.FIXER_RECEIPTS.label_event_id(gh.events))
+        self.assertEqual(mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: MEDIATE", reviews=[],
+                         comments=[comment(mod.action_marker(SHA, "MEDIATE"))], day="x"), "skip-already-mediate")
+
     def test_pause_in_final_audit_gap_recovers_without_terminal_deadend(self):
         gh = FakeGH(); original = gh.post; helper = mod.FIXER_RECEIPTS
         def paused_at_audit(path, body):
