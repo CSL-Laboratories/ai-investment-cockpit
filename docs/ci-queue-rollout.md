@@ -72,8 +72,8 @@ that every GitHub queue topology maps successfully.
 
 ## Activation sequence and owner decisions
 
-1. Integrate corrected #157, #158, #159, #160, then #161; run the combined tree's
-   tests and all changed workflows through actionlint. Preserve the #159 settle
+1. Integrate replacement #162, #163, #164, #165, then #166; run the combined tree's
+   tests and all changed workflows through actionlint. Preserve the #164 settle
    dependency in every aggregate, including intentional docs noops.
 2. Land the policy under the existing protection (currently `linux-gates` and
    `Devin Review`). Do not require the new base-loaded `review-gate` before its
@@ -85,8 +85,13 @@ that every GitHub queue topology maps successfully.
    workflow/policy control; a green canary alone cannot establish that control.
    No role, receipt, trust or fixer
    policy is replaced by these aggregates.
-4. After explicit owner approval, configure required checks/queue enforcement and
-   run a controlled live queue canary. Confirm the required checks bind to the
+4. Queue activation is blocked until there is evidence that the currently required
+   direct `Devin Review` reports on the merge-group SHA, or the owner separately
+   approves a protected replacement that establishes the trust boundary described
+   above. Do not disable direct Devin protection to make a canary pass. Only after
+   resolving that prerequisite and obtaining explicit owner approval may the owner
+   configure required checks/queue enforcement and run a controlled live queue
+   canary. Confirm the required checks bind to the
    merge-group SHA; demonstrate Windows/Rust pending, failure and cancellation
    blocking, docs noops, multiple PRs, and late review recovery. Live negative
    tests and repository settings changes are not authorized by this draft.
