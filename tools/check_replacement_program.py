@@ -37,6 +37,25 @@ EXPECTED_AUTHORITY_KEYS = {
     "contract_acceptance",
     "superseded_acceptance_receipt",
 }
+EXPECTED_RECEIPT_KEYS = {
+    "linear_issue",
+    "human_linear_comment_id",
+    "mirror_comment_id",
+    "accepted_by",
+    "accepted_by_linear_user_id",
+    "accepted_at",
+    "reviewed_head",
+    "accepted_contracts",
+    "authority_research_sha256",
+    "superseded_reason",
+    "not_granted",
+}
+EXPECTED_SUPERSEDED_CONTRACTS = {
+    "docs/replacement/SUCCESSOR-PRODUCT.md": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487",
+    "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+    "docs/replacement/MONTH-PROGRAM.md": "cd46235c7d562c2587d4eb4d8ea7557fa1958a12c4dd0e6dc45c5822eea3b41a",
+    "docs/replacement/SCOPE-AUDIT.md": "3936196bee6c160025144be2315476fcc65f271484a02cce4138f4150414ae7c",
+}
 EXPECTED_DISCRETION = {
     "O1": "human_gated",
     "O2": "collaborative_judgment",
@@ -143,6 +162,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(authority.get("live_authority_granted") is False, "program grants live authority")
     _require(authority.get("contract_acceptance") == "pending_updated_human_digest_receipt", "updated digest acceptance inferred")
     receipt = authority.get("superseded_acceptance_receipt", {})
+    _require(set(receipt) == EXPECTED_RECEIPT_KEYS, "superseded receipt fields changed")
     _require(receipt.get("linear_issue") == "CSL-212", "superseded receipt issue mismatch")
     _require(receipt.get("human_linear_comment_id") == "736a6b55-2b20-463c-86e1-9553a5692996", "superseded human comment mismatch")
     _require(receipt.get("mirror_comment_id") == "15c6f540-3686-49eb-a9e7-d93083313e85", "superseded mirror mismatch")
@@ -150,7 +170,11 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(receipt.get("accepted_by_linear_user_id") == "8709c8bb-e7d2-429e-89f9-89a48b7187fa", "superseded owner identity mismatch")
     _require(receipt.get("accepted_at") == "2026-10-16T05:21:02.659Z", "superseded acceptance timestamp mismatch")
     _require(receipt.get("reviewed_head") == "f5f4cefaa9bfcac8a87654428d96c921196e53d2", "superseded reviewed head mismatch")
-    _require(_nonempty(receipt.get("superseded_reason")), "superseded receipt reason missing")
+    _require(
+        receipt.get("superseded_reason")
+        == "Human review required changes to accepted governing documents; a new exact digest receipt is required.",
+        "superseded receipt reason changed",
+    )
     _require(
         set(receipt.get("not_granted", []))
         == {
@@ -201,11 +225,7 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(_digest(path) == expected, f"contract digest mismatch: {rel}")
     superseded_contracts = receipt.get("accepted_contracts")
     _require(isinstance(superseded_contracts, dict), "superseded contract digest set missing")
-    _require(set(superseded_contracts) == EXPECTED_CONTRACTS, "superseded contract paths changed")
-    _require(
-        all(re.fullmatch(r"[0-9a-f]{64}", digest) for digest in superseded_contracts.values()),
-        "superseded contract digest invalid",
-    )
+    _require(superseded_contracts == EXPECTED_SUPERSEDED_CONTRACTS, "superseded contract digests changed")
 
     outcomes = program.get("outcomes")
     _require(isinstance(outcomes, list) and len(outcomes) == 9, "exactly nine outcomes required")

@@ -37,6 +37,10 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][0].pop("independent_verification"),
             lambda p: p["authority"].update(live_authority_granted=True),
             lambda p: p["authority"].update(bounded_direct_authorized=True),
+            lambda p: p["authority"]["superseded_acceptance_receipt"]["accepted_contracts"].update(
+                {"docs/replacement/SUCCESSOR-PRODUCT.md": "f" * 64}
+            ),
+            lambda p: p["authority"]["superseded_acceptance_receipt"].update(extra_receipt_claim=True),
             lambda p: p["outcomes"][0]["falsifiers"].append(""),
             lambda p: p["outcomes"][0]["deliverables"].append("   "),
             lambda p: p["outcomes"][0]["non_goals"].append(""),
