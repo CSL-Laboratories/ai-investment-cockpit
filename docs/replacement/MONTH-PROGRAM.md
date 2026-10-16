@@ -51,6 +51,32 @@ review may overlap; implementation consumes only accepted contract fragments.
 No dependency may point to a later outcome. Related evidence may inform an earlier
 contract without becoming a hard reverse dependency.
 
+Dependencies bind accepted contract fragments, not completion of a whole outcome.
+Every consumed fragment needs its identifier, version or digest, owner, acceptance
+criterion and receipt status. Informational feedback does not create a hard edge.
+
+## Split-phase checkpoints that prevent cycles
+
+- **O2/O3:** freeze a minimal canonical identity, currency, clock and source envelope
+  before ingestion work. O3 may enrich accounting semantics only through a versioned
+  compatibility amendment; it may not silently change already admitted O2 evidence.
+- **O4/O5:** freeze evaluation populations, baselines, metrics and thresholds before
+  observing provider results. O5 consumes that protocol; no provider result may
+  rewrite it.
+- **O6/O7:** O6 first freezes a non-privileged service/intervention contract that a
+  CLI and GUI can share. Final operator acceptance can follow O7; neither surface is
+  required to invent or widen O6 authority.
+- **O8 phase A:** freeze interfaces, correctness and safety floors, a matched
+  comparison protocol, and smallest candidate experiments before affected
+  implementation. **O8 phase B** consumes minimal matched O2–O7 candidates for a
+  human architecture/migration decision. No outcome waits for the final migration
+  decision while also producing its evidence.
+- **O9 phase A:** freeze capability-scoped qualification cells, exact-candidate
+  identity and evidence protocols before runs. **O9 phase B** consumes final evidence
+  and prepares a release decision. Evidence producers do not wait for release
+  qualification, and offline/demo/paper testing uses current non-live authority
+  rather than depending on a future live-enablement decision.
+
 ## Rolling checkpoints
 
 - **C0 Baseline reconciled:** repository, Linear, audit and owner decisions agree on

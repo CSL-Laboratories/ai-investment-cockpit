@@ -24,6 +24,9 @@ inferred from historical implementation.
 
 - A point-in-time evidence and replay plane retains raw inputs separately from
   summaries, with source identity, retrieval time, transformations and provenance.
+  Applicable collection, licensing, retention, redistribution, confidentiality and
+  account terms must be established before authenticated or continuing acquisition;
+  demo or read-only access is not blanket data permission.
 - Instrument, venue, portfolio, collateral, resolution, cash-flow, fee, tax and
   accounting semantics are explicit and reconcile across restarts and external truth.
 - Strategy research compares explicit baselines on frozen populations, separates
@@ -42,6 +45,10 @@ inferred from historical implementation.
 - Qualification binds evidence to the exact candidate, configuration, data manifest,
   venue profile and environment. Release is a human decision after independent
   verification, not a consequence of CI.
+
+Qualification is capability-scoped. Stock, Kalshi demo, later Polymarket US Retail,
+provider, interface and platform cells retain separate evidence and unknowns. A PASS
+for one capability or environment cannot unlock another.
 
 ## One-month target
 

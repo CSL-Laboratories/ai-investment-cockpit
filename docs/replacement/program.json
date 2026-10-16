@@ -12,7 +12,7 @@
   "contracts": [
     {
       "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
-      "sha256": "ef3c95c4baba9beff10444b6268963f56d1c83d5a570d6005ab0d3db72a30b03"
+      "sha256": "801d11dc4ce01ece9ebfba99cb10e40e85cfffae79ee69853f3ef3b8fd73d320"
     },
     {
       "path": "docs/replacement/ISSUE-CONTRACT.md",
@@ -20,7 +20,7 @@
     },
     {
       "path": "docs/replacement/MONTH-PROGRAM.md",
-      "sha256": "114e4af6b417ceaa100912b6cda860a95c85d6d9a7cff12487d25056daa59601"
+      "sha256": "73a1e0a0809e94e83d26c36cc30c89a004db89f87a729b56c0b67a4e8e1f87ee"
     },
     {
       "path": "docs/replacement/SCOPE-AUDIT.md",
