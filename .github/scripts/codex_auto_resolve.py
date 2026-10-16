@@ -1095,6 +1095,30 @@ def unresolved_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
     return frozenset(found)
 
 
+def known_thread_ids(threads: list[dict[str, Any]]) -> frozenset[str]:
+    found: set[str] = set()
+    for thread in threads:
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if tid:
+            found.add(tid)
+    return frozenset(found)
+
+
+def pat_resolved_thread_ids(threads: list[dict[str, Any]], actor_login: str) -> frozenset[str]:
+    found: set[str] = set()
+    if not actor_login:
+        return frozenset()
+    for thread in threads:
+        if not thread.get("isResolved"):
+            continue
+        if not login_matches(resolved_by_login(thread), actor_login):
+            continue
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if tid:
+            found.add(tid)
+    return frozenset(found)
+
+
 def resolved_count_today(
     threads: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
@@ -1109,15 +1133,19 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt, so two
-    unmarked resolves of a reopened thread cannot hide behind one thread
-    id. A failed cite plus a later unmarked success on another head
+    per ``(thread id, sha)`` when that pair has no receipt and GitHub
+    attributes the thread's ``resolvedBy`` to the PAT, so two unmarked
+    PAT resolves of a reopened thread cannot hide behind one thread id.
+    A PAT cite on a human-resolved thread does not consume the cap. A
+    failed cite plus a later unmarked PAT success on another head
     over-counts (fail closed). Missing timestamps fail closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
+    known = known_thread_ids(threads)
+    pat_resolved = pat_resolved_thread_ids(threads, actor_login)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_window: set[tuple[str, str]] = set()
     all_marker_pairs: set[tuple[str, str]] = set()
@@ -1148,6 +1176,8 @@ def resolved_count_today(
     for pair in cite_window:
         tid, _digest = pair
         if tid in pending or pair in all_marker_pairs:
+            continue
+        if tid in known and tid not in pat_resolved:
             continue
         unmarked.add(pair)
     return len(counted) + len(unmarked)
