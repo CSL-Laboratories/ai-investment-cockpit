@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cockpit-book", "cockpit-py"]
+members = ["cockpit-book", "cockpit-costs", "cockpit-py"]
 
 [profile.release]
 lto = "thin"
