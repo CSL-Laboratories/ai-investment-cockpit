@@ -66,14 +66,16 @@ permissions:
 
 # Newer runs of the same PR cancel superseded heads (cancel-in-progress). The
 # group is the PR number (or ref for branch runs), not the head SHA: a SHA
-# suffix made every push a new group, so old runs kept billing. Label reruns
-# share that PR-number group via inputs.pr_number; filter still fail-closes
-# stale dispatch context before billed matrix work. Nightly has its own group
-# so it cannot cancel a main-push Linux/Windows run (or vice versa). Draft
-# synchronize uses a separate group so its fail-closed aggregator cannot
-# cancel a ready_for_review matrix (or vice versa).
+# suffix made every push a new group, so old runs kept billing. Suffixes are
+# nightly | label | draft | default. workflow_dispatch is `label` because
+# `gh workflow run --ref` resolves to the current head; a stale label rerun
+# must not cancel or fail that head's in-progress PR run. Filter still
+# fail-closes stale dispatch context before billed matrix work. Nightly has
+# its own group so it cannot cancel a main-push Linux/Windows run (or vice
+# versa). Draft synchronize uses a separate group so its fail-closed
+# aggregator cannot cancel a ready_for_review matrix (or vice versa).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || github.event_name == 'workflow_dispatch' && 'label' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
   cancel-in-progress: true
 
 jobs:
