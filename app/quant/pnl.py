@@ -48,10 +48,11 @@ would make the exactness test above flap rather than fail.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from quant.costs import FeeSchedule, fee_for_fill
+from quant.costs import FeeSchedule, _default_context, fee_for_fill
 from quant.events import Fill, Liquidity, PriceScale, Side
 
 
@@ -146,7 +147,12 @@ class PnLTracker:
         telescopes, so the endpoints are what matter — but it does coarsen the equity curve,
         and drawdown measured on a coarse curve understates the real one.
         """
-        if self._core is not None and _rust_mid_ok(mid_ticks) and (ts is None or _fits_i64(ts)):
+        if (
+            self._core is not None
+            and _default_context()
+            and _rust_mid_ok(mid_ticks)
+            and (ts is None or _fits_i64(ts))
+        ):
             _rust_mark(self, mid_ticks, ts)
             return
         if mid_ticks is not None:
@@ -176,7 +182,12 @@ class PnLTracker:
         inventory to a price move that had not happened yet, and the exactness identity in
         the module docstring would stop holding.
         """
-        if self._core is not None and _rust_fill_ok(fill, mid_ticks):
+        if (
+            self._core is not None
+            and _default_context()
+            and _rust_fill_ok(fill, mid_ticks)
+            and _fits_i64(self.position + fill.signed_qty)
+        ):
             _rust_on_fill(self, fill, mid_ticks)
             return
         # Python now owns the ledger; the native core would restore stale state.
@@ -255,7 +266,12 @@ def _fits_i64(value: object) -> bool:
 
 
 def _rust_mid_ok(mid_ticks: float | None) -> bool:
-    return mid_ticks is not None and not isinstance(mid_ticks, bool) and isinstance(mid_ticks, (int, float))
+    return (
+        mid_ticks is not None
+        and not isinstance(mid_ticks, bool)
+        and isinstance(mid_ticks, (int, float))
+        and math.isfinite(mid_ticks)
+    )
 
 
 def _rust_fill_ok(fill: Fill, mid_ticks: float | None) -> bool:
