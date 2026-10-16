@@ -32,7 +32,13 @@ MAX_DETAIL_PRS = 200  # per scan; the window rotates every scan so no PR starves
 ROTATION_SECONDS = 1800
 MAX_RUN_PAGES = 5
 FIXER_EVENTS = frozenset(
-    {"issue_comment", "pull_request_review", "pull_request_review_comment"}
+    {
+        "issue_comment",
+        "pull_request_review",
+        "pull_request_review_comment",
+        "repository_dispatch",
+        "workflow_dispatch",
+    }
 )
 WORKFLOW_FILE = "claude.yml"
 
