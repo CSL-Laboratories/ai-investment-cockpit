@@ -248,6 +248,30 @@ def test_direct_content_hash_accepts_default_str_values():
         event["raw_input"], sort_keys=True, separators=(",", ":"), ensure_ascii=True
     )
 
+    class Plain(dict):
+        pass
+
+    class SameItems(dict):
+        def items(self):
+            return dict.items(self)
+
+    nested = 0
+    for _ in range(1100):
+        nested = [nested]
+    plain = {"x": nested}
+    for raw in (Plain(plain), SameItems(plain)):
+        assert cockpit_quant.content_hash(raw) == cockpit_quant.content_hash(plain)
+        got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", raw)
+        assert got[5] == cockpit_quant.content_hash(plain)
+    deep = 0
+    for _ in range(3000):
+        deep = [deep]
+    for raw in (Plain({"x": deep}), SameItems({"x": deep})):
+        with pytest.raises(ValueError, match="JSON nesting too deep"):
+            cockpit_quant.content_hash(raw)
+        with pytest.raises(ValueError, match="JSON nesting too deep"):
+            cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", raw)
+
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
     """``ts`` is applied in Python, but a lone surrogate must not take the native call."""

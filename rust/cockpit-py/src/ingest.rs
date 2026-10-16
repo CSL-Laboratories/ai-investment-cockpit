@@ -73,30 +73,9 @@ fn read_json_at(
         return Ok(Json::Str(obj.extract()?));
     }
     if obj.is_instance_of::<PyDict>() {
-        // `dict.iter()` reads the underlying entries. `json.dumps` calls
-        // `items()`, which a subclass can override with different pairs.
-        if !obj.get_type().is(&PyDict::type_object(obj.py())) {
-            return Err(ReadError::Py(invalid("dict subclass")));
-        }
-        let Ok(dict) = obj.downcast::<PyDict>() else {
-            return Err(ReadError::Py(invalid("dict subclass")));
-        };
-        let id = enter_container(obj, visiting, depth)?;
-        let mut entries = Vec::new();
-        for (key, value) in dict.iter() {
-            let key: String = key
-                .extract()
-                .map_err(|_| invalid("json object key must be a str"))?;
-            match read_json_at(&value, visiting, depth + 1) {
-                Ok(parsed) => entries.push((key, parsed)),
-                Err(err) => {
-                    visiting.remove(&id);
-                    return Err(err);
-                }
-            }
-        }
-        visiting.remove(&id);
-        return Ok(Json::Object(entries));
+        // Separate frame: the dict iterator must not sit on the list walk.
+        // A 2048-deep list is at the native limit and the default stack.
+        return read_dict(obj, visiting, depth);
     }
     if obj.is_instance_of::<PyList>() || obj.is_instance_of::<PyTuple>() {
         let id = enter_container(obj, visiting, depth)?;
@@ -114,6 +93,76 @@ fn read_json_at(
         return Ok(Json::Array(items));
     }
     Err(ReadError::Py(invalid("unsupported json value")))
+}
+
+#[inline(never)]
+fn read_dict(
+    obj: &Bound<'_, PyAny>,
+    visiting: &mut HashSet<usize>,
+    depth: u32,
+) -> Result<Json, ReadError> {
+    let Ok(dict) = obj.downcast::<PyDict>() else {
+        return Err(ReadError::Py(invalid("dict subclass")));
+    };
+    // `dict.iter()` reads the stored entries. `json.dumps` calls `items()`.
+    // When that view is the same objects, keep the native depth limit.
+    // A real override falls through to `json.dumps`.
+    if !obj.get_type().is(&PyDict::type_object(obj.py())) && !items_match_storage(obj, &dict) {
+        return Err(ReadError::Py(invalid("dict subclass")));
+    }
+    let id = enter_container(obj, visiting, depth)?;
+    let mut entries = Vec::new();
+    for (key, value) in dict.iter() {
+        let key: String = key
+            .extract()
+            .map_err(|_| invalid("json object key must be a str"))?;
+        // Call this function directly so a deep object is one frame per level.
+        let parsed = if value.is_instance_of::<PyDict>() {
+            read_dict(&value, visiting, depth + 1)
+        } else {
+            read_json_at(&value, visiting, depth + 1)
+        };
+        match parsed {
+            Ok(parsed) => entries.push((key, parsed)),
+            Err(err) => {
+                visiting.remove(&id);
+                return Err(err);
+            }
+        }
+    }
+    visiting.remove(&id);
+    Ok(Json::Object(entries))
+}
+
+#[inline(never)]
+fn items_match_storage(obj: &Bound<'_, PyAny>, dict: &Bound<'_, PyDict>) -> bool {
+    // A bool, not a `PyErr`: the error type is large, and this frame is live
+    // only for the check. Nested values are compared by identity so the walk
+    // does not recurse into them.
+    let Ok(items) = obj.call_method0("items") else {
+        return false;
+    };
+    let Ok(mut reported) = items.try_iter() else {
+        return false;
+    };
+    let mut stored = dict.iter();
+    loop {
+        match (reported.next(), stored.next()) {
+            (None, None) => return true,
+            (Some(Ok(pair)), Some((stored_key, stored_value))) => {
+                let Ok(key) = pair.get_item(0) else {
+                    return false;
+                };
+                let Ok(value) = pair.get_item(1) else {
+                    return false;
+                };
+                if !key.is(&stored_key) || !value.is(&stored_value) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
 }
 
 fn enter_container(
