@@ -335,7 +335,8 @@ class _CompleteSubmissionsFetcher:
         return self._enforce_submissions_freshness(document, recent, baseline)
 
     def _enforce_submissions_freshness(self, document, recent, baseline):
-        """Fail closed when a strict-CIK submissions response cannot prove strategy freshness."""
+        """Raise on strict-CIK submissions responses that cannot prove strategy freshness;
+        a missing saved boundary is left to the vendored poller's boundary-missing fault."""
         from filings.edgar.submissions_poll import PROCESS_FORMS
 
         accessions = recent.get("accessionNumber")
