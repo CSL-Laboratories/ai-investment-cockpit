@@ -10,6 +10,11 @@ name: ci label retrigger
 on:
   pull_request:
     types: [labeled]
+  # This trigger loads workflow policy from the default branch. It never runs
+  # PR artifacts or scripts with the existing Actions-write token.
+  workflow_run:
+    workflows: [ci, rust]
+    types: [requested, completed]
 
 permissions:
   actions: write
@@ -19,12 +24,13 @@ permissions:
 concurrency:
   # Delivery order is not guaranteed. An old event must not cancel the newer
   # head's dispatcher before either reaches dispatch-context validation.
-  group: ci-label-retrigger-${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.label.name }}
+  group: ${{ github.event_name == 'workflow_run' && format('ci-cancel-controller-{0}', github.run_id) || format('ci-label-retrigger-{0}-{1}-{2}-{3}', github.workflow, github.event.pull_request.number, github.event.pull_request.head.sha, github.event.label.name) }}
   cancel-in-progress: true
 
 jobs:
   retrigger:
     if: >
+      github.event_name == 'pull_request' &&
       github.event.pull_request.draft != true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (github.event.label.name == 'ci:full' || github.event.label.name == 'enhancement')
@@ -49,3 +55,27 @@ jobs:
           if printf '%s\n' "$files" | grep -Eq '^(rust/|app/quant/book/|app/quant/costs\.py|app/quant/pnl\.py|app/tests/quant/book/|app/tests/quant/test_pnl\.py|app/tests/quant/test_costs_rust_parity\.py|app/tests/quant/test_w21_cost_model\.py|\.github/workflows/rust\.yml)'; then
             gh workflow run rust.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "scope=$CI_SCOPE" -f "pr_number=$PR_NUMBER" -f "pr_head_sha=$PR_HEAD_SHA" -f "merge_sha=$MERGE_SHA"
           fi
+
+  cancel-ancestors:
+    # Trigger names are an initial filter, not provenance proof. The script
+    # verifies numeric workflow/run/PR/repository identity through the API.
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci/ci_cancel_controller.py
+          sparse-checkout-cone-mode: false
+      - name: Cancel only verified obsolete PR CI runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/ci/ci_cancel_controller.py ]; then
+            echo "::notice::Cancellation policy is not on the default branch yet; shared PR queues remain intact."
+            exit 0
+          fi
+          python3 -X utf8 -B scripts/ci/ci_cancel_controller.py
