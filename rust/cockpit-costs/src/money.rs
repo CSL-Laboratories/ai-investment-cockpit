@@ -4,6 +4,10 @@
 //! is also what ``Decimal.quantize(Decimal("0.01"))`` uses for the SEC fee.
 //! Values are a sign, a base-10 coefficient, and an exponent:
 //! ``(-1)^neg * int(digits) * 10^exp``.
+//!
+//! The context is fixed. A caller that changes precision, rounding, the exponent
+//! range, clamp, or the default trap set is not computed here: ``quant.costs``
+//! keeps that call on the Python implementation, which honors the active context.
 
 use std::cmp::Ordering;
 
@@ -695,14 +699,11 @@ impl Pnl {
         tick_size: &str,
         elapsed: Option<&str>,
     ) -> Result<(), String> {
-        if let Some(mid_ticks) = mid_ticks {
-            self.mark(mid_ticks, tick_size, ingest_ts, elapsed)?;
-        }
+        let new_position = self
+            .position
+            .checked_add(signed_qty)
+            .ok_or_else(|| "position overflow".to_string())?;
         let price = mul(&Dec::from_i64(price_ticks), &Dec::parse(tick_size)?);
-        if let Some(last) = self.last_mid.clone() {
-            let edge = mul(&sub(&last, &price), &Dec::from_i64(signed_qty));
-            self.spread_capture = add(&self.spread_capture, &edge);
-        }
         let side = if side_sell { Side::Sell } else { Side::Buy };
         let liquidity = if maker {
             Liquidity::Maker
@@ -710,13 +711,17 @@ impl Pnl {
             Liquidity::Taker
         };
         let fee = fee_for(&self.schedule, side, qty, &price, liquidity)?;
+        if let Some(mid_ticks) = mid_ticks {
+            self.mark(mid_ticks, tick_size, ingest_ts, elapsed)?;
+        }
+        if let Some(last) = self.last_mid.clone() {
+            let edge = mul(&sub(&last, &price), &Dec::from_i64(signed_qty));
+            self.spread_capture = add(&self.spread_capture, &edge);
+        }
         self.fees = add(&self.fees, &fee);
         self.realized_notional = add(&self.realized_notional, &mul(&price, &Dec::from_i64(qty)));
         self.cash = sub(&self.cash, &mul(&price, &Dec::from_i64(signed_qty)));
-        self.position = self
-            .position
-            .checked_add(signed_qty)
-            .ok_or_else(|| "position overflow".to_string())?;
+        self.position = new_position;
         self.fills += 1;
         if maker {
             self.maker_fills += 1;
@@ -900,6 +905,52 @@ mod tests {
         pnl.mark("10002.0", "0.01", Some(2), Some("1e-09")).unwrap();
         assert_eq!(pnl.gross(), pnl.mark_to_market());
         assert_eq!(pnl.inventory_drift, d("6"));
+    }
+
+    #[test]
+    fn overflow_on_fill_does_not_mutate_the_ledger() {
+        let mut pnl = Pnl::new(Schedule::parse("0", "0.003", "0", "0", "0", "0", "0").unwrap());
+        pnl.mark("100", "0.01", Some(0), None).unwrap();
+        pnl.on_fill(
+            false,
+            1 << 62,
+            100,
+            false,
+            1 << 62,
+            Some(0),
+            Some("100"),
+            "0.01",
+            None,
+        )
+        .unwrap();
+        let fees_before = pnl.fees.clone();
+        let notional_before = pnl.realized_notional.clone();
+        let cash_before = pnl.cash.clone();
+        let spread_before = pnl.spread_capture.clone();
+        let last_mid_before = pnl.last_mid.clone();
+        let position_before = pnl.position;
+        let fills_before = pnl.fills;
+        let err = pnl
+            .on_fill(
+                false,
+                1 << 62,
+                102,
+                false,
+                1 << 62,
+                Some(1),
+                Some("102"),
+                "0.01",
+                None,
+            )
+            .unwrap_err();
+        assert!(err.contains("overflow"), "{err}");
+        assert_eq!(pnl.position, position_before);
+        assert_eq!(pnl.fills, fills_before);
+        assert_eq!(pnl.fees, fees_before);
+        assert_eq!(pnl.realized_notional, notional_before);
+        assert_eq!(pnl.cash, cash_before);
+        assert_eq!(pnl.spread_capture, spread_before);
+        assert_eq!(pnl.last_mid, last_mid_before);
     }
 
     #[test]
