@@ -401,10 +401,11 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
             continue
-        if fn is draft_proposal and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+        if (cand["holdings_match"] or cand["symbol"] in watchlist) \
                 and not subject_fits_context(state, ev, packet):
-            # Preflight before spending: an unfit subject makes no model call, so
-            # it must not consume a daily deep-escalation unit on each retry.
+            # Preflight is independent of propose_fn identity: production
+            # build_services wraps draft_proposal, so `fn is draft_proposal`
+            # would skip this and spend budget on a call that cannot dispatch.
             _defer(state, dispositions, ev, "context_limit")
             continue
         try:
