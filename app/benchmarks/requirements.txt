@@ -1,0 +1,6 @@
+# Installed only by the pull-request benchmarks job. The suite imports the
+# risk engine, the order-tuple hash, the outbound scrubber, jsonschema (the
+# same call as agent_runner.runner._validate), and the audit log. It does not
+# install the full runtime set.
+sqlalchemy
+jsonschema
