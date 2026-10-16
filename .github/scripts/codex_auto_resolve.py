@@ -349,6 +349,19 @@ class ThreadVerdict:
     source: str = ""
 
 
+def _fence_indent(line: str) -> tuple[int, str]:
+    """Leading spaces before fence content. A tab is indent 4 (not a fence)."""
+    n = 0
+    for index, char in enumerate(line):
+        if char == " ":
+            n += 1
+            continue
+        if char == "\t":
+            return 4, line[index + 1 :]
+        return n, line[index:]
+    return n, ""
+
+
 def _fence_marker(stripped: str) -> tuple[str, int, str]:
     """Return (character, run length, rest) for a fence line, else empty."""
     if not stripped or stripped[0] not in "`~":
@@ -370,18 +383,19 @@ def strip_quoted_and_fenced(text: str) -> str:
     fence_char = ""
     fence_len = 0
     for line in (text or "").replace("\r\n", "\n").split("\n"):
-        stripped = line.lstrip()
-        char, run, rest = _fence_marker(stripped)
+        indent, rest = _fence_indent(line)
+        char, run, after = _fence_marker(rest) if indent <= 3 else ("", 0, "")
         if char:
             if not fence_char:
                 fence_char = char
                 fence_len = run
                 continue
-            if char == fence_char and run >= fence_len and not rest.strip():
+            if char == fence_char and run >= fence_len and not after.strip():
                 fence_char = ""
                 fence_len = 0
                 continue
-        if fence_char or stripped.startswith(">"):
+        stripped = line.lstrip()
+        if fence_char or stripped.startswith(">") or indent >= 4:
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -1068,9 +1082,11 @@ def resolved_count_today(
     not extra-charge once a later head's marker is in the window. A marker
     whose matching cite is older than 24h is a late receipt / retry-mark
     and does not consume today's cap; a delayed ``retry-resolve`` is charged
-    in-scan via ``posted_today``. Posted-unmarked resolves count per
-    ``(thread id, sha)`` when that pair has no receipt and the thread has
-    no in-window marker. Missing timestamps fail closed (count).
+    in-scan via ``posted_today``. Posted-unmarked resolves count at most
+    once per thread when that pair has no receipt and the thread has no
+    in-window marker (a failed earlier cite cannot be distinguished from a
+    successful unmarked reopen without a receipt). Missing timestamps
+    fail closed (count).
     """
     if not actor_login:
         return 0
@@ -1096,12 +1112,12 @@ def resolved_count_today(
             if tid and digest and in_window:
                 cite_window.add((tid, digest))
     completed = marker_window & cite_window
-    unmarked: set[tuple[str, str]] = set()
+    unmarked: set[str] = set()
     for pair in cite_window:
         tid, _digest = pair
         if tid in pending or pair in marker_pairs or tid in marker_tids_window:
             continue
-        unmarked.add(pair)
+        unmarked.add(tid)
     return len(completed) + len(unmarked)
 
 
@@ -1157,12 +1173,13 @@ def classify_thread(
     # resolved but the audit marker never landed, retry the marker only
     # when GitHub attributes the resolve to the PAT identity.
     if thread.get("isResolved"):
-        if thread_has_resolved_marker(comments, thread_id, actor_login=pat_login):
+        cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
+        if cite_sha and already_resolved_on_sha(
+            comments, thread_id, cite_sha, actor_login=pat_login
+        ):
             return "already-resolved", None
-        if pat_login and login_matches(resolved_by_login(thread), pat_login):
-            cite_sha = cite_sha_for_thread(comments, thread_id, actor_login=pat_login)
-            if cite_sha:
-                return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
+        if pat_login and login_matches(resolved_by_login(thread), pat_login) and cite_sha:
+            return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
     if already_resolved_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
         return "already-marked", None
