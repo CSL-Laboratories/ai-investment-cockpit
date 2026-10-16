@@ -30,5 +30,7 @@ class VibeTradingPoller:
                 continue
             emitted += 1
         if batch.status != "ok":
-            raise RuntimeError(f"vibe-trading collect status={batch.status}")
+            error = RuntimeError(f"vibe-trading collect status={batch.status}")
+            error.emitted = emitted
+            raise error
         return emitted

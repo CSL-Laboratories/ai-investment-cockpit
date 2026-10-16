@@ -143,6 +143,27 @@ def _data(payload: dict) -> dict:
     return data if type(data) is dict else {}
 
 
+def _identity_value(payload: dict, key: str) -> str | None:
+    data = _data(payload)
+    value = data.get(key) if type(data.get(key)) is str else payload.get(key)
+    if type(value) is not str:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _identity_matches(payload: dict, key: str, requested: str, *, fold: bool = False) -> bool:
+    got = _identity_value(payload, key)
+    if got is None or type(requested) is not str:
+        return False
+    want = requested.strip()
+    if not want:
+        return False
+    if fold:
+        return got.casefold() == want.casefold()
+    return got == want
+
+
 def _aware_dt(value: str) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -174,15 +195,21 @@ def _counts(accepted: list[dict], payload: dict) -> tuple[int, int, int, int, st
 
 
 def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
-                        symbols: tuple[str, ...] = ()) -> list[FeatureLine]:
+                        symbols: tuple[str, ...] = ()) -> list[FeatureLine] | None:
     """One summary line plus one line per accepted factor. Bad rows are skipped.
 
     Factor scores are universe-wide, not stock-specific. ``symbols`` is ignored so
     triage cannot treat a bench as evidence for the operator watchlist.
+    ``None`` means the envelope is malformed or the returned identity does not
+    match the request; ``[]`` is a valid empty result.
     """
     del symbols
     if not _ok(payload):
-        return []
+        return None
+    if (not _identity_matches(payload, "zoo", zoo)
+            or not _identity_matches(payload, "universe", universe)
+            or not _identity_matches(payload, "period", period)):
+        return None
     raw_rows = _factor_rows(payload)
     accepted: list[dict] = []
     for row in raw_rows:
@@ -245,13 +272,12 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
     return lines
 
 
-def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine]:
+def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine] | None:
     if not _ok(payload):
-        return []
+        return None
+    if not _identity_matches(payload, "ticker", ticker, fold=True):
+        return None
     data = _data(payload)
-    returned = data.get("ticker") if type(data.get("ticker")) is str else payload.get("ticker")
-    if type(returned) is str and returned.strip().upper() != ticker.upper():
-        return []
     quarter = data.get("quarter") if type(data.get("quarter")) is str else payload.get("quarter")
     if type(quarter) is not str or _QUARTER.fullmatch(quarter) is None:
         quarter = ""
@@ -314,13 +340,12 @@ def _holding_ticker(row: dict) -> str | None:
     return None
 
 
-def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[FeatureLine]:
+def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[FeatureLine] | None:
     if not _ok(payload):
-        return []
+        return None
+    if not _identity_matches(payload, "symbol", etf, fold=True):
+        return None
     data = _data(payload)
-    returned = data.get("symbol") if type(data.get("symbol")) is str else payload.get("symbol")
-    if type(returned) is not str or returned.strip().upper() != etf.upper():
-        return []
     rows = data.get("holdings")
     if type(rows) is not list:
         rows = payload.get("constituents") if type(payload.get("constituents")) is list else []
@@ -330,7 +355,7 @@ def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[Fe
     if type(as_of) is not str:
         as_of = data.get("as_of")
     if type(as_of) is not str or _AS_OF.fullmatch(as_of) is None:
-        return []
+        return None
     kept: list[str] = []
     symbols: list[str] = []
     outside = 0
@@ -387,9 +412,11 @@ def _event_probability(row: dict) -> float | None:
     return found
 
 
-def project_contracts(payload: dict) -> list[FeatureLine]:
+def project_contracts(payload: dict, *, query: str) -> list[FeatureLine] | None:
     if not _ok(payload):
-        return []
+        return None
+    if not _identity_matches(payload, "query", query):
+        return None
     data = _data(payload)
     rows = data.get("events")
     if type(rows) is not list:

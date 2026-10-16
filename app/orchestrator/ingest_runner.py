@@ -292,10 +292,16 @@ class IngestRunner:
             feed.last_error = repr(exc)
             log.warning("ingest feed %s FAILED (consecutive=%d): %r",
                         name, feed.consecutive_errors, exc)
+            credited = getattr(exc, "emitted", None)
+            if type(credited) is int and credited > 0:
+                feed.emitted += credited
             if name == FEED_EDGAR:
                 self._sync_edgar_watch_only(False, f"EDGAR poll failed: {exc!r}")
-            return {"feed": name, **self._poll_health(feed), "error": repr(exc),
-                    "consecutive_errors": feed.consecutive_errors}
+            result = {"feed": name, **self._poll_health(feed), "error": repr(exc),
+                      "consecutive_errors": feed.consecutive_errors}
+            if type(credited) is int:
+                result["emitted"] = credited
+            return result
         feed.consecutive_errors = 0
         feed.emitted += emitted
         result = {"feed": name, "emitted": emitted, **self._poll_health(feed),

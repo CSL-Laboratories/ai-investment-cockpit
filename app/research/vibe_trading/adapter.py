@@ -181,9 +181,12 @@ class ResearchAdapter:
                 continue
             payload, attempt = self._invoke(tool, args, timeout_s=remaining)
             if payload is not None and attempt.status == "ok":
-                attempt.lines = self._project(tool, args, payload, universe=universe)
-                if not attempt.lines:
+                projected = self._project(tool, args, payload, universe=universe)
+                if projected is None:
                     attempt.status = "quarantined"
+                    attempt.lines = []
+                else:
+                    attempt.lines = projected
             attempts.append(attempt)
         if request.strategy_id is not None or request.run_root is not None:
             remaining = deadline - time.monotonic()
@@ -195,7 +198,7 @@ class ResearchAdapter:
 
     @staticmethod
     def _project(tool: str, args: dict, payload: dict, *,
-                 universe: frozenset[str]) -> list[FeatureLine]:
+                 universe: frozenset[str]) -> list[FeatureLine] | None:
         if tool == "alpha_bench":
             return project_alpha_bench(
                 payload, zoo=args["zoo"], universe=args["universe"], period=args["period"],
@@ -205,8 +208,8 @@ class ResearchAdapter:
         if tool == "etf_holdings":
             return project_etf(payload, etf=args["symbol"], universe=universe)
         if tool == "prediction_market":
-            return project_contracts(payload)
-        return []
+            return project_contracts(payload, query=args["query"])
+        return None
 
     def _vet(self, request: ResearchRequest, universe: frozenset[str],
              timeout_s: float | None = None) -> _Attempt:
@@ -229,7 +232,8 @@ class ResearchAdapter:
         # Staged strategy Python runs inside the sidecar as this OS user. A scratch
         # HOME does not isolate SecretService / Keychain / Credential Manager, so
         # this path never executes operator-staged code and never republishes a
-        # leftover run_card.json as fresh evidence.
+        # leftover run_card.json as fresh evidence. ``project_run_card`` stays for
+        # unit tests and a future isolated runner; it is not reachable here.
         return _Attempt("backtest", "denied", _millis(started), {}, [])
 
     def _invoke(self, tool: str, arguments: dict, timeout_s: float | None = None

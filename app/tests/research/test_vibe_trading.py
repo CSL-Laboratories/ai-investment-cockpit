@@ -200,7 +200,10 @@ def test_token_budget_trims_instead_of_overflowing(tmp_path):
             "ic_positive_ratio": 0.7,
             "ic_count": 100,
         })
-    payload = {"status": "ok", "alive": 30, "reversed": 0, "dead": 0, "rows": rows}
+    payload = {
+        "status": "ok", "zoo": "alpha101", "universe": "sp500", "period": "2018-2025",
+        "alive": 30, "reversed": 0, "dead": 0, "rows": rows,
+    }
     transport = FakeSidecar({"alpha_bench": payload})
     settings = _settings(
         vibe_trading_etfs="", vibe_trading_event_queries="", watchlist="AAPL",
@@ -447,6 +450,9 @@ def test_published_refs_are_groundable(state, tmp_path):
 def test_alpha_bench_ignores_envelope_zoo_counts():
     payload = {
         "status": "ok",
+        "zoo": "alpha101",
+        "universe": "sp500",
+        "period": "2018-2025",
         "alive": 99,
         "reversed": 98,
         "dead": 97,
@@ -573,20 +579,59 @@ def test_etf_mismatching_or_missing_symbol_is_quarantined():
     payload = _load("etf.json")
     universe = frozenset({"AAPL"})
     assert project_etf(payload, etf="SPY", universe=universe)
-    assert project_etf(payload, etf="IVV", universe=universe) == []
+    assert project_etf(payload, etf="IVV", universe=universe) is None
     missing = json.loads(json.dumps(payload))
     missing["data"]["symbol"] = ""
-    assert project_etf(missing, etf="SPY", universe=universe) == []
+    assert project_etf(missing, etf="SPY", universe=universe) is None
     del missing["data"]["symbol"]
-    assert project_etf(missing, etf="SPY", universe=universe) == []
+    assert project_etf(missing, etf="SPY", universe=universe) is None
 
 
 def test_holdings_mismatching_ticker_are_quarantined():
     from research.vibe_trading.features import project_holdings
 
     payload = _load("holdings.json")
-    assert project_holdings(payload, ticker="MSFT") == []
+    assert project_holdings(payload, ticker="MSFT") is None
     assert project_holdings(payload, ticker="AAPL")
+    missing = json.loads(json.dumps(payload))
+    del missing["data"]["ticker"]
+    assert project_holdings(missing, ticker="AAPL") is None
+
+
+def test_alpha_bench_mismatching_identity_is_quarantined():
+    payload = _load("alpha_bench.json")
+    assert project_alpha_bench(
+        payload, zoo="alpha101", universe="sp500", period="2018-2025",
+    )
+    assert project_alpha_bench(
+        payload, zoo="alpha101", universe="csi300", period="2018-2025",
+    ) is None
+
+
+def test_prediction_mismatching_or_missing_query_is_quarantined():
+    from research.vibe_trading.features import project_contracts
+
+    payload = _load("prediction.json")
+    assert project_contracts(payload, query="Fed cut")
+    assert project_contracts(payload, query="Rates") is None
+    missing = json.loads(json.dumps(payload))
+    del missing["data"]["query"]
+    assert project_contracts(missing, query="Fed cut") is None
+
+
+def test_valid_empty_prediction_keeps_the_batch_ok():
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="Fed cut",
+    )
+    transport = FakeSidecar({
+        "alpha_bench": _load("alpha_bench.json"),
+        "prediction_market": {"ok": True, "data": {"query": "Fed cut", "events": []}},
+    })
+    batch = ResearchAdapter(settings, transport=transport).collect(clock=FrozenClock(NOW))
+    assert batch.status == "ok"
+    pred = next(call for call in batch.calls if call["tool"] == "prediction_market")
+    assert pred["status"] == "ok"
 
 
 def test_failed_run_card_status_is_quarantined():
@@ -610,7 +655,7 @@ def test_outcome_odds_are_not_an_event_probability():
 
     payload = {
         "ok": True,
-        "data": {"events": [{
+        "data": {"query": "Fed cut", "events": [{
             "event_id": "fed-cut-2026",
             "title": "Fed cut by December",
             "end_date": "2026-07-01T00:00:00Z",
@@ -620,7 +665,7 @@ def test_outcome_odds_are_not_an_event_probability():
             ]}],
         }]},
     }
-    lines = project_contracts(payload)
+    lines = project_contracts(payload, query="Fed cut")
     assert lines
     assert "implied_probability=" not in lines[0].text
 
@@ -685,6 +730,8 @@ def test_poller_surfaces_a_partial_collection(tmp_path):
     out = runner.poll(FEED_VIBE_TRADING)
     assert out["status"] == "error"
     assert "partial" in out["error"]
+    assert out["emitted"] > 0
+    assert runner.polls[FEED_VIBE_TRADING].emitted == out["emitted"]
     window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
     assert window
     assert all(row.source == "vibe-trading" for row in window)
