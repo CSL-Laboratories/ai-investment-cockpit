@@ -242,7 +242,11 @@ The engine runs in **paper trading** by default. Live trading requires an explic
 
 ## Performance
 
-Flag speed regressions. A benchmark CI step is tracked in Linear; until it lands, note perf impact in the PR description for engine changes.
+Flag speed regressions. Pull requests run a non-blocking `benchmarks` job
+(`.github/workflows/ci.yml`, CSL-53) that times the order-path and model-output
+hot paths against the default-branch tree in the same job and warns when the
+median slowdown, after sample spread, is above 10%. It does not fail
+`linux-gates`. Still note perf impact in the PR description for engine changes.
 
 ## Guardrails (MUST)
 
