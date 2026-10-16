@@ -7,7 +7,7 @@
   "coverage": "full_portfolio",
   "paging": {"offset": 0, "count": 2, "next_offset": null},
   "data": {
-    "symbol": "IVV",
+    "symbol": "SPY",
     "holdings_in_filing": 503,
     "holdings": [
       {"ticker": "AAPL", "name": "APPLE INC", "pct_of_net_assets": 7.0, "value_usd": 1},

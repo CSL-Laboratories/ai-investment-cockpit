@@ -19,18 +19,14 @@ from pathlib import Path
 from ingest.dedup import Dedup
 from research.vibe_trading.features import (
     FeatureLine,
-    config_symbols,
     load_research_config,
     project_alpha_bench,
     project_contracts,
     project_etf,
     project_holdings,
-    project_run_card,
-    read_run_card,
     scan_run_tree,
     to_events,
     trim_lines,
-    normalize_run_card,
 )
 from research.vibe_trading.mcp_client import (
     SidecarProtocolError,
@@ -230,30 +226,11 @@ class ResearchAdapter:
         if reason is not None:
             status = "denied" if ("forbidden" in reason or "order" in reason) else "quarantined"
             return _Attempt("backtest", status, _millis(started), {}, [])
-        args = {"run_dir": str(run_dir)}
-        payload, attempt = self._invoke("backtest", args, timeout_s=timeout_s)
-        if payload is None or attempt.status != "ok" or payload.get("status") != "ok":
-            attempt.status = "unavailable" if attempt.status == "unavailable" else "quarantined"
-            attempt.lines = []
-            return attempt
-        returned = payload.get("run_dir")
-        if type(returned) is str and Path(returned).resolve() != run_dir:
-            attempt.status = "quarantined"
-            attempt.lines = []
-            return attempt
-        sidecar_card = read_run_card(run_dir / "run_card.json")
-        card = None if sidecar_card is None else normalize_run_card(
-            sidecar_card, config_point_in_time=config.get("point_in_time") is True,
-        )
-        if card is None:
-            attempt.status = "quarantined"
-            attempt.lines = []
-            return attempt
-        attempt.lines = [project_run_card(
-            card, strategy_id=strategy_id, symbols=config_symbols(config, universe),
-            sidecar_card=sidecar_card,
-        )]
-        return attempt
+        # Staged strategy Python runs inside the sidecar as this OS user. A scratch
+        # HOME does not isolate SecretService / Keychain / Credential Manager, so
+        # this path never executes operator-staged code and never republishes a
+        # leftover run_card.json as fresh evidence.
+        return _Attempt("backtest", "denied", _millis(started), {}, [])
 
     def _invoke(self, tool: str, arguments: dict, timeout_s: float | None = None
                 ) -> tuple[dict | None, _Attempt]:

@@ -28,6 +28,7 @@ from research.vibe_trading.features import (
     categorise,
     normalize_run_card,
     project_alpha_bench,
+    project_run_card,
     _finite,
 )
 from research.vibe_trading.mcp_client import (
@@ -317,6 +318,9 @@ def test_allowlist_cannot_reenable_a_trading_tool(monkeypatch):
     "import importlib\nimportlib.import_module('brokers.gateway')\n",
     "getattr(mod, 'place_' + 'order')\n",
     "exec('place_order()')\n",
+    "import keyring\n",
+    "import os\n",
+    "import socket\n",
 ])
 def test_backtest_refuses_an_engine_that_imports_the_order_path(tmp_path, engine):
     run = _stage_run(tmp_path, engine=engine)
@@ -330,10 +334,22 @@ def test_backtest_refuses_an_engine_that_imports_the_order_path(tmp_path, engine
     assert not any(event["event_type"] == "signal:run_card" for event in batch.events)
 
 
-def test_point_in_time_run_card_is_evidence_and_not_an_order(tmp_path):
+def test_point_in_time_run_card_never_admits_an_order():
+    sidecar = _load("run_card.json")
+    card = normalize_run_card(sidecar, config_point_in_time=True)
+    assert card is not None
+    line = project_run_card(
+        card, strategy_id="idea-1", symbols=("AAPL",), sidecar_card=sidecar,
+    )
+    assert "admits_order=false" in line.text
+    assert "side" not in line.text
+    assert "buy" not in line.text
+    assert line.raw["sidecar_card"]["admits_order"] is True
+
+
+def test_staged_backtest_is_not_executed_and_leftover_cards_are_not_published(tmp_path):
     run = _stage_run(tmp_path, engine="def signal(panel):\n    return panel\n")
-    card = _load("run_card.json")
-    (run / "run_card.json").write_text(json.dumps(card), encoding="utf-8")
+    (run / "run_card.json").write_text(json.dumps(_load("run_card.json")), encoding="utf-8")
     transport = FakeSidecar({
         **_responses(),
         "backtest": {"status": "ok", "run_dir": str(run), "side": "buy"},
@@ -342,13 +358,9 @@ def test_point_in_time_run_card_is_evidence_and_not_an_order(tmp_path):
         _settings(vibe_trading_etfs="", vibe_trading_event_queries="", vibe_trading_max_symbols=0),
         transport=transport,
     ).collect(ResearchRequest(strategy_id="idea-1", run_root=str(tmp_path)), clock=FrozenClock(NOW))
-    assert transport.calls[-1][0] == "backtest"
-    assert set(transport.calls[-1][1]) == {"run_dir"}
-    card_event = next(event for event in batch.events if event["event_type"] == "signal:run_card")
-    assert "admits_order=false" in card_event["headline"]
-    assert "side" not in card_event["headline"]
-    assert "buy" not in card_event["headline"]
-    assert card_event["raw_input"]["sidecar_card"]["admits_order"] is True
+    assert "backtest" not in [tool for tool, _args in transport.calls]
+    assert any(call["tool"] == "backtest" and call["status"] == "denied" for call in batch.calls)
+    assert not any(event["event_type"] == "signal:run_card" for event in batch.events)
 
 
 def test_run_card_without_point_in_time_is_quarantined(tmp_path):
@@ -547,12 +559,26 @@ def test_etf_percent_weights_are_always_divided_by_one_hundred():
     payload = {
         "ok": True,
         "as_of": "2026-06-30",
-        "data": {"holdings": [
+        "data": {"symbol": "SPY", "holdings": [
             {"ticker": "AAPL", "pct_of_net_assets": 0.70},
         ]},
     }
     lines = project_etf(payload, etf="SPY", universe=frozenset({"AAPL"}))
     assert "AAPL:0.0070" in lines[0].text
+
+
+def test_etf_mismatching_or_missing_symbol_is_quarantined():
+    from research.vibe_trading.features import project_etf
+
+    payload = _load("etf.json")
+    universe = frozenset({"AAPL"})
+    assert project_etf(payload, etf="SPY", universe=universe)
+    assert project_etf(payload, etf="IVV", universe=universe) == []
+    missing = json.loads(json.dumps(payload))
+    missing["data"]["symbol"] = ""
+    assert project_etf(missing, etf="SPY", universe=universe) == []
+    del missing["data"]["symbol"]
+    assert project_etf(missing, etf="SPY", universe=universe) == []
 
 
 def test_holdings_mismatching_ticker_are_quarantined():
@@ -636,6 +662,32 @@ def test_poller_surfaces_an_unavailable_collection(tmp_path):
     out = runner.poll(FEED_VIBE_TRADING)
     assert out["status"] == "error"
     assert "unavailable" in out["error"]
+
+
+def test_poller_surfaces_a_partial_collection(tmp_path):
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_event_queries="",
+    )
+    state = _state(tmp_path, settings, name="partial.db")
+    responses = _responses()
+
+    class Mixed:
+        def call(self, tool, arguments):
+            if tool == "etf_holdings":
+                from research.vibe_trading.mcp_client import SidecarTimeout
+                raise SidecarTimeout("etf")
+            payload = responses[tool]
+            return payload(arguments) if callable(payload) else payload
+
+    adapter = ResearchAdapter(settings, transport=Mixed())
+    runner = IngestRunner(state, parquet_root=tmp_path / "raw", clock=FrozenClock(NOW))
+    runner.add_poller(FEED_VIBE_TRADING, VibeTradingPoller(adapter, state=state))
+    out = runner.poll(FEED_VIBE_TRADING)
+    assert out["status"] == "error"
+    assert "partial" in out["error"]
+    window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
+    assert window
+    assert all(row.source == "vibe-trading" for row in window)
 
 
 def test_vibe_poller_persists_parquet_backed_events(tmp_path):

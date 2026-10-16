@@ -46,6 +46,8 @@ _AS_OF = re.compile(r"[0-9TZ:.\-+]{10,40}")
 _RESEARCH_SOURCES = frozenset({"yfinance", "yahoo", "stooq", "local"})
 _FORBIDDEN_IMPORT_ROOTS = frozenset({
     "brokers", "risk", "importlib", "subprocess", "ctypes", "multiprocessing",
+    "keyring", "os", "socket", "ssl", "http", "urllib", "httpx", "requests",
+    "aiohttp", "pwd", "grp", "dbus", "jeepney", "winreg", "win32api", "win32cred",
 })
 _FORBIDDEN_ORDER_NAMES = frozenset({
     "place_order",
@@ -316,6 +318,9 @@ def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[Fe
     if not _ok(payload):
         return []
     data = _data(payload)
+    returned = data.get("symbol") if type(data.get("symbol")) is str else payload.get("symbol")
+    if type(returned) is not str or returned.strip().upper() != etf.upper():
+        return []
     rows = data.get("holdings")
     if type(rows) is not list:
         rows = payload.get("constituents") if type(payload.get("constituents")) is list else []
@@ -566,9 +571,9 @@ def project_run_card(card: dict, *, strategy_id: str, symbols: tuple[str, ...],
 def scan_signal_engine(path: Path) -> str | None:
     """Staging filter for a scanned Python file.
 
-    This is not the order-path boundary. Trading tools are refused before spawn,
-    the child gets a scratch HOME, and cockpit packages are not on PYTHONPATH.
-    An AST walk cannot prove the absence of an order path.
+    This is not the order-path boundary. The adapter refuses to execute staged
+    strategy code under the cockpit OS identity; trading tools are refused before
+    spawn. An AST walk cannot prove the absence of an order path.
     """
     try:
         text = path.read_text(encoding="utf-8")
