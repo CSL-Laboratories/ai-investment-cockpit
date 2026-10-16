@@ -125,6 +125,8 @@ def wait_for_review(resolve, state, attempts=9, sleep=time.sleep, clock=time.mon
         if results and all(result == "success" for result in results) and clock() < deadline:
             if resolve() != initial:
                 raise GateError("Review targets changed before success")
+            if clock() >= deadline:
+                raise GateError("Review deadline exceeded during final verification")
             return
         # A failed attempt may be replaced by a new Devin retry during this bound.
         if attempt + 1 < attempts:

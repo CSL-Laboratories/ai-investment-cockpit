@@ -273,12 +273,13 @@ jobs:
     permissions:
       contents: read
     needs: [filter, settle, linux]
-    if: always() && !cancelled() && github.event_name != 'schedule'
+    if: always() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Required Linux gate
         env:
+          WORKFLOW_CANCELLED: ${{ cancelled() }}
           FILTER_RESULT: ${{ needs.filter.result }}
           SETTLE_RESULT: ${{ needs.settle.result }}
           SETTLE_EXPECTED: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true }}
@@ -287,6 +288,10 @@ jobs:
         run: |
           set -euo pipefail
           echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT}"
+          if [ "$WORKFLOW_CANCELLED" != "false" ]; then
+            echo "Workflow cancellation cannot satisfy a required gate"
+            exit 1
+          fi
           if [ "$FILTER_RESULT" != "success" ]; then
             echo "filter job did not succeed"
             exit 1
@@ -322,6 +327,7 @@ jobs:
           persist-credentials: false
       - name: Require all mandatory platform cells
         env:
+          WORKFLOW_CANCELLED: ${{ cancelled() }}
           FILTER_RESULT: ${{ needs.filter.result }}
           REQUIRED: ${{ needs.filter.outputs.run-tests }}
           LINUX_RESULT: ${{ needs.linux.result }}
@@ -336,7 +342,8 @@ jobs:
           env = os.environ
           required = env['REQUIRED']
           windows_required = 'true' if required == 'true' and env['WINDOWS_REQUIRED'] == 'true' else 'false'
-          passed = (settled(env['SETTLE_RESULT'], env['SETTLE_EXPECTED'])
+          passed = (env['WORKFLOW_CANCELLED'] == 'false'
+                    and settled(env['SETTLE_RESULT'], env['SETTLE_EXPECTED'])
                     and gate(env['FILTER_RESULT'], required, [env['LINUX_RESULT']])
                     and gate(env['FILTER_RESULT'], windows_required, [env['WINDOWS_RESULT']]))
           raise SystemExit(0 if passed else 'Mandatory platform gate failed closed')

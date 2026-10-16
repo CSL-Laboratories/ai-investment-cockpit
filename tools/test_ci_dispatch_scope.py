@@ -227,14 +227,14 @@ class DispatchScopeTests(unittest.TestCase):
 
     def test_linux_gate_fails_closed(self):
         gate = self.ci['jobs']['linux-gates']
-        self.assertEqual(gate['if'], "always() && !cancelled() && github.event_name != 'schedule'")
+        self.assertEqual(gate['if'], "always() && github.event_name != 'schedule'")
         self.assertEqual(self.ci['jobs']['linux']['strategy']['matrix']['python-version'], ['3.11', '3.12'])
         for filter_result in ('success', 'failure', 'skipped', 'cancelled'):
             for linux_result in ('success', 'failure', 'skipped', 'cancelled'):
                 with self.subTest(filter=filter_result, linux=linux_result):
                     result = subprocess.run(['bash', '-c', gate['steps'][0]['run']],
                                             capture_output=True, check=False, env={**os.environ,
-                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
+                                            'WORKFLOW_CANCELLED': 'false', 'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
                                             'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
                                             'RUN_TESTS': 'true'})
                     self.assertEqual(result.returncode == 0,

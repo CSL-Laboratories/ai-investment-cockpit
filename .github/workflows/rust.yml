@@ -247,6 +247,7 @@ jobs:
           persist-credentials: false
       - name: Require all selected Rust cells or an explicit path noop
         env:
+          WORKFLOW_CANCELLED: ${{ cancelled() }}
           FILTER_RESULT: ${{ needs.filter.result }}
           REQUIRED: ${{ needs.filter.outputs.has-cells }}
           RESULTS: ${{ toJSON(needs.rust-book.result) }}
@@ -256,7 +257,8 @@ jobs:
           python3 - <<'PY'
           import json, os
           from tools.required_ci_gate import gate, settled
-          passed = (settled(os.environ['SETTLE_RESULT'], os.environ['SETTLE_EXPECTED'])
+          passed = (os.environ['WORKFLOW_CANCELLED'] == 'false'
+                    and settled(os.environ['SETTLE_RESULT'], os.environ['SETTLE_EXPECTED'])
                     and gate(os.environ['FILTER_RESULT'], os.environ['REQUIRED'],
                              [json.loads(os.environ['RESULTS'])]))
           raise SystemExit(0 if passed else 'Required Rust gate failed closed')

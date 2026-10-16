@@ -102,6 +102,11 @@ class ReviewGateTests(unittest.TestCase):
         with self.assertRaises(GateError):
             wait_for_review(Mock(side_effect=[[SHA], ['b' * 40]]), lambda _: 'success', sleep=sleep)
 
+    def test_final_target_verification_cannot_pass_after_deadline(self):
+        with self.assertRaisesRegex(GateError, 'deadline exceeded'):
+            wait_for_review(lambda: [SHA], lambda _: 'success',
+                            clock=Mock(side_effect=[0, 1, 2, 121]), sleep=Mock())
+
     def test_same_head_manual_recovery_requires_live_head(self):
         event = {'inputs': {'pr_number': '42'}}
         self.assertEqual(targets('owner/repo', 'workflow_dispatch', event, SHA,
