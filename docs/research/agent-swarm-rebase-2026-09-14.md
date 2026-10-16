@@ -16,8 +16,10 @@ its installed CLIs. “Kernel” is shorthand for those goals, not a new product
 parallel runtime or permission to rewrite the cockpit.
 
 PRODUCT and its adopted contracts own scope and acceptance; PLAN owns delivery
-order; REGISTER owns claims; CLAUDE owns the nine invariants. This process
-amendment changes development orchestration only. It grants no empirical PASS,
+order; claim by assigning the `CSL-N` issue and moving it to In Progress
+(REGISTER records work ID, branch, and status); CLAUDE owns the nine
+invariants. This process amendment changes development orchestration only.
+It grants no empirical PASS,
 strategy activation, paper/live order authority, soak or production deployment.
 
 ## Current runtime policy

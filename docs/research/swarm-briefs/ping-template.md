@@ -8,7 +8,7 @@ The offline preview helper cannot launch it.
 ## Admission
 
 - job_id: <unique bounded job>
-- claim_id: <existing REGISTER claim>
+- claim_id: <CSL-N Linear assignment; REGISTER records the ID>
 - attempt: <positive integer; new path for every retry>
 - role: <leaf | first-gate-review | second-gate-synthesis>
 - runtime / executable version: <qualified route and exact version>

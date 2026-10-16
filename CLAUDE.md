@@ -7,9 +7,9 @@
 
 Linear is the basis of operations. Check Linear for overlapping issues and PRs
 before starting; work only from a Linear issue and keep it updated (agents
-with Linear access post status and PR links as issue comments; hosted Claude
-is GitHub-only, and Linear PR-sync/stuck-thread-watch do not post its
-milestones). Every review request,
+with Linear access post status and PR links as issue comments). Hosted Claude
+(`devin-review-fix`, `resolve-pr`) is exempt from that Linear preflight and
+from posting Linear status: it is GitHub-only. Every review request,
 blocker, or question directed at a person is an @mention on the matching CSL
 Linear issue — not GitHub alone. Automated GitHub workflows keep their
 existing channels (Codex gate, Linear PR-sync, Devin Review). Handles:

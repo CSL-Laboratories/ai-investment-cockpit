@@ -7,15 +7,15 @@
 Linear is the basis of operations. Bounded workers with a frozen brief (for
 example `muse-synthesizer`) are exempt from the Linear and external-research
 steps below; Head performs them before freezing the brief, and the worker's own
-prompt governs.
+prompt governs. Hosted Claude (`devin-review-fix`, `resolve-pr`) is exempt
+from the Linear preflight and status steps below: it has no Linear access and
+works from the GitHub event only (see **When Claude can't fix a review thread**).
 
 - Before starting work, check Linear for overlapping issues and PRs.
 - Work only from a Linear issue. Keep it updated with status, progress comments,
   and PR links. Agents and bots with Linear access post their own status
-  updates and PR links as comments on that issue. Hosted Claude
-  (`devin-review-fix`, `resolve-pr`) has no Linear access: it replies on
-  GitHub only (see **When Claude can't fix a review thread**). Linear PR-sync
-  writes generic PR status, not Claude milestones; the stuck-thread watcher
+  updates and PR links as comments on that issue. Linear PR-sync writes
+  generic PR status, not hosted-Claude milestones; the stuck-thread watcher
   files a roll-up only for stuck threads. When a hosted-Claude blocker or
   milestone needs a person, an agent with Linear access (usually the PR
   author) posts that @mention on the CSL issue.
