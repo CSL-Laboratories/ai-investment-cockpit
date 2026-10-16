@@ -78,13 +78,15 @@ permissions:
   contents: read
 
 concurrency:
-  # Suffixes are label | draft | default. workflow_dispatch is `label` because
+  # Label dispatch suffixes bind expected head and scope because
   # `gh workflow run --ref` resolves to the current head; a stale label rerun
-  # must not cancel that head's in-progress PR run. The head SHA is not in
-  # the group (that suffix prevented cancellation). Filter still fail-closes
+  # must not cancel that head's PR run or newer label run. Different scopes
+  # cannot cancel each other on the same head. Ordinary PR groups omit SHA
+  # so new pushes cancel old heads. Manual and queue runs are isolated.
+  # Filter still fail-closes
   # stale dispatch context before billed rust-book work. Draft synchronize
   # stays in its own group so it cannot cancel a ready_for_review matrix.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'label' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
   cancel-in-progress: true
 
 jobs:

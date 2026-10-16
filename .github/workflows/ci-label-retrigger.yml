@@ -17,7 +17,9 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-label-retrigger-${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  # Delivery order is not guaranteed. An old event must not cancel the newer
+  # head's dispatcher before either reaches dispatch-context validation.
+  group: ci-label-retrigger-${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.label.name }}
   cancel-in-progress: true
 
 jobs:

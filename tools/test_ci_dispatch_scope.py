@@ -5,11 +5,11 @@ Requires PyYAML (already part of the repository validation dependencies).
 """
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 import yaml
 
@@ -29,6 +29,7 @@ def evaluate(expression, **overrides):
     """
     values = {
         'github.event_name': 'pull_request',
+        'github.event.action': 'synchronize',
         'github.workflow': 'ci',
         'github.sha': 'a' * 40,
         'github.ref': 'refs/pull/149/merge',
@@ -54,8 +55,17 @@ def evaluate(expression, **overrides):
     expression = re.sub(r'\btrue\b', 'True', expression)
     expression = re.sub(r'\bfalse\b', 'False', expression)
     # Expressions under test only use literals, comparisons, boolean operators,
-    # and contains. No arbitrary external input reaches this evaluation.
-    return eval(expression, {'__builtins__': {}, 'contains': lambda a, b: b in a})
+    # contains, and indexed string format. No arbitrary external input reaches
+    # this evaluation. format fixtures use only GitHub's supported {N} form.
+    return eval(expression, {'__builtins__': {}, 'contains': lambda a, b: b in a,
+                             'format': lambda template, *args: template.format(*args)})
+
+
+def concurrency_group(doc, **context):
+    """Render the checked-in group expression for a synthetic event."""
+    return re.sub(r'\$\{\{(.*?)\}\}',
+                  lambda match: str(evaluate(match[1], **context)),
+                  doc['concurrency']['group'])
 
 
 class DispatchScopeTests(unittest.TestCase):
@@ -140,7 +150,7 @@ class DispatchScopeTests(unittest.TestCase):
             for linux_result in ('success', 'failure', 'skipped', 'cancelled'):
                 with self.subTest(filter=filter_result, linux=linux_result):
                     result = subprocess.run(['bash', '-c', gate['steps'][0]['run']],
-                                            capture_output=True, env={**os.environ,
+                                            capture_output=True, check=False, env={**os.environ,
                                             'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result})
                     self.assertEqual(result.returncode == 0,
                                      filter_result == 'success' and linux_result in ('success', 'skipped'))
@@ -187,52 +197,98 @@ class DispatchScopeTests(unittest.TestCase):
                                             for name in expected])
                     (tmp/'calls').unlink()
                     rejected = subprocess.run(['bash', '-c', self.step['run']], env={**env, 'HEAD_REF': 'main'},
-                                              capture_output=True)
+                                              capture_output=True, check=False)
                     self.assertNotEqual(rejected.returncode, 0)
                     self.assertFalse((tmp/'calls').exists())
 
-    def test_pr_and_dispatch_share_concurrency_but_drafts_and_nightly_do_not(self):
-        def group(doc, **context):
-            return re.sub(r'\$\{\{(.*?)\}\}',
-                          lambda match: str(evaluate(match[1], **context)),
-                          doc['concurrency']['group'])
+    def test_pr_concurrency_cancels_old_heads_but_isolates_drafts(self):
         for doc in (self.ci, self.rust):
-            group_expr = doc['concurrency']['group']
-            self.assertNotIn('pr_head_sha', group_expr)
-            self.assertNotIn('head.sha', group_expr)
-            self.assertIn("&& 'label'", group_expr)
             self.assertEqual(doc['concurrency']['cancel-in-progress'], 'true')
-            normal = group(doc)
-            self.assertTrue(normal.endswith('-default'), normal)
-            # workflow_dispatch is its own `label` suffix: `gh workflow run --ref`
-            # resolves to the current head, so a stale rerun must not cancel
-            # that head's in-progress PR run. Filter still fail-closes stale
-            # dispatch context before billed matrix work.
-            label = group(doc, **{
-                'github.event_name': 'workflow_dispatch', 'inputs.pr_number': '149',
-                'inputs.pr_head_sha': 'a' * 40,
-                'github.ref': 'refs/heads/cursor/csl-202',
-                'github.event.pull_request.number': '',
-                'github.event.pull_request.head.sha': ''})
-            self.assertTrue(label.endswith('-label'), label)
-            self.assertNotEqual(normal, label)
-            self.assertEqual(normal, group(doc, **{
+            normal = concurrency_group(doc)
+            # The action and resolved merge/head SHA must not partition normal
+            # PR work: opened -> synchronize -> ready all supersede old work.
+            for action in ('opened', 'synchronize', 'reopened', 'ready_for_review'):
+                for head in ('a' * 40, 'b' * 40):
+                    with self.subTest(workflow=doc['name'], action=action, head=head):
+                        self.assertEqual(normal, concurrency_group(doc, **{
+                            'github.event.action': action, 'github.sha': head,
+                            'github.event.pull_request.head.sha': head}))
+            draft = concurrency_group(doc, **{'github.event.pull_request.draft': True})
+            self.assertNotEqual(normal, draft)
+            self.assertEqual(draft, concurrency_group(doc, **{
+                'github.event.pull_request.draft': True,
                 'github.event.pull_request.head.sha': 'b' * 40}))
-            self.assertNotEqual(normal, group(doc, **{
-                'github.event.pull_request.draft': True}))
-            self.assertTrue(group(doc, **{
-                'github.event.pull_request.draft': True}).endswith('-draft'))
-            self.assertNotEqual(label, group(doc, **{
-                'github.event_name': 'workflow_dispatch', 'github.event.pull_request.number': '',
-                'github.ref': 'refs/heads/main'}))
-            self.assertNotEqual(normal, group(doc, **{
+            self.assertNotEqual(normal, concurrency_group(doc, **{
                 'github.event.pull_request.number': 150}))
-        self.assertTrue(group(self.ci, **{
-            'github.event_name': 'schedule', 'github.event.pull_request.number': '',
-            'github.ref': 'refs/heads/main'}).endswith('-nightly'))
-        self.assertNotEqual(group(self.ci), group(self.ci, **{
-            'github.event_name': 'schedule', 'github.event.pull_request.number': '',
-            'github.ref': 'refs/heads/main'}))
+
+    def test_out_of_order_label_dispatch_cannot_cancel_current_work(self):
+        def dispatched(label, head, resolved_head):
+            # Evaluate the real dispatcher scope expression. A delayed A event
+            # can resolve --ref to B while still carrying expected head A.
+            scope = evaluate(self.step['env']['CI_SCOPE'], **{
+                'github.event.label.name': label,
+                'github.event.pull_request.labels.*.name': [label]})
+            return {'github.event_name': 'workflow_dispatch',
+                    'github.event.pull_request.number': '',
+                    'github.event.pull_request.head.sha': '',
+                    'github.ref': 'refs/heads/feature', 'github.sha': resolved_head,
+                    'inputs.pr_number': '149', 'inputs.pr_head_sha': head,
+                    'inputs.scope': scope}
+
+        a, b = 'a' * 40, 'b' * 40
+        for doc in (self.ci, self.rust):
+            for delayed_head in (a, b):
+                with self.subTest(workflow=doc['name'], delayed_head=delayed_head):
+                    # Model admission before filter validation: cancellation is
+                    # based only on the actual rendered concurrency key.
+                    active = {}
+                    cancelled = []
+                    arrivals = [('ordinary-B', {'github.sha': b,
+                                                'github.event.pull_request.head.sha': b}),
+                                ('full-B', dispatched('ci:full', b, b)),
+                                ('delayed-enhancement', dispatched('enhancement', delayed_head, b))]
+                    for name, context in arrivals:
+                        key = concurrency_group(doc, **context)
+                        if key in active:
+                            cancelled.append(active[key])
+                        active[key] = name
+                    self.assertEqual(cancelled, [])
+                    self.assertEqual(set(active.values()), {name for name, _ in arrivals})
+            # Same expected-head/scope retries coalesce, even when --ref moved;
+            # different expected heads remain independent until validation.
+            for label in ('ci:full', 'enhancement'):
+                self.assertEqual(concurrency_group(doc, **dispatched(label, a, a)),
+                                 concurrency_group(doc, **dispatched(label, a, b)))
+                self.assertNotEqual(concurrency_group(doc, **dispatched(label, a, b)),
+                                    concurrency_group(doc, **dispatched(label, b, b)))
+        for label in ('ci:full', 'enhancement'):
+            old = {'github.event.pull_request.head.sha': a, 'github.event.label.name': label}
+            new = {**old, 'github.event.pull_request.head.sha': b}
+            self.assertNotEqual(concurrency_group(self.label, **old),
+                                concurrency_group(self.label, **new))
+
+    def test_manual_nightly_and_queue_concurrency_isolation(self):
+        for doc in (self.ci, self.rust):
+            # Intentionally use the same ref to prove event-kind isolation,
+            # rather than merely relying on differing ordinary ref strings.
+            base = {'github.event.pull_request.number': '',
+                    'github.event.pull_request.head.sha': '',
+                    'github.ref': 'refs/heads/main'}
+            events = [('push', ''), ('workflow_dispatch', 'full'),
+                      ('workflow_dispatch', 'linux'), ('merge_group', '')]
+            if doc is self.ci:
+                events.append(('schedule', ''))
+            keys = [concurrency_group(doc, **{**base, 'github.event_name': event,
+                                             'inputs.scope': scope})
+                    for event, scope in events]
+            self.assertEqual(len(keys), len(set(keys)), keys)
+            manual_default = concurrency_group(doc, **{**base,
+                'github.event_name': 'workflow_dispatch'})
+            self.assertEqual(manual_default, keys[1])
+            queue = {**base, 'github.event_name': 'merge_group'}
+            self.assertNotEqual(concurrency_group(doc, **queue),
+                                concurrency_group(doc, **{**queue,
+                                    'github.ref': 'refs/heads/gh-readonly-queue/main/pr-150'}))
 
     def test_merge_context_reaches_every_matrix_checkout(self):
         for doc, jobs in ((self.ci, ('filter', 'linux', 'windows', 'macos')),
@@ -278,7 +334,7 @@ class DispatchScopeTests(unittest.TestCase):
                     ({'PR_NUMBER': '', 'PR_HEAD_SHA': '', 'MERGE_SHA': ''}, True)]:
                 with self.subTest(changes=changes):
                     result = subprocess.run(['bash', '-c', scripts[0]], cwd=tmp,
-                        capture_output=True, env={**os.environ, **valid, **changes})
+                        capture_output=True, check=False, env={**os.environ, **valid, **changes})
                     self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
