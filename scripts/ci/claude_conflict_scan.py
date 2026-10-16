@@ -29,7 +29,7 @@ MERGEABLE_ATTEMPTS = 4
 MERGEABLE_BUDGET_SECONDS = 120.0
 MAX_RETRY_REQUESTS = 100
 MAX_DETAIL_PRS = 200  # per scan; the window rotates every scan so no PR starves
-ROTATION_SECONDS = 1800
+ROTATION_SECONDS = 7200
 MAX_RUN_PAGES = 5
 FIXER_EVENTS = frozenset(
     {
@@ -178,7 +178,7 @@ def fetch_prs(
     computed lazily: retries share one time budget, never sleep after the last
     attempt, and stop after the deadline or once MAX_RETRY_REQUESTS retries are
     spent. At most MAX_DETAIL_PRS PRs are fetched per scan, from a window that
-    rotates with wall-clock time (one step per 30-minute schedule), so the scan
+    rotates with wall-clock time (one step per 2-hour schedule), so the scan
     stays bounded and every PR is reached within a few scans. Pending PRs are
     skipped.
     """
