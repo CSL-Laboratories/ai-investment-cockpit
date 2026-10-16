@@ -147,9 +147,17 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
-Agents must stay Linear-aware and proactive. Linear is the source of truth.
+Agents must stay Linear-aware and proactive. Linear is the source of truth for issue
+status, assignment, discussion, and cycle membership. Work claims stay in
+`docs/REGISTER.md`: allocate `RW-*`, `W-*`, `BUG-*`, `SEC-*`, and the other series
+there, then cite that ID in the Linear issue title or description. `CSL-N` links the
+pull request. Process work with no package says so and does not mint an ID. Cycle 1
+has not started;
+[CSL-8](https://linear.app/csl-laboratories/issue/CSL-8/define-cycle-length-and-first-cycle-scope)
+still owns cycle length and first-cycle scope. See the Linear section in
+`docs/REGISTER.md`.
 
-- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`. When the work has a REGISTER ID, cite it in the issue title or description before editing code.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.

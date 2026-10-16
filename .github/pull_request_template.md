@@ -1,4 +1,5 @@
 Linear: CSL-___
+REGISTER: RW-___ | W-___ | BUG-___ | SEC-___ | none
 
 ## Summary
 <!-- What changed and why. -->
