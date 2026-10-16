@@ -1554,7 +1554,8 @@ not going to change. It means the fix is a **claim mechanism**, not a process.
 
 ### Before writing code for anything larger than a one-line bugfix
 
-One entry in [[REGISTER]], and answers to these:
+Assign the `CSL-N` issue and move it to In Progress, record the work ID and
+branch in [[REGISTER]], and answers to these:
 
 1. **What changes for the operator?** If nothing, this is a refactor — say so and justify it.
 2. **What existing code path does this replace or extend?** Name the file. If "none", say why
@@ -1564,7 +1565,8 @@ One entry in [[REGISTER]], and answers to these:
 4. **What proves it is reachable in production?** Name the test that fails if the wiring is
    removed. Not "the unit tests pass." *(This is the grounding failure: `decision_agent_cwd`
    had zero test references, so a dead security control looked healthy.)*
-5. **Which IDs does this claim?** Cross-check the register for an existing claim.
+5. **Which IDs does this claim?** Cross-check Linear for an existing assigned
+   `CSL-N` issue, then record the work ID in the register.
 6. **Windows / Ubuntu implications.** Subprocess, path, credential, or temp file — say how for
    native Windows and Ubuntu/WSL2. Note best-effort macOS portability where materially relevant.
 7. **Rough size.** Over ~1,000 LOC is more than one package. Split it before starting.

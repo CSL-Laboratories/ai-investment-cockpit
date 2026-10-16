@@ -247,8 +247,10 @@ canonical invariant list, and nothing else restates it.
 ## Contributor handoff
 
 1. Fetch `origin/main`; do not continue one of the stale branches named above.
-2. Read [[PLAN]] for phase/dependency context and [[REGISTER]] for the exact open row.
-3. Claim one row and one fresh branch. Keep one production-code package active at a time.
+2. Read [[PLAN]] for phase/dependency context. Check Linear for overlapping
+   issues and the exact open `CSL-N`; [[REGISTER]] records work ID, branch, and status.
+3. Claim by assigning the `CSL-N` issue and moving it to In Progress, then
+   record the ID on one fresh branch. Keep one production-code package active at a time.
 4. Add a reachability/regression test, run targeted tests, the full local suite, and Ruff using
    the platform instructions in `AGENTS.md`; order-path changes also require adversarial review.
 5. Record whether evidence is local-platform, live-market, paper-broker, independent-witness, or deployment
