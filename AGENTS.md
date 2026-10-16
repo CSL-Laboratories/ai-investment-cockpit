@@ -87,8 +87,10 @@ provisioned.
 ## Working conventions
 
 1. Read `docs/README.md` and the relevant plan before editing.
-2. Keep changes to one work package and add tests with the change.
-3. Use the project virtual environment. Create it once with `python -m venv .venv`
+2. Before proposing architecture or direction, read `docs/adr/` and the linked
+   decision issues; do not re-argue a recorded decision without new evidence.
+3. Keep changes to one work package and add tests with the change.
+4. Use the project virtual environment. Create it once with `python -m venv .venv`
    from the repo root — note the `py` launcher is not present on every dev box —
    then install the full runtime and validation dependency set CI installs (see
    `.github/workflows/ci.yml` and the command in `CLAUDE.md`), including `discord.py`.
@@ -103,9 +105,9 @@ provisioned.
    ~80 spurious `WinError 206` failures that are not real defects. Also clear any
    ambient `COCKPIT_*` vars — real operator config in the shell fails at least one
    test that asserts an unconfigured default.
-4. Keep the repository private and commit only when the operator asks.
-5. Any order-path change needs an adversarial-review round.
-6. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
+5. Keep the repository private and commit only when the operator asks.
+6. Any order-path change needs an adversarial-review round.
+7. The release-blocking local matrix is **native Windows plus Ubuntu under WSL2**, each on
    Python 3.11 and 3.12. Run all four cells on the operator's Windows workstation. Hosted
    Linux (`linux-gates`) is a required PR diagnostic and does not replace that matrix;
    hosted Windows/macOS are not ordinary-PR checks; Hetzner is not a release gate. macOS is a
@@ -118,6 +120,7 @@ provisioned.
 
 Prefer the project `parallel-search` MCP server (`web_search` / `web_fetch`) for web lookups.
 It is declared in `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code); no API key is required.
+Search/Extract is for lookups. Assignee decision/direction work also needs the Task API — see Linear-first.
 
 ## Engineering stack (Oct 2026)
 
@@ -150,8 +153,10 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 - **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- **When you are the assignee** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
 - Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
 - Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
 - When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
 - **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
 - The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
@@ -168,10 +173,62 @@ Hosted split (PR #102):
 
 ## Review roles
 
-- **Devin** is the only GitHub PR reviewer. It does not auto-fix.
+- **Devin** is the GitHub PR code reviewer (findings). It does not auto-fix.
 - **Claude Code Action** (`.github/workflows/claude.yml`) is the fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate).
+- **Codex** has two allowed GitHub review paths, neither a Devin substitute:
+  1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
+  2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
 - **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
-- Cursor, Codex, Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs. The author agent may fix CI failures on its own PR.
+- Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
+
+## Review loop
+
+Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
+`ci:full` / human handoff only. Devin findings
+trigger Claude directly without waiting for Codex. All Claude jobs share one
+per-PR lock with GitHub `queue: max` (one active, up to 100 pending; excess
+requests can still be dropped). The automated Devin fixer stops at eight consecutive Claude
+commits. Stuck threads are also picked up by
+[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
+(CSL-86 / PR #124), which asks Codex to mediate (`@codex review`, no
+`CODEX-GATE:` line) and records one Linear Triage `needs-decision` roll-up per
+unapproved PR (`Stuck PR threads: <repo>#<PR>`), updated in place. Adopt an
+existing roll-up only by the `stuck-pr-threads` HTML marker, never by title.
+Write Linear only when at least one thread is actionable after the per-PR cap
+and `CODEX_TRIGGER_PAT` checks, or to create a missing roll-up after an earlier
+Linear outage. Humans decide.
+The watcher never resolves threads, pushes, or merges.
+
+## Code Review Rules
+
+These rules apply to the **CI/fixer gate** `@codex review` (comment marker
+`<!-- codex-gate:<sha> -->`). When the head is ready for full CI or needs a
+human decision, **end the review body with exactly one applicable verdict
+line**. When fixes are still pending, leave advisory findings without a verdict:
+
+    CODEX-GATE: READY
+    CODEX-GATE: MEDIATE
+
+- Legacy `CODEX-GATE: FIX` verdicts are ignored. Human-only findings need a human `@claude` mention.
+  Devin submitted reviews trigger fixes directly; Codex never dispatches the fixer.
+- `READY` — findings are settled or none remain; apply the `ci:full` label
+  so the hosted Windows/macOS matrix runs once.
+- `MEDIATE` — Devin and Claude disagree or a thread needs a human. File or
+  update the shared Linear `needs-decision` Triage issue per PR, titled
+  `Stuck PR threads: <repo>#<PR>` (key `<!-- stuck-pr-threads:owner/repo#N -->`).
+  Skip if the PR is already approved. Do not wait for stuck-thread-watch (it
+  only flags a needs-human phrase or a 6-hour-old Claude reply).
+
+If fixes remain, leave advisory findings without a gate verdict. READY and
+MEDIATE are the only actionable verdicts; missing verdicts never time out
+into fixer dispatch. Recovery scans retry missing requests and those two
+verdicts only. There is no daily fixer dispatch cap. Locked live-head and
+unresolved-finding checks skip obsolete queued events; failed runs remain
+retryable through a new Devin submitted review or authorized manual dispatch.
+
+If this `@codex review` is a stuck-thread mediation (the comment contains
+`<!-- codex-mediation:`), do **not** add a `CODEX-GATE:` line. The gate
+ignores those reviews and never dispatches a fixer from them.
 
 ## Automations
 
@@ -194,7 +251,11 @@ The engine runs in **paper trading** by default. Live trading requires an explic
 
 ## Performance
 
-Flag speed regressions. A benchmark CI step is tracked in Linear; until it lands, note perf impact in the PR description for engine changes.
+Flag speed regressions. Pull requests run a non-blocking `benchmarks` job
+(`.github/workflows/ci.yml`, CSL-53) that times the order-path and model-output
+hot paths against the default-branch tree in the same job and warns when the
+median slowdown, after sample spread, is above 10%. It does not fail
+`linux-gates`. Still note perf impact in the PR description for engine changes.
 
 ## Guardrails (MUST)
 
@@ -203,3 +264,61 @@ Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacks
 Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 
 Do not add paid services or raise spend limits.
+
+### Fixer receipts and bounded no-progress retries (CSL-201)
+
+Automatic eligibility requires explicit Devin `kind: bug` metadata. Trusted Claude
+structured per-root receipts bind the original body fingerprint to a validated
+base and pushed commit; addressed receipts suppress repeats only when that commit
+is strictly newer than the base and remains an ancestor of the live PR head.
+Explicit `needs-human` receipts leave the thread unresolved for human mediation.
+New meaningful Devin or repository-writer replies rearm it; arbitrary prose,
+failed tests, tool/API errors, and no-push runs never prove completion.
+
+Under the shared PR lock, at most three automatic attempt reservations are allowed
+for the same head and same meaningful pending-findings fingerprint. A new head or
+changed findings resets this budget; authorized manual `devin-review-fix` dispatch
+can retry while the eight-commit guard remains. There is no daily cap. Reservations
+can include workflow-validation stops before model execution, so after activation
+an authorized manual retry may be needed. A paused attempt budget is never READY.
+
+Receipt parsing accepts inline or indented machine markers; quoted receipts do not
+hide a repository-writer correction. Root findings must also match the REST
+numeric Devin bot identity. Invalid compare SHAs (HTTP 404/422) leave findings
+pending; authentication, transport, and server errors still fail closed. The
+eight-commit count is applied only after receipt-aware selection proves pending
+work remains, so a clean PR does not receive a misleading loop-cap pause.
+
+READY is reconciled against live unresolved bug findings before and after applying
+`ci:full`, including explicit human handoffs. Verified addressed receipts count
+as handled. Historical READY audit comments never prevent a fresh reconciliation;
+MEDIATE retains trusted deduplication. Existing clean labels cause no repeated
+label writes or READY comments. `ci:full` requests CI, not merge approval.
+
+Trusted Actions receipts bind gate-owned labels to exact label-event IDs across
+head changes. Only that event can be revoked. Human removals are observed with a trusted head-bound receipt and preserved
+on that head. A fresh verified READY on a different head may request CI again;
+The observation binds the first verified head where the gate sees the removal,
+not a reconstructed historical head. If removal on A is first seen on B, B is
+conservatively preserved; a later head may request CI. This also covers legacy
+removal history without inventing ownership.
+Later re-adds are preserved; ambiguous ownership requires manual action. GitHub has no atomic
+compare-and-delete, so a human change between the final check and deletion is an
+unavoidable narrow race, not an atomic guarantee.
+
+Before adding a label, the gate records a trusted intent. It retries label-event visibility three times with one- and two-second waits. If ownership remains unknown or recording
+proof fails, the intent blocks subsequent READY processing, even after a restart.
+It never infers ownership from the PAT owner's name. Inspect the label and
+manually remove/re-add `ci:full` to reconcile; if absent, add then remove it.
+The removal must be later than the intent's timestamp (same-second ambiguity
+remains blocked). Legacy labels without ownership proof are not automatically
+removed. API failures report uncertain cleanup rather than claiming absence.
+
+An explicit HTTP 400/401/403/404/409/422/429 label-write rejection settles only
+that intent and permits retry. Transport errors, timeouts, and server failures
+remain uncertain; failure to record rejection also retains the blocker. A failed
+PR reconciliation does not prevent scheduled recovery of other PRs.
+Same-second review edits are conservatively eligible when ordering is ambiguous;
+identical follow-up content retains the same findings fingerprint and three-attempt
+budget. Same-second human removal cannot prove intent ordering: remove/re-add
+in a later second to reconcile. Event IDs and comment IDs are never compared.

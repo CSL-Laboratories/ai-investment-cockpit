@@ -6,6 +6,7 @@ files only.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,10 @@ class FeasibilityError(ValueError):
 
 class DecisiveVerdictBlocked(FeasibilityError):
     """qualify/watch/reject are forbidden until metrics_schema_version is frozen."""
+
+
+def sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def load_schema() -> dict[str, Any]:
