@@ -361,16 +361,25 @@ class ThreadVerdict:
     source: str = ""
 
 
+def _is_fence_opener(stripped: str) -> bool:
+    return stripped.startswith("```") or stripped.startswith("~~~")
+
+
 def strip_quoted_and_fenced(text: str) -> str:
     """Drop quoted lines and fenced code so echoed verdicts cannot authorize."""
     kept: list[str] = []
-    in_fence = False
+    fence = ""
     for line in (text or "").replace("\r\n", "\n").split("\n"):
         stripped = line.lstrip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence or stripped.startswith(">"):
+        if _is_fence_opener(stripped):
+            marker = stripped[:3]
+            if not fence:
+                fence = marker
+                continue
+            if marker == fence:
+                fence = ""
+                continue
+        if fence or stripped.startswith(">"):
             continue
         kept.append(line)
     return "\n".join(kept)
@@ -582,15 +591,25 @@ def required_checks_green(rollup: dict[str, Any] | None) -> tuple[bool, str]:
     return False, f"checks={state.lower()}"
 
 
+def sanitize_ruling_excerpt(text: str, limit: int = 240) -> str:
+    """Drop HTML comments and receipt prefixes so a copied ruling cannot mint markers."""
+    cleaned = HTML_COMMENT_RE.sub("", text or "")
+    cleaned = RESOLVED_AT_RE.sub("", cleaned)
+    for prefix in (CITE_PREFIX, RESOLVED_PREFIX, VERDICT_PREFIX):
+        cleaned = cleaned.replace(prefix, "")
+    excerpt = " ".join(cleaned.split())
+    if limit > 0 and len(excerpt) > limit:
+        excerpt = excerpt[: max(limit - 3, 0)] + "..."
+    return excerpt
+
+
 def build_resolve_reply(thread_id: str, sha: str, ruling_excerpt: str = "") -> str:
     digest = safe_sha(sha)
     tid = safe_thread_id(thread_id)
     if not digest or not tid:
         raise ValueError("unsafe reply ids")
     short = digest[:12]
-    excerpt = " ".join((ruling_excerpt or "").split())
-    if len(excerpt) > 240:
-        excerpt = excerpt[:237] + "..."
+    excerpt = sanitize_ruling_excerpt(ruling_excerpt, 240)
     lines = [
         cite_marker(tid, digest),
         f"Codex ruled the fix is already present on head `{short}` and no "
@@ -1058,43 +1077,55 @@ def resolved_count_today(
 ) -> int:
     """Count unique PAT-attributed successful resolves in the last 24h.
 
-    A success is a PAT ``codex-thread-resolved`` marker whose ``RESOLVED_AT``
-    (or comment time) falls in the window, or a PAT-resolved thread that still
-    lacks that marker but has a PAT cite in the window. Failed cites on
-    still-open threads do not count. Marker retries copy the original resolve
+    A completed resolve is a ``(thread id, sha)`` pair from a PAT success
+    marker whose ``RESOLVED_AT`` falls in the window (new resolve / delayed
+    ``retry-resolve``), or a legacy marker whose comment time and matching
+    PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
+    Failed cites on still-open threads do not count. Unmarked PAT-resolved
+    threads with a recent PAT cite count once. Missing timestamps fail closed.
     """
     if not actor_login:
         return 0
     start = now - timedelta(hours=24)
-    counted: set[str] = set()
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
+    cite_window: set[tuple[str, str]] = set()
+    marker_tids: set[str] = set()
+    markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
             continue
-        markers = parse_resolved_markers(body_of(comment))
-        if not markers:
+        stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
+        body = body_of(comment)
+        in_window = stamped is None or stamped >= start
+        for tid, digest in parse_cite_markers(body):
+            if tid and digest and in_window:
+                cite_window.add((tid, digest))
+        resolved_at = parse_resolved_at(body)
+        for tid, digest in parse_resolved_markers(body):
+            if not tid or not digest:
+                continue
+            marker_tids.add(tid)
+            markers.append((tid, digest, resolved_at or stamped, resolved_at is not None))
+    counted: set[tuple[str, str]] = set()
+    for tid, digest, effective, has_resolved_at in markers:
+        if effective is not None and effective < start:
             continue
-        stamped = parse_resolved_at(body_of(comment)) or parse_dt(
-            comment.get("createdAt") or comment.get("created_at")
-        )
-        if stamped is None or stamped >= start:
-            for tid, _sha in markers:
-                counted.add(tid)
+        if has_resolved_at or (tid, digest) in cite_window:
+            counted.add((tid, digest))
     for thread in threads:
         if not thread.get("isResolved"):
             continue
         if not login_matches(resolved_by_login(thread), actor_login):
             continue
         tid = safe_thread_id(str(thread.get("id") or ""))
-        if not tid or tid in counted:
+        if not tid or tid in marker_tids:
             continue
         comments = thread_comments(thread) + issue_comments
-        if thread_has_resolved_marker(comments, tid, actor_login=actor_login):
-            continue
+        digest = cite_sha_for_thread(comments, tid, actor_login=actor_login)
         cite_when = cite_time_for_thread(comments, tid, actor_login=actor_login)
-        if cite_when is not None and cite_when >= start:
-            counted.add(tid)
+        if digest and cite_when is not None and cite_when >= start:
+            counted.add((tid, digest))
     return len(counted)
 
 
@@ -1334,8 +1365,12 @@ def scan_pr(
         now,
         actor_login=pat_login,
     )
+    abort_scan = False
     for thread in threads:
         tid = log_thread_id(str(thread.get("id") or ""))
+        if abort_scan:
+            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=abort-scan")
+            continue
         if thread_comments_truncated(thread):
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=truncated-comments")
             continue
@@ -1395,10 +1430,15 @@ def scan_pr(
             )
         except Exception:
             result = "error"
+        if result == "error":
+            abort_scan = True
+            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=error")
+            continue
         if result in {"posted", "posted-unmarked", "resolve-error"}:
             posted_today += 1
             remaining[0] -= 1
             if result == "resolve-error":
+                abort_scan = True
                 logs.append(
                     f"codex-auto-resolve: pr={number} thread={tid} skip=resolve-error sha={head_sha}"
                 )
