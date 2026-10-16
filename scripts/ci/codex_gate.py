@@ -10,8 +10,9 @@ parses `CODEX-GATE: FIX|READY|MEDIATE` from the Codex review, and then:
   (title `Stuck PR threads: <repo>#<PR>`); skip if the PR is already approved
 * no verdict within 20 minutes — FIX (fail open)
 
-Cap: 3 fixer runs per PR per UTC day. Human `@claude` mentions do not go
-through this script (the claude-mention job bypasses the cap).
+No daily dispatch cap. Devin findings trigger the fixer directly; this is a
+compatibility fallback. The fixer serializes per PR and stops at eight
+consecutive Claude commits.
 
 Missing `CODEX_TRIGGER_PAT` is a `::notice::` skip, not a failure.
 Import from tests.
@@ -58,7 +59,6 @@ WATCHER_END = "<!-- stuck-pr-threads-end -->"
 CLOSED_STATE_TYPES = frozenset({"completed", "canceled"})
 PROTECTED_REFS = frozenset({"master", "main", "HEAD"})
 TIMEOUT = timedelta(minutes=20)
-FIXER_CAP = 3
 CI_FULL_LABEL = "ci:full"
 FIXER_EVENT = "devin-review-fix"
 MEDIATION_RE = re.compile(r"<!--\s*codex-mediation:[A-Za-z0-9_=-]{1,128}\s*-->")
@@ -570,10 +570,6 @@ def list_items(get: Get, path: str) -> list[dict[str, Any]]:
     return items
 
 
-def cap_reached(comments: list[dict[str, Any]], day: str, cap: int = FIXER_CAP) -> bool:
-    return fixer_runs_on_day(comments, day) >= cap
-
-
 def decide_request(
     pr: dict[str, Any],
     repository: str,
@@ -597,7 +593,6 @@ def decide_verdict(
     reviews: list[dict[str, Any]],
     comments: list[dict[str, Any]],
     day: str,
-    cap: int = FIXER_CAP,
 ) -> str:
     """Return FIX/READY/MEDIATE/skip-* ."""
     sha = safe_sha(sha)
@@ -611,8 +606,6 @@ def decide_verdict(
     verdict = parse_verdict(review_body) or verdict_from_reviews(reviews, sha)
     if not verdict:
         return "skip-no-verdict"
-    if verdict == "FIX" and cap_reached(comments, day, cap):
-        return "skip-cap"
     return verdict
 
 
@@ -623,7 +616,6 @@ def decide_timeout(
     reviews: list[dict[str, Any]],
     now: datetime,
     day: str,
-    cap: int = FIXER_CAP,
     timeout: timedelta = TIMEOUT,
 ) -> str:
     """Return FIX/READY/MEDIATE/skip-* for a previously requested SHA."""
@@ -635,8 +627,6 @@ def decide_timeout(
         return f"skip-already-{existing.lower()}"
     verdict = verdict_from_reviews(reviews, sha)
     if verdict:
-        if verdict == "FIX" and cap_reached(comments, day, cap):
-            return "skip-cap"
         return verdict
     needle = gate_marker(sha)
     stamp: datetime | None = None
@@ -649,8 +639,6 @@ def decide_timeout(
         return "skip-no-request"
     if now - stamp < timeout:
         return "skip-waiting"
-    if cap_reached(comments, day, cap):
-        return "skip-cap"
     return "FIX"
 
 

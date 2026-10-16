@@ -6,8 +6,8 @@
 # dispatches one batched Claude fixer, labels ci:full, or files/updates one
 # Linear needs-decision issue per PR (MEDIATE; skip if already approved).
 # 20-minute timeout fail-opens to FIX.
-# Cap: 3 fixer runs per PR per UTC day. Human @claude bypasses the cap
-# (claude.yml claude-mention job).
+# No daily dispatch cap. Direct Devin events do not wait for this gate.
+# claude.yml serializes per PR and enforces the eight-commit loop guard.
 name: Codex CI/fixer gate
 
 on:

@@ -238,7 +238,7 @@ class VerdictDecisionTests(unittest.TestCase):
             "MEDIATE",
         )
 
-    def test_already_acted_and_cap(self) -> None:
+    def test_already_acted_and_no_daily_cap(self) -> None:
         acted = [comment(mod.action_marker(SHA, "FIX"))]
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: FIX", reviews=[], comments=acted, day="2026-10-15"),
@@ -250,7 +250,7 @@ class VerdictDecisionTests(unittest.TestCase):
         ]
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: FIX", reviews=[], comments=cap, day="2026-10-15"),
-            "skip-cap",
+            "FIX",
         )
         self.assertEqual(
             mod.decide_verdict(sha=SHA, review_body="CODEX-GATE: READY", reviews=[], comments=cap, day="2026-10-15"),
@@ -306,13 +306,13 @@ class TimeoutDecisionTests(unittest.TestCase):
             "READY",
         )
 
-    def test_timeout_cap(self) -> None:
+    def test_timeout_has_no_daily_cap(self) -> None:
         comments = [self._request(30)] + [
             comment(mod.fixer_run_marker("2026-10-15", f"{i:040x}")) for i in range(3)
         ]
         self.assertEqual(
             mod.decide_timeout(sha=SHA, comments=comments, reviews=[], now=self.now, day="2026-10-15"),
-            "skip-cap",
+            "FIX",
         )
 
     def test_timeout_still_fires_when_mediation_prompt_is_newest(self) -> None:

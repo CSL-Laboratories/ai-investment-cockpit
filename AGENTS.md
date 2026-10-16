@@ -184,7 +184,10 @@ Hosted split (PR #102):
 ## Review loop
 
 Devin reviews → Claude fixes (`claude.yml`) → the Codex gate (CSL-103) oversees
-fixer / `ci:full` / human handoff. Stuck threads are also picked up by
+`ci:full` / human handoff and a compatibility fixer fallback. Devin findings
+trigger Claude directly without waiting for Codex. All Claude jobs share one
+per-PR lock; the automated Devin fixer stops at eight consecutive Claude
+commits. Stuck threads are also picked up by
 [`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml)
 (CSL-86 / PR #124), which asks Codex to mediate (`@codex review`, no
 `CODEX-GATE:` line) and records one Linear Triage `needs-decision` roll-up per
@@ -216,8 +219,9 @@ body with exactly one verdict line**:
   only flags a needs-human phrase or a 6-hour-old Claude reply).
 
 Do not omit the verdict line. Do not put more than one. The gate's 20-minute
-timeout treats a missing verdict as `FIX` (fail open, capped at 3 fixer runs
-per PR per UTC day). Human `@claude` mentions bypass that cap.
+timeout treats a missing verdict as `FIX` (compatibility fallback). There is
+no daily dispatch cap. Locked live-head and unresolved-finding checks skip
+obsolete queued events. No success marker suppresses retries after failures or new findings.
 
 If this `@codex review` is a stuck-thread mediation (the comment contains
 `<!-- codex-mediation:`), do **not** add a `CODEX-GATE:` line. The gate

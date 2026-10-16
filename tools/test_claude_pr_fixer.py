@@ -216,10 +216,13 @@ class DevinMatrixTests(unittest.TestCase):
     def _review(self, **pr_kw) -> dict:
         return {
             "review": {
-                "user": {"login": "devin-ai-integration[bot]"},
+                "user": {"login": "devin-ai-integration[bot]", "type": "Bot", "id": 158243242},
+                "commit_id": "a" * 40,
                 "state": "commented",
                 "id": 1,
             },
+            "action": "submitted",
+            "sender": {"login": "devin-ai-integration[bot]", "type": "Bot", "id": 158243242},
             "pull_request": pr_payload(**pr_kw),
         }
 
@@ -1251,29 +1254,29 @@ class FixerLoopCapTests(unittest.TestCase):
             posted = (d / "posted").read_text(encoding="utf-8") if (d / "posted").exists() else ""
             return out.read_text(encoding="utf-8"), posted
 
-    def test_three_claude_commits_after_human_skips_and_comments(self) -> None:
-        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 3, [])
+    def test_eight_claude_commits_after_human_skips_and_comments(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 8, [])
         self.assertIn("skip=true", out)
         self.assertEqual(posted.count("posted"), 1)
 
-    def test_two_claude_commits_runs(self) -> None:
-        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 2, [])
+    def test_seven_claude_commits_runs(self) -> None:
+        out, posted = self._run([("alice", "Alice")] + [("claude[bot]", "claude[bot]")] * 7, [])
         self.assertIn("skip=false", out)
         self.assertEqual(posted, "")
 
     def test_human_commit_resets_streak(self) -> None:
-        c = [("claude[bot]", "claude[bot]")] * 3 + [("bob", "Bob")] + [("claude[bot]", "claude[bot]")] * 2
+        c = [("claude[bot]", "claude[bot]")] * 8 + [("bob", "Bob")] + [("claude[bot]", "claude[bot]")] * 7
         out, _ = self._run(c, [])
         self.assertIn("skip=false", out)
 
     def test_other_bot_does_not_reset_streak(self) -> None:
         c = [("alice", "Alice"), ("claude[bot]", "claude[bot]"), ("github-actions[bot]", "github-actions[bot]"),
              ("claude[bot]", "claude[bot]"), ("claude[bot]", "claude[bot]")]
-        out, _ = self._run(c, [])
+        out, _ = self._run(c + [("claude[bot]", "claude[bot]")] * 5, [])
         self.assertIn("skip=true", out)
 
     def test_existing_marker_suppresses_duplicate_comment(self) -> None:
-        out, posted = self._run([("claude[bot]", "claude[bot]")] * 3, ["<!-- claude-fixer-loop-cap:abc123 -->"])
+        out, posted = self._run([("claude[bot]", "claude[bot]")] * 8, ["<!-- claude-fixer-loop-cap:abc123 -->"])
         self.assertIn("skip=true", out)
         self.assertEqual(posted, "")
 
@@ -1306,6 +1309,137 @@ class ConflictResolvePushSkipTests(unittest.TestCase):
         header = job.split("steps:", 1)[0]
         self.assertIn("github.event_name != 'push'", header)
         self.assertIn("needs.conflict-scan.outputs.count != '0'", header)
+
+
+class DirectDevinRoutingTests(unittest.TestCase):
+    _review = DevinMatrixTests._review
+
+    def test_human_mentions_created_only_on_both_routes(self) -> None:
+        for event_name in ("issue_comment", "pull_request_review_comment"):
+            event = {"comment": comment(body="@claude help"),
+                     "sender": {"login": "alice", "type": "User"},
+                     "issue": {"number": 42, "pull_request": {"url": "x"}},
+                     "pull_request": pr_payload()}
+            for action in ("created", "edited"):
+                event["action"] = action
+                self.assertEqual(gate.job_level_admits(event_name, event), action == "created")
+                self.assertEqual(decide(event_name, event)["mention"], "true" if action == "created" else "false")
+
+    def test_stale_missing_or_spoofed_review_is_rejected(self) -> None:
+        for field, value in (("commit_id", "b" * 40), ("commit_id", "")):
+            event = self._review()
+            event["review"][field] = value
+            self.assertEqual(decide("pull_request_review", event)["devin"], "false")
+        for actor in ("sender", "review"):
+            for field, value in (("id", 1), ("type", "User"), ("login", "fake[bot]")):
+                event = self._review()
+                user = event[actor]["user"] if actor == "review" else event[actor]
+                user[field] = value
+                self.assertEqual(decide("pull_request_review", event)["devin"], "false")
+        event = self._review()
+        event["action"] = "edited"
+        self.assertEqual(decide("pull_request_review", event)["devin"], "false")
+
+    def test_current_devin_review_comments_and_edits_are_admitted(self) -> None:
+        for action in ("created", "edited"):
+            event = self._review()
+            event["action"] = action
+            event["comment"] = event.pop("review")
+            self.assertTrue(gate.job_level_admits("pull_request_review_comment", event))
+            self.assertEqual(decide("pull_request_review_comment", event)["devin"], "true")
+            event["comment"]["commit_id"] = "b" * 40
+            self.assertEqual(decide("pull_request_review_comment", event)["devin"], "false")
+            event["sender"]["id"] = 1
+            self.assertFalse(gate.job_level_admits("pull_request_review_comment", event))
+
+
+class FixerPreflightTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location("fixer_preflight", ROOT / "scripts/ci/claude_fixer_preflight.py")
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def thread(self, comment_id=101, kind="bug"):
+        return {"id": "thread1", "isResolved": False, "isOutdated": False,
+                "comments": {"nodes": [{"databaseId": comment_id,
+                    "author": {"login": "devin-ai-integration", "__typename": "Bot"},
+                    "commit": {"oid": "a" * 40},
+                    "body": '<!-- devin-review-comment ' + json.dumps({"kind": kind}) + ' -->\nFix the bug'}]}}
+
+    def test_actionable_bot_root_only_and_legacy_without_metadata(self) -> None:
+        t = self.thread()
+        self.assertEqual(self.mod.eligible_comment_ids([t], "a" * 40), [101])
+        t["comments"]["nodes"][0]["body"] = "Legacy Devin finding"
+        self.assertEqual(self.mod.eligible_comment_ids([t], "a" * 40), [101])
+        for kind in ("analysis", "summary", "resolved"):
+            self.assertEqual(self.mod.eligible_comment_ids([self.thread(kind=kind)], "a" * 40), [])
+        for field in ("isResolved", "isOutdated"):
+            t = self.thread()
+            t[field] = True
+            self.assertEqual(self.mod.eligible_comment_ids([t], "a" * 40), [])
+        for field, value in (("login", "fake"), ("__typename", "User")):
+            t = self.thread()
+            t["comments"]["nodes"][0]["author"][field] = value
+            self.assertEqual(self.mod.eligible_comment_ids([t], "a" * 40), [])
+        self.assertEqual(self.mod.eligible_comment_ids([self.thread()], "b" * 40), [])
+
+    def run_preflight(self, pr=None, permission="write", pages=None):
+        from unittest.mock import patch
+        pr = pr if pr is not None else dict(pr_payload(), draft=False)
+        if pages is None:
+            pages = [[self.thread()]]
+        replies = [json.dumps({"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "nodes": nodes, "pageInfo": {"hasNextPage": i < len(pages) - 1, "endCursor": "next"}
+        }}}}}) for i, nodes in enumerate(pages)]
+        with tempfile.TemporaryDirectory() as d, patch.dict(os.environ, {
+            "REPO": REPO, "PR_NUMBER": "42", "HEAD_SHA": "a" * 40,
+            "GITHUB_OUTPUT": str(Path(d) / "out")}), patch.object(self.mod, "api", side_effect=[pr, {"permission": permission}]), patch.object(self.mod.subprocess, "check_output", side_effect=replies) as graphql:
+            self.mod.main()
+            return (Path(d) / "out").read_text(), graphql.call_count
+
+    def test_locked_live_trust_and_sha_revalidated(self) -> None:
+        for changes in ({"state": "closed"}, {"draft": True},
+                        {"head": pr_payload(head_repo="evil/fork")["head"]},
+                        {"head": pr_payload(head_sha="b" * 40)["head"]}):
+            output, calls = self.run_preflight(dict(pr_payload(), draft=False) | changes)
+            self.assertIn("skip=true", output)
+            self.assertEqual(calls, 0)
+        for permission in ("read", "none", "error"):
+            output, calls = self.run_preflight(permission=permission)
+            self.assertIn("skip=true", output)
+            self.assertEqual(calls, 0)
+
+    def test_pagination_batches_exact_eligible_ids(self) -> None:
+        output, calls = self.run_preflight(pages=[[self.thread()], [self.thread(102), self.thread(103, "analysis")]])
+        self.assertEqual(calls, 2)
+        self.assertIn("skip=false", output)
+        self.assertIn("comment_ids=[101, 102]", output)
+
+    def test_live_dedup_and_failed_run_retry_new_findings(self) -> None:
+        for _ in range(2):  # No persisted marker can suppress a failed/no-push attempt.
+            output, _ = self.run_preflight()
+            self.assertIn("skip=false", output)
+        resolved = self.thread()
+        resolved["isResolved"] = True
+        output, _ = self.run_preflight(pages=[[resolved]])
+        self.assertIn("skip=true", output)
+        output, _ = self.run_preflight(pages=[[resolved, self.thread(102)]])
+        self.assertIn("comment_ids=[102]", output)
+        self.assertIn("skip=false", output)
+
+    def test_embedded_preflight_and_shared_lock(self) -> None:
+        text = WORKFLOW_PATH.read_text()
+        start = "python3 - <<'CLAUDE_FIXER_PREFLIGHT'\n"
+        chunk = text.split(start, 1)[1].split("          CLAUDE_FIXER_PREFLIGHT", 1)[0]
+        self.assertEqual(textwrap.dedent(chunk).rstrip(), (ROOT / "scripts/ci/claude_fixer_preflight.py").read_text().rstrip())
+        self.assertIn('ELIGIBLE ROOT COMMENT IDS: ${{ steps.preflight.outputs.comment_ids }}', text)
+        self.assertEqual(text.count('group: claude-${{ needs.resolve-pr.outputs.pr_number }}'), 2)
+        self.assertIn('group: claude-${{ matrix.pr.number }}', SCAN_WORKFLOW_PATH.read_text())
+        job = text.split('  devin-review-fix:', 1)[1]
+        self.assertLess(job.index('id: preflight'), job.index('uses: actions/checkout'))
+        self.assertIn("github.event_name == 'pull_request_review' ||", job)
+        self.assertIn("github.event_name == 'pull_request_review_comment' ||", job)
 
 
 if __name__ == "__main__":
