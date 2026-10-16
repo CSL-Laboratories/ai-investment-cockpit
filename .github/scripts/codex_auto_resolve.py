@@ -343,12 +343,12 @@ def later_human_veto(
     after: datetime,
     pat_login: str = "",
 ) -> bool:
-    """True when a trusted human commented after the Codex RESOLVE stamp."""
+    """True when a trusted human commented at or after the Codex RESOLVE stamp."""
     for comment in comments:
         if not is_trusted_human(comment, pat_login):
             continue
         when = parse_dt(comment.get("createdAt") or comment.get("created_at"))
-        if when is None or when > after:
+        if when is None or when >= after:
             return True
     return False
 
@@ -1378,7 +1378,22 @@ def thread_tail_vetoes(
             for item in ((node.get("comments") or {}).get("nodes") or [])
             if isinstance(item, dict)
         ]
-    return later_human_veto(comments, after, pat_login)
+    if later_human_veto(comments, after, pat_login):
+        return True
+    # last:40 is the live window. If it is full and every visible stamp is
+    # after the verdict, comments between the verdict and that window are
+    # unseen — fail closed rather than resolve.
+    if len(comments) >= 40:
+        oldest: datetime | None = None
+        for item in comments:
+            when = parse_dt(item.get("createdAt") or item.get("created_at"))
+            if when is None:
+                return True
+            if oldest is None or when < oldest:
+                oldest = when
+        if oldest is None or oldest > after:
+            return True
+    return False
 
 
 def reply_and_resolve(

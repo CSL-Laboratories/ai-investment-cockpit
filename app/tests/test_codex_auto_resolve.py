@@ -517,7 +517,7 @@ def test_classify_already_resolved_and_marked():
     forged = thread(
         comments=[
             comment(CODEX, verdict_body()),
-            comment("alice", mod.resolved_marker(THREAD, SHA)),
+            comment("alice", mod.resolved_marker(THREAD, SHA), NOW - timedelta(seconds=1)),
         ]
     )
     latest = mod.latest_verdicts(mod.thread_comments(forged))
@@ -531,7 +531,7 @@ def test_forged_resolved_marker_does_not_already_mark():
     t = thread(
         comments=[
             comment(CODEX, verdict_body()),
-            comment("alice", mod.resolved_marker(THREAD, SHA)),
+            comment("alice", mod.resolved_marker(THREAD, SHA), NOW - timedelta(seconds=1)),
         ]
     )
     latest = mod.latest_verdicts(mod.thread_comments(t))
@@ -1832,6 +1832,19 @@ def test_classify_later_owner_reply_is_human_veto():
     assert verdict is not None and verdict.verdict == "RESOLVE"
 
 
+def test_classify_same_second_human_reply_is_human_veto():
+    t = thread(
+        comments=[
+            comment(CODEX, verdict_body()),
+            comment("alice", "leave this open"),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-veto"
+
+
 def test_classify_earlier_human_finding_does_not_veto():
     t = thread(
         comments=[
@@ -1973,4 +1986,29 @@ def test_scan_resolves_still_revalidates_empty_tail():
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == [THREAD]
     assert gh.thread_tail_calls >= 2
+    assert any("resolve=posted" in line for line in logs)
+
+
+def test_scan_incomplete_tail_window_is_human_veto():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    later = NOW + timedelta(seconds=1)
+    gh.thread_tails[THREAD] = [
+        comment("devin-ai-integration[bot]", f"bot {i}", later) for i in range(40)
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_complete_full_tail_window_can_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tails[THREAD] = [
+        comment(CODEX, "prior", NOW - timedelta(seconds=1)),
+        *[
+            comment("devin-ai-integration[bot]", f"bot {i}", NOW + timedelta(seconds=1))
+            for i in range(39)
+        ],
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
     assert any("resolve=posted" in line for line in logs)
