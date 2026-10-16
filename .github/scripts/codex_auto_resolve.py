@@ -1112,15 +1112,34 @@ def cite_sha_for_thread(
     thread_id: str,
     actor_login: str = "",
 ) -> str:
+    """Latest PAT cite SHA for ``thread_id`` by ``createdAt``, not list order.
+
+    ``classify_thread`` concatenates thread replies then issue comments, so
+    iteration order is not recency. A missing timestamp fails closed as
+    newest (cannot prove it is older).
+    """
     if not actor_login:
         return ""
     digest = ""
+    chosen_when: datetime | None = None
+    seen = False
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
+        stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
         for tid, sha in parse_cite_markers(body_of(comment)):
-            if tid == thread_id:
+            if tid != thread_id or not sha:
+                continue
+            if not seen:
                 digest = sha
+                chosen_when = stamped
+                seen = True
+                continue
+            if chosen_when is None:
+                continue
+            if stamped is None or stamped >= chosen_when:
+                digest = sha
+                chosen_when = stamped
     return digest
 
 
@@ -1480,6 +1499,9 @@ def reply_and_resolve(
     if not actor or not login_matches(resolver, actor):
         # Missing resolvedBy cannot be distinguished from a PAT success.
         # Do not post a skip (that would exempt the pair from the cap).
+        # Refresh the cite so a retry older than 24h still lands in today's
+        # unmarked window instead of disappearing from the cap.
+        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "posted-unmarked"
     stamp = now or utcnow()
     if publish_resolved_marker(
