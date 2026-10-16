@@ -28,7 +28,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -1232,6 +1232,9 @@ def scan_pr(
         logs.append(f"codex-auto-resolve: pr={number} skip=no-secret")
         return logs
     pat_login = cfg.pat_login or fetch_pat_login(gh, cfg)
+    if not pat_login:
+        logs.append(f"codex-auto-resolve: pr={number} skip=no-pat-login")
+        return logs
     posted_today = resolved_count_today(
         issue_comments + [c for t in threads for c in thread_comments(t)],
         now,
@@ -1322,6 +1325,11 @@ def run(
         notice("CODEX_TRIGGER_PAT is not configured; skipping auto-resolve.")
         return 0
     gh = gh or GitHub()
+    if not cfg.pat_login:
+        cfg = replace(cfg, pat_login=fetch_pat_login(gh, cfg))
+    if not cfg.pat_login:
+        notice("CODEX_TRIGGER_PAT viewer login unavailable; skipping auto-resolve.")
+        return 0
     try:
         prs = list_open_prs(gh, cfg)
     except Exception:

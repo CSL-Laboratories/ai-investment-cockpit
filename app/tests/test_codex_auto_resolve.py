@@ -127,6 +127,7 @@ class FakeGitHub(mod.GitHub):
         self.fail_resolve = False
         self.fail_reply = False
         self.fail_issue_post = False
+        self.fail_viewer = False
         self.viewer_login = PAT_LOGIN
 
     def _unused(self, *args, **kwargs):
@@ -142,6 +143,8 @@ class FakeGitHub(mod.GitHub):
         if "viewer { login }" in " ".join(query.split()):
             if token != "pat":
                 raise AssertionError("viewer login must use CODEX_TRIGGER_PAT")
+            if self.fail_viewer:
+                raise RuntimeError("viewer lookup failed")
             return {"viewer": {"login": self.viewer_login}}
         if "resolveReviewThread" in query:
             if token != "pat":
@@ -834,6 +837,25 @@ def test_run_wide_cap_is_shared_across_prs():
     assert code == 0
     assert gh.resolves == [THREAD]
     assert len(gh.resolves) == 1
+
+
+def test_missing_pat_login_skips_without_resolving():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.fail_viewer = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert any("skip=no-pat-login" in line for line in logs)
+
+
+def test_run_skips_when_viewer_lookup_fails(capsys):
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.fail_viewer = True
+    code = mod.run(cfg=cfg(pr_number=""), gh=gh, now=NOW)
+    assert code == 0
+    assert gh.resolves == []
+    out = capsys.readouterr().out
+    assert "viewer login unavailable" in out
 
 
 def test_missing_pat_is_notice_not_failure(capsys):
