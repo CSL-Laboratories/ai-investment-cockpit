@@ -17,60 +17,97 @@ py=.venv/bin/python
 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || fetch=FAIL
 git fetch --quiet --prune origin || fetch=FAIL
 
-# Project virtualenv. uv's --seed adds pip if the stdlib venv module is missing.
-if [ ! -x "$py" ]; then
-  python3 -m venv .venv 2>/dev/null || uv venv --quiet --seed .venv || venv=FAIL
+# Project virtualenv. A venv without a working pip (for example a half-built
+# one left by a failed `python3 -m venv`) is rebuilt, falling back to uv,
+# whose --seed adds pip.
+if [ ! -x "$py" ] || ! "$py" -m pip --version >/dev/null 2>&1; then
+  rm -rf .venv
+  { python3 -m venv .venv 2>/dev/null && "$py" -m pip --version >/dev/null 2>&1; } ||
+    { rm -rf .venv; uv venv --quiet --seed .venv; } || venv=FAIL
 fi
 if [ "$venv" = ok ] && ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
   venv="FAIL(python<3.11)"
 fi
 
-# Install only when the dependency files changed, so resume stays cheap.
-stamp=.venv/.cloud-deps.sha256
-if [ "$venv" = ok ]; then
-  want="$(cat app/pyproject.toml app/benchmarks/requirements.txt | sha256sum | cut -d' ' -f1)"
-  if [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
-    rm -f "$stamp"
-    reqs="$(mktemp)"
-    if "$py" - > "$reqs" <<'EOF'
+# Every declared requirement must be installed at an allowed version,
+# including the packages its extras pull in (e.g. uvicorn[standard]).
+verify_deps() {
+  "$py" - <<'EOF'
+import sys, tomllib
+from importlib.metadata import PackageNotFoundError, distribution
+try:
+    from packaging.requirements import Requirement
+except ImportError:
+    from pip._vendor.packaging.requirements import Requirement
+
+with open("app/pyproject.toml", "rb") as f:
+    reqs = tomllib.load(f)["project"]["dependencies"]
+with open("app/benchmarks/requirements.txt") as f:
+    reqs += [l for l in (x.split("#")[0].strip() for x in f) if l]
+
+problems, seen = [], set()
+
+def need(req, extra=""):
+    r = Requirement(req)
+    if r.marker and not r.marker.evaluate({"extra": extra}):
+        return
+    key = (r.name.lower(), frozenset(r.extras))
+    if key in seen:
+        return
+    seen.add(key)
+    try:
+        dist = distribution(r.name)
+    except PackageNotFoundError:
+        problems.append(f"{r.name} missing")
+        return
+    if r.specifier and not r.specifier.contains(dist.version, prereleases=True):
+        problems.append(f"{r.name} {dist.version} not {r.specifier}")
+    for ex in r.extras:
+        for sub in dist.requires or []:
+            s = Requirement(sub)
+            if s.marker and s.marker.evaluate({"extra": ex}):
+                s.marker = None
+                need(str(s))
+
+for req in reqs + ["pytest", "ruff"]:
+    need(req)
+if problems:
+    print("deps: " + "; ".join(problems), file=sys.stderr)
+sys.exit(1 if problems else 0)
+EOF
+}
+
+install_deps() {
+  local reqs rc=1
+  reqs="$(mktemp)"
+  if "$py" - > "$reqs" <<'EOF'
 import tomllib
 with open("app/pyproject.toml", "rb") as f:
     deps = tomllib.load(f)["project"]["dependencies"]
 print("\n".join(deps + ["pytest", "ruff"]))
 EOF
-    then
-      { "$py" -m pip install --quiet -U pip &&
-        "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt; } || deps=FAIL
+  then
+    "$py" -m pip install --quiet -U pip &&
+      "$py" -m pip install --quiet -r "$reqs" -r app/benchmarks/requirements.txt && rc=0
+  fi
+  rm -f "$reqs"
+  return $rc
+}
+
+# Reinstall unless the dependency files are unchanged AND the venv still
+# verifies, so resume stays cheap. A failed check always drops the stamp.
+stamp=.venv/.cloud-deps.sha256
+if [ "$venv" = ok ]; then
+  want="$(cat app/pyproject.toml app/benchmarks/requirements.txt | sha256sum | cut -d' ' -f1)"
+  if [ "$(cat "$stamp" 2>/dev/null)" = "$want" ] && verify_deps 2>/dev/null; then
+    deps=ok
+  else
+    rm -f "$stamp"
+    if install_deps && verify_deps; then
+      echo "$want" > "$stamp"
     else
       deps=FAIL
     fi
-    rm -f "$reqs"
-  fi
-
-  # Verify every declared distribution is installed, whether or not we just
-  # installed, and only then record the stamp.
-  if [ "$deps" = ok ] && "$py" - <<'EOF'
-import re, sys, tomllib
-from importlib.metadata import PackageNotFoundError, version
-with open("app/pyproject.toml", "rb") as f:
-    reqs = tomllib.load(f)["project"]["dependencies"]
-with open("app/benchmarks/requirements.txt") as f:
-    reqs += [l for l in (x.split("#")[0].strip() for x in f) if l]
-missing = []
-for req in reqs + ["pytest", "ruff"]:
-    name = re.split(r"[\[<>=!~;\s]", req, maxsplit=1)[0]
-    try:
-        version(name)
-    except PackageNotFoundError:
-        missing.append(name)
-if missing:
-    print("missing: " + ", ".join(missing), file=sys.stderr)
-sys.exit(1 if missing else 0)
-EOF
-  then
-    [ -n "${want:-}" ] && echo "$want" > "$stamp"
-  else
-    deps=FAIL
   fi
 else
   deps=skipped
