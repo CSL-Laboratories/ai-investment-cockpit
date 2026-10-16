@@ -881,14 +881,26 @@ def test_newer_headless_verdict_cancels_older_resolve():
     assert verdict is not None and verdict.verdict == "AMBIGUOUS"
 
 
-def test_protected_path_never_resolves():
+@pytest.mark.parametrize(
+    "path",
+    [
+        "app/risk/limits.py",
+        "app/brokers/gateway.py",
+        "app/orchestrator/app.py",
+        "app/storage/repositories.py",
+        "app/quant/execution/autoloop.py",
+        "app/schemas/models/order.py",
+        "app/schemas/models/audit_entry.py",
+    ],
+)
+def test_protected_path_never_resolves(path: str):
     t = thread(comments=[comment(CODEX, verdict_body())])
-    t["path"] = "app/risk/limits.py"
+    t["path"] = path
     latest = mod.latest_verdicts(mod.thread_comments(t))
     reason, _ = mod.classify_thread(t, head_sha=SHA, latest=latest, issue_comments=[])
     assert reason == "protected-path"
     gh = ready_gh(threads=[t], reviews=[comment(CODEX, verdict_body())])
-    gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["path"] = "app/risk/limits.py"
+    gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["path"] = path
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
     assert any("skip=protected-path" in line for line in logs)
