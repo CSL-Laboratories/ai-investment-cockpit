@@ -187,7 +187,7 @@ class DispatchScopeTests(unittest.TestCase):
                 with self.subTest(filter=filter_result, linux=linux_result):
                     result = subprocess.run(['bash', '-c', gate['steps'][0]['run']],
                                             capture_output=True, check=False, env={**os.environ,
-                                            'WORKFLOW_CANCELLED': 'false', 'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
+                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
                                             'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
                                             'RUN_TESTS': 'true'})
                     self.assertEqual(result.returncode == 0,
