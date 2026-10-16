@@ -379,14 +379,22 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
 
     contracts = program.get("contracts")
     _require(isinstance(contracts, list) and contracts, "contracts missing")
-    contract_paths = [item.get("path") for item in contracts]
+    for contract in contracts:
+        _require(
+            isinstance(contract, dict) and set(contract) == {"path", "sha256"},
+            "contract record fields changed",
+        )
+        _require(
+            _nonempty(contract["path"]) and _nonempty(contract["sha256"]),
+            "contract path/digest missing",
+        )
+    contract_paths = [item["path"] for item in contracts]
     _require(len(contract_paths) == len(set(contract_paths)), "duplicate contract path")
     _require(set(contract_paths) == EXPECTED_CONTRACTS, "missing or unexpected contract path")
     verified_contracts: dict[str, str] = {}
     for contract in contracts:
-        rel = contract.get("path")
-        expected = contract.get("sha256")
-        _require(_nonempty(rel) and _nonempty(expected), "contract path/digest missing")
+        rel = contract["path"]
+        expected = contract["sha256"]
         path = root / rel
         _require(path.is_file(), f"contract path missing: {rel}")
         _require(re.fullmatch(r"[0-9a-f]{64}", expected) is not None, f"invalid digest: {rel}")

@@ -22,6 +22,39 @@ class ReplacementProgramTests(unittest.TestCase):
     def test_checked_in_registry_passes(self) -> None:
         CHECKER.validate(self.program)
 
+    def test_contract_records_reject_arbitrary_metadata(self) -> None:
+        for index in range(len(self.program["contracts"])):
+            for field, value in (("live_authority_granted", True), ("annotation", False)):
+                candidate = copy.deepcopy(self.program)
+                candidate["contracts"][index][field] = value
+                with self.subTest(index=index, field=field), self.assertRaisesRegex(
+                    CHECKER.ContractError, "contract record fields changed"
+                ):
+                    CHECKER.validate(candidate)
+
+    def test_contract_records_require_exact_object_shape(self) -> None:
+        for index, record in enumerate(self.program["contracts"]):
+            replacements = [None, list(record), "accepted_contract", True, 1, {}]
+            replacements.extend({key: value} for key, value in record.items())
+            for replacement in replacements:
+                candidate = copy.deepcopy(self.program)
+                candidate["contracts"][index] = replacement
+                with self.subTest(index=index, replacement=replacement), self.assertRaisesRegex(
+                    CHECKER.ContractError, "contract record fields changed"
+                ):
+                    CHECKER.validate(candidate)
+
+    def test_contract_fields_require_nonempty_strings(self) -> None:
+        for index in range(len(self.program["contracts"])):
+            for field in ("path", "sha256"):
+                for value in (None, [], {}, True, 1, "", "   "):
+                    candidate = copy.deepcopy(self.program)
+                    candidate["contracts"][index][field] = value
+                    with self.subTest(index=index, field=field, value=value), self.assertRaisesRegex(
+                        CHECKER.ContractError, "contract path/digest missing"
+                    ):
+                        CHECKER.validate(candidate)
+
     def test_enclosing_schemas_reject_extra_claims(self) -> None:
         for container in (None, "research_evidence"):
             for field, value in (
