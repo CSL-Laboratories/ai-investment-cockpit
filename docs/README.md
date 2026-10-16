@@ -7,22 +7,38 @@ last-verified: 2026-10-16
 
 # Docs index
 
-## Cursor Cloud process rebase — 2026-09-14
+Reconciled 2026-10-15 against `origin/main` `4a4308d`, using the same commit and
+UTC merge-date rule as the REGISTER and PLAN status pass (CSL-61,
+[PR #121](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/121),
+open until merged; merge it before or with this index). Merge dates and
+`last-verified` added here are UTC calendar dates from GitHub `mergedAt`
+(PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and
+evidence dates already in these sections keep the calendar dates they recorded.
+This index records merge state only. It does not close an empirical, paper-day,
+witness, selection, or pre-live gate, and it does not claim PASS.
+
+## Cursor Cloud process rebase — RW-33 merged 2026-09-15
 
 [RW-33 rebase](research/agent-swarm-rebase-2026-09-14.md) replaces current Devin
 instructions with Cursor Cloud/native work and qualification-gated CLI routes.
+It merged in [PR #96](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/96)
+(`cfb4f7c`) on 2026-09-15.
 [Start the next Cloud task here](research/cursor-cloud-rdt-handoff-2026-09-14.md)
 for the adopted research, development and testing goals; this is not a new Kernel
 product or a waiver of PRODUCT/PLAN. [Evidence](evidence/rw33-swarm-rebase-2026-09-14.md)
 records offline validation and remaining runtime qualification.
 [RW-34/RW-35 Cloud evidence](evidence/rw34-cloud-adapter-2026-09-15.md) records
-the admitted json-child fixture hashes and the composed empty-run update;
-it is not DEC-09 and not empirical PASS.
+the admitted json-child fixture hashes and the composed empty-run update.
+Both merged in [PR #97](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/97)
+(`8beb271`) on 2026-09-15. That record is not DEC-09 and not empirical PASS.
 [RW-36 2026-09-15 screen intake](research/rw36-screen-intake-2026-09-15.md)
-appends the Monday-evening GET-only board (cash 1 BOW, still empty/date-not-ready).
+appends the Monday-evening GET-only board (cash 1 BOW, still empty/date-not-ready)
+and merged in [PR #98](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/98)
+(`5a963ff`) on 2026-09-16.
 [RW-37 Tuesday rescreen](research/rw37-screen-intake-2026-09-15.md)
-appends the same-day board (supported 32, cash 0); the 30-identity gate
-stays closed.
+appends the same-day board (supported 32, cash 0) and merged in
+[PR #99](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/99)
+(`33156c9`) on 2026-09-16. The 30-identity gate stays closed. No empirical PASS.
 [CSL-63 slice A memo](research/csl-63-slice-a-memo-2026-10-16.md)
 lists each RW-27 name's blocking evidence after `qualify_count` 0 and
 proposes `RW-38` (daily NAV source contract) for Lucas to authorize or
@@ -32,6 +48,8 @@ refuse. The proposal does not lower the cohort gate.
 
 Lucas adopted [PRODUCT.md](../PRODUCT.md) and its supporting contracts under PD-048,
 completing the RW-25 grill on `work/rw25-product-grill`.
+That documentation delivery merged in [PR #85](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/85)
+(`e4e9844`) on 2026-09-10.
 [The planning record](product-planning.md) preserves exact answers and ratification.
 PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order and
 REGISTER owns claims. Current runtime invariants and applicable empirical gates retain
@@ -45,7 +63,7 @@ connect useful research and real paper operation to release evidence and bounded
 including explicit reconciliation with older scope and current gates. These adopted
 contracts define required work; they do not claim implementation or a passed gate.
 
-## RW-23 / RW-24 audit repairs and reliability — 2026-09-07
+## RW-23 / RW-24 audit repairs and reliability — merged 2026-09-08
 
 BUG-146 through BUG-158 are fixed in commit slices, alongside a measured triage
 optimization and full Discord validation coverage. Independent authority review and
@@ -58,6 +76,10 @@ See [[evidence/rw23-audit-repair-2026-09-07]],
 [[evidence/rw24-reliability-2026-09-07]], and
 [[evidence/rw23-rw24-local-matrix-2026-09-08/README]] for changes and evidence.
 The frozen baseline findings remain in [[evidence/astra-audit-2026-09-07/AUDIT]].
+Branch head `f3f315f` on `codex/audit-reliability-2026-09-07` (one docs commit after
+`fa3cc1c`) merged with RW-24 in [PR #81](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/81)
+(`5d50b25`) on 2026-09-08. The head and the merge commit are on main. No empirical
+gate is closed.
 
 ## RW-22 review remediation — 2026-09-07
 
@@ -264,6 +286,7 @@ defects got fixed twice on two branches.
 |---|---|
 | [[PLAN]] | MVP, milestones, intake gate, scope boundaries |
 | [[REGISTER]] | Every open ID and who has it |
+| [[adr/README]] | Architecture decision records. Written when a Linear `decision` issue closes; cite any `DEC-xx` from [[REGISTER]] |
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
@@ -315,10 +338,10 @@ defects got fixed twice on two branches.
 | [[research/rw28-slice-a-evaluation-2026-09-11]] | RW-28 metrics + evaluation: discrete protocol, 0 qualify, no activation / no PASS |
 | [[research/rw29-case-inspection-2026-09-11]] | RW-29 case inspection: six failure classes, missing decisions, no activation / no PASS |
 | [[research/rw30-measurement-protocol-2026-09-12]] | RW-30 pre-measurement protocol: sealed rules, no measurement / no PASS |
-| [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; no empirical PASS |
-| [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs |
-| [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; no PASS |
-| [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; no PASS |
+| [[research/rw34-cloud-adapter-2026-09-15]] | RW-34 Cloud CLI inventory and admitted json-child profile; merged with RW-35 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
+| [[research/rw35-empty-run-update-2026-09-15]] | RW-35 composed empty-run research update from retained RW-29/RW-31 inputs; merged with RW-34 in PR #97 (`8beb271`) on 2026-09-15; no empirical PASS |
+| [[research/rw36-screen-intake-2026-09-15]] | RW-36 third GET-only screen row: cash 1 BOW, still empty/date-not-ready; merged in PR #98 (`5a963ff`) on 2026-09-16; no PASS |
+| [[research/rw37-screen-intake-2026-09-15]] | RW-37 fourth GET-only screen row: Tue 2026-09-15, supported 32, cash 0; merged in PR #99 (`33156c9`) on 2026-09-16; the 30-identity gate stays closed; no PASS |
 | [[research/csl-63-slice-a-memo-2026-10-16]] | CSL-63 memo: per-candidate blocking evidence after zero qualify; RW-38 proposed, not authorized |
 | [[research-report]] · [[research-supplement]] · [[upside-and-roi]] | Original research inputs |
 | [[moving-targets-refresh-2026-07-06]] | A dated verification snapshot |

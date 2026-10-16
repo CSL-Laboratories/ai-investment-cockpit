@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from feasibility.validate import (
     FeasibilityError,
     DecisiveVerdictBlocked,
     load_freeze,
+    sha256_file,
     validate_freeze,
 )
 
@@ -105,6 +107,23 @@ def test_result_order_must_match_shortlist() -> None:
 def test_freeze_file_is_canonical_bytes() -> None:
     raw = json.loads(FREEZE_PATH.read_text(encoding="utf-8"))
     validate_freeze(raw)
+
+
+def test_sha256_file_hashes_file_bytes(tmp_path: Path) -> None:
+    payload = b"CSL-118 sha256_file probe\n"
+    path = tmp_path / "probe.bin"
+    path.write_bytes(payload)
+    digest = sha256_file(path)
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert digest == digest.lower()
+    assert len(digest) == 64
+
+
+def test_sha256_file_matches_rw27_freeze_pin() -> None:
+    assert (
+        sha256_file(FREEZE_PATH)
+        == "26f34dba3fd3a75732d136e88a6280dd313c5ffc01886f79e73ab1c8c56eb2d8"
+    )
 
 
 _FORBIDDEN_IMPORT = (
