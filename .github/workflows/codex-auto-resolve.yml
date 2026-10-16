@@ -1,12 +1,15 @@
 # Codex auto-resolve for review threads (CSL-179).
 # GitHub-hosted ubuntu-latest on purpose: do not spend Blacksmith minutes.
 # Parses the shared per-thread marker contract (recursion CSL-178 uses the same):
-#   <!-- codex-thread-verdict:<thread_id>:<sha>:RESOLVE|KEEP -->
-#   CODEX-THREAD: RESOLVE|KEEP thread=<thread_id> sha=<sha>
-# Both formats must agree. RESOLVE + current head SHA + green required checks
-# (excluding this workflow's own runs) → GraphQL resolveReviewThread and a
-# short reply citing the ruling. KEEP / missing fix / ambiguous / stale SHA
-# leave the Linear needs-decision path in place.
+#
+#   <!-- codex-thread-verdict:<thread_id> -->
+#   CODEX-THREAD: RESOLVE|DECIDE|MISSING|AMBIGUOUS
+#   HEAD: <full 40-character commit SHA>
+#
+# RESOLVE + current head SHA + green required checks → cite on the thread,
+# then GraphQL resolveReviewThread, then a success marker. DECIDE / MISSING /
+# AMBIGUOUS / stale SHA / pending required checks leave the Linear
+# needs-decision path in place.
 #
 # Does not post @codex review (that is #124 / #131). Never pushes or merges.
 # Missing CODEX_TRIGGER_PAT is a ::notice:: skip, not a failure.
@@ -16,21 +19,12 @@
 # stuck-thread watcher. GITHUB_TOKEN is read-only. The PAT identity is what
 # GitHub records as resolving the thread.
 #
-# Forks: the PAT job never starts unless head-repo == this repository.
-# issue_comment events do not include head.repo, so a no-secret admit job
-# looks the PR up first. Checkout is always the default branch
-# (persist-credentials: false); never PR-head or fork code with the PAT.
-# author_association is not used to authorize: in this private org, members
-# are reported as CONTRIBUTOR and the Codex GitHub App is NONE (see claude.yml).
+# Review/comment events are intentionally omitted: GitHub would run this YAML
+# from the PR head, so a same-repo edit of this file would receive the PAT.
+# schedule and workflow_dispatch always run the default-branch copy.
 name: Codex auto-resolve
 
 on:
-  pull_request_review:
-    types: [submitted]
-  pull_request_review_comment:
-    types: [created]
-  issue_comment:
-    types: [created]
   schedule:
     # Catch Codex reviews that land a few minutes after @codex review.
     # Offset from the gate (7/17/27/...) and stuck-thread watch (23 */2).
@@ -48,7 +42,6 @@ env:
   QUOTE_LIMIT: "240"
 
 # Writes go through CODEX_TRIGGER_PAT. GITHUB_TOKEN only reads.
-# checks/statuses are required to read statusCheckRollup on a private repo.
 permissions:
   contents: read
   pull-requests: read
@@ -61,145 +54,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  admit:
-    # No secrets. Decides whether the PAT job may run. Fork PRs stop here.
-    # Review events already carry head.repo; issue_comment looks the PR up.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      ) ||
-      (
-        github.event_name == 'pull_request_review_comment' &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      ) ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
-      )
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-      issues: read
-    outputs:
-      ok: ${{ steps.gate.outputs.ok }}
-      pr: ${{ steps.gate.outputs.pr }}
-    steps:
-      - name: Same-repository gate
-        id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.issue.number || github.event.pull_request.number || '' }}
-        run: |
-          set -euo pipefail
-          python3 - <<'ADMIT'
-          import json, os, re, subprocess, sys
-
-          SAFE_PR = re.compile(r"^[1-9][0-9]{0,8}$")
-          CODEX = frozenset({"chatgpt-codex-connector[bot]", "chatgpt-codex-connector"})
-          TRUSTED = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-
-          def out(ok: bool, pr: str = "") -> None:
-              path = os.environ.get("GITHUB_OUTPUT") or ""
-              line_ok = "true" if ok else "false"
-              print(f"codex-auto-resolve: admit ok={line_ok} pr={pr or '-'}")
-              if path:
-                  with open(path, "a", encoding="utf-8") as handle:
-                      handle.write(f"ok={line_ok}\npr={pr}\n")
-
-          def head_repo(pr: dict | None) -> str:
-              if not isinstance(pr, dict):
-                  return ""
-              head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
-              repo = head.get("repo") if isinstance(head.get("repo"), dict) else {}
-              return str(repo.get("full_name") or "")
-
-          def login_of(node: dict | None) -> str:
-              if not isinstance(node, dict):
-                  return ""
-              user = node.get("user") if isinstance(node.get("user"), dict) else {}
-              return str(user.get("login") or node.get("login") or "")
-
-          def is_codex(login: str) -> bool:
-              name = (login or "").strip().lower()
-              return name in {item.lower() for item in CODEX} or name + "[bot]" in {item.lower() for item in CODEX}
-
-          event_name = os.environ.get("GITHUB_EVENT_NAME") or ""
-          repository = os.environ.get("GITHUB_REPOSITORY") or ""
-          pr_hint = (os.environ.get("PR_NUMBER") or "").strip()
-          if event_name in {"schedule", "workflow_dispatch"}:
-              out(True, pr_hint if SAFE_PR.fullmatch(pr_hint) else "")
-              sys.exit(0)
-
-          event_path = os.environ.get("GITHUB_EVENT_PATH") or ""
-          try:
-              with open(event_path, encoding="utf-8") as handle:
-                  event = json.load(handle)
-          except (OSError, ValueError):
-              out(False)
-              sys.exit(0)
-          if not isinstance(event, dict):
-              out(False)
-              sys.exit(0)
-
-          if event_name == "pull_request_review":
-              node = event.get("review") if isinstance(event.get("review"), dict) else {}
-          else:
-              node = event.get("comment") if isinstance(event.get("comment"), dict) else {}
-          if not is_codex(login_of(node)):
-              out(False)
-              sys.exit(0)
-
-          pr = event.get("pull_request") if isinstance(event.get("pull_request"), dict) else None
-          number = ""
-          if pr:
-              number = str(pr.get("number") or "")
-              repo = head_repo(pr)
-              if repo != repository:
-                  out(False, number if SAFE_PR.fullmatch(number) else "")
-                  sys.exit(0)
-              out(True, number if SAFE_PR.fullmatch(number) else "")
-              sys.exit(0)
-
-          issue = event.get("issue") if isinstance(event.get("issue"), dict) else {}
-          if not issue.get("pull_request"):
-              out(False)
-              sys.exit(0)
-          number = str(issue.get("number") or pr_hint or "")
-          if not SAFE_PR.fullmatch(number):
-              out(False)
-              sys.exit(0)
-          try:
-              raw = subprocess.check_output(
-                  ["gh", "api", f"repos/{repository}/pulls/{number}"],
-                  text=True,
-              )
-              payload = json.loads(raw)
-          except (OSError, subprocess.CalledProcessError, ValueError):
-              out(False, number)
-              sys.exit(0)
-          if not isinstance(payload, dict) or head_repo(payload) != repository:
-              out(False, number)
-              sys.exit(0)
-          # Association is logged, not authorizing (private-org CONTRIBUTOR / App NONE).
-          assoc = str(node.get("author_association") or "")
-          print(f"codex-auto-resolve: commenter_association={assoc or '-'} trusted={assoc in TRUSTED}")
-          out(True, number)
-          ADMIT
-
   resolve:
-    needs: admit
-    if: needs.admit.outputs.ok == 'true'
+    # Default-branch copy only (schedule / workflow_dispatch).
+    # Forks are skipped in the script via isCrossRepository.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -221,7 +79,7 @@ jobs:
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         if: steps.pat.outputs.skip != 'true'
         with:
           # Trusted default-branch copy. Never run the PR head with the PAT.
@@ -236,7 +94,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
-          PR_NUMBER: ${{ needs.admit.outputs.pr }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number || '' }}
         run: |
           set -euo pipefail
           # First-merge bootstrap: this workflow ships in the PR, but the
