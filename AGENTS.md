@@ -14,8 +14,11 @@ prompt governs.
   and PR links. Agents and bots with Linear access post their own status
   updates and PR links as comments on that issue. Hosted Claude
   (`devin-review-fix`, `resolve-pr`) has no Linear access: it replies on
-  GitHub only (see **When Claude can't fix a review thread**); Linear PR-sync
-  and the stuck-thread watcher cover the Linear side.
+  GitHub only (see **When Claude can't fix a review thread**). Linear PR-sync
+  writes generic PR status, not Claude milestones; the stuck-thread watcher
+  files a roll-up only for stuck threads. When a hosted-Claude blocker or
+  milestone needs a person, an agent with Linear access (usually the PR
+  author) posts that @mention on the CSL issue.
 - Every review request, blocker, or question directed at a person must be an
   @mention comment on the matching CSL Linear issue so the Linear bot notifies
   them. A GitHub mention alone is not enough. Automated GitHub workflows keep
