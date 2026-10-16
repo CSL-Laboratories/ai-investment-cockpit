@@ -13,8 +13,9 @@ Resolve when every condition holds:
   the mutation — never resolve on a stale SHA)
 * no owner/human decision is needed (``DECIDE`` / ``MISSING`` / ``AMBIGUOUS``
   / malformed / mixed markers fail closed and leave the needs-decision path)
-* no later trusted human thread reply after the ``RESOLVE`` stamp (the
-  thread tail is re-fetched before cite and before ``resolveReviewThread``)
+* no trusted human thread reply at or after the ``RESOLVE`` stamp (the
+  thread tail is re-fetched before cite and before ``resolveReviewThread``;
+  an incomplete last-40 window fails closed)
 * required checks on that head are green (``isRequired`` contexts, ignoring
   this workflow's own in-progress check)
 
@@ -215,6 +216,7 @@ query($id: ID!) {
   node(id: $id) {
     ... on PullRequestReviewThread {
       comments(last: 40) {
+        pageInfo { hasPreviousPage }
         nodes {
           createdAt
           authorAssociation
@@ -1372,28 +1374,38 @@ def thread_tail_vetoes(
         return True
     node = tail.get("node") if isinstance(tail, dict) else None
     comments: list[dict[str, Any]] = []
+    page_info: dict[str, Any] | None = None
     if isinstance(node, dict):
-        comments = [
-            item
-            for item in ((node.get("comments") or {}).get("nodes") or [])
-            if isinstance(item, dict)
-        ]
+        conn = node.get("comments") or {}
+        if isinstance(conn, dict):
+            raw_page = conn.get("pageInfo")
+            if isinstance(raw_page, dict):
+                page_info = raw_page
+            comments = [
+                item for item in (conn.get("nodes") or []) if isinstance(item, dict)
+            ]
     if later_human_veto(comments, after, pat_login):
         return True
-    # last:40 is the live window. If it is full and every visible stamp is
-    # after the verdict, comments between the verdict and that window are
-    # unseen — fail closed rather than resolve.
-    if len(comments) >= 40:
-        oldest: datetime | None = None
-        for item in comments:
-            when = parse_dt(item.get("createdAt") or item.get("created_at"))
-            if when is None:
-                return True
-            if oldest is None or when < oldest:
-                oldest = when
-        if oldest is None or oldest > after:
+    # last:40 is a suffix. hasPreviousPage (or a missing pageInfo on a
+    # full 40-comment page) means older comments are unseen. Fail closed
+    # unless a visible stamp is strictly before the verdict, so the
+    # contiguous suffix covers the whole at-or-after window — including
+    # same-second replies GitHub would order before this page.
+    if page_info is None or "hasPreviousPage" not in page_info:
+        has_previous = None
+    else:
+        has_previous = bool(page_info.get("hasPreviousPage"))
+    truncated = has_previous is True or (has_previous is None and len(comments) >= 40)
+    if not truncated:
+        return False
+    oldest: datetime | None = None
+    for item in comments:
+        when = parse_dt(item.get("createdAt") or item.get("created_at"))
+        if when is None:
             return True
-    return False
+        if oldest is None or when < oldest:
+            oldest = when
+    return oldest is None or oldest >= after
 
 
 def reply_and_resolve(

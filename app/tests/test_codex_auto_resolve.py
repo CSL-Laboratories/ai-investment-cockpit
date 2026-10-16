@@ -143,6 +143,7 @@ class FakeGitHub(mod.GitHub):
         self.resolve_by_queue: list[str | None] = []
         self.thread_tails: dict[str, list[dict]] = {}
         self.thread_tail_queue: dict[str, list[list[dict]]] = {}
+        self.thread_tail_has_previous: dict[str, bool] = {}
         self.fail_thread_tail = False
         self.thread_tail_calls = 0
 
@@ -205,7 +206,15 @@ class FakeGitHub(mod.GitHub):
                 nodes = list(self.thread_tails[tid])
             else:
                 nodes = self._comments_for_thread(tid)
-            return {"node": {"comments": {"nodes": nodes}}}
+            has_previous = self.thread_tail_has_previous.get(tid, len(nodes) >= 40)
+            return {
+                "node": {
+                    "comments": {
+                        "nodes": nodes,
+                        "pageInfo": {"hasPreviousPage": has_previous},
+                    }
+                }
+            }
         if "addPullRequestReviewThreadReply" in query:
             if token != "pat":
                 raise AssertionError("reply must use CODEX_TRIGGER_PAT")
@@ -2012,3 +2021,34 @@ def test_scan_complete_full_tail_window_can_resolve():
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == [THREAD]
     assert any("resolve=posted" in line for line in logs)
+
+
+def test_scan_rechecks_same_second_human_on_tail():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tails[THREAD] = [comment("alice", "leave this open")]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.thread_tail_calls >= 1
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_full_tail_same_second_as_stamp_is_human_veto():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tails[THREAD] = [
+        comment("devin-ai-integration[bot]", f"bot {i}") for i in range(40)
+    ]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_scan_has_previous_page_without_reaching_stamp_is_human_veto():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    gh.thread_tails[THREAD] = [
+        comment("devin-ai-integration[bot]", "bot", NOW + timedelta(seconds=1))
+    ]
+    gh.thread_tail_has_previous[THREAD] = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=human-veto" in line for line in logs)
