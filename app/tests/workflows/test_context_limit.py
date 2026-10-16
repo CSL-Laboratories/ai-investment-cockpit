@@ -71,10 +71,24 @@ def _events(st):
     return [e for e in entries if st.audit.verify_entry(e)]
 
 
-def test_estimate_is_at_least_the_dense_tokenizer_rule():
-    text = "AAPL filed an 8-K. " * 50
-    # Claude 4.7+ is about chars/3.08 on English. bytes/3 must not under-count that.
-    assert estimate_tokens(text) >= len(text.encode("utf-8")) // 4
+def test_dense_number_sample_accepted_by_the_cap_stays_under_100k():
+    """Digits at ~2.5 bytes/token must not cross Haiku 5.5's 100k tier.
+
+    bytes/3 under the 90k default would accept 270_000 bytes, which is
+    108_000 tokens at 2.5 bytes each. bytes/2 refuses that body, and any
+    body it accepts under the maximum legal cap stays under 100k tokens
+    even at 2 bytes each.
+    """
+    old_accept = "9" * 270_000
+    assert (len(old_accept) + 2) // 3 <= 90_000
+    assert len(old_accept) / 2.5 > 100_000
+    assert estimate_tokens(old_accept) > 90_000
+
+    cap = 99_999  # the largest cap Settings will store
+    accepted = "9" * (2 * cap - 1)
+    assert estimate_tokens(accepted) == cap
+    assert len(accepted) / 2 < 100_000
+    assert len(accepted) / 2.5 < 100_000
     assert estimate_tokens("") == 0
 
 
@@ -151,6 +165,35 @@ def test_vendor_usage_reads_claude_envelope_and_ignores_prose():
     raw = json.dumps({"usage": {"input_tokens": 12, "output_tokens": 3}, "result": "capacity"})
     assert parse_vendor_usage(raw) == (12, 3)
     assert parse_vendor_usage("the model said input_tokens 999") is None
+
+
+def test_vendor_usage_adds_cache_tokens_before_pricing():
+    raw = json.dumps({
+        "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 8_000,
+            "cache_read_input_tokens": 2_000,
+            "output_tokens": 1_000,
+        },
+    })
+    assert parse_vendor_usage(raw) == (10_004, 1_000)
+    quote = quote_cost(
+        "claude-haiku-4-5-20251001", input_tokens=10_004, output_tokens=1_000,
+        input_token_source="vendor",
+    )
+    # 10004 * $1/M + 1000 * $5/M. Cache tokens are counted at the base rate.
+    assert quote.usd == "0.01500400"
+    assert quote.input_tokens == 10_004
+    # The long-context tier sees the sum, not the uncached sliver.
+    tier = quote_cost(
+        "claude-haiku-5-5", input_tokens=4 + 100_000, output_tokens=0,
+        input_token_source="vendor",
+    )
+    assert tier.rate_tier == "haiku-5.5-long"
+    bad = json.dumps({
+        "usage": {"input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": -1},
+    })
+    assert parse_vendor_usage(bad) is None
 
 
 def test_settings_cap_cannot_reach_the_surcharge_tier():
@@ -301,7 +344,7 @@ def test_worst_case_repair_overhead_covers_a_500_char_multibyte_reason():
     reason = "\U0001F600" * 600
     suffix = repair_prompt_for("", reason)
     assert suffix == worst_case_repair_overhead()
-    assert estimate_tokens(suffix) >= (len(suffix.encode("utf-8")) + 2) // 3
+    assert estimate_tokens(suffix) == (len(suffix.encode("utf-8")) + 1) // 2
 
 
 def test_prompt_just_under_the_cap_is_refused_once_repair_reserve_is_added(st):

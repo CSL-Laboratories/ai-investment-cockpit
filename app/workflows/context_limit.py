@@ -1,9 +1,13 @@
 """Hard context cap for schema-validated workflow prompts (CSL-42 / CSL-98).
 
 Claude Haiku 5.5 bills the whole request at five times the short-context rate
-once the prompt exceeds 100k input tokens. ``estimate_tokens`` uses UTF-8
-bytes / 3, which sits just above the ~30% denser Claude 4.7+ tokenizer on
-English, so a prompt this module accepts stays under that boundary.
+once the prompt exceeds 100k input tokens. ``estimate_tokens`` counts UTF-8
+bytes / 2. Number-heavy text is about 2.5 bytes per token, and bytes / 3
+under a 90k cap accepted about 270KB of that text (~108k real tokens), past
+the surcharge. Bytes / 2 stays at or above a 2-byte tokenizer: an estimate
+under 100_000 is at most 200_000 bytes, which is under 100k tokens at 2
+bytes each and under 80k tokens at 2.5 bytes each. The configured cap is
+itself kept strictly below 100_000.
 
 ``fit_packet`` drops a packet's tail until the wrapped items plus the
 template overhead fit. ``call_agent`` refuses any rendered prompt that is
@@ -18,10 +22,16 @@ from workflows.packets import Packet, PacketItem
 
 
 def estimate_tokens(text: str) -> int:
-    """Conservative token count. Empty text is 0."""
+    """Conservative token count. Empty text is 0.
+
+    ``(utf-8 bytes + 1) // 2`` is the ceiling of bytes / 2. A prompt this
+    function scores under 100_000 cannot reach Haiku 5.5's 100k tier at 2
+    bytes per token, which is denser than the ~2.5 bytes/token of digits
+    and JSON.
+    """
     if not text:
         return 0
-    return (len(text.encode("utf-8")) + 2) // 3
+    return (len(text.encode("utf-8")) + 1) // 2
 
 
 def context_token_cap(settings) -> int:
