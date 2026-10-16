@@ -19,7 +19,7 @@ pub fn source_allowlisted(source: &str) -> bool {
         "alpaca:benzinga" | "finnhub" | "calendar" | "sec:edgar" | "finra"
     )
 }
-const MAX_SYMBOLS: usize = 64;
+pub const MAX_SYMBOLS: usize = 64;
 const MAX_REF: usize = 128;
 
 pub struct EventParts {

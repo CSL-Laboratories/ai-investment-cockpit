@@ -198,7 +198,9 @@ def _plain_symbols(symbols) -> bool:
         return _utf8_text(symbols)
     if type(symbols) not in (list, tuple):
         return False
-    return all(_utf8_text(item) for item in symbols)
+    # Match ``_clean_symbols``: only the first 64 entries are work. A hostile
+    # tail must not be scanned or copied before the native call.
+    return all(_utf8_text(item) for item in symbols[:MAX_SYMBOLS])
 
 
 def escape_untrusted(text) -> str:

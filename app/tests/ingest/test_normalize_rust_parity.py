@@ -237,6 +237,23 @@ else:
     assert completed.returncode == 0, completed.stderr + completed.stdout
 
 
+def test_symbol_lists_stop_at_the_same_bound_as_python():
+    """Only the first 64 entries are validated or copied. The tail is ignored."""
+    import cockpit_quant
+
+    symbols = ["AAPL"] + ["not a ticker"] * 63 + ["MSFT"] * 1000 + [object()]
+    kwargs = dict(
+        source="finnhub", article_id="1", symbols=symbols,
+        headline="h", summary="s", ts=None, event_type="news",
+    )
+    assert to_market_event(**kwargs)["symbols"] == ["AAPL"]
+    assert python_to_market_event(**kwargs)["symbols"] == ["AAPL"]
+    direct = cockpit_quant.market_event("finnhub", "1", symbols, "h", "s", "news")
+    assert direct[1] == ["AAPL"]
+    batched = cockpit_quant.market_event_many([("finnhub", "1", symbols, "h", "s", "news")])
+    assert batched[0][1] == ["AAPL"]
+
+
 def test_batched_events_match_single_calls():
     import cockpit_quant
 

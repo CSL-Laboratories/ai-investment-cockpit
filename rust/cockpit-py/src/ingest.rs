@@ -3,12 +3,15 @@
 use std::ffi::CString;
 
 use cockpit_ingest::{
-    content_hash, escape_untrusted, market_event, source_allowlisted, Json, MAX_LEN,
+    content_hash, escape_untrusted, market_event, source_allowlisted, Json, MAX_LEN, MAX_SYMBOLS,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::PyTypeInfo;
 use pyo3::sync::GILOnceCell;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PyString, PyTuple};
+use pyo3::types::{
+    PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySequence, PyString, PyTuple,
+};
 
 fn invalid(message: impl Into<String>) -> PyErr {
     PyValueError::new_err(message.into())
@@ -61,11 +64,24 @@ fn read_json(obj: &Bound<'_, PyAny>) -> PyResult<Json> {
     Err(invalid("unsupported json value"))
 }
 
-fn read_symbols(symbols: &Bound<'_, PyAny>) -> PyResult<(Option<String>, Vec<String>)> {
-    if symbols.is_instance_of::<PyString>() {
+fn read_symbols(
+    py: Python<'_>,
+    symbols: &Bound<'_, PyAny>,
+) -> PyResult<(Option<String>, Vec<String>)> {
+    let ty = symbols.get_type();
+    if ty.is(&PyString::type_object(py)) {
         return Ok((Some(symbols.extract()?), Vec::new()));
     }
-    Ok((None, symbols.extract()?))
+    if !ty.is(&PyList::type_object(py)) && !ty.is(&PyTuple::type_object(py)) {
+        return Ok((None, Vec::new()));
+    }
+    let seq = symbols.downcast::<PySequence>()?;
+    let n = std::cmp::min(seq.len()?, MAX_SYMBOLS);
+    let mut items = Vec::with_capacity(n);
+    for index in 0..n {
+        items.push(seq.get_item(index)?.extract()?);
+    }
+    Ok((None, items))
 }
 
 type EventOut = (String, Vec<String>, String, String, String, String, String);
@@ -212,7 +228,7 @@ fn market_event_py(
 ) -> PyResult<EventOut> {
     ensure_source(source)?;
     let skewed = needs_python_unicode(py, &[headline, summary, event_type])?;
-    let (csv, items) = read_symbols(symbols)?;
+    let (csv, items) = read_symbols(py, symbols)?;
     let raw_json = raw.map(read_json).transpose()?;
     let parts = pack(market_event(
         source,
@@ -233,24 +249,25 @@ fn market_event_py(
 #[pyfunction]
 fn market_event_many(
     py: Python<'_>,
-    rows: Vec<(String, String, Vec<String>, String, String, String)>,
+    rows: Vec<(String, String, Py<PyAny>, String, String, String)>,
 ) -> PyResult<Vec<EventOut>> {
     for (source, _, _, _, _, _) in &rows {
         ensure_source(source)?;
     }
     let mut out = Vec::with_capacity(rows.len());
     for (source, article_id, symbols, headline, summary, event_type) in rows {
+        let (csv, items) = read_symbols(py, symbols.bind(py))?;
+        let parts = pack(market_event(
+            &source,
+            &article_id,
+            csv.as_deref(),
+            &items,
+            &headline,
+            &summary,
+            &event_type,
+            None,
+        ));
         if needs_python_unicode(py, &[&headline, &summary, &event_type])? {
-            let parts = pack(market_event(
-                &source,
-                &article_id,
-                None,
-                &symbols,
-                &headline,
-                &summary,
-                &event_type,
-                None,
-            ));
             out.push(overlay_python_text(
                 py,
                 parts,
@@ -259,16 +276,7 @@ fn market_event_many(
                 &event_type,
             )?);
         } else {
-            out.push(pack(market_event(
-                &source,
-                &article_id,
-                None,
-                &symbols,
-                &headline,
-                &summary,
-                &event_type,
-                None,
-            )));
+            out.push(parts);
         }
     }
     Ok(out)
