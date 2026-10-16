@@ -1,0 +1,93 @@
+# In-repo stuck-thread watch + Codex mediator.
+# Own file on purpose: a cron inside claude.yml never fired because of event noise.
+# Lightweight API script only — GitHub-hosted ubuntu-latest, no Blacksmith, no tests.
+# Linear: one roll-up issue per PR (`Stuck PR threads: <repo>#<PR>`), updated in place.
+# Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->`
+# and `<!-- codex-gate-mediate:owner/repo:N -->`. Each writer owns only its fence.
+# Skip already-approved PRs. Never one Linear issue per thread.
+name: Stuck thread watch
+
+on:
+  schedule:
+    # Odd minute, every two hours. Tune here; do not hide this cron in another workflow.
+    - cron: "23 */2 * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Only scan this PR number (optional)"
+        required: false
+        default: ""
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+# Tune without editing the script. FILE_LINEAR is on for this Linear-enabled repo.
+env:
+  STUCK_HOURS: "6"
+  MAX_MEDIATIONS_PER_PR_PER_DAY: "3"
+  QUOTE_LIMIT: "2000"
+  DEVIN_LOGIN: "devin-ai-integration[bot]"
+  CLAUDE_LOGINS: "claude[bot],claude"
+  FILE_LINEAR: "true"
+  # Personal-repo path only. Labels are posted with CODEX_TRIGGER_PAT (GITHUB_TOKEN is read-only).
+  APPLY_PR_LABEL: "false"
+  NEEDS_DECISION_LABEL: "needs-decision"
+  LINEAR_TEAM_KEY: "CSL"
+  LINEAR_LABELS: "needs-decision,auto-filed"
+  LINEAR_PROJECT: "ai-investment-cockpit"
+  LINEAR_REPO_LABEL: "ai-investment-cockpit"
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: stuck-thread-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    # Comment events only if cheap: Devin or Claude on a PR. Schedule/dispatch always run.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (
+          github.event.comment.user.login == 'claude[bot]' ||
+          github.event.comment.user.login == 'claude' ||
+          github.event.comment.user.login == 'devin-ai-integration[bot]'
+        )
+      ) ||
+      (
+        github.event_name == 'pull_request_review_comment' &&
+        (
+          github.event.comment.user.login == 'claude[bot]' ||
+          github.event.comment.user.login == 'claude' ||
+          github.event.comment.user.login == 'devin-ai-integration[bot]'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: Checkout watcher
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Scan stuck threads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.issue.number || github.event.pull_request.number || '' }}
+        run: python3 .github/scripts/stuck_thread_watch.py
