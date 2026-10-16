@@ -29,6 +29,7 @@ def evaluate(expression, **overrides):
     """
     values = {
         'github.event_name': 'pull_request',
+        'github.event.before': 'e' * 40,
         'github.event.action': 'synchronize',
         'github.workflow': 'ci',
         'github.sha': 'a' * 40,
@@ -260,7 +261,14 @@ class DispatchScopeTests(unittest.TestCase):
         # Stub gh locally. This executes the workflow shell, never the real CLI.
         for scope in ('linux', 'full'):
             for changed, expected in [('docs/example.md', ['ci.yml']),
-                                      ('rust/crate/src/lib.rs', ['ci.yml', 'rust.yml'])]:
+                                      ('rust/crate/src/lib.rs', ['ci.yml', 'rust.yml']),
+                                      ('.github/workflows/ci.yml', ['ci.yml', 'rust.yml']),
+                                      ('.github/actions/run-gates/action.yml', ['ci.yml', 'rust.yml']),
+                                      ('.github/actionlint.yaml', ['ci.yml', 'rust.yml']),
+                                      ('tools/required_ci_gate.py', ['ci.yml', 'rust.yml']),
+                                      ('tools/test_queue_gates.py', ['ci.yml', 'rust.yml']),
+                                      ('tools/test_queue_gates.py.bak', ['ci.yml']),
+                                      ('app/quant/pnl.py.bak', ['ci.yml'])]:
                 with self.subTest(scope=scope, changed=changed), tempfile.TemporaryDirectory() as tmp:
                     tmp = Path(tmp)
                     gh = tmp / 'gh'
@@ -284,6 +292,77 @@ class DispatchScopeTests(unittest.TestCase):
                                               capture_output=True, check=False)
                     self.assertNotEqual(rejected.returncode, 0)
                     self.assertFalse((tmp/'calls').exists())
+
+    def test_actual_rust_merge_tree_filter_with_diverged_base(self):
+        step = next(s for s in self.rust['jobs']['filter']['steps'] if s.get('id') == 'gate')
+        # Run the actual workflow shell and Python matrix generator against real
+        # commits. No DIFF_FILES override or mocked git can hide the regression.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'user.name=CI Test',
+                    '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
+                    '-c', 'core.hooksPath=/dev/null', *args], cwd=root,
+                    text=True, stderr=subprocess.DEVNULL).strip()
+
+            def commit(path, content, message):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding='utf-8')
+                git('add', path)
+                git('commit', '-m', message)
+                return git('rev-parse', 'HEAD')
+
+            git('init', '-b', 'main')
+            ancestor = commit('README.md', 'base\n', 'base')
+            git('checkout', '-b', 'docs-pr')
+            pr_head = commit('docs/example.md', 'docs only\n', 'docs')
+            git('checkout', 'main')
+            base = commit('rust/base-only.rs', '// base-only Rust\n', 'base Rust')
+            git('merge', '--no-ff', 'docs-pr', '-m', 'immutable docs merge candidate')
+            candidate = git('rev-parse', 'HEAD')
+            git('remote', 'add', 'origin', str(root))
+            self.assertIn('rust/base-only.rs', git('diff', '--name-only', base, pr_head))
+            self.assertEqual(git('diff', '--name-only', base, candidate), 'docs/example.md')
+
+            def cells(event='pull_request', **overrides):
+                output = root / 'matrix-output'
+                output.write_text('', encoding='utf-8')
+                # Isolate event identity from any ambient real Actions SHA.
+                env = {key: value for key, value in os.environ.items()
+                       if key not in {'DIFF_FILES', 'EVENT_NAME', 'EXPECTED_PR_HEAD',
+                                      'MERGE_CANDIDATE', 'DIFF_BASE', 'DIFF_HEAD'}}
+                env.update({'CHECK_PATHS': 'true', 'SKIP_CELLS': 'false',
+                            'RUN_WINDOWS': 'true', 'RUN_MACOS': 'false',
+                            'EVENT_NAME': event, 'EXPECTED_PR_HEAD': pr_head,
+                            'MERGE_CANDIDATE': candidate, 'DIFF_BASE': base,
+                            'DIFF_HEAD': candidate, 'GITHUB_OUTPUT': str(output),
+                            **overrides})
+                result = subprocess.run(['bash', '-eu', '-c', step['run']], cwd=root,
+                                        env=env, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(output.read_text().splitlines()[1])['include']
+
+            self.assertEqual(cells(), [])
+            docs_base, docs_candidate = base, candidate
+            for overrides in [{'MERGE_CANDIDATE': pr_head},
+                              {'EXPECTED_PR_HEAD': base}, {'MERGE_CANDIDATE': ''}]:
+                self.assertEqual(len(cells(**overrides)), 4)
+            git('checkout', 'docs-pr')
+            self.assertEqual(len(cells(MERGE_CANDIDATE=pr_head)), 4)
+            pr_head = commit('rust/pr-owned.rs', '// PR Rust\n', 'PR Rust')
+            git('checkout', 'main')
+            base = git('rev-parse', 'HEAD')
+            git('merge', '--no-ff', 'docs-pr', '-m', 'immutable code merge candidate')
+            candidate = git('rev-parse', 'HEAD')
+            self.assertEqual(len(cells()), 4)
+            # Fetching explicit push/queue ranges can shallow the local fixture;
+            # finish constructing all merge candidates before these actual fetches.
+            for event in ['push', 'merge_group']:
+                self.assertEqual(cells(event, DIFF_BASE=docs_base, DIFF_HEAD=docs_candidate), [])
+                self.assertEqual(len(cells(event, DIFF_BASE=ancestor, DIFF_HEAD=docs_base)), 4)
+                self.assertEqual(len(cells(event, DIFF_BASE='0' * 40)), 4)
 
     def test_pr_concurrency_cancels_old_heads_but_isolates_drafts(self):
         for doc in (self.ci, self.rust):

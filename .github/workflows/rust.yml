@@ -111,13 +111,32 @@ jobs:
           CHECK_PATHS: ${{ github.event_name != 'workflow_dispatch' }}
           RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'push') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
           RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MERGE_CANDIDATE: ${{ github.sha }}
+          DIFF_BASE: ${{ github.event.merge_group.base_sha || github.event.before }}
+          DIFF_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           if [ "${CHECK_PATHS}" = "true" ] && [ -z "${DIFF_FILES+x}" ]; then
-            base="${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.event.before }}"
-            head="${{ github.event.merge_group.head_sha || github.event.pull_request.head.sha || github.sha }}"
-            git fetch --depth=1 origin "$base" "$head" || true
-            DIFF_FILES="$(git diff --name-only "$base" "$head" || printf 'rust/\n')"
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              # Diff the exact tested merge tree against its first parent. A raw
+              # base-tip -> PR-head diff mistakes base-only additions for PR deletions.
+              # A missing/stale/non-merge checkout must select tests, never a noop.
+              if [[ "$MERGE_CANDIDATE" =~ ^[0-9a-f]{40}$ ]] &&
+                 [[ "$EXPECTED_PR_HEAD" =~ ^[0-9a-f]{40}$ ]] &&
+                 [ "$(git rev-parse HEAD)" = "$MERGE_CANDIDATE" ] &&
+                 [ "$(git rev-parse HEAD^2)" = "$EXPECTED_PR_HEAD" ] &&
+                 base="$(git rev-parse HEAD^1)"; then
+                DIFF_FILES="$(git diff --name-only "$base" "$MERGE_CANDIDATE" || printf 'rust/\n')"
+              else
+                DIFF_FILES='rust/'
+              fi
+            else
+              # Push and queue events retain their explicit before/base -> head range.
+              git fetch --depth=1 origin "$DIFF_BASE" "$DIFF_HEAD" || true
+              DIFF_FILES="$(git diff --name-only "$DIFF_BASE" "$DIFF_HEAD" || printf 'rust/\n')"
+            fi
             export DIFF_FILES
           fi
           python3 - <<'PY'
