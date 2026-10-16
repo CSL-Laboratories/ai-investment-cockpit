@@ -75,8 +75,15 @@ fn read_json_at(
     if obj.is_instance_of::<PyDict>() {
         // `dict.iter()` reads the underlying entries. `json.dumps` calls
         // `items()`, which a subclass can override with different pairs.
-        if !obj.get_type().is(&PyDict::type_object(obj.py())) {
-            return Err(ReadError::Py(invalid("dict subclass")));
+        // A subclass whose `items` is still the stock `dict.items` (no type or
+        // instance override) dumps the same pairs, so it keeps the native path
+        // and its depth limit instead of Python's `RecursionError`.
+        let dict_type = PyDict::type_object(obj.py());
+        if !obj.get_type().is(&dict_type) {
+            let stock = dict_type.getattr("items")?.call_method1("__get__", (obj,))?;
+            if !obj.getattr("items")?.eq(stock)? {
+                return Err(ReadError::Py(invalid("dict subclass")));
+            }
         }
         let Ok(dict) = obj.downcast::<PyDict>() else {
             return Err(ReadError::Py(invalid("dict subclass")));

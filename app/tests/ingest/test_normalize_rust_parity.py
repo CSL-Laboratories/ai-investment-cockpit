@@ -249,6 +249,23 @@ def test_direct_content_hash_accepts_default_str_values():
     )
 
 
+def test_deep_plain_dict_subclass_stays_native():
+    import cockpit_quant
+
+    class Plain(dict):
+        pass
+
+    deep: list = []
+    for _ in range(1100):
+        deep = [deep]
+    value = Plain({"x": deep})
+    plain = {"x": deep}
+    assert cockpit_quant.content_hash(value) == cockpit_quant.content_hash(plain)
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", value)
+    want = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", plain)
+    assert got == want
+
+
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
     """``ts`` is applied in Python, but a lone surrogate must not take the native call."""
     import ingest.normalize as mod
