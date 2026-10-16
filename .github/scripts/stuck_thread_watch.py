@@ -479,6 +479,7 @@ class StuckThread:
     claude_body: str
     reason: str
     already_mediated: bool = False
+    failure_evidence: str = ""
 
 
 def classify_thread(
@@ -543,6 +544,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
         loc = f"{loc}:{item.line}"
     devin = quote_untrusted(item.devin_body, cfg.quote_limit)
     claude = quote_untrusted(item.claude_body, cfg.quote_limit)
+    evidence = ("\n### Workflow failure evidence\n\n" + item.failure_evidence + "\n") if item.failure_evidence else ""
     return (
         f"@codex review\n\n"
         f"{marker(item.thread_id)}\n\n"
@@ -560,7 +562,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
         f"**Thread:** {item.thread_url}\n"
         f"**Why stuck:** {item.reason}\n\n"
         f"### Devin's finding\n\n```text\n{devin}\n```\n\n"
-        f"### Claude's reply\n\n```text\n{claude}\n```\n"
+        f"### Claude's reply\n\n```text\n{claude}\n```\n{evidence}"
     )
 
 
@@ -821,6 +823,7 @@ def select_stuck(
     issue_comments: list[dict[str, Any]],
     cfg: Config,
     now: datetime,
+    failures: dict | None = None,
 ) -> tuple[list[StuckThread], list[str]]:
     audit: list[str] = []
     chosen: list[StuckThread] = []
@@ -832,6 +835,17 @@ def select_stuck(
     for thread in nodes:
         item, reason = classify_thread(thread, cfg=cfg, now=now)
         tid = str((thread or {}).get("id") or "?")
+        proof = (failures or {}).get(tid)
+        if item is None and proof:
+            import hashlib
+            opener = ((thread.get("comments") or {}).get("nodes") or [{}])[0]
+            if (thread.get("isResolved") is False
+                    and opener.get("databaseId") == proof["root"]
+                    and hashlib.sha256(body_of(opener).encode()).hexdigest() == proof["fingerprint"]):
+                reason = "exhausted-fixer-failed"
+                item = StuckThread(0, "", "", tid, str(thread.get("path") or ""),
+                                   str(thread.get("line") or ""), str(opener.get("url") or ""),
+                                   body_of(opener), "", reason, failure_evidence=proof["description"])
         if item is None:
             audit.append(f"pr={number} thread={tid} skip={reason}")
             continue
@@ -1007,6 +1021,7 @@ def mediate_pr(
     gh: GitHub,
     linear: Linear | None,
     now: datetime,
+    failure_collector=None,
 ) -> list[str]:
     logs: list[str] = []
     number = int(pr.get("number") or 0)
@@ -1027,7 +1042,20 @@ def mediate_pr(
             logs.append(f"stuck-thread-watch: pr={number} skip=approved")
             return logs
     comments = list_issue_comments(gh, cfg, number)
-    stuck, audit = select_stuck(pr, comments, cfg, now)
+    evidence, failures, failure_unknown = None, {}, False
+    if failure_collector:
+        try:
+            evidence, failures = failure_collector(cfg.repository, number)
+        except Exception:  # noqa: BLE001 - refuse new intake without suppressing ordinary mediation
+            failure_unknown = True
+            logs.append(f"stuck-thread-watch: pr={number} failure-evidence=unverified")
+    if failures:
+        try:
+            if not evidence.fresh():
+                failures, failure_unknown = {}, True
+        except Exception:  # noqa: BLE001 - retain ordinary routing and the existing roll-up
+            failures, failure_unknown = {}, True
+    stuck, audit = select_stuck(pr, comments, cfg, now, failures)
     logs.extend(f"stuck-thread-watch: {line}" for line in audit)
     posted_today = mediation_count_since(comments, now - timedelta(hours=24))
     remaining = max(cfg.max_per_pr_per_day - posted_today, 0)
@@ -1044,7 +1072,7 @@ def mediate_pr(
     # exists yet (retry after a Linear outage on an earlier scan).
     actionable = eligible[:remaining]
     unmediated = [item for item in stuck if not item.already_mediated]
-    if cfg.file_linear and stuck:
+    if cfg.file_linear and stuck and not failure_unknown:
         if not cfg.linear_api_key or linear is None:
             logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-secret")
         else:
@@ -1066,6 +1094,14 @@ def mediate_pr(
         if posted_today >= cfg.max_per_pr_per_day:
             logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} mediate=over-cap")
             continue
+        if item.failure_evidence:
+            try:
+                if not evidence.fresh():
+                    logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} failure-evidence=stale")
+                    continue
+            except Exception:  # noqa: BLE001 - do not block independently eligible ordinary threads
+                logs.append(f"stuck-thread-watch: pr={number} thread={item.thread_id} failure-evidence=unverified")
+                continue
         if cfg.apply_pr_label and not labelled:
             try:
                 apply_pr_label(gh, cfg, number)
@@ -1088,6 +1124,7 @@ def run(
     linear: Linear | None = None,
     now: datetime | None = None,
     load_event: Callable[[str], dict[str, Any]] | None = None,
+    failure_collector=None,
 ) -> int:
     cfg = cfg or load_config()
     now = now or utcnow()
@@ -1112,7 +1149,7 @@ def run(
     logs: list[str] = []
     for pr in prs:
         try:
-            logs.extend(mediate_pr(pr, cfg, gh, linear, now))
+            logs.extend(mediate_pr(pr, cfg, gh, linear, now, failure_collector))
         except Exception:
             logs.append(f"stuck-thread-watch: pr={pr.get('number')} error")
     for line in logs:
@@ -1126,8 +1163,19 @@ def run(
     return 0
 
 
+
+def load_failure_collector():
+    """Load the checked-in, read-only adapter; no workflow or permission change."""
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[2] / "scripts/ci/fixer_failure_escalation.py"
+    spec = importlib.util.spec_from_file_location("fixer_failure_escalation", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.collect
+
 def main() -> int:
-    return run()
+    return run(failure_collector=load_failure_collector())
 
 
 if __name__ == "__main__":

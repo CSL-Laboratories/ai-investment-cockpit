@@ -32,6 +32,10 @@ on:
       - "scripts/ci/claude_denials.py"
       - "scripts/ci/claude_fixer_guard.py"
       - "tools/test_claude_fixer_guard.py"
+      - "scripts/ci/fixer_failure_escalation.py"
+      - "tools/test_fixer_failure_escalation.py"
+      - "tools/test_fixer_failure_watcher.py"
+      - ".github/scripts/stuck_thread_watch.py"
       - "scripts/ci/claude_conflict_scan.py"
       - "scripts/ci/codex_gate.py"
       - "tools/test_claude_pr_fixer.py"
@@ -507,6 +511,8 @@ jobs:
           python3 -X utf8 -B tools/test_claude_pr_fixer.py
           python3 -X utf8 -B tools/test_claude_fixer_receipts.py
           python3 -X utf8 -B tools/test_claude_fixer_guard.py
+          python3 -X utf8 -B tools/test_fixer_failure_escalation.py
+          python3 -X utf8 -B tools/test_fixer_failure_watcher.py
       - name: Codex-gate tests
         run: python3 -X utf8 -B tools/test_codex_gate.py
       - name: actionlint
@@ -1646,6 +1652,7 @@ jobs:
               ids = [item["root"] for item in items]
               thread_ids = [item["thread"] for item in items]
               with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                  output.write(f"attempt_key={head}:{attempt_key(head, items)['fingerprint']}\n")
                   output.write(f"skip={'false' if items else 'true'}\ncomment_ids={json.dumps(ids)}\nthread_ids={json.dumps(thread_ids)}\nreceipt_context={json.dumps(context, separators=(',', ':'))}\nreason={reason}\n")
               print(json.dumps(ids))
 
@@ -1953,7 +1960,7 @@ jobs:
         if: steps.preflight.outputs.skip != 'true' && steps.cap.outputs.skip != 'true' && steps.eligibility.outputs.skip != 'true'
         working-directory: app
         run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
-      - name: Install single-attempt push guard
+      - name: "Fixer attempt ${{ steps.eligibility.outputs.attempt_key }}"
         id: push_guard
         if: steps.preflight.outputs.skip != 'true' && steps.cap.outputs.skip != 'true' && steps.eligibility.outputs.skip != 'true'
         env:
