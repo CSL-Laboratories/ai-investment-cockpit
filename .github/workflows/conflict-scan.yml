@@ -51,7 +51,7 @@ jobs:
           python3 - <<'CLAUDE_CONFLICT_SCAN'
           #!/usr/bin/env python3
           """Find same-repo open PRs with merge conflicts for the Claude conflict resolver.
-
+          
           Fail closed. Selects a PR only when GitHub reports it CONFLICTING (mergeable
           false / mergeable_state dirty), its head is in this repository, its refs are
           safe, its head is not a protected branch, it is not labelled needs-decision,
@@ -59,14 +59,14 @@ jobs:
           GITHUB_OUTPUT. Import select() from tests.
           """
           from __future__ import annotations
-
+          
           import json
           import os
           import re
           import subprocess
           import time
           from typing import Any, Callable
-
+          
           WRITE_PERMISSIONS = frozenset({"admin", "maintain", "write"})
           SAFE_REF_RE = re.compile(r"^(?!.*\.\.)(?!/)(?!.*//)[A-Za-z0-9._/-]{1,200}$")
           SAFE_SHA_RE = re.compile(r"^[0-9a-f]{40}$|^[0-9a-f]{64}$")
@@ -83,17 +83,23 @@ jobs:
           ROTATION_SECONDS = 1800
           MAX_RUN_PAGES = 5
           FIXER_EVENTS = frozenset(
-              {"issue_comment", "pull_request_review", "pull_request_review_comment"}
+              {
+                  "issue_comment",
+                  "pull_request_review",
+                  "pull_request_review_comment",
+                  "repository_dispatch",
+                  "workflow_dispatch",
+              }
           )
           WORKFLOW_FILE = "claude.yml"
-
+          
           PermissionLookup = Callable[[str], str]
-
-
+          
+          
           def is_conflicted(pr: dict[str, Any]) -> bool:
               return pr.get("mergeable") is False and str(pr.get("mergeable_state") or "") == "dirty"
-
-
+          
+          
           def open_bases(prs: list[dict[str, Any]]) -> set[str]:
               """Base branches targeted by any open PR (stacked review branches)."""
               return {
@@ -101,8 +107,8 @@ jobs:
                   for pr in prs
                   if isinstance(pr, dict) and str(pr.get("state") or "open") == "open"
               }
-
-
+          
+          
           def is_protected_head(head_ref: str, review_bases: set[str]) -> bool:
               """Default/release branches and any branch another open PR targets are off limits."""
               return (
@@ -110,13 +116,13 @@ jobs:
                   or head_ref.startswith(PROTECTED_PREFIXES)
                   or head_ref in review_bases
               )
-
-
+          
+          
           def _ref(value: Any) -> str:
               text = str(value or "")
               return text if SAFE_REF_RE.fullmatch(text) else ""
-
-
+          
+          
           def select(
               prs: list[dict[str, Any]],
               repository: str,
@@ -175,13 +181,13 @@ jobs:
                       {"number": number, "head_ref": head_ref, "head_sha": head_sha, "base_ref": base_ref}
                   )
               return chosen, audit
-
-
+          
+          
           def _gh_json(path: str) -> Any:
               raw = subprocess.check_output(["gh", "api", path], text=True, stderr=subprocess.DEVNULL)
               return json.loads(raw)
-
-
+          
+          
           def list_open_prs(repository: str, get: Callable[[str], Any] | None = None) -> list[dict[str, Any]]:
               """All open PR listing entries, following pagination (bounded by MAX_PAGES x 100)."""
               get = get or _gh_json
@@ -194,20 +200,20 @@ jobs:
                   if len(listing) < 100:
                       break
               return entries
-
-
+          
+          
           def list_open_numbers(repository: str, get: Callable[[str], Any] | None = None) -> list[str]:
               return [str(p.get("number")) for p in list_open_prs(repository, get)]
-
-
+          
+          
           def rotate_window(numbers: list[str], epoch: float, size: int = MAX_DETAIL_PRS) -> list[str]:
               """Bounded slice of numbers whose start advances by `size` every ROTATION_SECONDS."""
               if len(numbers) <= size:
                   return numbers
               start = (int(epoch // ROTATION_SECONDS) * size) % len(numbers)
               return (numbers[start:] + numbers[:start])[:size]
-
-
+          
+          
           def fetch_prs(
               repository: str,
               only: str = "",
@@ -217,7 +223,7 @@ jobs:
               now: Callable[[], float] = time.time,
           ) -> tuple[list[dict[str, Any]], set[str]]:
               """Return (PR details, bases of all open PRs).
-
+          
               The open listing is always fetched so stacked-branch protection also holds
               for a single-PR dispatch. mergeable is only on the single-PR endpoint and is
               computed lazily: retries share one time budget, never sleep after the last
@@ -254,13 +260,13 @@ jobs:
                   if isinstance(pr, dict):
                       details.append(pr)
               return details, bases
-
-
+          
+          
           def fixer_busy(
               repository: str, current_run_id: str = "", get: Callable[[str], Any] | None = None
           ) -> bool:
               """True if an event-driven Claude fixer run (comment/review/PR) is queued or running.
-
+          
               The resolver shares the per-PR claude-<N> concurrency group with the fixers, and
               GitHub keeps only one pending job per group. Not queueing resolvers while any
               fixer run is active means a scheduled resolver can never displace a pending,
@@ -291,16 +297,16 @@ jobs:
               except (OSError, ValueError, subprocess.CalledProcessError):
                   return True
               return False
-
-
+          
+          
           def gh_permission(repository: str) -> PermissionLookup:
               def lookup(login: str) -> str:
                   data = _gh_json(f"repos/{repository}/collaborators/{login}/permission")
                   return str(data.get("permission") or "none") if isinstance(data, dict) else "none"
-
+          
               return lookup
-
-
+          
+          
           def emit(chosen: list[dict[str, str]], audit: list[str]) -> None:
               for line in audit:
                   print(line)
@@ -311,8 +317,8 @@ jobs:
               if dest:
                   with open(dest, "a", encoding="utf-8") as handle:
                       handle.write("\n".join(lines) + "\n")
-
-
+          
+          
           def main() -> int:
               repository = os.environ.get("GITHUB_REPOSITORY", "")
               only = os.environ.get("PR_NUMBER", "").strip()
@@ -330,8 +336,8 @@ jobs:
               chosen, audit = select(prs, repository, gh_permission(repository), review_bases=bases)
               emit(chosen, audit)
               return 0
-
-
+          
+          
           if __name__ == "__main__":
               raise SystemExit(main())
           CLAUDE_CONFLICT_SCAN
