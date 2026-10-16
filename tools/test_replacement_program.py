@@ -37,6 +37,10 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["outcomes"][0].pop("independent_verification"),
             lambda p: p["authority"].update(live_authority_granted=True),
             lambda p: p["authority"].update(bounded_direct_authorized=True),
+            lambda p: p["authority"]["acceptance_receipt"]["accepted_contracts"].update(
+                {"docs/replacement/SUCCESSOR-PRODUCT.md": "f" * 64}
+            ),
+            lambda p: p["authority"]["acceptance_receipt"].update(extra_receipt_claim=True),
             lambda p: p["authority"]["superseded_acceptance_receipt"]["accepted_contracts"].update(
                 {"docs/replacement/SUCCESSOR-PRODUCT.md": "f" * 64}
             ),
@@ -56,6 +60,9 @@ class ReplacementProgramTests(unittest.TestCase):
             lambda p: p["research_evidence"]["authority_compliance"].update(not_claimed=[]),
             lambda p: p["research_evidence"]["authority_compliance"].update(sha256="0" * 64),
             lambda p: p["outcomes"][0].update(authoritative_clause="missing.md#nope"),
+            lambda p: p["outcomes"][1]["dependency_contracts"][0].update(
+                status="pending_human_digest_receipt", accepted_digest=None
+            ),
             lambda p: p["outcomes"][0]["evidence"].update(
                 claimed="human_decided", not_claimed=list(CHECKER.MATURITY[3:])
             ),

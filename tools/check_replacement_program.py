@@ -35,9 +35,22 @@ EXPECTED_AUTHORITY_KEYS = {
     "current_runtime_invariants_preserved",
     "live_authority_granted",
     "contract_acceptance",
+    "acceptance_receipt",
     "superseded_acceptance_receipt",
 }
-EXPECTED_RECEIPT_KEYS = {
+EXPECTED_ACCEPTED_RECEIPT_KEYS = {
+    "linear_issue",
+    "human_linear_comment_id",
+    "mirror_comment_id",
+    "accepted_by",
+    "accepted_by_linear_user_id",
+    "accepted_at",
+    "reviewed_head",
+    "accepted_contracts",
+    "authority_research_sha256",
+    "not_granted",
+}
+EXPECTED_SUPERSEDED_RECEIPT_KEYS = {
     "linear_issue",
     "human_linear_comment_id",
     "mirror_comment_id",
@@ -49,6 +62,12 @@ EXPECTED_RECEIPT_KEYS = {
     "authority_research_sha256",
     "superseded_reason",
     "not_granted",
+}
+EXPECTED_ACCEPTED_CONTRACTS = {
+    "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",
+    "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+    "docs/replacement/MONTH-PROGRAM.md": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+    "docs/replacement/SCOPE-AUDIT.md": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c",
 }
 EXPECTED_SUPERSEDED_CONTRACTS = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487",
@@ -153,16 +172,69 @@ def _has_exact_outcome_heading(document: str, key: str) -> bool:
 def validate(program: dict[str, Any], root: Path = ROOT) -> None:
     _require(program.get("schema_version") == 1, "unsupported schema_version")
     _require(program.get("program_id") == "cockpit.replacement.2026-10", "wrong program_id")
-    _require(program.get("status") == "candidate", "updated program must remain candidate")
+    _require(program.get("status") == "accepted_contract", "program contract acceptance changed")
     _require(program.get("controlling_issue") == "CSL-212", "missing CSL-212 lineage")
     _require(program.get("source_commit") == "73ab78d9d69494c757cec875855121b1d29320a4", "stale source commit")
     authority = program.get("authority", {})
     _require(set(authority) == EXPECTED_AUTHORITY_KEYS, "authority keys changed")
     _require(authority.get("current_runtime_invariants_preserved") is True, "runtime invariants not preserved")
     _require(authority.get("live_authority_granted") is False, "program grants live authority")
-    _require(authority.get("contract_acceptance") == "pending_updated_human_digest_receipt", "updated digest acceptance inferred")
+    _require(authority.get("contract_acceptance") == "accepted_human_digest_receipt", "contract acceptance changed")
+    accepted_receipt = authority.get("acceptance_receipt", {})
+    _require(set(accepted_receipt) == EXPECTED_ACCEPTED_RECEIPT_KEYS, "accepted receipt fields changed")
+    _require(accepted_receipt.get("linear_issue") == "CSL-212", "accepted receipt issue mismatch")
+    _require(
+        accepted_receipt.get("human_linear_comment_id")
+        == "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+        "accepted human comment mismatch",
+    )
+    _require(
+        accepted_receipt.get("mirror_comment_id")
+        == "6aafae80-2f96-449c-947c-90bcaf8380b6",
+        "accepted mirror mismatch",
+    )
+    _require(accepted_receipt.get("accepted_by") == "Lucas Guerra", "accepted owner mismatch")
+    _require(
+        accepted_receipt.get("accepted_by_linear_user_id")
+        == "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+        "accepted owner identity mismatch",
+    )
+    _require(
+        accepted_receipt.get("accepted_at") == "2026-10-16T05:45:25.133Z",
+        "accepted timestamp mismatch",
+    )
+    _require(
+        accepted_receipt.get("reviewed_head")
+        == "51aec39760202d07027af086087784b1bafca2e1",
+        "accepted reviewed head mismatch",
+    )
+    _require(
+        accepted_receipt.get("accepted_contracts") == EXPECTED_ACCEPTED_CONTRACTS,
+        "accepted contract digests changed",
+    )
+    _require(
+        accepted_receipt.get("authority_research_sha256")
+        == "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6",
+        "accepted research digest changed",
+    )
+    _require(
+        set(accepted_receipt.get("not_granted", []))
+        == {
+            "implementation_completion",
+            "empirical_pass",
+            "legal_account_or_venue_eligibility",
+            "provider_permission",
+            "release_qualification",
+            "live_authority",
+            "credentials",
+            "capital_movement",
+            "merge_permission",
+        },
+        "accepted receipt exclusions changed",
+    )
+
     receipt = authority.get("superseded_acceptance_receipt", {})
-    _require(set(receipt) == EXPECTED_RECEIPT_KEYS, "superseded receipt fields changed")
+    _require(set(receipt) == EXPECTED_SUPERSEDED_RECEIPT_KEYS, "superseded receipt fields changed")
     _require(receipt.get("linear_issue") == "CSL-212", "superseded receipt issue mismatch")
     _require(receipt.get("human_linear_comment_id") == "736a6b55-2b20-463c-86e1-9553a5692996", "superseded human comment mismatch")
     _require(receipt.get("mirror_comment_id") == "15c6f540-3686-49eb-a9e7-d93083313e85", "superseded mirror mismatch")
@@ -264,7 +336,12 @@ def validate(program: dict[str, Any], root: Path = ROOT) -> None:
         _require(isinstance(refs, list) and [ref.get("outcome") for ref in refs] == deps, f"{key} dependency fragments mismatch")
         for ref in refs:
             _require(ref.get("fragment") == f"docs/replacement/MONTH-PROGRAM.md#{ref['outcome'].lower()}", f"{key} invalid dependency fragment")
-            _require(ref.get("status") == "pending_human_digest_receipt" and ref.get("accepted_digest") is None, f"{key} inferred dependency acceptance")
+            _require(
+                ref.get("status") == "accepted_human_digest_receipt"
+                and ref.get("accepted_digest")
+                == EXPECTED_ACCEPTED_CONTRACTS["docs/replacement/MONTH-PROGRAM.md"],
+                f"{key} dependency contract receipt changed",
+            )
         seen.add(key)
         for field in ("non_goals", "inherited_decisions", "falsifiers", "deliverables"):
             _require(_nonempty_list(item[field]), f"{key} empty {field}")

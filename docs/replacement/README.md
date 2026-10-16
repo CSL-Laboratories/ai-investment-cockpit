@@ -1,6 +1,7 @@
 # Cockpit replacement program
 
-**Status:** candidate under [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212).
+**Status:** accepted contract under [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212);
+outcome artifacts and all implementation, empirical and release gates remain pending.
 
 This directory is the review surface for the owner-directed Cockpit replacement.
 It proposes a successor product contract and a dependency-ordered month program.
@@ -15,7 +16,7 @@ Read in this order:
 4. [AUTHORITY-COMPLIANCE-RESEARCH.md](AUTHORITY-COMPLIANCE-RESEARCH.md) for
    the reconciled A/B/C authority research, owner direction and unresolved gaps.
 5. [MONTH-PROGRAM.md](MONTH-PROGRAM.md) for outcome order and checkpoints.
-6. [program.json](program.json) for the machine-readable candidate.
+6. [program.json](program.json) for the machine-readable accepted contract and pending outcomes.
 
 The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
 invariants, the order path, and all pre-live controls remain authoritative until

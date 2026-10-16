@@ -1,21 +1,19 @@
 ---
-title: Cockpit product contract pending replacement acceptance
-status: authoritative-until-replacement-digest-acceptance
+title: Historical Cockpit product contract
+status: superseded-by-accepted-replacement-contract
 last-verified: 2026-10-16
 ---
 
 # Cockpit product contract
 
-> **Replacement notice:** Lucas directed a full product reset under
-> [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212). The proposed
-> successor contract is under review in
-> [docs/replacement/SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md).
-> Until the updated replacement digest receives its required human Linear receipt,
-> this September contract remains the authoritative product contract while also
-> serving as historical evidence and a source of candidate safeguards. Current runtime
-> rules, nine invariants and pre-live controls remain authoritative until separately
-> reviewed implementation amendments; the successor direction itself grants no live
-> authority or empirical PASS.
+> **Replacement notice:** Lucas accepted the exact successor digest set under
+> [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212). The governing
+> direction is now [docs/replacement/SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md);
+> this September contract remains historical evidence and a source of candidate
+> safeguards. Current runtime rules, nine invariants and pre-live controls remain
+> authoritative until separately reviewed implementation amendments; successor
+> contract acceptance grants no live authority, implementation completion or
+> empirical PASS.
 
 **Owner:** Lucas. **Planning package:** RW-25.
 **Stage:** ratified by Lucas on 2026-09-09 under PD-048 (final review Q37).
