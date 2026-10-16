@@ -18,9 +18,20 @@ fn invalid(message: impl Into<String>) -> PyErr {
     PyValueError::new_err(message.into())
 }
 
+enum ReadError {
+    Limit(&'static str),
+    Py(PyErr),
+}
+
+impl From<PyErr> for ReadError {
+    fn from(err: PyErr) -> Self {
+        ReadError::Py(err)
+    }
+}
+
 const MAX_JSON_DEPTH: u32 = 2048;
 
-fn read_json(obj: &Bound<'_, PyAny>) -> PyResult<Json> {
+fn read_json(obj: &Bound<'_, PyAny>) -> Result<Json, ReadError> {
     let mut visiting = HashSet::new();
     read_json_at(obj, &mut visiting, 0)
 }
@@ -29,7 +40,7 @@ fn read_json_at(
     obj: &Bound<'_, PyAny>,
     visiting: &mut HashSet<usize>,
     depth: u32,
-) -> PyResult<Json> {
+) -> Result<Json, ReadError> {
     if obj.is_none() {
         return Ok(Json::Null);
     }
@@ -48,7 +59,7 @@ fn read_json_at(
         } else if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
             return Ok(Json::Big(text));
         }
-        return Err(invalid(format!("unsupported int {text}")));
+        return Err(ReadError::Py(invalid(format!("unsupported int {text}"))));
     }
     if obj.is_instance_of::<PyFloat>() {
         return Ok(Json::Float(obj.extract()?));
@@ -89,20 +100,20 @@ fn read_json_at(
         visiting.remove(&id);
         return Ok(Json::Array(items));
     }
-    Err(invalid("unsupported json value"))
+    Err(ReadError::Py(invalid("unsupported json value")))
 }
 
 fn enter_container(
     obj: &Bound<'_, PyAny>,
     visiting: &mut HashSet<usize>,
     depth: u32,
-) -> PyResult<usize> {
+) -> Result<usize, ReadError> {
     if depth >= MAX_JSON_DEPTH {
-        return Err(invalid("JSON nesting too deep"));
+        return Err(ReadError::Limit("JSON nesting too deep"));
     }
     let id = obj.as_ptr() as usize;
     if !visiting.insert(id) {
-        return Err(invalid("Circular reference detected"));
+        return Err(ReadError::Limit("Circular reference detected"));
     }
     Ok(id)
 }
@@ -296,22 +307,18 @@ fn escape_untrusted_py(py: Python<'_>, text: &str) -> PyResult<String> {
     Ok(escape_untrusted(text))
 }
 
-fn structural_json_limit(err: &PyErr) -> bool {
-    let text = err.to_string();
-    text.contains("Circular reference detected") || text.contains("JSON nesting too deep")
-}
-
 #[pyfunction]
 #[pyo3(name = "content_hash")]
 fn content_hash_py(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<String> {
     match read_json(value) {
         Ok(parsed) => Ok(content_hash(&parsed)),
-        Err(err) if structural_json_limit(&err) => Err(err),
-        Err(_) => {
+        Err(ReadError::Limit(message)) => Err(invalid(message)),
+        Err(ReadError::Py(err)) => {
+            drop(err);
             // `python_content_hash` hashes one `default=str` dump. That is not
             // the detached raw image `market_event` stores after `json.loads`.
-            // A cycle or a too-deep tree stays on the Rust error: Python 3.11's
-            // `json.dumps` recurses and raises `RecursionError` instead.
+            // Cycles and too-deep trees are `ReadError::Limit`, so they never
+            // reach `json.dumps` (Python 3.11 recurses and raises `RecursionError`).
             let raw_json: String = py
                 .import("json")?
                 .getattr("dumps")?
@@ -343,8 +350,11 @@ fn market_event_py(
         None => (None, None),
         Some(raw) => match read_json(raw) {
             Ok(value) => (None, Some(value)),
-            Err(err) if structural_json_limit(&err) => return Err(err),
-            Err(_) => (Some(python_canonical_raw(py, raw)?), None),
+            Err(ReadError::Limit(message)) => return Err(invalid(message)),
+            Err(ReadError::Py(err)) => {
+                drop(err);
+                (Some(python_canonical_raw(py, raw)?), None)
+            }
         },
     };
     let (csv, items) = read_symbols(py, symbols)?;

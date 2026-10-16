@@ -200,6 +200,19 @@ def test_direct_content_hash_accepts_default_str_values():
     numbered = {2: datetime.date(2026, 10, 16), 10: "b"}
     assert cockpit_quant.content_hash(numbered) == python_content_hash(numbered)
 
+    class Huge(int):
+        def __str__(self):
+            return "Circular reference detected"
+
+    huge = Huge(2**65)
+    assert cockpit_quant.content_hash(huge) == python_content_hash(huge)
+    event = python_to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"],
+        headline="h", summary="s", ts=None, event_type="news", raw={"n": huge},
+    )
+    got = cockpit_quant.market_event("finnhub", "1", ["AAPL"], "h", "s", "news", {"n": huge})
+    assert got[5] == event["content_hash"]
+
 
 def test_lone_surrogate_timestamp_stays_off_the_extension(monkeypatch):
     """``ts`` is applied in Python, but a lone surrogate must not take the native call."""
