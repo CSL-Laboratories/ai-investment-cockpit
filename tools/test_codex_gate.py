@@ -142,10 +142,10 @@ class FakeGH:
 
 class WriterIdentityTests(unittest.TestCase):
     def test_writer_login_uses_write_token(self) -> None:
-        gh = mod.GitHub("read-token-fixture", "write-token-fixture")
+        gh = mod.GitHub("reader", "writer")
         with patch.object(gh, "_run", return_value='{"login": "trigger-author"}') as run:
             self.assertEqual(gh.writer_login(), "trigger-author")
-        run.assert_called_once_with(["api", "user"], token="write-token-fixture")
+        run.assert_called_once_with(["api", "user"], token="writer")
 
     def test_failed_writer_lookup_does_not_trust_reader(self) -> None:
         gh = FakeGH()
