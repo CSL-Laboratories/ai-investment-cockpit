@@ -39,7 +39,16 @@ on:
     # 07:17 UTC: US night / EU morning, off the hour to miss the cron stampede.
     - cron: "17 7 * * *"
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Hosted platform scope (label retriggers may request Linux only)
+        type: choice
+        options: [full, linux]
+        default: full
+        required: false
 
+# Manual/API dispatch defaults to full; enhancement-only label reruns request
+# scope=linux without changing Linux gates or ordinary PR platform selection.
 permissions:
   contents: read
 
@@ -173,6 +182,8 @@ jobs:
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
+      - name: CI dispatch scope regressions
+        run: python -X utf8 -B tools/test_ci_dispatch_scope.py
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
   # when filter ran and Linux was skipped because the change is docs-only.
@@ -214,7 +225,7 @@ jobs:
     if: >
       needs.filter.outputs.run-tests == 'true' &&
       (
-        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
         (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
         (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
       )
@@ -237,7 +248,7 @@ jobs:
       contents: read
     needs: filter
     if: >
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
       (github.event_name == 'schedule' && needs.filter.outputs.run-macos == 'true') ||
       (
         github.event_name == 'pull_request' &&

@@ -3,7 +3,8 @@
 # and would satisfy the required check. This file has no job of that name.
 #
 # Adding `ci:full` or `enhancement` dispatches ci.yml (and rust.yml when the PR
-# touches Rust paths) as workflow_dispatch so Windows/macOS still re-run.
+# touches Rust paths). Enhancement alone re-runs Linux; ci:full preserves the
+# full platform matrix, including when enhancement is added to an already-full PR.
 name: ci label retrigger
 
 on:
@@ -32,14 +33,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          CI_SCOPE: ${{ (github.event.label.name == 'ci:full' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'full' || 'linux' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           case "$HEAD_REF" in
             ''|main|master|HEAD|*..*|*" "*) echo "unsafe HEAD_REF"; exit 1 ;;
           esac
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "scope=$CI_SCOPE"
           files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename')"
           if printf '%s\n' "$files" | grep -Eq '^(rust/|app/quant/book/|app/quant/costs\.py|app/quant/pnl\.py|app/tests/quant/book/|app/tests/quant/test_pnl\.py|app/tests/quant/test_costs_rust_parity\.py|app/tests/quant/test_w21_cost_model\.py|\.github/workflows/rust\.yml)'; then
-            gh workflow run rust.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"
+            gh workflow run rust.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f "scope=$CI_SCOPE"
           fi

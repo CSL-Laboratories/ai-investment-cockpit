@@ -52,7 +52,16 @@ on:
       - "app/tests/quant/test_w21_cost_model.py"
       - ".github/workflows/rust.yml"
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Hosted platform scope (label retriggers may request Linux only)
+        type: choice
+        options: [full, linux]
+        default: full
+        required: false
 
+# Manual/API dispatch defaults to full; enhancement-only label reruns request
+# scope=linux without changing Linux gates or ordinary PR platform selection.
 permissions:
   contents: read
 
@@ -72,8 +81,8 @@ jobs:
       - name: Choose hosted cells
         id: gate
         env:
-          RUN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
-          RUN_MACOS: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
         run: |
           python3 - <<'PY'
           import json, os
