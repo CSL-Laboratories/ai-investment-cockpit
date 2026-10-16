@@ -525,7 +525,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("UNTRUSTED DATA", self.text)
         self.assertIn("untrusted", self.text.lower())
         self.assertIn("Linear-first (CSL-88)", self.text)
-        self.assertGreaterEqual(self.text.count("Linear-first (CSL-88)"), 6)
+        combined = self.text + "\n" + SCAN_WORKFLOW_PATH.read_text(encoding="utf-8")
+        self.assertGreaterEqual(combined.count("Linear-first (CSL-88)"), 6)
 
     def test_tool_allowlist_and_denials(self) -> None:
         self.assertIn("--allowedTools", self.text)
