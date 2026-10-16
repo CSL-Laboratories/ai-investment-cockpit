@@ -335,6 +335,50 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual(api.reconcile(), [])
             self.assertEqual(api.cancelled, [])
 
+    def test_malformed_nested_run_associations_refuse_without_cancellation(self):
+        for side in ('head', 'base'):
+            for malformed in (None, [], 'branch', 1):
+                api = FakeGitHub()
+                api.event['workflow_run']['pull_requests'][0][side] = malformed
+                with self.subTest(side=side, value=malformed), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+
+    def test_malformed_live_head_base_or_refs_refuse_without_cancellation(self):
+        for side in ('head', 'base'):
+            for malformed in (None, [], 'branch', 1):
+                api = FakeGitHub()
+                api.pr[side] = malformed
+                with self.subTest(side=side, value=malformed), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+            for malformed in (None, [], {}, 1, ''):
+                api = FakeGitHub()
+                api.pr[side]['ref'] = malformed
+                with self.subTest(side=side, ref=malformed), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+
+    def test_malformed_nested_compare_evidence_refuses_without_cancellation(self):
+        for field in ('base_commit', 'merge_base_commit'):
+            for malformed in (None, [], 'commit', 1):
+                api = FakeGitHub()
+                api.compare = {'status': 'ahead', 'base_commit': {'sha': A},
+                               'merge_base_commit': {'sha': A}, 'ahead_by': 1, 'behind_by': 0}
+                api.compare[field] = malformed
+                with self.subTest(field=field, value=malformed), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+
+    def test_malformed_trigger_containers_refuse_without_cancellation(self):
+        for field in ('workflow_run', 'repository'):
+            for malformed in (None, []):
+                api = FakeGitHub()
+                api.event[field] = malformed
+                with self.subTest(field=field, value=malformed), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+
     def test_strict_ancestry_required_not_timestamp_or_sha_inequality(self):
         for status in ('identical', 'behind', 'diverged'):
             api = FakeGitHub()
@@ -430,7 +474,7 @@ class QueuePolicyTests(unittest.TestCase):
         return yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
 
     def test_ordinary_only_policy_and_shared_identity(self):
-        from test_ci_dispatch_scope import concurrency_group, evaluate
+        from tools.test_ci_dispatch_scope import concurrency_group, evaluate
         for name in ('ci.yml', 'rust.yml'):
             doc = self.document(name)
             for event in ('pull_request', 'workflow_dispatch', 'push', 'schedule', 'merge_group'):
@@ -443,7 +487,7 @@ class QueuePolicyTests(unittest.TestCase):
                 'github.sha': B, 'github.event.pull_request.head.sha': B}))
 
     def test_delayed_A_admission_does_not_displace_B_active_or_pending(self):
-        from test_ci_dispatch_scope import evaluate
+        from tools.test_ci_dispatch_scope import evaluate
         for name in ('ci.yml', 'rust.yml'):
             policy = self.document(name)['concurrency']
             for arrivals in (['B', 'A'], ['X', 'B', 'A']):
@@ -489,7 +533,7 @@ class QueuePolicyTests(unittest.TestCase):
         self.assertIn('shared PR queues remain intact', result.stdout)
 
     def test_controller_event_groups_do_not_collide_with_labels_or_other_runs(self):
-        from test_ci_dispatch_scope import concurrency_group
+        from tools.test_ci_dispatch_scope import concurrency_group
         doc = self.document('ci-label-retrigger.yml')
         label = concurrency_group(doc)
         first = concurrency_group(doc, **{'github.event_name': 'workflow_run', 'github.run_id': 10})

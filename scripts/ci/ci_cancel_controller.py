@@ -68,7 +68,7 @@ def association(run, repo, repo_id):
         return None
     for side in ('head', 'base'):
         data = pr.get(side, {})
-        if not same_repo(data.get('repo'), repo, repo_id, compact=True):
+        if not isinstance(data, dict) or not same_repo(data.get('repo'), repo, repo_id, compact=True):
             return None
         if not isinstance(data.get('ref'), str) or not data['ref']:
             return None
@@ -81,7 +81,8 @@ def run_identity(run, repo, repo_id, workflows):
     if not isinstance(run, dict):
         return None
     path = run.get('path')
-    if (run.get('event') != 'pull_request' or path not in workflows
+    if (run.get('event') != 'pull_request' or not isinstance(path, str) or path not in workflows
+            or not isinstance(run.get('status'), str)
             or run.get('workflow_id') != workflows[path]
             or not positive(run.get('id')) or not positive(run.get('run_attempt'))
             or not SHA.fullmatch(str(run.get('head_sha', '')))
@@ -99,14 +100,16 @@ def live_pr(api, repo, repo_id, number):
     pr = api.read(f'repos/{repo}/pulls/{number}')
     if not isinstance(pr, dict):
         raise Refused('Malformed live PR')
+    head, base = pr.get('head'), pr.get('base')
+    if not isinstance(head, dict) or not isinstance(base, dict):
+        raise Refused('Malformed live PR head/base')
     if (pr.get('number') != number or not positive(pr.get('id'))
             or pr.get('state') != 'open' or pr.get('draft') is not False
-            or not same_repo(pr.get('head', {}).get('repo'), repo, repo_id)
-            or not same_repo(pr.get('base', {}).get('repo'), repo, repo_id)
-            or not SHA.fullmatch(str(pr.get('head', {}).get('sha', '')))):
+            or not same_repo(head.get('repo'), repo, repo_id)
+            or not same_repo(base.get('repo'), repo, repo_id)
+            or not SHA.fullmatch(str(head.get('sha', '')))):
         raise Refused('PR is not an open, non-draft, same-repository target')
-    head, base = pr['head'], pr['base']
-    if not isinstance(head.get('ref'), str) or not head['ref'] or not base.get('ref'):
+    if any(not isinstance(side.get('ref'), str) or not side['ref'] for side in (head, base)):
         raise Refused('Missing live branch identity')
     return (pr['number'], pr['id'], head['ref'], base['ref'], head['sha'])
 
@@ -159,8 +162,9 @@ def strict_ancestor(api, repo, older, current):
     status = data.get('status')
     if status in ('identical', 'behind', 'diverged'):
         return False
-    if (status != 'ahead' or data.get('base_commit', {}).get('sha') != older
-            or data.get('merge_base_commit', {}).get('sha') != older
+    base, merge_base = data.get('base_commit'), data.get('merge_base_commit')
+    if (status != 'ahead' or not isinstance(base, dict) or not isinstance(merge_base, dict)
+            or base.get('sha') != older or merge_base.get('sha') != older
             or type(data.get('ahead_by')) is not int or data['ahead_by'] <= 0
             or data.get('behind_by') != 0):
         raise Refused('Incomplete strict-ancestor evidence')
@@ -185,12 +189,19 @@ def current_witness(identified, live, workflow_id):
 
 
 def reconcile(api, repo, event_name, event):
+    if not isinstance(event, dict):
+        raise Refused('Malformed triggering event')
     if event_name != 'workflow_run' or event.get('action') not in ('requested', 'completed'):
         return []
     payload = event.get('workflow_run', {})
-    if payload.get('event') != 'pull_request' or payload.get('path') not in WORKFLOWS:
+    if not isinstance(payload, dict):
+        raise Refused('Malformed triggering run')
+    if (payload.get('event') != 'pull_request' or not isinstance(payload.get('path'), str)
+            or payload['path'] not in WORKFLOWS):
         return []
     repository = event.get('repository', {})
+    if not isinstance(repository, dict):
+        raise Refused('Malformed triggering repository')
     repo_id = repository.get('id')
     if not positive(repo_id) or not same_repo(repository, repo, repo_id):
         raise Refused('Unverified triggering repository')
