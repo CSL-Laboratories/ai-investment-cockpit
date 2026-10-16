@@ -131,6 +131,54 @@ class GuardTests(unittest.TestCase):
 
 
 class RealGitRaceTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX runner hook launcher")
+    def test_installed_hook_race_after_advertisement_keeps_server_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            local, remote, hooks, binaries = [root / name for name in ("local", "remote.git", "hooks", "bin")]
+            hooks.mkdir()
+            binaries.mkdir()
+            def git(*args, cwd=local, check=True, env=None):
+                return subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True, check=check, env=env)
+            git("init", "--bare", str(remote), cwd=root)
+            git("init", str(local), cwd=root)
+            git("config", "user.name", "Fixture")
+            git("config", "user.email", "fixture@example.invalid")
+            git("checkout", "-b", "fix")
+            (local / "file").write_text("base")
+            git("add", "file")
+            git("commit", "-m", "base")
+            base = git("rev-parse", "HEAD").stdout.strip()
+            git("remote", "add", "origin", str(remote))
+            git("push", "origin", "HEAD:refs/heads/fix")
+            tree = git("rev-parse", "HEAD^{tree}").stdout.strip()
+            other = git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                        "commit-tree", tree, "-p", base, "-m", "external", cwd=remote).stdout.strip()
+            # The hook receives Git's already-advertised base. During its final
+            # API read, a separate writer advances the server. Return the old
+            # observation so only the server's ordinary ref comparison can stop it.
+            fake_api = binaries / "gh"
+            fake_api.write_text("#!/usr/bin/env python3\nimport subprocess\nsubprocess.run(" +
+                                repr(["git", "--git-dir", str(remote), "update-ref", "refs/heads/fix", other, base]) +
+                                ", check=True)\nprint(" + repr(json.dumps(pr(base))) + ")\n")
+            fake_api.chmod(0o700)
+            hook = hooks / "pre-push"
+            hook.write_text(SOURCE.read_text(encoding="utf-8"))
+            env = os.environ | {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": base,
+                                "HEAD_REF": "fix", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
+            subprocess.run([sys.executable, str(hook), "install"], cwd=local, env=env, check=True)
+            (local / "file").write_text("fix")
+            git("commit", "-am", "fix")
+            candidate = git("rev-parse", "HEAD").stdout.strip()
+            result = git("push", "origin", "HEAD:refs/heads/fix", check=False, env=env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("remote rejected", result.stderr)
+            self.assertEqual(git("rev-parse", "refs/heads/fix", cwd=remote).stdout.strip(), other)
+            self.assertEqual(json.loads((hooks / "attempt.json").read_text()), {"candidate": candidate})
+            retry = git("push", "origin", "HEAD:refs/heads/fix", check=False, env=env)
+            self.assertNotEqual(retry.returncode, 0)
+            self.assertIn("Stop this run", retry.stderr)
+
     def test_post_check_race_rejected_by_ordinary_push_then_no_second_attempt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
