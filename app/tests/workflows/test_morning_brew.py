@@ -217,6 +217,10 @@ def test_summary_packet_tail_stays_deferred_not_scored(st, clock, tmp_path, monk
         return real_fit(packet, reserved_tokens=reserved_tokens, cap=cap)
 
     monkeypatch.setattr("workflows.morning_brew.fit_packet", fake_fit)
+    # Packet order follows events_in_window (ingested_at, id). fake_fit drops
+    # the tail, so cite the kept row — stored[0] can be the dropped article.
+    ordered = sorted(stored, key=lambda row: (row.ingested_at, row.id))
+    kept_row, dropped_row = ordered[0], ordered[-1]
     scored = [
         {"article_id": row.raw_ref, "symbols": [row.symbol],
          "classification": "material", "score": 80, "rationale": "r"}
@@ -224,19 +228,26 @@ def test_summary_packet_tail_stays_deferred_not_scored(st, clock, tmp_path, monk
     ]
     transport = FakeTransport([
         envelope(_triage_body(scored)),
-        envelope(_brief_body([stored[0].raw_ref])),
+        envelope(_brief_body([kept_row.raw_ref])),
     ])
     result = morning_brew(
         st, clock, transport=transport, parquet_root=tmp_path / "raw",
         holdings_symbols=frozenset({"AAPL", "MSFT"}),
     )
     assert result["status"] == "ok"
-    assert dropped_ids and kept_ids
+    assert dropped_ids == [dropped_row.id] and kept_ids == [kept_row.id]
     assert len(_rows(st, BriefRecord)) == 1
+    brief = _rows(st, BriefRecord)[0]
+    assert brief.degraded is False
+    assert kept_row.raw_ref in brief.payload["source_refs"]
+    assert dropped_row.raw_ref not in brief.payload["source_refs"]
     batch = _verified(st, EVENT_TRIAGE_BATCH)[-1].payload
+    scored_ids = {e["event_id"] for e in batch["scored"]}
     assert batch["dispositions"][kept_ids[0]] == "scored"
     assert batch["dispositions"][dropped_ids[0]] == "deferred"
     assert dropped_ids[0] in batch["deferred"]
+    assert kept_ids[0] in scored_ids
+    assert dropped_ids[0] not in scored_ids
     assert batch["consumed"] is True
     assert len(transport.calls) == 2
 

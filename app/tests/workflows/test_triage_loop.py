@@ -35,7 +35,7 @@ from workflows.context_limit import estimate_tokens, repair_reserve_tokens
 from workflows.events import persist_events
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import ProposalOutcome
+from workflows.proposals import ProposalOutcome, draft_proposal
 from workflows.triage_loop import triage_loop
 
 HOLDINGS = frozenset({"AAPL"})
@@ -457,7 +457,11 @@ def test_context_limited_proposal_is_deferred_not_escalated(st, clock, tmp_path)
 
 
 def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path):
-    """Triage can fit an article the proposal template cannot; do not spend budget."""
+    """Triage can fit an article the proposal template cannot; do not spend budget.
+
+    Production ``build_services`` injects a wrapper around ``draft_proposal``,
+    so preflight must not key off callable identity.
+    """
     rows = _persist(st, clock, tmp_path,
                     [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
     ev = rows[0]
@@ -476,12 +480,16 @@ def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path)
     cap = triage_oh + reserve + article + 80
     assert cap < proposal_oh + reserve + article
     st.settings.context_token_cap = cap
+
+    def _propose(st_, clock_, **kw):
+        return draft_proposal(st_, clock_, **kw)
+
     transport = FakeTransport([envelope(_triage_body([
         _scored(ev.raw_ref, "AAPL", "urgent", 90),
     ]))])
     result = triage_loop(
         st, clock, transport=transport, parquet_root=tmp_path / "raw",
-        holdings_symbols=HOLDINGS,
+        holdings_symbols=HOLDINGS, propose_fn=_propose,
     )
     assert result["status"] == "ok"
     assert ev.id in result["deferred"]
