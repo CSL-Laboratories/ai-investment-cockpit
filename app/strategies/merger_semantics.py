@@ -225,7 +225,11 @@ def _sentence_fragments(text: str) -> list[str]:
 
 def _assertion_matches(pattern: re.Pattern, text: str, *, fragments=None):
     # The sentence split depends only on the text, so callers matching several
-    # patterns over the same text may pass one shared fragment list.
+    # patterns over the same text may pass one shared fragment list. A list
+    # split from anything else is refused rather than trusted: the capturing
+    # split keeps its delimiters, so the join must reproduce the text.
+    if fragments is not None and "".join(fragments) != text:
+        raise SemanticEvidenceUnavailable("sentence fragments do not match source text")
     sentences = fragments if fragments is not None else _sentence_fragments(text)
     for index in range(0, len(sentences), 2):
         sentence = sentences[index]

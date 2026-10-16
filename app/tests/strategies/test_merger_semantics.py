@@ -1199,21 +1199,38 @@ def test_shared_sentence_fragments_match_fresh_split():
 def test_sentence_fragments_must_come_from_the_same_text():
     """CSL-247: ``fragments`` must be ``_sentence_fragments`` of the matched text.
 
-    A shorter list can only lose evidence, so prefix and empty lists still fail
-    closed. A list split from a different string is not detected and can force a
-    positive assertion the text does not make — callers must pass their own split.
+    Mismatched lists are refused fail closed. Without the join guard a truncated
+    list could drop a termination clause (flipping ``lifecycle_status`` to
+    "active") or a conflicting cash sentence (yielding one unique offer), and a
+    foreign split could assert what the text does not say.
     """
     text = _FRAGMENT_PARITY_CASES[0]
     dated = _FRAGMENT_PARITY_CASES[8]
-    for fragments in ([], _sentence_fragments(text)[:2]):
+    terminated = text + " the merger agreement was terminated."
+    conflicting = text + " each share of common stock will receive $99.00 in cash per share."
+    for matched_text, fragments in (
+        (text, []),
+        (text, _sentence_fragments(text)[:2]),
+        # A truncated split of the longer text drops the termination clause or
+        # the conflicting offer; the join no longer reproduces the matched text.
+        (terminated, _sentence_fragments(terminated)[:6]),
+        (conflicting, _sentence_fragments(conflicting)[:6]),
+        (text, _sentence_fragments("the merger remains pending.")),
+    ):
         with pytest.raises(SemanticEvidenceUnavailable):
-            _derive_eligibility(text, amended=False, fragments=fragments)
+            _derive_eligibility(matched_text, amended=False, fragments=fragments)
     for fragments in ([], _sentence_fragments(dated)[:2]):
         with pytest.raises(SemanticEvidenceUnavailable):
             _unique_match(
                 _OUTSIDE_DATE, dated, field="outside date", fragments=fragments
             )
-    assert _asserted(_REMAINS_PENDING, text, fragments=[]) is False
-    # Documented contract hazard: a foreign split asserts what the text lacks.
-    foreign = _sentence_fragments("the merger remains pending.")
-    assert _asserted(_REMAINS_PENDING, "no deal here.", fragments=foreign) is True
+    with pytest.raises(SemanticEvidenceUnavailable):
+        _asserted(
+            _REMAINS_PENDING,
+            "no deal here.",
+            fragments=_sentence_fragments("the merger remains pending."),
+        )
+    # The same-text split is still accepted end to end.
+    assert _derive_eligibility(
+        text, amended=False, fragments=_sentence_fragments(text)
+    )["cash_offer"] == "190.00"
