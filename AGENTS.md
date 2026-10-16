@@ -264,3 +264,20 @@ Agents must **not** edit CI/runner configuration (`.github/workflows/**`, Blacks
 Trigger CI and reviews through the Discord bot (`/ci full|run`, `/devin review pr:<url>|run|status`, or MCP `ci_full` / `ci_run` / `devin_review` / `devin_run` / `devin_status`) or the `ci:full` label — not by editing config.
 
 Do not add paid services or raise spend limits.
+
+### Fixer receipts and bounded no-progress retries (CSL-201)
+
+Automatic eligibility requires explicit Devin `kind: bug` metadata. Trusted Claude
+structured per-root receipts bind the original body fingerprint to a validated
+base and pushed commit; addressed receipts suppress repeats only when that commit
+is strictly newer than the base and remains an ancestor of the live PR head.
+Explicit `needs-human` receipts leave the thread unresolved for human mediation.
+New meaningful Devin or repository-writer replies rearm it; arbitrary prose,
+failed tests, tool/API errors, and no-push runs never prove completion.
+
+Under the shared PR lock, at most three automatic attempt reservations are allowed
+for the same head and same meaningful pending-findings fingerprint. A new head or
+changed findings resets this budget; authorized manual `devin-review-fix` dispatch
+can retry while the eight-commit guard remains. There is no daily cap. Reservations
+can include workflow-validation stops before model execution, so after activation
+an authorized manual retry may be needed. A paused attempt budget is never READY.

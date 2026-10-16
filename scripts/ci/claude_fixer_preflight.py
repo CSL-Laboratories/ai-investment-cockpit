@@ -37,15 +37,14 @@ def eligible_comment_ids(threads: list[dict]) -> list[int]:
         if (author.get("login") not in {DEVIN, DEVIN + "[bot]"}
                 or author.get("__typename") != "Bot"):
             continue
-        match = re.search(r"<!-- devin-review-comment (\{.*?\}) -->", root.get("body", ""))
-        if match:
-            try:
-                if json.loads(match.group(1)).get("kind") != "bug":
-                    continue
-            except (ValueError, AttributeError):
+        matches = re.findall(r"<!-- devin-review-comment (\{.*?\}) -->", root.get("body", ""))
+        if len(matches) != 1:
+            continue
+        try:
+            if json.loads(matches[0]).get("kind") != "bug":
                 continue
-        elif "<!-- devin-review-comment" in root.get("body", ""):
-            continue  # Malformed metadata is not an actionable finding.
+        except (ValueError, AttributeError):
+            continue
         comment_id = root.get("databaseId")
         if isinstance(comment_id, int) and not isinstance(comment_id, bool) and comment_id > 0:
             findings.append(comment_id)

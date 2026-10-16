@@ -1376,11 +1376,11 @@ class FixerPreflightTests(unittest.TestCase):
                     "commit": {"oid": "a" * 40},
                     "body": '<!-- devin-review-comment ' + json.dumps({"kind": kind}) + ' -->\nFix the bug'}]}}
 
-    def test_actionable_bot_root_only_and_legacy_without_metadata(self) -> None:
+    def test_actionable_bot_root_requires_bug_metadata(self) -> None:
         t = self.thread()
         self.assertEqual(self.mod.eligible_comment_ids([t]), [101])
         t["comments"]["nodes"][0]["body"] = "Legacy Devin finding"
-        self.assertEqual(self.mod.eligible_comment_ids([t]), [101])
+        self.assertEqual(self.mod.eligible_comment_ids([t]), [])
         for kind in ("analysis", "summary", "resolved"):
             self.assertEqual(self.mod.eligible_comment_ids([self.thread(kind=kind)]), [])
         for field in ("isResolved", "isOutdated"):
@@ -1473,12 +1473,25 @@ class FixerPreflightTests(unittest.TestCase):
         self.assertIn("comment_ids=[102]", output)
         self.assertIn("skip=false", output)
 
+    def test_receipts_execute_trusted_source_before_checkout(self) -> None:
+        text = WORKFLOW_PATH.read_text(encoding="utf-8")
+        chunk = text.split("python3 - <<'CLAUDE_FIXER_RECEIPTS'\n", 1)[1].split("          CLAUDE_FIXER_RECEIPTS", 1)[0]
+        self.assertEqual(textwrap.dedent(chunk).rstrip(), (ROOT / "scripts/ci/claude_fixer_receipts.py").read_text().rstrip())
+        job = text.split("  devin-review-fix:", 1)[1]
+        self.assertLess(job.index("id: cap"), job.index("id: eligibility"))
+        self.assertLess(job.index("id: eligibility"), job.index("uses: actions/checkout"))
+        self.assertIn("MANUAL_RETRY: ${{ github.event_name == 'workflow_dispatch' }}", job)
+        for step in job.split("      - ")[1:]:
+            if "uses: actions/checkout" in step or "uses: anthropics/claude-code-action" in step:
+                self.assertIn("steps.eligibility.outputs.skip != 'true'", step)
+        self.assertIn("Never emit needs-human merely because", job)
+
     def test_embedded_preflight_and_shared_lock(self) -> None:
         text = WORKFLOW_PATH.read_text()
         start = "python3 - <<'CLAUDE_FIXER_PREFLIGHT'\n"
         chunk = text.split(start, 1)[1].split("          CLAUDE_FIXER_PREFLIGHT", 1)[0]
         self.assertEqual(textwrap.dedent(chunk).rstrip(), (ROOT / "scripts/ci/claude_fixer_preflight.py").read_text().rstrip())
-        self.assertIn('ELIGIBLE ROOT COMMENT IDS: ${{ steps.preflight.outputs.comment_ids }}', text)
+        self.assertIn('ELIGIBLE ROOT COMMENT IDS: ${{ steps.eligibility.outputs.comment_ids }}', text)
         self.assertEqual(text.count('group: claude-${{ needs.resolve-pr.outputs.pr_number }}'), 2)
         self.assertIn('group: claude-${{ matrix.pr.number }}', SCAN_WORKFLOW_PATH.read_text())
         job = text.split('  devin-review-fix:', 1)[1]
