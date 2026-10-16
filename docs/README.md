@@ -7,6 +7,19 @@ last-verified: 2026-10-15
 
 # Docs index
 
+## Accepted replacement product contract — CSL-212
+
+Lucas directed a full Cockpit product reset on 2026-10-16. Start replacement
+planning at [docs/replacement/README.md](replacement/README.md). The September
+[PRODUCT](../PRODUCT.md) contract is historical for replacement planning; its
+research and safety material remains evidence to classify rather than accepted
+successor architecture.
+
+The replacement contract is accepted; outcome artifacts and all implementation,
+empirical and release gates remain pending. Acceptance does not change current runtime authority, the nine
+invariants, credentials, order routing, or live-trading controls. A PR, merge, test
+or contract decision is not empirical acceptance.
+
 Reconciled 2026-10-15 against `origin/main` `4a4308d`, using the same commit and
 UTC merge-date rule as the REGISTER and PLAN status pass (CSL-61,
 [PR #121](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/121),
