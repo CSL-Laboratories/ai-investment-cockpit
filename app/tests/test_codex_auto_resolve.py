@@ -832,7 +832,7 @@ def test_old_cite_retry_mark_marker_does_not_count_today():
     assert any("resolve=posted" in line for line in logs)
 
 
-def test_failed_cite_on_prior_head_does_not_extra_charge():
+def test_unmarked_prior_head_cite_plus_later_marker_fail_closed():
     gh = ready_gh(
         threads=[thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))])],
         reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
@@ -843,9 +843,8 @@ def test_failed_cite_on_prior_head_does_not_extra_charge():
         comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2)),
     ]
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
-    assert THREAD2 in gh.resolves
-    assert any("resolve=posted" in line for line in logs)
-    assert not any("skip=over-cap" in line for line in logs)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
 
 
 def test_unmarked_reopen_on_new_head_counts_separately_from_old_marker():
@@ -911,23 +910,7 @@ def test_unmarked_success_after_receipt_consumes_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
-def test_failed_prior_cite_before_receipt_does_not_extra_charge_count():
-    threads = [
-        thread(
-            THREAD,
-            resolved=True,
-            resolved_by=PAT_LOGIN,
-            comments=[
-                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
-                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2)),
-                comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2)),
-            ],
-        )
-    ]
-    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
-
-
-def test_failed_cite_plus_unmarked_success_charges_once():
+def test_two_unmarked_heads_count_separately():
     gh = ready_gh(
         threads=[
             thread(
@@ -944,9 +927,8 @@ def test_failed_cite_plus_unmarked_success_charges_once():
         reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
     )
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
-    assert THREAD2 in gh.resolves
-    assert any("resolve=posted" in line for line in logs)
-    assert not any("skip=over-cap" in line for line in logs)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
 
 
 def test_old_cite_retry_resolve_consumes_in_scan_cap():
