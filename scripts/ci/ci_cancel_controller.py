@@ -77,7 +77,7 @@ def association(run, repo, repo_id):
     return pr
 
 
-def run_identity(run, repo, repo_id, workflows):
+def run_identity(run, repo, repo_id, workflows, live=None):
     if not isinstance(run, dict):
         return None
     path = run.get('path')
@@ -90,6 +90,12 @@ def run_identity(run, repo, repo_id, workflows):
             or not same_repo(run.get('head_repository'), repo, repo_id)):
         return None
     pr = association(run, repo, repo_id)
+    if (pr is None and live is not None and run.get('pull_requests') == []
+            and run['head_sha'] != live[4] and run.get('head_branch') == live[2]):
+        # GitHub drops the PR link from runs whose SHA is no longer the PR head.
+        # Branch plus same-repository head, live PR identity and the strict
+        # ancestor compare stand in; the current-head witness stays strict.
+        pr = {'number': live[0], 'id': live[1], 'base': {'ref': live[3]}}
     if pr is None:
         return None
     return (run['id'], run['run_attempt'], run['workflow_id'], path, run['head_sha'],
@@ -116,6 +122,15 @@ def live_pr(api, repo, repo_id, number):
 
 def belongs(identity, live):
     return identity is not None and (identity[6], identity[7], identity[5], identity[8]) == live[:4]
+
+
+def stable(data):
+    """Identity-only view of a run page; status/timestamps legitimately change."""
+    if not isinstance(data, dict) or not isinstance(data.get('workflow_runs'), list):
+        return None
+    return (data.get('total_count'), [
+        (run.get('id'), run.get('run_attempt'), run.get('head_sha'))
+        if isinstance(run, dict) else None for run in data['workflow_runs']])
 
 
 def run_snapshot(api, repo, workflow_id, branch):
@@ -147,7 +162,7 @@ def run_snapshot(api, repo, workflow_id, branch):
                 raise Refused('Incomplete run pagination')
             # Listing must remain stable through discovery. Per-run revalidation
             # below catches later status/attempt changes without trusting order.
-            if api.read(f'{path}&page=1') != first:
+            if stable(api.read(f'{path}&page=1')) != stable(first):
                 raise Refused('Run snapshot changed during pagination')
             return rows
     raise Refused('Run pagination bound exceeded')
@@ -225,7 +240,7 @@ def reconcile(api, repo, event_name, event):
     # Complete both workflow snapshots and ancestry reads before any cancellation.
     for workflow_id in workflows.values():
         rows = run_snapshot(api, repo, workflow_id, live[2])
-        identified = [(run, run_identity(run, repo, repo_id, workflows)) for run in rows]
+        identified = [(run, run_identity(run, repo, repo_id, workflows, live)) for run in rows]
         witness_id = current_witness(identified, live, workflow_id)
         if witness_id is None:
             continue
@@ -241,7 +256,7 @@ def reconcile(api, repo, event_name, event):
         # A rerun, completed cancellation, retarget, draft transition or head
         # change invalidates the plan. All APIs remain bounded and fail closed.
         target = api.read(f'repos/{repo}/actions/runs/{identity[0]}')
-        if run_identity(target, repo, repo_id, workflows) != identity:
+        if run_identity(target, repo, repo_id, workflows, live) != identity:
             raise Refused('Target identity/attempt changed before cancellation')
         if target.get('status') not in ACTIVE:
             continue
@@ -253,7 +268,7 @@ def reconcile(api, repo, event_name, event):
         if not successor(witness):
             continue
         fresh = run_snapshot(api, repo, identity[2], live[2])
-        identified = [(run, run_identity(run, repo, repo_id, workflows)) for run in fresh]
+        identified = [(run, run_identity(run, repo, repo_id, workflows, live)) for run in fresh]
         fresh_targets = [(run, found) for run, found in identified
                          if run['id'] == identity[0]]
         if len(fresh_targets) != 1 or fresh_targets[0][1] != identity:
