@@ -572,8 +572,12 @@ class WorkflowStructureTests(unittest.TestCase):
             "conflict-resolve",
         ):
             header = self._job(name).split("steps:")[0]
-            self.assertIn("runs-on: ubuntu-latest", header, name)
-            self.assertNotIn("blacksmith-", header, name)
+            runners = [
+                line.strip()
+                for line in header.splitlines()
+                if line.strip().startswith("runs-on:")
+            ]
+            self.assertEqual(runners, ["runs-on: ubuntu-latest"], name)
 
     def _job(self, name: str) -> str:
         marker = f"  {name}:"
