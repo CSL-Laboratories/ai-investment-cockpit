@@ -19,12 +19,13 @@ name: ci
 #                  Ubuntu x64 2 vCPU is $0.004/min, so a billed minute is a
 #                  rounding error next to the $50 budget.
 #
-# Label add/remove does not re-run the Linux matrix except `ci:full`
-# (Windows/macOS gate) and `enhancement` (manual re-trigger). Draft PRs skip
-# the test jobs. linux-gates still runs (GitHub-hosted) so the required check
-# reports success. Non-test jobs (filter, linux-gates) use ubuntu-latest;
-# the public repo does not pay for those minutes. The Python linux/windows
-# matrix stays on Blacksmith.
+# Label add/remove does not start this workflow's jobs except `ci:full`
+# (Windows/macOS gate) and `enhancement` (manual re-trigger). Those no-op
+# events use a separate concurrency group so they cannot cancel an in-progress
+# matrix or post a new linux-gates conclusion. Draft PRs skip filter and
+# linux-gates until ready_for_review; the aggregator never exits 0 for a skip.
+# Non-test jobs (filter, linux-gates) use ubuntu-latest; the public repo does
+# not pay for those minutes. The Python linux/windows matrix stays on Blacksmith.
 #
 # This workflow supersedes the Blacksmith Migration Wizard PR that only swapped
 # runner labels (open PR #100, branch blacksmith-migration-33156c9).
@@ -45,7 +46,10 @@ permissions:
 # A newer run for the same ref supersedes the run it interrupted. Nightly has its
 # own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || 'default' }}
+  # Unrelated label events and drafts must not share the default group:
+  # cancel-in-progress would kill an in-progress matrix, and a skipped
+  # aggregator must not replace that SHA's linux-gates conclusion.
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full' && github.event.label.name != 'enhancement' && 'label') || 'default' }}
   cancel-in-progress: true
 
 jobs:
@@ -184,14 +188,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
-  # when Linux was skipped (docs-only, draft PR, or a non-retrigger label event).
+  # when filter ran and Linux was skipped because the change is docs-only.
+  # Drafts and non-retrigger label events skip this job (filter is skipped), so
+  # they do not post a new linux-gates conclusion over a real failure.
   # Configure branch protection / rulesets to require exactly this name: linux-gates
   linux-gates:
     name: linux-gates
     permissions:
       contents: read
     needs: [filter, linux]
-    if: always() && !cancelled() && github.event_name != 'schedule'
+    if: always() && !cancelled() && github.event_name != 'schedule' && needs.filter.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -199,17 +205,9 @@ jobs:
         env:
           FILTER_RESULT: ${{ needs.filter.result }}
           LINUX_RESULT: ${{ needs.linux.result }}
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          PR_DRAFT: ${{ github.event.pull_request.draft }}
         run: |
           set -euo pipefail
-          echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT} action=${EVENT_ACTION} draft=${PR_DRAFT}"
-          if [ "$FILTER_RESULT" = "skipped" ] && [ "$EVENT_NAME" = "pull_request" ] && \
-             { [ "$PR_DRAFT" = "true" ] || [ "$EVENT_ACTION" = "labeled" ] || [ "$EVENT_ACTION" = "unlabeled" ]; }; then
-            echo "linux-gates: tests skipped for a draft or non-retrigger label event; required check passes."
-            exit 0
-          fi
+          echo "filter=${FILTER_RESULT} linux=${LINUX_RESULT}"
           if [ "$FILTER_RESULT" != "success" ]; then
             echo "filter job did not succeed"
             exit 1

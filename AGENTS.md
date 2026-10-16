@@ -131,7 +131,7 @@ Search/Extract is for lookups. Assignee decision/direction work also needs the T
 - **GitHub** — org **CSL-Laboratories**.
 - **Devin** — the only PR reviewer, review only (on PR open; on-demand via `/devin review`).
 - **Claude Code Action** — PR fixer for Devin findings and `@claude` mentions on open, same-repository PRs whose author (and, for `@claude`, the commenter) has write, maintain or admin permission on the repo (other PRs are skipped by the workflow's event gate) (`.github/workflows/claude.yml`).
-- **Blacksmith** — the only CI.
+- **Blacksmith** — paid test-matrix CI (Python linux/windows, rust-book). Non-test jobs use GitHub-hosted `ubuntu-latest` (this repo is public).
 - **Google Workspace** (`csl-laboratories.com`) — meetings and notes.
 - **Discord bot** (`csl-bot-operations`) — slash commands and MCP below.
 
@@ -166,10 +166,11 @@ Agents must stay Linear-aware and proactive. Linear is the source of truth.
 
 Hosted split (PR #102):
 
-- Required check: **`linux-gates`** (Linux, Python 3.11 and 3.12, on Blacksmith).
-- Windows runs on push to `main`, the `ci:full` label, and manual dispatch.
-- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on manual dispatch — not on ordinary `main` pushes.
-- Superseded runs are cancelled.
+- Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. A skipped or no-op run must not post a passing `linux-gates` over a real failure.
+- Windows runs on push to `main`, the `ci:full` label, and manual dispatch (Blacksmith).
+- macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
+- Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
+- Superseded runs are cancelled. Unrelated label events and drafts use a separate concurrency group so they cannot cancel an in-progress matrix.
 
 ## Review roles
 
@@ -178,7 +179,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: FIX|READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** is the only CI. That is the GitHub review path. It does not revive the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop

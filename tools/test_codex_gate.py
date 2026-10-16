@@ -1382,10 +1382,13 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("github.event.label.name == 'ci:full'", self.ci)
         self.assertIn("github.event.label.name == 'enhancement'", self.ci)
         self.assertIn("github.event.action != 'labeled'", self.ci)
-        self.assertIn("tests skipped for a draft or non-retrigger label event", self.ci)
+        self.assertIn("needs.filter.result != 'skipped'", self.ci)
+        self.assertNotIn("required check passes.", self.ci)
         self.assertIn("name: linux-gates", self.ci)
         self.assertIn("ready_for_review", self.ci)
         self.assertIn("github.event.pull_request.draft != true", self.ci)
+        self.assertIn("&& 'label'", self.ci)
+        self.assertIn("&& 'draft'", self.ci)
 
     def test_non_test_jobs_use_github_hosted(self) -> None:
         filter_job = self.ci.split("\n  linux:\n", 1)[0]
@@ -1397,6 +1400,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-latest", rust_filter)
         self.assertIn("github.event.pull_request.draft != true", self.rust)
         self.assertIn("ready_for_review", self.rust)
+        self.assertIn("&& 'label'", self.rust)
+        self.assertIn("&& 'draft'", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
         self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
 
@@ -1423,6 +1428,8 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("codex-mediation:", self.agents)
         self.assertIn("needs-decision", self.agents)
         self.assertIn("do **not** add a `CODEX-GATE:` line", self.agents)
+        self.assertIn("aggregator is GitHub-hosted", self.agents)
+        self.assertIn("Python 3.11+3.12 matrix it wraps runs on Blacksmith", self.agents)
         claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
         self.assertIn("AGENTS.md", claude)
         self.assertIn("Grok Bots", claude)

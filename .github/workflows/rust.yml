@@ -15,8 +15,10 @@ name: rust
 # (GitHub evaluates it before the matrix exists, and the run fails with zero
 # jobs). `filter` emits only the cells that should start.
 # Label add/remove does not start cells except `ci:full` and `enhancement`.
-# Draft PRs skip the test cells. `filter` is GitHub-hosted; rust-book stays
-# on Blacksmith. Windows cells use Blacksmith 2 vCPU (same as ci.yml).
+# Those no-op events use a separate concurrency group so they cannot cancel
+# an in-progress rust-book matrix. Draft PRs skip the test cells until
+# ready_for_review. `filter` is GitHub-hosted; rust-book stays on Blacksmith.
+# Windows cells use Blacksmith 2 vCPU (same as ci.yml).
 # Swatinem/rust-cache is redirected to Blacksmith's co-located cache.
 #
 # This workflow does not replace linux-gates or the DEC-09 local matrix (native
@@ -55,7 +57,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.ref }}
+  group: rust-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'ci:full' && github.event.label.name != 'enhancement' && 'label') || 'default' }}
   cancel-in-progress: true
 
 jobs:
