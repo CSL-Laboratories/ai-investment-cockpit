@@ -1,0 +1,9 @@
+[package]
+name = "cockpit-book"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "FIFO limit order book and price-time matcher (QT-01)"
+license = "UNLICENSED"
+
+[dependencies]
