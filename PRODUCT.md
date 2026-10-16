@@ -248,7 +248,9 @@ or forward-repair evidence. The running engine stays on its approved version.
 Installation does not itself activate strategies, increase limits or grant live mode.
 
 PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery
-order; REGISTER owns work claims; canonical subsystem contracts and evidence own
-technical controls and measured gates. The delivery plan identifies the required
-amendments to older MVP, DEC-03, approval/model, eligibility and evidence policies.
+order; claim by assigning the `CSL-N` issue and moving it to In Progress
+(REGISTER records work ID, branch, and status); canonical subsystem contracts
+and evidence own technical controls and measured gates. The delivery plan
+identifies the required amendments to older MVP, DEC-03, approval/model,
+eligibility and evidence policies.
 Historical evidence stays historical. Live trading remains separately gated.

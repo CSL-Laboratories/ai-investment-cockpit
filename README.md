@@ -29,8 +29,9 @@ and reconciliation, and contained offline quant simulation. The implementation s
 W-24 is merged, but its named online, semantic-authority, and paper-day evidence gates remain
 open. Dynamic event-driven paper autonomy, Robinhood connectivity, and autonomous live execution
 are not enabled; see
-[`docs/PLAN.md`](docs/PLAN.md) for the offline-to-deployment lifecycle and
-[`docs/REGISTER.md`](docs/REGISTER.md) for claim state.
+[`docs/PLAN.md`](docs/PLAN.md) for the offline-to-deployment lifecycle.
+Claim work by assigning the `CSL-N` issue and moving it to In Progress;
+[`docs/REGISTER.md`](docs/REGISTER.md) records work ID, branch, and status.
 
 ## Layout
 
