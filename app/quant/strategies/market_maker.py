@@ -192,9 +192,14 @@ class MarketMaker(Strategy):
         """Log-return volatility -> price volatility in TICKS. The unit conversion that,
         omitted, rescales the entire model by the price level without raising anything."""
         sigma_return = self._vol.value
-        if sigma_return is None:
+        if sigma_return is None or not math.isfinite(sigma_return):
+            # A NaN volatility is not a number the skew can clamp. ``nan``
+            # comparisons are false, so the quote would pin at +max skew.
             return None
-        return sigma_return * mid_ticks
+        sigma_ticks = sigma_return * mid_ticks
+        if not math.isfinite(sigma_ticks):
+            return None
+        return sigma_ticks
 
     def quotes(self, ctx: StrategyContext) -> tuple[int, int] | None:
         """Compute the target (bid, ask) in ticks, or None if the model cannot speak yet.
@@ -256,6 +261,11 @@ class MarketMaker(Strategy):
         self._sample_volatility(ctx)
         target = self.quotes(ctx)
         if target is None:
+            # Cold is "no opinion yet" and there is nothing resting. A NaN or
+            # infinite volatility is different: quotes already on the book would
+            # keep filling with no valid target.
+            if self._volatility_unusable():
+                return self._pull_live_quotes(ctx)
             return []
         return self._reconcile(ctx, *target)
 
@@ -288,10 +298,46 @@ class MarketMaker(Strategy):
         cannot react to the absence of book updates."""
         target = self.quotes(ctx)
         if target is None:
+            if self._volatility_unusable():
+                return self._pull_live_quotes(ctx)
             return []
         return self._reconcile(ctx, *target)
 
     # ---- quote management ----------------------------------------------------------------
+
+    def _volatility_unusable(self) -> bool:
+        """True once the estimator has a value that cannot be quoted.
+
+        ``None`` is the cold estimator and is not this case: nothing has been
+        sent yet. NaN and infinity are.
+        """
+        sigma = self._vol.value
+        return sigma is not None and not math.isfinite(sigma)
+
+    def _pull_live_quotes(self, ctx: StrategyContext) -> list[Intent]:
+        """Cancel both tracked quotes and forget them, as ``_side_intents`` does
+        when a side is no longer allowed.
+
+        An id the context no longer reports as live is dropped with no cancel,
+        matching ``_reconcile``. The ids are cleared in the same call that emits
+        the cancel, so a later update does not place a replacement.
+        """
+        book = ctx.book
+        symbol = book.symbol if book is not None else (self.symbols[0] if len(self.symbols) == 1 else None)
+        if symbol is not None:
+            live = {o.client_id for o in ctx.orders_for(symbol)}
+            if self._bid_id not in live:
+                self._bid_id, self._bid_ticks = None, None
+            if self._ask_id not in live:
+                self._ask_id, self._ask_ticks = None, None
+        intents: list[Intent] = []
+        if self._bid_id is not None:
+            intents.append(CancelOrder(client_id=self._bid_id))
+            self._set_side(True, None, None)
+        if self._ask_id is not None:
+            intents.append(CancelOrder(client_id=self._ask_id))
+            self._set_side(False, None, None)
+        return intents
 
     def _reconcile(self, ctx: StrategyContext, bid_ticks: int, ask_ticks: int) -> list[Intent]:
         """Bring live quotes toward the target, paying for priority only when it is worth it."""
