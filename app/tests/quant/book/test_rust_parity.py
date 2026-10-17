@@ -359,14 +359,19 @@ def test_rust_qty_domain_is_signed_64_bit():
 
 def test_rust_fit_i64_extraction_bounds_and_types():
     """FitI64 keeps its contract on the migrated PyO3 extractor."""
+    import cockpit_quant
+
     rust = LimitOrderBook("EXT")
     rust.add(order_id="max", side=Side.BUY, price_ticks=2**63 - 1, qty=1)
     assert rust.get("max").price_ticks == 2**63 - 1
     with pytest.raises(ValueError, match="signed 64-bit"):
         rust.add(order_id="low", side=Side.BUY, price_ticks=-(2**63) - 1, qty=1)
-    with pytest.raises(TypeError):
-        rust.add(order_id="str", side=Side.BUY, price_ticks=100, qty="1")
     rust.check_integrity()
+
+    # LimitOrderBook.add coerces with int(), so a str qty never reaches FitI64.
+    core = cockpit_quant.BookCore("EXT")
+    with pytest.raises(TypeError):
+        core.add("str", "buy", 100, "1", 0, 0, None)
 
 
 def test_rust_module_keeps_the_gil_contract_on_free_threaded_builds():
