@@ -436,7 +436,8 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
         return
     if key.startswith("sec:accession:"):
         accession = key[len("sec:accession:") :]
-        if accession != payload.get("accession") or not accession.startswith(f"{cik}-"):
+        # The accession prefix is the submitter's CIK (often a filing agent), not the issuer's.
+        if accession != payload.get("accession"):
             raise ContractError(f"{raw_id} natural key does not name its accession")
         return
     listing_prefix = f"us-equity:listing:{cik}:{share}:"
@@ -445,7 +446,12 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
         fact = rest.split(":", 1)[0]
         if fact != kind:
             raise ContractError(f"{raw_id} natural key does not name its equity fact")
-        if rest.startswith("corporate_action:ex-") and rest[len("corporate_action:ex-") :] != payload.get("ex_date"):
+        # The key is fixed by the original ex-date; a correction may move the ex-date.
+        if (
+            not record["supersedes"]
+            and rest.startswith("corporate_action:ex-")
+            and rest[len("corporate_action:ex-") :] != payload.get("ex_date")
+        ):
             raise ContractError(f"{raw_id} natural key does not name its ex-date")
         return
     raise ContractError(f"{raw_id} natural key does not name its equity identity")
@@ -454,7 +460,7 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
 def _predecessor_resolution(bundle: Bundle, record: dict):
     """Resolution supplied by an earlier record in this correction chain."""
     seen: set[str] = set()
-    parent_id = record.get("supersedes")
+    parent_id = record.get("supersedes") or record.get("duplicate_of")
     while type(parent_id) is str and parent_id not in seen:
         seen.add(parent_id)
         parent = bundle.records.get(parent_id)
@@ -520,7 +526,9 @@ def validate_records(bundle: Bundle) -> None:
             if kind == "filing_amendment":
                 amended = target["payload"]
                 amendment = record["payload"]
-                if amendment.get("amends_accession") != amended.get("accession"):
+                # A later amendment may name the original filing, not only its predecessor.
+                chain_accessions = {amended.get("accession"), amended.get("amends_accession")}
+                if amendment.get("amends_accession") not in chain_accessions - {None}:
                     raise ContractError(
                         f"{record['raw_record_id']} amends_accession does not name the superseded filing"
                     )
