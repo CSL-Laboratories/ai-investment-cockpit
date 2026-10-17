@@ -436,7 +436,9 @@ def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[Fe
         f"etf={etf} as_of={as_of} constituents={body} "
         f"outside_universe={outside}{coverage_text}"
     )
-    ordered = tuple(dict.fromkeys([etf, *symbols]))
+    # persist_events indexes symbols[0]. Watchlist constituents lead so intraday
+    # triage sees the event. The ETF itself gains no execution eligibility.
+    ordered = tuple(dict.fromkeys([*symbols, etf]))
     return [FeatureLine(
         priority=(7, 0, etf),
         text=text,
@@ -782,10 +784,15 @@ def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> li
     """Normalized ingest dicts. Enrichment types only — never halt or filing."""
     seen = dedup if dedup is not None else Dedup()
     events: list[dict] = []
+    day = ts.date().isoformat() if hasattr(ts, "date") else str(ts)[:10]
     for line in lines:
         if line.event_type in _HARD_EVENT_TYPES or line.event_type.startswith("calendar:"):
             raise RuntimeError(f"research feature used a hard event type: {line.event_type}")
-        digest = hashlib.sha256(f"{line.event_type}\n{line.text}".encode("utf-8")).hexdigest()[:20]
+        # Each daily poll is a fresh observation. The decision window selects recent
+        # arrivals, so identity and the raw image both carry the observation day.
+        digest = hashlib.sha256(
+            f"{line.event_type}\n{line.text}\n{day}".encode("utf-8"),
+        ).hexdigest()[:20]
         article_id = f"{line.event_type}:{digest}"
         if not seen.add(f"{SOURCE}:{article_id}"):
             continue
@@ -797,6 +804,6 @@ def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> li
             summary="",
             ts=ts,
             event_type=line.event_type,
-            raw=line.raw,
+            raw={**line.raw, "observed_on": day},
         ))
     return events

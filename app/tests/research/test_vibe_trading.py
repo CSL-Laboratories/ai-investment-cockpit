@@ -257,6 +257,24 @@ def test_sidecar_calls_are_audited_as_unpriced_cost(state, tmp_path):
     assert payload["output_tokens"] >= 0
 
 
+def test_etf_symbols_lead_with_a_watchlist_constituent():
+    lines = project_etf(_load("etf.json"), etf="SPY", universe=frozenset({"AAPL"}))
+    assert lines[0].symbols[0] == "AAPL"
+    assert lines[0].symbols[-1] == "SPY"
+
+
+def test_a_later_day_is_a_fresh_observation():
+    lines = project_alpha_bench(
+        _load("alpha_bench.json"), zoo="alpha101", universe="sp500", period="2018-2025",
+    )
+    first = to_events(lines, ts=NOW)
+    later = to_events(lines, ts=NOW + timedelta(days=1))
+    assert first[0]["article_id"] != later[0]["article_id"]
+    assert first[0]["raw_input"]["observed_on"] == "2026-07-07"
+    assert later[0]["raw_input"]["observed_on"] == "2026-07-08"
+    assert to_events(lines, ts=NOW)[0]["article_id"] == first[0]["article_id"]
+
+
 def test_republish_dedupes_the_same_feature(state, tmp_path):
     adapter = ResearchAdapter(_settings(), transport=FakeSidecar(_responses()))
     first = adapter.publish(state, parquet_root=tmp_path / "raw")
