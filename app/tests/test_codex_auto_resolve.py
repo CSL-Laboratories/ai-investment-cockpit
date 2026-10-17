@@ -374,6 +374,7 @@ def test_html_without_action_is_ambiguous():
     assert len(parsed) == 1
     assert parsed[0].verdict == "AMBIGUOUS"
     assert parsed[0].reason == "missing-action"
+    assert parsed[0].sha == SHA
 
 
 def test_malformed_keep_companion_is_ambiguous():
@@ -387,6 +388,7 @@ def test_malformed_keep_companion_is_ambiguous():
     assert len(parsed) == 1
     assert parsed[0].verdict == "AMBIGUOUS"
     assert parsed[0].reason == "malformed"
+    assert parsed[0].sha == SHA
 
 
 def test_mixed_actions_in_block_are_ambiguous():
@@ -1190,6 +1192,26 @@ def test_old_cite_retry_resolve_consumes_in_scan_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
+def test_reopened_unmarked_pat_success_still_counts():
+    threads = [
+        thread(
+            THREAD,
+            resolved=False,
+            resolved_by=PAT_LOGIN,
+            comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
+        ),
+        thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
+    gh = ready_gh(
+        threads=threads,
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
 def test_unresolved_cites_do_not_burn_daily_cap():
     stuck = [
         thread(
@@ -1425,23 +1447,24 @@ def test_retry_resolve_error_refreshes_cite():
     assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
 
 
-def test_fresh_cite_retry_resolve_error_does_not_refresh_cite():
+def test_fresh_cite_retry_resolve_error_still_refreshes_cite():
+    near = NOW - timedelta(hours=23, minutes=55)
     gh = ready_gh(
         threads=[
             thread(
                 comments=[
-                    comment(CODEX, verdict_body()),
-                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                    comment(CODEX, verdict_body(), near),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), near),
                 ]
             )
         ],
-        reviews=[comment(CODEX, verdict_body())],
+        reviews=[comment(CODEX, verdict_body(), near)],
     )
     gh.fail_resolve = True
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == []
     assert any("skip=resolve-error" in line for line in logs)
-    assert not any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+    assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
 
 
 def test_resolved_false_does_not_refresh_cite():
@@ -1826,6 +1849,29 @@ def test_malformed_decide_line_is_ambiguous():
     parsed = mod.parse_thread_verdicts(body)
     assert parsed[0].verdict == "AMBIGUOUS"
     assert parsed[0].reason == "malformed"
+    assert parsed[0].sha == SHA
+
+
+def test_malformed_ambiguous_sticks_to_stated_head():
+    malformed = comment(
+        CODEX,
+        (
+            f"{mod.verdict_marker(THREAD)}\n"
+            "CODEX-THREAD: RESOLVE\n"
+            "CODEX-THREAD: KEEP reason=unresolved\n"
+            f"HEAD: {SHA}\n"
+        ),
+        NOW - timedelta(minutes=5),
+    )
+    later = comment(CODEX, verdict_body("RESOLVE"), NOW)
+    latest = mod.latest_verdicts([malformed, later])
+    t = thread(comments=[malformed, later])
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[]
+    )
+    assert reason == "ambiguous"
+    assert verdict is not None and verdict.verdict == "AMBIGUOUS"
+    assert verdict.sha == SHA
 
 
 def test_linux_gates_skipped_is_not_green():

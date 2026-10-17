@@ -523,11 +523,16 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
             if head_match:
                 head_values.append(head_match.group(1).strip())
         actions = [str(item).upper() for item in VERDICT_ACTION_RE.findall(block)]
+        unique_sha = _unique_valid_sha(head_values)
         if not thread_lines:
-            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="missing-action", source="block"))
+            found.append(
+                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason="missing-action", source="block")
+            )
             continue
         if thread_lines != len(actions) or len(set(actions)) != 1:
-            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason="malformed", source="block"))
+            found.append(
+                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason="malformed", source="block")
+            )
             continue
         if len(head_values) != 1:
             reason = "missing-head" if not head_values else "malformed-head"
@@ -552,6 +557,16 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
                 verdict.thread_id, verdict.sha, "AMBIGUOUS", reason="conflict", source="block"
             )
     return [collapsed[key] for key in order]
+
+
+def _unique_valid_sha(head_values: list[str]) -> str:
+    """Preserve a uniquely valid HEAD so malformed AMBIGUOUS sticks to that SHA."""
+    found: list[str] = []
+    for raw in head_values:
+        digest = safe_sha(raw)
+        if digest and digest not in found:
+            found.append(digest)
+    return found[0] if len(found) == 1 else ""
 
 
 def parse_resolved_markers(text: str | None) -> list[tuple[str, str]]:
@@ -1226,10 +1241,12 @@ def resolved_count_today(
     ``retry-resolve``), or a legacy marker whose comment time and matching
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
-    Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt. A PAT skip
-    marker hides that pair unless a later PAT cite is strictly newer, so
-    a retry-resolve success cannot be erased by an earlier human race.
+    Failed cites on still-open threads do not count unless GitHub still
+    attributes ``resolvedBy`` to the PAT (a reopen after an unmarked
+    success). Unmarked cites count per ``(thread id, sha)`` when that
+    pair has no receipt. A PAT skip marker hides that pair unless a
+    later PAT cite is strictly newer, so a retry-resolve success cannot
+    be erased by an earlier human race.
     Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
     A missing resolver does not skip (fail closed). A failed skip post
     over-counts. Missing timestamps fail closed.
@@ -1238,6 +1255,14 @@ def resolved_count_today(
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
+    pat_reopened = {
+        tid
+        for thread in threads
+        for tid in [safe_thread_id(str(thread.get("id") or ""))]
+        if tid
+        and not thread.get("isResolved")
+        and login_matches(resolved_by_login(thread), actor_login)
+    }
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_times: dict[tuple[str, str], datetime | None] = {}
     skip_times: dict[tuple[str, str], datetime | None] = {}
@@ -1272,7 +1297,9 @@ def resolved_count_today(
     unmarked: set[tuple[str, str]] = set()
     for pair, cite_when in cite_times.items():
         tid, _digest = pair
-        if tid in pending or pair in all_marker_pairs:
+        if pair in all_marker_pairs:
+            continue
+        if tid in pending and tid not in pat_reopened:
             continue
         if pair in skip_times:
             skip_when = skip_times[pair]
@@ -1461,7 +1488,6 @@ def reply_and_resolve(
     now: datetime | None = None,
     pat_login: str = "",
     after: datetime | None = None,
-    cite_when: datetime | None = None,
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1504,15 +1530,11 @@ def reply_and_resolve(
         )
     except Exception:
         # GitHub may have applied the mutation even though the client
-        # saw an error. Refresh the cite only when the latest PAT cite is
-        # missing or older than 24h so a later retry-mark still counts
-        # today. A determinate failure (mismatched id / still-open thread)
-        # does not refresh — that would cite an open thread every scan.
-        stamp = now or utcnow()
-        already_fresh = (not retry) or (
-            cite_when is not None and cite_when >= stamp - timedelta(hours=24)
-        )
-        if not already_fresh:
+        # saw an error. On retry-resolve the existing cite may be near
+        # the 24h cutoff, so always refresh it. First-time resolve
+        # already posted a cite this scan. Determinate failures
+        # (mismatched id / still-open thread) do not refresh.
+        if retry:
             publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
@@ -1731,11 +1753,6 @@ def scan_pr(
             continue
         excerpt = ruling_excerpt(items, verdict.thread_id if verdict else tid, head_sha, cfg.quote_limit)
         stamped = latest.get((str(thread.get("id") or ""), head_sha))
-        cite_when = cite_time_for_thread(
-            thread_comments(thread) + issue_comments,
-            str(thread.get("id") or ""),
-            actor_login=pat_login,
-        )
         try:
             result = reply_and_resolve(
                 gh,
@@ -1748,7 +1765,6 @@ def scan_pr(
                 now=now,
                 pat_login=pat_login,
                 after=stamped.when if stamped is not None else None,
-                cite_when=cite_when,
             )
         except Exception:
             result = "error"
