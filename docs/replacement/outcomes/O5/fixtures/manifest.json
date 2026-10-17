@@ -22,14 +22,14 @@
   "schemas": [
     {
       "path": "docs/replacement/outcomes/O5/schemas/o5-wire.schema.json",
-      "sha256": "7e9aff325a932dd7f83c081e33b029009581a8d9e8d4f6329d8aac27c189a02e"
+      "sha256": "f7b8146789002537c868493c401503d205ba07f93e7d989e43f861f62f3c92c2"
     }
   ],
   "pins": [
     {
       "class": "prose",
       "path": "docs/replacement/outcomes/O5/CONTRACT.md",
-      "sha256": "90e60262df851a6054252c834294ffc58e2a2986868264dd5929d94e554d1856"
+      "sha256": "9d410d01ed9380b0d7b9997f70b0be1dbd063eb9b654b5c2084c593bb95a1013"
     },
     {
       "class": "governing",
@@ -101,7 +101,7 @@
     {
       "kind": "decision_result",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json",
-      "sha256": "f728cc62933d6eec8aa8111e1edbfdda16b15d7d4fef75fd6b5f08fb9b047391"
+      "sha256": "c6bb1f9a64ebaaa1d986c5453577f3718df43535e4a39d902a846e82307260f5"
     },
     {
       "kind": "decision_refusal",
@@ -170,7 +170,7 @@
       "id": "result_contradicts_suite",
       "kind": "decision_result",
       "path": "docs/replacement/outcomes/O5/fixtures/negative/result-contradicts-suite.json",
-      "sha256": "6b3156d8e23872c0e31805bfaf7d52645ed811dd6b35a440621202f79aee8678",
+      "sha256": "724f0f416d78c8afdd31f127b488469999dade2ebd7b1ab313e655df31758029",
       "expected_code": "result_contradicts_suite"
     },
     {

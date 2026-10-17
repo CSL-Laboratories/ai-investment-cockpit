@@ -1281,7 +1281,6 @@
         "task_id",
         "route_id",
         "suite_digest",
-        "output",
         "schema_compliance",
         "value_correctness",
         "grounding_ok",
@@ -1337,7 +1336,6 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
-        "output": {},
         "schema_compliance": {
           "type": "boolean"
         },

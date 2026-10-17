@@ -136,21 +136,13 @@ def test_grounding_and_refusal_results_fail_closed() -> None:
     )
     context = _context(module, suite)
     context.suite_digest = base["suite_digest"]
-    correct = dict(base)
-    correct["output"] = {"name": "composer"}
-    correct["value_correctness"] = True
-    assert module._admit_document(correct, schema, context).admitted is True
-    wrong_label = dict(base)
-    wrong_label["output"] = {"name": "composer"}
-    assert module._admit_document(wrong_label, schema, context).code == "result_contradicts_suite"
-    ungrounded_output = {"source_refs": ["ref-1"], "claims": {"name": "conductor"}}
     matched = dict(base)
     matched["task_id"] = "task.ungrounded_claim"
-    matched["output"] = ungrounded_output
     matched["grounding_ok"] = False
     admitted = module._admit_document(matched, schema, context)
     assert admitted.admitted is True
-    flipped = dict(matched)
+    flipped = dict(base)
+    flipped["task_id"] = "task.ungrounded_claim"
     flipped["grounding_ok"] = True
     refused = module._admit_document(flipped, schema, context)
     assert refused.admitted is False
