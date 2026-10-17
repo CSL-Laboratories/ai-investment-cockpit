@@ -241,10 +241,14 @@ cost and always carries a `fill_id`. One entry carries at most one
 causal reference — an entry naming both `fill_id` and `order_id` is
 ambiguous and fails. An `order_id` reservation must post before the
 order's first fill: it is valid while the order is still resting, and a
-reservation sequenced after a fill is rejected. When an order reserved
-collateral up front, its later fills do not re-post premium — the
-reservation already holds it — so those fills are exempt from the
-per-fill premium check while their fees still reconcile per fill.
+reservation sequenced after a fill is rejected. An order-linked
+reservation must equal the total posted by all of that order's fills —
+the sum of each fill's `qty * price_minor` plus its `fee_minor` — not
+more and not less; a reserve that exceeds or falls short of that total
+fails `balance_mismatch`. When an order reserved collateral up front,
+its later fills do not re-post premium — the reservation already holds
+it — so those fills are exempt from the per-fill premium check while
+their fees still reconcile per fill.
 Every line on a referenced entry must post the referenced fill's or
 order's own `instrument_id`, never a different declared instrument. A
 posting with a missing, unknown, checkpointed, conflicting, or
@@ -307,11 +311,15 @@ remain source facts. They are not automatic prices in this candidate.
 ## Reconciliation and restart
 
 Cash and positions reconcile separately. Either mismatch fails the fixture.
-A checkpoint stores the sequence, the applied idempotency keys, cash,
+A checkpoint stores the sequence, the applied idempotency keys, the ids
+of the entries it already applied (`applied_entry_ids`), cash,
 collateral, positions, and open reservations. The checkpoint's own open
 reservations must sum to its `collateral_reserved`; a checkpoint that
 disagrees with itself fails `collateral_double_count` before replay
-starts. Checkpoint instruments must also be declared. Replay applies only entries
+starts. Checkpoint instruments must also be declared. A correction may
+reverse a checkpointed entry: `reverses_entry_id` matches either a
+replayed journal entry or an id in the checkpoint's applied history,
+and either match admits the fill it names. Replay applies only entries
 with a higher sequence and a new idempotency key. Reapplying a key, or an
 entry at or below the checkpoint sequence, is a restart replay. On the
 event book that failure is `collateral_double_count`. On the equity book it
@@ -388,17 +396,6 @@ No tax conclusion. No broker selection. No margin or options scope. No live
 ledger migration. No credentials. No capital movement. No change to order
 authority. No Polymarket lifecycle. No claim that the current OMS, P&L, or
 paper reconciliation implements this candidate.
-
-## Known gaps
-
-- **Checkpointed corrections and admitted late fills.** A correction record
-  can admit a fill sequenced after a terminal state, but a fill that was
-  already checkpointed before its admitting correction cannot be admitted
-  by the current rule set: replay treats it as a late fill and fails
-  `late_fill_divergence`. The candidate keeps the stricter replay rule.
-  A correction that predates the checkpoint may admit a checkpointed fill.
-  Owner: ledger-contract reviewer. Recorded for a later candidate; not
-  blocking `researched`.
 
 ## Unresolved decisions (owner: Lucas)
 

@@ -134,6 +134,96 @@ def test_o3_fill_lines_must_match_fill_instrument() -> None:
     assert "position_divergence" in _evaluate(fixture)
 
 
+def test_o3_order_reserve_matches_fills_total() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    for entry in fixture["journal"]:
+        if entry["entry_id"] == "j-reserve-rest":
+            for line in entry["lines"]:
+                line["amount_minor"] = 2000000
+    fixture["reported"]["cash_available"] -= 1170000
+    fixture["reported"]["collateral_reserved"] += 1170000
+    fixture["reported"]["open_reservations"][1]["amount_minor"] = 2000000
+    assert "balance_mismatch" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["fills"].append({
+        "fill_id": "f-rest-2",
+        "order_id": "ord-rest",
+        "instrument_id": "ev-yes",
+        "sequence": 5,
+        "qty": 1,
+        "price_minor": 400000,
+        "fee_minor": 0,
+        "side": "buy",
+    })
+    fixture["reported"]["positions"][0]["qty"] = 13
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_checkpointed_correction_admits_late_fill() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["instruments"].append({
+        "instrument_id": "ev-two",
+        "family": "event_contract",
+        "venue_id": "venue-event-candidate",
+        "venue_symbol": "OTHER-23DEC31",
+        "currency": "USD",
+        "unit": "contract",
+        "contract_style": "binary",
+        "outcome_side": "yes",
+        "collateral_model": "fully_collateralized",
+    })
+    fixture["orders"].append({
+        "order_id": "ord-x",
+        "instrument_id": "ev-two",
+        "family": "event",
+        "side": "buy",
+        "qty": 3,
+        "state": "trade_cancelled",
+        "terminal_sequence": 4,
+    })
+    fixture["fills"].append({
+        "fill_id": "f-late",
+        "order_id": "ord-x",
+        "instrument_id": "ev-two",
+        "sequence": 5,
+        "qty": 3,
+        "price_minor": 400000,
+        "fee_minor": 0,
+        "side": "buy",
+    })
+    fixture["journal"].append({
+        "entry_id": "j-late",
+        "sequence": 6,
+        "idempotency_key": "reserve-late-1",
+        "fill_id": "f-late",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {"account": "collateral_reserved", "side": "dr", "amount_minor": 1200000, "instrument_id": "ev-two"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 1200000, "instrument_id": "ev-two"},
+        ],
+    })
+    fixture["corrections"].append({
+        "correction_id": "c-late",
+        "admits_fill_id": "f-late",
+        "reverses_entry_id": "j-reserve",
+        "reason": "admit late fill",
+    })
+    fixture["reported"]["cash_available"] -= 1200000
+    fixture["reported"]["collateral_reserved"] += 1200000
+    fixture["reported"]["positions"].append({"instrument_id": "ev-two", "qty": 3})
+    fixture["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-late",
+        "instrument_id": "ev-two",
+        "amount_minor": 1200000,
+    })
+    assert _evaluate(fixture) == set()
+    fixture["corrections"][0]["reverses_entry_id"] = "j-ghost"
+    assert "late_fill_divergence" in _evaluate(fixture)
+
+
 def test_o3_filled_order_must_be_fully_executed() -> None:
     for name in ("equity_partial_then_dividend", "event_yes_settlement"):
         path = VALIDATOR.parent / "fixtures" / f"{name}.json"
@@ -225,8 +315,19 @@ def _resting_extension(fixture: dict) -> dict:
             {"account": "cash_available", "side": "cr", "amount_minor": 2000000, "instrument_id": "ev-two"},
         ],
     })
+    fixture["fills"].append({
+        "fill_id": "f-rest",
+        "order_id": "ord-rest",
+        "instrument_id": "ev-two",
+        "sequence": 5,
+        "qty": 5,
+        "price_minor": 400000,
+        "fee_minor": 0,
+        "side": "buy",
+    })
     fixture["reported"]["cash_available"] -= 2000000
     fixture["reported"]["collateral_reserved"] += 2000000
+    fixture["reported"]["positions"].append({"instrument_id": "ev-two", "qty": 5})
     fixture["reported"]["open_reservations"].append({
         "reservation_id": "reserve-rest",
         "instrument_id": "ev-two",

@@ -196,7 +196,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("unknown_instrument")
 
     journal_entry_ids = {entry["entry_id"] for entry in fixture["journal"]}
-    journal_entry_ids |= set(fixture["checkpoint"].get("applied_entry_ids", []))
+    checkpoint = fixture["checkpoint"]
+    journal_entry_ids |= set(checkpoint.get("applied_entry_ids", ()))
     admitted = set()
     for item in fixture["corrections"]:
         if item["reverses_entry_id"] in journal_entry_ids:
@@ -206,7 +207,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     checkpointed_fill_ids: set[str] = set()
     defect_instruments: set[str] = set()
     accepted_qty: dict[str, int] = {}
-    checkpoint = fixture["checkpoint"]
+    order_fills_total: dict[str, int] = {}
     for row in checkpoint["positions"] + checkpoint["open_reservations"]:
         if row["instrument_id"] not in known_instruments:
             failures.add("unknown_instrument")
@@ -227,6 +228,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     posted_fees: dict[str, int] = {}
     order_first_fill_seq: dict[str, int] = {}
     order_reserve_seq: dict[str, int] = {}
+    order_reserve_total: dict[str, int] = {}
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -261,6 +263,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             defect_instruments.add(fill["instrument_id"])
             continue
         accepted_qty[order["order_id"]] = filled + fill["qty"]
+        order_fills_total[order["order_id"]] = (
+            order_fills_total.get(order["order_id"], 0)
+            + fill["qty"] * fill["price_minor"]
+            + fill["fee_minor"]
+        )
         first_seq = order_first_fill_seq.get(fill["order_id"])
         if first_seq is None or fill["sequence"] < first_seq:
             order_first_fill_seq[fill["order_id"]] = fill["sequence"]
@@ -459,6 +466,14 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             elif account == "collateral_reserved":
                 collateral += amount if side == "dr" else -amount
                 collateral_delta = amount if side == "dr" else -amount
+                if (
+                    order_ref is not None
+                    and fill_ref is None
+                    and entry["reason"] == "reserve_collateral"
+                ):
+                    order_reserve_total[order_ref] = (
+                        order_reserve_total.get(order_ref, 0) + collateral_delta
+                    )
                 reserved_end[line["instrument_id"]] = (
                     reserved_end.get(line["instrument_id"], 0) + collateral_delta
                 )
@@ -507,6 +522,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("balance_mismatch")
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
+
+    if not (failures & FILL_DEFECTS):
+        for order_id, reserved in order_reserve_total.items():
+            if reserved != order_fills_total.get(order_id, 0):
+                failures.add("balance_mismatch")
 
     if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
         failures.add("fee_mismatch")

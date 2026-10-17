@@ -114,13 +114,13 @@
                 {
                     "account": "collateral_reserved",
                     "side": "dr",
-                    "amount_minor": 2000000,
+                    "amount_minor": 830000,
                     "instrument_id": "ev-yes"
                 },
                 {
                     "account": "cash_available",
                     "side": "cr",
-                    "amount_minor": 2000000,
+                    "amount_minor": 830000,
                     "instrument_id": "ev-yes"
                 }
             ]
@@ -161,8 +161,8 @@
         "open_reservations": []
     },
     "reported": {
-        "cash_available": 9993900000,
-        "collateral_reserved": 6000000,
+        "cash_available": 9995070000,
+        "collateral_reserved": 4830000,
         "positions": [
             {
                 "instrument_id": "ev-yes",
@@ -178,7 +178,7 @@
             {
                 "reservation_id": "reserve-rest",
                 "instrument_id": "ev-yes",
-                "amount_minor": 2000000
+                "amount_minor": 830000
             }
         ],
         "attribution": [

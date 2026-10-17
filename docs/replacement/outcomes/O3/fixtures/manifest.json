@@ -40,14 +40,14 @@
       "id": "event_restart_idempotent",
       "path": "fixtures/event_restart_idempotent.json",
       "role": "positive",
-      "sha256": "69f9f220b43eeab6f465354901e0c3ef1bd858385a9c8eaf163ce2854d5db411",
+      "sha256": "c818478888965b9d487d5857a66ebb6bb5f1056b74324de556042f742bb956e2",
       "expected_failure_codes": []
     },
     {
       "id": "event_void_reconciled",
       "path": "fixtures/event_void_reconciled.json",
       "role": "positive",
-      "sha256": "0b89986568f7589a8b7026315eab38e58db1ae69b13f384bb3b9c38e5ce842de",
+      "sha256": "30791c26922eaa95f3bbe9faaa957de46dd7858a82ef85f9bd99573e7a155ad8",
       "expected_failure_codes": []
     },
     {
@@ -99,7 +99,7 @@
       "id": "event_resting_order_reservation",
       "path": "fixtures/event_resting_order_reservation.json",
       "role": "positive",
-      "sha256": "f4f850dcc111e59264988eeb15093a31ef9da13d406b222cbdfe10884ca26cb2",
+      "sha256": "c822b09d5f4a7362927c928a1e8bc0ac8be1eee109943c7dfe8f01745551582e",
       "expected_failure_codes": []
     },
     {
