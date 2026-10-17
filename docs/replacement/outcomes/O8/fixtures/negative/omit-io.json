@@ -48,5 +48,9 @@
     "recovery": "required_on_run",
     "growth": "required_on_run",
     "status": "required_on_run"
+  },
+  "provider_latency": {
+    "status": "excluded_with_reason",
+    "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
   }
 }

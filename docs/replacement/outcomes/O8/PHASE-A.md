@@ -88,9 +88,9 @@ Devin's 2026-10-16 note on CSL-220 is the tier split this packet records. It is 
 
 Tier 1 does not include end-to-end I/O or helper processes. It cannot decide CSL-42.
 
-**Tier 2, defined and unmeasured.** Provider-free tracked workloads. Cadence is `unresolved_owner_lucas`. They are not per-PR. Each manifest must name the commit, host, repetitions, relative IQR, included I/O, included helper processes, and a labeled `provider_latency`. Unmeasured fields in this packet use status `required_on_run` and JSON null. That records the obligation. It is not a measured sample.
+**Tier 2, defined and unmeasured.** Provider-free tracked workloads. Cadence is `unresolved_release_owner`. They are not per-PR. Each manifest must name the commit, host, repetitions, relative IQR, included I/O, included helper processes, and a labeled `provider_latency`. Unmeasured fields in this packet use status `required_on_run` and JSON null. That records the obligation. It is not a measured sample.
 
-`provider_latency` is a required labeled field, never absent: it is either a measured value in milliseconds or `{"status": "excluded_with_reason", "reason": ...}` with a non-empty reason. Every workload in this packet is provider-free (`provider_free` is true, `network_calls` is 0), so all six record `excluded_with_reason`. A manifest that leaves the field out fails `omits provider latency` — the CSL-220 falsifier cannot be met by omission.
+`provider_latency` is a required labeled field, never absent: `{"status": "excluded_with_reason", "reason": ...}` with a non-empty reason, and that is the only accepted shape. Every benchmark is provider-free (`provider_free` is true, `network_calls` is 0), so no provider latency exists to measure — a numeric value would be fictitious and the schema and validator reject it. All six workloads record `excluded_with_reason`. A manifest that leaves the field out, or writes a number, fails `omits provider latency` — the CSL-220 falsifier cannot be met by omission or invention.
 
 | Workload | What a later run has to include |
 | --- | --- |
@@ -105,6 +105,8 @@ The observation vector, required on a run and null until then: p50, p95, p99, th
 
 **Tier 3, the only CSL-42 evidence.** A tier-3 manifest may set `csl42_evidence` only when the tier is 3, floors are attached, variance status is `measured`, repetitions are an integer of at least 2, and relative IQR is a number. This packet's tier-3 result count is 0. No workload in the fixture claims that evidence.
 
+The evidence binds further. Attached floors are the full eleven-row registry, validator-checked — `floors_attached` is not a bare boolean, so a manifest that asserts the flag without the registry fails `attached floors invalid`. The baseline is bound to retained outputs: `baseline.outputs` names a repo path and its sha256, and the validator hashes the file, so a baseline that names only caller-supplied identifiers fails `tier-3 baseline lacks retained outputs`. A measured variance requires a measured observation — measured helper processes and finite, non-negative metrics — else `tier-3 evidence lacks measured observation`; percentiles must order p50 ≤ p95 ≤ p99, else `impossible measured observation`. Non-finite JSON constants (`NaN`, `Infinity`) are rejected at parse, and non-finite or negative measured values fail validation.
+
 A measured run also records host status `measured` and I/O status `measured`. pyperf's own guidance is the reason the protocol keeps repetitions, worker processes, and a robust spread: [Run a benchmark](https://pyperf.readthedocs.io/en/stable/run_benchmark.html) spawns worker processes sequentially, discards warmup, and warns when the maximum sits far from the mean; [Analyze benchmark results](https://pyperf.readthedocs.io/en/latest/analyze.html) reports quartiles and recommends median and median absolute deviation when outliers remain. This repository already uses median and relative IQR in `app/benchmarks/compare.py`. The protocol keeps that spread. It does not add pyperf to CI.
 
 ## Migration, rollback, and mixed-version recovery
@@ -115,7 +117,7 @@ Seams, in either order once their upstream contracts exist: the six tier-2 workl
 
 Shared stores during overlap: raw bytes and the hash-chain audit. Both sides read those stores. An anti-corruption translation may sit between legacy and new calls. It may not widen authority or change financial, failure, or recovery semantics. Microsoft's notes that apply here: shared data stores have to coexist, the façade must not become a bottleneck or a single point of failure, and cross-calls need an anti-corruption layer so the new side does not inherit legacy semantics by accident.
 
-Rollback: while the legacy objects for a seam still exist, the façade routes that seam back to legacy. Raw bytes and the hash chain stay the system of record. Decommission requires a human receipt after reconciliation. Removing legacy objects is the step that makes rollback expensive, so this packet does not take it.
+Rollback: while the legacy objects for a seam still exist, the façade routes that seam back to legacy. Raw bytes and the hash chain stay the system of record. Decommission requires a human receipt after reconciliation. Removing legacy objects is the step that makes rollback expensive, so this packet does not take it. The same reversibility sits in [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html) — Fowler's expand-and-contract: each of the expand, migrate, and contract phases is its own small, independently releasable step, so the old version stays routable until every caller has moved. That is why the validator checks `route_back_to_legacy` per seam rather than trusting a plan note.
 
 Mixed-version recovery: a generation tag is required once a seam is introduced. Recovery replays from raw inputs and the hash-chain audit. If generations disagree, the result is `watch_only`. `trade_on_disagreement` is false.
 
@@ -145,6 +147,12 @@ Checked-in fixtures under `fixtures/negative/`. Each one must fail. The validato
 | `floor-enforced-by-benchmark.json` | candidate missing floors |
 | `seam-missing-rollback.json` | migration cannot roll back |
 | `candidate-missing-smallest-experiment.json` | candidate missing smallest experiment |
+| `missing-measured-observation.json` | tier-3 evidence lacks measured observation |
+| `impossible-observation.json` | impossible measured observation |
+| `baseline-unbound-outputs.json` | tier-3 baseline lacks retained outputs |
+| `attached-floors-invalid.json` | attached floors invalid |
+| `experiment-seam-mismatch.json` | candidate experiment does not exercise its seam |
+| `non-finite-literal.json` | unreadable JSON |
 
 A packet whose maturity is anything other than `researched` is rejected. Promoting this artifact to `contract_frozen` requires a human receipt, not an edit.
 
@@ -152,10 +160,11 @@ A packet whose maturity is anything other than `researched` is rejected. Promoti
 
 Embedded Parallel searches run on Dan's box on 2026-10-17. The pages below were retrieved and the protocol follows them.
 
-Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e091750abdb2b9d763`, `search_b6290caf1f31d7a8a710db6b71f76c7e`, `search_86967d451c3ce6e3c60de7a6868def47`.
+Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e091750abdb2b9d763`, `search_b6290caf1f31d7a8a710db6b71f76c7e`, `search_86967d451c3ce6e3c60de7a6868def47`, `search_4b647f1aa2547fad5b4062554a71c354`, `search_41e4072e4bc070139371640730ea2eb3`.
 
 - [Strangler Fig pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig) — Microsoft Azure Architecture Center. Incremental façade, shared-store coexistence, anti-corruption layer, rollback while legacy objects remain.
 - [Strangler fig migration guide](https://adaptive-enforcement-lab.com/patterns/architecture/strangler-fig/migration-guide/) — Adaptive Enforcement Lab (`search_86967d451c3ce6e3c60de7a6868def47`). Every seam needs a defined rollback path and mixed-version coexistence; the basis for the required per-candidate `seam` and `rollback` fields and the `seam-missing-rollback` negative control.
+- [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html) — Martin Fowler's bliki (`search_41e4072e4bc070139371640730ea2eb3`). Expand-and-contract: old and new versions coexist through expand, migrate, and contract phases, each independently releasable, so rollback stays available while a seam is exercised. Supports the per-seam rollback control and the `seam-missing-rollback` negative control.
 - [Run a benchmark](https://pyperf.readthedocs.io/en/stable/run_benchmark.html) — pyperf worker processes, warmup, and instability warnings. Python 3.9 or newer.
 - [Analyze benchmark results](https://pyperf.readthedocs.io/en/latest/analyze.html) — quartiles, median, and median absolute deviation; `compare_to` uses a two-sample t-test.
 - [psf/pyperf](https://github.com/psf/pyperf) — toolkit repository for those documents.
@@ -163,9 +172,9 @@ Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e09
 - [hyperfine](https://github.com/sharkdp/hyperfine) — command-line benchmarking tool (`search_b6290caf1f31d7a8a710db6b71f76c7e`). Warmup runs, repetition counts, and statistical outlier handling; not installed by this packet.
 - [Strangler fig, Python to Rust](https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026) — Enersys, 18 Apr 2026. Case-study argument for incremental cuts. Other companies' speed claims are not local evidence.
 
-## Unresolved decisions (owner: Lucas)
+## Unresolved decisions (owner: release owner)
 
-None of these are decided in this packet. Each stays `unresolved` with owner Lucas.
+None of these are decided in this packet. Each stays `unresolved` with owner `release owner` — the role named the same way as the CSL-221 evidence slice, not a person.
 
 - **Spend.** Whether tier-2 workloads run on dispatch, `ci:full`, or nightly Blacksmith, and whether any host is purchased. This repeats Devin's open cadence and budget questions on CSL-220. No cadence and no spend are added here.
 - **Credentials.** No credential is requested or stored. Venue and provider credentials remain an owner decision.

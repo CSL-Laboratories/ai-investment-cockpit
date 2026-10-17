@@ -158,7 +158,7 @@
           "required": ["provider_free", "cadence", "per_pr", "workloads"],
           "properties": {
             "provider_free": {"const": true},
-            "cadence": {"const": "unresolved_owner_lucas"},
+            "cadence": {"const": "unresolved_release_owner"},
             "per_pr": {"const": false},
             "workloads": {
               "type": "array",
@@ -270,7 +270,7 @@
           "class": {
             "enum": ["spend", "credentials", "tax_legal", "architecture", "release", "live"]
           },
-          "owner": {"const": "Lucas"},
+          "owner": {"const": "release owner"},
           "status": {"const": "unresolved"},
           "question": {"type": "string", "minLength": 1}
         }

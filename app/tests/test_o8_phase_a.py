@@ -18,7 +18,13 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: floor-enforced-by-benchmark: candidate missing floors",
     "O8 negative control failed as designed: seam-missing-rollback: migration cannot roll back",
     "O8 negative control failed as designed: candidate-missing-smallest-experiment: candidate missing smallest experiment",
-    "O8 negative controls: 8 failed as designed",
+    "O8 negative control failed as designed: missing-measured-observation: tier-3 evidence lacks measured observation",
+    "O8 negative control failed as designed: impossible-observation: impossible measured observation",
+    "O8 negative control failed as designed: baseline-unbound-outputs: tier-3 baseline lacks retained outputs",
+    "O8 negative control failed as designed: attached-floors-invalid: attached floors invalid",
+    "O8 negative control failed as designed: experiment-seam-mismatch: candidate experiment does not exercise its seam",
+    "O8 negative control failed as designed: non-finite-literal: unreadable JSON",
+    "O8 negative controls: 14 failed as designed",
 )
 
 
@@ -66,10 +72,10 @@ def test_o8_phase_a_rejects_a_promoted_maturity(tmp_path: Path) -> None:
     assert "fixture accepted" not in result.stdout
 
 
-def test_o8_contract_doc_keeps_researched_maturity_and_lucas_decisions() -> None:
+def test_o8_contract_doc_keeps_researched_maturity_and_owner_role_decisions() -> None:
     text = (ROOT / "docs/replacement/outcomes/O8/PHASE-A.md").read_text(encoding="utf-8")
     assert "Maturity claimed: `researched`." in text
-    assert "## Unresolved decisions (owner: Lucas)" in text
+    assert "## Unresolved decisions (owner: release owner)" in text
     assert "## Research (Parallel)" in text
     for url in (
         "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig",
@@ -77,6 +83,7 @@ def test_o8_contract_doc_keeps_researched_maturity_and_lucas_decisions() -> None
         "https://pyperf.readthedocs.io/en/latest/analyze.html",
         "https://github.com/psf/pyperf",
         "https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026",
+        "https://martinfowler.com/bliki/ParallelChange.html",
     ):
         assert url in text
 

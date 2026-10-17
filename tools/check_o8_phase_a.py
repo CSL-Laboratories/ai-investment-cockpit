@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -118,6 +119,12 @@ NEGATIVES = (
         "candidate",
         "candidate missing smallest experiment",
     ),
+    ("missing-measured-observation.json", "benchmark", "tier-3 evidence lacks measured observation"),
+    ("impossible-observation.json", "benchmark", "impossible measured observation"),
+    ("baseline-unbound-outputs.json", "benchmark", "tier-3 baseline lacks retained outputs"),
+    ("attached-floors-invalid.json", "benchmark", "attached floors invalid"),
+    ("experiment-seam-mismatch.json", "candidate", "candidate experiment does not exercise its seam"),
+    ("non-finite-literal.json", "benchmark", "unreadable JSON"),
 )
 
 
@@ -127,10 +134,14 @@ class O8Error(ValueError):
         super().__init__("; ".join(reasons))
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant: {value}")
+
+
 def _load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_json_constant)
+    except (OSError, UnicodeError, ValueError) as exc:
         raise O8Error([f"unreadable JSON {path}: {exc}"]) from exc
 
 
@@ -206,6 +217,42 @@ def benchmark_reasons(document: Any) -> list[str]:
             or baseline.get("fixture_sha256") != document.get("fixture_sha256")
         ):
             reasons.append("tier-3 evidence lacks a matched baseline")
+        outputs = baseline.get("outputs") if isinstance(baseline, dict) else None
+        outputs_ok = False
+        if isinstance(outputs, dict):
+            outputs_path = outputs.get("path")
+            outputs_digest = outputs.get("sha256")
+            if (
+                isinstance(outputs_path, str)
+                and isinstance(outputs_digest, str)
+                and not outputs_path.startswith(("http://", "https://"))
+            ):
+                retained = ROOT / outputs_path
+                if retained.is_file() and hashlib.sha256(retained.read_bytes()).hexdigest() == outputs_digest:
+                    outputs_ok = True
+        if not outputs_ok:
+            reasons.append("tier-3 baseline lacks retained outputs")
+    if document.get("floors_attached") is True:
+        _check_floors(document.get("floors"), reasons, "attached floors invalid")
+    if isinstance(variance, dict) and variance.get("status") == "measured":
+        observation = document.get("observation")
+        observation = observation if isinstance(observation, dict) else {}
+        metrics_ok = all(
+            isinstance(observation.get(key), (int, float))
+            and not isinstance(observation.get(key), bool)
+            and math.isfinite(observation.get(key))
+            and observation.get(key) >= 0
+            for key in ("p50", "p95", "p99", "throughput", "cpu", "io")
+        ) and isinstance(observation.get("rss_bytes"), int) and not isinstance(
+            observation.get("rss_bytes"), bool
+        ) and observation.get("rss_bytes") >= 0
+        helpers_measured = isinstance(helpers, list) and all(
+            isinstance(item, dict) and item.get("status") == "measured" for item in helpers
+        )
+        if observation.get("status") != "measured" or not metrics_ok or not helpers_measured:
+            reasons.append("tier-3 evidence lacks measured observation")
+        elif not (observation["p50"] <= observation["p95"] <= observation["p99"]):
+            reasons.append("impossible measured observation")
     reasons.extend(_schema_errors(document, BENCHMARK_SCHEMA))
     return reasons
 
@@ -270,16 +317,16 @@ def _require_local(reasons: list[str], locator: str, label: str) -> None:
         reasons.append(f"missing {label}: {locator}")
 
 
-def _check_floors(floors: Any, reasons: list[str]) -> None:
+def _check_floors(floors: Any, reasons: list[str], label: str = "candidate missing floors") -> None:
     if _floor_ids(floors) != list(FLOOR_IDS):
-        reasons.append("candidate missing floors")
+        reasons.append(label)
         return
     for floor in floors:
         if not isinstance(floor, dict):
-            reasons.append("candidate missing floors")
+            reasons.append(label)
             return
         if floor.get("enforced_by") != "tests" or floor.get("benchmark_eligible") is not False:
-            reasons.append("candidate missing floors")
+            reasons.append(label)
             return
         expected = FLOOR_LOCATORS.get(floor.get("id"))
         if floor.get("test_locator") != expected:
@@ -357,7 +404,7 @@ def validate_packet(document: Any) -> None:
     if tuple(classes) != DECISION_CLASSES:
         reasons.append("unresolved decision classes drifted")
     for item in decisions:
-        if isinstance(item, dict) and (item.get("owner") != "Lucas" or item.get("status") != "unresolved"):
+        if isinstance(item, dict) and (item.get("owner") != "release owner" or item.get("status") != "unresolved"):
             reasons.append("a human decision was resolved in the packet")
     if document.get("source_commit") != INSPECTION_COMMIT or document.get("registry_baseline") != REGISTRY_BASELINE:
         reasons.append("source identity drifted")
@@ -371,9 +418,12 @@ def run_negative_controls() -> list[str]:
     lines = []
     for name, kind, expected in NEGATIVES:
         path = NEGATIVE_DIR / name
-        document = _load_json(path)
-        reasons = benchmark_reasons(document) if kind == "benchmark" else candidate_reasons(document)
-        if expected not in reasons:
+        try:
+            document = _load_json(path)
+            reasons = benchmark_reasons(document) if kind == "benchmark" else candidate_reasons(document)
+        except O8Error as exc:
+            reasons = exc.reasons
+        if not any(expected in reason for reason in reasons):
             detail = ", ".join(reasons) if reasons else "accepted"
             raise O8Error([f"negative control {name} did not fail as designed ({detail})"])
         lines.append(f"O8 negative control failed as designed: {path.stem}: {expected}")

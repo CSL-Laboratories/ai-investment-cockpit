@@ -550,7 +550,7 @@
     },
     "tier2": {
       "provider_free": true,
-      "cadence": "unresolved_owner_lucas",
+      "cadence": "unresolved_release_owner",
       "per_pr": false,
       "workloads": [
         "ingest_to_raw_store",
@@ -1087,42 +1087,42 @@
     {
       "id": "tier2-cadence-and-host",
       "class": "spend",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "Whether tier-2 tracked workloads run on dispatch, ci:full, or nightly Blacksmith, and whether any host is purchased. This packet adds no cadence and no spend."
     },
     {
       "id": "credentials",
       "class": "credentials",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "No credential is requested or stored. Venue and provider credentials remain an owner decision outside this packet."
     },
     {
       "id": "tax-legal",
       "class": "tax_legal",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "Tax and legal eligibility for a US individual across securities and event contracts remain unresolved. This packet does not decide them."
     },
     {
       "id": "language-storage-topology",
       "class": "architecture",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "Language, storage, topology, and any CSL-42 rewrite stay a phase B human decision after matched tier-3 evidence. This packet selects none."
     },
     {
       "id": "release-scope",
       "class": "release",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "Release scope and qualification remain with O9 and a human decision. This packet claims no release."
     },
     {
       "id": "live-authority",
       "class": "live",
-      "owner": "Lucas",
+      "owner": "release owner",
       "status": "unresolved",
       "question": "Live trading and bounded-direct authority stay closed. This packet grants no live effect."
     }

@@ -40,16 +40,56 @@
     "live_orders": {"const": false},
     "csl42_evidence": {"type": "boolean"},
     "floors_attached": {"type": "boolean"},
+    "floors": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enforced_by", "benchmark_eligible", "test_locator"],
+        "properties": {
+          "id": {
+            "enum": [
+              "invariant_1_single_order_path",
+              "invariant_2_decision_pinned_in_auto_modes",
+              "invariant_3_schema_validate_model_output",
+              "invariant_4_secrets_os_credential_store",
+              "invariant_5_risk_pure",
+              "invariant_6_human_gate_hash_chain_audit",
+              "invariant_7_fail_closed",
+              "invariant_8_raw_inputs_separate_from_summaries",
+              "invariant_9_post_pdt",
+              "fail_closed",
+              "hash_chain_audit"
+            ]
+          },
+          "enforced_by": {"const": "tests"},
+          "benchmark_eligible": {"const": false},
+          "test_locator": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "candidate_id": {"type": "string", "minLength": 1},
     "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "baseline": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["commit", "workload_id", "fixture_sha256"],
+      "required": ["commit", "workload_id", "fixture_sha256", "outputs"],
       "properties": {
         "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "workload_id": {"type": "string", "minLength": 1},
-        "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
       }
     },
     "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -193,18 +233,25 @@
           "observation": {
             "properties": {
               "status": {"const": "measured"},
-              "p50": {"type": "number"},
-              "p95": {"type": "number"},
-              "p99": {"type": "number"},
-              "throughput": {"type": "number"},
-              "rss_bytes": {"type": "integer"},
-              "cpu": {"type": "number"},
-              "io": {"type": "number"}
+              "p50": {"type": "number", "minimum": 0},
+              "p95": {"type": "number", "minimum": 0},
+              "p99": {"type": "number", "minimum": 0},
+              "throughput": {"type": "number", "minimum": 0},
+              "rss_bytes": {"type": "integer", "minimum": 0},
+              "cpu": {"type": "number", "minimum": 0},
+              "io": {"type": "number", "minimum": 0}
             },
             "required": ["status"]
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"floors_attached": {"const": true}},
+        "required": ["floors_attached"]
+      },
+      "then": {"required": ["floors"]}
     }
   ]
 }
