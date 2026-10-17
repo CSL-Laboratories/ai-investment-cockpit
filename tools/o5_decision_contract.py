@@ -548,6 +548,11 @@ def _admit_request(document: dict[str, Any], ctx: Context) -> Admission:
         return _refuse("spend_authorized", "a decision request authorizes no spend")
     if set(document.get("disclosure_classes") or []):
         return _refuse("disclosure_forbidden", "no disclosure class is admitted")
+    if document.get("evidence_class") in UNSUPPORTED_EVIDENCE:
+        return _refuse(
+            "installed_route_not_qualified",
+            "higher-tier evidence is not retained in this researched packet",
+        )
     return _admit()
 
 
@@ -604,6 +609,11 @@ def _admit_refusal(document: dict[str, Any], ctx: Context) -> Admission:
         return _refuse("fallback_widens_budget", "a refusal cannot change the budget")
     if document.get("disclosure_classes"):
         return _refuse("fallback_widens_disclosure", "a refusal cannot add disclosure")
+    if document.get("evidence_class") in UNSUPPORTED_EVIDENCE:
+        return _refuse(
+            "installed_route_not_qualified",
+            "higher-tier evidence is not retained in this researched packet",
+        )
     return _admit()
 
 
