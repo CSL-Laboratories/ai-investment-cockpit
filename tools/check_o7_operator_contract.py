@@ -57,13 +57,24 @@ REQUIRED_CONTROLS = (
 )
 COMMAND_SCHEMA_CONTROLS = frozenset({"unconfirmed_intervention", "unscoped_intervention"})
 REQUIRED_PRIVILEGED = {
-    "order_path": "privileged_order_bypass",
-    "enforcement_route": "privileged_order_bypass",
-    "command": "privileged_order_bypass",
-    "authority_effect": "authority_effect_mismatch",
-    "order_submitted": "privileged_order_bypass",
-    "forbidden_key": "privileged_order_bypass",
+    "order_path": ("privileged_order_bypass", "order_path", "surface_private", "none"),
+    "enforcement_route": (
+        "privileged_order_bypass",
+        "enforcement_route",
+        "broker_direct",
+        SOLE_ROUTE,
+    ),
+    "command": (
+        "privileged_order_bypass",
+        "command",
+        "operator.orders.submit",
+        "operator.positions.inspect",
+    ),
+    "authority_effect": ("authority_effect_mismatch", "authority_effect", "direct_order", "none"),
+    "order_submitted": ("privileged_order_bypass", "result.order_submitted", True, None),
+    "forbidden_key": ("privileged_order_bypass", "bypass_gateway", True, None),
 }
+PRIVILEGED_BASELINE_ID = "req_positions"
 SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only"} - COMMAND_SCHEMA_CONTROLS
 CONTROL_REASONS = {
     "gui_cli_semantic_divergence": "semantic_projection_mismatch",
@@ -707,7 +718,7 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             (
                 item
                 for item in responses
-                if isinstance(item, dict) and item.get("request_id") == "req_positions"
+                if isinstance(item, dict) and item.get("request_id") == PRIVILEGED_BASELINE_ID
             ),
             None,
         ) if isinstance(responses, list) else None
@@ -854,17 +865,30 @@ def _check_privileged(
     safeguards = document.get("safeguards")
     if not isinstance(safeguards, list) or not isinstance(baseline, dict):
         return _control_line(control, "WRONG_FAILURE")
+    if (
+        document.get("baseline_request_id") != PRIVILEGED_BASELINE_ID
+        or baseline.get("request_id") != PRIVILEGED_BASELINE_ID
+    ):
+        return _control_line(control, "WRONG_FAILURE")
     by_name: dict[str, dict[str, Any]] = {}
     for item in safeguards:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
             return _control_line(control, "WRONG_FAILURE")
+        if item["name"] in by_name:
+            return _control_line(control, "WRONG_FAILURE")
         by_name[item["name"]] = item
     if set(by_name) != set(REQUIRED_PRIVILEGED):
         return _control_line(control, "WRONG_FAILURE")
-    for name, expected in REQUIRED_PRIVILEGED.items():
+    for name, (expected, pinned_field, pinned_value, pinned_repair) in REQUIRED_PRIVILEGED.items():
         item = by_name[name]
         field = item.get("field")
-        if not isinstance(field, str) or not field:
+        if (
+            field != pinned_field
+            or item.get("value") != pinned_value
+            or type(item.get("value")) is not type(pinned_value)
+            or item.get("repair") != pinned_repair
+            or type(item.get("repair")) is not type(pinned_repair)
+        ):
             return _control_line(control, "WRONG_FAILURE")
         broken = json.loads(json.dumps(baseline))
         repaired = json.loads(json.dumps(baseline))
