@@ -137,7 +137,23 @@ class PriceLevel:
 
     price_ticks: int
     orders: dict[str, RestingOrder] = field(default_factory=dict)
-    total_qty: int = 0
+    _total_qty: int = field(default=0, repr=False)
+    # The book that owns this level, so a direct total edit drops its snapshot.
+    # Integrity tests write ``total_qty`` on purpose; that write changes depth.
+    _book: object | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def total_qty(self) -> int:
+        return self._total_qty
+
+    @total_qty.setter
+    def total_qty(self, value: int) -> None:
+        if value == self._total_qty:
+            return
+        self._total_qty = value
+        book = self._book
+        if book is not None:
+            book._snap = None
 
     def __len__(self) -> int:
         return len(self.orders)
@@ -317,7 +333,7 @@ class LimitOrderBook:
         levels, prices = self._side_maps(side)
         level = levels.get(price_ticks)
         if level is None:
-            level = PriceLevel(price_ticks=price_ticks)
+            level = PriceLevel(price_ticks=price_ticks, _book=self)
             levels[price_ticks] = level
             bisect.insort(prices, price_ticks)
         return level
@@ -358,7 +374,6 @@ class LimitOrderBook:
         """
         if order_id in self._index:
             raise ValueError(f"duplicate order_id {order_id!r} already resting in the book")
-        self._snap = None
         level = self._level_for_write(side, price_ticks)
         order = RestingOrder(
             order_id=order_id,
@@ -370,6 +385,7 @@ class LimitOrderBook:
             owner=owner,
             qty_ahead_at_entry=level.total_qty,
         )
+        self._snap = None
         level.append(order)
         self._index[order_id] = order
         self._last_seq = max(self._last_seq, seq)
@@ -397,9 +413,15 @@ class LimitOrderBook:
         order = self._index.get(order_id)
         if order is None:
             raise OrderNotFound(order_id)
-        self._snap = None
         levels, _ = self._side_maps(order.side)
         level = levels[order.price_ticks]
+        if qty <= 0:
+            raise ValueError(f"reduce qty must be positive, got {qty}")
+        if qty > order.qty:
+            raise ValueError(
+                f"cannot reduce order {order_id!r} by {qty}: only {order.qty} remaining"
+            )
+        self._snap = None
         level.reduce(order_id, qty)
         if order.qty == 0:
             del self._index[order_id]
@@ -429,11 +451,11 @@ class LimitOrderBook:
         existing = self._index.get(order_id)
         if existing is None:
             raise OrderNotFound(order_id)
-        self._snap = None
         price = existing.price_ticks if new_price_ticks is None else new_price_ticks
         qty = existing.qty if new_qty is None else new_qty
         if qty <= 0:
             raise ValueError(f"replace qty must be positive, got {qty}")
+        self._snap = None
         side, owner = existing.side, existing.owner
         self.cancel(order_id)
         return self.add(
