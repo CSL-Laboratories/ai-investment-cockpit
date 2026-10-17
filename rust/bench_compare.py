@@ -214,12 +214,18 @@ def _rate_deque(guards, repeats: int) -> None:
         rate_ok(1_000 + ts)
 
 
-# A full window of 500 stamps spaced 1ns apart, measured at ts=501 so each
-# check expires exactly one stamp and admits the new one. The other row uses
-# order_rate_window_ns=10**18, so nothing there ever expires.
+# 500 consecutive stamps, and a window one shorter than that span. The
+# opening edge is exclusive, so a window equal to the cap keeps the oldest
+# stamp and denies every 501st check. Each timed check therefore drops
+# exactly one stamp and admits the new one. The full-window row uses
+# 10**18 and never expires.
 _RATE_EXPIRE_CAP = 500
-_RATE_EXPIRE_WINDOW = 500
-_RATE_EXPIRE_TS0 = 501
+_RATE_EXPIRE_WINDOW = _RATE_EXPIRE_CAP - 1
+_RATE_EXPIRE_TS0 = _RATE_EXPIRE_CAP + 1
+
+
+def _expiring_seed() -> range:
+    return range(1, _RATE_EXPIRE_CAP + 1)
 
 
 def _expiring_guards():
@@ -229,21 +235,22 @@ def _expiring_guards():
         max_orders_per_window=_RATE_EXPIRE_CAP,
         order_rate_window_ns=_RATE_EXPIRE_WINDOW,
     ))
-    guards._recent_orders.extend(range(_RATE_EXPIRE_CAP))
+    guards._recent_orders.extend(_expiring_seed())
     return guards
 
 
-def _require_expiring_drop() -> None:
-    """Fail the bench if this row is another full-window deny in disguise."""
+def _require_expiring_drop(repeats: int) -> None:
+    """Fail unless every timed check drops the oldest stamp and admits."""
     guards = _expiring_guards()
-    oldest = guards._recent_orders[0]
-    admitted = guards._rate_ok(_RATE_EXPIRE_TS0)
-    if not admitted or guards._recent_orders[0] == oldest:
-        sys.exit("expiring order-rate bench did not drop the oldest stamp")
+    for i in range(repeats):
+        oldest = guards._recent_orders[0]
+        admitted = guards._rate_ok(_RATE_EXPIRE_TS0 + i)
+        if not admitted or guards._recent_orders[0] == oldest:
+            sys.exit(f"expiring order-rate bench did not drop the oldest stamp at check {i}")
 
 
 def _rate_copy_expiring(repeats: int) -> None:
-    recent = list(range(_RATE_EXPIRE_CAP))
+    recent = list(_expiring_seed())
     window = _RATE_EXPIRE_WINDOW
     cap = _RATE_EXPIRE_CAP
     for i in range(repeats):
@@ -258,7 +265,7 @@ def _rate_copy_expiring(repeats: int) -> None:
 def _rate_deque_expiring(guards, repeats: int) -> None:
     recent = guards._recent_orders
     recent.clear()
-    recent.extend(range(_RATE_EXPIRE_CAP))
+    recent.extend(_expiring_seed())
     guards._rate_ordered = True
     rate_ok = guards._rate_ok
     for i in range(repeats):
@@ -357,7 +364,7 @@ def main() -> None:
     _rate_deque(guards, 4)
     copy_time = _time(lambda: _rate_copy(list(range(500)), rate_n))
     deque_time = _time(lambda: _rate_deque(guards, rate_n))
-    _require_expiring_drop()
+    _require_expiring_drop(rate_n)
     expiring = _expiring_guards()
     _rate_copy_expiring(4)
     _rate_deque_expiring(expiring, 4)
