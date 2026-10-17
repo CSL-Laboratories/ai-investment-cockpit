@@ -664,6 +664,16 @@ def test_token_bucket_nan_matches_python_max_and_min():
 
 
 @_needs_rust
+def test_the_dedup_replay_binding_points_at_the_python_wrapper():
+    """The extension takes raw strings. Surrogate escaping lives in the wrapper."""
+    import cockpit_quant
+
+    doc = cockpit_quant.dedup_replay.__doc__ or ""
+    assert "ingest.dedup.dedup_replay" in doc
+    assert "surrogate" in doc
+
+
+@_needs_rust
 def test_a_lone_surrogate_shares_one_lru_with_utf8_keys(monkeypatch):
     import cockpit_quant
 

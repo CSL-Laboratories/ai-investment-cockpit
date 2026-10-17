@@ -555,6 +555,11 @@ fn token_bucket_allow_py(
     token_bucket_allow(rate, capacity, tokens, last, now)
 }
 
+/// Replay `("a" | "d", key)` pairs. Keys are raw UTF-8 strings.
+///
+/// A lone surrogate cannot be passed in, and this function does not escape
+/// one. Callers use `ingest.dedup.dedup_replay`, which catches that UTF-8
+/// rejection, escapes the script, and retries. A direct call skips that guard.
 #[pyfunction]
 fn dedup_replay(capacity: i64, ops: Vec<(String, String)>) -> PyResult<Vec<bool>> {
     let mut seen = Dedup::new(capacity);
