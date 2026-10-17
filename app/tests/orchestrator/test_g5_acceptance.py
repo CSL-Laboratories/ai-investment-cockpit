@@ -369,6 +369,8 @@ def test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm(st):
     assert_execution_runtime(Mode.auto_full, "claude")  # claude allowed
     with pytest.raises(ExecutionRuntimeError):
         assert_execution_runtime(Mode.review_live, "codex")  # live remains Claude-only
+    with pytest.raises(ExecutionRuntimeError):
+        assert_execution_runtime(Mode.auto_full, "jev")
 
 
 def test_g5_3_codex_configuration_cannot_enter_review_live(st):
