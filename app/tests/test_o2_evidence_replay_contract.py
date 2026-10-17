@@ -118,6 +118,34 @@ def test_same_key_independent_splits_are_both_required_and_rejected() -> None:
         module.validate_records(bundle)
 
 
+def test_listing_change_drops_the_revoked_split() -> None:
+    module = _load_validator()
+    documents = {rel: json.loads((O2 / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR}
+    bundle = module.Bundle(documents)
+    bundle.identities["idn-eq-other"] = {
+        "identity_id": "idn-eq-other",
+        "market_family": "equity",
+        "identity_version": 1,
+        "equity": {"listing_key": "us-equity:cik:0000000002:class:common"},
+    }
+    correction = bundle.records["raw-eq-split-corr"]
+    correction["payload"] = dict(correction["payload"])
+    correction["payload"]["listing_identity_before"] = "idn-eq-other"
+    correction["payload"]["listing_identity_after"] = "idn-eq-other"
+    correction["raw_sha256"] = module.payload_sha256(correction["payload"])
+    decision = module.parse_time("2024-08-11T00:00:00Z")
+    assert module.required_corporate_actions(bundle, "idn-eq-v1", decision) == set()
+    moved = {(item[1], item[4]) for item in module.required_corporate_actions(bundle, "idn-eq-other", decision)}
+    assert moved == {(3, "raw-eq-split-corr")}
+    observation = {
+        "market_family": "equity",
+        "identity_id": "idn-eq-v1",
+        "natural_key": "sec:fact:0000000001:revenue:fy2023",
+        "corporate_actions": [],
+    }
+    assert module.semantic_codes(bundle, observation, decision) == []
+
+
 def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
     module = _load_validator()
     copy = tmp_path / "O2"

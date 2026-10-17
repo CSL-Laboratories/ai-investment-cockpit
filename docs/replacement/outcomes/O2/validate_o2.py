@@ -208,19 +208,23 @@ def _chain_leaves(records: list[dict]) -> list[dict]:
 
 
 def required_corporate_actions(bundle: Bundle, identity_id: str, decision: datetime) -> set[tuple]:
-    """Effective action of every visible chain. A superseded ratio is not required."""
+    """Effective action of every visible chain. Listing is judged on the leaf only."""
     listing = _listing_key(bundle.identities, identity_id)
     if listing is None:
         return set()
     grouped: dict[str, list[dict]] = {}
     for record in bundle.records.values():
-        if parse_time(record["accepted_at"]) > decision or not _action_applies(bundle, record, listing):
+        payload = record["payload"]
+        if payload.get("kind") != "corporate_action" or record["duplicate_of"] is not None:
+            continue
+        if parse_time(record["accepted_at"]) > decision:
             continue
         grouped.setdefault(record["natural_key"], []).append(record)
     found = set()
     for group in grouped.values():
         for record in _chain_leaves(group):
-            found.add(_action_tuple(record))
+            if _action_applies(bundle, record, listing):
+                found.add(_action_tuple(record))
     return found
 
 
