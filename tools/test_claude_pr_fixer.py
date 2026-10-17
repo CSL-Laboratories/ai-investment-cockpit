@@ -791,9 +791,9 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("prompt: |", body, job)
             self.assertIn("commit SHA", body, job)
             self.assertIn("do NOT resolve the thread", body, job)
-            self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
+            self.assertIn("pre-push model-api -- reply COMMENT_ID BODY_FILE", body, job)
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
-            self.assertIn("Bash(gh api repos/*/pulls/*/comments/*/replies:*)", allow, job)
+            self.assertIn("Bash(python3 ${{ runner.temp }}/claude-fixer-guard/pre-push model-api --:*)", allow, job)
             self.assertNotIn("resolveReviewThread", allow, job)
             self.assertNotIn("fix or a rationale", body, job)
             self.assertIn("do NOT push", body, job)

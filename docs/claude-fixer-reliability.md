@@ -31,7 +31,7 @@ budgets report unverified. Mention runs without captured context say not
 applicable. Results describe the observed context, not an atomic current-thread
 decision; future runs still recheck resolved/outdated findings and later replies.
 
-An `always()` step records a terminal audit after model failure, denied commands,
+A `!cancelled()` step records a terminal audit after model failure, denied commands,
 turn exhaustion or missing execution output. It independently checks the guarded
 candidate's remote ancestry and posts a PR notice. If the comment API fails,
 the job summary retains the audit and the step fails rather than claiming a
@@ -120,3 +120,21 @@ invocation. A missing guarded attempt remains unverified; neither local hook
 configuration nor the shared runner identity is a hostile-code boundary.
 This change does not alter checkout credential wiring or promise resistance
 to code that changes hooks or uses the existing runner credential directly.
+
+## Least-privilege API follow-up
+
+The model no longer receives generic `gh api` access: raw API commands are
+explicitly denied. The protected workflow helper exposes fixed current-PR
+reads (including a fixed paginated thread-state query), issue comments and
+review replies. It accepts no arbitrary endpoint, HTTP method, GraphQL query
+or mutation, so ref create/update/delete cannot bypass the push guard through
+that tool. Comment data comes only from regular `.claude-fixer-replies/NAME.txt`
+files under the checkout; traversal, absolute paths and symlinks are rejected.
+These files must not be committed. The helper uses the existing credential.
+
+The push hook also validates Git's actual remote URL against this repository's
+GitHub URL. Offline tests cover real delete records, empty input, tags, foreign
+URLs, fixed API operations and forbidden ref mutations. The terminal step runs
+after model success/failure but honors explicit workflow cancellation; runner
+loss and cancellation remain delivery limitations. Existing same-user shell
+execution is still outside the hook's isolation guarantee.
