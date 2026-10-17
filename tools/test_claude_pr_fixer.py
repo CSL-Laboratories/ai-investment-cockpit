@@ -791,10 +791,18 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("prompt: |", body, job)
             self.assertIn("commit SHA", body, job)
             self.assertIn("do NOT resolve the thread", body, job)
+            self.assertIn("citing the fix SHA", body, job)
+            self.assertIn("CSL-89", body, job)
             self.assertIn("gh api repos/REPO/pulls/PR/comments/COMMENT_ID/replies", body, job)
+            self.assertIn("resolveReviewThread", body, job)
+            self.assertIn("Do not call gh api graphql except resolveReviewThread", body, job)
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            deny = body.split("--disallowedTools", 1)[1]
+            self.assertIn("Bash(gh api:*)", allow, job)
             self.assertIn("Bash(gh api repos/*/pulls/*/comments/*/replies:*)", allow, job)
-            self.assertNotIn("resolveReviewThread", allow, job)
+            self.assertIn("Bash(gh api graphql:*resolveReviewThread*)", allow, job)
+            self.assertNotIn("Bash(gh api graphql:*)", deny.split("\n", 1)[0], job)
+            self.assertNotIn("Bash(gh api:*resolveReviewThread*)", deny, job)
             self.assertNotIn("fix or a rationale", body, job)
             self.assertIn("do NOT push", body, job)
             self.assertIn("Never exit without either pushing or posting that failure reply", body, job)
@@ -804,6 +812,22 @@ class FixerGateAndPromptTests(unittest.TestCase):
             self.assertIn("git commit -m with a short message", body, job)
             self.assertIn("use Edit/Write for files", body, job)
             self.assertIn("the gate result", body, job)
+
+    def test_resolve_follows_pushed_fix_only(self) -> None:
+        for job in ("claude-mention", "devin-review-fix"):
+            prompt = self._job(job).split("prompt: |", 1)[1].split("claude_args:", 1)[0]
+            after_push = prompt.find("After that push, resolve each thread whose fix was pushed")
+            resolve_call = prompt.find("gh api graphql resolveReviewThread")
+            do_not_resolve = prompt.find("do NOT resolve the thread")
+            do_not_push = prompt.find("do NOT push")
+            self.assertGreater(after_push, -1, job)
+            self.assertGreater(resolve_call, after_push, job)
+            self.assertGreater(do_not_resolve, resolve_call, job)
+            self.assertGreater(do_not_push, -1, job)
+            fail_block = prompt[do_not_push:after_push]
+            self.assertIn("Never exit without either pushing or posting that failure reply", fail_block, job)
+            self.assertNotIn("resolveReviewThread", fail_block, job)
+            self.assertNotIn("resolve each thread", fail_block, job)
 
     def test_denials_are_reported_after_each_fixer(self) -> None:
         for job in ("claude-mention", "devin-review-fix"):
