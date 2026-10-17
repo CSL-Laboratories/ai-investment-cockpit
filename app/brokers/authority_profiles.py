@@ -1424,10 +1424,11 @@ def handoff_to_gateway(
     chain_kwargs = dict(kwargs)
     if getattr(outcome, "ok", None) is not True:
         if order_ref is not None:
-            _settle_failed(
+            if _settle_failed(
                 store, gateway, reservation.client_order_id, order_ref,
                 claim.generation, chain_kwargs, now,
-            )
+            ):
+                return ProfiledHandoff(reservation.client_order_id, False, True, None)
         else:
             store.fail_handoff(reservation.client_order_id, generation=claim.generation)
         return ProfiledHandoff(
@@ -1502,9 +1503,10 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused("store", "handoff reconcile was not admitted")
     outcome = gateway.submit(*submit_args, **kwargs)
     if getattr(outcome, "ok", None) is not True:
-        _settle_failed(
+        if _settle_failed(
             store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
-        )
+        ):
+            return ProfiledHandoff(client_order_id, False, True, None)
         return ProfiledHandoff(client_order_id, True, True, outcome)
     _settle_completed(
         store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
@@ -1534,12 +1536,17 @@ def _settle_completed(store, gateway, client_order_id, order_ref, generation, kw
         _record_landed(store, client_order_id, order_ref, now)
 
 
-def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwargs, now):
-    """Record a refusal only if the order did not already land on the chain."""
+def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwargs, now) -> bool:
+    """Record a refusal only if the order did not already land on the chain.
+
+    Returns True when the signed chain shows the order already submitted (the
+    reservation is then completed), so callers do not report a refusal.
+    """
     if _chain_submitted(gateway, order_ref, kwargs):
         _record_landed(store, client_order_id, order_ref, now)
-        return
+        return True
     store.fail_handoff(client_order_id, generation=generation)
+    return False
 
 
 def _record_landed(store, client_order_id, order_ref, now) -> None:
@@ -1548,8 +1555,22 @@ def _record_landed(store, client_order_id, order_ref, now) -> None:
             client_order_id, order_ref=order_ref, order_submitted=True, now=now
         )
     except ProfileRefused:
-        # Already completed by the other owner: nothing left to record.
-        pass
+        # Suppress only when the other owner already completed the reservation.
+        if not _reservation_completed(store, client_order_id):
+            raise
+
+
+def _reservation_completed(store, client_order_id: str) -> bool:
+    with store._txn() as conn:
+        row = conn.execute(
+            "SELECT handoff_state, handoff_done FROM reservations WHERE client_order_id = ?",
+            (client_order_id,),
+        ).fetchone()
+    return (
+        row is not None
+        and row["handoff_state"] == "completed"
+        and bool(int(row["handoff_done"]))
+    )
 
 
 def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:
