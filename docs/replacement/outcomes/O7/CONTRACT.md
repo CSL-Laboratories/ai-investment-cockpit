@@ -98,7 +98,7 @@ Machine-readable JSON goes to stdout with no ANSI escape in any string, includin
 One response has one `status_code`. When more than one condition is present, precedence picks that code and every condition stays visible:
 
 1. An unavailable dependency (`dependencies[*].status=unavailable`) selects `unavailable`.
-2. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled` when no dependency is unavailable.
+2. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled` when no dependency is unavailable. `visibility.reconciliation=unreconciled_visible` requires that unreconciled result, `restart_allowed` false, and a status of `stale_or_unreconciled` or `unavailable`. An unreconciled result requires that same visibility. A reconciled result cannot be labeled unreconciled.
 3. Stale data selects the same status when no dependency is unavailable. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
 4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`. `unavailable` is not a valid status when every dependency is readable.
 5. `ok` is allowed only when none of those conditions are present.

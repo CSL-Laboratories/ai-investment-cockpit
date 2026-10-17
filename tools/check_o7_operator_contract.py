@@ -321,10 +321,12 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
         if visibility.get("stale_data") != "visible" or doc.get("status_code") != expected_status:
             return "hidden_stale_data"
-    if visibility.get("reconciliation") == "hidden" or unreconciled:
+    claims_unreconciled = visibility.get("reconciliation") == "unreconciled_visible"
+    if visibility.get("reconciliation") == "hidden" or unreconciled or claims_unreconciled:
         expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
         visible = (
-            visibility.get("reconciliation") == "unreconciled_visible"
+            unreconciled
+            and claims_unreconciled
             and doc.get("status_code") == expected_status
             and result.get("restart_allowed") is False
         )

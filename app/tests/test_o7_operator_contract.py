@@ -373,6 +373,26 @@ def test_profile_class_agrees_and_intervention_controls_fail_on_their_own_field(
     assert "NEGATIVE CONTROL unscoped_intervention: WRONG_FAILURE" in stdout
 
 
+def test_unreconciled_visibility_matches_the_result() -> None:
+    by_request, commands, response_validator = _candidate_documents()
+    invented = copy.deepcopy(by_request["req_recovery"])
+    invented["visibility"]["reconciliation"] = "unreconciled_visible"
+    assert invented["result"]["reconciliation"] == "reconciled"
+    assert invented["result"]["unknown_orders"] == 0
+    assert invented["result"]["restart_allowed"] is True
+    assert CHECKER.classify_response(invented, commands) == "hidden_unreconciled"
+    assert CHECKER._schema_error(response_validator, invented) is not None
+    hidden = copy.deepcopy(by_request["req_recovery_open"])
+    hidden["visibility"]["reconciliation"] = "reconciled"
+    hidden["status_code"] = "ok"
+    hidden["errors"] = []
+    hidden["result"]["restart_allowed"] = True
+    hidden["presentation"]["exit_code"] = 0
+    hidden["presentation"]["text_status"] = "ok"
+    hidden["presentation"]["rendered"] = "status=ok reconciled"
+    assert CHECKER.classify_response(hidden, commands) == "hidden_unreconciled"
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)
