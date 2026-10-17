@@ -22,13 +22,19 @@ class VibeTradingPoller:
         if batch.status != "ok" and not batch.events:
             raise RuntimeError(f"vibe-trading collect status={batch.status}")
         emitted = 0
+        failed = 0
         for event in batch.events:
             try:
                 on_event(event)
             except Exception:
                 self.counters["emit_error"] += 1
+                failed += 1
                 continue
             emitted += 1
+        if failed:
+            error = RuntimeError(f"vibe-trading persist failed for {failed} event(s)")
+            error.emitted = emitted
+            raise error
         if batch.status != "ok":
             error = RuntimeError(f"vibe-trading collect status={batch.status}")
             error.emitted = emitted
