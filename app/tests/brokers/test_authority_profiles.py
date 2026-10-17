@@ -1546,3 +1546,16 @@ def test_first_profile_installs_on_fresh_store_and_oversized_confidence_refuses(
         )
     )
     assert code == "model_output"
+
+
+def test_claim_fence_refreshes_lease_with_current_clock(tmp_path):
+    """The fence reads the clock when it fires, so claimed_at advances."""
+    from app.brokers import authority_profiles as ap
+
+    class _Clock:
+        def now(self):
+            return NOW + timedelta(seconds=80)
+
+    fired = ap._fence_now(object(), {"clock": _Clock()}, NOW)()
+    assert fired == NOW + timedelta(seconds=80)
+    assert ap._fence_now(object(), {}, NOW)() == NOW

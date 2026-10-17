@@ -1575,7 +1575,8 @@ def handoff_to_gateway(
     outcome = gateway.submit(
         *submit_args,
         claim_fence=lambda: store._confirm_claim_before_broker_call(
-            reservation.client_order_id, claim.generation, now=now
+            reservation.client_order_id, claim.generation,
+            now=_fence_now(gateway, kwargs, now)(),
         ),
         **kwargs,
     )
@@ -1666,7 +1667,7 @@ def reconcile_handoff_to_gateway(
     outcome = gateway.submit(
         *submit_args,
         claim_fence=lambda: store._confirm_claim_before_broker_call(
-            client_id, verdict.generation, now=now
+            client_id, verdict.generation, now=_fence_now(gateway, kwargs, now)(),
         ),
         **kwargs,
     )
@@ -1680,6 +1681,20 @@ def reconcile_handoff_to_gateway(
         store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
     )
     return ProfiledHandoff(client_order_id, True, True, outcome)
+
+
+def _fence_now(gateway, kwargs: Mapping, fallback: datetime):
+    """Return a callable giving the gateway clock's current time at fence time."""
+    def current() -> datetime:
+        try:
+            clock = kwargs.get("clock") or gateway._resolve_state(kwargs.get("ladder")).clock
+            stamp = clock.now()
+            if isinstance(stamp, datetime) and stamp.tzinfo is not None:
+                return stamp
+        except Exception:  # noqa: BLE001 - fall back to the handoff time
+            pass
+        return fallback
+    return current
 
 
 def _chain_submitted(gateway, order_ref: str, kwargs: Mapping) -> bool:
