@@ -830,6 +830,13 @@ class AuthorityProfileStore:
                     "handoff_in_progress",
                     "handoff claim is already owned; reconcile before re-claiming",
                 )
+            # The durable action, not the caller flag, decides whether a gateway
+            # submit is owed; a disagreeing flag must never complete a paper
+            # submit that never reached the gateway.
+            if awaiting_submit != (row["action"] == "submit_paper"):
+                raise ProfileRefused(
+                    "store", "handoff claim disagrees with the reservation action"
+                )
             generation = int(row["claim_generation"]) + 1
             if state == "failed":
                 if not awaiting_submit:
@@ -1414,15 +1421,28 @@ def handoff_to_gateway(
     if not isinstance(claim, ClaimTicket):
         raise ProfileRefused("store", "handoff claim was not admitted")
     outcome = gateway.submit(*submit_args, **kwargs)
+    chain_kwargs = dict(kwargs)
     if getattr(outcome, "ok", None) is not True:
-        store.fail_handoff(reservation.client_order_id, generation=claim.generation)
+        if order_ref is not None:
+            _settle_failed(
+                store, gateway, reservation.client_order_id, order_ref,
+                claim.generation, chain_kwargs, now,
+            )
+        else:
+            store.fail_handoff(reservation.client_order_id, generation=claim.generation)
         return ProfiledHandoff(
             reservation.client_order_id,
             True,
             claim.state != "claimed" or reservation.replayed,
             outcome,
         )
-    store.complete_handoff(reservation.client_order_id, generation=claim.generation)
+    if order_ref is not None:
+        _settle_completed(
+            store, gateway, reservation.client_order_id, order_ref,
+            claim.generation, chain_kwargs, now,
+        )
+    else:
+        store.complete_handoff(reservation.client_order_id, generation=claim.generation)
     return ProfiledHandoff(
         reservation.client_order_id,
         True,
@@ -1482,10 +1502,54 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused("store", "handoff reconcile was not admitted")
     outcome = gateway.submit(*submit_args, **kwargs)
     if getattr(outcome, "ok", None) is not True:
-        store.fail_handoff(client_order_id, generation=verdict.generation)
+        _settle_failed(
+            store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
+        )
         return ProfiledHandoff(client_order_id, True, True, outcome)
-    store.complete_handoff(client_order_id, generation=verdict.generation)
+    _settle_completed(
+        store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
+    )
     return ProfiledHandoff(client_order_id, True, True, outcome)
+
+
+def _chain_submitted(gateway, order_ref: str, kwargs: Mapping) -> bool:
+    try:
+        st = gateway._resolve_state(kwargs.get("ladder"))
+        return gateway._order_submitted_on_chain(st, order_ref) is True
+    except Exception:
+        return False
+
+
+def _settle_completed(store, gateway, client_order_id, order_ref, generation, kwargs, now):
+    """Complete a returned submit; a fenced-out owner re-checks the chain.
+
+    If a concurrent reconcile re-owned the claim while this submit was in
+    flight, the order may still have landed. The durable chain is the truth.
+    """
+    try:
+        store.complete_handoff(client_order_id, generation=generation)
+    except ProfileRefused as exc:
+        if exc.code != "stale_claim" or not _chain_submitted(gateway, order_ref, kwargs):
+            raise
+        _record_landed(store, client_order_id, order_ref, now)
+
+
+def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwargs, now):
+    """Record a refusal only if the order did not already land on the chain."""
+    if _chain_submitted(gateway, order_ref, kwargs):
+        _record_landed(store, client_order_id, order_ref, now)
+        return
+    store.fail_handoff(client_order_id, generation=generation)
+
+
+def _record_landed(store, client_order_id, order_ref, now) -> None:
+    try:
+        store.reconcile_handoff(
+            client_order_id, order_ref=order_ref, order_submitted=True, now=now
+        )
+    except ProfileRefused:
+        # Already completed by the other owner: nothing left to record.
+        pass
 
 
 def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:
