@@ -589,6 +589,21 @@ def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
     raise ContractError("refused intervention can still be recorded")
 
 
+def _refused_intervention_probe(doc: dict[str, Any], recorded: bool) -> dict[str, Any]:
+    """Copy one intervention response into a refused response with one recording value."""
+    result = doc.get("result")
+    presentation = dict(doc.get("presentation") or {})
+    presentation["exit_code"] = EXIT_CODES["refused"]
+    presentation["text_status"] = "refused"
+    presentation["rendered"] = "status=refused probe"
+    return {
+        **doc,
+        "status_code": "refused",
+        "result": {**result, "recorded": recorded, "survives_restart": recorded},
+        "presentation": presentation,
+    }
+
+
 def _require_recorded_refusal_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
     """The response schema itself rejects a refused intervention that was recorded."""
     for doc in responses:
@@ -597,16 +612,12 @@ def _require_recorded_refusal_rejected(validator: Draft202012Validator, response
         result = doc.get("result")
         if not isinstance(result, dict):
             raise ContractError("refused intervention schema accepts a recording")
-        recorded = {**doc, "status_code": "refused", "result": {**result, "recorded": True}}
-        if _schema_error(validator, recorded) is None:
-            raise ContractError(f"refused intervention schema accepts a recording for {doc['command']}")
-        unrecorded = {
-            **doc,
-            "status_code": "refused",
-            "result": {**result, "recorded": False, "survives_restart": False},
-        }
+        unrecorded = _refused_intervention_probe(doc, False)
         if _schema_error(validator, unrecorded) is not None:
             raise ContractError(f"refused intervention schema rejects an unrecorded {doc['command']}")
+        recorded = _refused_intervention_probe(doc, True)
+        if _schema_error(validator, recorded) is None:
+            raise ContractError(f"refused intervention schema accepts a recording for {doc['command']}")
 
 
 def _error_probe(code: str, status: str) -> dict[str, Any]:
@@ -1515,9 +1526,9 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         for error in doc["errors"]:
             _require_schema(error_validator, error, "oracle error")
         seen.add(doc["command"])
-        if seen != set(commands):
-            raise ContractError("oracle responses do not cover the catalog")
-        _require_recorded_refusal_rejected(response_validator, responses)
+    if seen != set(commands):
+        raise ContractError("oracle responses do not cover the catalog")
+    _require_recorded_refusal_rejected(response_validator, responses)
     by_request: dict[str, dict[str, Any]] = {}
     for doc in responses:
         if not isinstance(doc, dict):
