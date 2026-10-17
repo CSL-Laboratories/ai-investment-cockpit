@@ -158,11 +158,21 @@ def test_multi_symbol_generation_keeps_per_symbol_sequences():
         assert seqs == list(range(1, len(seqs) + 1))
 
 
+def _require_cursor():
+    """The Rust job must compare tapes. A missing cursor is a skip only off that job."""
+    import os
+
+    cockpit = pytest.importorskip("cockpit_quant")
+    if hasattr(cockpit, "synthetic_cursor"):
+        return cockpit
+    if os.environ.get("COCKPIT_REQUIRE_RUST") == "1":
+        raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but synthetic_cursor is missing")
+    pytest.skip("synthetic_cursor is not installed")
+
+
 def test_rust_synthetic_matches_the_python_generator():
     """The extension owns the shadow book. The events are still this generator's."""
-    cockpit = pytest.importorskip("cockpit_quant")
-    if not hasattr(cockpit, "synthetic_events"):
-        pytest.skip("synthetic_events is not installed")
+    _require_cursor()
     cases = [
         SyntheticFeed(symbols=("S",), n_events=400, seed=3),
         SyntheticFeed(symbols=("AAA", "BBB"), n_events=300, seed=9),
@@ -173,15 +183,33 @@ def test_rust_synthetic_matches_the_python_generator():
                 tick_volatility=1.2, depth_levels=3, target_resting_orders=12,
             ),
         ),
+        SyntheticFeed(symbols=("S",), n_events=1025, seed=1),
+        SyntheticFeed(symbols=("S", "S"), n_events=300, seed=5),
     ]
+    for seed in (0, -1, 2**32, -2**63, 2**63 - 1):
+        cases.append(SyntheticFeed(symbols=("S",), n_events=30, seed=seed))
     for feed in cases:
         assert list(feed) == list(feed._python_events())
 
 
+def test_a_non_integer_seed_stays_on_python_and_other_overflows_raise():
+    _require_cursor()
+    for seed in (1.5, "generator"):
+        feed = SyntheticFeed(symbols=("S",), n_events=5, seed=seed)
+        assert list(feed) == list(feed._python_events())
+    huge = SyntheticFeed(symbols=("S",), n_events=2**63, seed=1)
+    with pytest.raises(OverflowError):
+        list(huge)
+    priced = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=1,
+        params=SyntheticParams(initial_ticks=2**63),
+    )
+    with pytest.raises(OverflowError):
+        list(priced)
+
+
 def test_rust_synthetic_matches_python_on_repeated_names_and_edges():
-    cockpit = pytest.importorskip("cockpit_quant")
-    if not hasattr(cockpit, "synthetic_cursor"):
-        pytest.skip("synthetic_cursor is not installed")
+    _require_cursor()
     shared = SyntheticFeed(symbols=("S", "S"), n_events=40, seed=3)
     assert list(shared) == list(shared._python_events())
     empty = SyntheticFeed(symbols=(), n_events=0, seed=1)
@@ -207,45 +235,46 @@ def test_a_batch_keeps_events_that_preceded_an_error():
     ``next_batch(0)`` also has to leave the cursor where it is. A zero limit
     used to draw one event and shift every later read.
     """
-    cockpit = pytest.importorskip("cockpit_quant")
-    if not hasattr(cockpit, "synthetic_cursor"):
-        pytest.skip("synthetic_cursor is not installed")
+    cockpit = _require_cursor()
 
-    def open_cursor():
+    def open_cursor(seed: int):
         return cockpit.synthetic_cursor(
-            ["S"], 40, 0, 10_000, 0.35, 5, 0.55, 100, 1_000, 0.35, 40, 0.08,
+            ["S"], 40, seed, 10_000, 0.35, 5, 0.55, 100, 1_000, 0.35, 40, 0.08,
             10**18, 0, 0, 0, 0,
         )
 
-    one = open_cursor()
-    singles = []
-    with pytest.raises(ValueError, match="exchange timestamp overflow"):
-        while True:
-            rows = one.next_batch(1)
-            if not rows:
-                break
-            singles.extend(rows)
-    assert singles
+    for seed in (0, 3):
+        one = open_cursor(seed)
+        singles = []
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            while True:
+                rows = one.next_batch(1)
+                if not rows:
+                    break
+                singles.extend(rows)
+        assert singles
 
-    batched = open_cursor()
-    assert batched.next_batch(0) == []
-    prefix = batched.next_batch(1024)
-    assert prefix == singles
-    with pytest.raises(ValueError, match="exchange timestamp overflow"):
-        batched.next_batch(1)
+        batched = open_cursor(seed)
+        assert batched.next_batch(0) == []
+        prefix = batched.next_batch(1024)
+        assert prefix == singles
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            batched.next_batch(1)
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            next(batched)
 
-    feed = SyntheticFeed(
-        symbols=("S",), n_events=40, seed=0,
-        params=SyntheticParams(
-            exchange_gap_ns=10**18, feed_latency_ns=0, feed_jitter_ns=0,
-            decode_latency_ns=0, decode_jitter_ns=0,
-        ),
-    )
-    seen = []
-    with pytest.raises(ValueError, match="exchange timestamp overflow"):
-        for event in feed:
-            seen.append(event.seq)
-    assert seen == list(range(1, len(singles) + 1))
+        feed = SyntheticFeed(
+            symbols=("S",), n_events=40, seed=seed,
+            params=SyntheticParams(
+                exchange_gap_ns=10**18, feed_latency_ns=0, feed_jitter_ns=0,
+                decode_latency_ns=0, decode_jitter_ns=0,
+            ),
+        )
+        seen = []
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            for event in feed:
+                seen.append(event.seq)
+        assert seen == list(range(1, len(singles) + 1))
 
 
 def test_a_quiet_generator_still_stabilises_depth():

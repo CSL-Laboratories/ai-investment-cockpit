@@ -251,6 +251,10 @@ def main() -> None:
     if getattr(LimitOrderBook, "backend", "python") != "rust":
         print("cockpit_quant is not installed; build the release extension first")
         sys.exit(1)
+    import cockpit_quant
+    if not hasattr(cockpit_quant, "synthetic_cursor"):
+        print("synthetic_cursor is not installed; build the release extension first")
+        sys.exit(1)
 
     def _median_match(book_cls) -> float:
         samples = sorted(_match_only(book_cls, SWEEP_N) for _ in range(5))

@@ -255,9 +255,10 @@ class SyntheticFeed:
 def _rust_cursor(feed: SyntheticFeed):
     """One native event at a time, or None when the extension is not installed.
 
-    A seed that does not fit in a signed 64-bit integer stays on the Python
-    generator. Any other failure from a present extension is raised: a broken
-    build must not silently change the stream. The cursor keeps the book and
+    A seed ``random.Random`` accepts and the i64 binding does not — a float, a
+    str, or an int outside i64 — stays on the Python generator. Any other
+    failure from a present extension is raised: a broken build must not
+    silently change the stream. The cursor keeps the book and
     the RNG in Rust, so the first event does not wait on the rest of the tape.
     """
     try:
@@ -267,29 +268,32 @@ def _rust_cursor(feed: SyntheticFeed):
     open_cursor = getattr(cockpit_quant, "synthetic_cursor", None)
     if open_cursor is None:
         return None
-    params = feed.params
-    try:
-        return open_cursor(
-            list(feed.symbols),
-            feed.n_events,
-            feed.seed,
-            params.initial_ticks,
-            params.tick_volatility,
-            params.depth_levels,
-            params.arrival_decay,
-            params.min_size,
-            params.max_size,
-            params.cancel_probability,
-            params.target_resting_orders,
-            params.trade_probability,
-            params.exchange_gap_ns,
-            params.feed_latency_ns,
-            params.feed_jitter_ns,
-            params.decode_latency_ns,
-            params.decode_jitter_ns,
-        )
-    except OverflowError:
+    # random.Random accepts a float or a str, and an int outside i64.
+    # PyO3's i64 binding rejects those. Anything else, including a count or
+    # a price that does not fit, is passed through and raised.
+    seed = feed.seed
+    if type(seed) is not int or seed < -2**63 or seed > 2**63 - 1:
         return None
+    params = feed.params
+    return open_cursor(
+        list(feed.symbols),
+        feed.n_events,
+        seed,
+        params.initial_ticks,
+        params.tick_volatility,
+        params.depth_levels,
+        params.arrival_decay,
+        params.min_size,
+        params.max_size,
+        params.cancel_probability,
+        params.target_resting_orders,
+        params.trade_probability,
+        params.exchange_gap_ns,
+        params.feed_latency_ns,
+        params.feed_jitter_ns,
+        params.decode_latency_ns,
+        params.decode_jitter_ns,
+    )
 
 
 def _events_from_cursor(cursor) -> Iterator[Event]:

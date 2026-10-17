@@ -183,18 +183,29 @@ impl SynthCursor {
             .rng
             .randint(-self.params.feed_jitter_ns, self.params.feed_jitter_ns)
             .ok_or_else(|| SynthError("feed jitter range is empty".into()))?;
-        let recv_ts = (self.exchange_ts + self.params.feed_latency_ns)
-            .checked_add(recv_draw)
-            .ok_or_else(|| SynthError("recv timestamp overflow".into()))?
-            .max(self.last_recv + 1);
+        let recv_ts = self
+            .exchange_ts
+            .checked_add(self.params.feed_latency_ns)
+            .and_then(|base| base.checked_add(recv_draw))
+            .ok_or_else(|| SynthError("recv timestamp overflow".into()))?;
+        let recv_floor = self
+            .last_recv
+            .checked_add(1)
+            .ok_or_else(|| SynthError("recv timestamp overflow".into()))?;
+        let recv_ts = recv_ts.max(recv_floor);
         let ingest_draw = self
             .rng
             .randint(-self.params.decode_jitter_ns, self.params.decode_jitter_ns)
             .ok_or_else(|| SynthError("decode jitter range is empty".into()))?;
-        let ingest_ts = (recv_ts + self.params.decode_latency_ns)
-            .checked_add(ingest_draw)
-            .ok_or_else(|| SynthError("ingest timestamp overflow".into()))?
-            .max(self.last_ingest + 1);
+        let ingest_ts = recv_ts
+            .checked_add(self.params.decode_latency_ns)
+            .and_then(|base| base.checked_add(ingest_draw))
+            .ok_or_else(|| SynthError("ingest timestamp overflow".into()))?;
+        let ingest_floor = self
+            .last_ingest
+            .checked_add(1)
+            .ok_or_else(|| SynthError("ingest timestamp overflow".into()))?;
+        let ingest_ts = ingest_ts.max(ingest_floor);
         self.last_recv = recv_ts;
         self.last_ingest = ingest_ts;
         let exchange_ts = self.exchange_ts;
