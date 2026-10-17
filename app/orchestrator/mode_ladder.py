@@ -24,7 +24,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-from config.models import runtime_for
+from config.models import DECISION_STAGE_ALIASES, runtime_for
 from config.settings import Mode
 from core.ids import new_id
 from schemas.models.audit_entry import AuditEntry
@@ -41,7 +41,7 @@ _LADDER: list[Mode] = [
 _RUNG: dict[Mode, int] = {m: i for i, m in enumerate(_LADDER)}
 _AUTO_MODES: frozenset[Mode] = frozenset({Mode.auto_veto, Mode.auto_full})
 _LIVE_MODES: frozenset[Mode] = frozenset({Mode.review_live, Mode.auto_veto, Mode.auto_full})
-_DECISION_STAGE_ALIASES = ("triage", "deep")
+_DECISION_STAGE_ALIASES = DECISION_STAGE_ALIASES
 
 
 class IllegalTransition(Exception):

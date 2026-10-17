@@ -1,0 +1,9 @@
+[package]
+name = "cockpit-signals"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Online estimators (QT-02). No I/O and no broker."
+license = "UNLICENSED"
+
+[dependencies]
