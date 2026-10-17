@@ -196,6 +196,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("unknown_instrument")
 
     journal_entry_ids = {entry["entry_id"] for entry in fixture["journal"]}
+    journal_entry_ids |= set(fixture["checkpoint"].get("applied_entry_ids", []))
     admitted = set()
     for item in fixture["corrections"]:
         if item["reverses_entry_id"] in journal_entry_ids:

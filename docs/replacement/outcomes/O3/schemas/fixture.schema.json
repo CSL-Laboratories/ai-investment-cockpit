@@ -78,6 +78,11 @@
           "uniqueItems": true,
           "items": {"type": "string", "minLength": 1}
         },
+        "applied_entry_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
         "cash_available": {"type": "integer", "minimum": 0},
         "collateral_reserved": {"type": "integer", "minimum": 0},
         "positions": {"type": "array", "items": {"$ref": "#/$defs/position"}},
