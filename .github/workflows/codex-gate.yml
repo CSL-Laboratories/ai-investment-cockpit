@@ -63,7 +63,7 @@ jobs:
         id: scan
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SCAN: 'true'
+          CANDIDATE_SCAN: ${{ vars.CANDIDATE_COORDINATOR }}
         run: |
           set -euo pipefail
           if [ ! -f scripts/ci/candidate_gate.py ]; then

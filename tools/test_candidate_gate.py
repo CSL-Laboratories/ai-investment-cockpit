@@ -14,6 +14,7 @@ import os
 import re
 import runpy
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -1391,6 +1392,56 @@ class CandidateCoordinatorTests(unittest.TestCase):
               redirect_stdout(output), self.assertRaises(SystemExit) as exited):
             runpy.run_path(str(ROOT / "scripts/ci/codex_gate.py"), run_name="__main__")
         return exited.exception.code, output.getvalue()
+
+    def run_main(self, scan_value, github=None):
+        """Run candidate_gate.py as the workflow's scan step does, with fake GitHub boundaries."""
+        def refuse(*args, **kwargs):
+            raise AssertionError("coordinator off: no GitHub client or event read")
+        fake = SimpleNamespace(GitHub=github or refuse, load_event=Mock(return_value={}) if github else refuse)
+        environment = {"GH_TOKEN": "read-token", "GITHUB_REPOSITORY": REPO, "GITHUB_EVENT_NAME": "schedule",
+                       "GITHUB_EVENT_PATH": "fake-event.json"}
+        if scan_value is not None:
+            environment["CANDIDATE_SCAN"] = scan_value
+        stdout, code = io.StringIO(), None
+        with tempfile.TemporaryDirectory() as directory:
+            environment["GITHUB_OUTPUT"] = str(Path(directory) / "output")
+            with (patch.dict(os.environ, environment, clear=True),
+                  patch.dict(sys.modules, {"codex_gate": fake, "merge_candidate": gate.candidate_api}),
+                  redirect_stdout(stdout)):
+                try:
+                    runpy.run_path(str(ROOT / "scripts/ci/candidate_gate.py"), run_name="__main__")
+                except SystemExit as exited:
+                    code = exited.code
+            written = Path(environment["GITHUB_OUTPUT"]).read_text(encoding="utf-8")
+        return code, written, stdout.getvalue()
+
+    def assert_inert(self, scan_value):
+        code, written, stdout = self.run_main(scan_value)
+        self.assertEqual(code, 0)
+        self.assertEqual(written, "prs=[]\n")
+        self.assertIn('::notice::Candidate coordinator is off (repo variable CANDIDATE_COORDINATOR is not "true").',
+                      stdout)
+
+    def test_main_is_inert_when_coordinator_variable_unset(self):
+        """An unset repo variable leaves the coordinator off: prs=[] and no GitHub API call."""
+        self.assert_inert(None)
+
+    def test_main_is_inert_for_non_true_values(self):
+        for value in ("", "false", "TRUE", "1", "yes", " true"):
+            with self.subTest(value=value):
+                self.assert_inert(value)
+
+    def test_main_scans_only_when_variable_is_exactly_true(self):
+        """Exactly "true" runs the real scan() against the read token and writes its result."""
+        client = SimpleNamespace(get=Mock(return_value=[{"id": 1, "number": PR, "draft": False,
+                                                         "head": {"repo": {"full_name": REPO}}}]))
+        github = Mock(return_value=client)
+        code, written, stdout = self.run_main("true", github)
+        self.assertIsNone(code)
+        github.assert_called_once_with("read-token")
+        self.assertTrue(client.get.call_args.args[0].startswith(f"repos/{REPO}/pulls?state=open"))
+        self.assertEqual(written, f'prs=["{PR}"]\n')
+        self.assertNotIn("Candidate coordinator is off", stdout)
 
     def test_edited_machine_receipt_fails_closed_without_redispatch(self):
         for kind in ("request", "dispatch"):

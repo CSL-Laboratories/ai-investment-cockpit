@@ -1494,7 +1494,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertEqual(scan.get('permissions', doc['permissions']),
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'})
         self.assertEqual(scan['steps'][1]['env'],
-                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': 'true'})
+                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': '${{ vars.CANDIDATE_COORDINATOR }}'})
         self.assertEqual(gate['permissions'],
                          {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
         for job in (scan, gate):

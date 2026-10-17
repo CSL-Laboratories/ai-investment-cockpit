@@ -627,9 +627,14 @@ def scan(gh, repository, event_name, event):
 
 if __name__ == "__main__":
     import os
-    import codex_gate
+    # Off by default: only the exact repo variable value "true" enables the
+    # coordinator, and turning it on is an owner decision gated on CSL-272.
     if os.environ.get("CANDIDATE_SCAN") != "true":
-        raise SystemExit("candidate helper is invoked through the locked gate")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("prs=[]\n")
+        print('::notice::Candidate coordinator is off (repo variable CANDIDATE_COORDINATOR is not "true").')
+        raise SystemExit(0)
+    import codex_gate
     numbers = scan(codex_gate.GitHub(os.environ["GH_TOKEN"]), os.environ["GITHUB_REPOSITORY"],
                    os.environ["GITHUB_EVENT_NAME"], codex_gate.load_event(os.environ["GITHUB_EVENT_PATH"]))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
