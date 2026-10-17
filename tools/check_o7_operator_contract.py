@@ -1,0 +1,2479 @@
+"""Provider-free checker for the CSL-219 O7 operator candidate.
+
+Exact command:
+
+    python -X utf8 -B tools/check_o7_operator_contract.py
+
+Exit 0 means the checked-in candidate is internally consistent and every
+negative control fails as designed. It does not claim outcome qualification,
+and it does not open a network connection.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
+REPO = Path(__file__).resolve().parents[1]
+DEFAULT_ROOT = REPO / "docs" / "replacement" / "outcomes" / "O7"
+PROGRAM_CHECKER = REPO / "tools" / "check_replacement_program.py"
+API_VERSION = "o7.operator.v0"
+MATURITY = "researched"
+SOLE_ROUTE = "risk_pass_mode_approval_order_gateway"
+MARKER = (
+    "<!-- o7-candidate: maturity=researched qualification_claimed=false "
+    "contract_frozen_claimed=false framework_selected=false -->"
+)
+DECISION_HEADING = "## Unresolved decisions (owner: Lucas)"
+EXIT_CODES = {
+    "ok": 0,
+    "usage": 1,
+    "refused": 2,
+    "stale_or_unreconciled": 3,
+    "unavailable": 4,
+}
+DENIED_FALSE_RESULTS = (
+    "bounded_direct_authorized",
+    "local_control_is_account_wide",
+    "order_submitted",
+    "secrets_included",
+)
+REQUIRED_TRUE_RESULTS = (
+    "raw_separated_from_summary",
+    "restart_requires_reconciliation",
+    "surfaces_share_one_profile",
+)
+COMMAND_PROPERTIES = (
+    "api_version",
+    "arguments",
+    "candidate_maturity",
+    "command",
+    "confirmation",
+    "request_id",
+    "surface",
+)
+PROFILE_PROPERTIES = (
+    "digest",
+    "profile_class",
+    "profile_id",
+    "signature_state",
+)
+EVENT_PROPERTIES = (
+    "api_version",
+    "candidate_maturity",
+    "command",
+    "event_type",
+    "request_id",
+    "status_code",
+    "visibility",
+)
+ERROR_PROPERTIES = (
+    "code",
+    "color_only",
+    "message",
+    "recovery",
+    "status_code",
+)
+PRESENTATION_PROPERTIES = (
+    "ansi_in_machine_output",
+    "color_only_signal",
+    "exit_code",
+    "machine_readable",
+    "rendered",
+    "text_status",
+)
+VISIBILITY_PROPERTIES = (
+    "reconciliation",
+    "refusal",
+    "stale_data",
+    "uncertainty",
+)
+RESPONSE_REQUIRED = (
+    "api_version",
+    "authority_effect",
+    "candidate_maturity",
+    "enforcement_route",
+    "errors",
+    "order_path",
+    "presentation",
+    "profile",
+    "request_id",
+    "result",
+    "status_code",
+    "surface",
+    "visibility",
+)
+RESPONSE_PROPERTIES = (
+    "api_version",
+    "authority_effect",
+    "candidate_maturity",
+    "command",
+    "enforcement_route",
+    "errors",
+    "order_path",
+    "presentation",
+    "profile",
+    "request_id",
+    "result",
+    "status_code",
+    "surface",
+    "visibility",
+)
+RESULT_PROPERTIES = (
+    "active_profile_class",
+    "baseline_id",
+    "bounded_direct_authorized",
+    "budgets",
+    "bundle_id",
+    "chain_head_seq",
+    "collateral",
+    "contents",
+    "decisions",
+    "dependencies",
+    "evidence_id",
+    "export_id",
+    "includes_refusals",
+    "intervention",
+    "items",
+    "local_control_is_account_wide",
+    "order_submitted",
+    "positions",
+    "provenance",
+    "qualification",
+    "qualification_reference",
+    "raw_ref",
+    "raw_separated_from_summary",
+    "reconciliation",
+    "recorded",
+    "refusals",
+    "restart_allowed",
+    "restart_requires_reconciliation",
+    "retrieved_at",
+    "secrets_included",
+    "source_id",
+    "stale",
+    "strategy_id",
+    "summary_ref",
+    "surfaces_share_one_profile",
+    "survives_restart",
+    "unknown_orders",
+    "watch_only",
+)
+NESTED_RESULT_ARRAYS = {
+    "budgets": ("budget_id", "currency", "remaining", "scope"),
+    "decisions": ("decision_id", "outcome", "reason_code"),
+    "dependencies": ("name", "status"),
+    "items": ("state", "subject", "visible"),
+    "positions": ("currency", "instrument_id", "quantity", "venue"),
+    "refusals": ("decision_id", "reason_code", "visible"),
+}
+COLLATERAL_PROPERTIES = (
+    "amount",
+    "currency",
+    "state",
+)
+DECISION_OUTCOMES = frozenset({"recorded", "refused"})
+SURFACES = frozenset({"cli", "gui"})
+REQUIRED_CONTROLS = (
+    "gui_cli_semantic_divergence",
+    "hidden_refusal",
+    "hidden_uncertainty",
+    "hidden_stale_data",
+    "hidden_unreconciled",
+    "privileged_order_bypass",
+    "color_only_signal",
+    "success_exit_on_refusal",
+    "contradictory_status_text",
+    "unconfirmed_intervention",
+    "unscoped_intervention",
+    "stale_not_watch_only",
+)
+COMMAND_SCHEMA_CONTROLS = frozenset({"unconfirmed_intervention", "unscoped_intervention"})
+REQUIRED_PRIVILEGED = {
+    "order_path": ("privileged_order_bypass", "order_path", "surface_private", "none"),
+    "enforcement_route": (
+        "privileged_order_bypass",
+        "enforcement_route",
+        "broker_direct",
+        SOLE_ROUTE,
+    ),
+    "command": (
+        "privileged_order_bypass",
+        "command",
+        "operator.orders.submit",
+        "operator.positions.inspect",
+    ),
+    "authority_effect": ("authority_effect_mismatch", "authority_effect", "direct_order", "none"),
+    "order_submitted": ("privileged_order_bypass", "result.order_submitted", True, None),
+    "forbidden_key": ("privileged_order_bypass", "bypass_gateway", True, None),
+}
+PRIVILEGED_BASELINE_ID = "req_positions"
+SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only", "contradictory_status_text"} - COMMAND_SCHEMA_CONTROLS
+CONTROL_REASONS = {
+    "gui_cli_semantic_divergence": "semantic_projection_mismatch",
+    "hidden_refusal": "refusal_not_visible",
+    "hidden_uncertainty": "uncertainty_not_visible",
+    "hidden_stale_data": "stale_not_visible",
+    "hidden_unreconciled": "unreconciled_not_visible",
+    "privileged_order_bypass": "surface_order_path",
+    "color_only_signal": "color_only_signal",
+    "success_exit_on_refusal": "exit_code_hides_refusal",
+    "contradictory_status_text": "status_text_mismatch",
+    "unconfirmed_intervention": "intervention_not_explicit",
+    "unscoped_intervention": "intervention_not_scoped",
+    "stale_not_watch_only": "stale_not_watch_only",
+}
+ORACLE_KINDS = ("responses", "pairs", "commands", "events", "errors")
+REQUIRED_ORACLE_PAIRS = ("positions.inspect.parity", "decisions.inspect.parity")
+REQUIRED_ORACLE_PAIR_COMMANDS = {
+    "positions.inspect.parity": "operator.positions.inspect",
+    "decisions.inspect.parity": "operator.decisions.inspect",
+}
+REQUIRED_JOURNEYS = (
+    "evidence_provenance",
+    "strategies",
+    "positions_collateral",
+    "decisions_refusals",
+    "uncertainty",
+    "health",
+    "budgets",
+    "compliance_profiles",
+    "interventions",
+    "audit",
+    "recovery",
+    "export",
+)
+CATALOG_ROOT_FIELDS = ("api_version", "commands", "framework_selected", "maturity", "order_commands")
+CATALOG_COMMAND_FIELDS = ("effect", "journey", "name", "required_result_fields")
+GATE_AUTHORITY_FIELDS = (
+    "enforcement_route",
+    "local_control_implies_account_wide",
+    "o6_fragment",
+    "o6_fragment_digest",
+    "o6_outcome_artifact",
+    "surface_order_path",
+    "widens_o6_authority",
+)
+REQUIRED_COMMANDS = {
+    "operator.audit.export": {
+        "journey": "audit",
+        "effect": "read",
+        "fields": ("export_id", "chain_head_seq", "includes_refusals", "secrets_included"),
+        "must_show": ("includes_refusals", "secrets_included"),
+    },
+    "operator.budgets.inspect": {
+        "journey": "budgets",
+        "effect": "read",
+        "fields": ("budgets",),
+        "must_show": ("budgets",),
+    },
+    "operator.decisions.inspect": {
+        "journey": "decisions_refusals",
+        "effect": "read",
+        "fields": ("decisions", "refusals"),
+        "must_show": ("refusals",),
+    },
+    "operator.evidence.inspect": {
+        "journey": "evidence_provenance",
+        "effect": "read",
+        "fields": (
+            "evidence_id",
+            "source_id",
+            "retrieved_at",
+            "raw_ref",
+            "summary_ref",
+            "raw_separated_from_summary",
+            "provenance",
+        ),
+        "must_show": ("provenance", "raw_separated_from_summary"),
+    },
+    "operator.export.bundle": {
+        "journey": "export",
+        "effect": "read",
+        "fields": ("bundle_id", "contents", "secrets_included"),
+        "must_show": ("contents", "secrets_included"),
+    },
+    "operator.health.inspect": {
+        "journey": "health",
+        "effect": "read",
+        "fields": ("watch_only", "stale", "dependencies"),
+        "must_show": ("stale", "watch_only"),
+    },
+    "operator.interventions.request_reconciliation": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.interventions.request_revocation": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.interventions.request_stop": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.positions.inspect": {
+        "journey": "positions_collateral",
+        "effect": "read",
+        "fields": ("positions", "collateral"),
+        "must_show": ("positions", "collateral"),
+    },
+    "operator.profiles.inspect": {
+        "journey": "compliance_profiles",
+        "effect": "read",
+        "fields": (
+            "active_profile_class",
+            "local_control_is_account_wide",
+            "surfaces_share_one_profile",
+            "qualification_reference",
+            "bounded_direct_authorized",
+        ),
+        "must_show": ("active_profile_class", "local_control_is_account_wide"),
+    },
+    "operator.recovery.inspect": {
+        "journey": "recovery",
+        "effect": "read",
+        "fields": (
+            "reconciliation",
+            "unknown_orders",
+            "restart_allowed",
+            "restart_requires_reconciliation",
+        ),
+        "must_show": ("reconciliation", "unknown_orders"),
+    },
+    "operator.strategies.inspect": {
+        "journey": "strategies",
+        "effect": "read",
+        "fields": ("strategy_id", "qualification", "baseline_id"),
+        "must_show": ("qualification",),
+    },
+    "operator.uncertainty.inspect": {
+        "journey": "uncertainty",
+        "effect": "read",
+        "fields": ("items",),
+        "must_show": ("items",),
+    },
+}
+REQUIRED_MUST_SHOW = {name: spec["must_show"] for name, spec in REQUIRED_COMMANDS.items()}
+REQUIRED_DECISION_CLASSES = (
+    "architecture",
+    "release",
+    "spend",
+    "credentials",
+    "tax_legal",
+    "live",
+    "authority",
+)
+REQUIRED_DECISIONS = {
+    "gui-framework": "architecture",
+    "gui-distribution-and-os": "architecture",
+    "cli-implementation-stack": "architecture",
+    "tui-authorization": "architecture",
+    "legacy-surface-migration": "architecture",
+    "month-slice-surfaces": "release",
+    "operator-surface-spend": "spend",
+    "operator-authentication": "credentials",
+    "surface-eligibility-language": "tax_legal",
+    "live-surface-effects": "live",
+    "intervention-scope": "authority",
+}
+REQUIRED_CITATIONS = (
+    "search_08b86fcb75c9012e38baca48941cbf74",
+    "search_d8e17f0eba7853c179f525c121ae9b51",
+    "https://www.w3.org/TR/WCAG22/",
+    "https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22",
+    "https://clig.dev/",
+    "https://primer.style/accessibility/foundations/cli-accessibility/",
+    "https://dl.acm.org/doi/fullHtml/10.1145/3411764.3445544",
+    "https://github.blog/engineering/user-experience/building-a-more-accessible-github-cli/",
+    "full HTML not retrieved",
+)
+FORBIDDEN_KEYS = frozenset(
+    {
+        "bypass_gateway",
+        "submit_order",
+        "execute_now",
+        "broker_order",
+        "api_key",
+        "password",
+        "credential",
+        "live_order",
+    }
+)
+EVENT_COMMANDS = {
+    "evidence_viewed": frozenset({"operator.evidence.inspect"}),
+    "refusal_visible": frozenset(REQUIRED_MUST_SHOW),
+    "uncertainty_visible": frozenset(REQUIRED_MUST_SHOW),
+    "stale_visible": frozenset(REQUIRED_MUST_SHOW),
+    "unreconciled_visible": frozenset(REQUIRED_MUST_SHOW),
+    "intervention_recorded": frozenset(
+        {
+            "operator.interventions.request_stop",
+            "operator.interventions.request_reconciliation",
+            "operator.interventions.request_revocation",
+        }
+    ),
+    "export_recorded": frozenset({"operator.audit.export", "operator.export.bundle"}),
+}
+EVENT_VISIBILITY = {
+    "evidence_viewed": "visible",
+    "refusal_visible": "visible",
+    "uncertainty_visible": "visible",
+    "stale_visible": "visible",
+    "unreconciled_visible": "unreconciled_visible",
+    "intervention_recorded": "visible",
+    "export_recorded": "visible",
+}
+EVENT_STATUSES = {
+    "evidence_viewed": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
+    "refusal_visible": frozenset({"refused", "stale_or_unreconciled", "unavailable"}),
+    "uncertainty_visible": frozenset({"ok", "refused", "stale_or_unreconciled", "unavailable"}),
+    "stale_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
+    "unreconciled_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
+    "intervention_recorded": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
+    "export_recorded": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
+}
+INTERVENTION_NAMES = {
+    "operator.interventions.request_stop": "stop",
+    "operator.interventions.request_reconciliation": "reconciliation",
+    "operator.interventions.request_revocation": "revocation",
+}
+SUMMARY = (
+    "o7-operator-contract: candidate_consistent maturity=researched "
+    "qualification_claimed=false contract_frozen_claimed=false framework_selected=false"
+)
+
+
+class ContractError(ValueError):
+    pass
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _load_json(path: Path) -> Any:
+    try:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle, object_pairs_hook=_unique_object)
+    except (OSError, ValueError, RecursionError) as exc:
+        raise ContractError(f"invalid JSON {path.name}: {exc}") from exc
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _walk_keys(value: Any):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield key
+            yield from _walk_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_keys(child)
+
+
+RESULT_STATUSES = ("ok", "refused", "stale_or_unreconciled", "unavailable")
+# JSON Schema annotations do not change whether a clause matches.
+SCHEMA_ANNOTATIONS = frozenset(
+    {
+        "$comment",
+        "default",
+        "deprecated",
+        "description",
+        "examples",
+        "readOnly",
+        "title",
+        "writeOnly",
+    }
+)
+
+
+def _assertion_keys(schema: dict[str, Any]) -> set[str]:
+    return set(schema) - SCHEMA_ANNOTATIONS
+
+
+def _admitted_strings(schema: Any) -> set[str] | None:
+    """Return the strings a plain const or enum schema admits."""
+    if not isinstance(schema, dict):
+        return None
+    if _assertion_keys(schema) == {"const"} and isinstance(schema.get("const"), str):
+        return {schema["const"]}
+    values = schema.get("enum")
+    if _assertion_keys(schema) == {"enum"} and isinstance(values, list) and values:
+        if all(isinstance(item, str) for item in values):
+            return set(values)
+    return None
+
+
+def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str, list[Any]]]:
+    """Map each command to the result fields required for every non-usage status."""
+    found: dict[str, dict[str, list[Any]]] = {}
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        command_schema = properties.get("command")
+        command = command_schema.get("const") if isinstance(command_schema, dict) else None
+        then = clause.get("then")
+        result_properties = then.get("properties") if isinstance(then, dict) else None
+        result_schema = result_properties.get("result") if isinstance(result_properties, dict) else None
+        required = result_schema.get("required") if isinstance(result_schema, dict) else None
+        if not isinstance(command, str) or not isinstance(required, list):
+            continue
+        if set(properties) != {"command", "status_code"}:
+            continue
+        status = properties.get("status_code")
+        status_code = status.get("const") if isinstance(status, dict) else None
+        if status_code not in RESULT_STATUSES:
+            raise ContractError(f"schema result fields are not per status for {command}")
+        if (
+            not isinstance(condition, dict)
+            or _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "status_code"}
+            or not isinstance(command_schema, dict)
+            or _assertion_keys(command_schema) != {"const"}
+            or not isinstance(status, dict)
+            or _assertion_keys(status) != {"const"}
+        ):
+            raise ContractError(f"schema result clause cannot apply for {command}")
+        if (
+            _assertion_keys(then) != {"properties"}
+            or set(result_properties) != {"result"}
+            or not _result_consequent_applies(result_schema, required, _result_property_schemas(schema))
+        ):
+            raise ContractError(f"schema result consequent cannot apply for {command}")
+        by_status = found.setdefault(command, {})
+        if status_code in by_status:
+            raise ContractError(f"schema result fields repeated for {command}")
+        by_status[status_code] = required
+    return found
+
+
+def _result_property_schemas(schema: dict[str, Any]) -> dict[str, Any]:
+    result = schema.get("properties", {}).get("result") if isinstance(schema.get("properties"), dict) else None
+    properties = result.get("properties") if isinstance(result, dict) else None
+    return properties if isinstance(properties, dict) else {}
+
+
+def _admitted_literals(schema: Any) -> set[Any] | None:
+    """Literals a plain const or enum schema admits."""
+    if not isinstance(schema, dict):
+        return None
+    keys = _assertion_keys(schema)
+    if keys == {"const"}:
+        value = schema.get("const")
+        if isinstance(value, str) or type(value) is bool:
+            return {value}
+        return None
+    values = schema.get("enum")
+    if keys == {"enum"} and isinstance(values, list) and values:
+        if all(isinstance(item, str) or type(item) is bool for item in values):
+            return set(values)
+    return None
+
+
+def _value_fits_base(value: Any, base: Any) -> bool:
+    """True when one literal is inside the base result property schema."""
+    if not isinstance(base, dict):
+        return False
+    if "const" in base and base.get("const") != value:
+        return False
+    enum = base.get("enum")
+    if isinstance(enum, list) and value not in enum:
+        return False
+    base_type = base.get("type")
+    if base_type == "boolean":
+        return type(value) is bool
+    if base_type == "string":
+        if not isinstance(value, str):
+            return False
+        pattern = base.get("pattern")
+        # JSON Schema pattern is a search, including an unanchored substring.
+        return not isinstance(pattern, str) or re.search(pattern, value) is not None
+    if base_type == "integer":
+        return type(value) is int
+    if base_type == "number":
+        return type(value) is int or type(value) is float
+    return "const" in base or isinstance(enum, list)
+
+
+def _property_constraints(properties: Any, names: set[str], bases: dict[str, Any]) -> dict[str, set[Any]] | None:
+    """Admitted literals for each property, or None when one cannot be satisfied."""
+    if not isinstance(properties, dict) or not set(properties) <= names:
+        return None
+    found: dict[str, set[Any]] = {}
+    for name, child in properties.items():
+        admitted = _admitted_literals(child)
+        if admitted is None:
+            return None
+        fitting = {value for value in admitted if _value_fits_base(value, bases.get(name))}
+        if not fitting:
+            return None
+        found[name] = fitting
+    return found
+
+
+def _result_clause_applies(clause: Any, names: set[str], bases: dict[str, Any], outer: dict[str, set[Any]]) -> bool:
+    """True when an allOf item can still be satisfied together with the outer properties."""
+    if not isinstance(clause, dict) or clause.get("then") is False:
+        return False
+    if _assertion_keys(clause) - {"if", "then"}:
+        return False
+    then = clause.get("then")
+    properties = then.get("properties") if isinstance(then, dict) else None
+    if not isinstance(then, dict) or _assertion_keys(then) != {"properties"}:
+        return False
+    inner = _property_constraints(properties, names, bases)
+    if inner is None:
+        return False
+    return all(not outer.get(name) or bool(outer[name] & values) for name, values in inner.items())
+
+
+def _result_consequent_applies(
+    result_schema: dict[str, Any], required: list[Any], bases: dict[str, Any]
+) -> bool:
+    """Reject a result consequent that no value allowed by the base schema can satisfy."""
+    if _assertion_keys(result_schema) - {"required", "properties", "allOf"}:
+        return False
+    if not required or not all(isinstance(item, str) for item in required):
+        return False
+    names = set(required)
+    properties = result_schema.get("properties", {})
+    if "properties" in result_schema:
+        outer = _property_constraints(properties, names, bases)
+        if outer is None:
+            return False
+    else:
+        outer = {}
+    if "allOf" not in result_schema:
+        return True
+    clauses = result_schema.get("allOf")
+    if not isinstance(clauses, list) or not clauses:
+        return False
+    return all(_result_clause_applies(clause, names, bases, outer) for clause in clauses)
+
+
+def _const_value(schema: Any) -> Any:
+    if isinstance(schema, dict) and _assertion_keys(schema) == {"const"} and "const" in schema:
+        return schema["const"]
+    return None
+
+
+def _result_property_map(schema: dict[str, Any]) -> dict[str, Any]:
+    properties = schema.get("properties")
+    result = properties.get("result") if isinstance(properties, dict) else None
+    fields = result.get("properties") if isinstance(result, dict) else None
+    if not isinstance(fields, dict):
+        raise ContractError("result property schema missing")
+    return fields
+
+
+def _require_denied_result_consts(schema: dict[str, Any]) -> None:
+    """Safety results that cannot be true stay a false const on the base schema."""
+    fields = _result_property_map(schema)
+    for name in DENIED_FALSE_RESULTS:
+        if _const_value(fields.get(name)) is not False:
+            raise ContractError(f"{name} is not limited to false")
+
+
+def _require_required_result_consts(schema: dict[str, Any]) -> None:
+    """Safety results that must stay true stay a true const on the base schema."""
+    fields = _result_property_map(schema)
+    for name in REQUIRED_TRUE_RESULTS:
+        if _const_value(fields.get(name)) is not True:
+            raise ContractError(f"{name} is not limited to true")
+
+
+def _require_closed_response_schema(schema: dict[str, Any]) -> None:
+    """The response and its result cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    result = properties.get("result") if isinstance(properties, dict) else None
+    result_properties = result.get("properties") if isinstance(result, dict) else None
+    required = schema.get("required")
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(RESPONSE_PROPERTIES)
+    ):
+        raise ContractError("response schema accepts an authority field")
+    if not isinstance(required, list) or len(required) != len(set(required)) or set(required) != set(RESPONSE_REQUIRED):
+        raise ContractError("response schema required fields drifted")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("response api_version is not o7.operator.v0")
+    if _admitted_strings(properties.get("surface")) != set(SURFACES):
+        raise ContractError("response surface allowlist drifted")
+    if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
+        raise ContractError("result schema accepts an authority field")
+    profile = properties.get("profile")
+    profile_properties = profile.get("properties") if isinstance(profile, dict) else None
+    if (
+        not _object_is_closed(profile)
+        or not _required_is(profile, PROFILE_PROPERTIES)
+        or set(profile_properties or {}) != set(PROFILE_PROPERTIES)
+    ):
+        raise ContractError("profile schema accepts an authority field")
+    errors = properties.get("errors")
+    items = errors.get("items") if isinstance(errors, dict) else None
+    item_properties = items.get("properties") if isinstance(items, dict) else None
+    if (
+        not _object_is_closed(items)
+        or not _required_is(items, ERROR_PROPERTIES)
+        or set(item_properties or {}) != set(ERROR_PROPERTIES)
+    ):
+        raise ContractError("response error schema accepts an authority field")
+    presentation = properties.get("presentation")
+    presentation_properties = presentation.get("properties") if isinstance(presentation, dict) else None
+    if (
+        not _object_is_closed(presentation)
+        or not _required_is(presentation, PRESENTATION_PROPERTIES)
+        or set(presentation_properties or {}) != set(PRESENTATION_PROPERTIES)
+    ):
+        raise ContractError("presentation schema accepts an authority field")
+    visibility = properties.get("visibility")
+    visibility_properties = visibility.get("properties") if isinstance(visibility, dict) else None
+    if (
+        not _object_is_closed(visibility)
+        or not _required_is(visibility, VISIBILITY_PROPERTIES)
+        or set(visibility_properties or {}) != set(VISIBILITY_PROPERTIES)
+    ):
+        raise ContractError("visibility schema accepts an authority field")
+    reference = result_properties.get("qualification_reference") if isinstance(result_properties, dict) else None
+    if _const_value(reference) != "A":
+        raise ContractError("qualification reference is not profile A")
+    _require_closed_nested_result(result_properties)
+
+
+def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """A closed result schema rejects an unmodeled live-authorization claim."""
+    positions = next(
+        (
+            doc
+            for doc in responses
+            if isinstance(doc, dict) and doc.get("request_id") == "req_positions"
+        ),
+        None,
+    )
+    result = positions.get("result") if isinstance(positions, dict) else None
+    if not isinstance(result, dict) or _schema_error(validator, positions) is not None:
+        raise ContractError("result schema rejects the positions oracle")
+    claimed = {**positions, "result": {**result, "live_authorized": True}}
+    if _schema_error(validator, claimed) is None:
+        raise ContractError("result schema accepts live_authorized")
+    profile = positions.get("profile")
+    if not isinstance(profile, dict):
+        raise ContractError("profile schema rejects the positions oracle")
+    claimed_profile = {**positions, "profile": {**profile, "live_authorized": True}}
+    if _schema_error(validator, claimed_profile) is None:
+        raise ContractError("profile schema accepts live_authorized")
+    presentation = positions.get("presentation")
+    if not isinstance(presentation, dict):
+        raise ContractError("presentation schema rejects the positions oracle")
+    claimed_presentation = {**positions, "presentation": {**presentation, "live_authorized": True}}
+    if _schema_error(validator, claimed_presentation) is None:
+        raise ContractError("presentation schema accepts live_authorized")
+    visibility = positions.get("visibility")
+    if not isinstance(visibility, dict):
+        raise ContractError("visibility schema rejects the positions oracle")
+    claimed_visibility = {**positions, "visibility": {**visibility, "live_authorized": True}}
+    if _schema_error(validator, claimed_visibility) is None:
+        raise ContractError("visibility schema accepts live_authorized")
+    rows = result.get("positions")
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        raise ContractError("positions schema rejects the positions oracle")
+    claimed_position = {
+        **positions,
+        "result": {**result, "positions": [{**rows[0], "live_authorized": True}, *rows[1:]]},
+    }
+    if _schema_error(validator, claimed_position) is None:
+        raise ContractError("positions schema accepts live_authorized")
+    if _schema_error(validator, {**positions, "surface": "broker"}) is None:
+        raise ContractError("response schema accepts surface broker")
+
+
+def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """A closed error object inside a response rejects an unmodeled authority claim."""
+    decisions = next(
+        (
+            doc
+            for doc in responses
+            if isinstance(doc, dict) and doc.get("request_id") == "req_decisions"
+        ),
+        None,
+    )
+    errors = decisions.get("errors") if isinstance(decisions, dict) else None
+    if (
+        not isinstance(errors, list)
+        or not errors
+        or not isinstance(errors[0], dict)
+        or _schema_error(validator, decisions) is not None
+    ):
+        raise ContractError("response error schema rejects the decisions oracle")
+    claimed = {**decisions, "errors": [{**errors[0], "live_authorized": True}, *errors[1:]]}
+    if _schema_error(validator, claimed) is None:
+        raise ContractError("response error schema accepts live_authorized")
+
+
+def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
+    """A refused intervention cannot claim that the request was recorded."""
+    commands = set(INTERVENTION_NAMES)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(condition, dict) or not isinstance(properties, dict):
+            continue
+        command_schema = properties.get("command")
+        status_schema = properties.get("status_code")
+        if _admitted_strings(command_schema) != commands or _admitted_strings(status_schema) != {"refused"}:
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        result = then_properties.get("result") if isinstance(then_properties, dict) else None
+        recorded_properties = result.get("properties") if isinstance(result, dict) else None
+        recorded = recorded_properties.get("recorded") if isinstance(recorded_properties, dict) else None
+        survives = recorded_properties.get("survives_restart") if isinstance(recorded_properties, dict) else None
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "status_code"}
+            or set(properties) != {"command", "status_code"}
+            or not isinstance(command_schema, dict)
+            or _assertion_keys(command_schema) != {"enum"}
+            or not isinstance(status_schema, dict)
+            or _assertion_keys(status_schema) != {"const"}
+            or not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"result"}
+            or not isinstance(result, dict)
+            or _assertion_keys(result) != {"properties"}
+            or not isinstance(recorded_properties, dict)
+            or set(recorded_properties) != {"recorded", "survives_restart"}
+            or _const_value(recorded) is not False
+            or _const_value(survives) is not False
+        ):
+            raise ContractError("refused intervention clause cannot apply")
+        return
+    raise ContractError("refused intervention can still be recorded")
+
+
+def _refused_intervention_probe(
+    doc: dict[str, Any], recorded: bool, survives_restart: bool | None = None
+) -> dict[str, Any]:
+    """Copy one intervention response into a refused response with one recording value."""
+    result = doc.get("result")
+    presentation = dict(doc.get("presentation") or {})
+    presentation["exit_code"] = EXIT_CODES["refused"]
+    presentation["text_status"] = "refused"
+    presentation["rendered"] = "status=refused probe"
+    if survives_restart is None:
+        survives_restart = recorded
+    return {
+        **doc,
+        "status_code": "refused",
+        "result": {**result, "recorded": recorded, "survives_restart": survives_restart},
+        "presentation": presentation,
+    }
+
+
+def _require_recorded_refusal_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """The response schema itself rejects a refused intervention that was recorded."""
+    for doc in responses:
+        if not isinstance(doc, dict) or doc.get("command") not in INTERVENTION_NAMES:
+            continue
+        result = doc.get("result")
+        if not isinstance(result, dict):
+            raise ContractError("refused intervention schema accepts a recording")
+        unrecorded = _refused_intervention_probe(doc, False)
+        if _schema_error(validator, unrecorded) is not None:
+            raise ContractError(f"refused intervention schema rejects an unrecorded {doc['command']}")
+        recorded = _refused_intervention_probe(doc, True)
+        if _schema_error(validator, recorded) is None:
+            raise ContractError(f"refused intervention schema accepts a recording for {doc['command']}")
+        persistent = _refused_intervention_probe(doc, False, True)
+        if _schema_error(validator, persistent) is None:
+            raise ContractError(f"refused intervention schema accepts persistence for {doc['command']}")
+
+
+def _require_unrecorded_intervention_ephemeral(schema: dict[str, Any]) -> None:
+    """An unrecorded intervention cannot claim that it survives restart."""
+    commands = set(INTERVENTION_NAMES)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(condition, dict) or not isinstance(properties, dict):
+            continue
+        command_schema = properties.get("command")
+        result_if = properties.get("result")
+        result_properties = result_if.get("properties") if isinstance(result_if, dict) else None
+        recorded = result_properties.get("recorded") if isinstance(result_properties, dict) else None
+        if _admitted_strings(command_schema) != commands or _const_value(recorded) is not False:
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        result = then_properties.get("result") if isinstance(then_properties, dict) else None
+        survives_properties = result.get("properties") if isinstance(result, dict) else None
+        survives = survives_properties.get("survives_restart") if isinstance(survives_properties, dict) else None
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "result"}
+            or set(properties) != {"command", "result"}
+            or not isinstance(command_schema, dict)
+            or _assertion_keys(command_schema) != {"enum"}
+            or not isinstance(result_if, dict)
+            or _assertion_keys(result_if) != {"properties", "required"}
+            or set(result_if.get("required") or []) != {"recorded"}
+            or set(result_properties or {}) != {"recorded"}
+            or not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"result"}
+            or not isinstance(result, dict)
+            or _assertion_keys(result) != {"properties"}
+            or not isinstance(survives_properties, dict)
+            or set(survives_properties) != {"survives_restart"}
+            or _const_value(survives) is not False
+        ):
+            raise ContractError("unrecorded intervention clause cannot apply")
+        return
+    raise ContractError("unrecorded intervention can still persist")
+
+
+def _compound_intervention_probe(
+    doc: dict[str, Any], status: str, *, survives_restart: bool
+) -> dict[str, Any]:
+    """Copy one intervention into a compound status with one persistence value."""
+    result = dict(doc.get("result") or {})
+    result["recorded"] = False
+    result["survives_restart"] = survives_restart
+    result["watch_only"] = True
+    result["order_submitted"] = False
+    result["restart_requires_reconciliation"] = True
+    visibility = dict(doc.get("visibility") or {})
+    visibility["uncertainty"] = "absent_not_hidden"
+    visibility["refusal"] = "absent_not_hidden"
+    visibility["reconciliation"] = "reconciled"
+    if status == "stale_or_unreconciled":
+        result["stale"] = True
+        result["dependencies"] = [{"name": "evidence", "status": "stale"}]
+        visibility["stale_data"] = "visible"
+    elif status == "unavailable":
+        result.pop("stale", None)
+        result["dependencies"] = [{"name": "evidence", "status": "unavailable"}]
+        visibility["stale_data"] = "absent_not_hidden"
+    else:
+        raise ContractError(f"compound intervention probe does not cover {status}")
+    presentation = dict(doc.get("presentation") or {})
+    presentation["exit_code"] = EXIT_CODES[status]
+    presentation["text_status"] = status
+    presentation["rendered"] = f"status={status} probe"
+    return {
+        **doc,
+        "status_code": status,
+        "result": result,
+        "visibility": visibility,
+        "presentation": presentation,
+        "errors": [
+            {
+                "code": status,
+                "status_code": status,
+                "message": "probe",
+                "recovery": "probe",
+                "color_only": False,
+            }
+        ],
+    }
+
+
+def _require_unrecorded_persistence_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """The response schema rejects an unrecorded intervention that survives restart."""
+    for doc in responses:
+        if not isinstance(doc, dict) or doc.get("command") not in INTERVENTION_NAMES:
+            continue
+        for status in ("stale_or_unreconciled", "unavailable"):
+            ephemeral = _compound_intervention_probe(doc, status, survives_restart=False)
+            if _schema_error(validator, ephemeral) is not None:
+                raise ContractError(f"unrecorded intervention schema rejects an ephemeral {doc['command']} {status}")
+            persistent = _compound_intervention_probe(doc, status, survives_restart=True)
+            if _schema_error(validator, persistent) is None:
+                raise ContractError(f"unrecorded intervention schema accepts persistence for {doc['command']} {status}")
+
+
+def _error_probe(code: str, status: str) -> dict[str, Any]:
+    return {
+        "code": code,
+        "status_code": status,
+        "message": "probe",
+        "recovery": "probe",
+        "color_only": False,
+    }
+
+
+def _require_error_clauses(schema: dict[str, Any]) -> None:
+    """Each error code's schema clause admits only the same status."""
+    codes = tuple(code for code in EXIT_CODES if code != "ok")
+    found: set[str] = set()
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict) or set(properties) != {"code"}:
+            continue
+        code_schema = properties.get("code")
+        code = _const_value(code_schema)
+        if code not in codes:
+            continue
+        if (
+            not isinstance(condition, dict)
+            or _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"code"}
+            or not isinstance(code_schema, dict)
+            or _assertion_keys(code_schema) != {"const"}
+        ):
+            raise ContractError(f"error schema clause cannot apply for {code}")
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        status = then_properties.get("status_code") if isinstance(then_properties, dict) else None
+        if (
+            not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"status_code"}
+            or _const_value(status) != code
+        ):
+            raise ContractError(f"error schema clause cannot apply for {code}")
+        if code in found:
+            raise ContractError(f"error schema clause repeated for {code}")
+        found.add(code)
+    for code in codes:
+        if code not in found:
+            raise ContractError(f"error schema does not bind {code}")
+
+
+def _require_error_schema_rejections(validator: Draft202012Validator) -> None:
+    """A schema-only consumer must reject an error code that disagrees with its status."""
+    codes = [code for code in EXIT_CODES if code != "ok"]
+    for index, code in enumerate(codes):
+        if _schema_error(validator, _error_probe(code, code)) is not None:
+            raise ContractError(f"error schema rejects {code}")
+        other = codes[(index + 1) % len(codes)]
+        if _schema_error(validator, _error_probe(code, other)) is None:
+            raise ContractError(f"error schema accepts a mismatched status for {code}")
+    if _schema_error(validator, _error_probe("order_submitted", "order_submitted")) is None:
+        raise ContractError("error schema accepts order_submitted")
+    colored = _error_probe("refused", "refused")
+    colored["color_only"] = True
+    if _schema_error(validator, colored) is None:
+        raise ContractError("error schema accepts color_only")
+
+
+def _unknown_order_count(result: dict[str, Any]) -> int | None:
+    value = result.get("unknown_orders")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _reconciled_with_unknown_orders(result: dict[str, Any]) -> bool:
+    count = _unknown_order_count(result)
+    return result.get("reconciliation") == "reconciled" and count is not None and count > 0
+
+
+def _is_unreconciled(result: dict[str, Any]) -> bool:
+    if _reconciled_with_unknown_orders(result):
+        return False
+    count = _unknown_order_count(result)
+    return result.get("reconciliation") == "unreconciled" or (count is not None and count > 0)
+
+
+def _intervention_probe(name: str, *, confirmation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "api_version": API_VERSION,
+        "candidate_maturity": MATURITY,
+        "surface": "cli",
+        "command": name,
+        "request_id": "req_cmd_probe",
+        "arguments": arguments,
+        "confirmation": confirmation,
+    }
+
+
+def _require_intervention_safeguards(validator: Draft202012Validator) -> None:
+    """Each intervention command must reject a missing confirmation and a missing scope."""
+    for name in INTERVENTION_NAMES:
+        explicit = _intervention_probe(
+            name, confirmation="explicit", arguments={"scope": "operator_session"}
+        )
+        if _schema_error(validator, explicit) is not None:
+            raise ContractError(f"intervention command schema rejects {name}")
+        unconfirmed = _intervention_probe(
+            name, confirmation="not_required", arguments={"scope": "operator_session"}
+        )
+        if _schema_error(validator, unconfirmed) is None:
+            raise ContractError(f"unconfirmed intervention schema accepts {name}")
+        unscoped = _intervention_probe(name, confirmation="explicit", arguments={})
+        if _schema_error(validator, unscoped) is None:
+            raise ContractError(f"unscoped intervention schema accepts {name}")
+        account = _intervention_probe(name, confirmation="explicit", arguments={"scope": "account"})
+        if _schema_error(validator, account) is None:
+            raise ContractError(f"non-session intervention schema accepts {name}")
+
+
+def _required_is(schema: dict[str, Any], expected: tuple[str, ...]) -> bool:
+    required = schema.get("required")
+    return (
+        isinstance(required, list)
+        and len(required) == len(set(required)) == len(expected)
+        and set(required) == set(expected)
+    )
+
+
+def _object_is_closed(schema: Any) -> bool:
+    """True when an object schema cannot carry properties it does not name."""
+    if not isinstance(schema, dict) or schema.get("additionalProperties") is not False:
+        return False
+    return "patternProperties" not in _assertion_keys(schema) and "unevaluatedProperties" not in _assertion_keys(schema)
+
+
+def _record_is_closed(schema: Any, names: tuple[str, ...]) -> bool:
+    """True when an object names exactly the given fields and cannot grow more."""
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    return (
+        _object_is_closed(schema)
+        and _required_is(schema, names)
+        and isinstance(properties, dict)
+        and set(properties) == set(names)
+    )
+
+
+def _require_closed_nested_result(result_properties: Any) -> None:
+    """Nested result records cannot carry an unmodeled authority field."""
+    fields = result_properties if isinstance(result_properties, dict) else {}
+    for name, record_fields in NESTED_RESULT_ARRAYS.items():
+        field = fields.get(name)
+        items = field.get("items") if isinstance(field, dict) else None
+        if not _record_is_closed(items, record_fields):
+            raise ContractError("nested result schema accepts an authority field")
+    if not _record_is_closed(fields.get("collateral"), COLLATERAL_PROPERTIES):
+        raise ContractError("nested result schema accepts an authority field")
+    decisions = fields.get("decisions")
+    decision_items = decisions.get("items") if isinstance(decisions, dict) else None
+    decision_properties = decision_items.get("properties") if isinstance(decision_items, dict) else None
+    outcome = decision_properties.get("outcome") if isinstance(decision_properties, dict) else None
+    if _admitted_strings(outcome) != set(DECISION_OUTCOMES):
+        raise ContractError("decision outcome allowlist drifted")
+
+
+def _require_closed_command_schema(schema: dict[str, Any]) -> None:
+    """The command and its arguments cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    arguments = properties.get("arguments") if isinstance(properties, dict) else None
+    argument_properties = arguments.get("properties") if isinstance(arguments, dict) else None
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(COMMAND_PROPERTIES)
+        or not _object_is_closed(arguments)
+        or set(argument_properties or {}) != {"scope"}
+        or not _required_is(schema, COMMAND_PROPERTIES)
+    ):
+        raise ContractError("command schema accepts an authority field")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("command api_version is not o7.operator.v0")
+    if _const_value(properties.get("candidate_maturity")) != MATURITY:
+        raise ContractError("command candidate_maturity is not researched")
+    if _admitted_strings(properties.get("surface")) != set(SURFACES):
+        raise ContractError("command surface allowlist drifted")
+
+
+def _require_command_authority_rejected(validator: Draft202012Validator) -> None:
+    """A closed command schema rejects an order path and a gateway bypass."""
+    read = _intervention_probe(
+        "operator.positions.inspect", confirmation="not_required", arguments={}
+    )
+    if _schema_error(validator, read) is not None:
+        raise ContractError("command schema rejects a read")
+    with_order_path = {**read, "order_path": "broker_direct"}
+    if _schema_error(validator, with_order_path) is None:
+        raise ContractError("command schema accepts order_path")
+    bypass = _intervention_probe(
+        "operator.interventions.request_stop",
+        confirmation="explicit",
+        arguments={"scope": "operator_session", "bypass_gateway": True},
+    )
+    if _schema_error(validator, bypass) is None:
+        raise ContractError("command schema accepts bypass_gateway")
+    omitted = {
+        key: value
+        for key, value in _intervention_probe(
+            "operator.interventions.request_stop",
+            confirmation="explicit",
+            arguments={"scope": "operator_session"},
+        ).items()
+        if key != "confirmation"
+    }
+    if _schema_error(validator, omitted) is None:
+        raise ContractError("command schema accepts an omitted confirmation")
+    if _schema_error(validator, {**read, "api_version": "o7.operator.v1"}) is None:
+        raise ContractError("command schema accepts o7.operator.v1")
+    if _schema_error(validator, {**read, "candidate_maturity": "contract_frozen"}) is None:
+        raise ContractError("command schema accepts a promoted maturity")
+    if _schema_error(validator, {**read, "surface": "broker"}) is None:
+        raise ContractError("command schema accepts surface broker")
+
+
+def _require_session_scope_schema(schema: dict[str, Any]) -> None:
+    """Intervention scope admits operator_session and no other value."""
+    arguments = schema.get("properties", {}).get("arguments")
+    scope = arguments.get("properties", {}).get("scope") if isinstance(arguments, dict) else None
+    if _admitted_strings(scope) != {"operator_session"}:
+        raise ContractError("intervention scope is not limited to operator_session")
+    matched = False
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        then_arguments = then_properties.get("arguments") if isinstance(then_properties, dict) else None
+        then_scope_properties = then_arguments.get("properties") if isinstance(then_arguments, dict) else None
+        then_scope = then_scope_properties.get("scope") if isinstance(then_scope_properties, dict) else None
+        if then_scope is None:
+            continue
+        matched = True
+        required = then_arguments.get("required") if isinstance(then_arguments, dict) else None
+        if (
+            _admitted_strings(then_scope) != {"operator_session"}
+            or set(required or []) != {"scope"}
+            or _assertion_keys(then_arguments) != {"properties", "required"}
+            or set(then_scope_properties) != {"scope"}
+        ):
+            raise ContractError("intervention scope is not limited to operator_session")
+    if not matched:
+        raise ContractError("intervention scope is not limited to operator_session")
+
+
+def _event_probe(event_type: str, command: str, status: str, visibility: str) -> dict[str, Any]:
+    return {
+        "api_version": API_VERSION,
+        "candidate_maturity": MATURITY,
+        "event_type": event_type,
+        "command": command,
+        "request_id": "req_event_probe",
+        "visibility": visibility,
+        "status_code": status,
+    }
+
+
+def _require_closed_event_schema(schema: dict[str, Any]) -> None:
+    """An event cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(EVENT_PROPERTIES)
+        or not _required_is(schema, EVENT_PROPERTIES)
+    ):
+        raise ContractError("event schema accepts an authority field")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("event api_version is not o7.operator.v0")
+    if _const_value(properties.get("candidate_maturity")) != MATURITY:
+        raise ContractError("event candidate_maturity is not researched")
+    if _admitted_strings(properties.get("event_type")) != set(EVENT_COMMANDS):
+        raise ContractError("event type allowlist drifted")
+
+
+def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
+    """A closed event schema rejects an order-submission claim."""
+    probe = _event_probe(
+        "intervention_recorded",
+        "operator.interventions.request_stop",
+        "ok",
+        "visible",
+    )
+    if _schema_error(validator, probe) is not None:
+        raise ContractError("event schema rejects a recorded stop")
+    if _schema_error(validator, {**probe, "order_submitted": True}) is None:
+        raise ContractError("event schema accepts order_submitted")
+    unknown = _event_probe("order_submitted", "operator.positions.inspect", "ok", "visible")
+    if _schema_error(validator, unknown) is None:
+        raise ContractError("event schema accepts event type order_submitted")
+    if _schema_error(validator, {**probe, "api_version": "o7.operator.v1"}) is None:
+        raise ContractError("event schema accepts o7.operator.v1")
+    if _schema_error(validator, {**probe, "candidate_maturity": "contract_frozen"}) is None:
+        raise ContractError("event schema accepts a promoted maturity")
+
+
+def _plain_text_rejects_ansi(schema: Any) -> bool:
+    """True when a string schema is non-empty and rejects one ANSI escape."""
+    if not isinstance(schema, dict) or _assertion_keys(schema) != {"minLength", "not", "type"}:
+        return False
+    banned = schema.get("not")
+    return (
+        schema.get("type") == "string"
+        and schema.get("minLength") == 1
+        and isinstance(banned, dict)
+        and _assertion_keys(banned) == {"pattern"}
+        and banned.get("pattern") == r"[\x1b]"
+    )
+
+
+def _require_closed_error_schema(schema: dict[str, Any]) -> None:
+    """An error cannot carry a field it does not name."""
+    properties = schema.get("properties")
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(ERROR_PROPERTIES)
+        or not _required_is(schema, ERROR_PROPERTIES)
+    ):
+        raise ContractError("error schema accepts an extra field")
+    failure_codes = {code for code in EXIT_CODES if code != "ok"}
+    if (
+        _admitted_strings(properties.get("code")) != failure_codes
+        or _admitted_strings(properties.get("status_code")) != failure_codes
+    ):
+        raise ContractError("error code allowlist drifted")
+    if _const_value(properties.get("color_only")) is not False:
+        raise ContractError("error color_only is not limited to false")
+    if not _plain_text_rejects_ansi(properties.get("message")) or not _plain_text_rejects_ansi(properties.get("recovery")):
+        raise ContractError("error text does not reject an ANSI escape")
+
+
+def _require_event_clauses(schema: dict[str, Any]) -> None:
+    """Each event type's schema clause admits only its command, visibility, and status."""
+    found: dict[str, dict[str, Any]] = {}
+    catalog = set(REQUIRED_COMMANDS)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict) or set(properties) != {"event_type"}:
+            continue
+        event_schema = properties.get("event_type")
+        event_type = event_schema.get("const") if isinstance(event_schema, dict) else None
+        if event_type not in EVENT_COMMANDS:
+            continue
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"event_type"}
+            or not isinstance(event_schema, dict)
+            or _assertion_keys(event_schema) != {"const"}
+        ):
+            raise ContractError(f"event schema clause cannot apply for {event_type}")
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        if not isinstance(then, dict) or _assertion_keys(then) != {"properties"} or not isinstance(then_properties, dict):
+            raise ContractError(f"event schema clause cannot apply for {event_type}")
+        if event_type in found:
+            raise ContractError(f"event schema clause repeated for {event_type}")
+        found[event_type] = then_properties
+    for event_type, allowed in EVENT_COMMANDS.items():
+        then_properties = found.get(event_type)
+        if not isinstance(then_properties, dict):
+            raise ContractError(f"event schema does not constrain {event_type}")
+        expected_names = {"visibility", "status_code"}
+        if set(allowed) != catalog:
+            expected_names.add("command")
+        visibility = then_properties.get("visibility")
+        status = then_properties.get("status_code")
+        if (
+            set(then_properties) != expected_names
+            or not isinstance(visibility, dict)
+            or _assertion_keys(visibility) != {"const"}
+            or visibility.get("const") != EVENT_VISIBILITY[event_type]
+            or _admitted_strings(status) != set(EVENT_STATUSES[event_type])
+        ):
+            raise ContractError(f"event schema constraint drifted for {event_type}")
+        if "command" in expected_names:
+            command_schema = then_properties.get("command")
+            if _admitted_strings(command_schema) != set(allowed):
+                raise ContractError(f"event schema constraint drifted for {event_type}")
+
+
+def _require_event_schema_rejections(validator: Draft202012Validator) -> None:
+    """A schema-only consumer must accept every allowed combination and reject the rest."""
+    catalog = list(REQUIRED_COMMANDS)
+    for event_type, allowed in EVENT_COMMANDS.items():
+        visibility = EVENT_VISIBILITY[event_type]
+        commands = sorted(allowed)
+        statuses = sorted(EVENT_STATUSES[event_type])
+        for command in commands:
+            for status in statuses:
+                probe = _event_probe(event_type, command, status, visibility)
+                if _schema_error(validator, probe) is not None:
+                    raise ContractError(f"event schema rejects {event_type} {status}")
+        for status in EXIT_CODES:
+            if status in EVENT_STATUSES[event_type]:
+                continue
+            probe = _event_probe(event_type, commands[0], status, visibility)
+            if _schema_error(validator, probe) is None:
+                raise ContractError(f"event schema accepts a mismatched status for {event_type}")
+        for command in catalog:
+            if command in allowed:
+                continue
+            probe = _event_probe(event_type, command, statuses[0], visibility)
+            if _schema_error(validator, probe) is None:
+                raise ContractError(f"event schema accepts a mismatched command for {event_type}")
+        other_visibility = "unreconciled_visible" if visibility == "visible" else "visible"
+        hidden = _event_probe(event_type, commands[0], statuses[0], other_visibility)
+        if _schema_error(validator, hidden) is None:
+            raise ContractError(f"event schema accepts a mismatched visibility for {event_type}")
+
+
+def _validator(schema: dict[str, Any]) -> Draft202012Validator:
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise ContractError(f"schema is not draft 2020-12: {exc.message}") from exc
+    return Draft202012Validator(schema)
+
+
+def _schema_error(validator: Draft202012Validator, instance: Any) -> str | None:
+    error = next(validator.iter_errors(instance), None)
+    if error is None:
+        return None
+    location = "/".join(str(part) for part in error.absolute_path) or "<root>"
+    return f"{location}: {error.message}"
+
+
+def _project(doc: dict[str, Any]) -> dict[str, Any]:
+    presentation = dict(doc.get("presentation") or {})
+    presentation.pop("rendered", None)
+    return {
+        "api_version": doc.get("api_version"),
+        "candidate_maturity": doc.get("candidate_maturity"),
+        "command": doc.get("command"),
+        "request_id": doc.get("request_id"),
+        "profile": doc.get("profile"),
+        "enforcement_route": doc.get("enforcement_route"),
+        "authority_effect": doc.get("authority_effect"),
+        "order_path": doc.get("order_path"),
+        "status_code": doc.get("status_code"),
+        "visibility": doc.get("visibility"),
+        "result": doc.get("result"),
+        "errors": doc.get("errors"),
+        "presentation": presentation,
+    }
+
+
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _conflicting_refusal_reasons(refusals: list[dict[str, Any]]) -> bool:
+    """True when one decision id is given more than one refusal reason."""
+    reasons: dict[Any, Any] = {}
+    for item in refusals:
+        decision_id = item.get("decision_id")
+        reason = item.get("reason_code")
+        if decision_id in reasons and reasons[decision_id] != reason:
+            return True
+        reasons[decision_id] = reason
+    return False
+
+
+def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[dict[str, Any]]) -> bool:
+    if any(item.get("visible") is not True for item in refusals):
+        return False
+    if _conflicting_refusal_reasons(refusals):
+        return False
+    covered = {
+        (item.get("decision_id"), item.get("reason_code"))
+        for item in refusals
+    }
+    return all((item.get("decision_id"), item.get("reason_code")) in covered for item in refused_decisions)
+
+
+def _refusal_without_decision(refusals: list[dict[str, Any]], decision_rows: list[dict[str, Any]]) -> bool:
+    """True when a refusal does not name a refused decision with the same reason."""
+    refused = {
+        (item.get("decision_id"), item.get("reason_code"))
+        for item in decision_rows
+        if item.get("outcome") == "refused"
+    }
+    return any((item.get("decision_id"), item.get("reason_code")) not in refused for item in refusals)
+
+
+def _refusal_names_recorded_decision(
+    refusals: list[dict[str, Any]], decision_rows: list[dict[str, Any]]
+) -> bool:
+    """True when a refusal row names a decision whose outcome is recorded."""
+    recorded = {
+        item.get("decision_id") for item in decision_rows if item.get("outcome") == "recorded"
+    }
+    return any(item.get("decision_id") in recorded for item in refusals)
+
+
+def _contains_ansi(value: Any) -> bool:
+    """True when any serialized string contains an ANSI escape."""
+    if isinstance(value, str):
+        return "\x1b" in value
+    if isinstance(value, dict):
+        return any(_contains_ansi(key) or _contains_ansi(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_contains_ansi(item) for item in value)
+    return False
+
+
+def _rendered_status_tokens(rendered: str) -> list[str]:
+    """Every delimited ``status=`` field, in order, without deduplication."""
+    return re.findall(r"(?:^|\s)status=(\S*)", rendered)
+
+
+def _status_text_mismatch(status: Any, text_status: Any, rendered: Any) -> bool:
+    if text_status != status or not isinstance(rendered, str):
+        return True
+    return _rendered_status_tokens(rendered) != [status]
+
+
+def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | None:
+    """Return the negative-control code for an unsafe response, or None."""
+    if not isinstance(doc, dict):
+        return "privileged_order_bypass"
+    keys = {str(key).lower() for key in _walk_keys(doc)}
+    result = doc.get("result") if isinstance(doc.get("result"), dict) else {}
+    visibility = doc.get("visibility") if isinstance(doc.get("visibility"), dict) else {}
+    presentation = doc.get("presentation") if isinstance(doc.get("presentation"), dict) else {}
+    profile = doc.get("profile") if isinstance(doc.get("profile"), dict) else {}
+    if keys & FORBIDDEN_KEYS:
+        return "privileged_order_bypass"
+    if doc.get("surface") not in SURFACES:
+        return "unknown_surface"
+    if doc.get("enforcement_route") != SOLE_ROUTE or doc.get("order_path") != "none":
+        return "privileged_order_bypass"
+    if doc.get("status_code") == "usage":
+        if doc.get("authority_effect") != "none":
+            return "authority_effect_mismatch"
+        if result:
+            return "usage_carries_result"
+        command = doc.get("command")
+        if command is not None and not isinstance(command, str):
+            return "privileged_order_bypass"
+    else:
+        if doc.get("command") not in allowed_commands:
+            return "privileged_order_bypass"
+        expected_effect = "intervention_request" if doc.get("command") in INTERVENTION_NAMES else "none"
+        if doc.get("authority_effect") != expected_effect:
+            return "authority_effect_mismatch"
+        expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
+        if expected_intervention is None and any(
+            field in result for field in ("intervention", "recorded", "survives_restart")
+        ):
+            return "read_claims_intervention"
+        if expected_intervention is not None and result.get("intervention") != expected_intervention:
+            return "intervention_mismatch"
+        if expected_intervention is not None and result.get("recorded") is True and result.get("survives_restart") is not True:
+            return "recorded_intervention_not_persistent"
+        if expected_intervention is not None and doc.get("status_code") == "ok" and (
+            result.get("recorded") is not True or result.get("survives_restart") is not True
+        ):
+            return "unrecorded_intervention_success"
+        if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("recorded") is True:
+            return "recorded_intervention_refused"
+        if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("survives_restart") is not False:
+            return "refused_intervention_persists"
+        if expected_intervention is not None and result.get("recorded") is not True and result.get("survives_restart") is not False:
+            return "unrecorded_intervention_persists"
+        if (
+            doc.get("command") == "operator.profiles.inspect"
+            and result.get("active_profile_class") != profile.get("profile_class")
+        ):
+            return "profile_class_mismatch"
+    if result.get("order_submitted") is True:
+        return "privileged_order_bypass"
+    if result.get("bounded_direct_authorized") is True:
+        return "direct_authorization"
+    if result.get("local_control_is_account_wide") is True:
+        return "account_wide_local_control"
+    if result.get("secrets_included") is True:
+        return "secrets_included"
+    if result.get("raw_separated_from_summary") is False:
+        return "raw_not_separated"
+    if result.get("surfaces_share_one_profile") is False:
+        return "split_profile"
+    if result.get("restart_requires_reconciliation") is False:
+        return "restart_without_reconciliation"
+    if "qualification_reference" in result and result.get("qualification_reference") != "A":
+        return "qualification_reference"
+    if profile.get("signature_state") != "illustrative_unsigned_fixture":
+        return "privileged_order_bypass"
+    refusals = _dicts(result.get("refusals"))
+    decision_rows = _dicts(result.get("decisions"))
+    decision_ids = [item.get("decision_id") for item in decision_rows]
+    if len(decision_ids) != len(set(decision_ids)):
+        return "duplicate_decision_id"
+    if any(item.get("outcome") not in DECISION_OUTCOMES for item in decision_rows):
+        return "decision_outcome"
+    if _refusal_names_recorded_decision(refusals, decision_rows):
+        return "refusal_on_recorded_decision"
+    if _conflicting_refusal_reasons(refusals):
+        return "conflicting_refusal_reason"
+    if _refusal_without_decision(refusals, decision_rows):
+        return "refusal_without_decision"
+    refused_decisions = [item for item in decision_rows if item.get("outcome") == "refused"]
+    dependencies = _dicts(result.get("dependencies"))
+    unknown_items = [
+        item for item in _dicts(result.get("items")) if item.get("state") in {"unknown", "uncertain"}
+    ]
+    collateral = result.get("collateral") if isinstance(result.get("collateral"), dict) else {}
+    has_refusal = bool(refusals or refused_decisions)
+    stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
+    unavailable = any(item.get("status") == "unavailable" for item in dependencies)
+    if _reconciled_with_unknown_orders(result):
+        return "reconciled_with_unknown_orders"
+    unreconciled = _is_unreconciled(result)
+    higher_status = stale or unreconciled or unavailable
+    has_uncertainty = bool(unknown_items) or collateral.get("state") == "unknown"
+    claims_refusal = visibility.get("refusal") == "visible"
+    if visibility.get("refusal") == "hidden" or has_refusal or claims_refusal:
+        disclosed = claims_refusal and has_refusal and _refusal_disclosed(refusals, refused_decisions)
+        if not disclosed or (not higher_status and doc.get("status_code") != "refused"):
+            return "hidden_refusal"
+    claims_uncertainty = visibility.get("uncertainty") == "visible"
+    if visibility.get("uncertainty") == "hidden" or has_uncertainty or claims_uncertainty:
+        evidenced = (
+            claims_uncertainty
+            and has_uncertainty
+            and all(item.get("visible") is True for item in unknown_items)
+        )
+        if not evidenced:
+            return "hidden_uncertainty"
+    claims_stale = visibility.get("stale_data") == "visible"
+    if visibility.get("stale_data") == "hidden" or stale or claims_stale:
+        expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
+        visible = stale and claims_stale and doc.get("status_code") == expected_status
+        if not visible:
+            return "hidden_stale_data"
+    claims_unreconciled = visibility.get("reconciliation") == "unreconciled_visible"
+    if visibility.get("reconciliation") == "hidden" or unreconciled or claims_unreconciled:
+        expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
+        visible = (
+            unreconciled
+            and claims_unreconciled
+            and doc.get("status_code") == expected_status
+            and result.get("restart_allowed") is False
+        )
+        if not visible:
+            return "hidden_unreconciled"
+    if doc.get("status_code") == "unavailable" and not unavailable:
+        return "false_unavailable"
+    if unavailable and doc.get("status_code") != "unavailable":
+        return "hidden_unavailable"
+    if (stale or unavailable) and result.get("watch_only") is not True:
+        return "stale_not_watch_only"
+    if (
+        presentation.get("color_only_signal") is True
+        or presentation.get("ansi_in_machine_output") is True
+        or presentation.get("machine_readable") is not True
+        or not presentation.get("text_status")
+        or _contains_ansi(doc)
+    ):
+        return "color_only_signal"
+    expected_exit = EXIT_CODES.get(doc.get("status_code"))
+    if expected_exit is None or presentation.get("exit_code") != expected_exit:
+        if doc.get("status_code") == "refused" and presentation.get("exit_code") == 0:
+            return "success_exit_on_refusal"
+        return "exit_code_mismatch"
+    if _status_text_mismatch(doc.get("status_code"), presentation.get("text_status"), presentation.get("rendered")):
+        return "contradictory_status_text"
+    if doc.get("candidate_maturity") != MATURITY:
+        return "maturity_promotion"
+    errors = doc.get("errors")
+    status = doc.get("status_code")
+    if not isinstance(errors, list):
+        return "status_error_mismatch"
+    active_codes: set[str] = set()
+    if unavailable:
+        active_codes.add("unavailable")
+    if stale or unreconciled:
+        active_codes.add("stale_or_unreconciled")
+    if has_refusal:
+        active_codes.add("refused")
+    if status == "usage":
+        active_codes.add(status)
+    if status == "ok":
+        if errors or active_codes:
+            return "status_error_mismatch"
+    elif (
+        status not in active_codes
+        or not errors
+        or any(
+            not isinstance(item, dict)
+            or item.get("code") not in active_codes
+            or item.get("status_code") != item.get("code")
+            or item.get("color_only") is not False
+            for item in errors
+        )
+        or any(code not in {item.get("code") for item in errors if isinstance(item, dict)} for code in active_codes)
+    ):
+        return "status_error_mismatch"
+    return None
+
+
+def validate_response(
+    validator: Draft202012Validator, doc: Any, allowed_commands: set[str]
+) -> str | None:
+    """Published validation path: response schema, then the semantic checks.
+
+    JSON Schema cannot express unique ``decisions[*].decision_id`` or that
+    every refusal names a refused decision, so schema validation alone is not
+    sufficient for a consumer.
+    """
+    problem = _schema_error(validator, doc)
+    if problem is not None:
+        return problem
+    return classify_response(doc, allowed_commands)
+
+
+def _event_error(event: dict[str, Any]) -> str | None:
+    allowed = EVENT_COMMANDS.get(event.get("event_type"))
+    if allowed is None or event.get("command") not in allowed:
+        return "event type does not match the command"
+    if event.get("visibility") != EVENT_VISIBILITY.get(event.get("event_type")):
+        return "event visibility does not match the event type"
+    if event.get("status_code") not in EVENT_STATUSES.get(event.get("event_type"), ()):
+        return "event status does not match the event type"
+    return None
+
+
+def _response_claims_event(event_type: Any, response: dict[str, Any]) -> bool:
+    """True when the response actually has the condition the event claims."""
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    visibility = response.get("visibility") if isinstance(response.get("visibility"), dict) else {}
+    if event_type == "evidence_viewed":
+        return response.get("command") == "operator.evidence.inspect" and "provenance" in result
+    if event_type == "refusal_visible":
+        refused = [item for item in _dicts(result.get("decisions")) if item.get("outcome") == "refused"]
+        return visibility.get("refusal") == "visible" and bool(_dicts(result.get("refusals")) or refused)
+    if event_type == "uncertainty_visible":
+        unknown = [
+            item for item in _dicts(result.get("items")) if item.get("state") in {"unknown", "uncertain"}
+        ]
+        collateral = result.get("collateral") if isinstance(result.get("collateral"), dict) else {}
+        return visibility.get("uncertainty") == "visible" and bool(unknown or collateral.get("state") == "unknown")
+    if event_type == "stale_visible":
+        dependencies = _dicts(result.get("dependencies"))
+        stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
+        return visibility.get("stale_data") == "visible" and stale
+    if event_type == "unreconciled_visible":
+        return (
+            visibility.get("reconciliation") == "unreconciled_visible"
+            and _is_unreconciled(result)
+            and not _reconciled_with_unknown_orders(result)
+        )
+    if event_type == "intervention_recorded":
+        expected = INTERVENTION_NAMES.get(response.get("command"))
+        return expected is not None and result.get("intervention") == expected and result.get("recorded") is True
+    if event_type == "export_recorded":
+        return response.get("command") in {"operator.audit.export", "operator.export.bundle"} and (
+            "export_id" in result or "bundle_id" in result
+        )
+    return False
+
+
+def _event_response_error(event: dict[str, Any], response: dict[str, Any] | None) -> str | None:
+    """Return why an event does not belong to the response with its request id."""
+    if response is None:
+        return "event request does not match a response"
+    if event.get("command") != response.get("command"):
+        return "event command does not match the response"
+    if event.get("status_code") != response.get("status_code"):
+        return "event status does not match the response"
+    if not _response_claims_event(event.get("event_type"), response):
+        return "event condition does not match the response"
+    return None
+
+
+def _oracle_response_error(doc: dict[str, Any], commands: dict[str, dict[str, Any]]) -> str | None:
+    command = commands.get(doc.get("command"))
+    if command is None:
+        return "command missing from catalog"
+    effect = "intervention_request" if command["effect"] == "intervention" else "none"
+    if doc.get("authority_effect") != effect:
+        return "authority effect does not match the catalog"
+    result = doc["result"]
+    missing = [field for field in command["required_result_fields"] if field not in result]
+    if missing:
+        return f"missing result fields {missing}"
+    if result.get("qualification") == "qualified":
+        return "oracle claims strategy qualification"
+    if result.get("secrets_included") is True or result.get("bounded_direct_authorized") is True:
+        return "oracle claims a secret or a live authorization"
+    if result.get("local_control_is_account_wide") is True:
+        return "oracle treats a local control as account-wide"
+    if doc.get("profile", {}).get("profile_class") != "A":
+        return "illustrative oracle must stay on profile A"
+    if (
+        doc.get("command") == "operator.profiles.inspect"
+        and result.get("active_profile_class") != doc.get("profile", {}).get("profile_class")
+    ):
+        return "active profile class does not match the response profile"
+    expected_intervention = INTERVENTION_NAMES.get(doc["command"])
+    if expected_intervention is None and any(
+        field in result for field in ("intervention", "recorded", "survives_restart")
+    ):
+        return "read oracle carries an intervention field"
+    if expected_intervention is not None:
+        if result.get("intervention") != expected_intervention or result.get("recorded") is not True:
+            return "intervention oracle is not a recorded non-order request"
+        if result.get("survives_restart") is not True or result.get("order_submitted") is not False:
+            return "stop or intervention oracle widens recovery or submits an order"
+    text = doc["presentation"]["text_status"]
+    rendered = doc["presentation"]["rendered"]
+    if _status_text_mismatch(doc["status_code"], text, rendered) or "\x1b" in rendered:
+        return "status text is missing from the rendered surface"
+    return None
+
+
+def _accepted_contracts() -> dict[str, str]:
+    spec = importlib.util.spec_from_file_location("replacement_program", PROGRAM_CHECKER)
+    if spec is None or spec.loader is None:
+        raise ContractError("replacement program checker is missing")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.EXPECTED_ACCEPTED_CONTRACTS)
+
+
+def _check_registry_still_researched() -> None:
+    program = _load_json(REPO / "docs" / "replacement" / "program.json")
+    matches = [item for item in program.get("outcomes", []) if item.get("key") == "O7"]
+    if len(matches) != 1:
+        raise ContractError("O7 registry record missing")
+    outcome = matches[0]
+    evidence = outcome.get("evidence") if isinstance(outcome.get("evidence"), dict) else {}
+    if evidence.get("claimed") != MATURITY:
+        raise ContractError("O7 registry maturity is no longer researched")
+    if outcome.get("completion_gate_status") != "pending_outcome_artifact":
+        raise ContractError("O7 completion gate was promoted")
+    if outcome.get("linear_issue") != "CSL-219":
+        raise ContractError("O7 registry issue changed")
+    contracts = _accepted_contracts()
+    for path, digest in contracts.items():
+        if _digest(REPO / path) != digest:
+            raise ContractError(f"accepted CSL-212 digest changed: {path}")
+
+
+def _check_contract_text(root: Path) -> None:
+    text = (root / "CONTRACT.md").read_text(encoding="utf-8")
+    if MARKER not in text or DECISION_HEADING not in text:
+        raise ContractError("candidate marker or unresolved-decision heading missing")
+    if "pending_outcome_artifact" not in text:
+        raise ContractError("contract no longer records the pending outcome gate")
+    for citation in REQUIRED_CITATIONS:
+        if citation not in text:
+            raise ContractError(f"research citation missing: {citation}")
+
+
+def _check_supporting_documents(root: Path, commands: dict[str, dict[str, Any]]) -> None:
+    catalog = _load_json(root / "catalog.json")
+    gates = _load_json(root / "gates.json")
+    parity = _load_json(root / "parity-matrix.json")
+    packet = _load_json(root / "tui-decision-packet.json")
+    decisions = _load_json(root / "unresolved-decisions.json")
+    for document in (catalog, gates, parity, packet, decisions):
+        if document.get("api_version") != API_VERSION or document.get("maturity") != MATURITY:
+            raise ContractError("supporting document maturity drifted")
+    if catalog.get("framework_selected") is not None or catalog.get("order_commands") != []:
+        raise ContractError("catalog selects a framework or an order command")
+    if gates.get("framework_selected") is not None or gates.get("framework_spike_ran") is not False:
+        raise ContractError("gates record a framework selection or spike")
+    if gates.get("tui_selected") is not False or gates.get("wcag_conformance_claimed") is not False:
+        raise ContractError("gates claim a TUI or WCAG conformance")
+    claims = gates.get("claims")
+    if not isinstance(claims, dict) or any(value is not False for value in claims.values()):
+        raise ContractError("gates claim a maturity promotion")
+    if "contract_frozen" not in claims or "qualification" not in claims:
+        raise ContractError("gates omit the non-claim flags")
+    automation = gates.get("automation") if isinstance(gates.get("automation"), dict) else {}
+    if automation.get("network_in_validator") is not False:
+        raise ContractError("validator is marked networked")
+    if automation.get("stable_exit_codes") != EXIT_CODES:
+        raise ContractError("exit-code map drifted")
+    authority = gates.get("authority")
+    if not isinstance(authority, dict) or set(authority) != set(GATE_AUTHORITY_FIELDS):
+        raise ContractError("authority gate accepts an extra field")
+    if authority.get("enforcement_route") != SOLE_ROUTE or authority.get("surface_order_path") != "none":
+        raise ContractError("authority gate widened the order path")
+    if authority.get("widens_o6_authority") is not False or authority.get("local_control_implies_account_wide") is not False:
+        raise ContractError("authority gate widens O6 or a local control")
+    if authority.get("o6_fragment") != "docs/replacement/MONTH-PROGRAM.md#o6":
+        raise ContractError("O6 fragment identifier changed")
+    if authority.get("o6_outcome_artifact") != "pending_outcome_artifact":
+        raise ContractError("O6 outcome artifact was treated as frozen")
+    accepted = _accepted_contracts()
+    month = "docs/replacement/MONTH-PROGRAM.md"
+    if authority.get("o6_fragment_digest") != accepted[month] or _digest(REPO / month) != accepted[month]:
+        raise ContractError("O6 fragment digest does not match the accepted month program")
+    wcag = gates.get("wcag") if isinstance(gates.get("wcag"), dict) else {}
+    if wcag.get("version") != "2.2" or wcag.get("level") != "AA" or wcag.get("parsing_4_1_1_required") is not False:
+        raise ContractError("WCAG gate drifted")
+    if wcag.get("aa_criteria_added_in_2_2") != ["2.4.11", "2.5.7", "2.5.8", "3.3.8"]:
+        raise ContractError("WCAG 2.2 AA additions drifted")
+    rows = parity.get("rows")
+    if not isinstance(rows, list):
+        raise ContractError("parity matrix missing")
+    seen: list[str] = []
+    journeys: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ContractError("parity row is not an object")
+        name = row.get("command")
+        if name not in commands or row.get("gui") != "same_api" or row.get("cli") != "same_api":
+            raise ContractError("parity row is not the shared API")
+        if row.get("order_path") != "none":
+            raise ContractError("parity row has an order path")
+        must_show = row.get("must_show")
+        expected_show = REQUIRED_MUST_SHOW.get(name)
+        if (
+            not isinstance(must_show, list)
+            or expected_show is None
+            or set(must_show) != set(expected_show)
+            or not set(must_show) <= set(commands[name]["required_result_fields"])
+        ):
+            raise ContractError(f"parity must_show drifted for {name}")
+        if row.get("journey") != commands[name]["journey"]:
+            raise ContractError(f"parity journey drifted for {name}")
+        seen.append(name)
+        journeys.add(row.get("journey"))
+    if len(seen) != len(set(seen)) or set(seen) != set(commands) or set(journeys) != set(REQUIRED_JOURNEYS):
+        raise ContractError("parity matrix does not cover the catalog")
+    if (
+        packet.get("human_decision") != "open"
+        or packet.get("decided") is not False
+        or packet.get("build_now") is not False
+        or packet.get("owner") != "Lucas"
+    ):
+        raise ContractError("TUI packet decides the TUI")
+    if decisions.get("decided_here") is not False or decisions.get("owner") != "Lucas":
+        raise ContractError("unresolved decisions were marked decided")
+    if set(REQUIRED_DECISIONS.values()) != set(REQUIRED_DECISION_CLASSES):
+        raise ContractError("decision id pin dropped a class")
+    seen_ids: list[str] = []
+    for item in decisions.get("decisions", []):
+        if not isinstance(item, dict):
+            raise ContractError("decision row is not an object")
+        if item.get("owner") != "Lucas" or item.get("status") != "open" or item.get("decided") is not False:
+            raise ContractError("a human decision was closed in the candidate")
+        decision_id = item.get("id")
+        if REQUIRED_DECISIONS.get(decision_id) != item.get("class"):
+            raise ContractError(f"unresolved decision drifted for {decision_id}")
+        seen_ids.append(decision_id)
+    if len(seen_ids) != len(set(seen_ids)) or set(seen_ids) != set(REQUIRED_DECISIONS):
+        raise ContractError("unresolved decision ids drifted")
+
+
+def _manifest_paths(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    files = manifest.get("files")
+    if manifest.get("manifest_version") != 1 or manifest.get("maturity") != MATURITY:
+        raise ContractError("fixture manifest header drifted")
+    if not isinstance(files, list):
+        raise ContractError("fixture manifest files missing")
+    discovered = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.json")
+        if path.name != "manifest.json"
+    )
+    listed = []
+    for item in files:
+        if not isinstance(item, dict):
+            raise ContractError("manifest entry is not an object")
+        rel = item.get("path")
+        digest = item.get("sha256")
+        if not isinstance(rel, str) or rel.startswith("/") or ".." in Path(rel).parts:
+            raise ContractError("manifest path escapes the candidate")
+        if item.get("role") not in {"oracle", "negative", "pinned"}:
+            raise ContractError("manifest role is unknown")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ContractError("manifest digest is not sha256")
+        target = root / rel
+        if not target.is_file() or _digest(target) != digest:
+            raise ContractError(f"frozen fixture digest mismatch: {rel}")
+        listed.append(rel)
+    if sorted(listed) != discovered or len(listed) != len(set(listed)):
+        raise ContractError("manifest does not pin every candidate JSON file once")
+    return files
+
+
+def _control_line(control: str, outcome: str, detail: str = "") -> str:
+    reason = CONTROL_REASONS[control]
+    suffix = f" {detail}" if detail else ""
+    return f"NEGATIVE CONTROL {control}: {outcome} ({reason}){suffix}"
+
+
+def evaluate(root: Path | None = None) -> tuple[int, str, str]:
+    """Check one candidate tree. Returns exit code, stdout, and stderr."""
+    candidate = DEFAULT_ROOT if root is None else root
+    try:
+        _check_registry_still_researched()
+        _check_contract_text(candidate)
+        catalog = _load_json(candidate / "catalog.json")
+        if not isinstance(catalog, dict) or set(catalog) != set(CATALOG_ROOT_FIELDS):
+            raise ContractError("catalog root accepts an extra field")
+        command_rows = catalog.get("commands")
+        if not isinstance(command_rows, list) or not command_rows:
+            raise ContractError("catalog commands missing")
+        commands = {}
+        for row in command_rows:
+            if not isinstance(row, dict) or row.get("effect") not in {"read", "intervention"}:
+                raise ContractError("catalog command is malformed")
+            commands[row["name"]] = row
+        if len(commands) != len(command_rows):
+            raise ContractError("catalog command names repeat")
+        if set(commands) != set(REQUIRED_COMMANDS):
+            raise ContractError("catalog command set drifted")
+        for name, row in commands.items():
+            spec = REQUIRED_COMMANDS[name]
+            if set(row) != set(CATALOG_COMMAND_FIELDS):
+                raise ContractError(f"catalog command accepts an extra field for {name}")
+            if row.get("journey") != spec["journey"]:
+                raise ContractError(f"catalog journey drifted for {name}")
+            if row.get("effect") != spec["effect"]:
+                raise ContractError(f"catalog effect drifted for {name}")
+            if row.get("required_result_fields") != list(spec["fields"]):
+                raise ContractError(f"catalog result fields drifted for {name}")
+        _check_supporting_documents(candidate, commands)
+        response_schema = _load_json(candidate / "schemas" / "operator-response.schema.json")
+        command_schema = _load_json(candidate / "schemas" / "operator-command.schema.json")
+        event_schema = _load_json(candidate / "schemas" / "operator-event.schema.json")
+        error_schema = _load_json(candidate / "schemas" / "operator-error.schema.json")
+        allowed = list(commands)
+        for schema in (command_schema, event_schema):
+            if schema["properties"]["command"]["enum"] != allowed:
+                raise ContractError("schema command enum drifted from the catalog")
+        response_enum = next(
+            (
+                clause.get("else", {}).get("properties", {}).get("command", {}).get("enum")
+                for clause in response_schema.get("allOf", [])
+                if isinstance(clause, dict) and "enum" in clause.get("else", {}).get("properties", {}).get("command", {})
+            ),
+            None,
+        )
+        if response_enum != allowed:
+            raise ContractError("schema command enum drifted from the catalog")
+        schema_fields = _schema_command_result_fields(response_schema)
+        for name, spec in REQUIRED_COMMANDS.items():
+            by_status = schema_fields.get(name)
+            pinned = list(spec["fields"])
+            if (
+                not isinstance(by_status, dict)
+                or set(by_status) != set(RESULT_STATUSES)
+                or any(fields != pinned for fields in by_status.values())
+            ):
+                raise ContractError(f"schema result fields drifted for {name}")
+        _require_session_scope_schema(command_schema)
+        _require_event_clauses(event_schema)
+        _require_closed_event_schema(event_schema)
+        _require_refused_intervention_unrecorded(response_schema)
+        _require_unrecorded_intervention_ephemeral(response_schema)
+        _require_denied_result_consts(response_schema)
+        _require_required_result_consts(response_schema)
+        _require_closed_response_schema(response_schema)
+        _require_closed_command_schema(command_schema)
+        _require_error_clauses(error_schema)
+        _require_closed_error_schema(error_schema)
+        response_validator = _validator(response_schema)
+        command_validator = _validator(command_schema)
+        _require_intervention_safeguards(command_validator)
+        _require_command_authority_rejected(command_validator)
+        event_validator = _validator(event_schema)
+        _require_event_schema_rejections(event_validator)
+        _require_event_authority_rejected(event_validator)
+        error_validator = _validator(error_schema)
+        _require_error_schema_rejections(error_validator)
+        manifest = _load_json(candidate / "fixtures" / "manifest.json")
+        entries = _manifest_paths(candidate, manifest)
+        oracle_kinds: dict[str, Any] = {}
+        negatives: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            if entry.get("role") == "oracle":
+                document = _load_json(candidate / entry["path"])
+                kind = document.get("kind") if isinstance(document, dict) else None
+                if kind not in ORACLE_KINDS or kind in oracle_kinds:
+                    raise ContractError(f"oracle kind missing or repeated in {entry['path']}")
+                oracle_kinds[kind] = document
+            elif entry.get("role") == "negative":
+                control = entry.get("control")
+                if control not in REQUIRED_CONTROLS or control in negatives:
+                    raise ContractError(f"negative control missing or repeated in {entry['path']}")
+                negatives[control] = _load_json(candidate / entry["path"])
+        if set(oracle_kinds) != set(ORACLE_KINDS) or set(negatives) != set(REQUIRED_CONTROLS):
+            raise ContractError("oracle kinds or negative controls are incomplete")
+        _check_oracles(
+            oracle_kinds,
+            commands,
+            response_validator,
+            command_validator,
+            event_validator,
+            error_validator,
+        )
+        responses = oracle_kinds["responses"].get("responses")
+        baseline = next(
+            (
+                item
+                for item in responses
+                if isinstance(item, dict) and item.get("request_id") == PRIVILEGED_BASELINE_ID
+            ),
+            None,
+        ) if isinstance(responses, list) else None
+        lines = [
+            _check_negative(
+                control,
+                negatives[control],
+                response_validator,
+                command_validator,
+                set(commands),
+                baseline,
+            )
+            for control in REQUIRED_CONTROLS
+        ]
+    except (OSError, ContractError, SchemaError, KeyError, TypeError, AttributeError) as exc:
+        return 1, "", f"o7-operator-contract: FAIL: {exc}\n"
+    stdout = "\n".join([*lines, SUMMARY]) + "\n"
+    if "UNEXPECTED_ACCEPT" in stdout or "WRONG_FAILURE" in stdout:
+        return 1, stdout, "o7-operator-contract: FAIL: negative control did not fail as designed\n"
+    return 0, stdout, ""
+
+
+def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], response_validator, command_validator, event_validator, error_validator) -> None:
+    responses = kinds["responses"].get("responses")
+    if not isinstance(responses, list):
+        raise ContractError("oracle responses missing")
+    seen: set[str] = set()
+    for doc in responses:
+        label = doc.get("command") if isinstance(doc, dict) else "response"
+        _require_schema(response_validator, doc, f"oracle response {label}")
+        problem = classify_response(doc, set(commands))
+        if problem is not None:
+            raise ContractError(f"oracle response classified as {problem}")
+        oracle_problem = _oracle_response_error(doc, commands)
+        if oracle_problem is not None:
+            raise ContractError(f"oracle response: {oracle_problem}")
+        for error in doc["errors"]:
+            _require_schema(error_validator, error, "oracle error")
+        seen.add(doc["command"])
+    if seen != set(commands):
+        raise ContractError("oracle responses do not cover the catalog")
+    _require_recorded_refusal_rejected(response_validator, responses)
+    _require_unrecorded_persistence_rejected(response_validator, responses)
+    _require_result_authority_rejected(response_validator, responses)
+    _require_embedded_error_authority_rejected(response_validator, responses)
+    by_request: dict[str, dict[str, Any]] = {}
+    for doc in responses:
+        if not isinstance(doc, dict):
+            continue
+        request_id = doc.get("request_id")
+        if not isinstance(request_id, str) or request_id in by_request:
+            raise ContractError("oracle response request ids drifted")
+        by_request[request_id] = doc
+    pairs = kinds["pairs"].get("pairs")
+    if not isinstance(pairs, list):
+        raise ContractError("oracle pairs missing")
+    pair_ids = []
+    for pair in pairs:
+        gui, cli = pair.get("gui"), pair.get("cli")
+        _require_schema(response_validator, gui, "oracle gui")
+        _require_schema(response_validator, cli, "oracle cli")
+        if classify_response(gui, set(commands)) or classify_response(cli, set(commands)):
+            raise ContractError("oracle pair carries a hidden state")
+        for side in (gui, cli):
+            pair_problem = _oracle_response_error(side, commands)
+            if pair_problem is not None:
+                raise ContractError(f"oracle pair: {pair_problem}")
+        if _project(gui) != _project(cli):
+            raise ContractError("oracle pair semantic projection diverges")
+        if gui.get("surface") != "gui" or cli.get("surface") != "cli":
+            raise ContractError("oracle pair surfaces are swapped")
+        if gui["presentation"]["rendered"] == cli["presentation"]["rendered"]:
+            raise ContractError("oracle pair does not exercise presentation")
+        expected_command = REQUIRED_ORACLE_PAIR_COMMANDS.get(pair.get("pair_id"))
+        if (
+            expected_command is None
+            or gui.get("command") != expected_command
+            or cli.get("command") != expected_command
+        ):
+            raise ContractError(f"oracle pair command drifted for {pair.get('pair_id')}")
+        pair_ids.append(pair.get("pair_id"))
+    if tuple(pair_ids) != REQUIRED_ORACLE_PAIRS:
+        raise ContractError("oracle pair ids drifted")
+    for command in kinds["commands"].get("commands", []):
+        _require_schema(command_validator, command, "oracle command")
+        arguments = command.get("arguments") if isinstance(command.get("arguments"), dict) else {}
+        if command["command"] in INTERVENTION_NAMES:
+            if command.get("confirmation") != "explicit" or arguments.get("scope") != "operator_session":
+                raise ContractError("intervention command skips confirmation or session scope")
+        elif command.get("confirmation") != "not_required":
+            raise ContractError("read command requires a confirmation it does not need")
+    if {item["command"] for item in kinds["commands"].get("commands", [])} != set(commands):
+        raise ContractError("oracle commands do not cover the catalog")
+    for event in kinds["events"].get("events", []):
+        _require_schema(event_validator, event, "oracle event")
+        if event.get("visibility") == "hidden":
+            raise ContractError("oracle event hides state")
+        event_problem = _event_error(event)
+        if event_problem is not None:
+            raise ContractError(f"oracle event: {event_problem}")
+        match_problem = _event_response_error(event, by_request.get(event.get("request_id")))
+        if match_problem is not None:
+            raise ContractError(f"oracle event: {match_problem}")
+    seen_types = {
+        event.get("event_type") for event in kinds["events"].get("events", []) if isinstance(event, dict)
+    }
+    if seen_types != set(EVENT_COMMANDS):
+        raise ContractError("oracle events do not cover the event types")
+    for error in kinds["errors"].get("errors", []):
+        _require_schema(error_validator, error, "oracle error catalog")
+        if error.get("code") != error.get("status_code"):
+            raise ContractError("oracle error code does not match its status")
+    if {item["code"] for item in kinds["errors"].get("errors", [])} != set(EXIT_CODES) - {"ok"}:
+        raise ContractError("oracle errors do not cover the failure statuses")
+
+
+def _repaired_status_text_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only the rendered status on the contradictory-status control."""
+    repaired = dict(body)
+    presentation = body.get("presentation")
+    status = body.get("status_code")
+    if not isinstance(presentation, dict) or not isinstance(status, str):
+        return repaired
+    repaired["presentation"] = {**presentation, "text_status": status, "rendered": f"status={status}"}
+    return repaired
+
+
+def _repaired_stale_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only watch_only on the stale negative control."""
+    repaired = dict(body)
+    result = body.get("result")
+    if not isinstance(result, dict):
+        return repaired
+    repaired["result"] = {**result, "watch_only": True}
+    return repaired
+
+
+def _repaired_command_body(control: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only the safeguard named by a command negative control."""
+    repaired = dict(body)
+    if control == "unconfirmed_intervention":
+        repaired["confirmation"] = "explicit"
+        return repaired
+    arguments = body.get("arguments")
+    if not isinstance(arguments, dict):
+        # Leave a malformed value alone so the repaired body still fails.
+        return repaired
+    repaired["arguments"] = {**arguments, "scope": "operator_session"}
+    return repaired
+
+
+def _assign(doc: dict[str, Any], path: str, value: Any) -> bool:
+    """Set or remove a dotted field. None removes the leaf."""
+    cursor: Any = doc
+    parts = path.split(".")
+    for part in parts[:-1]:
+        if not isinstance(cursor, dict):
+            return False
+        cursor = cursor.get(part)
+    if not isinstance(cursor, dict) or not parts[-1]:
+        return False
+    if value is None:
+        cursor.pop(parts[-1], None)
+    else:
+        cursor[parts[-1]] = value
+    return True
+
+
+def _check_privileged(
+    document: dict[str, Any],
+    validator: Draft202012Validator,
+    allowed: set[str],
+    baseline: dict[str, Any] | None,
+) -> str:
+    """Each privileged safeguard must fail alone, and its repair must pass."""
+    control = "privileged_order_bypass"
+    safeguards = document.get("safeguards")
+    if not isinstance(safeguards, list) or not isinstance(baseline, dict):
+        return _control_line(control, "WRONG_FAILURE")
+    if (
+        document.get("baseline_request_id") != PRIVILEGED_BASELINE_ID
+        or baseline.get("request_id") != PRIVILEGED_BASELINE_ID
+    ):
+        return _control_line(control, "WRONG_FAILURE")
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in safeguards:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            return _control_line(control, "WRONG_FAILURE")
+        if item["name"] in by_name:
+            return _control_line(control, "WRONG_FAILURE")
+        by_name[item["name"]] = item
+    if set(by_name) != set(REQUIRED_PRIVILEGED):
+        return _control_line(control, "WRONG_FAILURE")
+    for name, (expected, pinned_field, pinned_value, pinned_repair) in REQUIRED_PRIVILEGED.items():
+        item = by_name[name]
+        field = item.get("field")
+        if (
+            field != pinned_field
+            or item.get("value") != pinned_value
+            or type(item.get("value")) is not type(pinned_value)
+            or item.get("repair") != pinned_repair
+            or type(item.get("repair")) is not type(pinned_repair)
+        ):
+            return _control_line(control, "WRONG_FAILURE")
+        broken = json.loads(json.dumps(baseline))
+        repaired = json.loads(json.dumps(baseline))
+        if not _assign(broken, field, item.get("value")) or not _assign(repaired, field, item.get("repair")):
+            return _control_line(control, "WRONG_FAILURE")
+        schema_error = _schema_error(validator, broken)
+        classified = classify_response(broken, allowed)
+        if schema_error is None or classified != expected:
+            detail = schema_error or f"{name} classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, repaired)
+        repaired_class = classify_response(repaired, allowed)
+        if repaired_error is not None or repaired_class is not None:
+            detail = repaired_error or f"{name} repaired classified={repaired_class}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+    return _control_line(control, "FAIL as designed")
+
+
+def _require_schema(validator: Draft202012Validator, instance: Any, label: str) -> None:
+    error = _schema_error(validator, instance)
+    if error is not None:
+        raise ContractError(f"{label} schema: {error}")
+
+
+def _check_negative(
+    control: str,
+    document: dict[str, Any],
+    validator: Draft202012Validator,
+    command_validator: Draft202012Validator,
+    allowed: set[str],
+    baseline: dict[str, Any] | None = None,
+) -> str:
+    if not isinstance(document, dict) or document.get("control") != control:
+        return _control_line(control, "WRONG_FAILURE")
+    if control == "privileged_order_bypass":
+        return _check_privileged(document, validator, allowed, baseline)
+    if control in COMMAND_SCHEMA_CONTROLS:
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(command_validator, body)
+        if schema_error is None:
+            return _control_line(control, "UNEXPECTED_ACCEPT")
+        if not isinstance(body, dict):
+            return _control_line(control, "WRONG_FAILURE")
+        repaired_error = _schema_error(command_validator, _repaired_command_body(control, body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
+    if control == "gui_cli_semantic_divergence":
+        gui, cli = document.get("gui"), document.get("cli")
+        gui_error = _schema_error(validator, gui)
+        cli_error = _schema_error(validator, cli)
+        schema_ok = gui_error is None and cli_error is None
+        classified = None
+        if isinstance(gui, dict) and isinstance(cli, dict):
+            left = classify_response(gui, allowed)
+            right = classify_response(cli, allowed)
+            classified = left or right
+            if classified is None and _project(gui) != _project(cli):
+                classified = "gui_cli_semantic_divergence"
+        if schema_ok and classified == control:
+            return _control_line(control, "FAIL as designed")
+        detail = gui_error or cli_error or f"classified={classified}"
+        outcome = "UNEXPECTED_ACCEPT" if classified is None and schema_ok else "WRONG_FAILURE"
+        return _control_line(control, outcome, detail)
+    if control == "contradictory_status_text":
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
+        classified = classify_response(body, allowed) if isinstance(body, dict) else None
+        if schema_error is None or classified != control or not isinstance(body, dict):
+            if classified is None and schema_error is None:
+                return _control_line(control, "UNEXPECTED_ACCEPT")
+            detail = schema_error or f"classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, _repaired_status_text_body(body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
+    if control == "stale_not_watch_only":
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
+        classified = classify_response(body, allowed) if isinstance(body, dict) else None
+        if schema_error is None or classified != control or not isinstance(body, dict):
+            if classified is None and schema_error is None:
+                return _control_line(control, "UNEXPECTED_ACCEPT")
+            detail = schema_error or f"classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, _repaired_stale_body(body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
+    body = document.get("body")
+    schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
+    classified = classify_response(body, allowed) if isinstance(body, dict) else None
+    schema_matches = schema_error is None if control in SCHEMA_VALID_CONTROLS else schema_error is not None
+    if schema_matches and classified == control:
+        return _control_line(control, "FAIL as designed")
+    if classified is None and schema_error is None:
+        return _control_line(control, "UNEXPECTED_ACCEPT")
+    detail = schema_error or f"classified={classified}"
+    return _control_line(control, "WRONG_FAILURE", detail)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", type=Path, default=None)
+    args = parser.parse_args(argv)
+    code, stdout, stderr = evaluate(args.root)
+    sys.stdout.write(stdout)
+    sys.stderr.write(stderr)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
