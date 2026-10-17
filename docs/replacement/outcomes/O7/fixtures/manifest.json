@@ -132,7 +132,7 @@
     },
     {
       "path": "schemas/operator-response.schema.json",
-      "sha256": "bef2092aa5e735c2344fc6934c4d44412d8ee7066d7cf287a9546b6db325c7c3",
+      "sha256": "168f83f8b5f473437c4af68178c5437966f1cbe93b8ad79d7b35632a9e8b11a9",
       "role": "pinned"
     },
     {

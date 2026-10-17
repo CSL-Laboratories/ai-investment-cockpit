@@ -7,7 +7,6 @@
     "api_version",
     "candidate_maturity",
     "surface",
-    "command",
     "request_id",
     "profile",
     "enforcement_route",
@@ -23,25 +22,7 @@
     "api_version": {"const": "o7.operator.v0"},
     "candidate_maturity": {"const": "researched"},
     "surface": {"enum": ["gui", "cli"]},
-    "command": {
-      "type": "string",
-      "enum": [
-        "operator.audit.export",
-        "operator.budgets.inspect",
-        "operator.decisions.inspect",
-        "operator.evidence.inspect",
-        "operator.export.bundle",
-        "operator.health.inspect",
-        "operator.interventions.request_reconciliation",
-        "operator.interventions.request_revocation",
-        "operator.interventions.request_stop",
-        "operator.positions.inspect",
-        "operator.profiles.inspect",
-        "operator.recovery.inspect",
-        "operator.strategies.inspect",
-        "operator.uncertainty.inspect"
-      ]
-    },
+    "command": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9._:-]+$"},
     "request_id": {"type": "string", "pattern": "^req_[a-z0-9_.:-]{1,80}$"},
     "profile": {
       "type": "object",
@@ -247,31 +228,31 @@
     }
   },
   "allOf": [
-    {"if": {"properties": {"command": {"const": "operator.audit.export"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.export.bundle"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.health.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
     {"if": {"required": ["result"], "properties": {"result": {"anyOf": [{"required": ["stale"], "properties": {"stale": {"const": true}}}, {"required": ["dependencies"], "properties": {"dependencies": {"contains": {"required": ["status"], "properties": {"status": {"enum": ["stale", "unavailable"]}}}}}}]}}}, "then": {"properties": {"result": {"required": ["watch_only"], "properties": {"watch_only": {"const": true}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
-    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
-    {"if": {"required": ["command", "profile"], "properties": {"command": {"const": "operator.profiles.inspect"}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "A"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "A"}}}}}},
-    {"if": {"required": ["command", "profile"], "properties": {"command": {"const": "operator.profiles.inspect"}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "B"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "B"}}}}}},
-    {"if": {"required": ["command", "profile"], "properties": {"command": {"const": "operator.profiles.inspect"}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "C"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "C"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "A"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "A"}}}}}},
+    {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "B"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "B"}}}}}},
+    {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "C"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "C"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["reconciliation"], "properties": {"reconciliation": {"const": "unreconciled_visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}, "result": {"required": ["restart_allowed"], "properties": {"restart_allowed": {"const": false}}, "anyOf": [{"required": ["reconciliation"], "properties": {"reconciliation": {"const": "unreconciled"}}}, {"required": ["unknown_orders"], "properties": {"unknown_orders": {"type": "integer", "minimum": 1}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["stale_data"], "properties": {"stale_data": {"const": "visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}, "result": {"required": ["watch_only"], "properties": {"watch_only": {"const": true}}, "anyOf": [{"required": ["stale"], "properties": {"stale": {"const": true}}}, {"required": ["dependencies"], "properties": {"dependencies": {"contains": {"required": ["status"], "properties": {"status": {"const": "stale"}}}}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["refusal"], "properties": {"refusal": {"const": "visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["refused", "stale_or_unreconciled", "unavailable"]}, "errors": {"contains": {"required": ["code"], "properties": {"code": {"const": "refused"}}}}, "result": {"anyOf": [{"required": ["refusals"], "properties": {"refusals": {"minItems": 1}}}, {"required": ["decisions"], "properties": {"decisions": {"contains": {"required": ["outcome"], "properties": {"outcome": {"const": "refused"}}}}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["uncertainty"], "properties": {"uncertainty": {"const": "visible"}}}}}, "then": {"properties": {"result": {"anyOf": [{"required": ["items"], "properties": {"items": {"contains": {"required": ["state"], "properties": {"state": {"enum": ["unknown", "uncertain"]}}}}}}, {"required": ["collateral"], "properties": {"collateral": {"required": ["state"], "properties": {"state": {"const": "unknown"}}}}}]}}}},
-    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
     {
       "if": {
-        "required": ["command"],
+        "required": ["command", "status_code"],
         "properties": {
           "command": {
             "enum": [
@@ -279,7 +260,8 @@
               "operator.interventions.request_revocation",
               "operator.interventions.request_stop"
             ]
-          }
+          },
+          "status_code": {"not": {"const": "usage"}}
         }
       },
       "then": {"properties": {"authority_effect": {"const": "intervention_request"}}},
@@ -295,6 +277,12 @@
           }
         }
       }
-    }
+    },
+    {"if": {"properties": {"status_code": {"const": "usage"}}, "required": ["status_code"]}, "then": {"properties": {"authority_effect": {"const": "none"}, "result": {"maxProperties": 0}, "errors": {"minItems": 1, "contains": {"required": ["code"], "properties": {"code": {"const": "usage"}}}}}}, "else": {"required": ["command"], "properties": {"command": {"enum": ["operator.audit.export", "operator.budgets.inspect", "operator.decisions.inspect", "operator.evidence.inspect", "operator.export.bundle", "operator.health.inspect", "operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop", "operator.positions.inspect", "operator.profiles.inspect", "operator.recovery.inspect", "operator.strategies.inspect", "operator.uncertainty.inspect"]}}}},
+    {"if": {"properties": {"status_code": {"const": "ok"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "ok"}, "rendered": {"pattern": "(^|\\s)status=ok($|\\s)", "not": {"pattern": "(^|\\s)status=(usage|refused|stale_or_unreconciled|unavailable)($|\\s)"}}}}}}},
+    {"if": {"properties": {"status_code": {"const": "usage"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "usage"}, "rendered": {"pattern": "(^|\\s)status=usage($|\\s)", "not": {"pattern": "(^|\\s)status=(ok|refused|stale_or_unreconciled|unavailable)($|\\s)"}}}}}}},
+    {"if": {"properties": {"status_code": {"const": "refused"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "refused"}, "rendered": {"pattern": "(^|\\s)status=refused($|\\s)", "not": {"pattern": "(^|\\s)status=(ok|usage|stale_or_unreconciled|unavailable)($|\\s)"}}}}}}},
+    {"if": {"properties": {"status_code": {"const": "stale_or_unreconciled"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "stale_or_unreconciled"}, "rendered": {"pattern": "(^|\\s)status=stale_or_unreconciled($|\\s)", "not": {"pattern": "(^|\\s)status=(ok|usage|refused|unavailable)($|\\s)"}}}}}}},
+    {"if": {"properties": {"status_code": {"const": "unavailable"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "unavailable"}, "rendered": {"pattern": "(^|\\s)status=unavailable($|\\s)", "not": {"pattern": "(^|\\s)status=(ok|usage|refused|stale_or_unreconciled)($|\\s)"}}}}}}}
   ]
 }

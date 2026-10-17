@@ -425,6 +425,90 @@ def test_uncertainty_visible_event_keeps_compound_status() -> None:
     assert CHECKER._event_error(usage) == "event status does not match the event type"
 
 
+def test_unresolved_decision_ids_are_pinned(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "unresolved-decisions.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    document["decisions"] = [item for item in document["decisions"] if item["id"] != "tui-authorization"]
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "unresolved-decisions.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "unresolved decision ids drifted" in stderr
+    duplicated = tmp_path / "duplicate"
+    shutil.copytree(root, duplicated)
+    duplicate_fixture = duplicated / "unresolved-decisions.json"
+    duplicate = json.loads(duplicate_fixture.read_text(encoding="utf-8"))
+    duplicate["decisions"].append(copy.deepcopy(duplicate["decisions"][0]))
+    duplicate_fixture.write_text(json.dumps(duplicate, indent=2) + "\n", encoding="utf-8")
+    _retarget(duplicated, "unresolved-decisions.json")
+    code, stdout, stderr = CHECKER.evaluate(duplicated)
+    assert code == 1
+    assert stdout == ""
+    assert "unresolved decision ids drifted" in stderr
+
+
+def test_rendered_status_is_a_delimited_field() -> None:
+    by_request, commands, validator = _candidate_documents()
+    refused = copy.deepcopy(by_request["req_decisions"])
+    assert refused["status_code"] == "refused"
+    refused["presentation"]["text_status"] = "refused"
+    refused["presentation"]["rendered"] = "status=not_refused"
+    assert CHECKER.classify_response(refused, commands) == "contradictory_status_text"
+    assert CHECKER._schema_error(validator, refused) is not None
+    competing = copy.deepcopy(by_request["req_decisions"])
+    competing["presentation"]["rendered"] = "status=refused status=ok"
+    assert CHECKER.classify_response(competing, commands) == "contradictory_status_text"
+    assert CHECKER._schema_error(validator, competing) is not None
+
+
+def _usage_response(source: dict, command: str | None) -> dict:
+    body = copy.deepcopy(source)
+    if command is None:
+        body.pop("command", None)
+    else:
+        body["command"] = command
+    body["request_id"] = "req_usage_rejected"
+    body["status_code"] = "usage"
+    body["authority_effect"] = "none"
+    body["result"] = {}
+    body["errors"] = [
+        {
+            "code": "usage",
+            "status_code": "usage",
+            "message": "command was rejected",
+            "recovery": "use a catalog command",
+            "color_only": False,
+        }
+    ]
+    body["presentation"] = {
+        "exit_code": 1,
+        "machine_readable": True,
+        "ansi_in_machine_output": False,
+        "color_only_signal": False,
+        "text_status": "usage",
+        "rendered": "status=usage rejected command",
+    }
+    return body
+
+
+def test_usage_response_can_name_a_rejected_command() -> None:
+    by_request, commands, validator = _candidate_documents()
+    unknown = _usage_response(by_request["req_health"], "operator.orders.submit")
+    missing = _usage_response(by_request["req_health"], None)
+    assert CHECKER._schema_error(validator, unknown) is None
+    assert CHECKER.classify_response(unknown, commands) is None
+    assert CHECKER._schema_error(validator, missing) is None
+    assert CHECKER.classify_response(missing, commands) is None
+    invented = copy.deepcopy(by_request["req_health"])
+    invented["command"] = "operator.orders.submit"
+    assert CHECKER._schema_error(validator, invented) is not None
+    assert CHECKER.classify_response(invented, commands) == "privileged_order_bypass"
+
+
 def test_export_recorded_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))

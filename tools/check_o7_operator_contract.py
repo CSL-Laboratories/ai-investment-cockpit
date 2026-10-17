@@ -135,6 +135,19 @@ REQUIRED_DECISION_CLASSES = (
     "live",
     "authority",
 )
+REQUIRED_DECISIONS = {
+    "gui-framework": "architecture",
+    "gui-distribution-and-os": "architecture",
+    "cli-implementation-stack": "architecture",
+    "tui-authorization": "architecture",
+    "legacy-surface-migration": "architecture",
+    "month-slice-surfaces": "release",
+    "operator-surface-spend": "spend",
+    "operator-authentication": "credentials",
+    "surface-eligibility-language": "tax_legal",
+    "live-surface-effects": "live",
+    "intervention-scope": "authority",
+}
 REQUIRED_CITATIONS = (
     "search_08b86fcb75c9012e38baca48941cbf74",
     "search_d8e17f0eba7853c179f525c121ae9b51",
@@ -300,6 +313,16 @@ def _contains_ansi(value: Any) -> bool:
     return False
 
 
+def _rendered_status_tokens(rendered: str) -> set[str]:
+    return set(re.findall(r"(?:^|\s)status=([A-Za-z0-9_]+)(?=$|\s)", rendered))
+
+
+def _status_text_mismatch(status: Any, text_status: Any, rendered: Any) -> bool:
+    if text_status != status or not isinstance(rendered, str):
+        return True
+    return _rendered_status_tokens(rendered) != {status}
+
+
 def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | None:
     """Return the negative-control code for an unsafe response, or None."""
     if not isinstance(doc, dict):
@@ -309,31 +332,42 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     visibility = doc.get("visibility") if isinstance(doc.get("visibility"), dict) else {}
     presentation = doc.get("presentation") if isinstance(doc.get("presentation"), dict) else {}
     profile = doc.get("profile") if isinstance(doc.get("profile"), dict) else {}
-    if keys & FORBIDDEN_KEYS or doc.get("command") not in allowed_commands:
+    if keys & FORBIDDEN_KEYS:
         return "privileged_order_bypass"
     if doc.get("enforcement_route") != SOLE_ROUTE or doc.get("order_path") != "none":
         return "privileged_order_bypass"
-    expected_effect = "intervention_request" if doc.get("command") in INTERVENTION_NAMES else "none"
-    if doc.get("authority_effect") != expected_effect:
-        return "authority_effect_mismatch"
-    expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
-    if expected_intervention is None and any(
-        field in result for field in ("intervention", "recorded", "survives_restart")
-    ):
-        return "read_claims_intervention"
-    if expected_intervention is not None and result.get("intervention") != expected_intervention:
-        return "intervention_mismatch"
-    if (
-        doc.get("command") == "operator.interventions.request_stop"
-        and result.get("recorded") is True
-        and result.get("survives_restart") is not True
-    ):
-        return "recorded_stop_not_persistent"
-    if (
-        doc.get("command") == "operator.profiles.inspect"
-        and result.get("active_profile_class") != profile.get("profile_class")
-    ):
-        return "profile_class_mismatch"
+    if doc.get("status_code") == "usage":
+        if doc.get("authority_effect") != "none":
+            return "authority_effect_mismatch"
+        if result:
+            return "usage_carries_result"
+        command = doc.get("command")
+        if command is not None and not isinstance(command, str):
+            return "privileged_order_bypass"
+    else:
+        if doc.get("command") not in allowed_commands:
+            return "privileged_order_bypass"
+        expected_effect = "intervention_request" if doc.get("command") in INTERVENTION_NAMES else "none"
+        if doc.get("authority_effect") != expected_effect:
+            return "authority_effect_mismatch"
+        expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
+        if expected_intervention is None and any(
+            field in result for field in ("intervention", "recorded", "survives_restart")
+        ):
+            return "read_claims_intervention"
+        if expected_intervention is not None and result.get("intervention") != expected_intervention:
+            return "intervention_mismatch"
+        if (
+            doc.get("command") == "operator.interventions.request_stop"
+            and result.get("recorded") is True
+            and result.get("survives_restart") is not True
+        ):
+            return "recorded_stop_not_persistent"
+        if (
+            doc.get("command") == "operator.profiles.inspect"
+            and result.get("active_profile_class") != profile.get("profile_class")
+        ):
+            return "profile_class_mismatch"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
@@ -403,9 +437,7 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         if doc.get("status_code") == "refused" and presentation.get("exit_code") == 0:
             return "success_exit_on_refusal"
         return "exit_code_mismatch"
-    text_status = presentation.get("text_status")
-    rendered = presentation.get("rendered")
-    if text_status != doc.get("status_code") or not isinstance(rendered, str) or text_status not in rendered:
+    if _status_text_mismatch(doc.get("status_code"), presentation.get("text_status"), presentation.get("rendered")):
         return "contradictory_status_text"
     if doc.get("candidate_maturity") != MATURITY:
         return "maturity_promotion"
@@ -488,7 +520,7 @@ def _oracle_response_error(doc: dict[str, Any], commands: dict[str, dict[str, An
             return "stop or intervention oracle widens recovery or submits an order"
     text = doc["presentation"]["text_status"]
     rendered = doc["presentation"]["rendered"]
-    if text != doc["status_code"] or text not in rendered or "\x1b" in rendered:
+    if _status_text_mismatch(doc["status_code"], text, rendered) or "\x1b" in rendered:
         return "status text is missing from the rendered surface"
     return None
 
@@ -612,15 +644,20 @@ def _check_supporting_documents(root: Path, commands: dict[str, dict[str, Any]])
         raise ContractError("TUI packet decides the TUI")
     if decisions.get("decided_here") is not False or decisions.get("owner") != "Lucas":
         raise ContractError("unresolved decisions were marked decided")
-    found: set[str] = set()
+    if set(REQUIRED_DECISIONS.values()) != set(REQUIRED_DECISION_CLASSES):
+        raise ContractError("decision id pin dropped a class")
+    seen_ids: list[str] = []
     for item in decisions.get("decisions", []):
         if not isinstance(item, dict):
             raise ContractError("decision row is not an object")
         if item.get("owner") != "Lucas" or item.get("status") != "open" or item.get("decided") is not False:
             raise ContractError("a human decision was closed in the candidate")
-        found.add(item.get("class"))
-    if not set(REQUIRED_DECISION_CLASSES) <= found:
-        raise ContractError("a required decision class is missing")
+        decision_id = item.get("id")
+        if REQUIRED_DECISIONS.get(decision_id) != item.get("class"):
+            raise ContractError(f"unresolved decision drifted for {decision_id}")
+        seen_ids.append(decision_id)
+    if len(seen_ids) != len(set(seen_ids)) or set(seen_ids) != set(REQUIRED_DECISIONS):
+        raise ContractError("unresolved decision ids drifted")
 
 
 def _manifest_paths(root: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -684,9 +721,19 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         event_schema = _load_json(candidate / "schemas" / "operator-event.schema.json")
         error_schema = _load_json(candidate / "schemas" / "operator-error.schema.json")
         allowed = list(commands)
-        for schema in (response_schema, command_schema, event_schema):
+        for schema in (command_schema, event_schema):
             if schema["properties"]["command"]["enum"] != allowed:
                 raise ContractError("schema command enum drifted from the catalog")
+        response_enum = next(
+            (
+                clause.get("else", {}).get("properties", {}).get("command", {}).get("enum")
+                for clause in response_schema.get("allOf", [])
+                if isinstance(clause, dict) and "enum" in clause.get("else", {}).get("properties", {}).get("command", {})
+            ),
+            None,
+        )
+        if response_enum != allowed:
+            raise ContractError("schema command enum drifted from the catalog")
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
         event_validator = _validator(event_schema)
