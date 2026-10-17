@@ -1241,12 +1241,12 @@ def resolved_count_today(
     ``retry-resolve``), or a legacy marker whose comment time and matching
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
-    Failed cites on still-open threads do not count unless GitHub still
-    attributes ``resolvedBy`` to the PAT (a reopen after an unmarked
-    success). Unmarked cites count per ``(thread id, sha)`` when that
-    pair has no receipt. A PAT skip marker hides that pair unless a
-    later PAT cite is strictly newer, so a retry-resolve success cannot
-    be erased by an earlier human race.
+    Failed cites on still-open threads do not count. Unmarked cites count
+    per ``(thread id, sha)`` when that pair has no receipt, including
+    after a human reopen, when GitHub still attributes ``resolvedBy`` to
+    the PAT or the cite itself carries ``RESOLVED_AT``. A PAT skip
+    marker hides that pair unless a later PAT cite is strictly newer, so
+    a retry-resolve success cannot be erased by an earlier human race.
     Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
     A missing resolver does not skip (fail closed). A failed skip post
     over-counts. Missing timestamps fail closed.
@@ -1255,18 +1255,16 @@ def resolved_count_today(
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
-    pat_reopened = {
-        tid
-        for thread in threads
-        for tid in [safe_thread_id(str(thread.get("id") or ""))]
-        if tid
-        and not thread.get("isResolved")
-        and login_matches(resolved_by_login(thread), actor_login)
-    }
+    pat_resolved: set[str] = set()
+    for thread in threads:
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if tid and login_matches(resolved_by_login(thread), actor_login):
+            pat_resolved.add(tid)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_times: dict[tuple[str, str], datetime | None] = {}
     skip_times: dict[tuple[str, str], datetime | None] = {}
     all_marker_pairs: set[tuple[str, str]] = set()
+    durable_cites: set[tuple[str, str]] = set()
     markers: list[tuple[str, str, datetime | None, bool]] = []
     for comment in all_comments:
         if not login_matches(login_of(comment), actor_login):
@@ -1274,13 +1272,17 @@ def resolved_count_today(
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
         body = body_of(comment)
         in_window = stamped is None or stamped >= start
+        resolved_at = parse_resolved_at(body)
         for tid, digest in parse_cite_markers(body):
-            if tid and digest and in_window:
+            if not tid or not digest:
+                continue
+            if in_window:
                 _stamp_latest(cite_times, (tid, digest), stamped)
+            if resolved_at is not None and (stamped is None or resolved_at >= start):
+                durable_cites.add((tid, digest))
         for tid, digest in parse_skip_markers(body):
             if tid and digest and in_window:
                 _stamp_latest(skip_times, (tid, digest), stamped)
-        resolved_at = parse_resolved_at(body)
         for tid, digest in parse_resolved_markers(body):
             if not tid or not digest:
                 continue
@@ -1294,12 +1296,13 @@ def resolved_count_today(
             continue
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
+    counted |= durable_cites
     unmarked: set[tuple[str, str]] = set()
     for pair, cite_when in cite_times.items():
         tid, _digest = pair
-        if pair in all_marker_pairs:
+        if pair in counted or pair in all_marker_pairs:
             continue
-        if tid in pending and tid not in pat_reopened:
+        if tid in pending and tid not in pat_resolved:
             continue
         if pair in skip_times:
             skip_when = skip_times[pair]
@@ -1557,7 +1560,14 @@ def reply_and_resolve(
         # Do not post a skip (that would exempt the pair from the cap).
         # Refresh the cite so a retry older than 24h still lands in today's
         # unmarked window instead of disappearing from the cap.
-        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
+        publish_cite_marker(
+            gh,
+            cfg,
+            number=number,
+            thread_id=thread_id,
+            sha=sha,
+            resolved_at=now or utcnow(),
+        )
         return "posted-unmarked"
     stamp = now or utcnow()
     if publish_resolved_marker(
@@ -1569,7 +1579,9 @@ def reply_and_resolve(
         resolved_at=stamp,
     ):
         return "posted"
-    publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
+    publish_cite_marker(
+        gh, cfg, number=number, thread_id=thread_id, sha=sha, resolved_at=stamp
+    )
     return "posted-unmarked"
 
 
@@ -1580,12 +1592,15 @@ def publish_cite_marker(
     number: int,
     thread_id: str,
     sha: str,
+    resolved_at: datetime | None = None,
 ) -> bool:
     """Refresh the PAT cite so it outranks an earlier skip on this pair."""
     try:
         body = cite_marker(thread_id, sha)
     except ValueError:
         return False
+    if resolved_at is not None:
+        body = f"{body}\nRESOLVED_AT: {format_resolved_at(resolved_at)}\n"
     return _post_audit_comment(gh, cfg, number=number, thread_id=thread_id, body=body)
 
 
