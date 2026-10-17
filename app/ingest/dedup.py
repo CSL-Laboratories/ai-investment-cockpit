@@ -135,24 +135,31 @@ class Dedup:
         copy's ``add`` change the other's duplicates, and the pyclass itself
         does not pickle or deep-copy. The Python path uses the same rebuild.
         """
+        extra = {k: v for k, v in self.__dict__.items() if k not in ("_seen", "_cap", "_core")}
         if self._core is not None:
-            return (_restore_dedup, (self._cap, tuple(self._core.keys()), True))
-        return (_restore_dedup, (self._cap, tuple(self._seen), False))
+            state = (extra, tuple(self._core.keys()), True)
+        else:
+            state = (extra, tuple(self._seen), False)
+        return (_new_dedup, (type(self), self._cap), state)
+
+    def __setstate__(self, state) -> None:
+        # Applied after pickle/deepcopy memoizes the new object, so a window
+        # holding itself as a key round-trips without recursion.
+        extra, keys, from_core = state
+        self.__dict__.update(extra)
+        if not from_core:
+            self._core = None
+            self._seen = OrderedDict((key, None) for key in keys)
+        elif self._core is None:
+            self._seen = OrderedDict((_decode_core_key(stored), None) for stored in keys)
+        else:
+            for stored in keys:
+                self._core.add(stored)
 
 
-def _restore_dedup(capacity, keys, from_core: bool) -> Dedup:
-    seen = Dedup(capacity)
-    if not from_core:
-        seen._core = None
-        for key in keys:
-            seen._seen[key] = None
-        return seen
-    if seen._core is None:
-        for stored in keys:
-            seen._seen[_decode_core_key(stored)] = None
-        return seen
-    for stored in keys:
-        seen._core.add(stored)
+def _new_dedup(cls, capacity) -> Dedup:
+    seen = cls.__new__(cls)
+    Dedup.__init__(seen, capacity)
     return seen
 
 

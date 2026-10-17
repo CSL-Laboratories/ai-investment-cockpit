@@ -141,6 +141,30 @@ def test_python_dedup_accepts_a_hashable_and_copies_independently():
         assert seen.add(1) is False
 
 
+class _FeedDedup(Dedup):
+    pass
+
+
+def test_python_dedup_copies_a_self_key_subclass_and_attributes():
+    import copy
+    import pickle
+
+    seen = _FeedDedup(2)
+    seen._core = None
+    seen.feed = "news"
+    seen.add(seen)
+    seen.add("a")
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _FeedDedup
+        assert clone.feed == "news"
+        assert clone._core is None
+        assert clone.add("a") is False
+
+
 @_needs_rust
 def test_a_non_str_hashable_stays_in_one_window():
     folded = "alpaca:benzinga:\ud800\U0001f600"
