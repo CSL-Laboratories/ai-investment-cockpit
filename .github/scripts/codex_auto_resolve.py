@@ -1203,15 +1203,26 @@ def cite_time_for_thread(
     comments: list[dict[str, Any]],
     thread_id: str,
     actor_login: str = "",
+    sha: str = "",
 ) -> datetime | None:
+    """Latest PAT cite time for ``thread_id``, optionally pinned to ``sha``.
+
+    Refresh and retry-mark decisions are pair-specific. A cite for another
+    head must not hide a near-expired cite for the current SHA.
+    """
     tid = safe_thread_id(thread_id)
+    digest = safe_sha(sha) if sha else ""
     if not actor_login or not tid:
         return None
     latest: datetime | None = None
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
-        if not any(marker_tid == tid for marker_tid, _sha in parse_cite_markers(body_of(comment))):
+        markers = parse_cite_markers(body_of(comment))
+        if not any(
+            marker_tid == tid and (not digest or marker_sha == digest)
+            for marker_tid, marker_sha in markers
+        ):
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
         if stamped is None:
@@ -1743,6 +1754,7 @@ def scan_pr(
                 comments,
                 str(thread.get("id") or ""),
                 actor_login=pat_login,
+                sha=mark_sha,
             )
             try:
                 marked = publish_resolved_marker(
@@ -1789,6 +1801,7 @@ def scan_pr(
                     thread_comments(thread) + issue_comments,
                     str(thread.get("id") or ""),
                     actor_login=pat_login,
+                    sha=head_sha,
                 ),
             )
         except Exception:

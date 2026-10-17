@@ -1537,6 +1537,36 @@ def test_near_cutoff_retry_resolve_error_refreshes_cite():
     assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
 
 
+def test_other_head_cite_does_not_suppress_current_sha_refresh():
+    old = NOW - timedelta(hours=23, minutes=55)
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    gh.fail_resolve = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert any("skip=resolve-error" in line for line in logs)
+    assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+
+
+def test_cite_time_for_thread_is_pair_specific():
+    old = NOW - timedelta(hours=23, minutes=55)
+    comments = [
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+        comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW),
+    ]
+    assert mod.cite_time_for_thread(comments, THREAD, PAT_LOGIN, sha=SHA) == old
+    assert mod.cite_time_for_thread(comments, THREAD, PAT_LOGIN, sha=SHA2) == NOW
+
+
 def test_fresh_cite_retry_resolve_error_does_not_refresh_cite():
     gh = ready_gh(
         threads=[
