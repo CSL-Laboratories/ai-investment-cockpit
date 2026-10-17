@@ -11,7 +11,7 @@ name = "cockpit_quant"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.23.5", features = ["extension-module"] }
+pyo3 = { version = "0.29.3", features = ["extension-module"] }
 cockpit-book = { path = "../cockpit-book" }
 cockpit-costs = { path = "../cockpit-costs" }
 cockpit-ingest = { path = "../cockpit-ingest" }

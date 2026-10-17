@@ -9,7 +9,7 @@ use cockpit_ingest::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::sync::GILOnceCell;
+use pyo3::sync::PyOnceLock;
 use pyo3::types::{
     PyBool, PyDict, PyFloat, PyInt, PyList, PyModule, PySequence, PyString, PyTuple, PyType,
 };
@@ -54,7 +54,7 @@ fn read_json_at(
         }
         // A subclass can override `__str__` with different digits. An exact
         // `int` past i64 uses its decimal text; anything else is `json.dumps`.
-        if !obj.get_type().is(&PyInt::type_object(obj.py())) {
+        if !obj.get_type().is(PyInt::type_object(obj.py())) {
             return Err(ReadError::Py(invalid("int subclass")));
         }
         let text = obj.str()?.to_string();
@@ -107,14 +107,14 @@ fn read_dict(
     visiting: &mut HashSet<usize>,
     depth: u32,
 ) -> Result<Json, ReadError> {
-    let Ok(dict) = obj.downcast::<PyDict>() else {
+    let Ok(dict) = obj.cast::<PyDict>() else {
         return Err(ReadError::Py(invalid("dict subclass")));
     };
     // `dict.iter()` reads stored entries. `json.dumps` calls `items()`.
     // Only an inherited `dict.items` is the same view. Calling an override
     // here would change a stateful dict before the fallback dump, and a
     // list-shaped item would be accepted where Python rejects it.
-    if !obj.get_type().is(&PyDict::type_object(obj.py())) && !items_are_inherited(obj) {
+    if !obj.get_type().is(PyDict::type_object(obj.py())) && !items_are_inherited(obj) {
         return Err(ReadError::Py(invalid("dict subclass")));
     }
     let id = enter_container(obj, visiting, depth)?;
@@ -152,7 +152,7 @@ fn items_are_inherited(obj: &Bound<'_, PyAny>) -> bool {
 fn sequence_needs_python(obj: &Bound<'_, PyAny>) -> bool {
     let py = obj.py();
     let ty = obj.get_type();
-    if ty.is(&PyList::type_object(py)) || ty.is(&PyTuple::type_object(py)) {
+    if ty.is(PyList::type_object(py)) || ty.is(PyTuple::type_object(py)) {
         return false;
     }
     let base = if obj.is_instance_of::<PyList>() {
@@ -224,13 +224,13 @@ fn read_symbols(
     symbols: &Bound<'_, PyAny>,
 ) -> PyResult<(Option<String>, Vec<String>)> {
     let ty = symbols.get_type();
-    if ty.is(&PyString::type_object(py)) {
+    if ty.is(PyString::type_object(py)) {
         return Ok((Some(symbols.extract()?), Vec::new()));
     }
-    if !ty.is(&PyList::type_object(py)) && !ty.is(&PyTuple::type_object(py)) {
+    if !ty.is(PyList::type_object(py)) && !ty.is(PyTuple::type_object(py)) {
         return Ok((None, Vec::new()));
     }
-    let seq = symbols.downcast::<PySequence>()?;
+    let seq = symbols.cast::<PySequence>()?;
     let n = std::cmp::min(seq.len()?, MAX_SYMBOLS);
     let mut items = Vec::with_capacity(n);
     let str_type = PyString::type_object(py);
@@ -276,7 +276,7 @@ fn contains_unassigned(py: Python<'_>, text: &str) -> PyResult<bool> {
     if text.is_ascii() {
         return Ok(false);
     }
-    static CHECK: GILOnceCell<Py<PyAny>> = GILOnceCell::new();
+    static CHECK: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let checker = CHECK.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
         let code = CString::new(
             "import unicodedata\n\ndef has_unassigned(text):\n    return any(unicodedata.category(ch) == 'Cn' for ch in text)\n",
@@ -293,7 +293,7 @@ fn contains_unassigned(py: Python<'_>, text: &str) -> PyResult<bool> {
 }
 
 fn role_pattern(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    static PATTERN: GILOnceCell<Py<PyAny>> = GILOnceCell::new();
+    static PATTERN: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
     let compiled = PATTERN.get_or_try_init(py, || -> PyResult<Py<PyAny>> {
         let pattern = concat!(
             r"(?i)\b(?:system|assistant|human|developer|user|tool|function)\s*:",
