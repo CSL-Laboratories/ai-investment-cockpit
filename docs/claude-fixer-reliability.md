@@ -146,3 +146,9 @@ Malformed helper invocations fail without reading stdin or consuming a push.
 Reply input opens nonblocking, verifies a regular descriptor and bounds its read;
 named pipes and symlinks cannot stall the helper. These cases have offline tests,
 including simulated action URL metadata through the real local Git hook fixture.
+
+Remote transport syntax is restricted to canonical GitHub HTTPS/SSH forms.
+The existing action token may contain only URL-unreserved characters; multiple
+userinfo separators, encoded delimiters, empty ports and non-ASCII host lookalikes
+are rejected without printing the URL. This defensive parser restriction is not
+proof that a malformed URL previously reached another server.

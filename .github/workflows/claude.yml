@@ -757,7 +757,6 @@ jobs:
           import sys
           import time
           from pathlib import Path
-          from urllib.parse import urlsplit
 
           SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
           REF = re.compile(r"(?!.*\.\.)[A-Za-z0-9._/-]+\Z")
@@ -864,23 +863,16 @@ jobs:
 
 
           def expected_remote(config, remote_url):
-              """Accept the action's existing tokenized URL without logging userinfo."""
-              if not isinstance(remote_url, str) or any(c.isspace() for c in remote_url) or "\\" in remote_url:
+              """Accept only canonical GitHub transports; never interpret/log credentials."""
+              if not isinstance(remote_url, str):
                   return False
-              repo = config["repo"].casefold()
-              if remote_url.casefold() == f"git@github.com:{repo}.git":
-                  return True
-              try:
-                  parts = urlsplit(remote_url)
-                  if (parts.hostname != "github.com" or parts.port is not None or parts.query or parts.fragment
-                          or parts.path.casefold() not in {"/" + repo, "/" + repo + ".git"}):
-                      return False
-                  if parts.scheme == "https":
-                      return (parts.username is None and parts.password is None) or (
-                          parts.username == "x-access-token" and bool(parts.password))
-                  return parts.scheme == "ssh" and parts.username == "git" and parts.password is None
-              except ValueError:
-                  return False
+              # Limit userinfo to URL-unreserved token characters. A second @, encoded
+              # delimiter, empty port or control byte must not reach a different parser.
+              repo = re.escape(config["repo"])
+              return bool(re.fullmatch(
+                  rf"(?:https://(?:x-access-token:[A-Za-z0-9._~-]+@)?(?i:github\.com)/(?i:{repo})(?:\.git)?"
+                  rf"|ssh://git@(?i:github\.com)/(?i:{repo})(?:\.git)?"
+                  rf"|git@(?i:github\.com):(?i:{repo})\.git)", remote_url, flags=re.ASCII))
 
 
           def guard(config, updates, remote, state_path, read=api, git=command, remote_url=""):
@@ -2084,7 +2076,6 @@ jobs:
           import sys
           import time
           from pathlib import Path
-          from urllib.parse import urlsplit
 
           SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
           REF = re.compile(r"(?!.*\.\.)[A-Za-z0-9._/-]+\Z")
@@ -2191,23 +2182,16 @@ jobs:
 
 
           def expected_remote(config, remote_url):
-              """Accept the action's existing tokenized URL without logging userinfo."""
-              if not isinstance(remote_url, str) or any(c.isspace() for c in remote_url) or "\\" in remote_url:
+              """Accept only canonical GitHub transports; never interpret/log credentials."""
+              if not isinstance(remote_url, str):
                   return False
-              repo = config["repo"].casefold()
-              if remote_url.casefold() == f"git@github.com:{repo}.git":
-                  return True
-              try:
-                  parts = urlsplit(remote_url)
-                  if (parts.hostname != "github.com" or parts.port is not None or parts.query or parts.fragment
-                          or parts.path.casefold() not in {"/" + repo, "/" + repo + ".git"}):
-                      return False
-                  if parts.scheme == "https":
-                      return (parts.username is None and parts.password is None) or (
-                          parts.username == "x-access-token" and bool(parts.password))
-                  return parts.scheme == "ssh" and parts.username == "git" and parts.password is None
-              except ValueError:
-                  return False
+              # Limit userinfo to URL-unreserved token characters. A second @, encoded
+              # delimiter, empty port or control byte must not reach a different parser.
+              repo = re.escape(config["repo"])
+              return bool(re.fullmatch(
+                  rf"(?:https://(?:x-access-token:[A-Za-z0-9._~-]+@)?(?i:github\.com)/(?i:{repo})(?:\.git)?"
+                  rf"|ssh://git@(?i:github\.com)/(?i:{repo})(?:\.git)?"
+                  rf"|git@(?i:github\.com):(?i:{repo})\.git)", remote_url, flags=re.ASCII))
 
 
           def guard(config, updates, remote, state_path, read=api, git=command, remote_url=""):
