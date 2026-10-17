@@ -70,9 +70,15 @@
     },
     {
       "path": "fixtures/negative/unconfirmed-intervention.json",
-      "sha256": "36df9f327c8842a4ea70ffcaf357e16778e3ad1d84635592636db0e1be90cfa7",
+      "sha256": "8fcb2cbc4e526618399a33e559c5c98a7334bd671318a6c892f441d9f700f7f3",
       "role": "negative",
       "control": "unconfirmed_intervention"
+    },
+    {
+      "path": "fixtures/negative/unscoped-intervention.json",
+      "sha256": "737a72248a5d2276fe872a9da3b9073464bcfaecba44a7d2ad4324e7bd5e7413",
+      "role": "negative",
+      "control": "unscoped_intervention"
     },
     {
       "path": "fixtures/oracle/commands.json",

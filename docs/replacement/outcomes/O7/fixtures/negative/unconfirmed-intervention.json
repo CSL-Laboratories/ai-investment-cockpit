@@ -7,7 +7,9 @@
     "surface": "cli",
     "command": "operator.interventions.request_stop",
     "request_id": "req_cmd_unconfirmed_stop",
-    "arguments": {},
+    "arguments": {
+      "scope": "operator_session"
+    },
     "confirmation": "not_required"
   }
 }

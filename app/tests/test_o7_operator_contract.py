@@ -44,6 +44,7 @@ EXPECTED_LINES = (
     "NEGATIVE CONTROL success_exit_on_refusal: FAIL as designed (exit_code_hides_refusal)",
     "NEGATIVE CONTROL contradictory_status_text: FAIL as designed (status_text_mismatch)",
     "NEGATIVE CONTROL unconfirmed_intervention: FAIL as designed (intervention_not_explicit)",
+    "NEGATIVE CONTROL unscoped_intervention: FAIL as designed (intervention_not_scoped)",
     "NEGATIVE CONTROL stale_not_watch_only: FAIL as designed (stale_not_watch_only)",
 )
 ACCEPTED = {
