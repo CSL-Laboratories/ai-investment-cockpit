@@ -189,7 +189,7 @@ EVENT_STATUSES = {
     "stale_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
     "unreconciled_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
     "intervention_recorded": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
-    "export_recorded": frozenset({"ok"}),
+    "export_recorded": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
 }
 INTERVENTION_NAMES = {
     "operator.interventions.request_stop": "stop",

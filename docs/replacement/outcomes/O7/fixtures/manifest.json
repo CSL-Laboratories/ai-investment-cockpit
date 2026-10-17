@@ -127,7 +127,7 @@
     },
     {
       "path": "schemas/operator-event.schema.json",
-      "sha256": "456702876d50fcb055a34ee97718e33d69c8cd39abe33caba834d44e8958dee9",
+      "sha256": "6fc724c984e719024e05347ad98f2770dded89023f2f08a00611d9e444ad1d92",
       "role": "pinned"
     },
     {

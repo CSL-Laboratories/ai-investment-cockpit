@@ -425,6 +425,23 @@ def test_uncertainty_visible_event_keeps_compound_status() -> None:
     assert CHECKER._event_error(usage) == "event status does not match the event type"
 
 
+def test_export_recorded_event_keeps_compound_status() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    base = next(event for event in events["events"] if event["event_type"] == "export_recorded")
+    for status in ("ok", "stale_or_unreconciled", "unavailable"):
+        event = copy.deepcopy(base)
+        event["status_code"] = status
+        assert CHECKER._schema_error(event_validator, event) is None
+        assert CHECKER._event_error(event) is None
+    refused = copy.deepcopy(base)
+    refused["status_code"] = "refused"
+    assert CHECKER._schema_error(event_validator, refused) is not None
+    assert CHECKER._event_error(refused) == "event status does not match the event type"
+
+
 def test_evidence_viewed_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
