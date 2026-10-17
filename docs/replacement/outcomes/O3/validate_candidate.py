@@ -230,6 +230,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     applied_fill_fees = 0
     fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
     fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
+    post_checkpoint_qty: dict[str, int] = {}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
     order_first_fill_seq: dict[str, int] = {}
@@ -280,6 +281,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if fill["sequence"] <= checkpoint["sequence"]:
             checkpointed_fill_ids.add(fill["fill_id"])
             continue
+        post_checkpoint_qty[order["order_id"]] = (
+            post_checkpoint_qty.get(order["order_id"], 0) + fill["qty"]
+        )
         accepted_fills.append(fill)
         derived[fill["instrument_id"]] = derived.get(fill["instrument_id"], 0) + fill["qty"]
         applied_fill_fees += fill["fee_minor"]
@@ -289,7 +293,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             terminal = order.get("terminal_state") or order["state"]
             if terminal == "filled" and (
                 order.get("checkpoint_filled_qty", 0)
-                + accepted_qty.get(order["order_id"], 0)
+                + post_checkpoint_qty.get(order["order_id"], 0)
                 != order["qty"]
             ):
                 failures.add("partial_fill_divergence")
@@ -372,6 +376,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     replay_detected = False
     journal_fees = 0
     corporate_cash = 0
+    corporate_cash_by: dict[str, int] = {}
+    settlement_fee_cash_by: dict[str, int] = {}
     settlement_cash_dr = 0
     settlement_cash_by: dict[str, int] = {}
     settlement_collateral_by: dict[str, int] = {}
@@ -451,6 +457,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             for line in entry["lines"]:
                 if (line["account"], line["side"]) not in {
                     ("cash_available", "dr"),
+                    ("cash_available", "cr"),
                     ("collateral_reserved", "cr"),
                     ("realized_pnl", "dr"),
                     ("realized_pnl", "cr"),
@@ -477,6 +484,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 cash += amount if side == "dr" else -amount
                 if entry["reason"] == "corporate_action" and side == "dr":
                     corporate_cash += amount
+                    corporate_cash_by[line["instrument_id"]] = (
+                        corporate_cash_by.get(line["instrument_id"], 0) + amount
+                    )
+                if entry["reason"] == "settlement_payout" and side == "cr":
+                    settlement_fee_cash_by[line["instrument_id"]] = (
+                        settlement_fee_cash_by.get(line["instrument_id"], 0) + amount
+                    )
                 if entry["reason"] == "settlement_payout" and side == "dr":
                     settlement_cash_dr += amount
                     settlement_cash_by[line["instrument_id"]] = (
@@ -616,6 +630,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     )
     if corporate_cash != expected_dividend:
         failures.add("corporate_action_mismatch")
+    expected_dividend_by: dict[str, int] = {}
+    for action in fixture["corporate_actions"]:
+        if action["kind"] == "cash_dividend":
+            expected_dividend_by[action["instrument_id"]] = (
+                expected_dividend_by.get(action["instrument_id"], 0) + action["cash_minor"]
+            )
+    if {k: v for k, v in corporate_cash_by.items() if v} != {
+        k: v for k, v in expected_dividend_by.items() if v
+    }:
+        failures.add("corporate_action_mismatch")
 
     settled = [market for market in fixture["markets"] if market["state"] == "settled"]
     if settled:
@@ -637,7 +661,12 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if record["fee_already_deducted_from_payout"]:
                 if instrument_id in settlement_fee_by:
                     failures.add("fee_double_count")
-            elif settlement_fee_by.get(instrument_id, 0) != record["misc_fee_minor"]:
+                if settlement_fee_cash_by.get(instrument_id, 0) != 0:
+                    failures.add("settlement_unreconciled")
+            elif (
+                settlement_fee_by.get(instrument_id, 0) != record["misc_fee_minor"]
+                or settlement_fee_cash_by.get(instrument_id, 0) != record["misc_fee_minor"]
+            ):
                 failures.add("settlement_unreconciled")
             if settlement_collateral_by.get(instrument_id, 0) != reserved:
                 failures.add("settlement_unreconciled")
