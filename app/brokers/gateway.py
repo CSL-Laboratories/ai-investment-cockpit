@@ -216,6 +216,15 @@ class OrderGateway:
         # unrelated gates may omit agent lineage, but the real proposal path may not.
         self._require_analysis_generation = bool(require_analysis_generation)
 
+    @property
+    def execution_scope(self) -> str:
+        """Transport scope pinned at construction.
+
+        CSL-218 profile handoff reads this and refuses anything other than the
+        paper transport. The property has no setter; it cannot widen scope.
+        """
+        return self._execution_scope
+
     def _resolve_state(self, ladder):
         """Return the pinned TRUST ROOT for gate (e). The signed audit chain is the order authority;
         its HMAC key + DB must not be caller-supplied (SEC-03). When the gateway was built with a
