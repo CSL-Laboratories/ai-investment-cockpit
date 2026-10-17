@@ -278,6 +278,10 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     if doc.get("authority_effect") != expected_effect:
         return "authority_effect_mismatch"
     expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
+    if expected_intervention is None and any(
+        field in result for field in ("intervention", "recorded", "survives_restart")
+    ):
+        return "read_claims_intervention"
     if expected_intervention is not None and result.get("intervention") != expected_intervention:
         return "intervention_mismatch"
     if (
@@ -425,6 +429,10 @@ def _oracle_response_error(doc: dict[str, Any], commands: dict[str, dict[str, An
     ):
         return "active profile class does not match the response profile"
     expected_intervention = INTERVENTION_NAMES.get(doc["command"])
+    if expected_intervention is None and any(
+        field in result for field in ("intervention", "recorded", "survives_restart")
+    ):
+        return "read oracle carries an intervention field"
     if expected_intervention is not None:
         if result.get("intervention") != expected_intervention or result.get("recorded") is not True:
             return "intervention oracle is not a recorded non-order request"
@@ -730,6 +738,16 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle errors do not cover the failure statuses")
 
 
+def _repaired_stale_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only watch_only on the stale negative control."""
+    repaired = dict(body)
+    result = body.get("result")
+    if not isinstance(result, dict):
+        return repaired
+    repaired["result"] = {**result, "watch_only": True}
+    return repaired
+
+
 def _repaired_command_body(control: str, body: dict[str, Any]) -> dict[str, Any]:
     """Restore only the safeguard named by a command negative control."""
     repaired = dict(body)
@@ -787,6 +805,19 @@ def _check_negative(
         detail = gui_error or cli_error or f"classified={classified}"
         outcome = "UNEXPECTED_ACCEPT" if classified is None and schema_ok else "WRONG_FAILURE"
         return _control_line(control, outcome, detail)
+    if control == "stale_not_watch_only":
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
+        classified = classify_response(body, allowed) if isinstance(body, dict) else None
+        if schema_error is None or classified != control or not isinstance(body, dict):
+            if classified is None and schema_error is None:
+                return _control_line(control, "UNEXPECTED_ACCEPT")
+            detail = schema_error or f"classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, _repaired_stale_body(body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
     body = document.get("body")
     schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
     classified = classify_response(body, allowed) if isinstance(body, dict) else None

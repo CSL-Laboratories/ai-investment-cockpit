@@ -307,6 +307,20 @@ def test_error_codes_and_intervention_names_match() -> None:
     assert CHECKER._schema_error(error_validator, mismatched) is not None
 
 
+def test_reads_do_not_carry_intervention_fields() -> None:
+    by_request, commands, response_validator = _candidate_documents()
+    positions = copy.deepcopy(by_request["req_positions"])
+    assert positions["authority_effect"] == "none"
+    positions["result"]["intervention"] = "stop"
+    positions["result"]["recorded"] = True
+    assert CHECKER.classify_response(positions, commands) == "read_claims_intervention"
+    assert CHECKER._schema_error(response_validator, positions) is not None
+    recorded_only = copy.deepcopy(by_request["req_positions"])
+    recorded_only["result"]["survives_restart"] = True
+    assert CHECKER.classify_response(recorded_only, commands) == "read_claims_intervention"
+    assert CHECKER._schema_error(response_validator, recorded_only) is not None
+
+
 def test_recorded_stop_persists_and_ansi_is_absent_from_every_string() -> None:
     by_request, commands, response_validator = _candidate_documents()
     stop = copy.deepcopy(by_request["req_stop"])
@@ -371,6 +385,27 @@ def test_profile_class_agrees_and_intervention_controls_fail_on_their_own_field(
     code, stdout, stderr = CHECKER.evaluate(copied)
     assert code == 1
     assert "NEGATIVE CONTROL unscoped_intervention: WRONG_FAILURE" in stdout
+
+
+def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    response_schema = json.loads((root / "schemas" / "operator-response.schema.json").read_text(encoding="utf-8"))
+    response_validator = CHECKER._validator(response_schema)
+    document = json.loads((root / "fixtures" / "negative" / "stale-not-watch-only.json").read_text(encoding="utf-8"))
+    body = document["body"]
+    assert CHECKER._schema_error(response_validator, body) is not None
+    assert CHECKER._schema_error(response_validator, CHECKER._repaired_stale_body(body)) is None
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "fixtures" / "negative" / "stale-not-watch-only.json"
+    tampered = json.loads(fixture.read_text(encoding="utf-8"))
+    tampered["body"]["api_version"] = "o7.operator.v1"
+    fixture.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/negative/stale-not-watch-only.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert "NEGATIVE CONTROL stale_not_watch_only: WRONG_FAILURE" in stdout
+    assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
 def test_unreconciled_visibility_matches_the_result() -> None:

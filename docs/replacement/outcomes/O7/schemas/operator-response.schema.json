@@ -280,7 +280,18 @@
         }
       },
       "then": {"properties": {"authority_effect": {"const": "intervention_request"}}},
-      "else": {"properties": {"authority_effect": {"const": "none"}}}
+      "else": {
+        "properties": {
+          "authority_effect": {"const": "none"},
+          "result": {
+            "properties": {
+              "intervention": false,
+              "recorded": false,
+              "survives_restart": false
+            }
+          }
+        }
+      }
     }
   ]
 }

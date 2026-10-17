@@ -77,7 +77,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 ### Events and errors
 
-Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`.
+Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`. A read or export does not carry `result.intervention`, `result.recorded`, or `result.survives_restart`.
 
 Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation. A recorded stop (`recorded=true` on `operator.interventions.request_stop`) sets `survives_restart` true.
 
@@ -148,7 +148,7 @@ The CHI '21 ACM page linked below was returned by the Parallel search. This sess
 
 ## Negative controls
 
-Each fixture is schema-valid except the privileged bypass and the stale read with `watch_only=false`, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
+Each fixture is schema-valid except the privileged bypass and the stale read with `watch_only=false`, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. The stale read breaks only `watch_only=false`. Setting that field to true must make the response schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
 
 | Control | Fixture | What it catches |
 | --- | --- | --- |
