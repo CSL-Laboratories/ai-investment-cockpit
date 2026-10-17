@@ -166,6 +166,99 @@ def test_python_dedup_accepts_a_hashable_and_copies_independently():
         assert seen.add(1) is False
 
 
+class _FeedDedup(Dedup):
+    pass
+
+
+def test_python_dedup_copies_a_self_key_subclass_and_attributes():
+    import copy
+    import pickle
+
+    seen = _FeedDedup(2)
+    seen._core = None
+    seen.feed = "news"
+    seen.add(seen)
+    seen.add("a")
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _FeedDedup
+        assert clone.feed == "news"
+        assert clone._core is None
+        assert clone.add("a") is False
+
+
+class _CapacityNew(Dedup):
+    def __new__(cls, capacity):
+        return super().__new__(cls)
+
+
+def test_copy_does_not_call_a_subclass_new_that_requires_capacity():
+    import copy
+    import pickle
+
+    seen = _CapacityNew(2)
+    seen.add("a")
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _CapacityNew
+        assert clone.add("a") is False
+        assert seen.add("a") is False
+
+
+class _SlottedDedup(Dedup):
+    __slots__ = ("feed",)
+
+    def __init__(self, capacity):
+        super().__init__(capacity)
+        self.feed = "news"
+
+
+def test_copy_keeps_a_slotted_subclass_attribute():
+    import copy
+    import pickle
+
+    seen = _SlottedDedup(2)
+    seen.add("a")
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _SlottedDedup
+        assert clone.feed == "news"
+        assert clone.add("a") is False
+        clone.feed = "other"
+    assert seen.feed == "news"
+
+
+class _IdentityStr(str):
+    def __eq__(self, other):
+        return self is other
+
+    def __hash__(self):
+        return id(self)
+
+
+def test_a_str_subclass_keeps_python_equality():
+    """A ``str`` subclass is not reduced to its text on the per-call path."""
+    first = _IdentityStr("x")
+    second = _IdentityStr("x")
+    assert (first == second) is False
+    seen = Dedup(4)
+    assert seen._core is None
+    assert seen.add(first) is True
+    assert seen.add(second) is True
+    assert seen.add(first) is False
+    assert seen.add(1) is True
+    assert seen._core is None
+
+
 @_needs_rust
 def test_a_non_str_key_agrees_when_a_rust_core_is_attached(monkeypatch):
     import cockpit_quant

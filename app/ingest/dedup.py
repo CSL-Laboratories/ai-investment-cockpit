@@ -135,27 +135,61 @@ class Dedup:
 
     def __copy__(self) -> Dedup:
         """Independent map. A Rust core is rebuilt rather than shared."""
-        return _restore_dedup(self._cap, list(self._seen), self._core is not None)
+        cloned = _new_dedup(type(self), self._cap)
+        cloned.__setstate__(self.__getstate__())
+        return cloned
 
     def __deepcopy__(self, memo: dict) -> Dedup:
-        cloned = Dedup.__new__(Dedup)
+        cloned = _new_dedup(type(self), copy.deepcopy(self._cap, memo))
+        # Register before the keys are copied so a window that holds itself
+        # round-trips as the clone, not as a second copy.
         memo[id(self)] = cloned
-        cloned._cap = copy.deepcopy(self._cap, memo)
-        keys = copy.deepcopy(list(self._seen), memo)
-        cloned._seen = OrderedDict.fromkeys(keys)
-        cloned._core = _rebuild_core(cloned._cap, keys) if self._core is not None else None
+        cloned.__setstate__(copy.deepcopy(self.__getstate__(), memo))
         return cloned
 
     def __reduce__(self):
-        return (_restore_dedup, (self._cap, list(self._seen), self._core is not None))
+        """Rebuild for pickle. ``copy.copy`` and ``copy.deepcopy`` use the same state."""
+        return (_new_dedup, (type(self), self._cap), self.__getstate__())
+
+    def __getstate__(self):
+        extra = {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in ("_seen", "_cap", "_core")
+        }
+        return (extra, _slot_values(self), tuple(self._seen), self._core is not None)
+
+    def __setstate__(self, state) -> None:
+        extra, slots, keys, rust_core = state
+        self.__dict__.update(extra)
+        for name, value in slots.items():
+            setattr(self, name, value)
+        self._seen = OrderedDict.fromkeys(keys)
+        self._core = _rebuild_core(self._cap, keys) if rust_core else None
 
 
-def _restore_dedup(capacity, keys, rust_core: bool) -> Dedup:
-    """Rebuild a dedup from its ordered keys. Used by copy and pickle."""
-    seen = Dedup.__new__(Dedup)
-    seen._cap = capacity
-    seen._seen = OrderedDict.fromkeys(keys)
-    seen._core = _rebuild_core(capacity, keys) if rust_core else None
+def _slot_values(obj) -> dict:
+    """Slot attributes on ``obj``, including those declared by a subclass."""
+    values = {}
+    for cls in type(obj).__mro__:
+        for name in getattr(cls, "__slots__", ()):
+            if name in ("__dict__", "__weakref__") or name in values:
+                continue
+            try:
+                values[name] = getattr(obj, name)
+            except AttributeError:
+                continue
+    return values
+
+
+def _new_dedup(cls, capacity) -> Dedup:
+    """Allocate ``cls`` without calling a subclass ``__new__``.
+
+    A subclass ``__new__`` may require ``capacity``. ``Dedup`` does not define
+    ``__new__``, so this is ``object.__new__`` and only needs the class.
+    """
+    seen = Dedup.__new__(cls)
+    Dedup.__init__(seen, capacity)
     return seen
 
 
