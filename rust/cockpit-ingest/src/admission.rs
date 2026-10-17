@@ -12,18 +12,18 @@ use std::collections::HashMap;
 #[derive(Clone, Debug)]
 struct Slot {
     key: String,
-    prev: Option<u32>,
-    next: Option<u32>,
+    prev: Option<u64>,
+    next: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Dedup {
     cap: i64,
-    index: HashMap<String, u32>,
+    index: HashMap<String, u64>,
     slots: Vec<Slot>,
-    free: Vec<u32>,
-    head: Option<u32>,
-    tail: Option<u32>,
+    free: Vec<u64>,
+    head: Option<u64>,
+    tail: Option<u64>,
     len: i64,
 }
 
@@ -48,7 +48,7 @@ impl Dedup {
         let id = self.alloc(key.to_owned());
         self.index.insert(key.to_owned(), id);
         self.attach_tail(id);
-        self.len += 1;
+        self.len = self.len.saturating_add(1);
         if self.len > self.cap {
             self.evict_head();
         }
@@ -59,13 +59,26 @@ impl Dedup {
         let Some(id) = self.index.remove(key) else {
             return false;
         };
+        self.slots[id as usize].key = String::new();
         self.detach(id);
         self.free.push(id);
-        self.len -= 1;
+        self.len = self.len.saturating_sub(1);
         true
     }
 
-    fn alloc(&mut self, key: String) -> u32 {
+    /// Live keys, oldest first. Free slots are not included.
+    pub fn keys(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor = self.head;
+        while let Some(id) = cursor {
+            let slot = &self.slots[id as usize];
+            out.push(slot.key.clone());
+            cursor = slot.next;
+        }
+        out
+    }
+
+    fn alloc(&mut self, key: String) -> u64 {
         if let Some(id) = self.free.pop() {
             self.slots[id as usize] = Slot {
                 key,
@@ -74,7 +87,8 @@ impl Dedup {
             };
             return id;
         }
-        let id = u32::try_from(self.slots.len()).expect("dedup slot index fits in u32");
+        // u64, matching the signals sample counter: a long map must not wrap.
+        let id = u64::try_from(self.slots.len()).expect("dedup slot index fits in u64");
         self.slots.push(Slot {
             key,
             prev: None,
@@ -83,7 +97,7 @@ impl Dedup {
         id
     }
 
-    fn move_to_tail(&mut self, id: u32) {
+    fn move_to_tail(&mut self, id: u64) {
         if self.tail == Some(id) {
             return;
         }
@@ -91,7 +105,7 @@ impl Dedup {
         self.attach_tail(id);
     }
 
-    fn attach_tail(&mut self, id: u32) {
+    fn attach_tail(&mut self, id: u64) {
         self.slots[id as usize].prev = self.tail;
         self.slots[id as usize].next = None;
         if let Some(tail) = self.tail {
@@ -102,7 +116,7 @@ impl Dedup {
         self.tail = Some(id);
     }
 
-    fn detach(&mut self, id: u32) {
+    fn detach(&mut self, id: u64) {
         let prev = self.slots[id as usize].prev;
         let next = self.slots[id as usize].next;
         if let Some(prev) = prev {
@@ -123,11 +137,11 @@ impl Dedup {
         let Some(id) = self.head else {
             return;
         };
-        let key = self.slots[id as usize].key.clone();
+        let key = std::mem::take(&mut self.slots[id as usize].key);
         self.index.remove(&key);
         self.detach(id);
         self.free.push(id);
-        self.len -= 1;
+        self.len = self.len.saturating_sub(1);
     }
 }
 
@@ -180,6 +194,7 @@ mod tests {
         assert!(seen.add("b"));
         assert!(!seen.discard("c"));
         assert!(seen.discard("a"));
+        assert_eq!(seen.keys(), vec!["b".to_string()]);
     }
 
     #[test]
@@ -188,8 +203,20 @@ mod tests {
             let mut seen = Dedup::new(cap);
             assert!(seen.add("k"));
             assert!(seen.add("k"));
+            assert!(seen.keys().is_empty());
             assert!(!seen.discard("k"));
         }
+    }
+
+    #[test]
+    fn keys_follow_oldest_to_newest_after_a_refresh() {
+        let mut seen = Dedup::new(2);
+        assert!(seen.add("a"));
+        assert!(seen.add("b"));
+        assert!(!seen.add("a"));
+        assert_eq!(seen.keys(), vec!["b".to_string(), "a".to_string()]);
+        assert!(seen.add("c"));
+        assert_eq!(seen.keys(), vec!["a".to_string(), "c".to_string()]);
     }
 
     #[test]
@@ -206,6 +233,31 @@ mod tests {
     }
 
     #[test]
+    fn a_released_slot_drops_its_key() {
+        let mut seen = Dedup::new(2);
+        assert!(seen.add("alpha"));
+        assert!(seen.add("beta"));
+        assert!(seen.discard("alpha"));
+        assert!(seen
+            .free
+            .iter()
+            .all(|&id| seen.slots[id as usize].key.is_empty()));
+        assert!(seen.add("gamma"));
+        assert!(seen.add("delta"));
+        assert!(seen
+            .free
+            .iter()
+            .all(|&id| seen.slots[id as usize].key.is_empty()));
+        assert_eq!(
+            seen.slots
+                .iter()
+                .filter(|slot| !slot.key.is_empty())
+                .count(),
+            2
+        );
+    }
+
+    #[test]
     fn the_bucket_starts_empty_and_ignores_a_backwards_clock() {
         let (ok, tokens, last) = token_bucket_allow(1.0, 1.0, 0.0, 0.0, 0.0);
         assert!(!ok);
@@ -218,5 +270,21 @@ mod tests {
         let (ok, tokens, _) = token_bucket_allow(2.0, 1.0, tokens, last, 0.25);
         assert!(!ok);
         assert_eq!(tokens, 0.0);
+    }
+
+    #[test]
+    fn nan_matches_python_max_and_min() {
+        let (ok, tokens, last) = token_bucket_allow(1.0, 2.0, 0.0, 0.0, f64::NAN);
+        assert!(!ok);
+        assert_eq!(tokens, 0.0);
+        assert!(last.is_nan());
+        let (ok, tokens, last) = token_bucket_allow(f64::NAN, 2.0, 0.0, 0.0, 1.0);
+        assert!(ok);
+        assert_eq!(tokens, 1.0);
+        assert_eq!(last, 1.0);
+        let (ok, tokens, last) = token_bucket_allow(1.0, f64::NAN, 0.0, 0.0, 1.0);
+        assert!(!ok);
+        assert!(tokens.is_nan());
+        assert_eq!(last, 1.0);
     }
 }

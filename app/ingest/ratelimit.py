@@ -2,8 +2,11 @@
 never be exceeded (the runner passes monotonic ``now`` seconds)."""
 from __future__ import annotations
 
-import numbers
+import importlib.util
+import logging
 from collections.abc import Sequence
+
+log = logging.getLogger(__name__)
 
 RATELIMIT_BACKEND = "python"
 _NATIVE = None
@@ -12,22 +15,34 @@ _NATIVE = None
 def _load_native() -> None:
     """Use the Rust bucket step when the extension is installed.
 
-    A missing module keeps the pure-Python path. Any other import failure is a
-    broken extension and is not swallowed. Time stays caller-supplied.
+    A missing module keeps the pure-Python path. A present extension that
+    fails to import is broken and the error propagates. A present module
+    missing ``token_bucket_allow`` or ``token_bucket_replay`` is a partial
+    wheel, not a silent Python fallback. Time stays caller-supplied. Per-call
+    ``TokenBucket.allow`` stays on Python; ``allow_many`` is the batch path.
     """
     global _NATIVE, RATELIMIT_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("RATELIMIT_BACKEND=%s", RATELIMIT_BACKEND)
         return
-    if not hasattr(native, "token_bucket_allow"):
-        return
+    import cockpit_quant as native
+
+    required = ("token_bucket_allow", "token_bucket_replay")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
+        raise ImportError(
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
+        )
     _NATIVE = native
     RATELIMIT_BACKEND = "rust"
+    log.info("RATELIMIT_BACKEND=%s", RATELIMIT_BACKEND)
 
 
-def _real(value) -> bool:
-    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+def _all_float(values) -> bool:
+    for value in values:
+        if type(value) is not float:
+            return False
+    return True
 
 
 class TokenBucket:
@@ -38,49 +53,70 @@ class TokenBucket:
         self._last = now
 
     def allow(self, now: float) -> bool:
-        """One clock reading.
+        """Admit one timestamp.
 
-        A float or int goes straight into the extension. The previous binding
-        checked ``numbers.Real`` on every field first, and that check was slower
-        than the bucket step. A finished sequence of timestamps uses ``allow_many``.
+        Pollers call this once per item. Crossing into the extension for one
+        step is slower than the arithmetic, so the hot path stays here.
+        A finished clock uses ``allow_many``.
         """
-        native = _NATIVE
-        if native is not None and (type(now) is float or type(now) is int):
-            allowed, self.tokens, self._last = native.token_bucket_allow(
-                self.rate, self.capacity, self.tokens, self._last, now,
-            )
-            return allowed
-        return python_allow(self, now)
+        elapsed = max(0.0, now - self._last)
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        self._last = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        return False
 
     def allow_many(self, times: Sequence[float]) -> list[bool]:
-        """Admit a finished sequence and leave ``tokens`` and ``_last`` at the end of it."""
-        native = _NATIVE
-        if native is not None and _real(self.rate) and _real(self.capacity) and _real(self.tokens) and _real(self._last):
-            # One extension call for the whole clock sequence. Checking every
-            # timestamp in Python first was slower than the bucket step.
-            payload = times if isinstance(times, (list, tuple)) else list(times)
-            allowed, tokens, last = native.token_bucket_replay(
-                float(self.rate),
-                float(self.capacity),
-                float(self.tokens),
-                float(self._last),
-                payload,
+        """Admit a finished clock and leave ``tokens`` and ``_last`` at the end.
+
+        The clock is copied first, so a one-shot iterable can be scanned. An
+        all-float copy is one extension call, including NaN and inf, which
+        follow Python ``max`` / ``min``. An ``int`` or a value past the float
+        range is applied with ``allow``. A later timestamp that raises leaves
+        the earlier admissions in place, the same as calling ``allow`` in a loop.
+        """
+        times = list(times)
+        if (
+            _NATIVE is not None
+            and _all_float((self.rate, self.capacity, self.tokens, self._last))
+            and _all_float(times)
+        ):
+            allowed, self.tokens, self._last = token_bucket_replay(
+                self.rate, self.capacity, self.tokens, self._last, times
             )
-            self.tokens = tokens
-            self._last = last
             return list(allowed)
-        return [python_allow(self, now) for now in times]
+        return [self.allow(now) for now in times]
 
 
 def python_allow(bucket: TokenBucket, now: float) -> bool:
-    """The reference step. ``TokenBucket.allow`` uses this when Rust is absent."""
-    elapsed = max(0.0, now - bucket._last)
-    bucket.tokens = min(bucket.capacity, bucket.tokens + elapsed * bucket.rate)
-    bucket._last = now
-    if bucket.tokens >= 1.0:
-        bucket.tokens -= 1.0
-        return True
-    return False
+    """The reference step. ``TokenBucket.allow`` is this step."""
+    return bucket.allow(now)
+
+
+def token_bucket_replay(rate, capacity, tokens, last, times):
+    """Replay ``times`` from one bucket state.
+
+    An all-float script uses the extension in one call. Any ``int`` stays on
+    ``python_allow``, even when every input converts to ``f64`` exactly.
+    ``now - last`` can round in binary64 before the later addition, so the
+    integer step and the extension disagree. ``10**400`` is the same path.
+
+    ``times`` is scanned and then replayed, so a one-shot iterable is copied
+    first. Otherwise the scan would leave the replay empty.
+    """
+    times = list(times)
+    native = _NATIVE
+    if (
+        native is not None
+        and _all_float((rate, capacity, tokens, last))
+        and _all_float(times)
+    ):
+        return native.token_bucket_replay(rate, capacity, tokens, last, times)
+    bucket = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+    bucket.tokens = tokens
+    allowed = [python_allow(bucket, now) for now in times]
+    return allowed, bucket.tokens, bucket._last
 
 
 _load_native()

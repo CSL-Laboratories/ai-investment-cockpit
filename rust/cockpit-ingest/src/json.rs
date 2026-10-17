@@ -79,7 +79,8 @@ fn push_string(out: &mut String, text: &str) {
             c if (c as u32) < 0x20 => {
                 push_u_escape(out, c as u32);
             }
-            c if (c as u32) > 0x7F => {
+            // Python `ensure_ascii` escapes DEL as well as every non-ASCII scalar.
+            c if (c as u32) >= 0x7F => {
                 let mut buf = [0u16; 2];
                 for unit in c.encode_utf16(&mut buf) {
                     push_u_escape(out, *unit as u32);
@@ -285,5 +286,11 @@ mod tests {
     fn strings_escape_like_python() {
         let value = Json::Str("a\nb\t\"\\é\u{1F600}".into());
         assert_eq!(dumps(&value), r#""a\nb\t\"\\\u00e9\ud83d\ude00""#);
+    }
+
+    #[test]
+    fn delete_character_escapes_like_python() {
+        let value = Json::Object(vec![("note".into(), Json::Str("a\u{007f}b".into()))]);
+        assert_eq!(dumps(&value), r#"{"note":"a\u007fb"}"#);
     }
 }
