@@ -191,8 +191,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if action["kind"] != "cash_dividend":
             failures.add("corporate_action_unsupported")
 
-    admitted = {item["admits_fill_id"] for item in fixture["corrections"]}
+    journal_entry_ids = {entry["entry_id"] for entry in fixture["journal"]}
+    admitted = set()
+    for item in fixture["corrections"]:
+        if item["reverses_entry_id"] in journal_entry_ids:
+            admitted.add(item["admits_fill_id"])
     seen_fills: set[str] = set()
+    defect_instruments: set[str] = set()
     accepted_qty: dict[str, int] = {}
     checkpoint = fixture["checkpoint"]
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
@@ -208,10 +213,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             continue
         if fill["fill_id"] in seen_fills:
             failures.add("duplicate_fill_divergence")
+            defect_instruments.add(fill["instrument_id"])
             continue
         seen_fills.add(fill["fill_id"])
-        terminal = order.get("terminal_state")
+        terminal = order.get("terminal_state") or order["state"]
         terminal_sequence = order.get("terminal_sequence")
+        if terminal in LATE_TERMINALS and terminal_sequence is None:
+            failures.add("schema_invalid")
         late = (
             terminal in LATE_TERMINALS
             and terminal_sequence is not None
@@ -220,12 +228,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         )
         if late:
             failures.add("late_fill_divergence")
+            defect_instruments.add(fill["instrument_id"])
             continue
         filled = accepted_qty.get(order["order_id"], 0)
         if filled + fill["qty"] > order["qty"]:
             failures.add("partial_fill_divergence")
+            defect_instruments.add(fill["instrument_id"])
             continue
         accepted_qty[order["order_id"]] = filled + fill["qty"]
+        if fill["sequence"] <= checkpoint["sequence"]:
+            continue
         derived[fill["instrument_id"]] = derived.get(fill["instrument_id"], 0) + fill["qty"]
         applied_fill_fees += fill["fee_minor"]
 
@@ -251,6 +263,14 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if not matches:
             failures.add("settlement_unreconciled")
             continue
+        instrument = next(i for i in fixture["instruments"] if i["instrument_id"] == instrument_id)
+        if instrument.get("contract_style") == "binary" and scale is not None:
+            winner = record["market_result"] == instrument.get("outcome_side")
+            expected_gross = record["long_qty"] * 10**scale if winner else 0
+            if record["market_result"] == "scalar" or record["pre_rounding_minor"] != expected_gross:
+                failures.add("settlement_unreconciled")
+            if record["payout_minor"] > expected_gross:
+                failures.add("settlement_unreconciled")
         if record["misc_fee_minor"] == 0 and record["pre_rounding_minor"] != record["payout_minor"]:
             failures.add("settlement_unreconciled")
         if record["fee_already_deducted_from_payout"]:
@@ -272,7 +292,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         got_qty = derived.get(instrument_id, 0)
         if reported_qty == got_qty:
             continue
-        if failures & FILL_DEFECTS:
+        if instrument_id in defect_instruments:
             continue
         underfilled = any(
             accepted_qty.get(order["order_id"], 0) < order["qty"]
@@ -296,11 +316,32 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             item["kind"] == "market_settlement" and item["instrument_id"] == instrument_id
             for item in fixture["evidence"]
         )
-        has_payout = any(entry["reason"] == "settlement_payout" for entry in fixture["journal"])
+        has_payout = any(
+            entry["reason"] == "settlement_payout"
+            and any(line["instrument_id"] == instrument_id for line in entry["lines"])
+            for entry in fixture["journal"]
+        )
+        unwind_cash = 0
+        unwind_collateral = 0
+        unwind_other = False
+        for entry in fixture["journal"]:
+            if entry["reason"] != "void_unwind":
+                continue
+            for line in entry["lines"]:
+                if line["instrument_id"] != instrument_id:
+                    continue
+                if line["account"] == "cash_available" and line["side"] == "dr":
+                    unwind_cash += line["amount_minor"]
+                elif line["account"] == "collateral_reserved" and line["side"] == "cr":
+                    unwind_collateral += line["amount_minor"]
+                else:
+                    unwind_other = True
         if (
             not has_void
             or has_settlement
             or has_payout
+            or unwind_other
+            or unwind_cash != unwind_collateral
             or reported_positions.get(instrument_id, 0) != 0
             or fixture["reported"]["collateral_reserved"] != 0
         ):
@@ -315,6 +356,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     journal_fees = 0
     corporate_cash = 0
     settlement_cash_dr = 0
+    settlement_cash_by: dict[str, int] = {}
     settlement_collateral_cr = 0
     collateral_before_settlement: int | None = None
     fee_on_net_payout = False
@@ -330,7 +372,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 credits += amount
             else:
                 failures.add("schema_invalid")
-            if book_id == "equity" and line["account"] == "collateral_reserved":
+            if (book_id == "equity" and line["account"] == "collateral_reserved") or (
+                book_id == "event" and line["account"] == "position_cost"
+            ):
                 failures.add("family_crossed")
         if debits != credits:
             failures.add("unbalanced_entry")
@@ -356,6 +400,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     corporate_cash += amount
                 if entry["reason"] == "settlement_payout" and side == "dr":
                     settlement_cash_dr += amount
+                    settlement_cash_by[line["instrument_id"]] = (
+                        settlement_cash_by.get(line["instrument_id"], 0) + amount
+                    )
             elif account == "collateral_reserved":
                 collateral += amount if side == "dr" else -amount
                 if entry["reason"] == "settlement_payout" and side == "cr":
@@ -366,7 +413,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 bucket["realized_pnl_minor"] += delta
             elif account == "fees_expense":
                 delta = amount if side == "dr" else -amount
-                journal_fees += delta
+                if entry["reason"] != "settlement_payout":
+                    journal_fees += delta
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
                 bucket["fees_minor"] += delta
                 if entry["reason"] == "settlement_payout":
@@ -385,23 +433,24 @@ def evaluate_semantics(fixture: dict) -> set[str]:
 
     settled = [market for market in fixture["markets"] if market["state"] == "settled"]
     if settled:
-        instrument_id = settled[0]["instrument_id"]
-        evidence = [
-            item
-            for item in fixture["evidence"]
-            if item["kind"] == "market_settlement" and item["instrument_id"] == instrument_id
-        ]
-        if len(evidence) == 1:
-            payout = evidence[0]["payout_minor"]
-            if settlement_cash_dr != payout:
-                failures.add("settlement_unreconciled")
-            if (
-                collateral_before_settlement is None
-                or settlement_collateral_cr != collateral_before_settlement
-            ):
+        for market in settled:
+            instrument_id = market["instrument_id"]
+            evidence = [
+                item
+                for item in fixture["evidence"]
+                if item["kind"] == "market_settlement" and item["instrument_id"] == instrument_id
+            ]
+            if len(evidence) != 1:
+                continue
+            if settlement_cash_by.get(instrument_id, 0) != evidence[0]["payout_minor"]:
                 failures.add("settlement_unreconciled")
             if evidence[0]["fee_already_deducted_from_payout"] and fee_on_net_payout:
                 failures.add("fee_double_count")
+        if (
+            collateral_before_settlement is None
+            or settlement_collateral_cr != collateral_before_settlement
+        ):
+            failures.add("settlement_unreconciled")
 
     reported = fixture["reported"]
     cash_differs = cash != reported["cash_available"]
