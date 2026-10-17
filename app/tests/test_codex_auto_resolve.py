@@ -1400,6 +1400,69 @@ def test_daily_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
+def test_retry_resolve_error_refreshes_cite():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    gh.fail_resolve = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=resolve-error" in line for line in logs)
+    assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+
+
+def test_retry_resolve_error_fresh_cite_keeps_next_scan_cap():
+    old = NOW - timedelta(hours=48)
+    first = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    first.fail_resolve = True
+    mod.scan_pr(first.pr_by_number[12], cfg(max_per_pr_per_day=1), first, NOW)
+    fresh_cites = [body for _n, body in first.issue_posts if mod.CITE_PREFIX in body]
+    assert fresh_cites
+    second = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body(), old),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    second.issue_comments[12] = [
+        comment(PAT_LOGIN, fresh_cites[0], NOW),
+    ]
+    logs = mod.scan_pr(second.pr_by_number[12], cfg(max_per_pr_per_day=1), second, NOW)
+    assert THREAD2 not in second.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
 def test_indeterminate_resolve_consumes_same_scan_cap():
     gh = ready_gh(
         threads=[

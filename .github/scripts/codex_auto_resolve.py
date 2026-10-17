@@ -1502,12 +1502,18 @@ def reply_and_resolve(
             token=cfg.codex_pat,
         )
     except Exception:
+        # GitHub may have applied the mutation even though the client
+        # saw an error. Refresh the cite so a retry older than 24h still
+        # lands in today's unmarked / retry-mark window.
+        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
     echoed = str(thread.get("id") or "")
     if echoed != thread_id:
+        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     if thread.get("isResolved") is False:
+        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     # resolveReviewThread is a successful no-op on an already-resolved
     # thread. A human who won the race would otherwise get a PAT success
