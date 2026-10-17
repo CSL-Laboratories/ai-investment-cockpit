@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -269,7 +270,18 @@ class DispatchScopeTests(unittest.TestCase):
                                       ('tools/required_ci_gate.py', ['ci.yml', 'rust.yml']),
                                       ('tools/test_queue_gates.py', ['ci.yml', 'rust.yml']),
                                       ('tools/test_queue_gates.py.bak', ['ci.yml']),
-                                      ('app/quant/pnl.py.bak', ['ci.yml'])]:
+                                      ('app/quant/pnl.py.bak', ['ci.yml']),
+                                      # Native signals/normalization coverage added on main.
+                                      ('app/quant/signals.py', ['ci.yml', 'rust.yml']),
+                                      ('app/ingest/normalize.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/quant/test_signals.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/quant/test_signals_rust_parity.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/ingest/test_normalize.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/ingest/test_normalize_rust_parity.py', ['ci.yml', 'rust.yml']),
+                                      ('app/quant/signals.py.bak', ['ci.yml']),
+                                      ('app/ingest/normalize_edgar.py', ['ci.yml']),
+                                      ('app/ingest/edgar.py', ['ci.yml']),
+                                      ('app/tests/ingest/test_edgar_brew.py', ['ci.yml'])]:
                 with self.subTest(scope=scope, changed=changed), tempfile.TemporaryDirectory() as tmp:
                     tmp = Path(tmp)
                     gh = tmp / 'gh'
@@ -293,6 +305,65 @@ class DispatchScopeTests(unittest.TestCase):
                                               capture_output=True, check=False)
                     self.assertNotEqual(rejected.returncode, 0)
                     self.assertFalse((tmp/'calls').exists())
+
+    def test_label_regex_and_rust_filter_route_native_paths_consistently(self):
+        # Both CI-owned selectors must agree on every Rust-owned path, including
+        # the native signals/normalization coverage added on main. Each side is
+        # executed as checked in: the dispatcher's grep via bash, the rust.yml
+        # matrix generator via its embedded Python.
+        regex = re.search(r"grep -Eq '(\^\(.*?\))'", self.step['run']).group(1)
+        gate = next(step for step in self.rust['jobs']['filter']['steps']
+                    if step.get('id') == 'gate')
+        generator = gate['run'].split("<<'PY'", 1)[1].rsplit('PY', 1)[0]
+
+        def label_selects(path):
+            return subprocess.run(['bash', '-c', 'printf "%s\\n" "$1" | grep -Eq "$2"', '_', path, regex],
+                                  check=False).returncode == 0
+
+        def rust_selects(path):
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / 'output'
+                subprocess.run([sys.executable, '-c', generator], check=True, env={
+                    **os.environ, 'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
+                    'RUN_WINDOWS': 'false', 'RUN_MACOS': 'false', 'DIFF_FILES': path,
+                    'GITHUB_OUTPUT': str(output)})
+                return 'has-cells=true' in output.read_text()
+
+        selected = ['rust/cockpit-signals/src/lib.rs', 'rust/cockpit-ingest/src/normalize.rs',
+                    'rust/bench_signals.py', 'rust/bench_normalize.py',
+                    'app/quant/book/_rust_backend.py', 'app/quant/costs.py', 'app/quant/pnl.py',
+                    'app/quant/signals.py', 'app/ingest/normalize.py',
+                    'app/tests/quant/book/test_book_batch.py', 'app/tests/quant/test_pnl.py',
+                    'app/tests/quant/test_costs_rust_parity.py', 'app/tests/quant/test_signals.py',
+                    'app/tests/quant/test_signals_rust_parity.py', 'app/tests/quant/test_w21_cost_model.py',
+                    'app/tests/ingest/test_normalize.py', 'app/tests/ingest/test_normalize_rust_parity.py',
+                    '.github/workflows/rust.yml', 'tools/required_ci_gate.py', 'tools/test_queue_gates.py']
+        ignored = ['docs/ci-queue-rollout.md', 'app/ingest/edgar.py', 'app/ingest/normalize_edgar.py',
+                   'app/quant/signals.py.bak', 'app/quant/strategies/market_maker.py',
+                   'app/tests/ingest/test_edgar_brew.py', 'app/tests/quant/test_signals_extra.py',
+                   'app/workflows/morning_brew.py', 'tools/test_ci_dispatch_scope.py']
+        for path in selected + ignored:
+            with self.subTest(path=path):
+                expected = path in selected
+                self.assertEqual(label_selects(path), expected)
+                self.assertEqual(rust_selects(path), expected)
+        # Every selected Python source/test path is exercised by rust-book against the
+        # strictly required extension, and the main benchmarks all run.
+        pytest_step = next(step for step in self.rust['jobs']['rust-book']['steps']
+                           if step.get('name') == 'Python book tests against the extension')
+        self.assertEqual(pytest_step['env']['COCKPIT_REQUIRE_RUST'], '1')
+        for test_path in ('tests/quant/test_signals.py', 'tests/quant/test_signals_rust_parity.py',
+                          'tests/ingest/test_normalize.py', 'tests/ingest/test_normalize_rust_parity.py',
+                          'tests/quant/book', 'tests/quant/test_pnl.py',
+                          'tests/quant/test_costs_rust_parity.py', 'tests/quant/test_w21_cost_model.py'):
+            self.assertIn(f' {test_path}', pytest_step['run'])
+        bench_step = next(step for step in self.rust['jobs']['rust-book']['steps']
+                          if step.get('name') == 'Benchmark Rust against the Python reference')
+        self.assertEqual(bench_step['run'].split(),
+                         ['python', 'rust/bench_compare.py', 'python', 'rust/bench_costs.py',
+                          'python', 'rust/bench_normalize.py', 'python', 'rust/bench_signals.py'])
+        for script in ('bench_compare.py', 'bench_costs.py', 'bench_normalize.py', 'bench_signals.py'):
+            self.assertTrue((ROOT / 'rust' / script).is_file(), script)
 
     def test_actual_rust_merge_tree_filter_with_diverged_base(self):
         step = next(s for s in self.rust['jobs']['filter']['steps'] if s.get('id') == 'gate')

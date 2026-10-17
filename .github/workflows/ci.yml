@@ -243,7 +243,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 20
+    # The extension build below is a release PyO3 compile on top of the Python suite.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -257,6 +258,28 @@ jobs:
           python -X utf8 -B tools/test_ci_settle.py
           python -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates
           python -X utf8 -B tools/test_ci_cancel_controller.py
+      # CSL-166: the required linux gate runs pytest before any wheel exists, so
+      # test_book_batch.py's skipif dropped the whole file. Build the extension
+      # here and run that file. This is the existing linux job, not a new
+      # workflow, and it does not add Windows or macOS cells.
+      - name: Install the Rust toolchain for batch parity
+        if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-10-09
+        with:
+          toolchain: "1.83.0"
+      - name: Batch parity against the Rust extension
+        if: hashFiles('rust/cockpit-py/Cargo.toml') != ''
+        run: |
+          set -euo pipefail
+          python -m pip install -U maturin
+          python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
+          python -c "import glob, subprocess, sys; wheels = glob.glob('rust/target/wheels/cockpit_quant-*.whl'); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *wheels])"
+          cd app
+          python -m pytest -q tests/quant/book/test_book_batch.py -ra | tee "$RUNNER_TEMP/batch-parity.txt"
+          if grep -q 'skipped' "$RUNNER_TEMP/batch-parity.txt"; then
+            echo "batch parity skipped; cockpit_quant did not load"
+            exit 1
+          fi
 
   # Stable required status-check name. Passes when the Linux matrix succeeded, or
   # when filter ran and Linux was skipped because the change is docs-only.

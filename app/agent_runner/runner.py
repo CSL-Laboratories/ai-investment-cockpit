@@ -33,6 +33,23 @@ log = logging.getLogger(__name__)
 # text — so the reason is bounded and stays local-log only, never an operator-facing surface.
 _REASON_TAIL = 300
 
+# `_repair` slices the rejection to this many *characters* (not bytes) and appends a
+# fixed instruction. ``estimate_tokens`` counts UTF-8 bytes, so callers that reserve
+# headroom must use ``worst_case_repair_overhead`` (4 bytes per reserved character).
+_REPAIR_REASON_CHARS = 500
+_REPAIR_PREFIX = "\n\nYour previous output was rejected: "
+_REPAIR_SUFFIX = "\nReturn ONLY corrected JSON that matches the required schema; no prose."
+_WORST_CASE_REASON_CHAR = "\U0001F600"  # 4-byte UTF-8; matches the character slice
+
+
+def repair_prompt_for(prompt: str, reason) -> str:
+    return prompt + _REPAIR_PREFIX + str(reason)[:_REPAIR_REASON_CHARS] + _REPAIR_SUFFIX
+
+
+def worst_case_repair_overhead() -> str:
+    """The longest suffix `_repair` can append, for context-cap headroom."""
+    return _REPAIR_PREFIX + (_WORST_CASE_REASON_CHAR * _REPAIR_REASON_CHARS) + _REPAIR_SUFFIX
+
 
 # Codex exposes agentic tools as feature flags rather than Claude's ``--allowedTools none``.
 # This is the exact deny profile verified against the installed CLI. ``--ignore-user-config``
@@ -60,6 +77,12 @@ def _cli_model(alias: str, runtime: str) -> str:
     return cli_model_for(alias, runtime)
 
 
+def _cli_model_arg(spec: AgentSpec) -> str:
+    if spec.model_id:
+        return spec.model_id
+    return _cli_model(spec.model_alias, spec.runtime)
+
+
 def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
     # SEC-06: a decision-stage job MUST run with an empty tool set.
     if spec.decision_stage and spec.allowed_tools:
@@ -70,7 +93,7 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
     if spec.runtime == "claude":
         argv = [
             "claude", "-p", "--output-format", "json",
-            "--model", _cli_model(spec.model_alias, spec.runtime),
+            "--model", _cli_model_arg(spec),
             "--max-turns", str(spec.max_turns),
         ]
         if spec.decision_stage:
@@ -112,7 +135,7 @@ def build_argv(spec: AgentSpec, resume: bool = False) -> list[str]:
         elif resume and spec.session_id:
             argv += ["resume", spec.session_id]
         argv += [
-            "--model", _cli_model(spec.model_alias, spec.runtime),
+            "--model", _cli_model_arg(spec),
         ]
         if spec.decision_stage and spec.schema_path:
             argv += ["--output-schema", spec.schema_path]
@@ -405,7 +428,8 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
     # dispatch a decision job to a known-degraded vendor. (WP5 resets the window.)
     if usage.is_open(spec.runtime):
         w = usage.window(spec.runtime)
-        return AgentResult(status=LIMIT_HIT, error="breaker_open", usage_state=w.state)
+        return AgentResult(status=LIMIT_HIT, error="breaker_open", usage_state=w.state,
+                           dispatched=False)
 
     argv = build_argv(spec, resume=resume)
     if spec.decision_stage:
@@ -440,19 +464,17 @@ def run_agent(spec: AgentSpec, transport=None, usage=None, secret_values=None,
                 spec.job_id, spec.schema_path or "<inline>", _REASON_TAIL, str(reason))
 
     # one repair attempt, then quarantine (Inv 3)
-    return _repair(
+    repaired = _repair(
         spec, reason, transport, usage, session_id, secret_values, pinned_cwd,
         health_fault=health_fault,
     )
+    repaired.prior_raw = proc.stdout  # the first call was billed too
+    return repaired
 
 
 def _repair(spec: AgentSpec, reason, transport, usage, session_id, secret_values,
             pinned_cwd: str | None = None, health_fault=None) -> AgentResult:
-    repair_prompt = (
-        spec.prompt
-        + "\n\nYour previous output was rejected: " + str(reason)[:500]
-        + "\nReturn ONLY corrected JSON that matches the required schema; no prose."
-    )
+    repair_prompt = repair_prompt_for(spec.prompt, reason)
     # Decision sessions are intentionally ephemeral (SEC-24 / BUG-115). Repair gets the complete
     # original prompt plus validation error, so it can be a fresh turn without weakening the
     # one-repair contract. Non-decision jobs retain their existing resume behavior.

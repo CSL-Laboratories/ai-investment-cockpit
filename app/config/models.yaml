@@ -2,11 +2,37 @@
 # compatibility and the Claude-only auto/live pin. COCKPIT_DECISION_RUNTIME may select a declared
 # provider override for read_only/paper human-gated work. 'cli' is passed via --model; 'pinned' is
 # recorded in audit lineage (E-06). A provider switch never grants broker/order tools.
+#
+# CSL-42 / CSL-98 cost routing:
+#   classification + summary  -> cheap Haiku alias (not Opus)
+#   decision                  -> Claude Haiku only. Default CLI id is Haiku 4.5.
+#     COCKPIT_DECISION_MODEL=claude-haiku-5-5 opts into Haiku 5.5 when the CLI has it.
+#     Prompts must stay under 100k tokens or Haiku 5.5 bills the whole request at 5x.
+#   deep                      -> legacy Opus alias, still Claude, no longer the proposal route.
 aliases:
   triage:
     cli: haiku
     pinned: claude-haiku-4-5-20251001
     runtime: claude
+    job_class: classification
+    providers:
+      codex:
+        cli: gpt-5.5
+        pinned: gpt-5.5
+  summary:
+    cli: haiku
+    pinned: claude-haiku-4-5-20251001
+    runtime: claude
+    job_class: summary
+    providers:
+      codex:
+        cli: gpt-5.5
+        pinned: gpt-5.5
+  decision:
+    cli: claude-haiku-4-5
+    pinned: claude-haiku-4-5-20251001
+    runtime: claude
+    job_class: decision
     providers:
       codex:
         cli: gpt-5.5
@@ -15,6 +41,7 @@ aliases:
     cli: opus
     pinned: claude-opus-4-8
     runtime: claude
+    job_class: legacy_deep
     providers:
       codex:
         cli: gpt-5.5
@@ -23,3 +50,4 @@ aliases:
     cli: gpt-5.5
     pinned: gpt-5.5
     runtime: codex
+    job_class: research
