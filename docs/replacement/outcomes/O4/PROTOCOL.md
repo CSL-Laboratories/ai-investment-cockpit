@@ -98,15 +98,16 @@ measurement.
 Hypothesis under test, once a later authorized measurement exists: the family
 beats matched cash after those four costs, on the metric registry below, with
 the recorded empty outcome still visible. The null is that it does not beat
-matched cash; a net result that fails matched cash retains the null and
-falsifies the hypothesis. This packet does not compute that comparison.
+matched cash. A net result that does not beat matched cash retains the null
+and rejects the strategy hypothesis; only a net result that beats matched cash
+rejects the null. This packet does not compute that comparison.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.
 
 Falsifiers: overlapping tuning and evaluation populations; a dropped cost or
 dropped empty outcome; parameter variants counted as distinct strategies; a
-net result that fails matched cash; use of held-out observations to choose
+net result that does not beat matched cash (rejects the strategy hypothesis); use of held-out observations to choose
 parameters; collapse under an owner-declared uncertainty or liquidity limit.
 
 ## Economic metric registry
@@ -211,7 +212,10 @@ no library integration.
 
 None of these are decided in this packet. `selected_option` is null and
 `status` is `undecided`. Every decision routes to a role, never a named
-person. The owner-class rows route to `owner`. The release row routes to
+person. The spend and credentials rows route to `reserved authority`, the
+role AGENTS.md reserves to Lucas (spend, new services, sensitive company
+credentials); no other founder's receipt clears them. The other owner-class
+rows route to `owner`. The release row routes to
 `release owner`, the founder set: release scope and acceptance is a
 collective founder decision under the CSL-212 authority boundary, not a
 single person's.

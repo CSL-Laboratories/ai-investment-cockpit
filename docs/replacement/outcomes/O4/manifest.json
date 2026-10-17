@@ -5,35 +5,35 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "4f0c7a1b0875e1ca9c70a32e1e75bde21959916c627b1399cd44ba35dab077cf"
+      "sha256": "b5fa7d3d632319aad3cc35feb94fef4cd20afcb6e3805a6f89f5f3ca20a8611e"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "268e60177d0bca0959070c9384bdba43851e35948da5ab857d39ae595c5c1dfb"
+      "sha256": "77a9208045656a22557e2522399bfccabb8ef575c2a205088d62fe3cd7540d3b"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "9e28d6efd2a86d32cb587b89f10c87460d9d5190d5004b00be031606ad998a96"
+      "sha256": "092fbf315912cb541c9522196a83babd3b79f1f4235b3fe215314a31adc85e47"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "021ca510fe433ef08f43ed53735c034598814a9eabe167af5802e11a26db0c36"
+      "sha256": "e902f72442ca94d351241182af881580ca20601310d81fc9cccd409bd4337030"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
-      "sha256": "bd9374f86fb36086da0ad6ab1f46e11c54024df4ff2fe46138de1d9d3e64f980"
+      "sha256": "1e8ead6717e4746ba44de67a3f176a02b7ca537d562f9a8e4d9d121997c7529b"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "d60e6273f49cd270ab029cf5d03a5acb50be78a32c4f0f29399ef42d852651b7"
+      "sha256": "d51381c00b5ffed1f8053a258cc1253a06d0ac064b320f7657300ae851f518b3"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "8c5624c472655df5fe450022dca06d292532bd9830e597a9a04e5eb5476d3ffd"
+      "sha256": "3b474cf59906559efa093f51e3157a50548be6b25e81a7157302eed7671d2b68"
     },
     {
       "path": "fixtures/negative/release-owner-person.json",
-      "sha256": "00ea1c0b1ba45f9b3da51af34ce80d0922bd19fabda6f14e30a939aae1e90af5"
+      "sha256": "b58a6552ff09013af16383ada995da7b217f5289e6a50d50db11a292c469ac35"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -69,7 +69,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "816a266421521a7b36058305751e3cd630dcf275b8118c22ee8cd254a575050a"
+      "sha256": "314d4137b97013730cf2b485df634e51d752d94ccaf9923df5d9698030ddf628"
     }
   ],
   "linear_issue": "CSL-216",
