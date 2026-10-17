@@ -749,6 +749,56 @@ def test_event_schema_rejects_an_unconstrained_intervention(tmp_path: Path) -> N
     assert "event schema does not constrain intervention_recorded" in stderr
 
 
+def test_refused_intervention_cannot_be_recorded(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    for request_id in ("req_stop", "req_reconcile", "req_revoke"):
+        refused = copy.deepcopy(by_request[request_id])
+        refused["status_code"] = "refused"
+        assert refused["result"]["recorded"] is True
+        assert CHECKER.classify_response(refused, commands) == "recorded_intervention_refused"
+        assert CHECKER._schema_error(validator, refused) is not None
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    schema_path = copied / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    kept = []
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {}) if isinstance(clause.get("if"), dict) else {}
+        status = properties.get("status_code") if isinstance(properties, dict) else None
+        command = properties.get("command") if isinstance(properties, dict) else None
+        status_const = status.get("const") if isinstance(status, dict) else None
+        command_const = command.get("const") if isinstance(command, dict) else None
+        if status_const == "refused" and command_const is None and isinstance(command, dict):
+            continue
+        kept.append(clause)
+    assert len(kept) == len(schema["allOf"]) - 1
+    schema["allOf"] = kept
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "refused intervention can still be recorded" in stderr
+
+
+def test_error_schema_binds_every_code_to_its_status(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    schema_path = copied / "schemas" / "operator-error.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["allOf"] = [
+        clause
+        for clause in schema["allOf"]
+        if clause.get("if", {}).get("properties", {}).get("code", {}).get("const") != "usage"
+    ]
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "schemas/operator-error.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "error schema does not bind usage" in stderr
+
+
 def test_uncertainty_visible_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))

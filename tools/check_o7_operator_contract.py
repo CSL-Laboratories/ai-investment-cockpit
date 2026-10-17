@@ -434,6 +434,101 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
     return found
 
 
+def _const_value(schema: Any) -> Any:
+    if isinstance(schema, dict) and _assertion_keys(schema) == {"const"} and "const" in schema:
+        return schema["const"]
+    return None
+
+
+def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
+    """A refused intervention cannot claim that the request was recorded."""
+    commands = set(INTERVENTION_NAMES)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        if _admitted_strings(properties.get("command")) != commands:
+            continue
+        if _admitted_strings(properties.get("status_code")) != {"refused"}:
+            continue
+        if set(condition.get("required") or []) != {"command", "status_code"}:
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        result = then_properties.get("result") if isinstance(then_properties, dict) else None
+        recorded_properties = result.get("properties") if isinstance(result, dict) else None
+        recorded = recorded_properties.get("recorded") if isinstance(recorded_properties, dict) else None
+        if _const_value(recorded) is False:
+            return
+    raise ContractError("refused intervention can still be recorded")
+
+
+def _error_probe(code: str, status: str) -> dict[str, Any]:
+    return {
+        "code": code,
+        "status_code": status,
+        "message": "probe",
+        "recovery": "probe",
+        "color_only": False,
+    }
+
+
+def _require_error_clauses(schema: dict[str, Any]) -> None:
+    """Each error code's schema clause admits only the same status."""
+    codes = tuple(code for code in EXIT_CODES if code != "ok")
+    found: set[str] = set()
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict) or set(properties) != {"code"}:
+            continue
+        code_schema = properties.get("code")
+        code = _const_value(code_schema)
+        if code not in codes:
+            continue
+        if (
+            not isinstance(condition, dict)
+            or _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"code"}
+            or not isinstance(code_schema, dict)
+            or _assertion_keys(code_schema) != {"const"}
+        ):
+            raise ContractError(f"error schema clause cannot apply for {code}")
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        status = then_properties.get("status_code") if isinstance(then_properties, dict) else None
+        if (
+            not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"status_code"}
+            or _const_value(status) != code
+        ):
+            raise ContractError(f"error schema clause cannot apply for {code}")
+        if code in found:
+            raise ContractError(f"error schema clause repeated for {code}")
+        found.add(code)
+    for code in codes:
+        if code not in found:
+            raise ContractError(f"error schema does not bind {code}")
+
+
+def _require_error_schema_rejections(validator: Draft202012Validator) -> None:
+    """A schema-only consumer must reject an error code that disagrees with its status."""
+    codes = [code for code in EXIT_CODES if code != "ok"]
+    for index, code in enumerate(codes):
+        if _schema_error(validator, _error_probe(code, code)) is not None:
+            raise ContractError(f"error schema rejects {code}")
+        other = codes[(index + 1) % len(codes)]
+        if _schema_error(validator, _error_probe(code, other)) is None:
+            raise ContractError(f"error schema accepts a mismatched status for {code}")
+
+
 def _unknown_order_count(result: dict[str, Any]) -> int | None:
     value = result.get("unknown_orders")
     if isinstance(value, bool) or not isinstance(value, int):
@@ -721,6 +816,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
             result.get("recorded") is not True or result.get("survives_restart") is not True
         ):
             return "unrecorded_intervention_success"
+        if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("recorded") is True:
+            return "recorded_intervention_refused"
         if (
             doc.get("command") == "operator.profiles.inspect"
             and result.get("active_profile_class") != profile.get("profile_class")
@@ -1182,12 +1279,15 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
                 raise ContractError(f"schema result fields drifted for {name}")
         _require_session_scope_schema(command_schema)
         _require_event_clauses(event_schema)
+        _require_refused_intervention_unrecorded(response_schema)
+        _require_error_clauses(error_schema)
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
         _require_intervention_safeguards(command_validator)
         event_validator = _validator(event_schema)
         _require_event_schema_rejections(event_validator)
         error_validator = _validator(error_schema)
+        _require_error_schema_rejections(error_validator)
         manifest = _load_json(candidate / "fixtures" / "manifest.json")
         entries = _manifest_paths(candidate, manifest)
         oracle_kinds: dict[str, Any] = {}
