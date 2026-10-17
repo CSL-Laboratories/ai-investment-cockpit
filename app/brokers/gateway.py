@@ -27,6 +27,7 @@ consuming the single-use approval and advancing the order to ``submitted`` (both
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -141,6 +142,10 @@ _ORDER_AUTHORITY_BY_SCOPE = {
     "live": frozenset({"review_live", "auto_veto", "auto_full"}),
 }
 _AUTO_MODES = frozenset({"auto_veto", "auto_full"})
+# Final admission may block; if it waits longer than this the claim is re-fenced (the lease is
+# far longer) and admission re-read, bounded so a stuck lock fails closed.
+_ADMISSION_WAIT_BUDGET_S = 5.0
+_MAX_FENCE_ROUNDS = 3
 
 # Defaults for the SEC-07 pending-exposure cap and approval time-to-live (Settings/limits
 # override via getattr; the gateway ctor overrides both for tests).
@@ -1017,46 +1022,60 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
-            # The final admission read can block past the claim lease, letting a reconciler
-            # take over. Re-run the fence (generation + unexpired lease CAS) immediately
-            # before transport so a stale owner never reaches the broker.
+            # The admission read can block past the claim lease, letting a reconciler take
+            # over. Re-run the fence (generation + unexpired lease CAS) and then re-read
+            # admission. An admission read that itself blocked past the budget is followed
+            # by a fresh fence, so no unchecked wait precedes transport.
             if claim_fence is not None:
-                try:
-                    claim_fence()
-                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                for _round in range(_MAX_FENCE_ROUNDS):
+                    try:
+                        claim_fence()
+                    except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage="claim_fence",
+                            reason=f"claim fence refused the broker call: {exc}",
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    if (
+                        self._broker is not broker
+                        or type(broker) is not broker_type
+                        or self._execution_scope != execution_scope
+                    ):
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage="transport_scope",
+                            reason="broker transport changed during the claim fence",
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    started = time.monotonic()
+                    final_stage, final_reason = _final_admission()
+                    waited = time.monotonic() - started
+                    if final_stage is not None:
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage=final_stage,
+                            reason=final_reason,
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    if waited <= _ADMISSION_WAIT_BUDGET_S:
+                        break
+                else:
                     return self._abort_after_intent(
                         st,
                         order,
                         intent,
                         stage="claim_fence",
-                        reason=f"claim fence refused the broker call: {exc}",
-                        actor=producing_runtime,
-                        resolved_hash=resolved_hash,
-                    )
-                if (
-                    self._broker is not broker
-                    or type(broker) is not broker_type
-                    or self._execution_scope != execution_scope
-                ):
-                    return self._abort_after_intent(
-                        st,
-                        order,
-                        intent,
-                        stage="transport_scope",
-                        reason="broker transport changed during the claim fence",
-                        actor=producing_runtime,
-                        resolved_hash=resolved_hash,
-                    )
-                # The second fence can block while a denial is admitted; re-read admission
-                # after it so a denial admitted during the fence wins.
-                final_stage, final_reason = _final_admission()
-                if final_stage is not None:
-                    return self._abort_after_intent(
-                        st,
-                        order,
-                        intent,
-                        stage=final_stage,
-                        reason=final_reason,
+                        reason="admission wait exceeded the claim lease budget",
                         actor=producing_runtime,
                         resolved_hash=resolved_hash,
                     )
