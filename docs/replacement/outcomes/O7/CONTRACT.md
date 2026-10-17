@@ -77,7 +77,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 ### Events and errors
 
-Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, `export_recorded` is only an audit or bundle export, `stale_visible` may name any catalog command, and `uncertainty_visible` may repeat `ok`, `refused`, `stale_or_unreconciled`, or `unavailable` because uncertainty does not choose the status. The oracle includes every event type. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`. A read or export does not carry `result.intervention`, `result.recorded`, or `result.survives_restart`.
+Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request and may repeat `ok`, `stale_or_unreconciled`, or `unavailable`; `export_recorded` is only an audit or bundle export; `stale_visible` and `uncertainty_visible` may name any catalog command. `uncertainty_visible` may repeat `ok`, `refused`, `stale_or_unreconciled`, or `unavailable` because uncertainty does not choose the status. The oracle includes every event type. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`. A read or export does not carry `result.intervention`, `result.recorded`, or `result.survives_restart`.
 
 Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation. A recorded stop (`recorded=true` on `operator.interventions.request_stop`) sets `survives_restart` true.
 
@@ -111,7 +111,7 @@ An empty `positions` array is a known empty portfolio. Position `quantity` is a 
 
 `parity-matrix.json` gives every catalog command one row. GUI and CLI are both `same_api`. `order_path` is `none`. Each row's journey equals that command's catalog journey. `must_show` is the pinned display set for that command. Presentation text may differ. The semantic projection may not: profile, route, authority effect, order path, status, visibility, result, errors, and the exit code derived from status.
 
-The frozen oracle pairs `positions.inspect.parity` and `decisions.inspect.parity` use different `presentation.rendered` strings and the same projection. That is the allowed difference. Both sides pass the same oracle response checks as the catalog responses, including profile class A and no qualification claim.
+The frozen oracle pairs `positions.inspect.parity` and `decisions.inspect.parity` use different `presentation.rendered` strings and the same projection. Both sides of `positions.inspect.parity` must be `operator.positions.inspect`, and both sides of `decisions.inspect.parity` must be `operator.decisions.inspect`. That is the allowed difference. Both sides pass the same oracle response checks as the catalog responses, including profile class A and no qualification claim.
 
 ## Accessibility gates
 

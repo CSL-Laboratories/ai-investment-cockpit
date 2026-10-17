@@ -92,6 +92,10 @@ CONTROL_REASONS = {
 }
 ORACLE_KINDS = ("responses", "pairs", "commands", "events", "errors")
 REQUIRED_ORACLE_PAIRS = ("positions.inspect.parity", "decisions.inspect.parity")
+REQUIRED_ORACLE_PAIR_COMMANDS = {
+    "positions.inspect.parity": "operator.positions.inspect",
+    "decisions.inspect.parity": "operator.decisions.inspect",
+}
 REQUIRED_JOURNEYS = (
     "evidence_provenance",
     "strategies",
@@ -157,7 +161,7 @@ FORBIDDEN_KEYS = frozenset(
 EVENT_COMMANDS = {
     "evidence_viewed": frozenset({"operator.evidence.inspect"}),
     "refusal_visible": frozenset({"operator.decisions.inspect"}),
-    "uncertainty_visible": frozenset({"operator.uncertainty.inspect"}),
+    "uncertainty_visible": frozenset(REQUIRED_MUST_SHOW),
     "stale_visible": frozenset(REQUIRED_MUST_SHOW),
     "unreconciled_visible": frozenset({"operator.recovery.inspect"}),
     "intervention_recorded": frozenset(
@@ -184,7 +188,7 @@ EVENT_STATUSES = {
     "uncertainty_visible": frozenset({"ok", "refused", "stale_or_unreconciled", "unavailable"}),
     "stale_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
     "unreconciled_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
-    "intervention_recorded": frozenset({"ok"}),
+    "intervention_recorded": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
     "export_recorded": frozenset({"ok"}),
 }
 INTERVENTION_NAMES = {
@@ -780,6 +784,13 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
             raise ContractError("oracle pair surfaces are swapped")
         if gui["presentation"]["rendered"] == cli["presentation"]["rendered"]:
             raise ContractError("oracle pair does not exercise presentation")
+        expected_command = REQUIRED_ORACLE_PAIR_COMMANDS.get(pair.get("pair_id"))
+        if (
+            expected_command is None
+            or gui.get("command") != expected_command
+            or cli.get("command") != expected_command
+        ):
+            raise ContractError(f"oracle pair command drifted for {pair.get('pair_id')}")
         pair_ids.append(pair.get("pair_id"))
     if tuple(pair_ids) != REQUIRED_ORACLE_PAIRS:
         raise ContractError("oracle pair ids drifted")

@@ -425,6 +425,61 @@ def test_uncertainty_visible_event_keeps_compound_status() -> None:
     assert CHECKER._event_error(usage) == "event status does not match the event type"
 
 
+def test_uncertainty_visible_event_matches_any_catalog_command() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    base = next(event for event in events["events"] if event["event_type"] == "uncertainty_visible")
+    positions = copy.deepcopy(base)
+    positions["command"] = "operator.positions.inspect"
+    positions["request_id"] = "req_positions"
+    assert CHECKER._schema_error(event_validator, positions) is None
+    assert CHECKER._event_error(positions) is None
+
+
+def test_intervention_recorded_event_keeps_compound_status() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    base = next(event for event in events["events"] if event["event_type"] == "intervention_recorded")
+    for status in ("ok", "stale_or_unreconciled", "unavailable"):
+        event = copy.deepcopy(base)
+        event["status_code"] = status
+        assert CHECKER._schema_error(event_validator, event) is None
+        assert CHECKER._event_error(event) is None
+    refused = copy.deepcopy(base)
+    refused["status_code"] = "refused"
+    assert CHECKER._schema_error(event_validator, refused) is not None
+    assert CHECKER._event_error(refused) == "event status does not match the event type"
+
+
+def test_parity_pair_ids_match_their_commands(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    responses = json.loads((copied / "fixtures" / "oracle" / "responses.json").read_text(encoding="utf-8"))
+    health = next(doc for doc in responses["responses"] if doc["request_id"] == "req_health")
+    fixture = copied / "fixtures" / "oracle" / "pairs.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    pair = next(item for item in document["pairs"] if item["pair_id"] == "positions.inspect.parity")
+    gui = copy.deepcopy(health)
+    cli = copy.deepcopy(health)
+    gui["surface"] = "gui"
+    cli["surface"] = "cli"
+    gui["presentation"]["rendered"] = "status=ok gui health"
+    cli["presentation"]["rendered"] = "status=ok cli health"
+    pair["gui"] = gui
+    pair["cli"] = cli
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/oracle/pairs.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "oracle pair command drifted for positions.inspect.parity" in stderr
+
+
 def test_stale_visible_event_matches_any_catalog_command() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
