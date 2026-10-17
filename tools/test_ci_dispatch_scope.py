@@ -337,6 +337,8 @@ class DispatchScopeTests(unittest.TestCase):
                     'app/tests/quant/test_costs_rust_parity.py', 'app/tests/quant/test_signals.py',
                     'app/tests/quant/test_signals_rust_parity.py', 'app/tests/quant/test_w21_cost_model.py',
                     'app/tests/ingest/test_normalize.py', 'app/tests/ingest/test_normalize_rust_parity.py',
+                    'app/ingest/dedup.py', 'app/ingest/ratelimit.py',
+                    'app/tests/ingest/test_admission_rust_parity.py',
                     '.github/workflows/rust.yml', 'tools/required_ci_gate.py', 'tools/test_queue_gates.py']
         ignored = ['docs/ci-queue-rollout.md', 'app/ingest/edgar.py', 'app/ingest/normalize_edgar.py',
                    'app/quant/signals.py.bak', 'app/quant/strategies/market_maker.py',
