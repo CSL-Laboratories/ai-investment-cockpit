@@ -1,0 +1,125 @@
+{
+  "manifest_version": 1,
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "files": [
+    {
+      "path": "catalog.json",
+      "sha256": "77a0163d920ee13cc2f91a8f196bd46df9626954cbb86ba74f654179127b8aa7",
+      "role": "pinned"
+    },
+    {
+      "path": "fixtures/negative/color-only-signal.json",
+      "sha256": "32c15b8d5312b566b64c8221b7ebdde8bb0b4aacb6b23b893f8b33434c225d72",
+      "role": "negative",
+      "control": "color_only_signal"
+    },
+    {
+      "path": "fixtures/negative/gui-cli-divergence.json",
+      "sha256": "1fa227e511e30cf79d35808f37315d3bb917ca66c58897e49b73ac33d6b2503d",
+      "role": "negative",
+      "control": "gui_cli_semantic_divergence"
+    },
+    {
+      "path": "fixtures/negative/hidden-refusal.json",
+      "sha256": "fc6a03017d5dd121a7822b4cf8d60c13b9359ca3cbe1af183246f3280536b269",
+      "role": "negative",
+      "control": "hidden_refusal"
+    },
+    {
+      "path": "fixtures/negative/hidden-stale-data.json",
+      "sha256": "f6d0ccfdfbc8030bc1880cd57525a29b4afbcf71b9f8ece194ab6acb539c4142",
+      "role": "negative",
+      "control": "hidden_stale_data"
+    },
+    {
+      "path": "fixtures/negative/hidden-uncertainty.json",
+      "sha256": "556035d0d244365e526c11ecc30535e51759f456274a0fedecbf5438ef6826af",
+      "role": "negative",
+      "control": "hidden_uncertainty"
+    },
+    {
+      "path": "fixtures/negative/hidden-unreconciled.json",
+      "sha256": "afb743cd16d19d45738f0a768371aad7febf2eb54accf49db3cbd46c6686e683",
+      "role": "negative",
+      "control": "hidden_unreconciled"
+    },
+    {
+      "path": "fixtures/negative/privileged-order-bypass.json",
+      "sha256": "8477011d4f622d9051b7ceec4ebf2bfcf0bd64fdbf1e2efef22e21dc7716e1e8",
+      "role": "negative",
+      "control": "privileged_order_bypass"
+    },
+    {
+      "path": "fixtures/negative/success-exit-on-refusal.json",
+      "sha256": "c8fb47a632ff6c5cd5979e6e1319aa25ead431b3d6b86bcb4bca6fd812398233",
+      "role": "negative",
+      "control": "success_exit_on_refusal"
+    },
+    {
+      "path": "fixtures/oracle/commands.json",
+      "sha256": "e414648305310685bfe661138ef4286221ebd2db452b454977f694206b1209cc",
+      "role": "oracle"
+    },
+    {
+      "path": "fixtures/oracle/errors.json",
+      "sha256": "8881fffecb4f94dd76aa641bcc0a8d5f43bc21a68bbfa69e4859abf41746f384",
+      "role": "oracle"
+    },
+    {
+      "path": "fixtures/oracle/events.json",
+      "sha256": "9dc00cd18df387d17875c3f4250a49e6660e006e32f3bcb1c9c272a421ef51f5",
+      "role": "oracle"
+    },
+    {
+      "path": "fixtures/oracle/pairs.json",
+      "sha256": "9e8686d8f583279eec6bf0fb321aaf30e7425b2334842e7f03cc3ded986bd582",
+      "role": "oracle"
+    },
+    {
+      "path": "fixtures/oracle/responses.json",
+      "sha256": "6d2fd68c3370c4fcb5b77bf8c3f8fd56194aec17eaedc2ef768a80856eb01dac",
+      "role": "oracle"
+    },
+    {
+      "path": "gates.json",
+      "sha256": "0f25ee4cb7f8b36d41b082859c3bf5f53f95a80fc460d6dd862b5e7b6b64013f",
+      "role": "pinned"
+    },
+    {
+      "path": "parity-matrix.json",
+      "sha256": "cdeccd218e123bead78cc775dabd815ea9c52b68984600d87d45b696f2c11d57",
+      "role": "pinned"
+    },
+    {
+      "path": "schemas/operator-command.schema.json",
+      "sha256": "3693d1f517f02aa775de973d202debbc556798e6fd9b12ca4572d79aaf34c5cf",
+      "role": "pinned"
+    },
+    {
+      "path": "schemas/operator-error.schema.json",
+      "sha256": "404ecce4f3f1c8f38c5b32f53d4be0b591a939becd5273a6fa4efa530a4730cc",
+      "role": "pinned"
+    },
+    {
+      "path": "schemas/operator-event.schema.json",
+      "sha256": "9465aa0e896bca665f428ae0c64abf0838c8ef008ea4bd49984d40c8dc9a3b7d",
+      "role": "pinned"
+    },
+    {
+      "path": "schemas/operator-response.schema.json",
+      "sha256": "1045530f42e5751f55885244a031af6378c6bffdf5ba92d9588cfbd767313503",
+      "role": "pinned"
+    },
+    {
+      "path": "tui-decision-packet.json",
+      "sha256": "1bfe978852529c5288893f3cc4b60b33b119d8465103a3df4023ed0dbb1b7a21",
+      "role": "pinned"
+    },
+    {
+      "path": "unresolved-decisions.json",
+      "sha256": "aa5da33958fb73487ba7d3b59824512233b9f7c2902366cc6b8af6b873eff606",
+      "role": "pinned"
+    }
+  ]
+}

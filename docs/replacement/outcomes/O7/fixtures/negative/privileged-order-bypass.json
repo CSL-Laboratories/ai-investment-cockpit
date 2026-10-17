@@ -1,0 +1,40 @@
+{
+  "kind": "negative_response",
+  "control": "privileged_order_bypass",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.orders.submit",
+    "request_id": "req_positions",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "broker_direct",
+    "authority_effect": "direct_order",
+    "order_path": "surface_private",
+    "status_code": "ok",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "absent_not_hidden",
+      "stale_data": "absent_not_hidden",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "order_submitted": true
+    },
+    "errors": [],
+    "presentation": {
+      "exit_code": 0,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "ok",
+      "rendered": "status=ok canonical positions"
+    },
+    "bypass_gateway": true
+  }
+}

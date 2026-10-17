@@ -1,0 +1,65 @@
+{
+  "kind": "negative_response",
+  "control": "success_exit_on_refusal",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.decisions.inspect",
+    "request_id": "req_decisions",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "authority_effect": "none",
+    "order_path": "none",
+    "status_code": "refused",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "visible",
+      "stale_data": "absent_not_hidden",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "decisions": [
+        {
+          "decision_id": "dec_recorded",
+          "outcome": "recorded",
+          "reason_code": "proposal_only_no_order"
+        },
+        {
+          "decision_id": "dec_refused",
+          "outcome": "refused",
+          "reason_code": "watch_only"
+        }
+      ],
+      "refusals": [
+        {
+          "decision_id": "dec_refused",
+          "reason_code": "watch_only",
+          "visible": true
+        }
+      ]
+    },
+    "errors": [
+      {
+        "code": "refused",
+        "status_code": "refused",
+        "message": "Refused: watch_only. No order was submitted.",
+        "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+        "color_only": false
+      }
+    ],
+    "presentation": {
+      "exit_code": 0,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "refused",
+      "rendered": "status=refused canonical decisions"
+    }
+  }
+}

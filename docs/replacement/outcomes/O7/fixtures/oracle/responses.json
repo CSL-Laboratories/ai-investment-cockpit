@@ -1,0 +1,697 @@
+{
+  "kind": "responses",
+  "api_version": "o7.operator.v0",
+  "candidate_maturity": "researched",
+  "responses": [
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.audit.export",
+      "request_id": "req_audit",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "export_id": "audit_illustrative_01",
+        "chain_head_seq": 1,
+        "includes_refusals": true,
+        "secrets_included": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical audit export"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.budgets.inspect",
+      "request_id": "req_budgets",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "budgets": [
+          {
+            "budget_id": "illustrative_loss_cap",
+            "currency": "USD",
+            "remaining": "0.00",
+            "scope": "profile"
+          }
+        ]
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical budgets"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.decisions.inspect",
+      "request_id": "req_decisions",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "refused",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "visible",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "decisions": [
+          {
+            "decision_id": "dec_recorded",
+            "outcome": "recorded",
+            "reason_code": "proposal_only_no_order"
+          },
+          {
+            "decision_id": "dec_refused",
+            "outcome": "refused",
+            "reason_code": "watch_only"
+          }
+        ],
+        "refusals": [
+          {
+            "decision_id": "dec_refused",
+            "reason_code": "watch_only",
+            "visible": true
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "refused",
+          "status_code": "refused",
+          "message": "Refused: watch_only. No order was submitted.",
+          "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+          "color_only": false
+        }
+      ],
+      "presentation": {
+        "exit_code": 2,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "refused",
+        "rendered": "status=refused canonical decisions"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.evidence.inspect",
+      "request_id": "req_evidence",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "evidence_id": "ev_illustrative_01",
+        "source_id": "src_illustrative",
+        "retrieved_at": "2026-10-17T12:00:00Z",
+        "raw_ref": "raw://ev_illustrative_01",
+        "summary_ref": "summary://ev_illustrative_01",
+        "raw_separated_from_summary": true,
+        "provenance": [
+          "retrieved",
+          "stored_raw",
+          "summarized"
+        ]
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical evidence"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.export.bundle",
+      "request_id": "req_export",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "bundle_id": "bundle_illustrative_01",
+        "contents": [
+          "evidence",
+          "decisions",
+          "audit"
+        ],
+        "secrets_included": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical export"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.health.inspect",
+      "request_id": "req_health",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "watch_only": false,
+        "stale": false,
+        "dependencies": [
+          {
+            "name": "evidence",
+            "status": "ok"
+          }
+        ]
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical health"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_reconciliation",
+      "request_id": "req_reconcile",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "intervention_request",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "intervention": "reconciliation",
+        "recorded": true,
+        "survives_restart": true,
+        "restart_requires_reconciliation": true,
+        "order_submitted": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical reconciliation request"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_revocation",
+      "request_id": "req_revoke",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "intervention_request",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "intervention": "revocation",
+        "recorded": true,
+        "survives_restart": true,
+        "restart_requires_reconciliation": true,
+        "order_submitted": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical revocation request"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.interventions.request_stop",
+      "request_id": "req_stop",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "intervention_request",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "intervention": "stop",
+        "recorded": true,
+        "survives_restart": true,
+        "restart_requires_reconciliation": true,
+        "order_submitted": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical stop request"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.positions.inspect",
+      "request_id": "req_positions",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "positions": [
+          {
+            "instrument_id": "AAPL",
+            "venue": "stock",
+            "quantity": "1",
+            "currency": "USD"
+          },
+          {
+            "instrument_id": "KXDEMO-1",
+            "venue": "kalshi_demo",
+            "quantity": "0",
+            "currency": "USD"
+          }
+        ],
+        "collateral": {
+          "currency": "USD",
+          "amount": "0.00",
+          "state": "known"
+        }
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical positions"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.profiles.inspect",
+      "request_id": "req_profiles",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "active_profile_class": "A",
+        "local_control_is_account_wide": false,
+        "surfaces_share_one_profile": true,
+        "qualification_reference": "A",
+        "bounded_direct_authorized": false
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical profiles"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.recovery.inspect",
+      "request_id": "req_recovery",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "reconciliation": "reconciled",
+        "unknown_orders": 0,
+        "restart_allowed": true,
+        "restart_requires_reconciliation": true
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical recovery"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.strategies.inspect",
+      "request_id": "req_strategies",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "strategy_id": "strat_illustrative_baseline",
+        "qualification": "not_qualified",
+        "baseline_id": "baseline_hold"
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical strategies"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.uncertainty.inspect",
+      "request_id": "req_uncertainty",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "visible",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "items": [
+          {
+            "subject": "collateral.amount",
+            "state": "unknown",
+            "visible": true
+          }
+        ]
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok canonical uncertainty"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.health.inspect",
+      "request_id": "req_health_stale",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "stale_or_unreconciled",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "visible",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "watch_only": true,
+        "stale": true,
+        "dependencies": [
+          {
+            "name": "evidence",
+            "status": "stale"
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "stale_or_unreconciled",
+          "status_code": "stale_or_unreconciled",
+          "message": "Stale: evidence is not current. No order was submitted.",
+          "recovery": "Refresh the evidence feed and read health again.",
+          "color_only": false
+        }
+      ],
+      "presentation": {
+        "exit_code": 3,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "stale_or_unreconciled",
+        "rendered": "status=stale_or_unreconciled canonical stale health"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.recovery.inspect",
+      "request_id": "req_recovery_open",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "stale_or_unreconciled",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "unreconciled_visible"
+      },
+      "result": {
+        "reconciliation": "unreconciled",
+        "unknown_orders": 1,
+        "restart_allowed": false,
+        "restart_requires_reconciliation": true
+      },
+      "errors": [
+        {
+          "code": "stale_or_unreconciled",
+          "status_code": "stale_or_unreconciled",
+          "message": "Unreconciled: unknown orders remain. Restart is not allowed.",
+          "recovery": "Reconcile from authoritative records before restart.",
+          "color_only": false
+        }
+      ],
+      "presentation": {
+        "exit_code": 3,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "stale_or_unreconciled",
+        "rendered": "status=stale_or_unreconciled canonical unreconciled recovery"
+      }
+    }
+  ]
+}

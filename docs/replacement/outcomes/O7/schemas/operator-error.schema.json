@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "O7 operator error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "status_code", "message", "recovery", "color_only"],
+  "properties": {
+    "code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
+    "status_code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
+    "message": {"type": "string", "minLength": 1},
+    "recovery": {"type": "string", "minLength": 1},
+    "color_only": {"const": false}
+  }
+}
