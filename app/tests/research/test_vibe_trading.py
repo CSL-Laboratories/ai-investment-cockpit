@@ -364,6 +364,36 @@ def test_later_day_row_resolves_the_deduped_envelope(tmp_path):
     assert image["raw_input"]["source_ref"] == envelopes_stored[0].raw_ref
 
 
+def test_duplicate_envelope_rows_resolve_deterministically(tmp_path):
+    from sqlalchemy.orm import make_transient
+    from workflows.events import persist_events
+
+    from research.vibe_trading.poller import _raw_ref_for_hash
+
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="",
+    )
+    state = _state(tmp_path, settings, name="dupenv.db")
+    adapter = ResearchAdapter(
+        settings, transport=FakeSidecar({"alpha_bench": _load("alpha_bench.json")}),
+    )
+    batch = adapter.collect(clock=FrozenClock(NOW))
+    envelope = next(e for e in batch.events if e["event_type"] == "signal:envelope")
+    stored = persist_events(state, [envelope], parquet_root=tmp_path / "raw", clock=FrozenClock(NOW))
+    row = stored.stored[0]
+    with state.session_factory() as session:
+        clone = session.get(type(row), row.id)
+        make_transient(clone)
+        clone.id = "evt_concurrent_copy"
+        clone.raw_ref = "parquet://zz-concurrent-copy"
+        session.add(clone)
+        session.commit()
+    assert _raw_ref_for_hash(state, envelope["content_hash"]) == min(
+        row.raw_ref, "parquet://zz-concurrent-copy",
+    )
+
+
 def test_republish_dedupes_the_same_feature(state, tmp_path):
     adapter = ResearchAdapter(_settings(), transport=FakeSidecar(_responses()))
     first = adapter.publish(state, parquet_root=tmp_path / "raw")

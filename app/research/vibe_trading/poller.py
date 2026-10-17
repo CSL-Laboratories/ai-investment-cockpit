@@ -20,9 +20,11 @@ def _raw_ref_for_hash(state, digest: str) -> str:
             select(MarketEvent.raw_ref).where(MarketEvent.content_hash == digest)
         ).scalars().all()
     parquet = [ref for ref in refs if type(ref) is str and ref.startswith("parquet://")]
-    if len(parquet) != 1:
+    if not parquet:
         raise RuntimeError("sidecar envelope is not stored")
-    return parquet[0]
+    # Overlapping polls can each store the same content-addressed envelope; any
+    # copy holds the identical payload, so pick one deterministically.
+    return min(parquet)
 
 
 def stamp_source_refs(state, events) -> list[dict]:
