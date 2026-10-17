@@ -408,6 +408,18 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_visible_stale_requires_stale_evidence() -> None:
+    by_request, commands, response_validator = _candidate_documents()
+    invented = copy.deepcopy(by_request["req_health"])
+    invented["visibility"]["stale_data"] = "visible"
+    assert invented["result"]["stale"] is False
+    assert invented["result"]["dependencies"][0]["status"] == "ok"
+    assert invented["status_code"] == "ok"
+    assert invented["result"]["watch_only"] is False
+    assert CHECKER.classify_response(invented, commands) == "hidden_stale_data"
+    assert CHECKER._schema_error(response_validator, invented) is not None
+
+
 def test_unreconciled_visibility_matches_the_result() -> None:
     by_request, commands, response_validator = _candidate_documents()
     invented = copy.deepcopy(by_request["req_recovery"])

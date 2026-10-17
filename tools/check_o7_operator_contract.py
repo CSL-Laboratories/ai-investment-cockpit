@@ -321,9 +321,11 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     if visibility.get("uncertainty") == "hidden" or has_uncertainty:
         if visibility.get("uncertainty") != "visible" or any(item.get("visible") is not True for item in unknown_items):
             return "hidden_uncertainty"
-    if visibility.get("stale_data") == "hidden" or stale:
+    claims_stale = visibility.get("stale_data") == "visible"
+    if visibility.get("stale_data") == "hidden" or stale or claims_stale:
         expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
-        if visibility.get("stale_data") != "visible" or doc.get("status_code") != expected_status:
+        visible = stale and claims_stale and doc.get("status_code") == expected_status
+        if not visible:
             return "hidden_stale_data"
     claims_unreconciled = visibility.get("reconciliation") == "unreconciled_visible"
     if visibility.get("reconciliation") == "hidden" or unreconciled or claims_unreconciled:

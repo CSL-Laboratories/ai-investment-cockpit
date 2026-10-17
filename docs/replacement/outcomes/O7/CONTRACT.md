@@ -99,7 +99,7 @@ One response has one `status_code`. When more than one condition is present, pre
 
 1. An unavailable dependency (`dependencies[*].status=unavailable`) selects `unavailable`.
 2. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled` when no dependency is unavailable. `visibility.reconciliation=unreconciled_visible` requires that unreconciled result, `restart_allowed` false, and a status of `stale_or_unreconciled` or `unavailable`. An unreconciled result requires that same visibility. A reconciled result cannot be labeled unreconciled.
-3. Stale data selects the same status when no dependency is unavailable. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
+3. Stale data selects the same status when no dependency is unavailable. Stale data is `stale=true` or any `dependencies[*].status` of `stale`. `visibility.stale_data=visible` requires that stale evidence, `watch_only` true, and a status of `stale_or_unreconciled` or `unavailable`. A fresh result cannot be labeled stale.
 4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`. `unavailable` is not a valid status when every dependency is readable.
 5. `ok` is allowed only when none of those conditions are present.
 
