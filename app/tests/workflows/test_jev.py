@@ -251,6 +251,32 @@ def test_hookless_post_that_sends_then_raises_keeps_the_mark(st, monkeypatch):
         inner.close()
 
 
+def test_hookless_pre_send_failure_stays_marked(st, monkeypatch):
+    """A hookless post that fails before send still counts as dispatched.
+
+    That over-counts. The same client shape can send and then raise, and
+    releasing that case would let a retry exceed the cap. A client with
+    request hooks still releases a closed-client failure.
+    """
+    _provision(monkeypatch)
+
+    class Hookless:
+        def post(self, *args, **kwargs):
+            raise RuntimeError("closed before send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=Hookless(),
+        )
+        assert attempt.dispatched is True
+        assert attempt.reason == "jev_error"
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
 def test_transport_error_after_the_request_hook_keeps_the_mark(st, monkeypatch):
     """Once httpx has passed the request hook, a transport failure has sent."""
     _provision(monkeypatch)

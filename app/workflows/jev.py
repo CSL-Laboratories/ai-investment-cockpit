@@ -432,9 +432,9 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         candidate.append(_mark_on_send)
         hooks = candidate
     else:
-        # No request hook, so a send-then-raise inside post() cannot be seen.
-        # Mark first. A real httpx client uses the hook, so a closed client
-        # still raises before any mark.
+        # No request hook, so a send-then-raise cannot be told apart from a
+        # pre-send failure. Mark first: over-counting stays inside the cap.
+        # A real httpx client uses the hook, so a closed client still releases.
         mark_agent_dispatched()
     try:
         try:
