@@ -609,6 +609,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if order_id not in order_reserve_seq:
                 # The opening hold lives in the checkpoint, which carries no
                 # order_id; instrument-level reservation totals still reconcile.
+                # An order-linked release is only provable when the order held
+                # collateral at the checkpoint (it carried filled quantity).
+                if reserved < 0 and order.get("checkpoint_filled_qty", 0) <= 0:
+                    failures.add("balance_mismatch")
                 continue
             filled_qty = (
                 order.get("checkpoint_filled_qty", 0)
