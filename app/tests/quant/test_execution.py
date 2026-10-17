@@ -177,6 +177,25 @@ def test_the_position_limit_holds_under_a_strategy_that_never_stops_buying():
     assert result.intents_blocked > 0
 
 
+def test_rate_window_matches_a_full_scan_including_a_backwards_stamp():
+    """The deque drops a prefix on the way up. A stamp that goes backwards can
+    expire an interior time, and that case still has to match the full scan."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=3, order_rate_window_ns=100))
+    intent = NewOrder(client_id="c", symbol="S", side=Side.BUY, qty=1, price_ticks=1)
+    recent: list[int] = []
+    for ts in (0, 10, 20, 30, 150, 50, 160, 40, 200):
+        window_start = ts - 100
+        recent = [stamp for stamp in recent if stamp >= window_start]
+        allowed = len(recent) < 3
+        if allowed:
+            recent.append(ts)
+        assert guards.check(intent, ts=ts).allowed is allowed
+        assert list(guards._recent_orders) == recent
+    guards.reset()
+    assert guards.check(intent, ts=0).allowed
+    assert list(guards._recent_orders) == [0]
+
+
 def test_the_order_rate_ceiling_catches_a_requote_loop():
     """Not a financial limit — a blast-radius one. Every individual order here passes every
     exposure cap; only a rate ceiling catches this shape of failure."""
