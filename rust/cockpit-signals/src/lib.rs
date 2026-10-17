@@ -139,12 +139,9 @@ impl RollingZScore {
         let Some(mu) = self.mean() else {
             return Ok(None);
         };
-        // `(v - mean) ** 2` raises OverflowError once the square is non-finite.
-        // A sum of finite squares may still be inf, and Python keeps that.
-        if self.values.iter().any(|value| {
-            let delta = value - mu;
-            !(delta * delta).is_finite()
-        }) {
+        // Python ``** 2`` raises only when a finite base overflows. ``nan ** 2``
+        // and ``inf ** 2`` stay non-finite and do not raise.
+        if self.values.iter().any(|value| square_overflows(value - mu)) {
             return Err("overflow");
         }
         let acc = sum_mapped(self.values.iter().copied(), self.compensated, |value| {
@@ -288,18 +285,9 @@ impl RollingBeta {
         }
         let mx = sum_f64(&self.xs, self.compensated) / n as f64;
         let my = sum_f64(&self.ys, self.compensated) / n as f64;
-        // Variance uses ``** 2``, which raises once a square is non-finite.
-        // Covariance uses multiplication. A non-finite product is handed back
-        // to Python, which either raises on the square or returns the inf.
-        if self.xs.iter().any(|x| {
-            let dx = x - mx;
-            !(dx * dx).is_finite()
-        }) || self
-            .xs
-            .iter()
-            .zip(self.ys.iter())
-            .any(|(x, y)| !((x - mx) * (y - my)).is_finite())
-        {
+        // Variance uses ``** 2`` and raises only for a finite base that
+        // overflows. Covariance uses multiplication, which never raises.
+        if self.xs.iter().any(|x| square_overflows(x - mx)) {
             return Err("overflow");
         }
         let var = sum_mapped(self.xs.iter().copied(), self.compensated, |x| {
@@ -346,6 +334,11 @@ impl RollingBeta {
     pub fn ys(&self) -> Vec<f64> {
         self.ys.iter().copied().collect()
     }
+}
+
+/// Python raises ``OverflowError`` from ``x ** 2`` only for a finite ``x``.
+fn square_overflows(delta: f64) -> bool {
+    delta.is_finite() && !(delta * delta).is_finite()
 }
 
 fn sum_f64(values: &VecDeque<f64>, compensated: bool) -> f64 {

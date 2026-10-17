@@ -365,6 +365,37 @@ def test_huge_squares_raise_the_python_overflow():
     assert beta_r._core is None
 
 
+def test_non_finite_samples_stay_on_rust():
+    import cockpit_quant
+
+    z_r, z_p = _pair(RollingZScore, window=2)
+    z_r.update(1.0)
+    z_p.update(1.0)
+    _same(z_r.update(float("nan")), z_p.update(float("nan")))
+    _same(z_r.stdev, z_p.stdev)
+    _same(z_r.value, z_p.value)
+    assert z_r._core is not None
+
+    inf_r, inf_p = _pair(RollingZScore, window=2)
+    inf_r.update(1.0)
+    inf_p.update(1.0)
+    _same(inf_r.update(float("inf")), inf_p.update(float("inf")))
+    _same(inf_r.stdev, inf_p.stdev)
+    assert inf_r._core is not None
+
+    plain = RollingZScore(window=2)
+    plain._core = None
+    expected = [plain.update(1.0), plain.update(float("nan"))]
+    replay = cockpit_quant.zscore_replay(2, [1.0, float("nan")])
+    _same(replay[0], expected[0])
+    _same(replay[1], expected[1])
+
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    for x, y in ((1.0, 1.0), (2.0, 2.0), (float("nan"), 3.0)):
+        _same(beta_r.update(x, y), beta_p.update(x, y))
+    assert beta_r._core is not None
+
+
 def test_estimators_compare_by_observation_state():
     left, right = RollingZScore(window=3), RollingZScore(window=3)
     assert left == right
