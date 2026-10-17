@@ -27,6 +27,13 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# discord.py 2.7.1 imports stdlib audioop at discord/player.py (module discord.player).
+# On 3.11/3.12 that import emits one DeprecationWarning. Ignore that message from
+# that module only; every other warning stays in the pytest summary. Python >=3.13
+# is covered by discord.py's audioop-lts marker (see CLAUDE.md), not by this filter.
+filterwarnings = [
+  "ignore:'audioop' is deprecated and slated for removal in Python 3\\.13:DeprecationWarning:discord\\.player",
+]
 
 [tool.ruff]
 line-length = 100
