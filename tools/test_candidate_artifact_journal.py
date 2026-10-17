@@ -21,6 +21,7 @@ import sys
 import unittest
 import warnings
 import zipfile
+import zlib
 from pathlib import Path
 from unittest import mock
 
@@ -60,6 +61,37 @@ def set_flag_bits(archive, mask):
             pos = at + offset
             data[pos:pos + 2] = (int.from_bytes(data[pos:pos + 2], 'little') | mask).to_bytes(2, 'little')
             start = at + 4
+    return bytes(data)
+
+
+def entry_sizes(archive):
+    """(compress_size, file_size) of the single entry as the central directory declares them."""
+    with zipfile.ZipFile(io.BytesIO(archive)) as container:
+        (info,) = container.infolist()
+        return info.compress_size, info.file_size
+
+
+def compressed_span(archive):
+    """[start, end) of the single entry's raw compressed bytes inside a build_archive() result.
+
+    Local file header: compressed size at offset 18, name length at 26, extra length at 28,
+    data at 30 + name + extra. build_archive writes one entry at offset 0 with no data
+    descriptor, so the header sizes are authoritative.
+    """
+    assert archive[:4] == b'PK\x03\x04'
+    compress_size = int.from_bytes(archive[18:22], 'little')
+    start = 30 + int.from_bytes(archive[26:28], 'little') + int.from_bytes(archive[28:30], 'little')
+    return start, start + compress_size
+
+
+def set_compress_size(archive, value):
+    """Rewrite the declared compressed size in the local header (offset 18) and the central
+    directory record (offset 20) of a single-entry archive; the data bytes stay in place."""
+    data = bytearray(archive)
+    data[18:22] = value.to_bytes(4, 'little')
+    at = data.find(b'PK\x01\x02')
+    assert at > 0
+    data[at + 20:at + 24] = value.to_bytes(4, 'little')
     return bytes(data)
 
 
@@ -247,6 +279,161 @@ class ArchiveIntegrityTests(unittest.TestCase):
         case = Case()
         case.set_archive(build_archive(ENTRY, aj.canonical_bytes(case.document), compress=zipfile.ZIP_DEFLATED))
         self.assertTrue(case.evaluate()['diagnostic_valid'])
+
+    def test_corrupted_deflate_stream_is_an_integrity_error(self):
+        # The decompressor, not the ZIP layer, rejects invalid raw deflate bytes: zlib.error is
+        # not a BadZipFile, so testzip() does not translate it. The fixture keeps every header
+        # field intact and carries honest size/digest metadata, so the only failing layer is
+        # the decompressor, and the result must be the IntegrityError family, not an escape.
+        intact = build_archive(ENTRY, aj.canonical_bytes(FIXTURE['journal_document']), compress=zipfile.ZIP_DEFLATED)
+        start, end = compressed_span(intact)
+        self.assertGreater(end - start, 8)
+        # Deterministic: BTYPE=11 in the first deflate block header is a reserved block type.
+        corrupted = bytearray(intact)
+        corrupted[start] |= 0x06
+        corrupted = bytes(corrupted)
+        self.assertEqual(entry_sizes(corrupted), entry_sizes(intact))
+        case = Case()
+        case.set_archive(corrupted)  # authenticated metadata honestly matches the corrupted bytes
+        with self.assertRaises(aj.IntegrityError) as ctx:
+            aj.verify_archive(corrupted, case.artifact(), case.policy)
+        self.assertIn('entry could not be read', str(ctx.exception))
+        self.assertIsInstance(ctx.exception.__cause__, zlib.error)
+        with self.assertRaises(aj.IntegrityError):
+            case.evaluate()
+        # Every single-byte corruption of the compressed data fails closed as integrity,
+        # whichever of the decompressor or the CRC check notices first. The final byte is
+        # treated separately: it may carry only trailing padding bits after the end-of-block
+        # code, in which case the stream still decodes to the identical bytes with a matching
+        # CRC, and identical content is not an integrity defect.
+        for position in range(start, end - 1):
+            with self.subTest(position=position - start):
+                flipped = bytearray(intact)
+                flipped[position] ^= 0xFF
+                flipped = bytes(flipped)
+                case = Case()
+                case.set_archive(flipped)
+                with self.assertRaises(aj.IntegrityError):
+                    aj.verify_archive(flipped, case.artifact(), case.policy)
+                with self.assertRaises(aj.IntegrityError):
+                    case.evaluate()
+        final = bytearray(intact)
+        final[end - 1] ^= 0xFF
+        final = bytes(final)
+        case = Case()
+        case.set_archive(final)
+        try:
+            parsed = aj.verify_archive(final, case.artifact(), case.policy)
+        except aj.IntegrityError:
+            pass
+        else:
+            self.assertEqual(parsed, FIXTURE['journal_document'])
+        # The digest/size layer still runs first: the same corruption with the intact
+        # metadata is a digest mismatch, not a decompressor report.
+        case = Case()
+        case.set_archive(intact)
+        with self.assertRaises(aj.IntegrityError) as ctx:
+            aj.verify_archive(corrupted, case.artifact(), case.policy)
+        self.assertIn('sha256', str(ctx.exception))
+
+    def test_compression_ratio_is_measured_against_actual_compressed_size(self):
+        limit = aj.MAX_COMPRESSION_RATIO
+        self.assertEqual(limit, 32)
+
+        def deflated(n):
+            # A strict JSON object whose only value is a run of n identical characters.
+            return build_archive(ENTRY, b'{"k":"' + b'a' * n + b'"}', compress=zipfile.ZIP_DEFLATED)
+
+        def layer1(archive):
+            case = Case()
+            case.set_archive(archive)
+            return case, aj.verify_archive(archive, case.artifact(), case.policy)
+
+        def rejects(archive, fragment):
+            case = Case()
+            case.set_archive(archive)
+            with self.assertRaises(aj.IntegrityError) as ctx:
+                aj.verify_archive(archive, case.artifact(), case.policy)
+            self.assertIn(fragment, str(ctx.exception))
+            with self.assertRaises(aj.IntegrityError):
+                case.evaluate()
+
+        # Small entry, modest ratio: admitted at layer 1 (the parsed object comes back) and
+        # rejected only later as a journal, proving the ratio check did not fire.
+        modest = deflated(40)
+        c, f = entry_sizes(modest)
+        self.assertLess(c, 64)
+        self.assertLessEqual(f, limit * c)
+        case, parsed = layer1(modest)
+        self.assertEqual(parsed, {'k': 'a' * 40})
+        with self.assertRaises(aj.JournalError):
+            case.evaluate()
+
+        # Exact boundary, found by search rather than by assuming compressor output bytes:
+        # a run length n where file_size == 32 * compress_size and n + 1 keeps the same
+        # compress_size. The compressed size of a run grows far slower than the run, so the
+        # difference file_size - 32 * compress_size walks through zero within a few hundred
+        # bytes for any deflate implementation.
+        boundary = None
+        for n in range(1, 4096):
+            c, f = entry_sizes(deflated(n))
+            if f == limit * c and entry_sizes(deflated(n + 1))[0] == c:
+                boundary = n
+                break
+        self.assertIsNotNone(boundary, 'no exact ratio boundary found for a repeated-byte run')
+        at_limit, over_limit = deflated(boundary), deflated(boundary + 1)
+        c, f = entry_sizes(at_limit)
+        self.assertEqual(f, limit * c)
+        # The former max(compress_size, 64) floor would have admitted both of these.
+        self.assertLess(c, 64)
+        self.assertLessEqual(f + 1, limit * 64)
+        case, parsed = layer1(at_limit)
+        self.assertEqual(parsed, {'k': 'a' * boundary})
+        with self.assertRaises(aj.JournalError):
+            case.evaluate()
+        c_over, f_over = entry_sizes(over_limit)
+        self.assertEqual((c_over, f_over), (c, f + 1))
+        rejects(over_limit, 'suspicious compression ratio')
+
+        # Well over the limit for a small entry that is still far below 32 * 64 bytes.
+        small_bomb = deflated(1500)
+        c, f = entry_sizes(small_bomb)
+        self.assertLess(c, 64)
+        self.assertGreater(f, limit * c)
+        self.assertLessEqual(f, limit * 64)
+        rejects(small_bomb, 'suspicious compression ratio')
+
+        # Stored entries are ratio 1 and unaffected.
+        stored = build_archive(ENTRY, b'{"k":"' + b'a' * 1500 + b'"}')
+        self.assertEqual(entry_sizes(stored), (1508, 1508))
+        self.assertEqual(layer1(stored)[1], {'k': 'a' * 1500})
+
+    def test_zero_compressed_size_for_nonempty_entry_rejects(self):
+        payload = aj.canonical_bytes(FIXTURE['journal_document'])
+        for name, archive in (('deflated', build_archive(ENTRY, payload, compress=zipfile.ZIP_DEFLATED)),
+                              ('stored', build_archive(ENTRY, payload))):
+            with self.subTest(name=name):
+                zeroed = set_compress_size(archive, 0)
+                c, f = entry_sizes(zeroed)
+                self.assertEqual(c, 0)
+                self.assertEqual(f, len(payload))
+                case = Case()
+                case.set_archive(zeroed)
+                with self.assertRaises(aj.IntegrityError) as ctx:
+                    aj.verify_archive(zeroed, case.artifact(), case.policy)
+                self.assertIn('zero compressed size', str(ctx.exception))
+                with self.assertRaises(aj.IntegrityError):
+                    case.evaluate()
+        # Understating a nonzero compressed size is a ratio rejection, never a partial read.
+        archive = build_archive(ENTRY, payload, compress=zipfile.ZIP_DEFLATED)
+        c, f = entry_sizes(archive)
+        understated = set_compress_size(archive, max(1, (f - 1) // aj.MAX_COMPRESSION_RATIO))
+        self.assertLess(entry_sizes(understated)[0], c)
+        case = Case()
+        case.set_archive(understated)
+        with self.assertRaises(aj.IntegrityError) as ctx:
+            aj.verify_archive(understated, case.artifact(), case.policy)
+        self.assertIn('suspicious compression ratio', str(ctx.exception))
 
     def test_strict_json(self):
         base = aj.canonical_bytes(FIXTURE['journal_document'])
@@ -954,7 +1141,7 @@ class DisabledEntryTests(unittest.TestCase):
         self.assertIn('artifact-journal-disabled', output.getvalue())
         self.assertNotIn('synthetic-not-a-token', output.getvalue())
 
-    ALLOWED_IMPORTS = {'__future__', 'hashlib', 'io', 'json', 're', 'zipfile', 'datetime'}
+    ALLOWED_IMPORTS = {'__future__', 'hashlib', 'io', 'json', 're', 'zipfile', 'zlib', 'datetime'}
     FORBIDDEN_NAMES = {'open', 'exec', 'eval', 'compile', '__import__'}
     FORBIDDEN_ATTRIBUTES = {'environ', 'getenv', 'getenvb', 'extractall', 'extract', 'system', 'popen',
                             'Popen', 'urlopen'}

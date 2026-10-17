@@ -35,6 +35,7 @@ import io
 import json
 import re
 import zipfile
+import zlib
 from datetime import datetime
 
 POLICY_SCHEMA = 'candidate-artifact-journal-policy/v1'
@@ -421,13 +422,19 @@ def verify_archive(archive, artifact, policy):
                  'archive: unsupported compression method')
         _require(0 < info.file_size <= bounds['max_entry_bytes'], integrity_error, 'archive: entry size out of bounds')
         _require(info.compress_size <= len(archive), integrity_error, 'archive: compressed size exceeds archive')
-        _require(info.file_size <= MAX_COMPRESSION_RATIO * max(info.compress_size, 64), integrity_error,
+        # The ratio is measured against the actual compressed size with no floor, so a
+        # small entry cannot expand beyond MAX_COMPRESSION_RATIO either. A nonempty entry
+        # that claims zero compressed bytes is malformed, not infinitely compressible.
+        _require(info.compress_size > 0, integrity_error, 'archive: zero compressed size for a nonempty entry')
+        _require(info.file_size <= MAX_COMPRESSION_RATIO * info.compress_size, integrity_error,
                  'archive: suspicious compression ratio')
         try:
+            # testzip only translates BadZipFile (CRC/structure); invalid raw deflate bytes
+            # surface from the decompressor as zlib.error and must fail closed the same way.
             _require(container.testzip() is None, integrity_error, 'archive: CRC or structure check failed')
             with container.open(info) as handle:
                 data = handle.read(bounds['max_entry_bytes'] + 1)
-        except (zipfile.BadZipFile, RuntimeError, EOFError, OSError, ValueError) as exc:
+        except (zipfile.BadZipFile, zlib.error, RuntimeError, EOFError, OSError, ValueError) as exc:
             if isinstance(exc, IntegrityError):
                 raise
             raise integrity_error('archive: entry could not be read') from exc
