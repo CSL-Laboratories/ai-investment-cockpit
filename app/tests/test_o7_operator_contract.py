@@ -673,6 +673,44 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert "schema result consequent cannot apply for operator.interventions.request_stop" in stderr
 
 
+def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
+    schema = {
+        "properties": {
+            "result": {
+                "properties": {"source_id": {"type": "string", "pattern": "source"}},
+            }
+        },
+        "allOf": [
+            {
+                "if": {
+                    "required": ["command", "status_code"],
+                    "properties": {
+                        "command": {"const": "operator.evidence.inspect"},
+                        "status_code": {"const": "refused"},
+                    },
+                },
+                "then": {
+                    "properties": {
+                        "result": {
+                            "required": ["source_id"],
+                            "properties": {"source_id": {"const": "fixture_source_1"}},
+                        }
+                    }
+                },
+            }
+        ],
+    }
+    fields = CHECKER._schema_command_result_fields(schema)
+    assert fields["operator.evidence.inspect"]["refused"] == ["source_id"]
+    schema["allOf"][0]["then"]["properties"]["result"]["properties"]["source_id"] = {"const": "fixture"}
+    try:
+        CHECKER._schema_command_result_fields(schema)
+    except CHECKER.ContractError as exc:
+        assert "schema result consequent cannot apply" in str(exc)
+    else:
+        raise AssertionError("a literal outside the base pattern was accepted")
+
+
 def test_schema_annotations_do_not_block_result_clauses(tmp_path: Path) -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     annotated = tmp_path / "annotated"

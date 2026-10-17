@@ -477,7 +477,8 @@ def _value_fits_base(value: Any, base: Any) -> bool:
         if not isinstance(value, str):
             return False
         pattern = base.get("pattern")
-        return not isinstance(pattern, str) or re.fullmatch(pattern, value) is not None
+        # JSON Schema pattern is a search, including an unanchored substring.
+        return not isinstance(pattern, str) or re.search(pattern, value) is not None
     if base_type == "integer":
         return type(value) is int
     if base_type == "number":
