@@ -559,7 +559,10 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     for clause in schema["allOf"]:
         command = clause.get("if", {}).get("properties", {}).get("command", {}).get("const")
-        required = clause.get("then", {}).get("properties", {}).get("result", {}).get("required")
+        then = clause.get("then")
+        required = (
+            then.get("properties", {}).get("result", {}).get("required") if isinstance(then, dict) else None
+        )
         if command == "operator.evidence.inspect" and isinstance(required, list):
             clause["then"]["properties"]["result"]["required"] = ["raw_separated_from_summary", "provenance"]
     schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
@@ -611,6 +614,29 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result clause cannot apply for operator.evidence.inspect" in stderr
+
+
+def test_schema_annotations_do_not_block_result_clauses(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    annotated = tmp_path / "annotated"
+    shutil.copytree(root, annotated)
+    schema_path = annotated / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {}) if isinstance(clause.get("if"), dict) else {}
+        status = properties.get("status_code")
+        if (
+            isinstance(properties.get("command"), dict)
+            and properties["command"].get("const") == "operator.evidence.inspect"
+            and isinstance(status, dict)
+            and status.get("const") == "refused"
+        ):
+            clause["if"]["description"] = "Evidence refusal"
+            properties["command"]["$comment"] = "annotation only"
+            status["title"] = "refused"
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    fields = CHECKER._schema_command_result_fields(schema)
+    assert "refused" in fields["operator.evidence.inspect"]
 
 
 def test_reconciled_result_cannot_carry_unknown_orders() -> None:

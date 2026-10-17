@@ -358,6 +358,7 @@ def _walk_keys(value: Any):
             yield from _walk_keys(child)
 
 
+SCHEMA_ANNOTATIONS = frozenset({"description", "title", "$comment", "examples", "deprecated"})
 RESULT_STATUSES = ("ok", "refused", "stale_or_unreconciled", "unavailable")
 
 
@@ -383,12 +384,12 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
         command_schema = properties.get("command")
         if (
             not isinstance(condition, dict)
-            or set(condition) != {"properties", "required"}
+            or set(condition) - SCHEMA_ANNOTATIONS != {"properties", "required"}
             or set(condition.get("required") or []) != {"command", "status_code"}
             or not isinstance(command_schema, dict)
-            or set(command_schema) != {"const"}
+            or set(command_schema) - SCHEMA_ANNOTATIONS != {"const"}
             or not isinstance(status, dict)
-            or set(status) != {"const"}
+            or set(status) - SCHEMA_ANNOTATIONS != {"const"}
         ):
             raise ContractError(f"schema result clause cannot apply for {command}")
         by_status = found.setdefault(command, {})
