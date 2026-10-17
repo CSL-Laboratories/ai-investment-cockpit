@@ -317,6 +317,45 @@ def _write_json(path: Path, value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+_MARKET_DATA_SOURCE_TERMS = {
+    "market_data": "https://docs.alpaca.markets/us/docs/about-market-data-api",
+    "feed_comparison": "https://docs.alpaca.markets/us/docs/market-data-faq",
+}
+_NEWS_SOURCE_TERMS = {
+    "websocket": "https://docs.alpaca.markets/us/docs/streaming-real-time-news",
+    "rest": "https://docs.alpaca.markets/us/docs/historical-news-data",
+}
+
+
+def _require_tz_aware(values: Iterable[datetime], what: str) -> None:
+    if any(value.tzinfo is None or value.utcoffset() is None for value in values):
+        raise ValueError(f"{what} must be timezone-aware")
+
+
+def _symbol_scope(symbols: Iterable[str]) -> tuple[str, ...]:
+    scope = tuple(
+        sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
+    )
+    if not scope:
+        raise ValueError("an explicit non-empty symbol universe is required")
+    return scope
+
+
+def _fresh_capture_root(root: Path, kind: str | None, day: date, stamp: datetime) -> Path:
+    capture_id = stamp.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    parts = (kind, day.isoformat(), capture_id) if kind else (day.isoformat(), capture_id)
+    capture_root = Path(root).joinpath(*parts)
+    if capture_root.exists():
+        raise FileExistsError(f"capture already exists: {capture_root}")
+    return capture_root
+
+
+def _write_manifest(capture_root: Path, manifest: dict) -> Path:
+    manifest_path = capture_root / "manifest.json"
+    _write_json(manifest_path, manifest)
+    return manifest_path
+
+
 def verify_evidence_manifest(manifest_path: Path) -> dict:
     """Verify every raw/summary hash bound by an RW-19 manifest."""
     manifest_path = Path(manifest_path)
@@ -392,15 +431,9 @@ def write_bar_evidence(
     thresholds_bps: Iterable[int] = DEFAULT_THRESHOLDS_BPS,
 ) -> Path:
     """Write one immutable raw/summary capture directory and return its manifest path."""
-    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
-        raise ValueError("captured_at must be timezone-aware")
-    scope = tuple(sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip())))
-    if not scope:
-        raise ValueError("an explicit non-empty symbol universe is required")
-    capture_id = captured_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    capture_root = Path(root) / observation_date.isoformat() / capture_id
-    if capture_root.exists():
-        raise FileExistsError(f"capture already exists: {capture_root}")
+    _require_tz_aware((captured_at,), "captured_at")
+    scope = _symbol_scope(symbols)
+    capture_root = _fresh_capture_root(root, None, observation_date, captured_at)
 
     # Validate and derive BEFORE the first write. A zero-overlap or malformed comparison must
     # not leave an unbound raw directory that looks like a capture but has no manifest.
@@ -437,19 +470,14 @@ def write_bar_evidence(
             "sip": {"path": "raw/alpaca-sip-1min.json", "sha256": sip_hash},
         },
         "summary": {"path": "summary.json", "sha256": summary_hash},
-        "source_terms": {
-            "market_data": "https://docs.alpaca.markets/us/docs/about-market-data-api",
-            "feed_comparison": "https://docs.alpaca.markets/us/docs/market-data-faq",
-        },
+        "source_terms": _MARKET_DATA_SOURCE_TERMS,
         "limitations": [
             "Historical minute bars measure coverage and threshold recall, not wire latency.",
             "Thresholds are a measurement sweep and are not production trigger policy.",
             "Delayed SIP history is a reference surface; current credentials do not imply live SIP.",
         ],
     }
-    return_path = capture_root / "manifest.json"
-    _write_json(return_path, manifest)
-    return return_path
+    return _write_manifest(capture_root, manifest)
 
 
 def _news_identity_rows(stream_rows: Iterable[dict]) -> list[dict]:
@@ -476,11 +504,7 @@ def characterize_news_reconnect(
     reconnected_at: datetime,
 ) -> dict:
     """Measure identity continuity and REST recovery across one deliberate news gap."""
-    if any(
-        value.tzinfo is None or value.utcoffset() is None
-        for value in (disconnected_at, reconnected_at)
-    ):
-        raise ValueError("reconnect timestamps must be timezone-aware")
+    _require_tz_aware((disconnected_at, reconnected_at), "reconnect timestamps")
     disconnected_at = disconnected_at.astimezone(UTC)
     reconnected_at = reconnected_at.astimezone(UTC)
     if reconnected_at < disconnected_at:
@@ -557,17 +581,11 @@ def write_news_evidence(
     environment: dict[str, Any],
 ) -> Path:
     """Write an immutable news WebSocket/REST identity capture."""
-    if any(value.tzinfo is None or value.utcoffset() is None for value in (window_start, window_end)):
-        raise ValueError("capture window must be timezone-aware")
+    _require_tz_aware((window_start, window_end), "capture window")
     if window_end <= window_start:
         raise ValueError("capture window end must follow its start")
-    scope = tuple(sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip())))
-    if not scope:
-        raise ValueError("an explicit non-empty symbol universe is required")
-    capture_id = window_start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    capture_root = Path(root) / "news" / window_start.date().isoformat() / capture_id
-    if capture_root.exists():
-        raise FileExistsError(f"capture already exists: {capture_root}")
+    scope = _symbol_scope(symbols)
+    capture_root = _fresh_capture_root(root, "news", window_start.date(), window_start)
 
     stream_hash = _write_json(capture_root / "raw" / "alpaca-news-ws.json", stream_rows)
     rest_hash = _write_json(capture_root / "raw" / "alpaca-news-rest.json", rest_rows)
@@ -592,19 +610,14 @@ def write_news_evidence(
             "rest": {"path": "raw/alpaca-news-rest.json", "sha256": rest_hash},
         },
         "summary": {"path": "summary.json", "sha256": summary_hash},
-        "source_terms": {
-            "websocket": "https://docs.alpaca.markets/us/docs/streaming-real-time-news",
-            "rest": "https://docs.alpaca.markets/us/docs/historical-news-data",
-        },
+        "source_terms": _NEWS_SOURCE_TERMS,
         "limitations": [
             "A zero-frame window is an insufficient sample, not evidence of stream correctness.",
             "Article IDs test identity equivalence; they do not prove correction ordering alone.",
             "Raw article content is local evidence and must not be committed or redistributed.",
         ],
     }
-    manifest_path = capture_root / "manifest.json"
-    _write_json(manifest_path, manifest)
-    return manifest_path
+    return _write_manifest(capture_root, manifest)
 
 
 def write_news_reconnect_evidence(
@@ -622,19 +635,11 @@ def write_news_reconnect_evidence(
 ) -> Path:
     """Write an immutable two-segment news reconnect and REST-backfill capture."""
     timestamps = (window_start, disconnected_at, reconnected_at, window_end)
-    if any(value.tzinfo is None or value.utcoffset() is None for value in timestamps):
-        raise ValueError("capture and reconnect timestamps must be timezone-aware")
+    _require_tz_aware(timestamps, "capture and reconnect timestamps")
     if not window_start < disconnected_at <= reconnected_at < window_end:
         raise ValueError("news reconnect timestamps are not monotonic")
-    scope = tuple(
-        sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()))
-    )
-    if not scope:
-        raise ValueError("an explicit non-empty symbol universe is required")
-    capture_id = window_start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    capture_root = Path(root) / "news-reconnect" / window_start.date().isoformat() / capture_id
-    if capture_root.exists():
-        raise FileExistsError(f"capture already exists: {capture_root}")
+    scope = _symbol_scope(symbols)
+    capture_root = _fresh_capture_root(root, "news-reconnect", window_start.date(), window_start)
 
     reconnect = characterize_news_reconnect(
         before_rows,
@@ -686,10 +691,7 @@ def write_news_reconnect_evidence(
             "rest": {"path": "raw/alpaca-news-rest.json", "sha256": rest_hash},
         },
         "summary": {"path": "summary.json", "sha256": summary_hash},
-        "source_terms": {
-            "websocket": "https://docs.alpaca.markets/us/docs/streaming-real-time-news",
-            "rest": "https://docs.alpaca.markets/us/docs/historical-news-data",
-        },
+        "source_terms": _NEWS_SOURCE_TERMS,
         "limitations": [
             "One deliberate reconnect cannot establish a production loss rate.",
             "No observed correction is not evidence that corrections never occur.",
@@ -697,9 +699,7 @@ def write_news_reconnect_evidence(
             "Raw article content is local evidence and must not be committed or redistributed.",
         ],
     }
-    manifest_path = capture_root / "manifest.json"
-    _write_json(manifest_path, manifest)
-    return manifest_path
+    return _write_manifest(capture_root, manifest)
 
 
 def write_market_stream_evidence(
@@ -713,19 +713,13 @@ def write_market_stream_evidence(
     environment: dict[str, Any],
 ) -> Path:
     """Write an immutable bounded Alpaca market-WebSocket capture."""
-    if any(value.tzinfo is None or value.utcoffset() is None for value in (window_start, window_end)):
-        raise ValueError("capture window must be timezone-aware")
+    _require_tz_aware((window_start, window_end), "capture window")
     if window_end <= window_start:
         raise ValueError("capture window end must follow its start")
     if feed not in {"test", "iex", "sip"}:
         raise ValueError("feed must be test, iex, or sip")
-    scope = tuple(sorted(set(str(symbol).strip().upper() for symbol in symbols if str(symbol).strip())))
-    if not scope:
-        raise ValueError("an explicit non-empty symbol universe is required")
-    capture_id = window_start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    capture_root = Path(root) / "market" / window_start.date().isoformat() / capture_id
-    if capture_root.exists():
-        raise FileExistsError(f"capture already exists: {capture_root}")
+    scope = _symbol_scope(symbols)
+    capture_root = _fresh_capture_root(root, "market", window_start.date(), window_start)
     raw_hash = _write_json(capture_root / "raw" / f"alpaca-{feed}-ws.json", rows)
     summary = characterize_market_frames(rows)
     summary_hash = _write_json(capture_root / "summary.json", summary)
@@ -752,9 +746,7 @@ def write_market_stream_evidence(
             "Synthetic message identity T:S:t is a measurement key, not vendor idempotency.",
         ],
     }
-    manifest_path = capture_root / "manifest.json"
-    _write_json(manifest_path, manifest)
-    return manifest_path
+    return _write_manifest(capture_root, manifest)
 
 
 def write_capability_evidence(
@@ -766,15 +758,11 @@ def write_capability_evidence(
     environment: dict[str, Any],
 ) -> Path:
     """Write raw, hash-bound market-data entitlement probes and a small derived summary."""
-    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
-        raise ValueError("captured_at must be timezone-aware")
+    _require_tz_aware((captured_at,), "captured_at")
     clean_symbol = str(symbol).strip().upper()
     if not clean_symbol:
         raise ValueError("an explicit probe symbol is required")
-    capture_id = captured_at.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    capture_root = Path(root) / "capabilities" / captured_at.date().isoformat() / capture_id
-    if capture_root.exists():
-        raise FileExistsError(f"capture already exists: {capture_root}")
+    capture_root = _fresh_capture_root(root, "capabilities", captured_at.date(), captured_at)
     raw_hash = _write_json(capture_root / "raw" / "alpaca-latest-quotes.json", probes)
     summary = {
         name: {
@@ -801,18 +789,13 @@ def write_capability_evidence(
             },
         },
         "summary": {"path": "summary.json", "sha256": summary_hash},
-        "source_terms": {
-            "market_data": "https://docs.alpaca.markets/us/docs/about-market-data-api",
-            "feed_comparison": "https://docs.alpaca.markets/us/docs/market-data-faq",
-        },
+        "source_terms": _MARKET_DATA_SOURCE_TERMS,
         "limitations": [
             "Capabilities are account-specific and must be re-probed after entitlement changes.",
             "A successful latest quote proves access at one instant, not stream reliability.",
         ],
     }
-    manifest_path = capture_root / "manifest.json"
-    _write_json(manifest_path, manifest)
-    return manifest_path
+    return _write_manifest(capture_root, manifest)
 
 
 def utc_day_bounds(day: date) -> tuple[str, str]:
