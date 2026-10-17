@@ -291,21 +291,13 @@ fn add(
     while distance < depth_limit && rng.random() > params.arrival_decay {
         distance += 1;
     }
-    let base = py_round_wide(state.fair)?;
-    let mut price = if side == Side::Buy {
-        narrow_price(base - 1 - i128::from(distance))?
-    } else {
-        narrow_price(base + 1 + i128::from(distance))?
-    };
-    if side == Side::Buy {
-        if let Some(best_ask) = state.book.best_ask() {
-            let cap = narrow_price(i128::from(best_ask) - 1)?;
-            price = price.min(cap);
-        }
-    } else if let Some(best_bid) = state.book.best_bid() {
-        let floor = narrow_price(i128::from(best_bid) + 1)?;
-        price = price.max(floor);
-    }
+    let price = quote_price(
+        state.fair,
+        side,
+        distance,
+        state.book.best_ask(),
+        state.book.best_bid(),
+    )?;
     let qty = draw_size(rng, params)?;
     let order_ref = state.next_ref;
     state.next_ref += 1;
@@ -372,8 +364,7 @@ fn trade(
     let touch = match touch {
         Some(price) => price,
         None => {
-            let base = py_round_wide(state.fair)?;
-            narrow_price(if aggressor == Side::Buy { base + 1 } else { base - 1 })?
+            invented_touch(state.fair, aggressor)?
         }
     };
     let result = match_order(
@@ -445,28 +436,34 @@ fn trunc_i64(value: f64) -> i64 {
     value as i64
 }
 
-/// Python 3 `round` of a finite float: half goes to the even integer.
-///
-/// The result is wide because `i64::MAX` is not an exact float. Python rounds
-/// that value to `2**63`, and a later `+ 1` has to fail instead of wrapping.
-fn py_round_wide(value: f64) -> Result<i128, SynthError> {
-    if !value.is_finite() {
-        return Err(SynthError("fair value is not finite".into()));
+/// Python 3 `round` of a finite float, kept wide so a later clamp can still
+/// land on `best_ask - 1` the way `SyntheticFeed._add` does.
+fn quote_price(
+    fair: f64,
+    side: Side,
+    distance: i64,
+    best_ask: Option<i64>,
+    best_bid: Option<i64>,
+) -> Result<i64, SynthError> {
+    let delta = if side == Side::Buy {
+        -1 - i128::from(distance)
+    } else {
+        1 + i128::from(distance)
+    };
+    let raw = WideInt::from_fair(fair)?.add_i128(delta);
+    if side == Side::Buy {
+        if let Some(ask) = best_ask {
+            return raw.min_narrow(i128::from(ask) - 1);
+        }
+    } else if let Some(bid) = best_bid {
+        return raw.max_narrow(i128::from(bid) + 1);
     }
-    let floor = value.floor();
-    // `i64::MAX as f64` is 2^63. Anything past that is already outside the
-    // price the book can store, even before the one-tick offset.
-    if floor.abs() > i64::MAX as f64 {
-        return Err(SynthError(
-            "price does not fit in a signed 64-bit integer".into(),
-        ));
-    }
-    let frac = value - floor;
-    let mut n = floor as i128;
-    if frac > 0.5 || (frac == 0.5 && n % 2 != 0) {
-        n += 1;
-    }
-    Ok(n)
+    raw.narrow()
+}
+
+fn invented_touch(fair: f64, aggressor: Side) -> Result<i64, SynthError> {
+    let delta = if aggressor == Side::Buy { 1 } else { -1 };
+    WideInt::from_fair(fair)?.add_i128(delta).narrow()
 }
 
 fn narrow_price(price: i128) -> Result<i64, SynthError> {
@@ -477,6 +474,188 @@ fn narrow_price(price: i128) -> Result<i64, SynthError> {
     })
 }
 
+/// Rounded fair value. `Big` is only for magnitudes above `i128`.
+enum WideInt {
+    Small(i128),
+    Big { neg: bool, digits: Vec<u8> },
+}
+
+impl WideInt {
+    fn from_fair(value: f64) -> Result<Self, SynthError> {
+        if !value.is_finite() {
+            return Err(SynthError("fair value is not finite".into()));
+        }
+        // 2^127. The next smaller finite value still fits in `i128`.
+        const LIM: f64 = 170141183460469231731687303715884105728.0;
+        if value.abs() < LIM {
+            return Ok(Self::Small(f64_to_i128_banker(value)));
+        }
+        Ok(Self::Big {
+            neg: value.is_sign_negative(),
+            digits: abs_f64_to_digits(value.abs()),
+        })
+    }
+
+    fn add_i128(self, delta: i128) -> Self {
+        match self {
+            Self::Small(n) => match n.checked_add(delta) {
+                Some(sum) => Self::Small(sum),
+                None => {
+                    let mut digits = u128_to_digits(n.unsigned_abs());
+                    add_u128_digits(&mut digits, delta.unsigned_abs());
+                    Self::Big {
+                        neg: n.is_negative(),
+                        digits,
+                    }
+                }
+            },
+            Self::Big { neg, mut digits } => {
+                if delta == 0 {
+                    return Self::Big { neg, digits };
+                }
+                let mag = delta.unsigned_abs();
+                if neg == delta.is_negative() {
+                    add_u128_digits(&mut digits, mag);
+                } else {
+                    // `|digits|` is above 2^127 and `|delta|` is at most that,
+                    // so the sign does not flip.
+                    sub_u128_digits(&mut digits, mag);
+                }
+                Self::Big { neg, digits }
+            }
+        }
+    }
+
+    fn min_narrow(self, cap: i128) -> Result<i64, SynthError> {
+        match self {
+            Self::Small(n) => narrow_price(n.min(cap)),
+            Self::Big { neg: false, .. } => narrow_price(cap),
+            big => big.narrow(),
+        }
+    }
+
+    fn max_narrow(self, floor: i128) -> Result<i64, SynthError> {
+        match self {
+            Self::Small(n) => narrow_price(n.max(floor)),
+            Self::Big { neg: true, .. } => narrow_price(floor),
+            big => big.narrow(),
+        }
+    }
+
+    fn narrow(self) -> Result<i64, SynthError> {
+        match self {
+            Self::Small(n) => narrow_price(n),
+            Self::Big { neg, digits } => Err(SynthError(format!(
+                "price {}{} does not fit in a signed 64-bit integer",
+                if neg { "-" } else { "" },
+                format_digits(&digits),
+            ))),
+        }
+    }
+}
+
+fn f64_to_i128_banker(value: f64) -> i128 {
+    let abs = value.abs();
+    if abs >= (1u64 << 53) as f64 {
+        let bits = abs.to_bits();
+        let exp = ((bits >> 52) & 0x7ff) as i32;
+        let mant = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+        let shift = (exp - 1023 - 52) as u32;
+        let mag = i128::from(mant) << shift;
+        return if value.is_sign_negative() { -mag } else { mag };
+    }
+    let floor = value.floor();
+    let frac = value - floor;
+    let mut n = floor as i128;
+    if frac > 0.5 || (frac == 0.5 && n % 2 != 0) {
+        n += 1;
+    }
+    n
+}
+
+fn abs_f64_to_digits(abs: f64) -> Vec<u8> {
+    let bits = abs.to_bits();
+    let exp = ((bits >> 52) & 0x7ff) as i32;
+    let mant = (bits & ((1u64 << 52) - 1)) | (1u64 << 52);
+    let shift = (exp - 1023 - 52) as u32;
+    let mut digits = u128_to_digits(u128::from(mant));
+    for _ in 0..shift {
+        mul2_digits(&mut digits);
+    }
+    digits
+}
+
+fn u128_to_digits(mut n: u128) -> Vec<u8> {
+    if n == 0 {
+        return vec![0];
+    }
+    let mut digits = Vec::new();
+    while n > 0 {
+        digits.push((n % 10) as u8);
+        n /= 10;
+    }
+    digits
+}
+
+fn add_u128_digits(digits: &mut Vec<u8>, mut n: u128) {
+    let mut index = 0;
+    let mut carry = 0u16;
+    while n > 0 || carry > 0 {
+        if index == digits.len() {
+            digits.push(0);
+        }
+        let sum = u16::from(digits[index]) + (n % 10) as u16 + carry;
+        digits[index] = (sum % 10) as u8;
+        carry = sum / 10;
+        n /= 10;
+        index += 1;
+    }
+}
+
+fn sub_u128_digits(digits: &mut Vec<u8>, mut n: u128) {
+    let mut index = 0;
+    let mut borrow = 0u16;
+    while n > 0 || borrow > 0 {
+        let digit = u16::from(digits[index]);
+        let sub = (n % 10) as u16 + borrow;
+        if digit >= sub {
+            digits[index] = (digit - sub) as u8;
+            borrow = 0;
+        } else {
+            digits[index] = (digit + 10 - sub) as u8;
+            borrow = 1;
+        }
+        n /= 10;
+        index += 1;
+    }
+    while digits.len() > 1 && digits.last() == Some(&0) {
+        digits.pop();
+    }
+}
+
+fn mul2_digits(digits: &mut Vec<u8>) {
+    let mut carry = 0u8;
+    for digit in digits.iter_mut() {
+        let sum = *digit * 2 + carry;
+        *digit = sum % 10;
+        carry = sum / 10;
+    }
+    if carry > 0 {
+        digits.push(carry);
+    }
+}
+
+fn format_digits(digits: &[u8]) -> String {
+    let mut out = String::with_capacity(digits.len());
+    for digit in digits.iter().rev() {
+        out.push(char::from(b'0' + digit));
+    }
+    if out.is_empty() {
+        out.push('0');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,9 +663,26 @@ mod tests {
     #[test]
     fn max_fair_rounds_to_two_to_the_63_and_a_sell_does_not_wrap() {
         let fair = i64::MAX as f64;
-        let base = py_round_wide(fair).unwrap();
+        let WideInt::Small(base) = WideInt::from_fair(fair).unwrap() else {
+            panic!("2^63 fits in i128");
+        };
         assert_eq!(base, i128::from(i64::MAX) + 1);
         assert_eq!(narrow_price(base - 1).unwrap(), i64::MAX);
-        assert!(narrow_price(base + 1).is_err());
+        let err = narrow_price(base + 1).unwrap_err();
+        assert_eq!(
+            err.0,
+            "price 9223372036854775809 does not fit in a signed 64-bit integer"
+        );
+    }
+
+    #[test]
+    fn a_buy_past_two_to_the_63_clamps_to_the_ask() {
+        let fair = (i64::MAX as f64) + 4096.0;
+        let ask = (1i64 << 62) + 100;
+        let price = quote_price(fair, Side::Buy, 0, Some(ask), None).unwrap();
+        assert_eq!(price, ask - 1);
+        let err = quote_price(fair, Side::Sell, 0, None, Some(ask)).unwrap_err();
+        assert!(err.0.starts_with("price 9223372036854779905"));
+        assert!(err.0.contains("does not fit in a signed 64-bit integer"));
     }
 }

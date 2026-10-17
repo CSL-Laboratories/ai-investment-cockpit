@@ -234,6 +234,26 @@ def test_a_price_past_i64_raises_on_both_generators():
     assert rust[1] is not None and "does not fit" in rust[1]
 
 
+def test_a_far_fair_matches_python_after_the_uncrossing_clamp():
+    """A fair value past 2**63 still clamps onto a resting ask, on both tapes."""
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=40, seed=4,
+        params=SyntheticParams(initial_ticks=2**63 - 1, tick_volatility=50_000),
+    )
+
+    def prefix(events):
+        seen = []
+        try:
+            for event in events:
+                seen.append(event)
+        except ValueError as exc:
+            return seen, str(exc)
+        return seen, None
+
+    assert prefix(feed) == prefix(feed._python_events())
+
+
 def test_rust_synthetic_matches_python_on_repeated_names_and_edges():
     _require_cursor()
     shared = SyntheticFeed(symbols=("S", "S"), n_events=40, seed=3)
