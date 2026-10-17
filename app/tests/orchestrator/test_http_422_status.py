@@ -48,8 +48,18 @@ def test_deprecated_http_422_guard_detects_a_hit(tmp_path: Path):
 
 
 def test_project_requires_starlette_with_rfc9110_status_names():
-    text = (APP / "pyproject.toml").read_text(encoding="utf-8")
-    assert "starlette>=0.48.0" in text
+    root = APP.parent
+    paths = (
+        APP / "pyproject.toml",
+        root / ".github" / "actions" / "run-gates" / "action.yml",
+        root / "CLAUDE.md",
+    )
+    missing = [
+        str(path.relative_to(root))
+        for path in paths
+        if "starlette>=0.48.0" not in path.read_text(encoding="utf-8")
+    ]
+    assert not missing, missing
 
 
 def test_ceiling_breach_returns_422_and_disarms_to_review_live(tmp_path: Path):
