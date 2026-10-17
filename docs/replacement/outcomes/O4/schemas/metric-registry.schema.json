@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.metric-registry.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "measures", "methodology_references", "thresholds_are_owner_decisions"],
+  "properties": {
+    "schema_version": {"const": "o4.metric-registry.v1"},
+    "thresholds_are_owner_decisions": {"const": true},
+    "methodology_references": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "measures": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "citation", "role", "computed", "inputs_retained", "threshold"],
+        "properties": {
+          "id": {
+            "enum": [
+              "deflated_sharpe_ratio",
+              "probability_of_backtest_overfitting",
+              "drawdown",
+              "uncertainty"
+            ]
+          },
+          "citation": {"type": ["string", "null"]},
+          "role": {"type": "string", "minLength": 1},
+          "computed": {"const": false},
+          "inputs_retained": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "threshold": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "value"],
+            "properties": {
+              "status": {"const": "owner_unset"},
+              "value": {"type": "null"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
