@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from collections.abc import Sequence
 
 log = logging.getLogger(__name__)
 
@@ -16,9 +17,9 @@ def _load_native() -> None:
 
     A missing module keeps the pure-Python path. A present extension that
     fails to import is broken and the error propagates. A present module
-    missing ``token_bucket_allow`` is a partial wheel, not a silent Python
-    fallback. Time stays caller-supplied. Per-call ``TokenBucket.allow`` stays
-    on Python; ``token_bucket_replay`` is the batch path that uses the extension.
+    missing ``token_bucket_allow`` or ``token_bucket_replay`` is a partial
+    wheel, not a silent Python fallback. Time stays caller-supplied. Per-call
+    ``TokenBucket.allow`` stays on Python; ``allow_many`` is the batch path.
     """
     global _NATIVE, RATELIMIT_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
@@ -26,9 +27,11 @@ def _load_native() -> None:
         return
     import cockpit_quant as native
 
-    if not hasattr(native, "token_bucket_allow"):
+    required = ("token_bucket_allow", "token_bucket_replay")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
         raise ImportError(
-            "cockpit_quant is installed but does not provide token_bucket_allow"
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
         )
     _NATIVE = native
     RATELIMIT_BACKEND = "rust"
@@ -54,7 +57,7 @@ class TokenBucket:
 
         Pollers call this once per item. Crossing into the extension for one
         step is slower than the arithmetic, so the hot path stays here.
-        ``token_bucket_replay`` is the batch path.
+        A finished clock uses ``allow_many``.
         """
         elapsed = max(0.0, now - self._last)
         self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
@@ -63,6 +66,27 @@ class TokenBucket:
             self.tokens -= 1.0
             return True
         return False
+
+    def allow_many(self, times: Sequence[float]) -> list[bool]:
+        """Admit a finished clock and leave ``tokens`` and ``_last`` at the end.
+
+        The clock is copied first, so a one-shot iterable can be scanned. An
+        all-float copy is one extension call, including NaN and inf, which
+        follow Python ``max`` / ``min``. An ``int`` or a value past the float
+        range is applied with ``allow``. A later timestamp that raises leaves
+        the earlier admissions in place, the same as calling ``allow`` in a loop.
+        """
+        times = list(times)
+        if (
+            _NATIVE is not None
+            and _all_float((self.rate, self.capacity, self.tokens, self._last))
+            and _all_float(times)
+        ):
+            allowed, self.tokens, self._last = token_bucket_replay(
+                self.rate, self.capacity, self.tokens, self._last, times
+            )
+            return list(allowed)
+        return [self.allow(now) for now in times]
 
 
 def python_allow(bucket: TokenBucket, now: float) -> bool:

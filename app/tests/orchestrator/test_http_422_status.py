@@ -55,11 +55,28 @@ def _declares_starlette_floor(text: str) -> bool:
     return _STARLETTE_FLOOR in text
 
 
+def _version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
+    numbers: list[int] = []
+    for part in version.split("."):
+        digits = ""
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            return False
+        numbers.append(int(digits))
+    while len(numbers) < len(minimum):
+        numbers.append(0)
+    return tuple(numbers[: len(minimum)]) >= minimum
+
+
 def test_project_requires_starlette_with_rfc9110_status_names():
+    """The quoted ``>=`` token is intentional. A comment, or a rewrapped
+    install line that drops the quotes, must not satisfy pyproject or CLAUDE.md."""
     root = APP.parent
     paths = (
         APP / "pyproject.toml",
-        root / ".github" / "actions" / "run-gates" / "action.yml",
         root / "CLAUDE.md",
     )
     missing = [
@@ -68,6 +85,14 @@ def test_project_requires_starlette_with_rfc9110_status_names():
         if not _declares_starlette_floor(path.read_text(encoding="utf-8"))
     ]
     assert not missing, missing
+    requirements = (root / ".github/actions/run-gates/requirements.txt").read_text(encoding="utf-8")
+    pins = [
+        line.strip()
+        for line in requirements.splitlines()
+        if line.strip().startswith("starlette==")
+    ]
+    assert len(pins) == 1, pins
+    assert _version_at_least(pins[0].split("==", 1)[1], (0, 48, 0))
 
 
 def test_starlette_floor_check_ignores_a_comment():

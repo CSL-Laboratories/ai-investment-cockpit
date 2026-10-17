@@ -1507,11 +1507,11 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertNotIn("labeled, unlabeled", rust_on)
         self.assertIn("github.event.pull_request.draft != true", self.ci)
         self.assertIn("&& 'draft'", self.ci)
-        self.assertNotIn("&& 'label'", self.ci)
+        self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.ci)
         gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
         header = gates.split("steps:", 1)[0]
         self.assertIn("name: linux-gates", self.ci)
-        self.assertIn("always() && !cancelled() && github.event_name != 'schedule'", header)
+        self.assertIn("always() && github.event_name != 'schedule'", header)
         self.assertNotIn("needs.filter.result != 'skipped'", header)
         self.assertIn('FILTER_RESULT" != "success"', gates)
         self.assertNotIn("required check passes.", self.ci)
@@ -1537,7 +1537,7 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("github.event.pull_request.draft != true", self.rust)
         self.assertIn("ready_for_review", self.rust)
         self.assertIn("&& 'draft'", self.rust)
-        self.assertNotIn("&& 'label'", self.rust)
+        self.assertIn("format('label-{0}-{1}', inputs.pr_head_sha", self.rust)
         linux = self.ci.split("\n  linux:\n", 1)[1].split("\n  linux-gates:\n", 1)[0]
         self.assertIn("blacksmith-2vcpu-ubuntu-2404", linux)
         claude_runners = [
