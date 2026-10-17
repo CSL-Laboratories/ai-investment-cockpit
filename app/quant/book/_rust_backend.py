@@ -240,6 +240,8 @@ class LimitOrderBook:
         self.symbol = symbol
         self._core = cockpit_quant.BookCore(symbol)
         self._live: dict[str, object] = {}
+        self._snap_key = None
+        self._snap = None
 
     def add(
         self,
@@ -378,14 +380,28 @@ class LimitOrderBook:
         ]
 
     def snapshot(self, *, levels: int = 5, seq: int | None = None, ts: int | None = None):
+        """Immutable depth. Repeated reads of an unchanged book return the same object.
+
+        ``generation`` moves on every successful mutation. ``last_seq`` does not:
+        two adds can share a sequence number. The object is frozen.
+        """
+        generation = self._core.generation()
         last_seq, last_ts = self._core.last_stamps()
-        return _BookSnapshot(
+        out_seq = last_seq if seq is None else seq
+        out_ts = last_ts if ts is None else ts
+        key = (generation, levels, seq, ts, out_seq, out_ts)
+        if self._snap_key == key:
+            return self._snap
+        snap = _BookSnapshot(
             symbol=self.symbol,
-            seq=last_seq if seq is None else seq,
-            ts=last_ts if ts is None else ts,
+            seq=out_seq,
+            ts=out_ts,
             bids=tuple(self.depth(Side.BUY, levels)),
             asks=tuple(self.depth(Side.SELL, levels)),
         )
+        self._snap_key = key
+        self._snap = snap
+        return snap
 
     def check_integrity(self) -> None:
         _call(self._core.check_integrity)
