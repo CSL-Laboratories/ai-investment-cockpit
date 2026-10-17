@@ -614,6 +614,25 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result clause cannot apply for operator.evidence.inspect" in stderr
+    impossible = tmp_path / "impossible-then"
+    shutil.copytree(root, impossible)
+    schema_path = impossible / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    patched = False
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        status = properties.get("status_code", {}).get("const") if isinstance(properties, dict) else None
+        if command == "operator.evidence.inspect" and status == "refused":
+            clause["then"]["required"] = ["missing_field"]
+            patched = True
+    assert patched
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(impossible, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(impossible)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result consequent cannot apply for operator.evidence.inspect" in stderr
 
 
 def test_schema_annotations_do_not_block_result_clauses(tmp_path: Path) -> None:
@@ -686,6 +705,20 @@ def test_each_intervention_command_requires_confirmation(tmp_path: Path) -> None
     assert code == 1
     assert stdout == ""
     assert "unconfirmed intervention schema accepts operator.interventions.request_reconciliation" in stderr
+    widened = tmp_path / "account-scope"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", widened)
+    schema_path = widened / "schemas" / "operator-command.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["arguments"]["properties"]["scope"]["enum"] = ["operator_session", "account"]
+    schema["allOf"][0]["then"]["properties"]["arguments"]["properties"]["scope"] = {
+        "enum": ["operator_session", "account"]
+    }
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-command.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "intervention scope is not limited to operator_session" in stderr
 
 
 def test_catalog_command_set_is_pinned(tmp_path: Path) -> None:
@@ -696,6 +729,24 @@ def test_catalog_command_set_is_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "catalog command set drifted" in stderr
+
+
+def test_event_schema_rejects_an_unconstrained_intervention(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    schema_path = copied / "schemas" / "operator-event.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["allOf"] = [
+        clause
+        for clause in schema["allOf"]
+        if clause.get("if", {}).get("properties", {}).get("event_type", {}).get("const") != "intervention_recorded"
+    ]
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "schemas/operator-event.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "event schema does not constrain intervention_recorded" in stderr
 
 
 def test_uncertainty_visible_event_keeps_compound_status() -> None:

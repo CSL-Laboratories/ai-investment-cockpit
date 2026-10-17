@@ -358,8 +358,37 @@ def _walk_keys(value: Any):
             yield from _walk_keys(child)
 
 
-SCHEMA_ANNOTATIONS = frozenset({"description", "title", "$comment", "examples", "deprecated"})
 RESULT_STATUSES = ("ok", "refused", "stale_or_unreconciled", "unavailable")
+# JSON Schema annotations do not change whether a clause matches.
+SCHEMA_ANNOTATIONS = frozenset(
+    {
+        "$comment",
+        "default",
+        "deprecated",
+        "description",
+        "examples",
+        "readOnly",
+        "title",
+        "writeOnly",
+    }
+)
+
+
+def _assertion_keys(schema: dict[str, Any]) -> set[str]:
+    return set(schema) - SCHEMA_ANNOTATIONS
+
+
+def _admitted_strings(schema: Any) -> set[str] | None:
+    """Return the strings a plain const or enum schema admits."""
+    if not isinstance(schema, dict):
+        return None
+    if _assertion_keys(schema) == {"const"} and isinstance(schema.get("const"), str):
+        return {schema["const"]}
+    values = schema.get("enum")
+    if _assertion_keys(schema) == {"enum"} and isinstance(values, list) and values:
+        if all(isinstance(item, str) for item in values):
+            return set(values)
+    return None
 
 
 def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str, list[Any]]]:
@@ -368,10 +397,16 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
     for clause in schema.get("allOf", []):
         if not isinstance(clause, dict):
             continue
-        properties = clause.get("if", {}).get("properties", {})
-        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        command_schema = properties.get("command")
+        command = command_schema.get("const") if isinstance(command_schema, dict) else None
         then = clause.get("then")
-        required = then.get("properties", {}).get("result", {}).get("required") if isinstance(then, dict) else None
+        result_properties = then.get("properties") if isinstance(then, dict) else None
+        result_schema = result_properties.get("result") if isinstance(result_properties, dict) else None
+        required = result_schema.get("required") if isinstance(result_schema, dict) else None
         if not isinstance(command, str) or not isinstance(required, list):
             continue
         if set(properties) != {"command", "status_code"}:
@@ -380,18 +415,18 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
         status_code = status.get("const") if isinstance(status, dict) else None
         if status_code not in RESULT_STATUSES:
             raise ContractError(f"schema result fields are not per status for {command}")
-        condition = clause.get("if")
-        command_schema = properties.get("command")
         if (
             not isinstance(condition, dict)
-            or set(condition) - SCHEMA_ANNOTATIONS != {"properties", "required"}
+            or _assertion_keys(condition) != {"properties", "required"}
             or set(condition.get("required") or []) != {"command", "status_code"}
             or not isinstance(command_schema, dict)
-            or set(command_schema) - SCHEMA_ANNOTATIONS != {"const"}
+            or _assertion_keys(command_schema) != {"const"}
             or not isinstance(status, dict)
-            or set(status) - SCHEMA_ANNOTATIONS != {"const"}
+            or _assertion_keys(status) != {"const"}
         ):
             raise ContractError(f"schema result clause cannot apply for {command}")
+        if _assertion_keys(then) != {"properties"} or set(result_properties) != {"result"}:
+            raise ContractError(f"schema result consequent cannot apply for {command}")
         by_status = found.setdefault(command, {})
         if status_code in by_status:
             raise ContractError(f"schema result fields repeated for {command}")
@@ -446,6 +481,120 @@ def _require_intervention_safeguards(validator: Draft202012Validator) -> None:
         unscoped = _intervention_probe(name, confirmation="explicit", arguments={})
         if _schema_error(validator, unscoped) is None:
             raise ContractError(f"unscoped intervention schema accepts {name}")
+        account = _intervention_probe(name, confirmation="explicit", arguments={"scope": "account"})
+        if _schema_error(validator, account) is None:
+            raise ContractError(f"non-session intervention schema accepts {name}")
+
+
+def _require_session_scope_schema(schema: dict[str, Any]) -> None:
+    """Intervention scope admits operator_session and no other value."""
+    arguments = schema.get("properties", {}).get("arguments")
+    scope = arguments.get("properties", {}).get("scope") if isinstance(arguments, dict) else None
+    if _admitted_strings(scope) != {"operator_session"}:
+        raise ContractError("intervention scope is not limited to operator_session")
+    matched = False
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        then_arguments = then_properties.get("arguments") if isinstance(then_properties, dict) else None
+        then_scope_properties = then_arguments.get("properties") if isinstance(then_arguments, dict) else None
+        then_scope = then_scope_properties.get("scope") if isinstance(then_scope_properties, dict) else None
+        if then_scope is None:
+            continue
+        matched = True
+        required = then_arguments.get("required") if isinstance(then_arguments, dict) else None
+        if (
+            _admitted_strings(then_scope) != {"operator_session"}
+            or set(required or []) != {"scope"}
+            or _assertion_keys(then_arguments) != {"properties", "required"}
+            or set(then_scope_properties) != {"scope"}
+        ):
+            raise ContractError("intervention scope is not limited to operator_session")
+    if not matched:
+        raise ContractError("intervention scope is not limited to operator_session")
+
+
+def _event_probe(event_type: str, command: str, status: str, visibility: str) -> dict[str, Any]:
+    return {
+        "api_version": API_VERSION,
+        "candidate_maturity": MATURITY,
+        "event_type": event_type,
+        "command": command,
+        "request_id": "req_event_probe",
+        "visibility": visibility,
+        "status_code": status,
+    }
+
+
+def _require_event_clauses(schema: dict[str, Any]) -> None:
+    """Each event type's schema clause admits only its command, visibility, and status."""
+    found: dict[str, dict[str, Any]] = {}
+    catalog = set(REQUIRED_COMMANDS)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(properties, dict) or set(properties) != {"event_type"}:
+            continue
+        event_schema = properties.get("event_type")
+        event_type = event_schema.get("const") if isinstance(event_schema, dict) else None
+        if event_type not in EVENT_COMMANDS:
+            continue
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"event_type"}
+            or not isinstance(event_schema, dict)
+            or _assertion_keys(event_schema) != {"const"}
+        ):
+            raise ContractError(f"event schema clause cannot apply for {event_type}")
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        if not isinstance(then, dict) or _assertion_keys(then) != {"properties"} or not isinstance(then_properties, dict):
+            raise ContractError(f"event schema clause cannot apply for {event_type}")
+        if event_type in found:
+            raise ContractError(f"event schema clause repeated for {event_type}")
+        found[event_type] = then_properties
+    for event_type, allowed in EVENT_COMMANDS.items():
+        then_properties = found.get(event_type)
+        if not isinstance(then_properties, dict):
+            raise ContractError(f"event schema does not constrain {event_type}")
+        expected_names = {"visibility", "status_code"}
+        if set(allowed) != catalog:
+            expected_names.add("command")
+        visibility = then_properties.get("visibility")
+        status = then_properties.get("status_code")
+        if (
+            set(then_properties) != expected_names
+            or not isinstance(visibility, dict)
+            or _assertion_keys(visibility) != {"const"}
+            or visibility.get("const") != EVENT_VISIBILITY[event_type]
+            or _admitted_strings(status) != set(EVENT_STATUSES[event_type])
+        ):
+            raise ContractError(f"event schema constraint drifted for {event_type}")
+        if "command" in expected_names:
+            command_schema = then_properties.get("command")
+            if _admitted_strings(command_schema) != set(allowed):
+                raise ContractError(f"event schema constraint drifted for {event_type}")
+
+
+def _require_event_schema_rejections(validator: Draft202012Validator) -> None:
+    """A schema-only consumer must reject a command or status outside the event type."""
+    catalog = set(REQUIRED_COMMANDS)
+    for event_type, allowed in EVENT_COMMANDS.items():
+        visibility = EVENT_VISIBILITY[event_type]
+        status = sorted(EVENT_STATUSES[event_type])[0]
+        command = sorted(allowed)[0]
+        if _schema_error(validator, _event_probe(event_type, command, status, visibility)) is not None:
+            raise ContractError(f"event schema rejects {event_type}")
+        if _schema_error(validator, _event_probe(event_type, command, "usage", visibility)) is None:
+            raise ContractError(f"event schema accepts a mismatched status for {event_type}")
+        if set(allowed) != catalog:
+            outsider = sorted(catalog - set(allowed))[0]
+            if _schema_error(validator, _event_probe(event_type, outsider, status, visibility)) is None:
+                raise ContractError(f"event schema accepts a mismatched command for {event_type}")
 
 
 def _validator(schema: dict[str, Any]) -> Draft202012Validator:
@@ -1031,10 +1180,13 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
                 or any(fields != pinned for fields in by_status.values())
             ):
                 raise ContractError(f"schema result fields drifted for {name}")
+        _require_session_scope_schema(command_schema)
+        _require_event_clauses(event_schema)
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
         _require_intervention_safeguards(command_validator)
         event_validator = _validator(event_schema)
+        _require_event_schema_rejections(event_validator)
         error_validator = _validator(error_schema)
         manifest = _load_json(candidate / "fixtures" / "manifest.json")
         entries = _manifest_paths(candidate, manifest)
