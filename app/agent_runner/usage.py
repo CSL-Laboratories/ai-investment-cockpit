@@ -251,7 +251,13 @@ class UsageTracker:
                     if self.integrity_error.startswith("final audit")
                     else "watch_only_persistence_failed"
                 )
-            pending = [self._pending.get(vendor)] if vendor is not None else self._pending.values()
+            if vendor is not None:
+                pending = [self._pending.get(vendor)]
+            else:
+                pending = [
+                    transition for name, transition in self._pending.items()
+                    if name != "jev"
+                ]
             pending = [transition for transition in pending if transition is not None]
             if pending:
                 return (
@@ -265,9 +271,14 @@ class UsageTracker:
                     if self._w.setdefault(vendor, VendorWindow(vendor)).state != "ok"
                     else None
                 )
+            # ``jev`` is a provider cooldown. Claude still writes the analysis, so
+            # that window must not freeze triage or the unscoped order view.
             return (
                 "watch_only_active"
-                if any(window.state != "ok" for window in self._w.values())
+                if any(
+                    window.state != "ok" and window.vendor != "jev"
+                    for window in self._w.values()
+                )
                 else None
             )
 
