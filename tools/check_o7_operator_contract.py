@@ -160,10 +160,10 @@ FORBIDDEN_KEYS = frozenset(
 )
 EVENT_COMMANDS = {
     "evidence_viewed": frozenset({"operator.evidence.inspect"}),
-    "refusal_visible": frozenset({"operator.decisions.inspect"}),
+    "refusal_visible": frozenset(REQUIRED_MUST_SHOW),
     "uncertainty_visible": frozenset(REQUIRED_MUST_SHOW),
     "stale_visible": frozenset(REQUIRED_MUST_SHOW),
-    "unreconciled_visible": frozenset({"operator.recovery.inspect"}),
+    "unreconciled_visible": frozenset(REQUIRED_MUST_SHOW),
     "intervention_recorded": frozenset(
         {
             "operator.interventions.request_stop",

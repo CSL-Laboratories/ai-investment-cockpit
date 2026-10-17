@@ -425,6 +425,20 @@ def test_uncertainty_visible_event_keeps_compound_status() -> None:
     assert CHECKER._event_error(usage) == "event status does not match the event type"
 
 
+def test_refusal_and_unreconciled_events_match_the_originating_command() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    for event_type in ("refusal_visible", "unreconciled_visible"):
+        base = next(event for event in events["events"] if event["event_type"] == event_type)
+        positions = copy.deepcopy(base)
+        positions["command"] = "operator.positions.inspect"
+        positions["request_id"] = "req_positions"
+        assert CHECKER._schema_error(event_validator, positions) is None
+        assert CHECKER._event_error(positions) is None
+
+
 def test_uncertainty_visible_event_matches_any_catalog_command() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
