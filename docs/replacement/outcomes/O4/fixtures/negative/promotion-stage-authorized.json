@@ -1,0 +1,524 @@
+{
+  "accepted_contract_digests": {
+    "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+    "docs/replacement/MONTH-PROGRAM.md": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+    "docs/replacement/SCOPE-AUDIT.md": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c",
+    "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e"
+  },
+  "candidate_queue": {
+    "entries": [
+      {
+        "activation_authorized": false,
+        "blocking_rule": "empirical_evidence_gate_open",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "cash_merger",
+        "verdict": "watch"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "data_contract_unauthorized",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "cef_discount",
+        "verdict": "watch"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "no_expected_return_model",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "mega_cap_signal",
+        "verdict": "reject"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "no_edge",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "awareness_fallback",
+        "verdict": "reject"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "quant_sim_loop",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "momentum",
+        "verdict": "reject"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "quant_sim_loop",
+        "qualified": false,
+        "source": "rw28_evaluation",
+        "strategy_id": "pairs",
+        "verdict": "reject"
+      },
+      {
+        "activation_authorized": false,
+        "blocking_rule": "design_only_not_measured",
+        "qualified": false,
+        "source": "o4_design",
+        "strategy_id": "xm_us_equity_kalshi_demo",
+        "verdict": "not_run"
+      }
+    ],
+    "qualify_count": 0,
+    "schema_version": "o4.candidate-queue.v1"
+  },
+  "contract_frozen_claimed": false,
+  "credentials_present": false,
+  "data_acquisition_authorized": false,
+  "dependencies": [
+    {
+      "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+      "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+      "outcome": "O1",
+      "status": "accepted_human_digest_receipt"
+    },
+    {
+      "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+      "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+      "outcome": "O2",
+      "status": "accepted_human_digest_receipt"
+    },
+    {
+      "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+      "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+      "outcome": "O3",
+      "status": "accepted_human_digest_receipt"
+    }
+  ],
+  "empirical_pass_claimed": false,
+  "experiment": {
+    "alternatives": [
+      "Equity leg only, with the event leg unused.",
+      "Kalshi-demo event leg only, with the equity leg unused.",
+      "Awareness-only fallback that supplies no execution edge."
+    ],
+    "cash_flows": {
+      "matched_to_baseline": true,
+      "retained": true,
+      "value": null
+    },
+    "costs": {
+      "data": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
+      "latency": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
+      "model": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      },
+      "transaction": {
+        "amount": null,
+        "status": "retained_unmeasured",
+        "unit": "owner_unset"
+      }
+    },
+    "data_acquisition_authorized": false,
+    "design_only": true,
+    "experiment_id": "xm-us-equity-kalshi-demo-001",
+    "falsifiers": [
+      "Tuning and evaluation populations overlap.",
+      "A required cost or the recorded empty outcome is dropped.",
+      "Parameter variants are counted as distinct strategies.",
+      "The net result does not beat the matched cash baseline after retained costs, which retains the null and rejects the strategy hypothesis.",
+      "Held-out observations are used to choose parameters.",
+      "The result collapses under an owner-declared uncertainty or liquidity limit."
+    ],
+    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after retained transaction, latency, data, and model costs, measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
+    "leakage_controls": {
+      "embargo": {
+        "evidence": null,
+        "length": "owner_unset",
+        "rule": "remove_post_evaluation_training_rows_for_serial_correlation",
+        "status": "not_run"
+      },
+      "purge": {
+        "evidence": null,
+        "rule": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window",
+        "status": "not_run"
+      }
+    },
+    "markets": [
+      "us_cash_equity",
+      "kalshi_demo_event"
+    ],
+    "matched_baseline": {
+      "kind": "cash",
+      "same_clock": true,
+      "same_population": true,
+      "value": null
+    },
+    "population": {
+      "evaluation_member_ids": [
+        "illustrative:us-equity:eval",
+        "illustrative:kalshi-demo:eval"
+      ],
+      "member_ids_are_acquired_observations": false,
+      "selection_manifest": {
+        "as_of": null,
+        "members_sha256": "9f1e599a430f4c82b28ac22431545657e93c016e74cf413aac14c5ad5ec47b8a",
+        "split_rule": "purged_embargoed_disjoint_tuning_evaluation",
+        "universe": "owner_unset"
+      },
+      "status": "illustrative_design_not_acquired",
+      "tuning_member_ids": [
+        "illustrative:us-equity:tune",
+        "illustrative:kalshi-demo:tune"
+      ]
+    },
+    "schema_version": "o4.experiment.v1",
+    "status": "not_run"
+  },
+  "linear_issue": "CSL-216",
+  "live_authority_granted": false,
+  "maturity": "researched",
+  "metric_registry": {
+    "measures": [
+      {
+        "citation": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551",
+        "computed": false,
+        "id": "deflated_sharpe_ratio",
+        "inputs_retained": [
+          "selected_sharpe",
+          "trial_count",
+          "trial_sharpe_variance",
+          "skewness",
+          "excess_kurtosis",
+          "observation_count"
+        ],
+        "role": "selection_bias_and_non_normality_haircut",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      },
+      {
+        "citation": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253",
+        "computed": false,
+        "id": "probability_of_backtest_overfitting",
+        "inputs_retained": [
+          "variant_return_matrix",
+          "cscv_splits",
+          "in_sample_winner_out_of_sample_rank"
+        ],
+        "role": "share_of_cscv_splits_where_the_in_sample_winner_ranks_below_the_out_of_sample_median",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      },
+      {
+        "citation": null,
+        "computed": false,
+        "id": "drawdown",
+        "inputs_retained": [
+          "peak_to_trough_net_loss",
+          "drawdown_duration"
+        ],
+        "role": "peak_to_trough_loss_on_the_matched_net_cash_flow",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      },
+      {
+        "citation": null,
+        "computed": false,
+        "id": "uncertainty",
+        "inputs_retained": [
+          "estimator_owner_unset",
+          "net_result_series"
+        ],
+        "role": "sampling_uncertainty_of_the_net_result",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      },
+      {
+        "citation": null,
+        "computed": false,
+        "id": "net_yield",
+        "inputs_retained": [
+          "net_result_series",
+          "matched_cash_baseline_series",
+          "retained_cost_amounts"
+        ],
+        "role": "net_of_cost_return_against_the_matched_cash_baseline",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      },
+      {
+        "citation": null,
+        "computed": false,
+        "id": "capital_use",
+        "inputs_retained": [
+          "capital_employed_series",
+          "peak_capital_employed"
+        ],
+        "role": "capital_required_to_run_the_family",
+        "threshold": {
+          "status": "owner_unset",
+          "value": null
+        }
+      }
+    ],
+    "methodology_references": [
+      "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551",
+      "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253",
+      "https://doi.org/10.1016/j.knosys.2024.112477",
+      "https://github.com/eslazarev/purged-cross-validation"
+    ],
+    "schema_version": "o4.metric-registry.v1",
+    "thresholds_are_owner_decisions": true
+  },
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "outcome": "O4",
+  "promotion_protocol": {
+    "blocked_because": [
+      "thresholds_owner_unset",
+      "qualify_count_zero",
+      "independent_verification_not_run"
+    ],
+    "live": {
+      "authorized": false,
+      "in_this_contract": false
+    },
+    "promotion_authorized": false,
+    "schema_version": "o4.promotion-protocol.v1",
+    "stages": [
+      {
+        "authorized": true,
+        "entry_gates": {
+          "criteria": [
+            "packet_and_manifest_digests_pinned_to_separately_accepted_preresult_receipt",
+            "independent_verifier_rerun_authorized"
+          ],
+          "required_evidence": [
+            "preresult_receipt",
+            "verifier_rerun_record"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "replay_output_recorded_and_matched_to_receipt_digests"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
+        "id": "replay",
+        "order": 1,
+        "requires_prior_stage": null
+      },
+      {
+        "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "replay_exit_gates_met"
+          ],
+          "required_evidence": [
+            "replay_output_record"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "demo_output_recorded",
+            "outcome_routed_to_release_owner_for_decision"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
+        "id": "demo",
+        "order": 2,
+        "requires_prior_stage": "replay"
+      }
+    ],
+    "strategy_activation_authorized": false
+  },
+  "qualification_claimed": false,
+  "recorded_empty_outcome": {
+    "empirical_pass_claimed": false,
+    "evaluation_path": "app/feasibility/evaluation.v1.json",
+    "evaluation_sha256": "665f72b426efff7a7411d14816e50867cccb8ee26f03e3bd5dc18056a5a0ab31",
+    "latest_counts": {
+      "cash_parse_hits": 0,
+      "cohort": 0,
+      "date_ready": 0,
+      "pool": 199,
+      "selection_ready": 0,
+      "supported_heads": 32
+    },
+    "latest_gate_result": "no_pass_empty_date_not_ready",
+    "latest_screen_id": "w24_2026_09_15_tue",
+    "qualify_count": 0,
+    "retained": true,
+    "schema_version": "o4.recorded-empty-outcome.v1",
+    "screens_path": "app/feasibility/screens.v1.json",
+    "screens_sha256": "933afccdd9bac75949c069ca07dbd1102cd54f5ab2285c0ca9dc1c5a49c01f09"
+  },
+  "registry_source_commit": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "research": {
+    "citations": [
+      {
+        "title": "Bailey and Lopez de Prado, The Deflated Sharpe Ratio: Correcting for Selection Bias, Backtest Overfitting and Non-Normality",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551"
+      },
+      {
+        "title": "Bailey, Borwein, Lopez de Prado, and Zhu, The Probability of Backtest Overfitting",
+        "url": "https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253"
+      },
+      {
+        "title": "Arian, Norouzi, and Seco, Backtest overfitting in the machine learning era",
+        "url": "https://doi.org/10.1016/j.knosys.2024.112477"
+      },
+      {
+        "title": "eslazarev/purged-cross-validation",
+        "url": "https://github.com/eslazarev/purged-cross-validation"
+      }
+    ],
+    "parallel_search_ids": [
+      "search_a81ed0bcb8b97e64d4f958ef59dde38a",
+      "search_73f6ee6002538aa601e083ab7169dee4"
+    ],
+    "retrieved_on": "2026-10-17",
+    "schema_version": "o4.research.v1"
+  },
+  "schema_version": "o4.candidate-packet.v1",
+  "strategy_contract": {
+    "alternatives": [
+      "Equity leg only, with the event leg unused.",
+      "Kalshi-demo event leg only, with the equity leg unused.",
+      "Awareness-only fallback that supplies no execution edge."
+    ],
+    "counted_as_distinct_strategies": false,
+    "distinct_strategy_count": 1,
+    "falsifiers": [
+      "Tuning and evaluation populations overlap.",
+      "A required cost or the recorded empty outcome is dropped.",
+      "Parameter variants are counted as distinct strategies.",
+      "The net result does not beat the matched cash baseline after retained costs, which retains the null and rejects the strategy hypothesis.",
+      "Held-out observations are used to choose parameters.",
+      "The result collapses under an owner-declared uncertainty or liquidity limit."
+    ],
+    "family_id": "xm_us_equity_kalshi_demo",
+    "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after retained transaction, latency, data, and model costs, measured on net yield against the matched-cash baseline, capital use, deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
+    "maturity": "researched",
+    "multiple_testing_trial_count": 3,
+    "parameter_variants": [
+      {
+        "configuration": {
+          "legs": [
+            "us_cash_equity"
+          ]
+        },
+        "configuration_sha256": "ee8833f0c6714bd66d94e576913b18d074546b50f4faa0ef60c21a6c384e7a02",
+        "counts_as_distinct_strategy": false,
+        "family_id": "xm_us_equity_kalshi_demo",
+        "variant_id": "equity_leg"
+      },
+      {
+        "configuration": {
+          "legs": [
+            "kalshi_demo_event"
+          ]
+        },
+        "configuration_sha256": "d6980d4463e6c057d445d5fc3bb98b83637ced6c40edc6c6e43b9d0adeb3b943",
+        "counts_as_distinct_strategy": false,
+        "family_id": "xm_us_equity_kalshi_demo",
+        "variant_id": "event_leg"
+      },
+      {
+        "configuration": {
+          "legs": [
+            "kalshi_demo_event",
+            "us_cash_equity"
+          ]
+        },
+        "configuration_sha256": "211066ce7ecb33429194049c9c153f5b55e2a3fdeeca5fc3991ec072985eed64",
+        "counts_as_distinct_strategy": false,
+        "family_id": "xm_us_equity_kalshi_demo",
+        "variant_id": "joint_legs"
+      }
+    ],
+    "research_quota": {
+      "continuation_requires_human_linear_receipt": true,
+      "data_acquisition": false,
+      "deep_research_runs": 0,
+      "quota_class": "one_bounded_reconciliation_pass"
+    },
+    "schema_version": "o4.strategy-contract.v1",
+    "strategy_id": "xm_us_equity_kalshi_demo"
+  },
+  "unresolved_decisions": [
+    {
+      "id": "spend",
+      "owner": "reserved authority",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "New data acquisition, paid provider calls, or another Deep Research run."
+    },
+    {
+      "id": "credentials",
+      "owner": "reserved authority",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Broker, venue, or model credentials."
+    },
+    {
+      "id": "tax_legal",
+      "owner": "owner",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Whether tax is inside the first net-yield metric, and account or venue eligibility."
+    },
+    {
+      "id": "architecture",
+      "owner": "owner",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Costly-to-reverse engine, storage, topology, or exclusive cross-validation implementation."
+    },
+    {
+      "id": "release",
+      "owner": "release owner",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Release scope and acceptance."
+    },
+    {
+      "id": "live",
+      "owner": "owner",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Live trading, capital movement, or strategy activation."
+    },
+    {
+      "id": "thresholds",
+      "owner": "owner",
+      "selected_option": null,
+      "status": "undecided",
+      "topic": "Numeric bars for deflated Sharpe, backtest-overfitting probability, drawdown, uncertainty, capital, loss, embargo length, and the uncertainty estimator."
+    }
+  ]
+}

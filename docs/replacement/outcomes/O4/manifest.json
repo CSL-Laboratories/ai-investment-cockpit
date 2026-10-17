@@ -5,51 +5,59 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "2a258b7fc7dda3238aff8db2bd9c7696624aef2511644733d0a953a395b25799"
+      "sha256": "0a493ba74f0517ea448b46d16c65c80d729bf7107cd0be05c238d1813c800f80"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "b55011cf222c77e57bdd03f5773c9d7c17fac368de0d8ed068fc11acb125f271"
+      "sha256": "b5f965b56cfd4a05b5201ddd30282d50f903d4ae1fd5bcdc8ed0e0233c5e12a5"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "11d56d82ff578ff4c58669b3a96eefe9e5d4a382c7d90ebaa2270674b3b188fe"
+      "sha256": "1c4eb3a0048cbd80a05d095ab5b979f9623e075670f3aa9cfac6662e810fedfc"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "45a5f958f022c848a962f98bf4aca1edab73e7c71d44f56a7dfcb91ddb283dfb"
+      "sha256": "6bfc587ecf2da5dee598788fc1a2a1f05976f2cdf1f6c56e256798275071813e"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
-      "sha256": "fe8af9087962d8c901bbf0d64862a21537b48e118e705b42d26efd63cf66aeab"
+      "sha256": "31436994090bae025f46ca46ef32719432c6473713e5254c19bfcab7ca9bf106"
     },
     {
       "path": "fixtures/negative/measured-costs.json",
-      "sha256": "caa0fdadafe76e5c5a0e5c57d0c5fbdc6b79956a59f98ce134f1d04690002924"
+      "sha256": "b37b2d1285b142c2f8b37d8600b50fe4a3f4ef820334a6059af928f0622d3d88"
     },
     {
       "path": "fixtures/negative/metric-registry-incomplete.json",
-      "sha256": "e9a45244489f159c0631a66eba854b66b52db3a7e3cc1af02b19baf6e6bb603e"
+      "sha256": "1cfe713ad084574a89e12ea4f9ced93daf4dd6a314a9ba18a5cd4af63e9dacb4"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "7d1655f4ef087badeaac3f906178b38063ad76a3046783180d6bf6905fd6236a"
+      "sha256": "0ffd7cfd0ede099eb969065dbe19e1649f81884610ab35599daf99026c414988"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "b056d19c2e66a84fe099430da27759a4446fb93e44e95e024afab2c565682913"
+      "sha256": "0c11180b4a67db9bbda7ce747655a3a265c8f42d0fee28d1eea576f384657500"
     },
     {
       "path": "fixtures/negative/population-members-rebound.json",
-      "sha256": "61a8a1a3dad61f0953bf4baa5ca6ef5cf7a367dece9cdd78298dce47943e93c3"
+      "sha256": "89f25f9a7144b5738467a39e07565f57a1c32e8bc6a600190dcc8d1ff0f45b6b"
+    },
+    {
+      "path": "fixtures/negative/preresult-receipt-dropped.json",
+      "sha256": "25cd37a12f5903d536b5047c84052198b3de26e785458c7db09735c76df4d360"
+    },
+    {
+      "path": "fixtures/negative/promotion-stage-authorized.json",
+      "sha256": "bb47c4357b37b4aac5af3100d86d19f1ccefc4e205e6db442b4081dfeb59b385"
     },
     {
       "path": "fixtures/negative/release-owner-person.json",
-      "sha256": "c11f731a13dd524216983728803be160ac8c111ed1880bcfcba0cd2c21682dc3"
+      "sha256": "f1b5752720a685f6822d5e9a99bfb5e5579898822a9e3196122e5d24456472e8"
     },
     {
       "path": "fixtures/negative/variant-configuration.json",
-      "sha256": "12511530c497ba3a36be6eb563592dc3f023cc53ea7d553e664fe521e9217b34"
+      "sha256": "8b33b5544d1214a2cb1c1d9ca48d6d44992caf6c165eaccfcf0081f4b42bfc99"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -69,7 +77,7 @@
     },
     {
       "path": "schemas/promotion-protocol.schema.json",
-      "sha256": "6177d905d8d1bba1355b364881335cfb6e50726a361f40412642136a4cfec324"
+      "sha256": "7241f551de78d2f85049c5a8622ac7c5178a4dc918c8ed63048ee2962b54cdf7"
     },
     {
       "path": "schemas/recorded-empty-outcome.schema.json",
@@ -85,7 +93,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "6d450eb27e9c12a886bd73c74e2e560fd0dab7499e86ecbda3dc526b36871f24"
+      "sha256": "de6e4b27708581b87f065c2ecc7fb08b0095666af52dd63ff9884eb3fdf00a04"
     }
   ],
   "linear_issue": "CSL-216",
@@ -130,6 +138,14 @@
     {
       "expect": "measured_costs_on_unrun_experiment",
       "path": "fixtures/negative/measured-costs.json"
+    },
+    {
+      "expect": "promotion_stage_authorized",
+      "path": "fixtures/negative/promotion-stage-authorized.json"
+    },
+    {
+      "expect": "promotion_gates",
+      "path": "fixtures/negative/preresult-receipt-dropped.json"
     }
   ],
   "outcome": "O4",

@@ -37,6 +37,8 @@ FAILURES = (
     "O4 negative control FAIL unbound_population:",
     "O4 negative control FAIL metric_registry:",
     "O4 negative control FAIL measured_costs_on_unrun_experiment:",
+    "O4 negative control FAIL promotion_stage_authorized:",
+    "O4 negative control FAIL promotion_gates:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -62,10 +64,10 @@ def test_o4_negative_controls_fail_as_designed(capsys) -> None:
         sys.stdout.flush()
     assert completed.returncode == 0, completed.stderr
     lines = completed.stdout.splitlines()
-    assert len(lines) == 11
+    assert len(lines) == 13
     for line, prefix in zip(lines, FAILURES):
         assert line.startswith(prefix)
-    assert lines[10] == CHECKED
+    assert lines[12] == CHECKED
     assert "PASS" not in completed.stdout
     assert "contract_frozen" not in completed.stdout
     source = (O4 / "validate.py").read_text(encoding="utf-8")

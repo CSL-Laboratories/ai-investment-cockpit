@@ -313,12 +313,43 @@
     "stages": [
       {
         "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "packet_and_manifest_digests_pinned_to_separately_accepted_preresult_receipt",
+            "independent_verifier_rerun_authorized"
+          ],
+          "required_evidence": [
+            "preresult_receipt",
+            "verifier_rerun_record"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "replay_output_recorded_and_matched_to_receipt_digests"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
         "id": "replay",
         "order": 1,
         "requires_prior_stage": null
       },
       {
         "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "replay_exit_gates_met"
+          ],
+          "required_evidence": [
+            "replay_output_record"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "demo_output_recorded",
+            "outcome_routed_to_release_owner_for_decision"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
         "id": "demo",
         "order": 2,
         "requires_prior_stage": "replay"
