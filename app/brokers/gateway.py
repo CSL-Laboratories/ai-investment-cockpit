@@ -218,10 +218,11 @@ class OrderGateway:
 
     @property
     def execution_scope(self) -> str:
-        """Transport scope pinned at construction.
+        """Scope pinned at construction for this gateway's own mode check.
 
-        CSL-218 profile handoff reads this and refuses anything other than the
-        paper transport. The property has no setter; it cannot widen scope.
+        Profile handoff does not treat this attribute as paper authority. A
+        caller can pass ``execution_scope="paper"`` to ``OrderGateway``. Paper
+        admission is the ``PaperOrderGateway`` type.
         """
         return self._execution_scope
 
@@ -1126,6 +1127,34 @@ class OrderGateway:
             token_nonce=token_nonce, producing_runtime=producing_runtime,
             analysis_vendor=analysis_vendor, analysis_generation=analysis_generation, clock=clock,
         )
+
+
+class PaperOrderGateway(OrderGateway):
+    """Paper transport by concrete type, not by a caller-set scope string.
+
+    Construction forces the paper scope and the admitted paper adapter. A
+    plain ``OrderGateway(..., execution_scope="paper")`` is a different type
+    and is not paper authority for a profile handoff.
+    """
+
+    def __init__(self, broker, **kwargs):
+        from brokers.alpaca_paper import AlpacaPaperBroker
+
+        if not isinstance(broker, AlpacaPaperBroker):
+            raise ValueError("paper gateway requires the admitted paper adapter")
+        if kwargs.get("execution_scope", "paper") != "paper":
+            raise ValueError("paper gateway cannot select another scope")
+        kwargs["execution_scope"] = "paper"
+        super().__init__(broker, **kwargs)
+
+    def submit(self, order, **kwargs):
+        from brokers.alpaca_paper import AlpacaPaperBroker
+
+        if self._execution_scope != "paper" or not isinstance(self._broker, AlpacaPaperBroker):
+            return GateOutcome(
+                False, "transport_scope", "paper gateway pin does not match its type"
+            )
+        return super().submit(order, **kwargs)
 
 
 def _verdict_get(verdict, key):

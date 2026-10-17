@@ -19,8 +19,11 @@ SEC-04 HALT sentinel: releasing a profile stop must not clear an operator kill.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -31,7 +34,14 @@ from pathlib import Path
 from typing import Iterator, Mapping
 
 SCHEMA_VERSION = 1
+# Profile documents stay at schema 1. The sqlite user_version is separate so a
+# column migration does not require a document bump. Version 1 is the order_ref
+# store. Version 2 adds the durable handoff state.
+STORE_USER_VERSION = 2
+ADMITTED_STORE_VERSIONS = frozenset({0, 1, STORE_USER_VERSION})
 ADMITTED_ENVIRONMENTS = frozenset({"paper", "dry_run"})
+_MODEL_OUTPUT_KEYS = frozenset({"provider", "model_version", "summary", "confidence"})
+_HANDOFF_STATES = frozenset({"pending", "in_progress", "failed", "completed"})
 RUNTIME_PROFILE_CLASSES = frozenset({"A", "B"})
 FUTURE_PROFILE_CLASS = "C"
 MAX_PROFILE_LIFETIME = timedelta(days=7)
@@ -166,10 +176,40 @@ class ProfiledHandoff:
     outcome: object | None = None
 
 
+@dataclass(frozen=True)
+class StopCapability:
+    """Capability minted at install. The stop-owner string is not this token."""
+
+    profile_id: str
+    token: str
+
+
 def model_output_grants_authority(model_output: object) -> bool:
     """Provider output is evidence. It is never a credential or a grant."""
     del model_output
     return False
+
+
+def _validate_model_output(model_output: object) -> None:
+    """Accept an empty output or a closed evidence object. Never read it as a grant.
+
+    Unknown keys are the grant-shaped fields a caller could use to smuggle
+    authority, so they fail closed before a profile is loaded or a budget is
+    reserved.
+    """
+    if model_output is None:
+        return
+    if not isinstance(model_output, dict):
+        raise ProfileRefused("model_output", "model output must be an object")
+    if set(model_output) - _MODEL_OUTPUT_KEYS:
+        raise ProfileRefused("model_output", "model output contains an unknown field")
+    for key in ("provider", "model_version", "summary"):
+        if key in model_output and type(model_output[key]) is not str:
+            raise ProfileRefused("model_output", "model output field is malformed")
+    if "confidence" in model_output:
+        value = model_output["confidence"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= float(value) <= 1:
+            raise ProfileRefused("model_output", "model output confidence is malformed")
 
 
 def load_profile(document: Mapping, *, now: datetime) -> AuthorityProfile:
@@ -305,7 +345,8 @@ _SCHEMA = (
         revoked INTEGER NOT NULL DEFAULT 0,
         revoked_by TEXT,
         revoked_at TEXT,
-        revoke_reason TEXT
+        revoke_reason TEXT,
+        stop_capability_hash TEXT
     )
     """,
     """
@@ -347,6 +388,7 @@ _SCHEMA = (
         notional TEXT NOT NULL,
         created_at TEXT NOT NULL,
         handoff_done INTEGER NOT NULL DEFAULT 0,
+        handoff_state TEXT NOT NULL DEFAULT 'pending',
         order_ref TEXT
     )
     """,
@@ -374,7 +416,9 @@ class AuthorityProfileStore:
         self._conn.row_factory = sqlite3.Row
         self._ensure_schema()
 
-    def install(self, document: Mapping, *, actor: str, now: datetime) -> AuthorityProfile:
+    def install(
+        self, document: Mapping, *, actor: str, now: datetime, capability: object = None
+    ) -> tuple[AuthorityProfile, StopCapability]:
         profile = load_profile(document, now=now)
         self._require_actor(actor, expected=profile.stop_owner)
         with self._txn() as conn:
@@ -387,7 +431,8 @@ class AuthorityProfileStore:
                     raise ProfileRefused("profile_changed", "installed profile body cannot change")
                 if existing["revoked"]:
                     raise ProfileRefused("revoked", "profile is revoked")
-                return profile
+                self._require_capability(conn, profile.profile_id, capability)
+                return profile, _as_capability(profile.profile_id, capability)
             self._refuse_if_blocked(conn, profile)
             occupied = conn.execute(
                 """
@@ -401,12 +446,14 @@ class AuthorityProfileStore:
                 raise ProfileRefused(
                     "perimeter_occupied", "an active profile already binds this perimeter"
                 )
+            token = secrets.token_urlsafe(32)
             conn.execute(
                 """
                 INSERT INTO profiles (
                     profile_id, canonical, account_id, venue, environment, stop_owner,
-                    recovery_owner, expires_at, installed_by, installed_at, revoked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    recovery_owner, expires_at, installed_by, installed_at, revoked,
+                    stop_capability_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 (
                     profile.profile_id,
@@ -419,6 +466,7 @@ class AuthorityProfileStore:
                     profile.expires_at.isoformat(),
                     actor,
                     now.astimezone(timezone.utc).isoformat(),
+                    _capability_hash(token),
                 ),
             )
             conn.execute(
@@ -444,14 +492,17 @@ class AuthorityProfileStore:
                 ),
             )
             self._tighten_ceiling(conn, profile)
-        return profile
+        return profile, StopCapability(profile.profile_id, token)
 
-    def revoke(self, profile_id: str, *, actor: str, now: datetime, reason: str) -> None:
+    def revoke(
+        self, profile_id: str, *, actor: str, now: datetime, reason: str, capability: object = None
+    ) -> None:
         _require_now(now)
         _reason(reason)
         with self._txn() as conn:
             profile = self._profile_row(conn, profile_id)
             self._require_actor(actor, expected=profile.stop_owner)
+            self._require_capability(conn, profile_id, capability)
             if profile.revoked:
                 return
             conn.execute(
@@ -463,14 +514,28 @@ class AuthorityProfileStore:
                 (actor, now.astimezone(timezone.utc).isoformat(), reason, profile_id),
             )
 
-    def kill(self, profile_id: str, *, actor: str, now: datetime, reason: str) -> None:
-        self._set_stop(profile_id, actor=actor, now=now, reason=reason, column="kill")
+    def kill(
+        self, profile_id: str, *, actor: str, now: datetime, reason: str, capability: object = None
+    ) -> None:
+        self._set_stop(
+            profile_id, actor=actor, now=now, reason=reason, column="kill", capability=capability
+        )
 
-    def hold(self, profile_id: str, *, actor: str, now: datetime, reason: str) -> None:
-        self._set_stop(profile_id, actor=actor, now=now, reason=reason, column="hold")
+    def hold(
+        self, profile_id: str, *, actor: str, now: datetime, reason: str, capability: object = None
+    ) -> None:
+        self._set_stop(
+            profile_id, actor=actor, now=now, reason=reason, column="hold", capability=capability
+        )
 
     def release_stop(
-        self, profile_id: str, *, actor: str, now: datetime, reconciled: bool
+        self,
+        profile_id: str,
+        *,
+        actor: str,
+        now: datetime,
+        reconciled: bool,
+        capability: object = None,
     ) -> None:
         """Clear a profile kill and hold. Recovery ownership cannot do this."""
         _require_now(now)
@@ -479,7 +544,25 @@ class AuthorityProfileStore:
         with self._txn() as conn:
             profile = self._profile_row(conn, profile_id)
             self._require_actor(actor, expected=profile.stop_owner)
-            conn.execute(
+            self._require_capability(conn, profile_id, capability)
+            if profile.revoked or profile.expires_at <= now:
+                code = "revoked" if profile.revoked else "expired"
+                raise ProfileRefused(
+                    code, "a revoked or expired profile cannot clear the perimeter stop"
+                )
+            occupant = conn.execute(
+                """
+                SELECT profile_id FROM profiles
+                WHERE account_id = ? AND venue = ? AND environment = ?
+                  AND revoked = 0 AND expires_at > ?
+                """,
+                (*profile.binding(), now.astimezone(timezone.utc).isoformat()),
+            ).fetchone()
+            if occupant is None or occupant["profile_id"] != profile.profile_id:
+                raise ProfileRefused(
+                    "revoked", "only the current unrevoked profile can clear the perimeter stop"
+                )
+            updated = conn.execute(
                 """
                 UPDATE controls
                 SET kill = 0, hold = 0, kill_actor = NULL, hold_actor = NULL,
@@ -488,6 +571,8 @@ class AuthorityProfileStore:
                 """,
                 (now.astimezone(timezone.utc).isoformat(), *profile.binding()),
             )
+            if updated.rowcount != 1:
+                raise ProfileRefused("store", "stop ledger is missing")
 
     def authorize(
         self,
@@ -500,8 +585,15 @@ class AuthorityProfileStore:
         now: datetime,
         model_output: object = None,
         order_ref: str | None = None,
+        provider: str | None = None,
+        model_version: str | None = None,
+        adapter: str | None = None,
+        venue: str | None = None,
+        venue_family: str | None = None,
+        capability: object = None,
     ) -> Reservation:
         """Reserve one action, or return the original reservation for the same id."""
+        _validate_model_output(model_output)
         if model_output_grants_authority(model_output):
             raise ProfileRefused("model_authority", "model output cannot grant authority")
         if order_ref is not None:
@@ -512,8 +604,14 @@ class AuthorityProfileStore:
         with self._txn() as conn:
             profile = self._load_installed(conn, profile_id, now=now)
             self._require_actor(actor, expected=profile.stop_owner)
+            self._require_capability(conn, profile_id, capability)
             if action not in profile.allowed_actions:
                 raise ProfileRefused("action_refused", "action is outside the profile")
+            _require_match(provider, profile.provider, "binding_provider")
+            _require_match(model_version, profile.model_version, "binding_model")
+            _require_match(adapter, profile.adapter, "binding_adapter")
+            _require_match(venue, profile.venue, "binding_venue")
+            _require_match(venue_family, profile.venue_family, "binding_venue_family")
             self._refuse_if_blocked(conn, profile)
             existing = conn.execute(
                 "SELECT * FROM reservations WHERE client_order_id = ?",
@@ -583,8 +681,8 @@ class AuthorityProfileStore:
                 """
                 INSERT INTO reservations (
                     client_order_id, profile_id, account_id, venue, environment,
-                    action, notional, created_at, handoff_done, order_ref
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    action, notional, created_at, handoff_done, handoff_state, order_ref
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?)
                 """,
                 (
                     client_id,
@@ -621,17 +719,36 @@ class AuthorityProfileStore:
             raise ProfileRefused("store", "consumption ledger is missing")
         return Decimal(row["reserved_notional"]), int(row["reserved_count"])
 
-    def claim_handoff(self, client_order_id: str) -> str:
-        """Mark a reservation handed off. A stop claimed here never reaches the gateway."""
+    def claim_handoff(
+        self, client_order_id: str, *, now: datetime, awaiting_submit: bool = False
+    ) -> str:
+        """Advance a reservation. Only ``completed`` skips a later gateway submit.
+
+        ``in_progress`` means a previous claim did not finish ``OrderGateway.submit``,
+        so the caller must enter the gateway again. Revocation, expiry, kill, hold,
+        and a missing controls row leave the row pending or in progress. They do
+        not mark it complete.
+        """
+        _require_now(now)
+        client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
             row = conn.execute(
                 "SELECT * FROM reservations WHERE client_order_id = ?",
-                (client_order_id,),
+                (client_id,),
             ).fetchone()
             if row is None:
                 raise ProfileRefused("unknown_reservation", "reservation is missing")
-            if row["handoff_done"]:
+            state = row["handoff_state"]
+            if state not in _HANDOFF_STATES:
+                raise ProfileRefused("store", "handoff state is not admitted")
+            if state == "completed" or int(row["handoff_done"]):
                 return "replay"
+            try:
+                self._load_installed(conn, row["profile_id"], now=now)
+            except ProfileRefused as exc:
+                if exc.code in {"revoked", "expired"}:
+                    return exc.code
+                raise
             control = conn.execute(
                 """
                 SELECT kill, hold FROM controls
@@ -640,17 +757,100 @@ class AuthorityProfileStore:
                 (row["account_id"], row["venue"], row["environment"]),
             ).fetchone()
             blocked = _control_code(control)
+            if blocked == "store":
+                raise ProfileRefused("store", "stop ledger is missing")
             if blocked:
                 # A blocked reservation stays pending so a retry after release can run.
                 return blocked
-            conn.execute(
-                "UPDATE reservations SET handoff_done = 1 WHERE client_order_id = ?",
-                (client_order_id,),
+            if state == "in_progress":
+                return "in_progress"
+            if state == "failed":
+                if not awaiting_submit:
+                    return "failed"
+                updated = conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'in_progress', handoff_done = 0
+                    WHERE client_order_id = ? AND handoff_state = 'failed' AND handoff_done = 0
+                    """,
+                    (client_id,),
+                )
+                if updated.rowcount != 1:
+                    raise ProfileRefused("store", "handoff claim was not admitted")
+                return "retry"
+            target = "in_progress" if awaiting_submit else "completed"
+            done = 0 if awaiting_submit else 1
+            updated = conn.execute(
+                """
+                UPDATE reservations
+                SET handoff_state = ?, handoff_done = ?
+                WHERE client_order_id = ? AND handoff_state = 'pending' AND handoff_done = 0
+                """,
+                (target, done, client_id),
             )
-            return "claimed"
+            if updated.rowcount != 1:
+                raise ProfileRefused("store", "handoff claim was not admitted")
+            return "claimed" if awaiting_submit else "completed"
+
+    def complete_handoff(self, client_order_id: str) -> None:
+        """Record that ``OrderGateway.submit`` returned.
+
+        A crash between claim and this update leaves ``in_progress``. The next
+        claim enters the gateway again. ``completed`` is the only skip.
+        """
+        client_id = _ident(client_order_id, code="client_order_id")
+        with self._txn() as conn:
+            updated = conn.execute(
+                """
+                UPDATE reservations
+                SET handoff_state = 'completed', handoff_done = 1
+                WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                """,
+                (client_id,),
+            )
+            if updated.rowcount != 1:
+                raise ProfileRefused("store", "handoff was not in progress")
+
+    def fail_handoff(self, client_order_id: str) -> None:
+        """Record a returned refusal. The client id stays reusable and is not an order."""
+        client_id = _ident(client_order_id, code="client_order_id")
+        with self._txn() as conn:
+            updated = conn.execute(
+                """
+                UPDATE reservations
+                SET handoff_state = 'failed', handoff_done = 0
+                WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                """,
+                (client_id,),
+            )
+            if updated.rowcount != 1:
+                raise ProfileRefused("store", "handoff was not in progress")
+
+    def reconcile_failed_handoff(self, client_order_id: str) -> str:
+        """Confirm a failed submit is not a completed order.
+
+        Reconciliation leaves the row ``failed`` and the client id reusable.
+        It does not write ``completed``.
+        """
+        client_id = _ident(client_order_id, code="client_order_id")
+        with self._txn() as conn:
+            row = conn.execute(
+                "SELECT handoff_state, handoff_done FROM reservations WHERE client_order_id = ?",
+                (client_id,),
+            ).fetchone()
+            if row is None or row["handoff_state"] != "failed" or int(row["handoff_done"]):
+                raise ProfileRefused("store", "failed handoff is not reconcilable")
+        return "failed"
 
     def _set_stop(
-        self, profile_id: str, *, actor: str, now: datetime, reason: str, column: str
+        self,
+        profile_id: str,
+        *,
+        actor: str,
+        now: datetime,
+        reason: str,
+        column: str,
+        capability: object = None,
     ) -> None:
         _require_now(now)
         _reason(reason)
@@ -659,6 +859,7 @@ class AuthorityProfileStore:
         with self._txn() as conn:
             stored = self._profile_row(conn, profile_id)
             self._require_actor(actor, expected=stored.profile.stop_owner)
+            self._require_capability(conn, profile_id, capability)
             stamp = now.astimezone(timezone.utc).isoformat()
             binding = stored.profile.binding()
             if column == "kill":
@@ -685,7 +886,7 @@ class AuthorityProfileStore:
     def _ensure_schema(self) -> None:
         with self._txn() as conn:
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, SCHEMA_VERSION):
+            if version not in ADMITTED_STORE_VERSIONS:
                 raise ProfileRefused("store", "profile store version is not admitted")
             for statement in _SCHEMA:
                 conn.execute(statement)
@@ -694,8 +895,29 @@ class AuthorityProfileStore:
             }
             if "order_ref" not in columns:
                 # Legacy v1 store: legacy rows keep NULL and bind once at handoff.
+                # ADD COLUMN appends. A nullable TEXT column needs no default.
                 conn.execute("ALTER TABLE reservations ADD COLUMN order_ref TEXT")
-            conn.execute("PRAGMA user_version = 1")
+            if "handoff_state" not in columns:
+                # NOT NULL on an added column requires a non-null default so
+                # existing rows satisfy the constraint.
+                conn.execute(
+                    "ALTER TABLE reservations ADD COLUMN handoff_state "
+                    "TEXT NOT NULL DEFAULT 'pending'"
+                )
+            conn.execute(
+                """
+                UPDATE reservations
+                SET handoff_state = 'completed'
+                WHERE handoff_done = 1
+                  AND (handoff_state IS NULL OR handoff_state = 'pending')
+                """
+            )
+            profile_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
+            }
+            if "stop_capability_hash" not in profile_columns:
+                conn.execute("ALTER TABLE profiles ADD COLUMN stop_capability_hash TEXT")
+            conn.execute(f"PRAGMA user_version = {STORE_USER_VERSION}")
 
     def _load_installed(self, conn: sqlite3.Connection, profile_id: str, *, now: datetime):
         sql = conn.execute(
@@ -779,6 +1001,8 @@ class AuthorityProfileStore:
             profile.binding(),
         ).fetchone()
         code = _control_code(control)
+        if code == "store":
+            raise ProfileRefused("store", "stop ledger is missing")
         if code == "kill_active":
             raise ProfileRefused("kill_active", "kill is active for this perimeter")
         if code == "hold_active":
@@ -787,6 +1011,18 @@ class AuthorityProfileStore:
     def _require_actor(self, actor: str, *, expected: str) -> None:
         if type(actor) is not str or actor != expected:
             raise ProfileRefused("unauthenticated", "actor is not the stop owner")
+
+    def _require_capability(self, conn: sqlite3.Connection, profile_id: str, capability: object) -> None:
+        token = _capability_token(capability)
+        row = conn.execute(
+            "SELECT stop_capability_hash FROM profiles WHERE profile_id = ?",
+            (profile_id,),
+        ).fetchone()
+        stored = None if row is None else row["stop_capability_hash"]
+        if type(stored) is not str or not stored:
+            raise ProfileRefused("unauthenticated", "stop capability is not bound")
+        if not hmac.compare_digest(_capability_hash(token), stored):
+            raise ProfileRefused("unauthenticated", "stop capability does not match")
 
     @contextmanager
     def _txn(self) -> Iterator[sqlite3.Connection]:
@@ -830,20 +1066,32 @@ def handoff_to_gateway(
     submit_args: tuple = (),
     submit_kwargs: Mapping | None = None,
     model_output: object = None,
+    provider: str | None = None,
+    model_version: str | None = None,
+    adapter: str | None = None,
+    venue: str | None = None,
+    venue_family: str | None = None,
+    capability: object = None,
 ) -> ProfiledHandoff:
     """Reserve the action, then call ``OrderGateway.submit`` only for paper submit.
 
-    Dry-run and proposal actions stop at the reservation. A non-paper gateway
-    transport is refused before any reservation. A replay does not call submit.
+    The gateway must be a real ``OrderGateway`` whose broker is the admitted
+    paper adapter. Dry-run and proposal actions stop at the reservation. A
+    refused transport does not reserve budget. ``completed`` is the only state
+    that skips submit. ``in_progress`` enters submit again.
     """
+    _validate_model_output(model_output)
     if model_output_grants_authority(model_output):
         raise ProfileRefused("model_authority", "model output cannot grant authority")
     kwargs = dict(submit_kwargs or {})
     order_ref = None
     if action == "submit_paper":
-        scope = getattr(gateway, "execution_scope", None)
-        if scope != "paper":
-            raise ProfileRefused("transport_scope", "paper profile refuses a non-paper transport")
+        _require_paper_gateway(gateway)
+        runtime = kwargs.get("producing_runtime")
+        if type(provider) is not str or type(runtime) is not str or runtime != provider:
+            raise ProfileRefused(
+                "binding_provider", "producing runtime does not match the profile provider"
+            )
         order = submit_args[0] if submit_args else kwargs.get("order")
         if order is None:
             raise ProfileRefused("order_required", "paper submit requires the gateway order")
@@ -872,18 +1120,42 @@ def handoff_to_gateway(
         now=now,
         model_output=model_output,
         order_ref=order_ref,
+        provider=provider,
+        model_version=model_version,
+        adapter=adapter,
+        venue=venue,
+        venue_family=venue_family,
+        capability=capability,
     )
-    claim = store.claim_handoff(reservation.client_order_id)
-    if claim == "replay":
-        return ProfiledHandoff(reservation.client_order_id, False, True, None)
-    if claim in {"kill_active", "hold_active"}:
-        raise ProfileRefused(claim, "stop is active for this perimeter")
-    if claim != "claimed":
+    claim = store.claim_handoff(
+        reservation.client_order_id,
+        now=now,
+        awaiting_submit=(action == "submit_paper"),
+    )
+    if claim in {"replay", "completed"}:
+        return ProfiledHandoff(
+            reservation.client_order_id, False, claim == "replay" or reservation.replayed, None
+        )
+    if claim in {"kill_active", "hold_active", "revoked", "expired"}:
+        raise ProfileRefused(claim, "handoff claim was refused")
+    if claim not in {"claimed", "in_progress", "retry"}:
         raise ProfileRefused("store", "handoff claim was not admitted")
-    if action != "submit_paper":
-        return ProfiledHandoff(reservation.client_order_id, False, reservation.replayed, None)
     outcome = gateway.submit(*submit_args, **kwargs)
-    return ProfiledHandoff(reservation.client_order_id, True, reservation.replayed, outcome)
+    if getattr(outcome, "ok", None) is not True:
+        store.fail_handoff(reservation.client_order_id)
+        return ProfiledHandoff(
+            reservation.client_order_id,
+            True,
+            claim != "claimed" or reservation.replayed,
+            outcome,
+        )
+    store.complete_handoff(reservation.client_order_id)
+    return ProfiledHandoff(
+        reservation.client_order_id,
+        True,
+        claim == "in_progress" or claim == "retry" or reservation.replayed,
+        outcome,
+    )
 
 
 def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:
@@ -896,9 +1168,51 @@ def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:
     return str(row["account_id"])
 
 
+def _require_paper_gateway(gateway) -> None:
+    """Admit only the paper gateway type. A caller-set scope string is not proof."""
+    from brokers.alpaca_paper import AlpacaPaperBroker
+    from brokers.gateway import PaperOrderGateway
+
+    if type(gateway) is not PaperOrderGateway:
+        raise ProfileRefused("transport", "paper handoff requires the paper order gateway type")
+    if not isinstance(getattr(gateway, "_broker", None), AlpacaPaperBroker):
+        raise ProfileRefused(
+            "binding_adapter", "paper handoff requires the admitted paper adapter"
+        )
+
+
+def _capability_token(capability: object) -> str:
+    if isinstance(capability, StopCapability):
+        token = capability.token
+    elif type(capability) is str:
+        token = capability
+    else:
+        raise ProfileRefused("unauthenticated", "stop capability is required")
+    if len(token) < 20:
+        raise ProfileRefused("unauthenticated", "stop capability is required")
+    return token
+
+
+def _capability_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _as_capability(profile_id: str, capability: object) -> StopCapability:
+    if isinstance(capability, StopCapability):
+        if capability.profile_id != profile_id:
+            raise ProfileRefused("unauthenticated", "stop capability does not match")
+        return capability
+    return StopCapability(profile_id, _capability_token(capability))
+
+
+def _require_match(value: object, expected: str, code: str) -> None:
+    if type(value) is not str or value != expected:
+        raise ProfileRefused(code, "execution binding does not match the profile")
+
+
 def _control_code(control) -> str | None:
     if control is None:
-        return None
+        return "store"
     if int(control["kill"]):
         return "kill_active"
     if int(control["hold"]):

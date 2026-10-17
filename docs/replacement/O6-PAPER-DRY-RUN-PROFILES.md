@@ -28,22 +28,46 @@ consumed.
 
 ## Enforcement
 
-- The stop owner is the only actor who may install, revoke, kill, hold, release,
-  or reserve. The recovery owner cannot clear a stop and cannot reserve an action.
+- The stop-owner string is a label, not a credential. Install mints a stop
+  capability and stores only its hash. Revoke, kill, hold, release, and reserve
+  require that capability. Presenting the owner string is refused.
 - Release requires an explicit reconciliation flag. A false flag leaves the stop
   in place.
 - Kill and hold are rows in the profile store. A new process that opens the same
   file still refuses the perimeter.
 - This fragment does not raise or clear the process-wide halt sentinel. Clearing
   a profile stop must not clear an operator kill. That coupling is an open decision.
-- `submit_paper` is handed to the existing `OrderGateway.submit` path after the
-  reservation. Risk pass, mode, approval, and the single-use capability still
-  apply. A profile reservation that the gateway refuses does not reach the broker.
-- A non-paper gateway transport is refused before reservation.
+- `submit_paper` is handed to a `PaperOrderGateway`. That class is the paper
+  transport. A caller-set `execution_scope` on `OrderGateway`, including the
+  value `paper`, is refused before reservation. The broker must still be the
+  admitted Alpaca paper adapter. Risk pass, mode, approval, and the single-use
+  capability still apply. A profile reservation that the gateway refuses does
+  not reach the broker.
+- A non-paper gateway type is refused before reservation.
+- Provider, model version, adapter, venue, and venue family are compared with
+  the profile before a reservation. An omitted or different binding is refused.
+  For `submit_paper`, `producing_runtime` must be that same provider.
+- A revoked or expired profile cannot clear the perimeter kill or hold. Release
+  is limited to the current unrevoked, unexpired occupant.
+- Claim rechecks revocation and expiry. A missing controls row is a store
+  refusal, not an open stop.
+- Model output is either absent or a closed evidence object. Unknown fields,
+  including a grant-shaped object, are refused. The object is never a grant.
+- Handoff state is `pending`, `in_progress`, `failed`, or `completed`. Claim of
+  a paper submit writes `in_progress` before `PaperOrderGateway.submit`. A
+  returned success writes `completed`. A returned refusal writes `failed` and
+  leaves the client id reusable: the same id enters the gateway again, and
+  reconciliation of a failed row does not mark it complete. A crash between
+  claim and return stays `in_progress`, and the retry enters the gateway again.
+  `completed` is the only state that skips submit. The gateway's own client
+  order id remains the broker reconciliation.
 - `propose` and `submit_dry_run` do not call the gateway and do not open a transport.
 - Client order ids are idempotent. A replay returns the original reservation and
   does not add consumption or call the gateway again. A different notional or
-  action for the same id is refused.
+  action for the same id is refused. A reservation with no order reference can
+  be bound once, before the handoff completes.
+- An older store without `order_ref` gains that column on open. Rows that were
+  already handed off become `completed`.
 - Consumption is reserved before the gateway call. A refused gateway call does
   not refund the reservation.
 
@@ -53,7 +77,7 @@ consumed.
 |---|---|
 | Live environment | The loader and handoff refuse every environment other than `paper` and `dry_run`. |
 | Live credential path | This fragment has no broker secret, no credential-store read, and no live adapter. |
-| Live transport | Profile handoff refuses a gateway whose pinned transport is not paper. |
+| Live transport | Profile handoff admits only `PaperOrderGateway`. A caller-set scope string is not paper authority. |
 | Profile C | Documented future target. No schema branch can load it. |
 | SEC-11 and the other pre-live gates | Unchanged. This fragment does not satisfy them. |
 | Human live receipt | Not issued. Lucas retains live enablement. |
@@ -63,9 +87,9 @@ consumed.
 
 ## Unresolved decisions
 
-1. Whether profile documents must be cryptographically signed. This slice records
-   the stop-owner actor and fails closed on any other actor. It does not add a
-   signature scheme.
+1. Whether profile documents must be cryptographically signed. Stop and clear
+   now require an install-minted capability, not the owner string. This slice
+   still does not sign the profile document.
 2. Whether a profile kill must also raise the process-wide halt sentinel. It does
    not, so a profile release cannot clear an operator kill.
 3. Whether a cancel or a gateway refusal should release consumed budget. It does
@@ -97,3 +121,14 @@ and they do not admit a live profile.
   reflect production prices.
 - [Kalshi create-order quick start](https://docs.kalshi.com/getting_started/quick_start_create_order)
   uses a client order id so a retry cannot create a second order.
+- [SQLite ALTER TABLE](https://sqlite.org/lang_altertable.html) appends a column.
+  A `NOT NULL` column needs a default so existing rows pass the new constraint.
+- [AWS transactional outbox](https://github.com/aws-samples/transactional-outbox-pattern/blob/main/README.md)
+  notes that a database update and the later notification can diverge, so the
+  consumer must be idempotent.
+- [Idempotent outbox](https://github.com/vgrente/idempotent-outbox-pattern/tree/main)
+  treats the database row as the consistency anchor: at-least-once delivery plus
+  an idempotent write.
+- [SEC Trading and Markets FAQ](https://www.sec.gov/rules-regulations/staff-guidance/trading-markets-frequently-asked-questions/divisionsmarketregfaq-0)
+  describes Rule 15c3-5 pre-trade credit thresholds. The excerpt is thin and is
+  not a live-admission source.
