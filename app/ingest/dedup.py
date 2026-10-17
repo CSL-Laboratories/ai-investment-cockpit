@@ -83,7 +83,9 @@ def _rebuild_core(capacity, keys):
     native = _NATIVE
     if native is None or not _rust_cap(capacity):
         return None
-    if any(not isinstance(key, str) for key in keys):
+    # Exact ``str`` only. A subclass can override equality, and PyO3 would
+    # reduce it to the text.
+    if any(type(key) is not str for key in keys):
         return None
     core = native.DedupCore(capacity)
     for key in keys:
@@ -194,8 +196,14 @@ def _new_dedup(cls, capacity) -> Dedup:
 
 
 def _str_script(ops) -> bool:
+    """True when every key is an exact ``str`` the extension can store.
+
+    A ``str`` subclass may override equality. ``isinstance`` would send it
+    across PyO3, which keeps only the text, so that script stays on the
+    OrderedDict with ``Dedup.add``.
+    """
     for op, key in ops:
-        if op not in ("a", "d") or not isinstance(key, str):
+        if op not in ("a", "d") or type(key) is not str:
             return False
     return True
 
@@ -203,7 +211,8 @@ def _str_script(ops) -> bool:
 def dedup_replay(capacity: int, ops: list[tuple[str, object]]) -> list[bool]:
     """Run an add/discard script.
 
-    A script of ``str`` keys uses the extension in one call. A lone surrogate
+    A script of exact ``str`` keys uses the extension in one call. A ``str``
+    subclass stays on the OrderedDict so its equality is preserved. A lone surrogate
     cannot cross as UTF-8, so that script is escaped and retried once. Any
     other hashable stays on the OrderedDict and matches ``Dedup.add`` instead
     of raising only on the extension. ``op`` is ``"a"`` or ``"d"``.

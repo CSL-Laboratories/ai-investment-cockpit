@@ -259,6 +259,22 @@ def test_a_str_subclass_keeps_python_equality():
     assert seen._core is None
 
 
+def test_a_str_subclass_replay_keeps_python_equality(monkeypatch):
+    """Batch replay of a ``str`` subclass matches ``Dedup.add``, not text equality."""
+    if DEDUP_BACKEND == "rust":
+        import cockpit_quant
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("str subclass replay entered the extension")
+
+        monkeypatch.setattr(cockpit_quant, "dedup_replay", boom)
+    first = _IdentityStr("x")
+    second = _IdentityStr("x")
+    ops = [("a", first), ("a", second), ("a", first)]
+    assert dedup_replay(4, ops) == [True, True, False]
+    assert _script(4, ops) == [True, True, False]
+
+
 @_needs_rust
 def test_a_non_str_key_agrees_when_a_rust_core_is_attached(monkeypatch):
     import cockpit_quant
