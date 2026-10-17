@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 GATE_PATH = ROOT / "scripts" / "ci" / "codex_gate.py"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "codex-gate.yml"
@@ -1461,23 +1463,43 @@ class WorkflowStructureTests(unittest.TestCase):
         self.assertIn("<!-- codex-gate:", source)
         self.assertIn("CODEX-GATE:", source)
 
-    def test_review_job_if_is_codex_only(self) -> None:
-        self.assertIn("chatgpt-codex-connector[bot]", self.text)
-        self.assertIn("github.event.pull_request.draft == false", self.text)
-        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
-        self.assertIn("group: codex-gate", self.text)
-        self.assertNotIn("github.run_id", self.text)
-        self.assertIn("github.event.repository.default_branch", self.text)
-        self.assertIn("persist-credentials: false", self.text)
-        self.assertIn("codex_gate.py is not on the default branch yet", self.text)
-        self.assertIn("event-paths", self.text)
-        self.assertIn("never checks out PR or fork code", self.text)
-        # Tests may check out same-repo PR code; they never receive the PAT.
-        event_paths_job = self.text.split("\n  event-paths:")[1]
-        self.assertIn(
-            "github.event.pull_request.head.repo.full_name == github.repository",
-            event_paths_job.split("runs-on:")[0],
-        )
+    def test_candidate_coordinator_uses_shared_writer_lock_and_trusted_policy(self) -> None:
+        doc = yaml.load(self.text, Loader=yaml.BaseLoader)
+        self.assertEqual(doc['on']['pull_request_review']['types'], ['submitted'])
+        self.assertEqual(doc['concurrency'], {'group': 'codex-gate', 'cancel-in-progress': 'false'})
+        scan, gate, tests = (doc['jobs'][name] for name in ('scan', 'gate', 'event-paths'))
+        self.assertEqual(gate['needs'], 'scan')
+        self.assertEqual(gate['concurrency'], {'group': 'claude-${{ matrix.pr }}',
+                                               'queue': 'max', 'cancel-in-progress': 'false'})
+        self.assertEqual(gate['strategy']['matrix']['pr'],
+                         "${{ fromJSON(needs.scan.outputs.prs || '[]') }}")
+        # Human review changes must wake reconciliation, including hold release.
+        # Exact reviewer identity is authenticated by the trusted helper.
+        self.assertEqual(' '.join(scan['if'].split()),
+                         "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || "
+                         'github.event.pull_request.head.repo.full_name == github.repository')
+        self.assertEqual(scan.get('permissions', doc['permissions']),
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'read'})
+        self.assertEqual(scan['steps'][1]['env'],
+                         {'GH_TOKEN': '${{ github.token }}', 'CANDIDATE_SCAN': 'true'})
+        self.assertEqual(gate['permissions'],
+                         {'contents': 'read', 'pull-requests': 'read', 'issues': 'write'})
+        for job in (scan, gate):
+            checkouts = [s for s in job['steps'] if s.get('uses') == 'actions/checkout@v4']
+            self.assertEqual(len(checkouts), 1)
+            self.assertEqual(checkouts[0]['with']['ref'], '${{ github.event.repository.default_branch }}')
+            self.assertEqual(checkouts[0]['with']['persist-credentials'], 'false')
+        execute = next(s for s in gate['steps'] if s.get('name') == 'Run Codex gate')
+        self.assertEqual(execute['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(execute['env']['CODEX_CANDIDATE_PR'], '${{ matrix.pr }}')
+        self.assertEqual(execute['env']['CODEX_TRIGGER_PAT'], '${{ secrets.CODEX_TRIGGER_PAT }}')
+        self.assertEqual(execute['env']['GH_TOKEN'], '${{ github.token }}')
+        # Same-repository tests may load PR code, but have no privileged secrets.
+        self.assertEqual(tests['permissions'], {'contents': 'read'})
+        self.assertEqual(' '.join(tests['if'].split()),
+                         "github.event_name == 'pull_request' && "
+                         'github.event.pull_request.head.repo.full_name == github.repository')
+        self.assertNotIn('secrets.', yaml.dump(tests))
 
     def test_claude_dispatch_triggers(self) -> None:
         self.assertIn("repository_dispatch:", self.claude)

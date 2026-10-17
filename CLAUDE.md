@@ -107,6 +107,13 @@ skipped if idle 24h), on `ci:full`, or on `workflow_dispatch`. Hetzner is not pa
 current package validation. This changes platform evidence only and does not waive any online,
 broker, witness, paper-day, or pre-live gate.
 
+The staged [CSL-259 candidate coordinator](docs/ci-candidate-readiness.md) requests
+all five Python and five Rust cells, including docs-only candidates, after an
+authenticated exact head/base/merge/tree independent READY and before human
+approval. It preserves human holds and manual label removal; persistent labels
+and legacy head-only review/CI are not proof. No repository protections or queue
+settings are activated by this code.
+
 ```bash
 cd app
 python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff

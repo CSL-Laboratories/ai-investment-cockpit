@@ -2,14 +2,14 @@
 # this must not spend Blacksmith minutes. Missing CODEX_TRIGGER_PAT is a
 # notice skip, not a failure.
 #
-# Posts one `@codex review` per head SHA and handles READY/full CI or
+# Posts one `@codex review` per exact candidate/generation and handles READY/full CI or
 # MEDIATE/Linear only. FIX and missing verdicts never dispatch Claude.
 # Devin submitted reviews and authorized human requests drive the fixer.
 name: Codex CI/fixer gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed, edited]
   pull_request_review:
     types: [submitted]
   schedule:
@@ -38,27 +38,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  scan:
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prs: ${{ steps.scan.outputs.prs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Discover candidate PRs
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SCAN: 'true'
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/ci/candidate_gate.py ]; then
+            echo 'prs=[]' >> "$GITHUB_OUTPUT"
+            echo '::notice::Candidate policy is not deployed on the default branch.'
+            exit 0
+          fi
+          python3 -X utf8 -B scripts/ci/candidate_gate.py
+
   gate:
+    needs: scan
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pr: ${{ fromJSON(needs.scan.outputs.prs || '[]') }}
+    # Same lock as every Claude writer; preserve the existing queue, never
+    # cancel or replace a queued writer to obtain a readiness decision.
+    concurrency:
+      group: claude-${{ matrix.pr }}
+      queue: max
+      cancel-in-progress: false
     # Owner-approved: exact bot provenance for ownership/invalidation receipts.
     permissions:
       contents: read
       pull-requests: read
       issues: write
-    # Same-repo PRs only. Reviews only if Codex submitted them. Schedule and
-    # dispatch scan for recoverable requests and verdicts. Forks never get the PAT or a checkout.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.draft == false &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      ) ||
-      (
-        github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      )
+    # Same-repo PRs only. Human reviews can add/remove holds; only verified
+    # Codex reviews authorize delivery. Forks never receive the trigger PAT.
+    if: needs.scan.outputs.prs != '[]' && needs.scan.outputs.prs != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -90,6 +117,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
+          CODEX_CANDIDATE_PR: ${{ matrix.pr }}
         run: |
           set -euo pipefail
           # First-merge bootstrap: this workflow ships in the PR, but the
@@ -114,13 +142,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Install workflow-test dependency
+        run: python3 -m pip install PyYAML
       - name: Codex-gate tests
         run: python3 -X utf8 -B tools/test_codex_gate.py
       - name: Fixer event-matrix tests
         run: python3 -X utf8 -B tools/test_claude_pr_fixer.py
+      - name: Exact candidate and delivery behavior
+        run: |
+          python3 -X utf8 -B -m unittest tools.test_merge_candidate tools.test_candidate_gate tools.test_candidate_workflows -v
       - name: Queue and review gate behavioral tests
         run: |
-          python3 -m pip install PyYAML
           python3 -X utf8 -B -m unittest tools.test_review_gate tools.test_queue_gates -v
       - name: actionlint
         env:
