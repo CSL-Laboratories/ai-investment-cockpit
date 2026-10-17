@@ -1203,15 +1203,22 @@ def cite_time_for_thread(
     comments: list[dict[str, Any]],
     thread_id: str,
     actor_login: str = "",
+    sha: str = "",
 ) -> datetime | None:
     tid = safe_thread_id(thread_id)
+    digest = safe_sha(sha)
     if not actor_login or not tid:
         return None
     latest: datetime | None = None
     for comment in comments:
         if not login_matches(login_of(comment), actor_login):
             continue
-        if not any(marker_tid == tid for marker_tid, _sha in parse_cite_markers(body_of(comment))):
+        markers = parse_cite_markers(body_of(comment))
+        if digest:
+            matched = any(marker_tid == tid and marker_sha == digest for marker_tid, marker_sha in markers)
+        else:
+            matched = any(marker_tid == tid for marker_tid, _marker_sha in markers)
+        if not matched:
             continue
         stamped = parse_dt(comment.get("createdAt") or comment.get("created_at"))
         if stamped is None:
@@ -1237,6 +1244,7 @@ def resolved_count_today(
     issue_comments: list[dict[str, Any]],
     now: datetime,
     actor_login: str = "",
+    head_sha: str = "",
 ) -> int:
     """Count unique PAT-attributed successful resolves in the last 24h.
 
@@ -1247,10 +1255,12 @@ def resolved_count_today(
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
     per ``(thread id, sha)`` when that pair has no receipt and the thread
-    is closed, or when the cite itself carries ``RESOLVED_AT`` (a
-    receipt-failed PAT success, including after a human reopen). A later
-    failed cite on a new SHA of a reopened thread does not inherit the
-    earlier ``resolvedBy``. A PAT skip
+    is closed, or when the cite itself carries ``RESOLVED_AT``. After a
+    human reopen, a receipt-failed PAT success still counts when
+    ``resolvedBy`` is the PAT and the cite is either a prior SHA or the
+    unique in-window cite for that thread (same-SHA reopen). A failed
+    current-head cite is not counted when another SHA is also cited.
+    A PAT skip
     marker hides that pair unless a later PAT cite is strictly newer, so
     a retry-resolve success cannot be erased by an earlier human race.
     Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
@@ -1261,6 +1271,16 @@ def resolved_count_today(
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
+    current = safe_sha(head_sha)
+    pat_resolved_open: set[str] = set()
+    for thread in threads:
+        tid = safe_thread_id(str(thread.get("id") or ""))
+        if (
+            tid
+            and tid in pending
+            and login_matches(resolved_by_login(thread), actor_login)
+        ):
+            pat_resolved_open.add(tid)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_times: dict[tuple[str, str], datetime | None] = {}
     skip_times: dict[tuple[str, str], datetime | None] = {}
@@ -1298,13 +1318,20 @@ def resolved_count_today(
         if has_resolved_at or (tid, digest) in cite_window:
             counted.add((tid, digest))
     counted |= durable_cites
+    cites_by_thread: dict[str, set[str]] = {}
+    for tid, digest in cite_times:
+        cites_by_thread.setdefault(tid, set()).add(digest)
     unmarked: set[tuple[str, str]] = set()
     for pair, cite_when in cite_times.items():
-        tid, _digest = pair
+        tid, digest = pair
         if pair in counted or pair in all_marker_pairs:
             continue
         if tid in pending:
-            continue
+            others = cites_by_thread.get(tid, set()) - {digest}
+            same_sha_reopen = current and digest == current and not others
+            prior_sha = current and digest != current
+            if tid not in pat_resolved_open or not (same_sha_reopen or prior_sha):
+                continue
         if pair in skip_times:
             skip_when = skip_times[pair]
             if skip_when is None or cite_when is None or cite_when <= skip_when:
@@ -1719,6 +1746,7 @@ def scan_pr(
         issue_comments,
         now,
         actor_login=pat_login,
+        head_sha=head_sha,
     )
     abort_scan = False
     for thread in threads:
@@ -1743,6 +1771,7 @@ def scan_pr(
                 comments,
                 str(thread.get("id") or ""),
                 actor_login=pat_login,
+                sha=mark_sha,
             )
             try:
                 marked = publish_resolved_marker(
@@ -1789,6 +1818,7 @@ def scan_pr(
                     thread_comments(thread) + issue_comments,
                     str(thread.get("id") or ""),
                     actor_login=pat_login,
+                    sha=head_sha,
                 ),
             )
         except Exception:
