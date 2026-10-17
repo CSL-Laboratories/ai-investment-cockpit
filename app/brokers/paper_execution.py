@@ -21,7 +21,7 @@ from bridge.operators import is_authorized
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.order_state_machine import transition
 from brokers.paper_performance import EASTERN, reconstruct_paper_performance
-from config.models import configured_decision_runtime
+from config.models import configured_decision_runtime, paper_job_runtime_allowed
 from core.proposal_authority import proposal_payload_hash
 from quant.events import to_ns
 from orchestrator.breakers import BreakerEngine, BreakerSignals, BreakerThresholds
@@ -56,6 +56,8 @@ class _Bundle:
     agent_job: AgentJob
     analysis_vendor: str | None = None
     analysis_generation: int | None = None
+    signed_decision_runtime: str | None = None
+    signed_decision_route: str | None = None
     analysis_authority_error: str | None = None
     order_authority_error: str | None = None
 
@@ -239,6 +241,8 @@ class PaperExecutionService:
         authority_error: str | None = None
         vendor: str | None = None
         generation: int | None = None
+        signed_runtime: str | None = None
+        signed_route: str | None = None
         order_authority_error = None
         proposal_entries = [
             entry for entry in authority_entries
@@ -259,7 +263,17 @@ class PaperExecutionService:
             job_payload = job_entries[0].payload or {}
             vendor = job_payload.get("runtime")
             generation = job_payload.get("generation")
-            row_generation = (agent_job.input_refs or {}).get("_generation")
+            raw_signed_runtime = job_payload.get("decision_runtime")
+            raw_signed_route = job_payload.get("decision_route")
+            if isinstance(raw_signed_runtime, str):
+                signed_runtime = raw_signed_runtime
+            if isinstance(raw_signed_route, str):
+                signed_route = raw_signed_route
+            row_refs = agent_job.input_refs if isinstance(agent_job.input_refs, dict) else {}
+            row_generation = row_refs.get("_generation")
+            row_route = row_refs.get("decision_route")
+            if not isinstance(row_route, str):
+                row_route = None
             try:
                 bound = (
                     proposal_payload.get("proposal_payload_hash") == proposal_payload_hash(proposal.payload)
@@ -294,6 +308,7 @@ class PaperExecutionService:
                 or not isinstance(generation, int)
                 or generation < 0
                 or row_generation != generation
+                or row_route != signed_route
             ):
                 authority_error = "signed agent generation/runtime does not match its persisted row"
         return _Bundle(
@@ -305,6 +320,8 @@ class PaperExecutionService:
             analysis_generation=generation,
             analysis_authority_error=authority_error,
             order_authority_error=order_authority_error,
+            signed_decision_runtime=signed_runtime,
+            signed_decision_route=signed_route,
         )
 
     def _assert_fresh_analysis(self, bundle: _Bundle) -> None:
@@ -490,8 +507,10 @@ class PaperExecutionService:
                 "order_not_submittable", f"order state {order.state!r} is not submittable"
             )
         selected_runtime = configured_decision_runtime(self.state.settings)
-        if (agent_job.status != "done" or agent_job.runtime not in {"claude", "codex"}
-                or agent_job.runtime != selected_runtime):
+        if agent_job.status != "done" or bundle.signed_decision_runtime != selected_runtime \
+                or not paper_job_runtime_allowed(
+                    agent_job.runtime, selected_runtime, bundle.signed_decision_route,
+                ):
             raise PaperExecutionError(
                 "runtime_not_allowed",
                 "paper execution requires a successful proposal from the currently configured "

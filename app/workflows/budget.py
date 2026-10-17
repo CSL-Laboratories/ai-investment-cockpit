@@ -1,10 +1,13 @@
 """WP8 — SEC-21 chain-derived daily deep budget + deterministic urgency (contract Owner A).
 
 Implements docs/security-hardening-backlog.md SEC-21 (denial-of-wallet as strategic
-blinding): the daily deep-escalation budget is derived by COUNTING HMAC-verified
-``EVENT_DEEP_ESCALATION`` entries on the signed ledger (restart-safe; a mutable counter is
-attacker-writable — storage map '_consumed_on_chain' pattern), consumed under ``state.lock``
-with a re-check inside the critical section. Deep escalation for a model-labeled 'urgent'
+blinding): the daily deep-escalation budget is the net of HMAC-verified
+``EVENT_DEEP_ESCALATION`` entries minus HMAC-verified releases of those same rows
+(restart-safe; a mutable counter is attacker-writable — storage map
+'_consumed_on_chain' pattern), consumed under ``state.lock`` with a re-check inside
+the critical section. An unused reservation (a proposal that returns
+``context_limited`` and makes no model call) is released by appending a signed
+``EVENT_DEEP_ESCALATION_RELEASE``; the release cancels only that one row. Deep escalation for a model-labeled 'urgent'
 requires DETERMINISTIC corroboration — calendar proximity, halt/filing event type, or a
 real quote move — the headline's self-description NEVER counts. Candidates are ranked by
 deterministic signal strength (corroborated first), never arrival order, so a fake-urgent
@@ -25,7 +28,11 @@ from orchestrator.limits import current_limits, limits_from_verified_session
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
 from storage.audit import AuditIntegrityError
-from workflows.constants import EVENT_DEEP_ESCALATION, EVENT_INGEST_BATCH
+from workflows.constants import (
+    EVENT_DEEP_ESCALATION,
+    EVENT_DEEP_ESCALATION_RELEASE,
+    EVENT_INGEST_BATCH,
+)
 
 _CALENDAR_WINDOW = timedelta(hours=36)
 _QUOTE_MOVE_PCT = 3.0
@@ -145,10 +152,66 @@ def _assert_budget_chain_ok(state, session):
     return verified
 
 
+def _released_consumption_ids(entries: Sequence[AuditEntry]) -> set[str]:
+    """Ids of consumptions cancelled by a verified release of the same row.
+
+    A release matches only when ``releases_entry_id``, ``event_id``, and ``date``
+    all agree with one consumption. A second release of that same row, or a
+    release aimed at another event or day, does not cancel anything else.
+    """
+    consumptions: dict[str, tuple] = {}
+    for entry in entries:
+        if entry.event_type != EVENT_DEEP_ESCALATION:
+            continue
+        payload = entry.payload or {}
+        consumptions[entry.id] = (payload.get("event_id"), payload.get("date"))
+    released: set[str] = set()
+    for entry in entries:
+        if entry.event_type != EVENT_DEEP_ESCALATION_RELEASE:
+            continue
+        payload = entry.payload or {}
+        ref = payload.get("releases_entry_id")
+        if not isinstance(ref, str) or ref not in consumptions:
+            continue
+        if consumptions[ref] == (payload.get("event_id"), payload.get("date")):
+            released.add(ref)
+    return released
+
+
+def _net_spent(entries: Sequence[AuditEntry], day: date) -> int:
+    """Verified same-day consumptions that no matching release has cancelled."""
+    released = _released_consumption_ids(entries)
+    day_s = day.isoformat()
+    return sum(
+        1 for entry in entries
+        if entry.event_type == EVENT_DEEP_ESCALATION
+        and entry.id not in released
+        and (entry.payload or {}).get("date") == day_s
+    )
+
+
+def _latest_unreleased(
+    entries: Sequence[AuditEntry], *, day: date, event_id: str,
+) -> AuditEntry | None:
+    released = _released_consumption_ids(entries)
+    day_s = day.isoformat()
+    matches = [
+        entry for entry in entries
+        if entry.event_type == EVENT_DEEP_ESCALATION
+        and entry.id not in released
+        and (entry.payload or {}).get("date") == day_s
+        and (entry.payload or {}).get("event_id") == event_id
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda entry: entry.seq)
+
+
 class DeepBudget:
-    """Chain-derived daily deep-escalation budget (SEC-21). ``spent`` counts only
-    HMAC-verified ledger entries, so a fresh instance (or a fresh process) sees the same
-    consumption — and a keyless DB writer cannot mint or erase budget."""
+    """Chain-derived daily deep-escalation budget (SEC-21). ``spent`` counts
+    HMAC-verified consumptions minus HMAC-verified releases of those same rows,
+    so a fresh instance (or a fresh process) sees the same net — and a keyless
+    DB writer cannot mint or erase budget."""
 
     def __init__(self, state, *, limit: int | None = None):
         self._state = state
@@ -159,25 +222,29 @@ class DeepBudget:
         return (self._limit if self._limit is not None
                 else int(current_limits(self._state)["deep_model_daily_budget"]))
 
-    def _spent_in(self, session, day: date) -> int:
-        """Count only after the caller verifies this pinned transaction."""
+    def _budget_entries(self, session) -> list[AuditEntry]:
+        """Verified consumption and release rows. A broken HMAC raises (fail closed).
+
+        Skipping a tampered row would under-count spend or ignore a real release
+        and could drive escalations past the audited cap. The chain check covers
+        rows moved out of this filter; this check covers rows still selected.
+        """
         entries = session.execute(
-            select(AuditEntry).where(AuditEntry.event_type == EVENT_DEEP_ESCALATION)
+            select(AuditEntry).where(AuditEntry.event_type.in_((
+                EVENT_DEEP_ESCALATION, EVENT_DEEP_ESCALATION_RELEASE,
+            )))
         ).scalars().all()
-        count = 0
-        for e in entries:
-            # FAIL CLOSED (SEC-21): verify EVERY selected consumption row. A keyless writer
-            # that tampers one covered field of a consumed row breaks its HMAC — treat that
-            # as budget-integrity failure and RAISE, never silently skip (which would
-            # undercount spent, inflate remaining, and over-escalate past the audited cap).
-            if not self._state.audit.verify_entry(e):
+        for entry in entries:
+            if not self._state.audit.verify_entry(entry):
                 raise BudgetIntegrityError(
-                    f"EVENT_DEEP_ESCALATION entry {getattr(e, 'id', '?')!r} failed HMAC "
+                    f"budget ledger entry {getattr(entry, 'id', '?')!r} failed HMAC "
                     "verification (budget ledger tampered — fail closed)"
                 )
-            if (e.payload or {}).get("date") == day.isoformat():
-                count += 1
-        return count
+        return list(entries)
+
+    def _spent_in(self, session, day: date) -> int:
+        """Net spend after the caller verifies this pinned transaction."""
+        return _net_spent(self._budget_entries(session), day)
 
     def spent(self, day: date) -> int:
         with self._state.session_factory() as session, session.begin():
@@ -235,6 +302,49 @@ class DeepBudget:
                             payload={"date": day.isoformat(), "event_id": event_id,
                                      "symbol": symbol, "reason": reason,
                                      "corroborated": bool(corroborated)},
+                        )
+                    self._state.audit.observe_committed(entry)
+                return True
+            except AuditIntegrityError as exc:
+                raise BudgetIntegrityError(str(exc)) from exc
+            except (IntegrityError, OperationalError):
+                if attempt == 6:
+                    raise
+                time.sleep(0.02 * attempt)
+        raise RuntimeError("deep budget: exhausted transaction retries")
+
+    def release(self, *, day: date, event_id: str, reason: str) -> bool:
+        """Release one unused same-day reservation for ``event_id``.
+
+        ``try_consume`` records the spend before the proposal handler runs. A
+        ``context_limited`` outcome made no model call, so the reservation is
+        unused. The ledger is append-only: this appends a signed release that
+        nets that one row out of ``spent``. A second release of the same row,
+        or a release for another event or day, appends nothing and returns
+        False — it cannot mint a unit. Chain tamper raises ``BudgetIntegrityError``.
+        """
+        if not isinstance(event_id, str) or not event_id:
+            return False
+        if not isinstance(reason, str) or not reason:
+            return False
+        for attempt in range(1, 7):
+            try:
+                with self._state.lock:
+                    with self._state.session_factory() as session, session.begin():
+                        _assert_budget_chain_ok(self._state, session)
+                        target = _latest_unreleased(
+                            self._budget_entries(session), day=day, event_id=event_id)
+                        if target is None:
+                            return False
+                        entry = self._state.audit.append_in(
+                            session, EVENT_DEEP_ESCALATION_RELEASE, actor="budget",
+                            refs={"event_id": event_id, "releases_entry_id": target.id},
+                            payload={
+                                "date": day.isoformat(),
+                                "event_id": event_id,
+                                "releases_entry_id": target.id,
+                                "reason": reason,
+                            },
                         )
                     self._state.audit.observe_committed(entry)
                 return True
