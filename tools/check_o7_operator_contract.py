@@ -168,6 +168,19 @@ RESULT_PROPERTIES = (
     "unknown_orders",
     "watch_only",
 )
+NESTED_RESULT_ARRAYS = {
+    "budgets": ("budget_id", "currency", "remaining", "scope"),
+    "decisions": ("decision_id", "outcome", "reason_code"),
+    "dependencies": ("name", "status"),
+    "items": ("state", "subject", "visible"),
+    "positions": ("currency", "instrument_id", "quantity", "venue"),
+    "refusals": ("decision_id", "reason_code", "visible"),
+}
+COLLATERAL_PROPERTIES = (
+    "amount",
+    "currency",
+    "state",
+)
 REQUIRED_CONTROLS = (
     "gui_cli_semantic_divergence",
     "hidden_refusal",
@@ -751,6 +764,7 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         or set(visibility_properties or {}) != set(VISIBILITY_PROPERTIES)
     ):
         raise ContractError("visibility schema accepts an authority field")
+    _require_closed_nested_result(result_properties)
 
 
 def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -787,6 +801,15 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     claimed_visibility = {**positions, "visibility": {**visibility, "live_authorized": True}}
     if _schema_error(validator, claimed_visibility) is None:
         raise ContractError("visibility schema accepts live_authorized")
+    rows = result.get("positions")
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        raise ContractError("positions schema rejects the positions oracle")
+    claimed_position = {
+        **positions,
+        "result": {**result, "positions": [{**rows[0], "live_authorized": True}, *rows[1:]]},
+    }
+    if _schema_error(validator, claimed_position) is None:
+        raise ContractError("positions schema accepts live_authorized")
 
 
 def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -1016,6 +1039,29 @@ def _object_is_closed(schema: Any) -> bool:
     return "patternProperties" not in _assertion_keys(schema) and "unevaluatedProperties" not in _assertion_keys(schema)
 
 
+def _record_is_closed(schema: Any, names: tuple[str, ...]) -> bool:
+    """True when an object names exactly the given fields and cannot grow more."""
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    return (
+        _object_is_closed(schema)
+        and _required_is(schema, names)
+        and isinstance(properties, dict)
+        and set(properties) == set(names)
+    )
+
+
+def _require_closed_nested_result(result_properties: Any) -> None:
+    """Nested result records cannot carry an unmodeled authority field."""
+    fields = result_properties if isinstance(result_properties, dict) else {}
+    for name, record_fields in NESTED_RESULT_ARRAYS.items():
+        field = fields.get(name)
+        items = field.get("items") if isinstance(field, dict) else None
+        if not _record_is_closed(items, record_fields):
+            raise ContractError("nested result schema accepts an authority field")
+    if not _record_is_closed(fields.get("collateral"), COLLATERAL_PROPERTIES):
+        raise ContractError("nested result schema accepts an authority field")
+
+
 def _require_closed_command_schema(schema: dict[str, Any]) -> None:
     """The command and its arguments cannot carry an unmodeled authority field."""
     properties = schema.get("properties")
@@ -1032,6 +1078,8 @@ def _require_closed_command_schema(schema: dict[str, Any]) -> None:
         raise ContractError("command schema accepts an authority field")
     if _const_value(properties.get("api_version")) != API_VERSION:
         raise ContractError("command api_version is not o7.operator.v0")
+    if _const_value(properties.get("candidate_maturity")) != MATURITY:
+        raise ContractError("command candidate_maturity is not researched")
 
 
 def _require_command_authority_rejected(validator: Draft202012Validator) -> None:
@@ -1064,6 +1112,8 @@ def _require_command_authority_rejected(validator: Draft202012Validator) -> None
         raise ContractError("command schema accepts an omitted confirmation")
     if _schema_error(validator, {**read, "api_version": "o7.operator.v1"}) is None:
         raise ContractError("command schema accepts o7.operator.v1")
+    if _schema_error(validator, {**read, "candidate_maturity": "contract_frozen"}) is None:
+        raise ContractError("command schema accepts a promoted maturity")
 
 
 def _require_session_scope_schema(schema: dict[str, Any]) -> None:
@@ -1120,6 +1170,8 @@ def _require_closed_event_schema(schema: dict[str, Any]) -> None:
         raise ContractError("event schema accepts an authority field")
     if _const_value(properties.get("api_version")) != API_VERSION:
         raise ContractError("event api_version is not o7.operator.v0")
+    if _const_value(properties.get("candidate_maturity")) != MATURITY:
+        raise ContractError("event candidate_maturity is not researched")
     if _admitted_strings(properties.get("event_type")) != set(EVENT_COMMANDS):
         raise ContractError("event type allowlist drifted")
 
@@ -1141,6 +1193,8 @@ def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
         raise ContractError("event schema accepts event type order_submitted")
     if _schema_error(validator, {**probe, "api_version": "o7.operator.v1"}) is None:
         raise ContractError("event schema accepts o7.operator.v1")
+    if _schema_error(validator, {**probe, "candidate_maturity": "contract_frozen"}) is None:
+        raise ContractError("event schema accepts a promoted maturity")
 
 
 def _require_closed_error_schema(schema: dict[str, Any]) -> None:
