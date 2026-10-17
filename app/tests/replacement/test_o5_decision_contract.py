@@ -181,6 +181,25 @@ def test_higher_tier_evidence_is_not_admitted() -> None:
         assert refused.code == "installed_route_not_qualified"
 
 
+def test_result_rejects_unsupported_evidence() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = document["suite_digest"]
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
+        higher = dict(document)
+        higher["evidence_class"] = evidence_class
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
 def test_grounding_and_refusal_results_fail_closed() -> None:
     module = _load()
     suite = json.loads(SUITE.read_text(encoding="utf-8"))

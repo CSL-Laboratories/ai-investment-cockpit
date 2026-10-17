@@ -576,8 +576,11 @@ def _admit_result(document: dict[str, Any], ctx: Context) -> Admission:
         return _refuse("credential_claimed", "a decision result contains no credential")
     if document.get("disposition") != "withhold":
         return _refuse("acceptance_is_not_qualification", "a result disposition must withhold")
-    if document.get("evidence_class") == "independently_verified":
-        return _refuse("installed_route_not_qualified", "a result is not independently verified evidence")
+    if document.get("evidence_class") in UNSUPPORTED_EVIDENCE:
+        return _refuse(
+            "installed_route_not_qualified",
+            "higher-tier evidence is not retained in this researched packet",
+        )
     return _admit()
 
 

@@ -121,7 +121,9 @@ Positive examples live in `fixtures/positive/` and the manifests beside them.
 - **Decision result.** Schema compliance and value correctness are separate
   booleans. The worked example is schema-valid and value-wrong, and the
   disposition is `withhold`. A result cannot grant authority, emit an order, or
-  carry a credential. A result that relabels the frozen task is refused.
+  carry a credential. A result that relabels the frozen task is refused. A result
+  cannot report `demo_or_paper`, `shadow`, `limited_live`, or
+  `independently_verified`, because those outputs were not retained.
 - **Decision refusal.** First-class object, not a schema-invalid success. The
   frozen refusal tasks cover an order request, a credential request, and a budget
   widening. A refusal adds no disclosure and does not change the budget.
