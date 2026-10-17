@@ -110,22 +110,130 @@ REQUIRED_JOURNEYS = (
     "recovery",
     "export",
 )
-REQUIRED_MUST_SHOW = {
-    "operator.audit.export": ("includes_refusals", "secrets_included"),
-    "operator.budgets.inspect": ("budgets",),
-    "operator.decisions.inspect": ("refusals",),
-    "operator.evidence.inspect": ("provenance", "raw_separated_from_summary"),
-    "operator.export.bundle": ("contents", "secrets_included"),
-    "operator.health.inspect": ("stale", "watch_only"),
-    "operator.interventions.request_reconciliation": ("intervention", "order_submitted"),
-    "operator.interventions.request_revocation": ("intervention", "order_submitted"),
-    "operator.interventions.request_stop": ("intervention", "order_submitted"),
-    "operator.positions.inspect": ("positions", "collateral"),
-    "operator.profiles.inspect": ("active_profile_class", "local_control_is_account_wide"),
-    "operator.recovery.inspect": ("reconciliation", "unknown_orders"),
-    "operator.strategies.inspect": ("qualification",),
-    "operator.uncertainty.inspect": ("items",),
+REQUIRED_COMMANDS = {
+    "operator.audit.export": {
+        "journey": "audit",
+        "effect": "read",
+        "fields": ("export_id", "chain_head_seq", "includes_refusals", "secrets_included"),
+        "must_show": ("includes_refusals", "secrets_included"),
+    },
+    "operator.budgets.inspect": {
+        "journey": "budgets",
+        "effect": "read",
+        "fields": ("budgets",),
+        "must_show": ("budgets",),
+    },
+    "operator.decisions.inspect": {
+        "journey": "decisions_refusals",
+        "effect": "read",
+        "fields": ("decisions", "refusals"),
+        "must_show": ("refusals",),
+    },
+    "operator.evidence.inspect": {
+        "journey": "evidence_provenance",
+        "effect": "read",
+        "fields": (
+            "evidence_id",
+            "source_id",
+            "retrieved_at",
+            "raw_ref",
+            "summary_ref",
+            "raw_separated_from_summary",
+            "provenance",
+        ),
+        "must_show": ("provenance", "raw_separated_from_summary"),
+    },
+    "operator.export.bundle": {
+        "journey": "export",
+        "effect": "read",
+        "fields": ("bundle_id", "contents", "secrets_included"),
+        "must_show": ("contents", "secrets_included"),
+    },
+    "operator.health.inspect": {
+        "journey": "health",
+        "effect": "read",
+        "fields": ("watch_only", "stale", "dependencies"),
+        "must_show": ("stale", "watch_only"),
+    },
+    "operator.interventions.request_reconciliation": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.interventions.request_revocation": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.interventions.request_stop": {
+        "journey": "interventions",
+        "effect": "intervention",
+        "fields": (
+            "intervention",
+            "recorded",
+            "survives_restart",
+            "restart_requires_reconciliation",
+            "order_submitted",
+        ),
+        "must_show": ("intervention", "order_submitted"),
+    },
+    "operator.positions.inspect": {
+        "journey": "positions_collateral",
+        "effect": "read",
+        "fields": ("positions", "collateral"),
+        "must_show": ("positions", "collateral"),
+    },
+    "operator.profiles.inspect": {
+        "journey": "compliance_profiles",
+        "effect": "read",
+        "fields": (
+            "active_profile_class",
+            "local_control_is_account_wide",
+            "surfaces_share_one_profile",
+            "qualification_reference",
+            "bounded_direct_authorized",
+        ),
+        "must_show": ("active_profile_class", "local_control_is_account_wide"),
+    },
+    "operator.recovery.inspect": {
+        "journey": "recovery",
+        "effect": "read",
+        "fields": (
+            "reconciliation",
+            "unknown_orders",
+            "restart_allowed",
+            "restart_requires_reconciliation",
+        ),
+        "must_show": ("reconciliation", "unknown_orders"),
+    },
+    "operator.strategies.inspect": {
+        "journey": "strategies",
+        "effect": "read",
+        "fields": ("strategy_id", "qualification", "baseline_id"),
+        "must_show": ("qualification",),
+    },
+    "operator.uncertainty.inspect": {
+        "journey": "uncertainty",
+        "effect": "read",
+        "fields": ("items",),
+        "must_show": ("items",),
+    },
 }
+REQUIRED_MUST_SHOW = {name: spec["must_show"] for name, spec in REQUIRED_COMMANDS.items()}
 REQUIRED_DECISION_CLASSES = (
     "architecture",
     "release",
@@ -250,6 +358,52 @@ def _walk_keys(value: Any):
             yield from _walk_keys(child)
 
 
+def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, list[Any]]:
+    """Map each command const to the response result fields its schema requires."""
+    found: dict[str, list[Any]] = {}
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        command = clause.get("if", {}).get("properties", {}).get("command", {}).get("const")
+        required = clause.get("then", {}).get("properties", {}).get("result", {}).get("required")
+        if not isinstance(command, str) or not isinstance(required, list):
+            continue
+        if command in found:
+            raise ContractError(f"schema result fields repeated for {command}")
+        found[command] = required
+    return found
+
+
+def _intervention_probe(name: str, *, confirmation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "api_version": API_VERSION,
+        "candidate_maturity": MATURITY,
+        "surface": "cli",
+        "command": name,
+        "request_id": "req_cmd_probe",
+        "arguments": arguments,
+        "confirmation": confirmation,
+    }
+
+
+def _require_intervention_safeguards(validator: Draft202012Validator) -> None:
+    """Each intervention command must reject a missing confirmation and a missing scope."""
+    for name in INTERVENTION_NAMES:
+        explicit = _intervention_probe(
+            name, confirmation="explicit", arguments={"scope": "operator_session"}
+        )
+        if _schema_error(validator, explicit) is not None:
+            raise ContractError(f"intervention command schema rejects {name}")
+        unconfirmed = _intervention_probe(
+            name, confirmation="not_required", arguments={"scope": "operator_session"}
+        )
+        if _schema_error(validator, unconfirmed) is None:
+            raise ContractError(f"unconfirmed intervention schema accepts {name}")
+        unscoped = _intervention_probe(name, confirmation="explicit", arguments={})
+        if _schema_error(validator, unscoped) is None:
+            raise ContractError(f"unscoped intervention schema accepts {name}")
+
+
 def _validator(schema: dict[str, Any]) -> Draft202012Validator:
     try:
         Draft202012Validator.check_schema(schema)
@@ -368,12 +522,12 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
             return "read_claims_intervention"
         if expected_intervention is not None and result.get("intervention") != expected_intervention:
             return "intervention_mismatch"
-        if (
-            doc.get("command") == "operator.interventions.request_stop"
-            and result.get("recorded") is True
-            and result.get("survives_restart") is not True
+        if expected_intervention is not None and result.get("recorded") is True and result.get("survives_restart") is not True:
+            return "recorded_intervention_not_persistent"
+        if expected_intervention is not None and doc.get("status_code") == "ok" and (
+            result.get("recorded") is not True or result.get("survives_restart") is not True
         ):
-            return "recorded_stop_not_persistent"
+            return "unrecorded_intervention_success"
         if (
             doc.get("command") == "operator.profiles.inspect"
             and result.get("active_profile_class") != profile.get("profile_class")
@@ -793,8 +947,16 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             commands[row["name"]] = row
         if len(commands) != len(command_rows):
             raise ContractError("catalog command names repeat")
-        if set(commands) != set(REQUIRED_MUST_SHOW):
+        if set(commands) != set(REQUIRED_COMMANDS):
             raise ContractError("catalog command set drifted")
+        for name, row in commands.items():
+            spec = REQUIRED_COMMANDS[name]
+            if row.get("journey") != spec["journey"]:
+                raise ContractError(f"catalog journey drifted for {name}")
+            if row.get("effect") != spec["effect"]:
+                raise ContractError(f"catalog effect drifted for {name}")
+            if row.get("required_result_fields") != list(spec["fields"]):
+                raise ContractError(f"catalog result fields drifted for {name}")
         _check_supporting_documents(candidate, commands)
         response_schema = _load_json(candidate / "schemas" / "operator-response.schema.json")
         command_schema = _load_json(candidate / "schemas" / "operator-command.schema.json")
@@ -814,8 +976,13 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         )
         if response_enum != allowed:
             raise ContractError("schema command enum drifted from the catalog")
+        schema_fields = _schema_command_result_fields(response_schema)
+        for name, spec in REQUIRED_COMMANDS.items():
+            if schema_fields.get(name) != list(spec["fields"]):
+                raise ContractError(f"schema result fields drifted for {name}")
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
+        _require_intervention_safeguards(command_validator)
         event_validator = _validator(event_schema)
         error_validator = _validator(error_schema)
         manifest = _load_json(candidate / "fixtures" / "manifest.json")

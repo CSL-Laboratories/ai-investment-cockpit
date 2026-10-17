@@ -325,13 +325,15 @@ def test_recorded_stop_persists_and_ansi_is_absent_from_every_string() -> None:
     by_request, commands, response_validator = _candidate_documents()
     stop = copy.deepcopy(by_request["req_stop"])
     stop["result"]["survives_restart"] = False
-    assert CHECKER.classify_response(stop, commands) == "recorded_stop_not_persistent"
+    assert CHECKER.classify_response(stop, commands) == "recorded_intervention_not_persistent"
     assert CHECKER._schema_error(response_validator, stop) is not None
-    unrecorded = copy.deepcopy(by_request["req_stop"])
-    unrecorded["result"]["recorded"] = False
-    unrecorded["result"]["survives_restart"] = False
-    assert CHECKER.classify_response(unrecorded, commands) is None
-    assert CHECKER._schema_error(response_validator, unrecorded) is None
+    for request_id in ("req_stop", "req_reconcile", "req_revoke"):
+        unrecorded = copy.deepcopy(by_request[request_id])
+        assert unrecorded["status_code"] == "ok"
+        unrecorded["result"]["recorded"] = False
+        unrecorded["result"]["survives_restart"] = False
+        assert CHECKER.classify_response(unrecorded, commands) == "unrecorded_intervention_success"
+        assert CHECKER._schema_error(response_validator, unrecorded) is not None
     tainted = copy.deepcopy(by_request["req_positions"])
     tainted["errors"] = [
         {
@@ -510,6 +512,85 @@ def _drop_catalog_command(root: Path, name: str) -> None:
         "fixtures/oracle/commands.json",
     ):
         _retarget(root, relative)
+
+
+def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    swapped = tmp_path / "swapped"
+    shutil.copytree(root, swapped)
+    catalog_path = swapped / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    for row in catalog["commands"]:
+        if row["name"] == "operator.positions.inspect":
+            row["journey"] = "audit"
+        elif row["name"] == "operator.audit.export":
+            row["journey"] = "positions_collateral"
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    parity_path = swapped / "parity-matrix.json"
+    parity = json.loads(parity_path.read_text(encoding="utf-8"))
+    for row in parity["rows"]:
+        if row["command"] == "operator.positions.inspect":
+            row["journey"] = "audit"
+        elif row["command"] == "operator.audit.export":
+            row["journey"] = "positions_collateral"
+    parity_path.write_text(json.dumps(parity, indent=2) + "\n", encoding="utf-8")
+    _retarget(swapped, "catalog.json")
+    _retarget(swapped, "parity-matrix.json")
+    code, stdout, stderr = CHECKER.evaluate(swapped)
+    assert code == 1
+    assert stdout == ""
+    assert "catalog journey drifted for operator.audit.export" in stderr
+    trimmed = tmp_path / "trimmed"
+    shutil.copytree(root, trimmed)
+    catalog_path = trimmed / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    for row in catalog["commands"]:
+        if row["name"] == "operator.evidence.inspect":
+            row["required_result_fields"] = ["raw_separated_from_summary", "provenance"]
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    _retarget(trimmed, "catalog.json")
+    code, stdout, stderr = CHECKER.evaluate(trimmed)
+    assert code == 1
+    assert stdout == ""
+    assert "catalog result fields drifted for operator.evidence.inspect" in stderr
+    schema_only = tmp_path / "schema"
+    shutil.copytree(root, schema_only)
+    schema_path = schema_only / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    for clause in schema["allOf"]:
+        command = clause.get("if", {}).get("properties", {}).get("command", {}).get("const")
+        required = clause.get("then", {}).get("properties", {}).get("result", {}).get("required")
+        if command == "operator.evidence.inspect" and isinstance(required, list):
+            clause["then"]["properties"]["result"]["required"] = ["raw_separated_from_summary", "provenance"]
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(schema_only, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(schema_only)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result fields drifted for operator.evidence.inspect" in stderr
+
+
+def test_each_intervention_command_requires_confirmation(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    schema_path = copied / "schemas" / "operator-command.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["allOf"][0]["then"]["properties"].pop("confirmation")
+    schema["allOf"].append(
+        {
+            "if": {
+                "required": ["command"],
+                "properties": {"command": {"const": "operator.interventions.request_stop"}},
+            },
+            "then": {"properties": {"confirmation": {"const": "explicit"}}},
+        }
+    )
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "schemas/operator-command.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "unconfirmed intervention schema accepts operator.interventions.request_reconciliation" in stderr
 
 
 def test_catalog_command_set_is_pinned(tmp_path: Path) -> None:
