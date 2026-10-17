@@ -12,7 +12,6 @@ or close an empirical gate.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,7 @@ from typing import Any
 import jsonschema
 
 from feasibility.evaluate import EVALUATION_PATH, load_evaluation
-from feasibility.validate import FROZEN_IDS, FREEZE_PATH, FeasibilityError
+from feasibility.validate import FROZEN_IDS, FREEZE_PATH, FeasibilityError, sha256_file
 
 CASES_VERSION = "feasibility.cases.v1"
 CASES_CLAIM_ID = "RW-29"
@@ -59,10 +58,6 @@ _HERE = Path(__file__).resolve().parent
 CASES_PATH = _HERE / "cases.v1.json"
 CASES_SCHEMA_PATH = _HERE.parent / "schemas" / "json" / "FeasibilityCases.schema.json"
 REPO_ROOT = _HERE.parents[1]
-
-
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def validate_cases(payload: dict[str, Any]) -> None:

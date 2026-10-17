@@ -386,5 +386,8 @@ def test_resting_at_matches_the_python_index_order():
         assert right.side is left.side
         assert right.price_ticks == left.price_ticks
         assert right.qty == left.qty
-    with pytest.raises(IndexError):
-        rust.resting_at(len(rust))
+    for bad in (len(rust), -1, True, 2**63, 2**64):
+        with pytest.raises(IndexError):
+            rust.resting_at(bad)
+        with pytest.raises(IndexError):
+            python.resting_at(bad)

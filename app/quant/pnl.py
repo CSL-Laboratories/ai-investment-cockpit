@@ -48,11 +48,15 @@ would make the exactness test above flap rather than fail.
 """
 from __future__ import annotations
 
+import importlib.util
+import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quant.costs import FeeSchedule, fee_for_fill
 from quant.events import Fill, Liquidity, PriceScale, Side
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +141,8 @@ class PnLTracker:
     # One mark or fill is a handful of Decimal operations. Crossing into the extension
     # on each call measured slower, and so did ``pnl_replay`` of a finished tape once
     # tracker construction was not charged to the Decimal loop. Guards read the running
-    # total, so the paper loop calls ``mark`` and ``on_fill``.
+    # total, so the paper loop calls ``mark`` and ``on_fill``. A core set by a test
+    # harness is not used here.
     _core: object | None = field(default=None, init=False, repr=False)
 
     def mark(self, mid_ticks: float | None, ts: int | None = None) -> None:
@@ -211,15 +216,25 @@ class PnLTracker:
         return self._cash + (Decimal(self.position) * (self._last_mid or Decimal("0")))
 
 
-_I64_MAX = 2**63 - 1
-
-
 def _pnl_backend() -> str:
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    """Record whether ``PnlCore`` and ``pnl_replay`` are installed.
+
+    A missing module stays on Decimal. A present module missing either symbol is
+    a partial wheel. Per-call ``mark`` and ``on_fill`` do not attach a core.
+    """
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("PNL_BACKEND=%s", "python")
         return "python"
-    return "rust" if hasattr(native, "PnlCore") else "python"
+    import cockpit_quant as native
+
+    required = ("PnlCore", "pnl_replay")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
+        raise ImportError(
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
+        )
+    log.info("PNL_BACKEND=%s", "rust")
+    return "rust"
 
 
 PNL_BACKEND = _pnl_backend()
@@ -238,20 +253,6 @@ def _make_pnl_core(schedule: FeeSchedule):
         format(schedule.clearing_per_share, "f"),
         format(schedule.borrow_rate_annual, "f"),
     )
-
-
-def _fits_i64(value: object) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and -_I64_MAX - 1 <= value <= _I64_MAX
-
-
-def _rust_mid_ok(mid_ticks: float | None) -> bool:
-    return mid_ticks is not None and not isinstance(mid_ticks, bool) and isinstance(mid_ticks, (int, float))
-
-
-def _rust_fill_ok(fill: Fill, mid_ticks: float | None) -> bool:
-    if mid_ticks is not None and not _rust_mid_ok(mid_ticks):
-        return False
-    return all(_fits_i64(value) for value in (fill.qty, fill.price_ticks, fill.signed_qty, fill.ingest_ts))
 
 
 def _elapsed(last_ts: int | None, ts: int | None) -> str | None:

@@ -17,6 +17,8 @@ The properties pinned, in order of how badly getting them wrong hurts:
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from quant.events import Side
@@ -50,6 +52,46 @@ def test_a_warm_model_does_quote():
     mm = _maker()
     _warm(mm)
     assert mm.quotes(context(snapshot())) is not None
+
+
+def test_a_non_finite_volatility_refuses_to_quote():
+    """A NaN sigma fails every comparison, so the skew clamp would pin at +max."""
+    mm = _maker()
+    _warm(mm)
+    ctx = context(snapshot(), positions={"TEST": 0})
+    assert mm.quotes(ctx) is not None
+    mm._vol.update(float("nan"))
+    assert mm._vol.value is not None and math.isnan(mm._vol.value)
+    assert mm.quotes(ctx) is None
+
+
+def test_a_non_finite_volatility_cancels_quotes_already_resting():
+    """Stopping new targets is not enough. The bid and ask already in the book
+    would keep filling. Both callbacks cancel them and do not replace them."""
+    mm = _maker()
+    _warm(mm)
+    opened = mm.on_book_update(context(snapshot()))
+    live = _as_live(opened)
+    bid_id, ask_id = mm._bid_id, mm._ask_id
+    assert bid_id is not None and ask_id is not None
+    mm._vol.update(float("nan"))
+
+    intents = mm.on_book_update(context(snapshot(), live_orders=live))
+    assert [i.client_id for i in intents if isinstance(i, CancelOrder)] == [bid_id, ask_id]
+    assert not any(isinstance(i, NewOrder) for i in intents)
+    assert mm._bid_id is None and mm._ask_id is None
+    assert mm.on_book_update(context(snapshot(), live_orders=live)) == []
+
+    quiet = _maker()
+    _warm(quiet)
+    opened = quiet.on_book_update(context(snapshot()))
+    live = _as_live(opened)
+    bid_id, ask_id = quiet._bid_id, quiet._ask_id
+    quiet._vol.update(float("nan"))
+    intents = quiet.on_timer(9_999_999, context(snapshot(), live_orders=live))
+    assert [i.client_id for i in intents if isinstance(i, CancelOrder)] == [bid_id, ask_id]
+    assert not any(isinstance(i, NewOrder) for i in intents)
+    assert quiet._bid_id is None and quiet._ask_id is None
 
 
 def test_a_one_sided_book_produces_no_quotes():

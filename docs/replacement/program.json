@@ -1,0 +1,914 @@
+{
+  "schema_version": 1,
+  "program_id": "cockpit.replacement.2026-10",
+  "status": "accepted_contract",
+  "controlling_issue": "CSL-212",
+  "source_commit": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "authority": {
+    "current_runtime_invariants_preserved": true,
+    "live_authority_granted": false,
+    "contract_acceptance": "accepted_human_digest_receipt",
+    "acceptance_receipt": {
+      "linear_issue": "CSL-212",
+      "human_linear_comment_id": "25c50b43-6de4-4f6d-9652-47a649ccc5ae",
+      "mirror_comment_id": "6aafae80-2f96-449c-947c-90bcaf8380b6",
+      "accepted_by": "Lucas Guerra",
+      "accepted_by_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "accepted_at": "2026-10-16T05:45:25.133Z",
+      "reviewed_head": "51aec39760202d07027af086087784b1bafca2e1",
+      "accepted_contracts": {
+        "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",
+        "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+        "docs/replacement/MONTH-PROGRAM.md": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+        "docs/replacement/SCOPE-AUDIT.md": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c"
+      },
+      "authority_research_sha256": "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6",
+      "not_granted": [
+        "implementation_completion",
+        "empirical_pass",
+        "legal_account_or_venue_eligibility",
+        "provider_permission",
+        "release_qualification",
+        "live_authority",
+        "credentials",
+        "capital_movement",
+        "merge_permission"
+      ]
+    },
+    "superseded_acceptance_receipt": {
+      "linear_issue": "CSL-212",
+      "human_linear_comment_id": "736a6b55-2b20-463c-86e1-9553a5692996",
+      "mirror_comment_id": "15c6f540-3686-49eb-a9e7-d93083313e85",
+      "accepted_by": "Lucas Guerra",
+      "accepted_by_linear_user_id": "8709c8bb-e7d2-429e-89f9-89a48b7187fa",
+      "accepted_at": "2026-10-16T05:21:02.659Z",
+      "reviewed_head": "f5f4cefaa9bfcac8a87654428d96c921196e53d2",
+      "accepted_contracts": {
+        "docs/replacement/SUCCESSOR-PRODUCT.md": "23a608d292665281d7ac19686d8b9fc962d2abce642994b41511d4aba145c487",
+        "docs/replacement/ISSUE-CONTRACT.md": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094",
+        "docs/replacement/MONTH-PROGRAM.md": "cd46235c7d562c2587d4eb4d8ea7557fa1958a12c4dd0e6dc45c5822eea3b41a",
+        "docs/replacement/SCOPE-AUDIT.md": "3936196bee6c160025144be2315476fcc65f271484a02cce4138f4150414ae7c"
+      },
+      "authority_research_sha256": "0124cece646fc081de8db4e9b8a47cc7db3fea98ac4db3218a415c04da982938",
+      "superseded_reason": "Human review required changes to accepted governing documents; a new exact digest receipt is required.",
+      "not_granted": [
+        "implementation_completion",
+        "empirical_pass",
+        "legal_account_or_venue_eligibility",
+        "provider_permission",
+        "release_qualification",
+        "live_authority",
+        "credentials",
+        "capital_movement",
+        "merge_permission"
+      ]
+    }
+  },
+  "contracts": [
+    {
+      "path": "docs/replacement/SUCCESSOR-PRODUCT.md",
+      "sha256": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e"
+    },
+    {
+      "path": "docs/replacement/ISSUE-CONTRACT.md",
+      "sha256": "f1fb50dab4b166ca476698fc3974d6a1c2003b16df1d89ff8930060ad04b5094"
+    },
+    {
+      "path": "docs/replacement/MONTH-PROGRAM.md",
+      "sha256": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001"
+    },
+    {
+      "path": "docs/replacement/SCOPE-AUDIT.md",
+      "sha256": "d23dcc769e743d199ae4142f0e20ad5feebfe310c71d9f57fdd9d647c230db8c"
+    }
+  ],
+  "outcomes": [
+    {
+      "key": "O1",
+      "linear_issue": "CSL-213",
+      "title": "Successor product and economic contract",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o1",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable successor product and economic contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Repository scope audit, owner decisions in CSL-212, and Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; economic thresholds remain unresolved.",
+      "research_budget": {
+        "question": "What measurable product and economic contract should govern the US-individual successor?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned product and economic contract with unresolved-decision ledger",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O2",
+      "linear_issue": "CSL-214",
+      "title": "Multi-market evidence and replay plane",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o2",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable multi-market evidence and replay plane contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Source-commit audit of filings, ingestion, raw-store and replay surfaces plus official Kalshi and Polymarket US documentation checked 2026-10-16; entitlement and value evidence remain unresolved.",
+      "research_budget": {
+        "question": "What evidence, entitlement, identity and replay contract supports stocks and event markets?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned evidence and replay contract with entitlement matrix",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O3",
+      "linear_issue": "CSL-215",
+      "title": "Instrument, portfolio and accounting semantics",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o3",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable instrument, portfolio and accounting semantics contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Source-commit audit of book, OMS, P&L, fee, tax and reconciliation contracts; event-market resolution, collateral and cross-venue accounting semantics remain unresolved.",
+      "research_budget": {
+        "question": "What instrument, portfolio, collateral, settlement, fee, tax and accounting semantics are required?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "versioned market and accounting semantics with reconciliation cases",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O2"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O4",
+      "linear_issue": "CSL-216",
+      "title": "Strategy research and economic qualification laboratory",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o4",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable strategy research and economic qualification laboratory contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Historical strategy screens, frozen-cohort and feasibility evidence audited at the source commit; no strategy or positive net-yield result is promoted.",
+      "research_budget": {
+        "question": "What frozen evaluation protocol can falsify strategy and net-yield claims?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "frozen strategy evaluation protocol with baselines and falsifiers",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O5",
+      "linear_issue": "CSL-217",
+      "title": "Provider-neutral decision laboratory",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o5",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable provider-neutral decision laboratory contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Provider runner and mock-route audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813 and OpenAI Decisions documentation checked 2026-10-16; installed-route evidence remains unresolved.",
+      "research_budget": {
+        "question": "What provider-neutral workload and installed-route protocol can compare decision routes?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "provider comparison manifest with installed-route qualification protocol",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O2",
+        "O4"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O6",
+      "linear_issue": "CSL-218",
+      "title": "Configurable authority, execution and recovery",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o6",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable configurable authority, execution and recovery contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI.",
+        "A proposal-only is the qualification reference; C bounded direct authorization is the future target only after separate gates.",
+        "A, B and C are restrictive signed profiles over one independent enforcement layer, not a global autonomy switch."
+      ],
+      "research_basis": "Current nine invariants, order-path and recovery audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; legal, venue and provider permissions remain unresolved.",
+      "research_budget": {
+        "question": "What restrictive A, B and C authority profiles and recovery controls are legally and operationally admissible?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "signed authority-profile and recovery contract with adversarial cases",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O3",
+        "O4",
+        "O5"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Any provider output, typed decision or confidence value becomes a credential or authority grant.",
+        "Any profile bypasses the sole execution path, weakens an applicable floor or silently widens legal/account/venue scope.",
+        "Expired or revoked authority works, aggregate caps can be split or raced, or a stop/restart loses unknown orders or fills.",
+        "Demo, paper, shadow, API success or model agreement is promoted to live eligibility or economic qualification."
+      ],
+      "deliverables": [
+        "Versioned A/B/C profile schema with exact perimeter, expiry, cumulative budgets, stop/recovery ownership and evidence links.",
+        "Independent enforcement, atomic reservation/reconciliation and persistent stop/restart contracts.",
+        "Capability-scoped qualification matrix, adversarial negative controls and unresolved legal/venue/provider decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O7",
+      "linear_issue": "CSL-219",
+      "title": "GUI and CLI operator product",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o7",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable gui and cli operator product contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Source-commit audit of Discord, FastAPI and WebSocket operator surfaces plus owner direction for shared GUI and CLI; operator studies and distribution evidence remain unresolved.",
+      "research_budget": {
+        "question": "What shared service and operator contract supports useful GUI and CLI workflows without privileged paths?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "shared operator API and GUI/CLI acceptance contract",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3",
+        "O6"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "collaborative_judgment",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O8",
+      "linear_issue": "CSL-220",
+      "title": "Migration and performance frontier",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o8",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable migration and performance frontier contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Source-commit inventory and existing benchmark/evidence records; no language, runtime split or migration candidate is selected.",
+      "research_budget": {
+        "question": "What measured migration frontier justifies preserving, replacing or optimizing components?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "measured preserve-replace frontier and migration recommendation",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O2",
+        "O3",
+        "O4",
+        "O5",
+        "O6",
+        "O7"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O7",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o7",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    },
+    {
+      "key": "O9",
+      "linear_issue": "CSL-221",
+      "title": "Qualification, packaging and release evidence",
+      "parent_issue": "CSL-212",
+      "authoritative_clause": "docs/replacement/MONTH-PROGRAM.md#o9",
+      "current_state": "Inspected source commit 73ab78d9d69494c757cec875855121b1d29320a4 using replacement registry schema v1; evidence class: researched. Replacement contract direction is human-accepted; this outcome remains pending its exact outcome artifact and dependency completion evidence.",
+      "intended_outcome": "Freeze the measurable qualification, packaging and release evidence contract and exact-candidate evidence gate.",
+      "non_goals": [
+        "No live authority, credentials, capital movement or inferred acceptance."
+      ],
+      "inherited_decisions": [
+        "US individual; stocks and prediction markets; Kalshi demo first; GUI and CLI; bounded direct authority only after separate gates."
+      ],
+      "research_basis": "Historical acceptance, security-hardening, DEC-09 and release-evidence audit plus Parallel authority/compliance run trun_db705696fec649d8ad991d8f8f7b7813; no capability is release-qualified.",
+      "research_budget": {
+        "question": "What exact-candidate evidence bundle and independent protocol supports each maturity claim?",
+        "source_classes": [
+          "accepted repository evidence",
+          "current official documentation",
+          "bounded experiments where authorized"
+        ],
+        "quota_class": "one_bounded_reconciliation_pass",
+        "artifact": "capability evidence matrix and release-decision packet",
+        "stop_condition": "Stop after the named artifact records alternatives, falsifiers, unresolved decisions and the smallest next experiments; continuation requires a human Linear receipt."
+      },
+      "dependencies": [
+        "O1",
+        "O2",
+        "O3",
+        "O4",
+        "O5",
+        "O6",
+        "O7",
+        "O8"
+      ],
+      "authority_boundary": "Current nine invariants and non-live runtime authority remain binding.",
+      "discretion_class": "human_gated",
+      "falsifiers": [
+        "Semantic drift, stale evidence, implicit promotion or widened authority."
+      ],
+      "deliverables": [
+        "Versioned contract, negative controls, retained evidence and unresolved-decision ledger."
+      ],
+      "completion_gate": "Outcome-specific exact-candidate runner, oracle and negative controls must be checked in and independently run before this outcome can claim completion.",
+      "independent_verification": {
+        "verifier_role": "independent_non_implementer",
+        "method": "rerun_exact_candidate_and_negative_controls",
+        "required_evidence": [
+          "exact candidate identity",
+          "retained actual outputs",
+          "negative-control results"
+        ],
+        "self_verification_sufficient": false
+      },
+      "evidence": {
+        "claimed": "researched",
+        "not_claimed": [
+          "human_decided",
+          "contract_frozen",
+          "prototyped",
+          "implemented",
+          "provider_free_verified",
+          "demo_or_paper_qualified",
+          "shadow_qualified",
+          "limited_live_qualified",
+          "release_qualified"
+        ]
+      },
+      "dependency_contracts": [
+        {
+          "outcome": "O1",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o1",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O2",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o2",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O3",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o3",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O4",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o4",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O5",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o5",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O6",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O7",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o7",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        },
+        {
+          "outcome": "O8",
+          "fragment": "docs/replacement/MONTH-PROGRAM.md#o8",
+          "accepted_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+          "status": "accepted_human_digest_receipt"
+        }
+      ],
+      "completion_gate_status": "pending_outcome_artifact"
+    }
+  ],
+  "manifest_gate": "python -X utf8 -B tools/check_replacement_program.py",
+  "research_evidence": {
+    "authority_compliance": {
+      "run_id": "trun_db705696fec649d8ad991d8f8f7b7813",
+      "status": "completed",
+      "research_cutoff": "2026-10-16",
+      "claim": "research_input_only",
+      "reconciliation_path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+      "owner_direction": "A is the qualification reference; C bounded direct authorization is a candidate future target pending a human-authored final-digest receipt and separate accepted gates.",
+      "not_claimed": [
+        "legal_advice",
+        "account_or_venue_eligibility",
+        "provider_permission",
+        "live_authority",
+        "economic_qualification",
+        "release_qualification"
+      ],
+      "sha256": "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6"
+    }
+  }
+}

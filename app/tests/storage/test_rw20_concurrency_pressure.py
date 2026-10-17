@@ -76,6 +76,35 @@ def test_append_in_commit_after_watermark_read_keeps_one_chain(writers, monkeypa
     assert injected and verified.ok and verified.head_seq == 3
 
 
+def test_virgin_chain_commit_between_hwm_and_head_keeps_both_rows(writers, monkeypatch):
+    """sqlite3 legacy SELECT does not pin a snapshot. A concurrent first-append can
+    commit rows+watermark between ``_read_hwm`` and the head SELECT, which has the
+    same shape as SEC-11 truncation. Allocation must re-read a consistent pair
+    rather than refuse a healthy chain. Stable missing watermarks still refuse.
+    """
+    first, second, sf = writers
+    original_read = first._read_hwm
+    injected = False
+
+    def commit_between_allocation_reads(session):
+        nonlocal injected
+        hwm = original_read(session)
+        if not injected:
+            injected = True
+            second.append("competitor")
+        return hwm
+
+    monkeypatch.setattr(first, "_read_hwm", commit_between_allocation_reads)
+    first.append("standalone")
+    monkeypatch.setattr(first, "_read_hwm", original_read)
+    assert injected
+    verified = first.verify_chain()
+    assert verified.ok and verified.head_seq == 2
+    with sf() as session:
+        rows = session.execute(select(AuditEntry)).scalars().all()
+    assert {row.event_type for row in rows} == {"competitor", "standalone"}
+
+
 def test_independent_append_writers_preserve_all_committed_rows(writers):
     """Bounded mixed-writer load; no model, broker, production DB, or external witness."""
     first, second, sf = writers

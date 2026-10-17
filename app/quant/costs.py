@@ -43,10 +43,14 @@ straight into the risk engine.
 """
 from __future__ import annotations
 
+import importlib.util
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
 from quant.events import Fill, Liquidity, PriceScale, Side
+
+log = logging.getLogger(__name__)
 
 
 SECONDS_PER_DAY = 24 * 60 * 60
@@ -194,25 +198,31 @@ def python_cost_bps(cost: Decimal, notional: Decimal) -> Decimal:
 
 
 COSTS_BACKEND = "python"
-_NATIVE = None
 
 
 def _load_native() -> None:
     """Record that the costs extension is installed. Per-call methods stay on Decimal.
 
-    A missing module keeps that path. Any other import failure is a broken
-    extension and is not swallowed. ``cockpit_quant`` is arithmetic only: it does
-    not enter the impure set that ``quant/verify.py`` is forbidden to reach.
+    A missing module keeps that path. A present extension that fails to import is
+    broken and the error propagates. A present module missing ``fee_for``,
+    ``borrow_cost``, ``cost_bps``, or ``fee_for_many`` is a partial wheel.
+    ``cockpit_quant`` is arithmetic only: it does not enter the impure set that
+    ``quant/verify.py`` is forbidden to reach.
     """
-    global _NATIVE, COSTS_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    global COSTS_BACKEND
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("COSTS_BACKEND=%s", COSTS_BACKEND)
         return
-    if not all(hasattr(native, name) for name in ("fee_for", "borrow_cost", "cost_bps")):
-        return
-    _NATIVE = native
+    import cockpit_quant as native
+
+    required = ("fee_for", "borrow_cost", "cost_bps", "fee_for_many")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
+        raise ImportError(
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
+        )
     COSTS_BACKEND = "rust"
+    log.info("COSTS_BACKEND=%s", COSTS_BACKEND)
 
 
 _load_native()

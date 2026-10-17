@@ -10,6 +10,7 @@ SQLite, FakeTransport (no real subprocesses).
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -139,9 +140,20 @@ def test_limit_hit_enters_watch_only_once_and_mode_unchanged(st):
     assert len(_events(st, EVENT_WATCH_ONLY)) == 1
 
     # a second call while the breaker is open short-circuits and does NOT re-enter
-    result2, _ = _call(st, FakeTransport([]))
+    result2, job2 = _call(st, FakeTransport([]))
     assert result2.status == LIMIT_HIT and result2.error == "breaker_open"
+    assert result2.dispatched is False
     assert len(_events(st, EVENT_WATCH_ONLY)) == 1, "enter_watch_only must fire exactly once"
+    # The breaker refused before any subprocess. That refusal is not a charge.
+    refused = [
+        e.payload["cost"] for e in _events(st, EVENT_AGENT_JOB)
+        if e.payload["cost"].get("refused") == "breaker_open"
+    ]
+    assert len(refused) == 1
+    assert refused[0]["billed"] is False
+    assert refused[0]["usd_scope"] == "not_sent"
+    assert refused[0]["usd"] == "0.00000000"
+    assert job2.usage_estimate == Decimal("0")
 
 
 def test_timeout_enters_watch_only(st):
