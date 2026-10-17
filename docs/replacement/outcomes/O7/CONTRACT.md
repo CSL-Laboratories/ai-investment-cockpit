@@ -148,7 +148,7 @@ The CHI '21 ACM page linked below was returned by the Parallel search. This sess
 
 ## Negative controls
 
-Each fixture is schema-valid except the privileged bypass, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
+Each fixture is schema-valid except the privileged bypass and the stale read with `watch_only=false`, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
 
 | Control | Fixture | What it catches |
 | --- | --- | --- |

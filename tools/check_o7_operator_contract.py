@@ -56,7 +56,7 @@ REQUIRED_CONTROLS = (
     "stale_not_watch_only",
 )
 COMMAND_SCHEMA_CONTROLS = frozenset({"unconfirmed_intervention", "unscoped_intervention"})
-SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass"} - COMMAND_SCHEMA_CONTROLS
+SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only"} - COMMAND_SCHEMA_CONTROLS
 CONTROL_REASONS = {
     "gui_cli_semantic_divergence": "semantic_projection_mismatch",
     "hidden_refusal": "refusal_not_visible",
