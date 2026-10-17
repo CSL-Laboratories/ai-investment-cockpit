@@ -228,17 +228,38 @@ def test_sizeless_proposal_needs_human(st, clock, tmp_path):
     packet = build_packet([row])
     transport = FakeTransport([
         envelope(_proposal_body(refs=[row.raw_ref], quantity=None, notional=None)),
+        envelope(_grounding_body("prop-1", [row.raw_ref])),
     ])
     outcome = draft_proposal(st, clock, event=row, packet=packet, transport=transport,
-                             parquet_root=tmp_path / "raw")
+                             parquet_root=tmp_path / "raw",
+                             holdings_symbols=HOLDINGS, watchlist=WATCHLIST)
     assert outcome.status == "needs_human"
     assert outcome.order is None
     assert outcome.embed is not None
     assert outcome.embed["size_pending"] is True
+    assert outcome.embed["grounding_flagged"] is False
     assert outcome.embed["order_id"] is None
     assert outcome.embed["risk"]["human_required"] is True
     assert outcome.embed["risk"]["decision"] is None
     assert _rows(st, ProposalRecord)[0].status == "needs_human"
+    assert _rows(st, RiskDecision) == []
+    assert _rows(st, Order) == []
+
+
+def test_ungrounded_sizeless_proposal_is_flagged(st, clock, tmp_path):
+    row = _persist_event(st, clock, tmp_path)
+    packet = build_packet([row])
+    transport = FakeTransport([
+        envelope(_proposal_body(refs=[row.raw_ref], quantity=None, notional=None)),
+        envelope(_grounding_body("prop-1", [row.raw_ref], grounded=False)),
+    ])
+    outcome = draft_proposal(st, clock, event=row, packet=packet, transport=transport,
+                             parquet_root=tmp_path / "raw",
+                             holdings_symbols=HOLDINGS, watchlist=WATCHLIST)
+    assert outcome.status == "flagged"
+    assert outcome.record.flagged is True
+    assert outcome.embed["grounding_flagged"] is True
+    assert outcome.order is None
     assert _rows(st, RiskDecision) == []
     assert _rows(st, Order) == []
 

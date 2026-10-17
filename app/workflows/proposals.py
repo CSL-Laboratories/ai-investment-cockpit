@@ -469,20 +469,6 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         return ProposalOutcome("quarantined", proposal, record, None, None, None,
                                ("outbound scrub blocked (SEC-09)",))
 
-    # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
-    # No risk decision and no order. The embed is the operator's size-pending card.
-    if proposal.get("quantity") is None and proposal.get("notional") is None:
-        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
-                                 flagged=False, job_id=job.id)
-
-        def _excerpt(ref) -> str:
-            item = resolve_raw(parquet_root, str(ref), state=state)
-            return escape_untrusted(str(item.get("headline", "")))[:200]
-
-        embed = render_size_pending_embed(record.payload, raw_excerpt_fn=_excerpt)
-        return ProposalOutcome("needs_human", proposal, record, None, None, embed,
-                               ("neither quantity nor notional present",))
-
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------
     def _resolver(ref: str) -> dict:
         return resolve_raw(parquet_root, ref, state=state)
@@ -490,6 +476,28 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     grounding = evaluate_grounding(state, proposal, packet.dispatched_refs, _resolver,
                                    transport=transport,
                                    symbol_universe=holdings_symbols | watchlist)
+
+    # BUG-149: incomplete sizing is persisted model output, already scrubbed.
+    # Grounding runs first so a size-pending card cannot skip SEC-14. No risk
+    # decision and no order.
+    if proposal.get("quantity") is None and proposal.get("notional") is None:
+        flagged = grounding.flagged
+        if flagged:
+            reasons.extend(grounding.reasons)
+        status = "flagged" if flagged else "needs_human"
+        record = _persist_record(state, clock, proposal=proposal, status=status,
+                                 flagged=flagged, job_id=job.id)
+
+        def _excerpt(ref) -> str:
+            item = resolve_raw(parquet_root, str(ref), state=state)
+            return escape_untrusted(str(item.get("headline", "")))[:200]
+
+        embed = render_size_pending_embed(
+            record.payload, raw_excerpt_fn=_excerpt, flagged=flagged,
+            reasons=grounding.reasons,
+        )
+        return ProposalOutcome(status, proposal, record, None, None, embed,
+                               tuple(reasons) or ("neither quantity nor notional present",))
     flagged = grounding.flagged
     if flagged:
         reasons.extend(grounding.reasons)

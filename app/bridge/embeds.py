@@ -271,7 +271,8 @@ def render_execution_section(risk_decision, *, audit_facts: dict | None = None) 
     }
 
 
-def render_size_pending_embed(proposal: dict, raw_excerpt_fn=None) -> dict:
+def render_size_pending_embed(proposal: dict, raw_excerpt_fn=None, *,
+                              flagged: bool = False, reasons=()) -> dict:
     """Operator card for a proposal that has no size, no order, and no risk decision.
 
     Risk and execution stay empty on purpose. This card must not look like an
@@ -289,8 +290,13 @@ def render_size_pending_embed(proposal: dict, raw_excerpt_fn=None) -> dict:
         sources.append({"ref": str(ref)[:128], "excerpt": excerpt})
     side = (p.get("side") or "").upper()
     symbol = p.get("symbol") or "?"
+    title = f"{side} {symbol} — size pending"
+    if flagged:
+        title = f"{title} — grounding flagged"
     return {
-        "title": f"{side} {symbol} — size pending",
+        "title": title,
+        "grounding_flagged": flagged,
+        "grounding_reasons": [str(reason) for reason in reasons],
         "proposal_id": p.get("proposal_id"),
         "size_pending": True,
         "order_id": None,
