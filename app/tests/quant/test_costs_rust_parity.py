@@ -105,28 +105,52 @@ def _assert_same_tracker(accelerated: PnLTracker, reference: PnLTracker) -> None
             assert value == other
 
 
-def test_nonfinite_mids_stay_on_the_python_path():
-    """NaN and ±Inf must not reach PnlCore, which rejects them as ValueError."""
-    for mid in (float("nan"), float("inf"), float("-inf")):
-        accelerated, reference = _trackers(ZERO_FEES)
-        try:
-            reference.mark(mid, ts=0)
-        except Exception as exc:
-            with pytest.raises(type(exc)):
-                accelerated.mark(mid, ts=0)
-            assert accelerated._core is None
-            continue
-        accelerated.mark(mid, ts=0)
-        assert accelerated._core is None
-        assert reference._last_mid is not None and accelerated._last_mid is not None
-        if reference._last_mid.is_nan():
-            assert accelerated._last_mid.is_nan()
-        else:
-            assert accelerated._last_mid == reference._last_mid
-        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
-        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
-        assert accelerated.position == reference.position == 100
-        assert accelerated.fills == reference.fills == 1
+def _assert_nonfinite(got: Decimal, expected: Decimal) -> None:
+    """``Decimal("NaN") == Decimal("NaN")`` is False, so NaN is matched by class."""
+    if expected.is_nan():
+        assert got.is_nan(), got
+    else:
+        assert got == expected, (got, expected)
+
+
+@pytest.mark.parametrize(
+    ("mid", "expected_mid"),
+    [
+        (float("nan"), Decimal("NaN")),
+        (float("inf"), Decimal("Infinity")),
+        (float("-inf"), Decimal("-Infinity")),
+    ],
+    ids=["nan", "inf", "-inf"],
+)
+def test_nonfinite_mids_stay_on_the_python_path(mid, expected_mid):
+    """NaN and ±Inf must not reach PnlCore, which rejects them as ValueError.
+
+    The ledger is pinned from the Decimal rules rather than read off a second
+    tracker driven through the same methods: ``Decimal(str(mid)) * tick`` keeps
+    the NaN or the infinity, spread capture inherits it through
+    ``(mid - price) * signed_qty``, and the fill still lands on the cash,
+    notional and position ledgers at the fill price.
+    """
+    accelerated, _reference = _trackers(ZERO_FEES)
+    accelerated.mark(mid, ts=0)
+    assert accelerated._core is None
+    assert accelerated._last_mid is not None
+    _assert_nonfinite(accelerated._last_mid, expected_mid)
+    assert accelerated._last_ts == 0
+    assert accelerated.inventory_drift == 0
+
+    accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+    assert accelerated._core is None
+    _assert_nonfinite(accelerated._last_mid, expected_mid)
+    _assert_nonfinite(accelerated.spread_capture, expected_mid)
+    assert accelerated.inventory_drift == 0
+    assert accelerated.fees == 0
+    assert accelerated.realized_notional == Decimal("10000.00")
+    assert accelerated._cash == Decimal("-10000.00")
+    assert accelerated.position == 100
+    assert accelerated.fills == accelerated.maker_fills == 1
+    _assert_nonfinite(accelerated.mark_to_market(), expected_mid)
+    _assert_nonfinite(accelerated.snapshot().total, expected_mid)
 
 
 def test_huge_integer_mid_does_not_overflow_the_finite_check():
@@ -158,17 +182,45 @@ def test_position_overflow_keeps_the_python_ledger():
     _assert_same_tracker(accelerated, reference)
 
 
+def _short_one_hour(tracker: PnLTracker) -> None:
+    """Sell 300 taker at 100.01 against a 100.005 mid, then mark 99.995 an hour later."""
+    tracker.mark(10_000.5, ts=0)
+    tracker.on_fill(
+        _fill(Side.SELL, 300, 10_001, liquidity=Liquidity.TAKER, ts=0), mid_ticks=10_000.5,
+    )
+    tracker.mark(9_999.5, ts=3_600 * 1_000_000_000)
+
+
 def test_pnl_custom_decimal_context_matches_python():
-    """PnLTracker must honour a non-default context instead of 28-digit Rust arithmetic."""
+    """PnLTracker must honour a non-default context instead of 28-digit Rust arithmetic.
+
+    The ledger is pinned to values only a precision-6 context produces, the way the
+    cost-bps test pins ``1428.57``. The fees are 0.9 taker + 0.83 Section 31 + 0.0498
+    TAF + 0.06 clearing + 0.0171225... borrow; precision 6 rounds that to ``1.85692``
+    where the default context keeps ``1.856922431506849315068493151``. A tracker that
+    ignored the caller's context would fail these equalities on either path.
+    """
     with localcontext() as ctx:
         ctx.prec = 6
         accelerated, reference = _trackers(SCHEDULE)
-        accelerated.mark(10_000.5, ts=0)
-        reference.mark(10_000.5, ts=0)
-        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
-        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
+        _short_one_hour(accelerated)
+        _short_one_hour(reference)
         _assert_same_tracker(accelerated, reference)
         assert accelerated._core is None
+        assert accelerated.spread_capture == Decimal("1.500")
+        assert accelerated.inventory_drift == Decimal("3.000")
+        assert accelerated.fees == Decimal("1.85692")
+        assert accelerated.mark_to_market() == Decimal("4.5")
+        assert accelerated.snapshot().total == Decimal("2.64308")
+        # 100.01 * 300 is seven digits, so precision 6 drops the last place.
+        assert str(accelerated.realized_notional) == "30003.0"
+        assert str(accelerated._cash) == "30003.0"
+
+    default = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    _short_one_hour(default)
+    assert default.fees == Decimal("1.856922431506849315068493151")
+    assert default.snapshot().total == Decimal("2.643077568493150684931506849")
+    assert str(default.realized_notional) == "30003.00"
 
 
 def test_nonfinite_borrow_seconds_stay_on_the_python_path():
