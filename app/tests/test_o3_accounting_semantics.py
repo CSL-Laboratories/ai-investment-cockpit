@@ -75,6 +75,56 @@ def test_o3_resting_order_reservation_is_not_fill_cost() -> None:
     assert _evaluate(fixture) == set()
     del fixture["journal"][2]["order_id"]
     assert "balance_mismatch" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][2]["order_id"] = "ord-yes"
+    assert "position_divergence" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"].append({
+        "entry_id": "j-order-fee",
+        "sequence": 4,
+        "idempotency_key": "fee-rest-1",
+        "order_id": "ord-rest",
+        "strategy_id": "s-event",
+        "reason": "trade_fee",
+        "lines": [
+            {"account": "fees_expense", "side": "dr", "amount_minor": 50000, "instrument_id": "ev-yes"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 50000, "instrument_id": "ev-yes"},
+        ],
+    })
+    fixture["reported"]["cash_available"] -= 50000
+    fixture["reported"]["attribution"][0]["fees_minor"] += 50000
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_fill_lines_must_match_fill_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["instruments"].append({
+        "instrument_id": "eq-msft",
+        "family": "equity",
+        "venue_id": "venue-equity-candidate",
+        "venue_symbol": "MSFT",
+        "currency": "USD",
+        "unit": "share",
+    })
+    fixture["orders"].append({
+        "order_id": "ord-3",
+        "instrument_id": "eq-msft",
+        "family": "equity",
+        "side": "buy",
+        "qty": 1,
+        "state": "resting",
+    })
+    for line in fixture["journal"][0]["lines"]:
+        line["instrument_id"] = "eq-msft"
+    assert "position_divergence" in _evaluate(fixture)
+
+
+def test_o3_market_must_reference_declared_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["markets"].append({"instrument_id": "ghost", "state": "open"})
+    assert "unknown_instrument" in _evaluate(fixture)
 
 
 def test_o3_unknown_instrument_references_rejected() -> None:

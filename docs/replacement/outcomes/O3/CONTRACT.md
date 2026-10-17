@@ -234,13 +234,17 @@ the fixtures are placeholders.
 Posting references tie each entry to its cause. An entry with reason
 `fill` carries the `fill_id` it posts, and the premium and fee on those
 entries must equal that fill's `qty * price_minor` and `fee_minor`
-per fill, not just in aggregate. `reserve_collateral` and `trade_fee`
-entries carry a `fill_id` when they post an executed fill, or an
-`order_id` when they post the reservation of a resting (unfilled) order.
-A resting-order reservation is not fill cost and is exempt from the
-per-fill premium check; it still reserves collateral and still needs a
-reference. A posting with a missing, unknown, or checkpointed reference
-fails the fixture.
+per fill, not just in aggregate. `reserve_collateral` entries carry a
+`fill_id` when they post an executed fill, or an `order_id` when they
+post the reservation of a resting (unfilled) order; a `trade_fee` is
+execution cost and always carries a `fill_id`. A resting-order
+reservation is not fill cost and is exempt from the per-fill premium
+check; it still reserves collateral and still needs a reference. An
+`order_id` must name an order with no accepted fills — a filled order is
+not a resting reservation. Every line on a referenced entry must post
+the referenced fill's or order's own `instrument_id`, never a different
+declared instrument. A posting with a missing, unknown, checkpointed,
+or cross-instrument reference fails the fixture.
 
 ## Fills
 

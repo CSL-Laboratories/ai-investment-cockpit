@@ -218,9 +218,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
     applied_fill_fees = 0
     fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
+    fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
-    order_fee_total = 0
+    filled_order_ids: set[str] = set()
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -255,6 +256,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             defect_instruments.add(fill["instrument_id"])
             continue
         accepted_qty[order["order_id"]] = filled + fill["qty"]
+        filled_order_ids.add(fill["order_id"])
         if fill["sequence"] <= checkpoint["sequence"]:
             checkpointed_fill_ids.add(fill["fill_id"])
             continue
@@ -264,6 +266,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
 
     pre_settlement = dict(derived)
     for market in fixture["markets"]:
+        if market["instrument_id"] not in known_instruments:
+            failures.add("unknown_instrument")
         if market["state"] != "settled":
             continue
         instrument_id = market["instrument_id"]
@@ -378,10 +382,19 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("position_divergence")
         if order_ref is not None and order_ref not in orders:
             failures.add("position_divergence")
+        if order_ref is not None and order_ref in filled_order_ids:
+            failures.add("position_divergence")
         if entry["reason"] == "fill" and fill_ref is None:
             failures.add("balance_mismatch")
-        if entry["reason"] in {"reserve_collateral", "trade_fee"} and fill_ref is None and order_ref is None:
+        if entry["reason"] == "reserve_collateral" and fill_ref is None and order_ref is None:
             failures.add("balance_mismatch")
+        if entry["reason"] == "trade_fee" and fill_ref is None:
+            failures.add("balance_mismatch")
+        ref_instrument = None
+        if fill_ref in fills_by_id:
+            ref_instrument = fills_by_id[fill_ref]["instrument_id"]
+        elif order_ref in orders:
+            ref_instrument = orders[order_ref]["instrument_id"]
         if entry["reason"] == "corporate_action":
             for line in entry["lines"]:
                 if (line["account"], line["side"]) not in {
@@ -395,6 +408,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             amount = _line_amount(line, failures)
             if line["instrument_id"] not in known_instruments:
                 failures.add("unknown_instrument")
+            if ref_instrument is not None and line["instrument_id"] != ref_instrument:
+                failures.add("position_divergence")
             account = line["account"]
             side = line["side"]
             if fill_ref is not None:
@@ -436,8 +451,6 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 delta = amount if side == "dr" else -amount
                 if entry["reason"] != "settlement_payout":
                     journal_fees += delta
-                if order_ref is not None:
-                    order_fee_total += delta
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
                 bucket["fees_minor"] += delta
                 if entry["reason"] == "settlement_payout":
@@ -458,7 +471,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
 
-    if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees + order_fee_total:
+    if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
         failures.add("fee_mismatch")
 
     for market in fixture["markets"]:
