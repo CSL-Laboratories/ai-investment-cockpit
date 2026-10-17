@@ -832,6 +832,331 @@ def test_settlement_timestamp_after_acceptance_is_rejected(tmp_path: Path) -> No
         module.validate_candidate(copy)
 
 
+def test_split_endpoints_must_share_one_listing(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    documents["fixtures/identities.json"]["identities"].append(
+        {
+            "identity_id": "idn-eq-other",
+            "market_family": "equity",
+            "identity_version": 1,
+            "venue": "us_equity",
+            "currency": "USD",
+            "prior_identity_id": None,
+            "equity": {
+                "issuer_cik": "0000000002",
+                "listing_key": "us-equity:cik:0000000002:class:common",
+                "ticker": "OTHER",
+                "share_class": "common",
+            },
+        }
+    )
+    record = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-split"
+    )
+    record["payload"]["listing_identity_after"] = "idn-eq-other"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="split endpoints are not one listing"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize(
+    ("raw_id", "field"),
+    [("raw-ev-determined", "determination_ts"), ("raw-ev-settled", "settled_ts")],
+)
+def test_socket_lifecycle_timestamp_after_acceptance_is_rejected(
+    tmp_path: Path, raw_id: str, field: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == raw_id)
+    record["payload"][field] = 4102444800
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match=f"{field} is after accepted_at"):
+        module.validate_candidate(copy)
+
+
+def _retarget_fact_accessions(documents: dict, issuer_cik: str | None) -> None:
+    mapping = {
+        "raw-eq-10k": ("0000000099-24-000001", None),
+        "raw-eq-10k-dup": ("0000000099-24-000001", None),
+        "raw-eq-10ka": ("0000000099-24-000099", "0000000099-24-000001"),
+    }
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        planned = mapping.get(record["raw_record_id"])
+        if planned is None:
+            continue
+        accession, amends = planned
+        record["payload"]["accession"] = accession
+        if amends is not None:
+            record["payload"]["amends_accession"] = amends
+        if issuer_cik is not None:
+            record["payload"]["issuer_cik"] = issuer_cik
+
+
+def test_fact_accession_without_issuer_binding_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _retarget_fact_accessions(documents, None)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="agent-filed accession lacks its issuer CIK"):
+        module.validate_candidate(copy)
+
+
+def test_agent_filed_fact_is_accepted_when_issuer_matches(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _retarget_fact_accessions(documents, "0000000001")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+    assert module.validate_candidate(copy)[1] == "O2 maturity: researched"
+
+
+def test_agent_filed_accession_key_without_issuer_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-ooo"
+    )
+    record["payload"]["accession"] = "0000000099-24-000050"
+    record["natural_key"] = "sec:accession:0000000099-24-000050"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="agent-filed accession lacks its issuer CIK"):
+        module.validate_candidate(copy)
+
+
+def test_agent_filed_accession_key_is_accepted_when_issuer_matches(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-ooo"
+    )
+    record["payload"]["accession"] = "0000000099-24-000050"
+    record["payload"]["issuer_cik"] = "0000000001"
+    record["natural_key"] = "sec:accession:0000000099-24-000050"
+    old = "sec:accession:0000000001-24-000050"
+    for observation in documents["fixtures/observations.json"]["observations"]:
+        if observation["natural_key"] == old:
+            observation["natural_key"] = record["natural_key"]
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["natural_key"] == old:
+            check["natural_key"] = record["natural_key"]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
+def _hide_fact_record(documents: dict, raw_id: str) -> None:
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["natural_key"] == "sec:fact:0000000001:revenue:fy2023":
+            check["hidden_raw_record_ids"].append(raw_id)
+
+
+def _append_amendment(
+    documents: dict, raw_id: str, supersedes: str, accession: str, amends: str, accepted_at: str, value: str
+) -> None:
+    records = documents["fixtures/raw_records.json"]["records"]
+    base = json.loads(json.dumps(next(item for item in records if item["raw_record_id"] == "raw-eq-10ka")))
+    base.update(
+        raw_record_id=raw_id,
+        source_record_key=accession,
+        supersedes=supersedes,
+        event_time=accepted_at,
+        accepted_at=accepted_at,
+    )
+    base["calendar"] = dict(base["calendar"])
+    base["calendar"]["session_date"] = accepted_at[:10]
+    base["payload"] = dict(base["payload"])
+    base["payload"].update(accession=accession, amends_accession=amends, value=value)
+    records.append(base)
+    _hide_fact_record(documents, raw_id)
+
+
+def test_later_amendment_may_name_the_original_filing(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _append_amendment(
+        documents,
+        "raw-eq-10ka-mid",
+        "raw-eq-10ka",
+        "0000000001-24-000120",
+        "0000000001-24-000099",
+        "2024-09-01T16:00:05Z",
+        "130",
+    )
+    _append_amendment(
+        documents,
+        "raw-eq-10ka-orig",
+        "raw-eq-10ka-mid",
+        "0000000001-24-000130",
+        "0000000001-24-000001",
+        "2024-10-01T16:00:05Z",
+        "140",
+    )
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
+def test_amendment_accession_must_be_distinct(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    amendment = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-10ka"
+    )
+    amendment["payload"]["accession"] = "0000000001-24-000001"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="amendment reuses a predecessor accession"):
+        module.validate_candidate(copy)
+
+
+def _add_resultless_settled_pair(documents: dict) -> dict:
+    _add_lifecycle_state_probe(documents, "determined", "determined", "yes", "yes")
+    records = documents["fixtures/raw_records.json"]["records"]
+    prior = next(item for item in records if item["raw_record_id"] == "raw-ev-state-probe")
+    prior["raw_record_id"] = "raw-ev-probe-determined"
+    prior["source_record_key"] = "probe-determined"
+    settled = json.loads(json.dumps(prior))
+    settled.update(
+        raw_record_id="raw-ev-probe-settled",
+        source_record_key="probe-settled",
+        supersedes="raw-ev-probe-determined",
+        event_time="2024-09-01T18:00:00Z",
+        accepted_at="2024-09-01T18:00:02Z",
+    )
+    settled["payload"] = dict(settled["payload"])
+    settled["payload"].update(
+        event_type="settled",
+        channel="market_lifecycle_v2",
+        status_rest="finalized",
+        resolution="yes",
+        result=None,
+        official_lifecycle_status_observed=True,
+        determination_ts=None,
+        settlement_value=None,
+        settled_ts=1725213600,
+        settlement_ts=None,
+    )
+    records.append(settled)
+    return settled
+
+
+def test_resultless_settled_duplicate_is_idempotent(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    settled = _add_resultless_settled_pair(documents)
+    duplicate = json.loads(json.dumps(settled))
+    duplicate.update(
+        raw_record_id="raw-ev-probe-settled-dup",
+        source_record_key="probe-settled-dup",
+        duplicate_of="raw-ev-probe-settled",
+        supersedes=None,
+        accepted_at="2024-09-01T18:05:00Z",
+    )
+    documents["fixtures/raw_records.json"]["records"].append(duplicate)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+    bundle = module.Bundle({rel: json.loads((copy / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR})
+    effective = module.effective_record(
+        bundle.records,
+        settled["natural_key"],
+        module.parse_time("2024-09-01T19:00:00Z"),
+    )
+    assert effective is not None
+    assert effective["raw_record_id"] == "raw-ev-probe-settled"
+
+
+def test_resultless_settled_duplicate_with_different_bytes_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    settled = _add_resultless_settled_pair(documents)
+    duplicate = json.loads(json.dumps(settled))
+    duplicate.update(
+        raw_record_id="raw-ev-probe-settled-dup",
+        source_record_key="probe-settled-dup",
+        duplicate_of="raw-ev-probe-settled",
+        supersedes=None,
+        accepted_at="2024-09-01T18:05:00Z",
+    )
+    duplicate["payload"] = dict(duplicate["payload"])
+    duplicate["payload"]["resolution"] = "no"
+    documents["fixtures/raw_records.json"]["records"].append(duplicate)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate does not match its target"):
+        module.validate_candidate(copy)
+
+
+def test_ex_date_correction_is_replayable(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    records = documents["fixtures/raw_records.json"]["records"]
+    original = next(item for item in records if item["raw_record_id"] == "raw-eq-split-oct")
+    correction = json.loads(json.dumps(original))
+    correction.update(
+        raw_record_id="raw-eq-split-oct-corr",
+        source_record_key="split-2024-10-01#corr",
+        supersedes="raw-eq-split-oct",
+        event_time="2024-09-16T16:00:00Z",
+        accepted_at="2024-09-16T16:00:00Z",
+    )
+    correction["payload"] = dict(correction["payload"])
+    correction["payload"]["ex_date"] = "2024-10-02"
+    records.append(correction)
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["check_id"] == "independent_corporate_action_hidden":
+            check["hidden_raw_record_ids"].append("raw-eq-split-oct-corr")
+        if check["check_id"] == "independent_corporate_action_retained":
+            check["visible_raw_record_ids"].append("raw-eq-split-oct-corr")
+            check["effective_raw_record_id"] = "raw-eq-split-oct-corr"
+    observation = next(
+        item
+        for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] == "obs-splits-sep"
+    )
+    observation["effective_raw_record_id"] = "raw-eq-split-oct-corr"
+    observation["raw_record_ids"].append("raw-eq-split-oct-corr")
+    action = next(item for item in observation["corporate_actions"] if item["raw_record_id"] == "raw-eq-split-oct")
+    action["raw_record_id"] = "raw-eq-split-oct-corr"
+    action["ex_date"] = "2024-10-02"
+    edge = next(
+        item for item in documents["fixtures/lineage.json"]["edges"] if item["observation_id"] == "obs-splits-sep"
+    )
+    edge["input_raw_record_ids"] = list(observation["raw_record_ids"])
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+    bundle = module.Bundle({rel: json.loads((copy / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR})
+    effective = module.effective_record(
+        bundle.records,
+        original["natural_key"],
+        module.parse_time("2024-09-17T00:00:00Z"),
+    )
+    assert effective is not None
+    assert effective["raw_record_id"] == "raw-eq-split-oct-corr"
+    assert effective["payload"]["ex_date"] == "2024-10-02"
+
+
+def test_root_ex_date_suffix_must_match(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(
+        item
+        for item in documents["fixtures/raw_records.json"]["records"]
+        if item["raw_record_id"] == "raw-eq-split-oct"
+    )
+    record["payload"]["ex_date"] = "2024-10-02"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="natural key does not name its ex-date"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_replay_check_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    checks = documents["fixtures/replay_checks.json"]["checks"]
+    checks[-1]["check_id"] = checks[0]["check_id"]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate replay check"):
+        module.validate_candidate(copy)
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):

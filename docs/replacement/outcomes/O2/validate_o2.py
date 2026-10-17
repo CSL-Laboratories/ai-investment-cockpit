@@ -112,6 +112,15 @@ def parse_time(value: object) -> datetime:
     return parsed
 
 
+def parse_unix_time(value: object) -> datetime:
+    if type(value) is not int or value < 0:
+        raise ContractError(f"unix timestamp must be a non-negative integer, got {value!r}")
+    try:
+        return datetime.fromtimestamp(value, timezone.utc)
+    except (OSError, OverflowError, ValueError) as exc:
+        raise ContractError(f"unix timestamp is not a real instant: {value}") from exc
+
+
 def parse_date(value: object) -> date:
     if type(value) is not str:
         raise ContractError(f"date must be YYYY-MM-DD, got {value!r}")
@@ -420,6 +429,34 @@ def _require_event_natural_key(record: dict, identity: dict) -> None:
         )
 
 
+def _filer_cik(accession: object) -> str | None:
+    if type(accession) is not str or len(accession) < 11 or accession[10] != "-":
+        return None
+    prefix = accession[:10]
+    if not prefix.isdigit():
+        return None
+    return prefix
+
+
+def _require_accession_issuer(raw_id: str, accession: object, issuer_cik: str, payload: dict) -> None:
+    """The filer prefix may be the issuer or a filing agent.
+
+    The record must carry the issuer CIK, and that CIK must be the fact's issuer.
+    An issuer-filed accession carries the issuer in its prefix. An agent-filed
+    accession is allowed only when payload.issuer_cik is that same issuer.
+    """
+    filer = _filer_cik(accession)
+    if filer is None:
+        raise ContractError(f"{raw_id} accession does not name a filer")
+    carried = payload.get("issuer_cik")
+    if filer == issuer_cik:
+        if carried is not None and carried != issuer_cik:
+            raise ContractError(f"{raw_id} accession issuer does not match its fact")
+        return
+    if carried != issuer_cik:
+        raise ContractError(f"{raw_id} agent-filed accession lacks its issuer CIK")
+
+
 def _require_equity_natural_key(record: dict, identity: dict) -> None:
     """The CIK, listing, accession, and fact embedded in an equity key must match the record."""
     key = record["natural_key"]
@@ -433,12 +470,14 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
         parts = key.split(":")
         if len(parts) < 5 or parts[2] != cik or parts[3] != payload.get("concept"):
             raise ContractError(f"{raw_id} natural key does not name its equity fact")
+        if kind in {"filing", "filing_amendment"}:
+            _require_accession_issuer(raw_id, payload.get("accession"), cik, payload)
         return
     if key.startswith("sec:accession:"):
         accession = key[len("sec:accession:") :]
-        # The accession prefix is the submitter's CIK (often a filing agent), not the issuer's.
         if accession != payload.get("accession"):
             raise ContractError(f"{raw_id} natural key does not name its accession")
+        _require_accession_issuer(raw_id, accession, cik, payload)
         return
     listing_prefix = f"us-equity:listing:{cik}:{share}:"
     if key.startswith(listing_prefix):
@@ -455,6 +494,25 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
             raise ContractError(f"{raw_id} natural key does not name its ex-date")
         return
     raise ContractError(f"{raw_id} natural key does not name its equity identity")
+
+
+def _chain_accessions(bundle: Bundle, record: dict) -> set[str]:
+    """Every accession named by an earlier record in this correction chain."""
+    found: set[str] = set()
+    seen: set[str] = set()
+    parent_id = record.get("supersedes")
+    while type(parent_id) is str and parent_id not in seen:
+        seen.add(parent_id)
+        parent = bundle.records.get(parent_id)
+        if parent is None or parent["natural_key"] != record["natural_key"]:
+            break
+        payload = parent["payload"]
+        for field in ("accession", "amends_accession"):
+            value = payload.get(field)
+            if type(value) is str:
+                found.add(value)
+        parent_id = parent.get("supersedes")
+    return found
 
 
 def _predecessor_resolution(bundle: Bundle, record: dict):
@@ -526,11 +584,15 @@ def validate_records(bundle: Bundle) -> None:
             if kind == "filing_amendment":
                 amended = target["payload"]
                 amendment = record["payload"]
-                # A later amendment may name the original filing, not only its predecessor.
-                chain_accessions = {amended.get("accession"), amended.get("amends_accession")}
-                if amendment.get("amends_accession") not in chain_accessions - {None}:
+                # A later 10-K/A may name the original filing, not only its predecessor.
+                chain_accessions = _chain_accessions(bundle, record)
+                if amendment.get("amends_accession") not in chain_accessions:
                     raise ContractError(
                         f"{record['raw_record_id']} amends_accession does not name the superseded filing"
+                    )
+                if amendment.get("accession") in chain_accessions:
+                    raise ContractError(
+                        f"{record['raw_record_id']} amendment reuses a predecessor accession"
                     )
                 for field in ("concept", "unit"):
                     if amendment.get(field) != amended.get(field):
@@ -585,10 +647,18 @@ def validate_records(bundle: Bundle) -> None:
             # is the REST market field, never a market_lifecycle_v2 field.
             if payload.get("determination_ts") is not None and payload["event_type"] != "determined":
                 raise ContractError(f"{record['raw_record_id']} carries determination_ts outside a determined event")
+            if payload.get("determination_ts") is not None:
+                determination_ts = parse_unix_time(payload["determination_ts"])
+                if determination_ts > accepted_at:
+                    raise ContractError(f"{record['raw_record_id']} determination_ts is after accepted_at")
             if payload.get("settlement_value") is not None and payload["event_type"] != "determined":
                 raise ContractError(f"{record['raw_record_id']} carries settlement_value outside a determined event")
             if payload.get("settled_ts") is not None and payload["event_type"] != "settled":
                 raise ContractError(f"{record['raw_record_id']} carries settled_ts outside a settled event")
+            if payload.get("settled_ts") is not None:
+                settled_ts = parse_unix_time(payload["settled_ts"])
+                if settled_ts > accepted_at:
+                    raise ContractError(f"{record['raw_record_id']} settled_ts is after accepted_at")
             if payload.get("settlement_ts") is not None and payload["channel"] != "rest_get_markets":
                 raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
             if payload.get("settlement_ts") is not None:
@@ -602,10 +672,14 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
         if payload.get("kind") == "corporate_action":
             parse_date(payload["ex_date"])
+            listing_keys = []
             for field in ("listing_identity_before", "listing_identity_after"):
                 ref = bundle.identities.get(payload[field])
                 if ref is None or ref["market_family"] != "equity":
                     raise ContractError(f"{record['raw_record_id']} has an unresolved listing reference")
+                listing_keys.append(_listing_key(bundle.identities, payload[field]))
+            if listing_keys[0] is None or listing_keys[0] != listing_keys[1]:
+                raise ContractError(f"{record['raw_record_id']} split endpoints are not one listing")
     by_key: dict[str, list[dict]] = {}
     for record in bundle.records.values():
         by_key.setdefault(record["natural_key"], []).append(record)
@@ -666,7 +740,36 @@ def _require_version_chain(records: list[dict]) -> None:
         raise ContractError(f"natural key {key} is not a single correction chain")
 
 
+REQUIRED_REPLAY_CHECKS = (
+    "late_correction_before_amendment",
+    "duplicate_does_not_supersede",
+    "late_correction_after_amendment",
+    "out_of_order_acceptance_hidden",
+    "out_of_order_acceptance_visible_after_accept",
+    "corporate_action_retained",
+    "corporate_action_correction_is_effective",
+    "independent_corporate_action_hidden",
+    "independent_corporate_action_retained",
+    "independent_action_does_not_replace_correction",
+    "unadjusted_quote_not_rewritten",
+    "event_resolution_before_late_message",
+    "event_close_out_of_order_hidden",
+    "event_close_visible_only_after_accept",
+    "event_settled_keeps_determination_raw",
+    "voided_event_stays_distinct",
+    "event_dispute_chain_determined_only",
+    "event_dispute_correction_is_effective",
+    "event_amendment_supersedes_dispute",
+    "event_finalized_keeps_dispute_chain",
+)
+
+
 def validate_replay(bundle: Bundle) -> None:
+    check_ids = [check["check_id"] for check in bundle.checks]
+    if len(check_ids) != len(set(check_ids)):
+        raise ContractError("duplicate replay check")
+    if set(check_ids) != set(REQUIRED_REPLAY_CHECKS):
+        raise ContractError("replay checks are not the required set")
     for check in bundle.checks:
         decision = parse_time(check["decision_time"])
         visible = visible_versions(bundle.records, check["natural_key"], decision)

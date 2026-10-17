@@ -94,6 +94,8 @@ Facts used, and the limits of those facts:
 Equity identity: venue `us_equity`, issuer CIK, listing key, ticker, share class, currency `USD`, and an integer version. A later listing version points at the prior identity. The ticker is not the stable key. The synthetic issuer is CIK `0000000001`, ticker `SYNTH`.
 
 The listing key must equal `us-equity:cik:<issuer_cik>:class:<share_class>`.
+
+An SEC accession's 10-digit filer prefix may be the issuer CIK or a filing agent's CIK. The record still carries the issuer CIK, and that CIK must match the fact's issuer. An issuer-filed accession carries that CIK in the prefix. An agent-filed accession is allowed only when `payload.issuer_cik` is that same issuer. A filing amendment may name the original filing, or any accession already in its `supersedes` ancestry, so a later 10-K/A may still amend the original filing. The amendment's own accession is distinct from those submissions.
 A prior-identity link must preserve the equity listing key or event market ticker,
 as applicable, and strictly advance the identity version. Separate instruments
 cannot share one version history.
@@ -121,7 +123,7 @@ Ordering by `event_time` is not visibility. The out-of-order fixture has an even
 
 `acquisition_route` is `synthetic_fixture` on every row. The raw image is the canonical JSON of `payload` (`sort_keys`, compact separators, UTF-8). `raw_sha256` is the SHA-256 of those bytes. A derived observation cites raw ids. Reconstruction recomputes the hash from the retained payload. A summary that cites a missing id, or a hash that does not match, is `raw_not_reconstructable`.
 
-Duplicates set `duplicate_of` and must share the natural key and the hash. They are retained and they are not a new version. Corrections set `supersedes`, use a later `accepted_at`, and are a new payload. A row cannot be both.
+Duplicates set `duplicate_of` and must share the natural key and the hash. They are retained and they are not a new version. Corrections set `supersedes`, use a later `accepted_at`, and are a new payload. A row cannot be both. An exact duplicate of a result-less settled socket message is the same payload. It is idempotent: it does not become a new version, and the predecessor resolution is read through `duplicate_of`. A duplicate whose bytes differ is rejected.
 
 ## Lineage
 
@@ -159,17 +161,19 @@ Non-void resolutions and results must be `yes`/`no` for a binary identity and
 `scalar` for a scalar identity. A socket `settled` message may omit `result`;
 the resolution it asserts must still equal the resolution on an earlier record
 in that correction chain. A REST `settlement_ts`, when present, additionally
-requires `status_rest: finalized` and `settlement_ts <= accepted_at`.
+requires `status_rest: finalized` and `settlement_ts <= accepted_at`. Socket
+`determination_ts` on a determined event and socket `settled_ts` on a settled
+event, when present, are Unix instants at or before `accepted_at`.
 
 Settlement fields stay on the payload only where official docs confirm them: `determination_ts` and `settlement_value` (socket, only when determined), `settled_ts` (socket, only when settled), and `settlement_ts` (REST market object, populated at `finalized`). `settlement_sources` is event-level (`GET /events/{event_ticker}`) and lives on the event identity, not the market payload. Unconfirmed repeats — for example whether the `settled` message also carries `determination_ts` or `settlement_value` — are listed as unknowns in the qualification matrix.
 
 ## Corporate actions
 
-The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. The chain is resolved before the listing check. A correction that points the effective action at a different listing removes it from the former listing; the superseded split is not still required there. An independent later split uses a different natural key, `corporate_action:ex-2024-10-01`, and both effective actions are required together. Two actions on one natural key, with neither superseding the other, are rejected. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping either effective action is `lost_corporate_action_semantics`.
+The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Both endpoints are versions of one listing key. The `:ex-<date>` suffix names the chain's original ex-date; a correction on that key may move `ex_date` and stays replayable. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. The chain is resolved before the listing check. A correction that points the effective action at a different listing removes it from the former listing; the superseded split is not still required there. An independent later split uses a different natural key, `corporate_action:ex-2024-10-01`, and both effective actions are required together. Two actions on one natural key, with neither superseding the other, are rejected. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping either effective action is `lost_corporate_action_semantics`.
 
 ## Replay manifest
 
-`fixtures/replay_checks.json` freezes visibility, hidden ids, and the effective raw id for:
+`fixtures/replay_checks.json` freezes visibility, hidden ids, and the effective raw id. Check ids are unique and are exactly that scenario set:
 
 - late correction, before and after the amendment
 - duplicate that must not supersede
