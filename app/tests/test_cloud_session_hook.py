@@ -22,10 +22,14 @@ ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / ".claude" / "hooks" / "session-start.sh"
 STAMP = Path(".venv") / ".cloud-deps.sha256"
 
+# Real commands the hook and the stubs need when PATH is isolated.
+CORE_TOOLS = ("cat", "sha256sum", "cut", "mktemp", "rm", "mkdir", "chmod")
+
 pytestmark = [
+    pytest.mark.skipif(sys.platform != "linux", reason="cloud-session hook is Linux-only"),
     pytest.mark.skipif(
-        sys.platform != "linux" or not shutil.which("bash") or not shutil.which("sha256sum"),
-        reason="cloud-session hook is Linux-only",
+        not all(shutil.which(tool) for tool in ("bash", *CORE_TOOLS)),
+        reason="needs bash and " + ", ".join(CORE_TOOLS) + " on PATH",
     ),
     # The stub venv wraps this interpreter, and the hook requires `python -m pip`.
     pytest.mark.skipif(
@@ -73,10 +77,6 @@ def project(tmp_path):
         shutil.copy(ROOT / rel, proj / rel)
     (proj / "rust").mkdir()
     return proj
-
-
-# Real commands the hook and the stubs need when PATH is isolated.
-CORE_TOOLS = ("cat", "sha256sum", "cut", "mktemp", "rm", "mkdir", "chmod")
 
 
 def _run(
