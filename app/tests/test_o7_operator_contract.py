@@ -1220,6 +1220,44 @@ def test_qualification_reference_refusal_and_persistence_stay_pinned(tmp_path: P
     assert "refused intervention clause cannot apply" in stderr
 
 
+def test_unrecorded_compound_intervention_cannot_persist(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    for request_id in ("req_stop", "req_reconcile", "req_revoke"):
+        for status in ("stale_or_unreconciled", "unavailable"):
+            source = by_request[request_id]
+            persistent = CHECKER._compound_intervention_probe(source, status, survives_restart=True)
+            assert CHECKER._schema_error(validator, persistent) is not None
+            assert CHECKER.classify_response(persistent, commands) == "unrecorded_intervention_persists"
+            assert CHECKER.validate_response(validator, persistent, commands) is not None
+            ephemeral = CHECKER._compound_intervention_probe(source, status, survives_restart=False)
+            assert CHECKER._schema_error(validator, ephemeral) is None
+            assert CHECKER.classify_response(ephemeral, commands) is None
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    dropped = tmp_path / "unrecorded-persists"
+    shutil.copytree(root, dropped)
+    schema_path = dropped / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    kept = []
+    removed = False
+    for clause in schema["allOf"]:
+        condition = clause.get("if") if isinstance(clause, dict) else None
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        result = properties.get("result") if isinstance(properties, dict) else None
+        recorded = result.get("properties", {}).get("recorded") if isinstance(result, dict) else None
+        if isinstance(recorded, dict) and recorded.get("const") is False:
+            removed = True
+            continue
+        kept.append(clause)
+    assert removed
+    schema["allOf"] = kept
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(dropped, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(dropped)
+    assert code == 1
+    assert stdout == ""
+    assert "unrecorded intervention can still persist" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {

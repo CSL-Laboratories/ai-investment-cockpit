@@ -926,6 +926,112 @@ def _require_recorded_refusal_rejected(validator: Draft202012Validator, response
             raise ContractError(f"refused intervention schema accepts persistence for {doc['command']}")
 
 
+def _require_unrecorded_intervention_ephemeral(schema: dict[str, Any]) -> None:
+    """An unrecorded intervention cannot claim that it survives restart."""
+    commands = set(INTERVENTION_NAMES)
+    for clause in schema.get("allOf", []):
+        if not isinstance(clause, dict):
+            continue
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        if not isinstance(condition, dict) or not isinstance(properties, dict):
+            continue
+        command_schema = properties.get("command")
+        result_if = properties.get("result")
+        result_properties = result_if.get("properties") if isinstance(result_if, dict) else None
+        recorded = result_properties.get("recorded") if isinstance(result_properties, dict) else None
+        if _admitted_strings(command_schema) != commands or _const_value(recorded) is not False:
+            continue
+        then = clause.get("then")
+        then_properties = then.get("properties") if isinstance(then, dict) else None
+        result = then_properties.get("result") if isinstance(then_properties, dict) else None
+        survives_properties = result.get("properties") if isinstance(result, dict) else None
+        survives = survives_properties.get("survives_restart") if isinstance(survives_properties, dict) else None
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "result"}
+            or set(properties) != {"command", "result"}
+            or not isinstance(command_schema, dict)
+            or _assertion_keys(command_schema) != {"enum"}
+            or not isinstance(result_if, dict)
+            or _assertion_keys(result_if) != {"properties", "required"}
+            or set(result_if.get("required") or []) != {"recorded"}
+            or set(result_properties or {}) != {"recorded"}
+            or not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"result"}
+            or not isinstance(result, dict)
+            or _assertion_keys(result) != {"properties"}
+            or not isinstance(survives_properties, dict)
+            or set(survives_properties) != {"survives_restart"}
+            or _const_value(survives) is not False
+        ):
+            raise ContractError("unrecorded intervention clause cannot apply")
+        return
+    raise ContractError("unrecorded intervention can still persist")
+
+
+def _compound_intervention_probe(
+    doc: dict[str, Any], status: str, *, survives_restart: bool
+) -> dict[str, Any]:
+    """Copy one intervention into a compound status with one persistence value."""
+    result = dict(doc.get("result") or {})
+    result["recorded"] = False
+    result["survives_restart"] = survives_restart
+    result["watch_only"] = True
+    result["order_submitted"] = False
+    result["restart_requires_reconciliation"] = True
+    visibility = dict(doc.get("visibility") or {})
+    visibility["uncertainty"] = "absent_not_hidden"
+    visibility["refusal"] = "absent_not_hidden"
+    visibility["reconciliation"] = "reconciled"
+    if status == "stale_or_unreconciled":
+        result["stale"] = True
+        result["dependencies"] = [{"name": "evidence", "status": "stale"}]
+        visibility["stale_data"] = "visible"
+    elif status == "unavailable":
+        result.pop("stale", None)
+        result["dependencies"] = [{"name": "evidence", "status": "unavailable"}]
+        visibility["stale_data"] = "absent_not_hidden"
+    else:
+        raise ContractError(f"compound intervention probe does not cover {status}")
+    presentation = dict(doc.get("presentation") or {})
+    presentation["exit_code"] = EXIT_CODES[status]
+    presentation["text_status"] = status
+    presentation["rendered"] = f"status={status} probe"
+    return {
+        **doc,
+        "status_code": status,
+        "result": result,
+        "visibility": visibility,
+        "presentation": presentation,
+        "errors": [
+            {
+                "code": status,
+                "status_code": status,
+                "message": "probe",
+                "recovery": "probe",
+                "color_only": False,
+            }
+        ],
+    }
+
+
+def _require_unrecorded_persistence_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """The response schema rejects an unrecorded intervention that survives restart."""
+    for doc in responses:
+        if not isinstance(doc, dict) or doc.get("command") not in INTERVENTION_NAMES:
+            continue
+        for status in ("stale_or_unreconciled", "unavailable"):
+            ephemeral = _compound_intervention_probe(doc, status, survives_restart=False)
+            if _schema_error(validator, ephemeral) is not None:
+                raise ContractError(f"unrecorded intervention schema rejects an ephemeral {doc['command']} {status}")
+            persistent = _compound_intervention_probe(doc, status, survives_restart=True)
+            if _schema_error(validator, persistent) is None:
+                raise ContractError(f"unrecorded intervention schema accepts persistence for {doc['command']} {status}")
+
+
 def _error_probe(code: str, status: str) -> dict[str, Any]:
     return {
         "code": code,
@@ -1481,6 +1587,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
             return "recorded_intervention_refused"
         if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("survives_restart") is not False:
             return "refused_intervention_persists"
+        if expected_intervention is not None and result.get("recorded") is not True and result.get("survives_restart") is not False:
+            return "unrecorded_intervention_persists"
         if (
             doc.get("command") == "operator.profiles.inspect"
             and result.get("active_profile_class") != profile.get("profile_class")
@@ -1965,6 +2073,7 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         _require_event_clauses(event_schema)
         _require_closed_event_schema(event_schema)
         _require_refused_intervention_unrecorded(response_schema)
+        _require_unrecorded_intervention_ephemeral(response_schema)
         _require_denied_result_consts(response_schema)
         _require_required_result_consts(response_schema)
         _require_closed_response_schema(response_schema)
@@ -2054,6 +2163,7 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
     if seen != set(commands):
         raise ContractError("oracle responses do not cover the catalog")
     _require_recorded_refusal_rejected(response_validator, responses)
+    _require_unrecorded_persistence_rejected(response_validator, responses)
     _require_result_authority_rejected(response_validator, responses)
     _require_embedded_error_authority_rejected(response_validator, responses)
     by_request: dict[str, dict[str, Any]] = {}
