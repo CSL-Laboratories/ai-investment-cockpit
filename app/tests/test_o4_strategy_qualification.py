@@ -31,6 +31,8 @@ FAILURES = (
     "O4 negative control FAIL dropped_costs:",
     "O4 negative control FAIL dropped_empty_outcome:",
     "O4 negative control FAIL parameter_variants_as_distinct_strategies:",
+    "O4 negative control FAIL decision_owner_role:",
+    "O4 negative control FAIL leakage_controls_satisfied:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -56,10 +58,10 @@ def test_o4_negative_controls_fail_as_designed(capsys) -> None:
         sys.stdout.flush()
     assert completed.returncode == 0, completed.stderr
     lines = completed.stdout.splitlines()
-    assert len(lines) == 5
+    assert len(lines) == 7
     for line, prefix in zip(lines, FAILURES):
         assert line.startswith(prefix)
-    assert lines[4] == CHECKED
+    assert lines[6] == CHECKED
     assert "PASS" not in completed.stdout
     assert "contract_frozen" not in completed.stdout
     source = (O4 / "validate.py").read_text(encoding="utf-8")
@@ -70,7 +72,7 @@ def test_o4_negative_controls_fail_as_designed(capsys) -> None:
 def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     protocol = (O4 / "PROTOCOL.md").read_text(encoding="utf-8")
     assert "## Research (Parallel)" in protocol
-    assert "## Unresolved decisions (owner: Lucas)" in protocol
+    assert "## Unresolved decisions (owner: roles)" in protocol
     assert "search_a81ed0bcb8b97e64d4f958ef59dde38a" in protocol
     assert "search_73f6ee6002538aa601e083ab7169dee4" in protocol
     for url in (
@@ -89,7 +91,9 @@ def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     assert packet["contract_frozen_claimed"] is False
     assert packet["empirical_pass_claimed"] is False
     assert [item["status"] for item in packet["unresolved_decisions"]] == ["undecided"] * 7
-    assert {item["owner"] for item in packet["unresolved_decisions"]} == {"Lucas"}
+    owners = {item["id"]: item["owner"] for item in packet["unresolved_decisions"]}
+    assert owners["release"] == "release owner"
+    assert set(owners.values()) == {"owner", "release owner"}
 
 
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:

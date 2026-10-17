@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints four negative-control failures and one researched-maturity
+A clean command prints six negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -80,10 +80,13 @@ The population is an illustrative disjoint split, not an acquired sample:
 - tuning: `illustrative:us-equity:tune`, `illustrative:kalshi-demo:tune`
 - evaluation: `illustrative:us-equity:eval`, `illustrative:kalshi-demo:eval`
 
-Leakage controls are required on that split. Purge removes training labels
-whose outcome window overlaps the evaluation window. Embargo removes the
-post-evaluation training rows that would carry serial correlation. Embargo
-length is `owner_unset`.
+Leakage controls are required on that split, and each records an explicit
+`status`: `run` with retained evidence, or `not_run`. Purge removes training
+labels whose outcome window overlaps the evaluation window. Embargo removes
+the post-evaluation training rows that would carry serial correlation. Embargo
+length is `owner_unset`. Nothing here has run: both controls record `not_run`
+with null evidence, and a `not_run` control cannot satisfy qualification.
+A control that reads as satisfied without a run fails the packet.
 
 The matched baseline is cash on the same population and the same clock. Cash
 flows are retained and matched to that baseline. Their values are unmeasured.
@@ -166,6 +169,8 @@ must be rejected for exactly one designed reason:
 | `dropped-costs.json` | The transaction cost is marked dropped. |
 | `dropped-empty-outcome.json` | The recorded zero-qualify screen is marked not retained. |
 | `parameter-variants.json` | The three configurations are counted as three strategies. |
+| `release-owner-person.json` | The release decision routes to a person instead of its role. |
+| `leakage-control-satisfied.json` | The purge control reads `run` with evidence on an experiment that has not run. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.
@@ -202,10 +207,14 @@ Local evidence is the feasibility freeze, evaluation, protocol, and screen
 ledger already in the repository. Context7 was not required: this packet adds
 no library integration.
 
-## Unresolved decisions (owner: Lucas)
+## Unresolved decisions (owner: roles)
 
 None of these are decided in this packet. `selected_option` is null and
-`status` is `undecided`.
+`status` is `undecided`. Every decision routes to a role, never a named
+person. The owner-class rows route to `owner`. The release row routes to
+`release owner`, the founder set: release scope and acceptance is a
+collective founder decision under the CSL-212 authority boundary, not a
+single person's.
 
 | Decision | What is unresolved |
 | --- | --- |

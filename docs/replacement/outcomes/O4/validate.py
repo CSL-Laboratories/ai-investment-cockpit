@@ -53,6 +53,15 @@ DECISION_IDS = (
     "live",
     "thresholds",
 )
+DECISION_OWNER_ROLES = {
+    "spend": "owner",
+    "credentials": "owner",
+    "tax_legal": "owner",
+    "architecture": "owner",
+    "release": "release owner",
+    "live": "owner",
+    "thresholds": "owner",
+}
 COST_KEYS = ("transaction", "latency", "data", "model")
 METRIC_IDS = (
     "deflated_sharpe_ratio",
@@ -105,6 +114,8 @@ CONTROL_ORDER = (
     "dropped_costs",
     "dropped_empty_outcome",
     "parameter_variants_as_distinct_strategies",
+    "decision_owner_role",
+    "leakage_controls_satisfied",
 )
 
 
@@ -181,6 +192,7 @@ def _semantic_failures(packet: dict[str, Any], repo: Path) -> list[Failure]:
     failures: list[Failure] = []
     _claims(packet, failures)
     _populations(packet, failures)
+    _leakage(packet, failures)
     _costs(packet, failures)
     _variants(packet, failures)
     _empty_outcome(packet, repo, failures)
@@ -227,6 +239,22 @@ def _populations(packet: dict[str, Any], failures: list[Failure]) -> None:
         bool(leaked) or population.get("member_ids_are_acquired_observations") is not False,
         "acquired_population",
         "this design has no acquired population",
+    )
+
+
+def _leakage(packet: dict[str, Any], failures: list[Failure]) -> None:
+    controls = packet["experiment"]["leakage_controls"]
+    satisfied = [
+        name
+        for name in ("purge", "embargo")
+        if controls[name].get("status") != "not_run" or controls[name].get("evidence") is not None
+    ]
+    _fail_if(
+        failures,
+        bool(satisfied),
+        "leakage_controls_satisfied",
+        "an unrun leakage control reads as satisfied; a not_run control cannot satisfy qualification: "
+        + ", ".join(satisfied),
     )
 
 
@@ -382,13 +410,24 @@ def _decisions(packet: dict[str, Any], failures: list[Failure]) -> None:
     decided = [
         item["id"]
         for item in rows
-        if item.get("owner") != "Lucas" or item.get("status") != "undecided" or item.get("selected_option") is not None
+        if item.get("status") != "undecided" or item.get("selected_option") is not None
+    ]
+    misrouted = [
+        item["id"]
+        for item in rows
+        if item.get("owner") != DECISION_OWNER_ROLES.get(item["id"])
     ]
     _fail_if(
         failures,
         ids != DECISION_IDS or bool(decided),
         "human_decision_taken",
         "an owner decision is missing or has been selected: " + ", ".join(decided or list(ids)),
+    )
+    _fail_if(
+        failures,
+        bool(misrouted),
+        "decision_owner_role",
+        "an unresolved decision routes to a person instead of its role: " + ", ".join(misrouted),
     )
 
 

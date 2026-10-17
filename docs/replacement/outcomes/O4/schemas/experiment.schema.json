@@ -74,27 +74,8 @@
       "additionalProperties": false,
       "required": ["purge", "embargo"],
       "properties": {
-        "purge": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["applied", "rule"],
-          "properties": {
-            "applied": {"const": true},
-            "rule": {
-              "const": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window"
-            }
-          }
-        },
-        "embargo": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["applied", "rule", "length"],
-          "properties": {
-            "applied": {"const": true},
-            "rule": {"const": "remove_post_evaluation_training_rows_for_serial_correlation"},
-            "length": {"const": "owner_unset"}
-          }
-        }
+        "purge": {"$ref": "#/$defs/leakage_control_purge"},
+        "embargo": {"$ref": "#/$defs/leakage_control_embargo"}
       }
     },
     "matched_baseline": {
@@ -131,6 +112,49 @@
     }
   },
   "$defs": {
+    "leakage_control_purge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rule", "evidence"],
+      "properties": {
+        "status": {"enum": ["run", "not_run"]},
+        "rule": {
+          "const": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window"
+        },
+        "evidence": {"type": ["object", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "run"}}, "required": ["status"]},
+          "then": {"properties": {"evidence": {"type": "object", "minProperties": 1}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not_run"}}, "required": ["status"]},
+          "then": {"properties": {"evidence": {"type": "null"}}}
+        }
+      ]
+    },
+    "leakage_control_embargo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rule", "length", "evidence"],
+      "properties": {
+        "status": {"enum": ["run", "not_run"]},
+        "rule": {"const": "remove_post_evaluation_training_rows_for_serial_correlation"},
+        "length": {"const": "owner_unset"},
+        "evidence": {"type": ["object", "null"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "run"}}, "required": ["status"]},
+          "then": {"properties": {"evidence": {"type": "object", "minProperties": 1}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "not_run"}}, "required": ["status"]},
+          "then": {"properties": {"evidence": {"type": "null"}}}
+        }
+      ]
+    },
     "cost": {
       "type": "object",
       "additionalProperties": false,
