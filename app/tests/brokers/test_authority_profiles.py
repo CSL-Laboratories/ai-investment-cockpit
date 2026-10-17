@@ -342,6 +342,39 @@ def test_client_order_ids_are_idempotent_across_restart(tmp_path):
     ) == "client_order_conflict"
 
 
+def test_legacy_store_without_order_ref_migrates_and_binds_once(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "legacy.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="client-1",
+        notional=Decimal("25.00"), actor="stop-owner", now=NOW,
+    )
+    raw = sqlite3.connect(path)
+    raw.execute("ALTER TABLE reservations DROP COLUMN order_ref")
+    raw.commit()
+    raw.close()
+    reopened = AuthorityProfileStore(path)
+    second = reopened.authorize(
+        "profile-b", action="submit_paper", client_order_id="client-2",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    assert second.replayed is False
+    bound = reopened.authorize(
+        "profile-b", action="submit_paper", client_order_id="client-1",
+        notional=Decimal("25.00"), actor="stop-owner", now=NOW, order_ref="ord-1",
+    )
+    assert bound.replayed is True
+    assert _refuse(
+        lambda: reopened.authorize(
+            "profile-b", action="submit_paper", client_order_id="client-1",
+            notional=Decimal("25.00"), actor="stop-owner", now=NOW, order_ref="ord-2",
+        )
+    ) == "client_order_conflict"
+
+
 def test_profile_file_refuses_non_json(tmp_path):
     yaml_path = tmp_path / "profile.yaml"
     yaml_path.write_text("environment: live\n", encoding="utf-8")

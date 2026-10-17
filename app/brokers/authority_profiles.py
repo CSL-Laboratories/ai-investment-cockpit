@@ -520,8 +520,32 @@ class AuthorityProfileStore:
                 (client_id,),
             ).fetchone()
             if existing is not None:
-                if not _same_reservation(existing, profile.profile_id, action, amount) or (
-                    existing["order_ref"] != order_ref
+                if not _same_reservation(existing, profile.profile_id, action, amount):
+                    raise ProfileRefused(
+                        "client_order_conflict", "client order id is already bound"
+                    )
+                if existing["order_ref"] is None and order_ref is not None:
+                    if existing["handoff_done"]:
+                        raise ProfileRefused(
+                            "client_order_conflict", "client order id is already bound"
+                        )
+                    # One-time atomic binding of a legacy/unreferenced reservation.
+                    bound = conn.execute(
+                        "UPDATE reservations SET order_ref = ? "
+                        "WHERE client_order_id = ? AND order_ref IS NULL "
+                        "AND handoff_done = 0",
+                        (order_ref, client_id),
+                    )
+                    if bound.rowcount != 1:
+                        raise ProfileRefused(
+                            "client_order_conflict", "client order id is already bound"
+                        )
+                    existing = conn.execute(
+                        "SELECT * FROM reservations WHERE client_order_id = ?",
+                        (client_id,),
+                    ).fetchone()
+                elif existing["order_ref"] != order_ref and not (
+                    existing["order_ref"] is None and order_ref is None
                 ):
                     raise ProfileRefused(
                         "client_order_conflict", "client order id is already bound"
@@ -665,6 +689,12 @@ class AuthorityProfileStore:
                 raise ProfileRefused("store", "profile store version is not admitted")
             for statement in _SCHEMA:
                 conn.execute(statement)
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(reservations)").fetchall()
+            }
+            if "order_ref" not in columns:
+                # Legacy v1 store: legacy rows keep NULL and bind once at handoff.
+                conn.execute("ALTER TABLE reservations ADD COLUMN order_ref TEXT")
             conn.execute("PRAGMA user_version = 1")
 
     def _load_installed(self, conn: sqlite3.Connection, profile_id: str, *, now: datetime):
