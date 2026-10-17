@@ -795,6 +795,51 @@ def test_result_schema_rejects_unmodeled_authority(tmp_path: Path) -> None:
     assert "result schema accepts an authority field" in stderr
 
 
+def test_profile_event_and_confirmation_stay_closed(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    cases = (
+        (
+            "profile",
+            "schemas/operator-response.schema.json",
+            ("properties", "profile", "additionalProperties"),
+            True,
+            "profile schema accepts an authority field",
+        ),
+        (
+            "confirmation",
+            "schemas/operator-command.schema.json",
+            ("required",),
+            None,
+            "command schema accepts an authority field",
+        ),
+        (
+            "event",
+            "schemas/operator-event.schema.json",
+            ("additionalProperties",),
+            True,
+            "event schema accepts an authority field",
+        ),
+    )
+    for name, relative, path, value, message in cases:
+        widened = tmp_path / name
+        shutil.copytree(root, widened)
+        schema_path = widened / relative
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        if name == "confirmation":
+            schema["required"] = [item for item in schema["required"] if item != "confirmation"]
+        else:
+            cursor = schema
+            for key in path[:-1]:
+                cursor = cursor[key]
+            cursor[path[-1]] = value
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, relative)
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1, name
+        assert stdout == ""
+        assert message in stderr, name
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {

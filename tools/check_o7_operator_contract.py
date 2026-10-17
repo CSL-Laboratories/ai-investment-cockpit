@@ -61,6 +61,28 @@ COMMAND_PROPERTIES = (
     "request_id",
     "surface",
 )
+PROFILE_PROPERTIES = (
+    "digest",
+    "profile_class",
+    "profile_id",
+    "signature_state",
+)
+EVENT_PROPERTIES = (
+    "api_version",
+    "candidate_maturity",
+    "command",
+    "event_type",
+    "request_id",
+    "status_code",
+    "visibility",
+)
+ERROR_PROPERTIES = (
+    "code",
+    "color_only",
+    "message",
+    "recovery",
+    "status_code",
+)
 RESPONSE_REQUIRED = (
     "api_version",
     "authority_effect",
@@ -680,6 +702,14 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         raise ContractError("response schema required fields drifted")
     if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
         raise ContractError("result schema accepts an authority field")
+    profile = properties.get("profile")
+    profile_properties = profile.get("properties") if isinstance(profile, dict) else None
+    if (
+        not _object_is_closed(profile)
+        or not _required_is(profile, PROFILE_PROPERTIES)
+        or set(profile_properties or {}) != set(PROFILE_PROPERTIES)
+    ):
+        raise ContractError("profile schema accepts an authority field")
 
 
 def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -698,6 +728,12 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     claimed = {**positions, "result": {**result, "live_authorized": True}}
     if _schema_error(validator, claimed) is None:
         raise ContractError("result schema accepts live_authorized")
+    profile = positions.get("profile")
+    if not isinstance(profile, dict):
+        raise ContractError("profile schema rejects the positions oracle")
+    claimed_profile = {**positions, "profile": {**profile, "live_authorized": True}}
+    if _schema_error(validator, claimed_profile) is None:
+        raise ContractError("profile schema accepts live_authorized")
 
 
 def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
@@ -888,6 +924,15 @@ def _require_intervention_safeguards(validator: Draft202012Validator) -> None:
             raise ContractError(f"non-session intervention schema accepts {name}")
 
 
+def _required_is(schema: dict[str, Any], expected: tuple[str, ...]) -> bool:
+    required = schema.get("required")
+    return (
+        isinstance(required, list)
+        and len(required) == len(set(required)) == len(expected)
+        and set(required) == set(expected)
+    )
+
+
 def _object_is_closed(schema: Any) -> bool:
     """True when an object schema cannot carry properties it does not name."""
     if not isinstance(schema, dict) or schema.get("additionalProperties") is not False:
@@ -906,6 +951,7 @@ def _require_closed_command_schema(schema: dict[str, Any]) -> None:
         or set(properties) != set(COMMAND_PROPERTIES)
         or not _object_is_closed(arguments)
         or set(argument_properties or {}) != {"scope"}
+        or not _required_is(schema, COMMAND_PROPERTIES)
     ):
         raise ContractError("command schema accepts an authority field")
 
@@ -927,6 +973,17 @@ def _require_command_authority_rejected(validator: Draft202012Validator) -> None
     )
     if _schema_error(validator, bypass) is None:
         raise ContractError("command schema accepts bypass_gateway")
+    omitted = {
+        key: value
+        for key, value in _intervention_probe(
+            "operator.interventions.request_stop",
+            confirmation="explicit",
+            arguments={"scope": "operator_session"},
+        ).items()
+        if key != "confirmation"
+    }
+    if _schema_error(validator, omitted) is None:
+        raise ContractError("command schema accepts an omitted confirmation")
 
 
 def _require_session_scope_schema(schema: dict[str, Any]) -> None:
@@ -969,6 +1026,44 @@ def _event_probe(event_type: str, command: str, status: str, visibility: str) ->
         "visibility": visibility,
         "status_code": status,
     }
+
+
+def _require_closed_event_schema(schema: dict[str, Any]) -> None:
+    """An event cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(EVENT_PROPERTIES)
+        or not _required_is(schema, EVENT_PROPERTIES)
+    ):
+        raise ContractError("event schema accepts an authority field")
+
+
+def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
+    """A closed event schema rejects an order-submission claim."""
+    probe = _event_probe(
+        "intervention_recorded",
+        "operator.interventions.request_stop",
+        "ok",
+        "visible",
+    )
+    if _schema_error(validator, probe) is not None:
+        raise ContractError("event schema rejects a recorded stop")
+    if _schema_error(validator, {**probe, "order_submitted": True}) is None:
+        raise ContractError("event schema accepts order_submitted")
+
+
+def _require_closed_error_schema(schema: dict[str, Any]) -> None:
+    """An error cannot carry a field it does not name."""
+    properties = schema.get("properties")
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(ERROR_PROPERTIES)
+        or not _required_is(schema, ERROR_PROPERTIES)
+    ):
+        raise ContractError("error schema accepts an extra field")
 
 
 def _require_event_clauses(schema: dict[str, Any]) -> None:
@@ -1668,18 +1763,21 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
                 raise ContractError(f"schema result fields drifted for {name}")
         _require_session_scope_schema(command_schema)
         _require_event_clauses(event_schema)
+        _require_closed_event_schema(event_schema)
         _require_refused_intervention_unrecorded(response_schema)
         _require_denied_result_consts(response_schema)
         _require_required_result_consts(response_schema)
         _require_closed_response_schema(response_schema)
         _require_closed_command_schema(command_schema)
         _require_error_clauses(error_schema)
+        _require_closed_error_schema(error_schema)
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
         _require_intervention_safeguards(command_validator)
         _require_command_authority_rejected(command_validator)
         event_validator = _validator(event_schema)
         _require_event_schema_rejections(event_validator)
+        _require_event_authority_rejected(event_validator)
         error_validator = _validator(error_schema)
         _require_error_schema_rejections(error_validator)
         manifest = _load_json(candidate / "fixtures" / "manifest.json")
