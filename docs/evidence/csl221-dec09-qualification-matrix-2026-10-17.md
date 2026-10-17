@@ -60,15 +60,25 @@ Axes are platform, CPython, and tier. Tiers are `provider-free`, `replay`,
 | linux, windows, macos | same labels | same | same | 3.11, 3.12 | replay, simulation, paper-demo | excluded | release owner |
 
 Required evidence for a provider-free cell is the exact-candidate bundle:
-commit SHA, Git tree SHA, workflow run id, numeric job id, runner image,
-CPython version, canonical dependency digest, JUnit inventory, and SHA-256s
-of `junit.xml`, `dependencies.txt`, and `runner.json`. The hosted suite is
+commit SHA, Git tree SHA, workflow run id, numeric job id, the scheduled
+runner label, the image and interpreter observed inside the job
+(`ImageOS`, `ImageVersion`, `RUNNER_OS`, `RUNNER_ARCH`, `RUNNER_NAME`,
+`platform.platform()`, and `sys.version`), CPython version, canonical
+dependency digest, JUnit inventory, and SHA-256s of `junit.xml`,
+`dependencies.txt`, and `runner.json`. The scheduled label is not a
+substitute for those observed fields. The hosted suite is
 `tools/test_qualification_evidence.py`. It does not call a broker, a model
 provider, or a market-data vendor. The hosted six-cell matrix runs only when
 Linux, Windows, and macOS are all authorized: a pull request with `ci:full`,
 or a full workflow dispatch. An ordinary pull request, a `scope=linux`
 dispatch, the nightly schedule, and an ordinary push to `main` do not start
-it. A partial matrix is not a pass.
+it. A partial matrix is not a pass. On a full run, validation starts
+unless the qualification job itself was skipped, and it fails when any
+expected cell is missing, cancelled, or skipped. After a complete
+bundle validates, the workflow writes `manifest.json` with the SHA-256
+of `bundle.json` and attests that directory with
+`actions/attest-build-provenance@v3`. Whether the organization allows
+that attestation is blocker B18.
 
 Excluded tiers are defined so they cannot be reported as pass. Hetzner is not
 a cell. Native Windows and Ubuntu WSL2 remain DEC-09's package-acceptance

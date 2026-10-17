@@ -82,12 +82,14 @@ INVENTORY_KEYS = frozenset({"classname", "name", "status"})
 ARTIFACT_NAMES = ("junit.xml", "dependencies.txt", "runner.json")
 RUNNER_KEYS = frozenset(
     {
-        "image",
+        "scheduled_image",
+        "image_os",
+        "image_version",
         "runner_os",
         "runner_arch",
         "runner_name",
-        "image_os",
-        "image_version",
+        "platform",
+        "python_runtime",
     }
 )
 WRONG_COMMIT = "wrong-commit"
@@ -265,6 +267,53 @@ def load_matrix(path: Path) -> dict:
 
 def required_cells(matrix: dict) -> list[dict]:
     return [cell for cell in matrix["cells"] if cell["requirement"] == "required"]
+
+
+def provider_free_job_name(spec: dict) -> str:
+    return f"qualification ({spec['platform']}, {spec['python']})"
+
+
+def incomplete_matrix(jobs: object, expected_names: list[str]) -> list[str]:
+    """Reasons a full run is not six successful provider-free cells.
+
+    A missing job, or any conclusion other than ``success`` (including
+    ``cancelled`` and ``skipped``), is a rejection. Extra jobs are ignored.
+    """
+    if not isinstance(jobs, list):
+        return [err(NOT_PASS, "jobs payload is not a list")]
+    by_name: dict[str, list[object]] = {}
+    for job in jobs:
+        if not isinstance(job, dict) or not isinstance(job.get("name"), str):
+            return [err(NOT_PASS, "job name")]
+        by_name.setdefault(job["name"], []).append(job.get("conclusion"))
+    reasons: list[str] = []
+    for name in expected_names:
+        conclusions = by_name.get(name)
+        if not conclusions:
+            reasons.append(err(MISSING_CELL, name))
+            continue
+        if any(conclusion != "success" for conclusion in conclusions):
+            shown = ",".join("missing" if item is None else str(item) for item in conclusions)
+            reasons.append(err(NOT_PASS, f"{name} conclusion {shown}"))
+    return reasons
+
+
+MANIFEST_SCHEMA = "csl221-qualification-manifest.v1"
+
+
+def manifest_document(bundle_bytes: bytes) -> dict[str, str]:
+    return {
+        "bundle_path": "bundle.json",
+        "bundle_sha256": hashlib.sha256(bundle_bytes).hexdigest(),
+        "schema": MANIFEST_SCHEMA,
+    }
+
+
+def write_manifest(bundle_path: Path, destination: Path) -> dict[str, str]:
+    document = manifest_document(bundle_path.read_bytes())
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(canonical_json(document))
+    return document
 
 
 def _local(tag: str) -> str:
@@ -565,17 +614,15 @@ def _validate_required_cell(
             return errors
         if raw != canonical_json(runner):
             errors.append(err(ARTIFACT_DIGEST, f"{cell_id} runner canonical"))
-        if runner.get("image") != spec["runner_image"] or cell.get("runner_image") != spec["runner_image"]:
+        if runner.get("scheduled_image") != spec["runner_image"] or cell.get("runner_image") != spec["runner_image"]:
             errors.append(err(NOT_PASS, f"{cell_id} runner image"))
         if runner.get("runner_os") != spec["runner_os"]:
             errors.append(err(NOT_PASS, f"{cell_id} runner_os"))
         if runner.get("runner_arch") != spec["runner_arch"]:
             errors.append(err(NOT_PASS, f"{cell_id} runner_arch"))
-        if not isinstance(runner.get("runner_name"), str) or not runner["runner_name"]:
-            errors.append(err(NOT_PASS, f"{cell_id} runner_name"))
-        for key in ("image_os", "image_version"):
-            if not isinstance(runner.get(key), str):
-                errors.append(err(NOT_PASS, f"{cell_id} {key}"))
+        for key in ("runner_name", "image_os", "image_version", "platform", "python_runtime"):
+            if not isinstance(runner.get(key), str) or not runner[key].strip():
+                errors.append(err(NOT_PASS, f"{cell_id} observed {key}"))
     return errors
 
 
@@ -591,22 +638,40 @@ def build_cell_files(
     junit_bytes: bytes,
     dependency_text: str,
     runner_name: str,
-    image_os: str = "",
-    image_version: str = "",
+    runner_os: str,
+    runner_arch: str,
+    image_os: str,
+    image_version: str,
+    observed_platform: str,
+    python_runtime: str,
 ) -> tuple[dict, dict[str, bytes]]:
     parsed = parse_junit(junit_bytes)
     if parsed["tests"] == 0 or parsed["failures"] or parsed["errors"] or parsed["skipped"]:
         raise QualificationError("junit is not a clean provider-free inventory")
     if not python_version.startswith(spec["python"] + "."):
         raise QualificationError("python version does not match the cell")
-    dependencies = canonicalize_dependencies(dependency_text).encode("utf-8")
-    runner = {
-        "image": spec["runner_image"],
+    if runner_os != spec["runner_os"] or runner_arch != spec["runner_arch"]:
+        raise QualificationError("observed runner does not match the cell")
+    observed = {
         "image_os": image_os,
         "image_version": image_version,
-        "runner_arch": spec["runner_arch"],
+        "platform": observed_platform,
+        "python_runtime": python_runtime,
         "runner_name": runner_name,
-        "runner_os": spec["runner_os"],
+    }
+    for key, value in observed.items():
+        if not isinstance(value, str) or not value.strip():
+            raise QualificationError(f"observed {key} is empty")
+    dependencies = canonicalize_dependencies(dependency_text).encode("utf-8")
+    runner = {
+        "scheduled_image": spec["runner_image"],
+        "image_os": image_os,
+        "image_version": image_version,
+        "runner_arch": runner_arch,
+        "runner_name": runner_name,
+        "runner_os": runner_os,
+        "platform": observed_platform,
+        "python_runtime": python_runtime,
     }
     runner_bytes = canonical_json(runner)
     artifact_dir = (
@@ -709,6 +774,12 @@ def materialize_passing_bundle(root: Path, matrix: dict, *, commit: str, tree: s
             junit_bytes=junit,
             dependency_text="pytest==8.3.5\n",
             runner_name=f"runner-{spec['platform']}-{spec['python']}",
+            runner_os=spec["runner_os"],
+            runner_arch=spec["runner_arch"],
+            image_os=f"observed-{spec['platform']}",
+            image_version="observed-image",
+            observed_platform=f"{spec['runner_os']}-{spec['runner_arch']}",
+            python_runtime=f"{spec['python']}.0 ({spec['platform']})",
         )
         write_cell(artifact_root / cell["artifact_dir"], cell, files)
     return assemble_bundle(artifact_root, expected_commit=commit, expected_tree=tree)
@@ -892,8 +963,12 @@ def _live_python(python: str) -> str:
 def _runner_from_env() -> dict[str, str]:
     return {
         "runner_name": _env("RUNNER_NAME"),
-        "image_os": _env("ImageOS", required=False),
-        "image_version": _env("ImageVersion", required=False),
+        "runner_os": _env("RUNNER_OS"),
+        "runner_arch": _env("RUNNER_ARCH"),
+        "image_os": _env("ImageOS"),
+        "image_version": _env("ImageVersion"),
+        "platform": platform.platform(),
+        "python_runtime": sys.version,
     }
 
 
@@ -914,11 +989,11 @@ def command_emit(args: argparse.Namespace) -> int:
     if not _digits(args.run_id) or not _digits(args.run_attempt) or not _digits(args.job_id):
         raise QualificationError("run or job id")
     version = _live_python(args.python)
-    if os.environ.get("RUNNER_OS") != spec["runner_os"]:
-        raise QualificationError("RUNNER_OS does not match the cell")
-    if os.environ.get("RUNNER_ARCH") != spec["runner_arch"]:
-        raise QualificationError("RUNNER_ARCH does not match the cell")
     observed = _runner_from_env()
+    if observed["runner_os"] != spec["runner_os"]:
+        raise QualificationError("RUNNER_OS does not match the cell")
+    if observed["runner_arch"] != spec["runner_arch"]:
+        raise QualificationError("RUNNER_ARCH does not match the cell")
     junit_bytes = Path(args.junit).read_bytes()
     dependency_text = Path(args.dependencies_raw).read_text(encoding="utf-8")
     cell, files = build_cell_files(
@@ -932,8 +1007,12 @@ def command_emit(args: argparse.Namespace) -> int:
         junit_bytes=junit_bytes,
         dependency_text=dependency_text,
         runner_name=observed["runner_name"],
+        runner_os=observed["runner_os"],
+        runner_arch=observed["runner_arch"],
         image_os=observed["image_os"],
         image_version=observed["image_version"],
+        observed_platform=observed["platform"],
+        python_runtime=observed["python_runtime"],
     )
     output = Path(args.output)
     write_cell(output, cell, files)
@@ -970,6 +1049,28 @@ def command_validate(args: argparse.Namespace) -> int:
             print(item, file=sys.stderr)
         return 1
     print("qualification-evidence: required cells accepted")
+    return 0
+
+
+def command_require_matrix(args: argparse.Namespace) -> int:
+    matrix = load_matrix(Path(args.matrix))
+    payload = load_json(Path(args.jobs))
+    jobs = payload.get("jobs") if isinstance(payload, dict) else payload
+    expected = [provider_free_job_name(spec) for spec in required_cells(matrix)]
+    reasons = incomplete_matrix(jobs, expected)
+    if reasons:
+        print("qualification-evidence: full run is incomplete", file=sys.stderr)
+        for item in reasons:
+            print(item, file=sys.stderr)
+        return 1
+    print("qualification-evidence: six provider-free jobs concluded success")
+    return 0
+
+
+def command_manifest(args: argparse.Namespace) -> int:
+    document = write_manifest(Path(args.bundle), Path(args.output))
+    print(f"bundle-sha256:{document['bundle_sha256']}")
+    print(f"manifest:{args.output}")
     return 0
 
 
@@ -1033,6 +1134,16 @@ def build_parser() -> argparse.ArgumentParser:
     negative.add_argument("--expected-commit")
     negative.add_argument("--expected-tree")
     negative.set_defaults(func=command_negative)
+
+    require = sub.add_parser("require-matrix")
+    require.add_argument("--matrix", required=True)
+    require.add_argument("--jobs", required=True)
+    require.set_defaults(func=command_require_matrix)
+
+    manifest = sub.add_parser("manifest")
+    manifest.add_argument("--bundle", required=True)
+    manifest.add_argument("--output", required=True)
+    manifest.set_defaults(func=command_manifest)
     return parser
 
 

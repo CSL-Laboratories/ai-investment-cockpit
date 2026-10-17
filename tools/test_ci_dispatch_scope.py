@@ -306,6 +306,25 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertEqual(negative['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
         self.assertEqual(validate['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
         self.assertEqual(validate['needs'], 'qualification')
+        self.assertIn('always()', validate['if'])
+        self.assertIn("needs.qualification.result != 'skipped'", validate['if'])
+        self.assertNotIn("needs.qualification.result == 'success'", validate['if'])
+        self.assertEqual(qualification['permissions'], {'contents': 'read', 'actions': 'read'})
+        self.assertEqual(negative['permissions'], {'contents': 'read'})
+        self.assertEqual(
+            validate['permissions'],
+            {
+                'contents': 'read',
+                'actions': 'read',
+                'id-token': 'write',
+                'attestations': 'write',
+            },
+        )
+        self.assertNotIn('write', qualification['permissions'].values())
+        joined_permissions = '\n'.join(
+            f"{job.get('permissions')}" for job in (qualification, negative, validate)
+        )
+        self.assertNotIn("actions': 'write'", joined_permissions)
         self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'linux'])
         self.assertEqual(self.ci['jobs']['macos']['runs-on'], 'macos-latest')
         head_ref = '${{ github.event.pull_request.head.sha || inputs.pr_head_sha || github.sha }}'
@@ -329,6 +348,12 @@ class DispatchScopeTests(unittest.TestCase):
         validate_script = '\n'.join(step.get('run', '') for step in validate['steps'])
         self.assertIn('tools/qualification_evidence.py validate', validate_script)
         self.assertIn('tools/qualification_evidence.py negative-controls', validate_script)
+        self.assertIn('tools/qualification_evidence.py require-matrix', validate_script)
+        self.assertIn('tools/qualification_evidence.py manifest', validate_script)
+        attest = next(step for step in validate['steps']
+                      if 'attest-build-provenance' in step.get('uses', ''))
+        self.assertEqual(attest['uses'], 'actions/attest-build-provenance@v3')
+        self.assertIn('qualification-evidence-bundle/*.json', attest['with']['subject-path'])
         self.assertNotIn('qualification', self.ci['jobs']['linux-gates']['needs'])
 
 

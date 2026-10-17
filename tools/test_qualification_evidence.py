@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -205,6 +206,64 @@ class QualificationEvidenceTests(unittest.TestCase):
             self.assertIn(f"negative-control {name}: rejected", text)
         self.assertIn("junit suite tests=", text)
         self.assertIn("does not match", text)
+
+    def test_runner_record_stores_observed_image_not_only_the_scheduled_label(self) -> None:
+        spec = MOD.required_cells(self.matrix)[0]
+        cell = next(item for item in self.bundle["cells"] if item["cell_id"] == spec["cell_id"])
+        runner = json.loads((self.root / cell["artifact_dir"] / "runner.json").read_text(encoding="utf-8"))
+        self.assertEqual(set(runner), MOD.RUNNER_KEYS)
+        self.assertEqual(runner["scheduled_image"], spec["runner_image"])
+        self.assertEqual(cell["runner_image"], spec["runner_image"])
+        self.assertNotEqual(runner["image_os"], runner["scheduled_image"])
+        for key in ("image_os", "image_version", "platform", "python_runtime", "runner_name"):
+            self.assertTrue(runner[key].strip())
+        self.assertIn(spec["python"], runner["python_runtime"])
+        with self.assertRaises(MOD.QualificationError):
+            MOD.build_cell_files(
+                spec=spec,
+                commit_sha=COMMIT,
+                tree_sha=TREE,
+                run_id="1000",
+                run_attempt="1",
+                job_id="2001",
+                python_version=f"{spec['python']}.0",
+                junit_bytes=(self.root / cell["artifact_dir"] / "junit.xml").read_bytes(),
+                dependency_text="pytest==8.3.5\n",
+                runner_name="runner",
+                runner_os=spec["runner_os"],
+                runner_arch=spec["runner_arch"],
+                image_os="",
+                image_version="observed-image",
+                observed_platform=f"{spec['runner_os']}-{spec['runner_arch']}",
+                python_runtime=f"{spec['python']}.0 ({spec['platform']})",
+            )
+
+    def test_full_run_rejects_missing_cancelled_or_skipped_cells(self) -> None:
+        names = [MOD.provider_free_job_name(spec) for spec in MOD.required_cells(self.matrix)]
+        self.assertEqual(len(names), 6)
+        jobs = [{"name": name, "conclusion": "success"} for name in names]
+        self.assertEqual(MOD.incomplete_matrix(jobs, names), [])
+        missing = MOD.incomplete_matrix(jobs[:-1], names)
+        self.assertTrue(any(item.startswith("missing-cell:") and names[-1] in item for item in missing))
+        cancelled = json.loads(json.dumps(jobs))
+        cancelled[0]["conclusion"] = "cancelled"
+        skipped = json.loads(json.dumps(jobs))
+        skipped[1]["conclusion"] = "skipped"
+        self.assertTrue(any("conclusion cancelled" in item for item in MOD.incomplete_matrix(cancelled, names)))
+        self.assertTrue(any("conclusion skipped" in item for item in MOD.incomplete_matrix(skipped, names)))
+
+    def test_manifest_records_the_bundle_sha256(self) -> None:
+        bundle_path = self.tmp / "bundle.json"
+        bundle_path.write_bytes(MOD.canonical_json(self.bundle))
+        destination = self.tmp / "manifest.json"
+        document = MOD.write_manifest(bundle_path, destination)
+        self.assertEqual(document["schema"], MOD.MANIFEST_SCHEMA)
+        self.assertEqual(document["bundle_path"], "bundle.json")
+        self.assertEqual(
+            document["bundle_sha256"],
+            hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), document)
 
     def test_real_bundle_negative_controls_use_that_bundle(self) -> None:
         lines = MOD.run_negative_controls(
