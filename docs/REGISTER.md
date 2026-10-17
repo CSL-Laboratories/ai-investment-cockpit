@@ -1,12 +1,20 @@
 ---
 title: The register — one ID space, one place to claim work
 status: live
-last-verified: 2026-10-15
+last-verified: 2026-10-16
 ---
 
 # The register
 
 Reconciled 2026-10-15 against `origin/main` `4a4308d`. Status cells that still said `claimed`, `in review`, or `unmerged` after the corresponding pull request had merged are updated below. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. This pass records merge state only. It does not close an empirical, paper-day, witness, selection, or pre-live gate, and it does not claim PASS.
+
+## RW-38 slice A daily NAV source contract — proposed 2026-10-16
+
+| ID | Scope | Status | Owner | Completion contract |
+|---|---|---|---|---|
+| `RW-38` | Slice A source-contract proposal for `cef_discount` only, after `qualify_count` 0 and four empty GET-only boards (RW-31/RW-36/RW-37; cohort 0≪30). If Lucas authorizes it, the claim freezes one daily NAV authority contract: source identity he names, point-in-time as-of rule, distribution and corporate-action coverage, survivorship rule, cost ceiling, and untrusted-input handling (`<untrusted-content>`, SEC-02 canary). SEC Form N-PORT stays quarterly research context and is not that daily authority (DEC-03). Below-NAV is not expected return. The authorized claim writes the contract text only. It does not download or ingest a feed, set `data_contract_authorized` or `cef_nav_authorized`, mutate `freeze.v1.json` / `metrics.v1.json` / `evaluation.v1.json` / `cases.v1.json` / `protocol.v1.json` / `screens.v1.json`, or move `qualify_count` off 0. Cash-merger stays `watch` until a real same-date prospective cohort and a current date-ready target exist. The 30-identity gate stays 30. The four RW-28 rejects stay reject until a separate new freeze. No watchlist seed, labelling, measurement, activation, order-path edit, or empirical PASS | **proposed** under CSL-63 on 2026-10-16; awaiting Lucas; **not authorized**; memo [[research/csl-63-slice-a-memo-2026-10-16]] | Cloud Head proposal; Lucas decides | Lucas authorizes this text and names the source, or refuses it. Authorization is the decision. It does not ingest a feed, qualify a strategy, or select a launch name. Implementation of an authorized contract is a later bounded claim. Do not implement this row before that decision |
+
+This row reserves `RW-38`. It is not permission to collect data. `cash_merger` is outside this claim. `RW-32` remains the remote seal package and is not reused.
 
 ## RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16
 
