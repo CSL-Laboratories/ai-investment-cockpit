@@ -114,8 +114,10 @@ Current implementation order: bounded feasibility/evaluator qualification; usefu
 research through the real composition; shared authority/executor/recovery contracts;
 integrated strategy-to-paper lifecycle; full tax/economic workflow; then complete
 release qualification and at least 20 Linux market days plus required coverage.
-These are delivery slices to split and claim in REGISTER before code, not new package
-IDs, permission to start operational runs or a claim that evidence already exists.
+These are delivery slices to split and claim in Linear (assign the `CSL-N` issue
+and move it to In Progress) before code, then record the work ID and branch in
+REGISTER. They are not new package IDs, permission to start operational runs or a
+claim that evidence already exists.
 
 The delivery plan explicitly maps the old MVP and DEC-03 selection to the adopted
 product, retains applicable W-23/W-24 and independent-label gates, and requires a
@@ -124,7 +126,8 @@ authority implementation changes. It also calls for account/settlement applicabi
 review of current risk assumptions. The DEC-09 matrix and pre-live gates remain.
 
 **Current precedence:** PRODUCT owns product scope/acceptance; this PLAN owns delivery
-order and adopts the linked delivery slices; REGISTER owns claims. The older MVP
+order and adopts the linked delivery slices; claim by assigning the `CSL-N` issue
+and moving it to In Progress (REGISTER records work ID, branch, and status). The older MVP
 definition, single-strategy scope and serial delivery order below are superseded where
 they conflict with this section and PRODUCT. Their applicable subsystem/evidence gates
 remain under the explicit dispositions in the delivery plan. Existing runtime invariants
@@ -1514,10 +1517,12 @@ blocks promotion and returns the system to the appropriate lower/watch-only post
 
 Every production package follows this loop:
 
-1. **Claim:** change exactly one [[REGISTER]] row to `claimed`, name the branch
-   `work/<id>-<slug>`, and answer the seven intake questions in §5 before editing code. Paired
-   retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled together but retain separate
-   deletion gates.
+1. **Claim:** assign yourself on the Linear `CSL-N` issue and move it to In Progress.
+   Then record the work ID and branch on exactly one [[REGISTER]] row (`claimed`).
+   Name the branch from Linear's copied branch name, or `CSL-<n>-slug`; the PR title
+   must still carry `CSL-N`. Answer the seven intake questions in §5 before
+   editing code. Paired retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled
+   together but retain separate deletion gates.
 2. **Pin the baseline:** start from latest merged `main`, record its CI-attestation state, clear
    ambient `COCKPIT_*`, use the short Windows temp path, run targeted tests plus Ruff, and record
    any live/paper fixture the gate will compare against. During a CI-budget pause, local green
@@ -1570,7 +1575,8 @@ not going to change. It means the fix is a **claim mechanism**, not a process.
 
 ### Before writing code for anything larger than a one-line bugfix
 
-One entry in [[REGISTER]], and answers to these:
+Assign the `CSL-N` issue and move it to In Progress, record the work ID and
+branch in [[REGISTER]], and answers to these:
 
 1. **What changes for the operator?** If nothing, this is a refactor — say so and justify it.
 2. **What existing code path does this replace or extend?** Name the file. If "none", say why
@@ -1580,7 +1586,8 @@ One entry in [[REGISTER]], and answers to these:
 4. **What proves it is reachable in production?** Name the test that fails if the wiring is
    removed. Not "the unit tests pass." *(This is the grounding failure: `decision_agent_cwd`
    had zero test references, so a dead security control looked healthy.)*
-5. **Which IDs does this claim?** Cross-check the register for an existing claim.
+5. **Which IDs does this claim?** Cross-check Linear for an existing assigned
+   `CSL-N` issue, then record the work ID in the register.
 6. **Windows / Ubuntu implications.** Subprocess, path, credential, or temp file — say how for
    native Windows and Ubuntu/WSL2. Note best-effort macOS portability where materially relevant.
 7. **Rough size.** Over ~1,000 LOC is more than one package. Split it before starting.

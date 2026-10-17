@@ -60,8 +60,9 @@ completing the RW-25 grill on `work/rw25-product-grill`.
 That documentation delivery merged in [PR #85](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/85)
 (`e4e9844`) on 2026-09-10.
 [The planning record](product-planning.md) preserves exact answers and ratification.
-PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order and
-REGISTER owns claims. Current runtime invariants and applicable empirical gates retain
+PRODUCT owns product purpose, scope and acceptance; PLAN owns delivery order;
+claim by assigning the `CSL-N` issue and moving it to In Progress (REGISTER records work ID, branch, and status).
+Current runtime invariants and applicable empirical gates retain
 their authority until their separately reviewed amendments or required evidence.
 
 Read the [operating contracts](product-operating-contracts.md) for the shared workflow,
@@ -118,7 +119,7 @@ the repair record. Missing prospective observations and independent labels remai
 |---|---|
 | **[PRODUCT](../PRODUCT.md)** | Product purpose, scope and acceptance, with its adopted operating, tax and acceptance contracts. |
 | **[[PLAN]]** | Current delivery order, package lifecycle and scope reconciliation. Its RW-25 section supersedes conflicting older MVP/strategy/order text while retaining applicable evidence gates. |
-| **[[REGISTER]]** | One ID space, one claim board. **Claim work here before writing code.** |
+| **[[REGISTER]]** | One ID space and status board. **Claim in Linear (assign the `CSL-N` issue and move it to In Progress), then record the ID here before writing code.** |
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
@@ -259,8 +260,10 @@ canonical invariant list, and nothing else restates it.
 ## Contributor handoff
 
 1. Fetch `origin/main`; do not continue one of the stale branches named above.
-2. Read [[PLAN]] for phase/dependency context and [[REGISTER]] for the exact open row.
-3. Claim one row and one fresh branch. Keep one production-code package active at a time.
+2. Read [[PLAN]] for phase/dependency context. Check Linear for overlapping
+   issues and the exact open `CSL-N`; [[REGISTER]] records work ID, branch, and status.
+3. Claim by assigning the `CSL-N` issue and moving it to In Progress, then
+   record the ID on one fresh branch. Keep one production-code package active at a time.
 4. Add a reachability/regression test, run targeted tests, the full local suite, and Ruff using
    the platform instructions in `AGENTS.md`; order-path changes also require adversarial review.
 5. Record whether evidence is local-platform, live-market, paper-broker, independent-witness, or deployment
@@ -296,7 +299,7 @@ defects got fixed twice on two branches.
 | [[PLAN]] | MVP, milestones, intake gate, scope boundaries |
 | [[REGISTER]] | Every open ID and who has it |
 | [[adr/README]] | Architecture decision records. Written when a Linear `decision` issue closes; cite any `DEC-xx` from [[REGISTER]] |
-| [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
+| [[security-hardening-backlog]] | The **SEC-series** write-ups. Claim in Linear; record the ID in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |
 | [[rw01-live-smoke]] | The live bring-up runbook. Follow it verbatim on a real market day |
 | [[runbooks/w22-paper-mvp]] | Paper background/Discord bring-up, safety holds, and the two-day evidence checklist |

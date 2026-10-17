@@ -3,6 +3,27 @@
 > Auto-loaded each session. Keep it tight and high-signal. The detailed playbooks
 > and the full design corpus live in `docs/` — start at `docs/README.md`.
 
+## Linear-first operations (applies to every agent and Grok Bot)
+
+Linear is the basis of operations. Check Linear for overlapping issues and PRs
+before starting; work only from a Linear issue and keep it updated (agents
+with Linear access post status and PR links as issue comments). Hosted Claude
+(`devin-review-fix`, `resolve-pr`) is exempt from that Linear preflight and
+from posting Linear status: it is GitHub-only. Every review request,
+blocker, or question directed at a person is an @mention on the matching CSL
+Linear issue — not GitHub alone. Automated GitHub workflows keep their
+existing channels (Codex gate, Linear PR-sync, Devin Review). Handles:
+Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
+`@lucassalvador987`. File findings, ideas, and bugs to Triage (deduped);
+ground implementations with Parallel search (web) and Context7 (library
+docs). **Wait for jobs before reviewing:** no human or coding agent approves
+or request-changes until Devin Review, Claude fixer jobs (`devin-review-fix`,
+`resolve-pr`), and required CI have finished on the current head; the Codex
+CI/fixer gate still posts its `@codex review` request on open/synchronize
+without waiting; stale-head reviews do not count; re-review after new
+pushes. Post human/agent review requests and status as Linear @mentions;
+check job status on the PR directly. Full rule in [`AGENTS.md`](AGENTS.md).
+
 ## Product target and current implementation
 
 The ratified [PRODUCT.md](PRODUCT.md) owns purpose, scope and acceptance for the
@@ -56,15 +77,39 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin reviews PRs (does not auto-fix
+  review findings; Claude does). The documented post-merge Main CI fixer and
+  weekly dead-code sweep stay as human-managed Devin automations.
+  Research/dev swarm jobs stay retired
+  (`spawn_devin_leaf.py` frozen, RW-33). Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
   No swarm broker tools, secrets or soak starts. Product authority is unchanged.
 
+## Linear workflow
+
+Linear is the source of truth. Full rules live in [`AGENTS.md`](AGENTS.md)
+(Linear-first workflow and **Linear is how we communicate**). Short form:
+assign yourself and move the issue to **In Progress** before starting; branch
+from Linear's copied name or `CSL-<n>-slug`; put `CSL-N` in the PR title;
+replace the `Fixes CSL-___` placeholder with the real key (`Fixes CSL-N` is
+Linear's magic word). Merging moves the issue to **Done**. If the PR does not
+move it to **In Review**, move it yourself. Agents working a CSL issue keep
+milestone comments current on that issue. @mention the Linear handle when
+blocked or needing approval (`needs-decision`) — Chaandan `@chaandansaini101`,
+Samir `@samirshahahmed`, Lucas `@lucassalvador987`; a GitHub mention alone is
+not enough. File anything that comes up in-session to Triage instead of
+dropping it. Stuck threads: see the **Review loop** (CSL-86 / PR #124) — one
+roll-up Linear issue per PR (`Stuck PR threads: <repo>#N`, `needs-decision`,
+linked to the PR's CSL issue), human PR author as fallback. Before merging,
+that roll-up must be handled and the PR must have no unresolved GitHub review
+threads.
+
 ## Session workflow
 1. Read `docs/README.md`, `PRODUCT.md` for product scope/acceptance, then
-   `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for claims.
+   `docs/PLAN.md` for current delivery order and `docs/REGISTER.md` for the
+   ID/status board (the claim is the Linear assignment).
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
@@ -77,8 +122,9 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    (research → architecture → build → security → enhancements). Recorded
    architecture and direction live in `docs/adr/` and the linked Linear
    `decision` issues.
-6. Commit only when the operator asks. Message convention:
-   `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
+6. Commit only when the operator asks. Put `CSL-N` in the branch name and PR
+   title. Message convention: `CSL-N: feat(RW-xx): …` / `CSL-N: fix(RW-xx): …` /
+   `CSL-N: docs(RW-xx): …`.
 
 ## Hard rules
 - Never put an LLM on the order or risk path.

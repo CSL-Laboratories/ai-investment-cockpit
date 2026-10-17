@@ -2,6 +2,49 @@
 
 > **How CSL works:** start with the Linear doc [How CSL works](https://linear.app/csl-laboratories/document/how-csl-works-922e0df6026f).
 
+## Linear-first operations (applies to every agent and Grok Bot)
+
+Linear is the basis of operations. Bounded workers with a frozen brief (for
+example `muse-synthesizer`) are exempt from the Linear and external-research
+steps below; Head performs them before freezing the brief, and the worker's own
+prompt governs. Hosted Claude (`devin-review-fix`, `resolve-pr`) is exempt
+from the Linear preflight and status steps below: it has no Linear access and
+works from the GitHub event only (see **When Claude can't fix a review thread**).
+
+- Before starting work, check Linear for overlapping issues and PRs.
+- Work only from a Linear issue. Keep it updated with status, progress comments,
+  and PR links. Agents and bots with Linear access post their own status
+  updates and PR links as comments on that issue. Linear PR-sync writes
+  generic PR status, not hosted-Claude milestones; the stuck-thread watcher
+  files a roll-up only for stuck threads. When a hosted-Claude blocker or
+  milestone needs a person, an agent with Linear access (usually the PR
+  author) posts that @mention on the CSL issue.
+- Every review request, blocker, or question directed at a person must be an
+  @mention comment on the matching CSL Linear issue so the Linear bot notifies
+  them. A GitHub mention alone is not enough. Automated GitHub workflows keep
+  their existing channels and do not also @mention on Linear: the Codex gate
+  posts `@codex review` on the PR, Linear PR-sync writes PR status without an
+  extra @mention, and Devin Review posts findings on GitHub. Linear handles:
+  Chaandan `@chaandansaini101`, Samir `@samirshahahmed`, Lucas
+  `@lucassalvador987`.
+- Autonomously file research findings, ideas, and bugs to Triage, deduped.
+- Ground every implementation in the best available research: Parallel search
+  for web research and Context7 for current library docs.
+- **Wait for jobs before reviewing:** no human or coding agent approves or
+  requests changes on a PR until Devin Review, the Claude fixer jobs
+  (`devin-review-fix`, `resolve-pr`), and required CI have all finished on the
+  current head commit. Devin Review's own verdict is exempt: its
+  `changes_requested` is what starts `devin-review-fix`. The Codex CI/fixer
+  gate (CSL-103) still posts its one `@codex review` request on
+  `open`/`synchronize` without waiting for those jobs; that request is not an
+  approve or request-changes, and `READY` is reconciled against live findings
+  after jobs settle (`ci:full` requests CI, not merge approval). A review on a
+  stale head does not count; after new pushes, the reviewer reviews again.
+  Human and agent review requests and their status are posted as @mention
+  comments on the CSL Linear issue. Check job status on the PR directly; do
+  not wait on a readiness notice, since no watcher that posts one is part of
+  this repo.
+
 This project is a solo-developer, subscription-powered, human-gated investing
 copilot. It is paper-first: no live capital moves until the pre-live gates in
 `docs/security-hardening-backlog.md` are satisfied.
@@ -150,17 +193,65 @@ Agents trigger CI and reviews via these commands/tools or the `ci:full` label.
 
 ## Linear-first workflow
 
-Agents must stay Linear-aware and proactive. Linear is the source of truth.
+Agents must stay Linear-aware and proactive. Linear is the source of truth
+(team **CSL**, project **ai-investment-cockpit**).
 
-- **Before starting work**, find or create the Linear issue (team **CSL**, project **ai-investment-cockpit**) via the Linear MCP or the Devin Linear integration. Do not start a change without a `CSL-N`.
+- **Claim = assign yourself** in Linear before starting, and move the issue to
+  **In Progress**. Unassign if you stop. Find or create the issue via the Linear
+  MCP first. Do not start a change without a `CSL-N`. Then record the work ID
+  and branch in `docs/REGISTER.md`; the register is the ID/status board, Linear
+  assignment is the claim.
 - **When you are the assignee** (developer or their coding agent working in the repo) of an issue that needs a decision or sets direction, run Parallel Task API deep research before proposing or deciding, in addition to Search/Extract. Post the cited brief (options, tradeoffs, recommendation, target metrics) on the Linear issue, then decide or @mention for approval. Grok Bots do not research or resolve decision issues.
-- Branch names come from Linear's copied branch name, so the PR auto-links. PR title includes `CSL-N`. One issue per PR; keep PRs small and stackable.
-- Comment progress on the issue. Move it to **In Progress** when work starts, then **In Review** when the PR is up.
+- **Branch** from Linear's copied branch name, or `CSL-<n>-slug`. **PR title**
+  carries `CSL-N: ...`. Put `Fixes CSL-N` in the PR body — that is Linear's
+  magic word. Replace the `Fixes CSL-___` placeholder with the real key; a
+  branch name alone can link the PR but does not move the issue to Done. One
+  issue per PR; keep PRs small and stackable.
+- **Statuses:** when you start, assign yourself and move the issue to
+  **In Progress**. `Fixes CSL-N` (real key) is what Linear uses to close on
+  merge. If the PR does not move the issue to **In Review**, move it yourself.
+  Agents working a CSL issue keep comments current at other milestones — see
+  **Linear is how we communicate**.
 - Grok Bots must read the Linear PR-sync comment (`<!-- pr-sync:<repo>#<n> -->`, written by [`.github/workflows/linear-pr-sync.yml`](.github/workflows/linear-pr-sync.yml)) on the issue before touching shared files. Three people work this repo at once; that comment is the live PR link, mergeable/conflict state, head SHA, and top files.
-- When work reveals follow-ups, bugs, or next steps, create new **Triage** issues with one Type label, the repo label `ai-investment-cockpit`, the project, and a link back to the parent issue or PR — not drive-by changes.
-- **Assignees:** the three founders are Lucas (NotSkittlz), Chaandan (CDanTheMan), and Samir (samir-shah-ahmed). All are admins, and ownership changes over time, so never hardcode owners. Check the current assignee or project lead in Linear. Assign new issues to the owner of the parent issue, or leave them in Triage unassigned when unclear.
-- The author addresses CI comments on their own PR, then resolves the threads. Devin findings and `@claude` mentions are handled by the Claude Code Action (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers; on other PRs the author addresses them. Do not run review-fix loops on other agents' PRs.
-- Humans make the load-bearing decisions (architecture, security, trading-risk, merge order). Agents propose; humans decide.
+- **Routing labels** `for-devin`, `for-claude`, and `for-cursor` are the
+  single-select route group. `needs-decision` is a separate label. Humans
+  apply `for-devin` (agents must not trigger Devin automations). File
+  follow-ups to **Triage** with one Type label, the repo label
+  `ai-investment-cockpit`, the project, and a link back to the parent issue
+  or PR — not drive-by changes.
+- **Mentions** use the Linear handles in **Linear-first operations**, not
+  GitHub. Look up the parent issue's current assignee or project lead in Linear
+  and @mention them; the named handles are notification routes, not proof of
+  ownership. Assign new issues to that owner, or leave them in Triage
+  unassigned when unclear.
+- The author addresses CI comments on their own PR, then resolves the threads.
+  Devin findings and `@claude` mentions are handled by the Claude Code Action
+  (`.github/workflows/claude.yml`) on open, same-repository PRs by repo writers;
+  on other PRs the author addresses them. Do not run review-fix loops on other
+  agents' PRs.
+- Humans make the load-bearing decisions (architecture, security, trading-risk,
+  merge order). Agents propose; humans decide.
+
+## Linear is how we communicate
+
+Linear is the team's primary async channel, alongside Google Meet and Discord.
+
+- Agents with Linear access working a CSL issue keep it current in Linear as
+  work progresses: status, a short progress comment at meaningful milestones
+  (started, blocked, PR opened, done), and the PR link, posted as a comment
+  on that issue. Hosted Claude is exempt (GitHub-only; see **When Claude
+  can't fix a review thread**). Operator soak runs are not told to post
+  Linear milestone comments.
+- Every review request, blocker, or question directed at a person is an
+  @mention comment on the matching CSL Linear issue (Chaandan
+  `@chaandansaini101`, Samir `@samirshahahmed`, Lucas `@lucassalvador987`).
+  A GitHub mention alone is not enough. Automated GitHub workflows keep
+  their existing channels (see **Linear-first operations**). Add the
+  `needs-decision` label for approvals.
+- Anything that comes up during a dev session gets filed as a new Linear issue
+  in **Triage** instead of being dropped: ideas discussed, bugs or oddities
+  found in development, and areas to develop or test further. Link it to the
+  current issue when related, and dedupe against existing issues first.
 
 ## Hosted CI
 
@@ -181,7 +272,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs. Devin reviews GitHub PRs and does not auto-fix review findings (Claude does); that does not grant Devin research/dev swarm jobs. The documented post-merge Main CI failure fixer and weekly dead-code sweep remain the only Devin fix automations.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
@@ -232,6 +323,23 @@ retryable through a new Devin submitted review or authorized manual dispatch.
 If this `@codex review` is a stuck-thread mediation (the comment contains
 `<!-- codex-mediation:`), do **not** add a `CODEX-GATE:` line. The gate
 ignores those reviews and never dispatches a fixer from them.
+
+## When Claude can't fix a review thread
+
+Devin does not auto-fix review findings, so a review thread is never handed back to Devin.
+Stuck-thread handling is owned by the **Review loop** (CSL-86 / PR #124,
+`.github/workflows/stuck-thread-watch.yml`). Hosted Claude has no Linear
+access: it leaves the thread open, replies with why, and @mentions the PR
+author on GitHub. The watcher files **exactly one** roll-up Linear issue per
+PR titled `Stuck PR threads: <repo>#N` (`needs-decision`, linked to the PR's
+CSL issue, shared with the codex gate's MEDIATE path via
+`<!-- stuck-pr-threads:owner/repo#N -->`), not one issue per thread. The human
+PR author is the fallback filer. Developers resolve it from Linear like any
+other issue.
+
+Before merging any PR, check Linear for that roll-up issue **and** that the PR
+has no unresolved GitHub review threads; resolve them or record the decision
+first.
 
 ## Automations
 

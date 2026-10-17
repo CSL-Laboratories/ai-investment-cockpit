@@ -13,7 +13,9 @@ Start future work with the [Cloud handoff](../cursor-cloud-rdt-handoff-2026-09-1
 
 RW-26 through RW-31 and smoke briefs preserve historical jobs and their original
 runtime/schema assumptions. Never redispatch them unchanged as current work.
-Devin is retired. Current jobs need an available REGISTER claim, qualified route,
-approved disclosure, enforced reservation/deadline, exclusive output and receipt.
+Devin is retired. Current jobs need an available Linear assignment (assign
+the `CSL-N` issue and move it to In Progress, then record the ID in
+REGISTER), a qualified route, approved disclosure, enforced
+reservation/deadline, exclusive output and receipt.
 No bulk inherit; no secret inputs; no independent-family claim based on a provider
 name. ChatGPT discussion is manual steering, not a filed synthesis.

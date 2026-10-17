@@ -1,5 +1,5 @@
 ---
-title: The register — one ID space, one place to claim work
+title: The register — one ID space and status board
 status: live
 last-verified: 2026-10-15
 ---
@@ -67,7 +67,9 @@ passed / 6 skipped. Source-bound results and prior diagnostic failures are in
 a draft PR after validation. That draft merged as PR #96 (`cfb4f7c`) on 2026-09-15.
 No empirical PASS.
 
-> **Claim work here before writing code.** This is the whole mechanism. We work ad hoc —
+> **Claim work in Linear (assign the `CSL-N` issue to yourself and move it to In Progress)
+> before writing code, then record the work ID and branch here.** Linear assignment is the
+> claim; this register is the shared ID space and status board. We work ad hoc —
 > whoever picks something up — which is fine for four people and is not changing. What is not
 > fine is having no shared place to say "I have this", which is how the same five defects got
 > fixed twice on two branches.
@@ -77,10 +79,10 @@ No empirical PASS.
 documents that disagreed with each other, and the `BUG-03x` series lived only in commit
 messages and no register at all — which is precisely why that work got duplicated.
 
-**Detail lives in the owning doc; the claim lives here.** `SEC-*` findings are written up in
+**Detail lives in the owning doc; claim by assigning the `CSL-N` issue and moving it to In Progress.** `SEC-*` findings are written up in
 [[security-hardening-backlog]]. `WP-*` contracts are in [[build-scaffold-ultracode]] (cited by
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
-and the claim board, not the specification.
+and records work ID, branch, and status — not the claim and not the specification.
 
 ## RW-31 slice A screen intake and cohort/label plan — merged 2026-09-12
 

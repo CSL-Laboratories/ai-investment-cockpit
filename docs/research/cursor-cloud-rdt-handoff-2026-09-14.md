@@ -65,9 +65,11 @@ screens or prevent unrelated useful research within the adopted delivery order.
    Distinguish Cursor-native Task from Cursor CLI. Do not reinstall/auth Devin.
    Local Windows help is diagnostic context, not proof of Cloud compatibility.
 
-2. **Claim one bounded adapter package in REGISTER.** Prefer the available
-   Cursor-native route if it meets the contract; otherwise qualify one installed
-   CLI with known constrained behavior. Do not enable all runtimes at once.
+2. **Claim one bounded adapter package in Linear** (assign the `CSL-N`
+   issue and move it to In Progress), then record the work ID and branch
+   in REGISTER. Prefer the available Cursor-native route if it meets the
+   contract; otherwise qualify one installed CLI with known constrained
+   behavior. Do not enable all runtimes at once.
    Name the exact supported profile, admitted budget and evidence needed for
    completion. Keep adapter/tooling changes outside the production decision,
    risk, broker, audit, mode/approval and eligibility paths.
