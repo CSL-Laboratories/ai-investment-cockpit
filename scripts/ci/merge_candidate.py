@@ -26,6 +26,23 @@ REQUIRED_JOBS = {
                        'rust-book (linux / py3.12)', 'rust-book (windows / py3.11)',
                        'rust-book (windows / py3.12)', 'rust-book (macos / py3.12)'}),
 }
+# Actions run metadata may qualify the workflow file with "@<ref or sha>", e.g.
+# ".github/workflows/ci.yml@main" or "@refs/heads/<branch>". Only ref/SHA-safe
+# characters are admitted after "@"; the file name itself must match exactly.
+WORKFLOW_PATH_SUFFIX = r'(?:@[A-Za-z0-9._/-]+)?'
+
+
+def workflow_path_matches(path, kind):
+    """True when path names exactly this kind's workflow file, bare or @ref-qualified.
+
+    The suffix is tolerated, never trusted: numeric workflow ID, repository ID,
+    exact head/branch, actor, nonce, attempt and job completeness stay bound by
+    the callers. A split on "@" would admit a different file; this does not.
+    """
+    if kind not in REQUIRED_JOBS or not isinstance(path, str):
+        return False
+    pattern = re.escape(f'.github/workflows/{kind}.yml') + WORKFLOW_PATH_SUFFIX
+    return re.fullmatch(pattern, path) is not None
 
 
 class CandidateError(ValueError):
@@ -183,12 +200,20 @@ def _latest_head_review(reviews, head):
 
 
 def _terminal_verdict(body):
-    """Return plain marker lines and an exact, unquoted terminal verdict."""
+    """Return plain marker lines and an exact, unquoted terminal verdict.
+
+    The verdict must be the unique plain CODEX-GATE line, and the final nonblank
+    line of the body must itself be that admitted plain line. A final copy that
+    is indented code, quoted, a fence delimiter, or inside an open or closed
+    fence is not a verdict, and an earlier plain line cannot lend it that status.
+    """
     if not isinstance(body, str):
         return [], ''
-    lines = [line for line in body.splitlines() if line.strip()]
-    machine, fence = [], None
-    for raw in lines:
+    machine, fence, terminal = [], None, None
+    for raw in body.splitlines():
+        if not raw.strip():
+            continue  # Trailing blank lines are legitimate; they carry no verdict.
+        terminal = None  # Reset per nonblank line; only an admitted plain line sets it.
         # At most three spaces may precede a Markdown fence or plain marker.
         # A tab/four spaces denotes code, never an independent review verdict.
         indent = raw[:len(raw) - len(raw.lstrip())]
@@ -204,11 +229,11 @@ def _terminal_verdict(body):
         if delimiter and (delimiter[1][0] != '`' or '`' not in delimiter[2]):
             fence = (delimiter[1][0], len(delimiter[1]))
         elif not line.startswith('>'):
-            line = line.strip()
-            machine.append(line)
+            terminal = line.strip()
+            machine.append(terminal)
     verdicts = [line for line in machine if line.startswith('CODEX-GATE:')]
     if (len(verdicts) != 1 or verdicts[0] not in ('CODEX-GATE: READY', 'CODEX-GATE: MEDIATE')
-            or not lines or lines[-1].strip() != verdicts[0]):
+            or terminal != verdicts[0]):
         return machine, ''
     return machine, verdicts[0].split(': ', 1)[1]
 
@@ -259,13 +284,13 @@ def candidate_review(reviews, candidate, request):
 def candidate_verdict(reviews, candidate, request):
     """Authenticated candidate verdict string READY/MEDIATE, otherwise empty."""
     review = _candidate_review(reviews, candidate, request)
-    return review['body'].strip().splitlines()[-1].strip().split(': ', 1)[1] if review else ''
+    return _terminal_verdict(review['body'])[1] if review else ''
 
 
 def ready_review(reviews, candidate, request):
     """Return the exact current READY review; MEDIATE cannot qualify CI."""
     review = _candidate_review(reviews, candidate, request)
-    return review if review and review['body'].strip().splitlines()[-1].strip() == 'CODEX-GATE: READY' else None
+    return review if review and _terminal_verdict(review['body'])[1] == 'READY' else None
 
 
 def full_run_success(run, jobs, candidate, kind, workflow_id, dispatch_nonce):
@@ -286,7 +311,7 @@ def full_run_success(run, jobs, candidate, kind, workflow_id, dispatch_nonce):
             or not isinstance(repo, dict) or repo.get('id') != candidate.repository_id
             or repo.get('full_name') != candidate.repository
             or run.get('event') != 'workflow_dispatch' or run.get('workflow_id') != workflow_id
-            or run.get('path') != f'.github/workflows/{kind}.yml'
+            or not workflow_path_matches(run.get('path'), kind)
             or run.get('display_title') != f'candidate:{candidate.key}:{kind}:{dispatch_nonce}'
             or run.get('head_sha') != candidate.head or run.get('head_branch') != candidate.head_ref
             or not positive(run.get('id')) or not positive(run.get('run_attempt'))

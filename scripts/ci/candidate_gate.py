@@ -315,7 +315,10 @@ class Coordinator:
     def deliver(self, candidate, request, kind):
         workflow = self.action_get(f"{self.prefix}/actions/workflows/{kind}.yml")
         workflow_id = workflow.get("id")
-        if type(workflow_id) is not int or workflow.get("path") != KINDS[kind] or workflow.get("state") != "active":
+        # GitHub may qualify a workflow path with @ref; the exact file name,
+        # numeric workflow ID and active state remain required.
+        if (type(workflow_id) is not int or not candidate_api.workflow_path_matches(workflow.get("path"), kind)
+                or workflow.get("state") != "active"):
             raise ValueError("workflow identity unavailable")
         actor = json.loads(self.gh._run(["api", "user"], token=self.gh.write_token))
         if type(actor.get("id")) is not int or not actor.get("login"):
@@ -362,7 +365,8 @@ class Coordinator:
         run = matches[0]
         if (run["id"] <= intent["before"] or run.get("head_sha") != candidate.head
                 or (run.get("actor") or {}).get("id") != intent["actor"]
-                or run.get("workflow_id") != workflow_id or run.get("path") != KINDS[kind]
+                or run.get("workflow_id") != workflow_id
+                or not candidate_api.workflow_path_matches(run.get("path"), kind)
                 or run.get("event") != "workflow_dispatch"
                 or (run.get("repository") or {}).get("full_name") != self.repo):
             raise ValueError("unbound candidate run")

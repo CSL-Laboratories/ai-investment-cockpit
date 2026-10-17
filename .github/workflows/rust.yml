@@ -98,6 +98,13 @@ jobs:
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
+      # Install the interpreter before candidate validation (see ci.yml): Windows
+      # cells expose `python`, not a dependable `python3`, and the trusted action
+      # reads no candidate files when no pip cache is requested.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: "3.12"
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -114,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - name: Validate label dispatch context
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -256,6 +263,12 @@ jobs:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
           persist-credentials: false
+      # The cell interpreter is installed before candidate validation and reused
+      # by the extension build and Python tests below. Windows cells expose
+      # `python`, not a dependable `python3`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -272,7 +285,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - uses: dtolnay/rust-toolchain@master
         with:
           # Same channel as rust/rust-toolchain.toml. Passing `stable` as well
@@ -281,9 +294,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
       - name: Rust tests
         working-directory: rust
         run: cargo test --workspace

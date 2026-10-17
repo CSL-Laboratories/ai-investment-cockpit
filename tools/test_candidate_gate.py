@@ -102,6 +102,7 @@ class FakeGitHub:
         self.commit = {"sha": MERGE, "parents": [{"sha": BASE}, {"sha": HEAD}], "tree": {"sha": TREE}}
         self.comments, self.reviews, self.events = [], [], []
         self.workflow_ids = {"ci": 301, "rust": 302}
+        self.workflow_paths = dict(gate.KINDS)
         self.run_lists = {301: [], 302: []}
         self.jobs, self.latest_runs = {}, {}
         self.dispatches, self.mentions, self.label_writes = [], [], []
@@ -204,7 +205,7 @@ class FakeGitHub:
         match = re.fullmatch(re.escape(PREFIX) + r"/actions/workflows/(ci|rust)\.yml", path)
         if match:
             kind = match[1]
-            return json.dumps({"id": self.workflow_ids[kind], "path": gate.KINDS[kind], "state": "active"})
+            return json.dumps({"id": self.workflow_ids[kind], "path": self.workflow_paths[kind], "state": "active"})
         match = re.fullmatch(re.escape(PREFIX) + r"/actions/workflows/(\d+)/runs", path)
         if match:
             self.run_queries.append(parse_qs(parsed.query))
@@ -669,6 +670,62 @@ class CandidateCoordinatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.reconcile()
         self.assertEqual(len(self.gh.dispatches), 2)
+
+    def test_ref_qualified_workflow_and_run_paths_qualify_with_every_other_binding_intact(self):
+        for suffix in ("@refs/heads/feature/owned", "@feature/owned", "@" + HEAD, "@refs/pull/42/merge"):
+            with self.subTest(suffix=suffix):
+                self.setUp()
+                self.gh.workflow_paths = {kind: path + suffix for kind, path in gate.KINDS.items()}
+                self.dispatch()
+                self.observe_success()
+                for kind, workflow_id in self.gh.workflow_ids.items():
+                    run = self.gh.run_lists[workflow_id][0]
+                    run["path"] = gate.KINDS[kind] + suffix
+                    self.gh.latest_runs[run["id"]]["path"] = run["path"]
+                result = json.loads(self.reconcile())
+                self.assertTrue(result["qualified"])
+                self.assertEqual(result["full_matrix"], {"ci": "success", "rust": "success"})
+                self.assertEqual(len(self.gh.dispatches), 2)
+                # The suffix tolerates metadata shape only; identity drift still refuses.
+                run = self.gh.run_lists[301][0]
+                for field, value in (("actor", {"id": 999}), ("workflow_id", 302), ("event", "pull_request"),
+                                     ("repository", {"id": 10, "full_name": "fork/repo"})):
+                    with self.subTest(suffix=suffix, field=field):
+                        original = copy.deepcopy(run[field])
+                        run[field] = value
+                        self.gh.latest_runs[run["id"]][field] = copy.deepcopy(value)
+                        with self.assertRaises(ValueError):
+                            self.reconcile()
+                        run[field] = original
+                        self.gh.latest_runs[run["id"]][field] = copy.deepcopy(original)
+                self.assertEqual(len(self.gh.dispatches), 2)
+
+    def test_wrong_or_malformed_workflow_path_never_qualifies_or_dispatches(self):
+        malformed = (".github/workflows/rust.yml", ".github/workflows/rust.yml@refs/heads/feature/owned",
+                     ".github/workflows/ci.yml@", ".github/workflows/ci.yml@refs/heads/x y",
+                     ".github/workflows/ci.yml@refs/heads/x@y", ".github/workflows/ci.yml.bak@main",
+                     ".github/workflows/ci.yaml@main", "x.github/workflows/ci.yml@main",
+                     "@.github/workflows/ci.yml", ".github/workflows/ci.yml@main@.github/workflows/ci.yml",
+                     ".github/workflows/ci.yml@refs/heads/{x}", ".github/workflows/ci.yml@\nmain", "", None)
+        for path in malformed:
+            with self.subTest(path=path, stage="run"):
+                self.setUp()
+                self.dispatch()
+                self.observe_success()
+                run = self.gh.run_lists[301][0]
+                run["path"] = path
+                self.gh.latest_runs[run["id"]]["path"] = path
+                with self.assertRaises(ValueError):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
+            with self.subTest(path=path, stage="workflow"):
+                self.setUp()
+                self.prime_ready()
+                self.gh.workflow_paths["ci"] = path
+                with self.assertRaises(ValueError):
+                    self.reconcile()
+                self.assertEqual(self.gh.dispatches, [])
+                self.assertEqual(self.journal("dispatch"), [])
 
     def test_duplicate_candidate_runs_fail_closed(self):
         self.dispatch()

@@ -112,6 +112,15 @@ jobs:
         with:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
+      # Candidate validation needs an interpreter before any candidate-controlled
+      # dependency install. Windows runner images expose `python`, not a reliable
+      # `python3`, so every validating cell installs its pinned CPython first via
+      # the trusted action (no pip cache, so no cache key is derived from candidate
+      # files) and validation invokes `python` on all three platforms.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: "3.12"
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -128,7 +137,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - name: Validate label dispatch context
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -284,6 +293,11 @@ jobs:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
           persist-credentials: false
+      # Same cell interpreter as run-gates, installed before candidate validation.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -300,7 +314,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
@@ -462,6 +476,13 @@ jobs:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
           persist-credentials: false
+      # Windows has `python`, not a dependable `python3`; install the cell
+      # interpreter before validation so the candidate check cannot be skipped
+      # by a missing launcher.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -478,7 +499,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
@@ -516,6 +537,11 @@ jobs:
           ref: ${{ inputs.merge_sha || github.sha }}
           fetch-depth: 2
           persist-credentials: false
+      # Same cell interpreter as run-gates, installed before candidate validation.
+      - uses: actions/setup-python@v5
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        with:
+          python-version: "3.12"
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -532,7 +558,7 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python3 -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: "3.12"

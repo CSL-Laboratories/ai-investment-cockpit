@@ -334,6 +334,41 @@ class ReviewTests(unittest.TestCase):
             body = '````\nquoted example\n' + indent + '````\n' + review()['body']
             self.assertIsNone(m.ready_review([{**review(), 'body': body}], candidate(), request()))
 
+    def test_final_indented_quoted_or_fenced_copy_is_not_a_terminal_verdict(self):
+        # An earlier plain READY must not lend verdict status to a final line
+        # that is itself code, quoted, a fence delimiter or inside a fence.
+        body = review()['body']
+        verdict = 'CODEX-GATE: READY'
+        for tail in ['\n    ' + verdict, '\n\t' + verdict, '\n   \t' + verdict, '\n \t' + verdict,
+                     '\n```\n' + verdict, '\n~~~\n' + verdict, '\n````\n```\n' + verdict,
+                     '\n~~~~\n~~~\n' + verdict, '\n~~~\n' + verdict + '\n```',
+                     '\n```\n' + verdict + '\n```', '\n```\n```', '\n```',
+                     '\n```\n' + verdict + '\n```\n    ' + verdict,
+                     '\n> ' + verdict, '\n"' + verdict + '"', '\n`' + verdict + '`',
+                     '\n    CODEX-GATE: MEDIATE', '\n```\nCODEX-GATE: MEDIATE']:
+            with self.subTest(tail=tail):
+                r = {**review(), 'body': body + tail}
+                self.assertEqual(m._terminal_verdict(body + tail)[1], '')
+                self.assertIsNone(m.ready_review([r], candidate(), request()))
+                self.assertEqual(m.candidate_verdict([r], candidate(), request()), '')
+                self.assertIsNone(m.candidate_review([r], candidate(), request()))
+                self.assertIsNone(m.head_mediate_review([r], H))
+
+    def test_terminal_plain_verdict_after_fenced_copies_and_trailing_blanks_is_accepted(self):
+        echoes, verdict = review()['body'].splitlines()[:2], 'CODEX-GATE: READY'
+        for body in ['\n'.join(echoes + ['```', verdict, '```', verdict]),
+                     '\n'.join(echoes + ['~~~~', '```', verdict, '~~~~', verdict]),
+                     '\n'.join(['````text', verdict, '    ' + verdict, '````'] + echoes + [verdict]),
+                     '\n'.join(echoes + ['```', '    ' + verdict, '\t' + verdict, '```', verdict]),
+                     '\n'.join(echoes + [verdict]) + '\n\n   \n\t\n',
+                     '\n'.join('   ' + line for line in echoes + [verdict]) + '\n\n',
+                     '\n'.join(echoes + ['> ' + verdict, verdict])]:
+            with self.subTest(body=body):
+                r = {**review(), 'body': body}
+                self.assertEqual(m._terminal_verdict(body)[1], 'READY')
+                self.assertEqual(m.ready_review([r], candidate(), request()), r)
+                self.assertEqual(m.candidate_verdict([r], candidate(), request()), 'READY')
+
     def test_malformed_request_and_review_timestamp_refuse(self):
         for change in [{'id': True}, {'candidate': 'wrong'}, {'nonce': 'wrong'},
                        {'created_at': '2026-10-16T23:00:00'}]:
@@ -390,6 +425,35 @@ class HeadMediateTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertIsNone(m.head_mediate_review([{**self.mediate(), 'body': body}], H))
 
+    def test_final_indented_quoted_or_fenced_mediate_copy_is_not_a_handoff(self):
+        marker = 'CODEX-GATE: MEDIATE'
+        head = 'A human decision is needed.\n' + marker
+        for tail in ['\n    ' + marker, '\n\t' + marker, '\n   \t' + marker,
+                     '\n```\n' + marker, '\n~~~\n' + marker, '\n````\n```\n' + marker,
+                     '\n~~~~\n~~~\n' + marker, '\n~~~\n' + marker + '\n```',
+                     '\n```\n' + marker + '\n```', '\n```\n```', '\n```',
+                     '\n```\n' + marker + '\n```\n    ' + marker,
+                     '\n> ' + marker, '\n"' + marker + '"', '\n`' + marker + '`',
+                     '\n    CODEX-GATE: READY', '\n```\nCODEX-GATE: READY']:
+            with self.subTest(tail=tail):
+                r = {**self.mediate(), 'body': head + tail}
+                self.assertEqual(m._terminal_verdict(head + tail)[1], '')
+                self.assertIsNone(m.head_mediate_review([r], H))
+                self.assertIsNone(m.ready_review([r], candidate(), request()))
+
+    def test_terminal_plain_mediate_after_fenced_copies_and_trailing_blanks_is_a_handoff(self):
+        marker = 'CODEX-GATE: MEDIATE'
+        for body in ['```\n' + marker + '\n```\n' + marker,
+                     '~~~~\n```\n' + marker + '\n~~~~\n' + marker,
+                     '````\n' + marker + '\n\t' + marker + '\n````\nNeeds a human.\n' + marker,
+                     marker + '\n\n  \n\t\n', '   ' + marker + '\n\n',
+                     '> ' + marker + '\n' + marker]:
+            with self.subTest(body=body):
+                r = {**self.mediate(), 'body': body}
+                self.assertEqual(m._terminal_verdict(body)[1], 'MEDIATE')
+                self.assertEqual(m.head_mediate_review([r], H), r)
+                self.assertIsNone(m.ready_review([r], candidate(), request()))
+
     def test_ambiguous_latest_reviews_and_conflicting_records_refuse(self):
         r = self.mediate()
         self.assertIsNone(m.head_mediate_review([r, {**r, 'id': 7}], H))
@@ -426,6 +490,40 @@ class RunTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertFalse(m.full_run_success({**run, field: value}, jobs, candidate(), 'ci', 11, N))
         self.assertFalse(m.full_run_success(run, jobs, candidate(), 'ci', 11, '0' * 32))
+
+    def test_ref_qualified_workflow_path_binds_only_the_same_workflow_file(self):
+        run, jobs = evidence()
+        for suffix in ['@main', '@feature', '@refs/heads/feature', '@refs/pull/42/merge', '@' + H,
+                       '@release-1.2_x']:
+            with self.subTest(suffix=suffix):
+                qualified = {**run, 'path': '.github/workflows/ci.yml' + suffix}
+                self.assertTrue(m.workflow_path_matches(qualified['path'], 'ci'))
+                self.assertTrue(m.full_run_success(qualified, jobs, candidate(), 'ci', 11, N))
+                # A tolerated suffix never substitutes for any other binding.
+                for field, value in [('workflow_id', 12), ('head_sha', X), ('head_branch', 'other'),
+                                     ('event', 'pull_request'), ('status', 'in_progress'),
+                                     ('repository', {'id': 20, 'full_name': REPO}),
+                                     ('head_repository', {'id': 10, 'full_name': 'fork/repo'}),
+                                     ('display_title', f'candidate:{candidate().key}:ci:{"0" * 32}')]:
+                    self.assertFalse(m.full_run_success({**qualified, field: value}, jobs, candidate(), 'ci', 11, N))
+                self.assertFalse(m.full_run_success(qualified, jobs, candidate(), 'ci', 11, '0' * 32))
+                self.assertFalse(m.full_run_success(qualified, jobs, candidate(), 'ci', 12, N))
+                self.assertFalse(m.full_run_success(qualified, jobs[1:], candidate(), 'ci', 11, N))
+        self.assertTrue(m.workflow_path_matches('.github/workflows/rust.yml@main', 'rust'))
+        for path in ['.github/workflows/rust.yml', '.github/workflows/rust.yml@main',
+                     '.github/workflows/ci.yml@', '.github/workflows/ci.yml@main extra',
+                     '.github/workflows/ci.yml @main', '.github/workflows/ci.yml@main\n',
+                     '.github/workflows/ci.yml.bak@main', '.github/workflows/ci.yaml@main',
+                     'x.github/workflows/ci.yml@main', '@.github/workflows/ci.yml',
+                     '.github/workflows/ci.yml@main@.github/workflows/ci.yml',
+                     '.github/workflows/ci.yml@refs/heads/{x}', '.github/workflows/ci.yml@a~1',
+                     '.github/workflows/ci.yml#main', '.github/workflows/ci.yml@refs/heads/x@y',
+                     '.GITHUB/WORKFLOWS/CI.YML@main', '', None, 7, ['.github/workflows/ci.yml']]:
+            with self.subTest(path=path):
+                self.assertFalse(m.workflow_path_matches(path, 'ci'))
+                self.assertFalse(m.full_run_success({**run, 'path': path}, jobs, candidate(), 'ci', 11, N))
+        self.assertFalse(m.workflow_path_matches('.github/workflows/ci.yml', 'other'))
+        self.assertFalse(m.workflow_path_matches('.github/workflows/other.yml', 'other'))
 
     def test_rerun_cannot_borrow_prior_attempt_cells(self):
         run, jobs = evidence()

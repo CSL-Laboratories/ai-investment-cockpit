@@ -55,7 +55,13 @@ their successful runs constitute candidate qualification.
 Each workflow gets a durable authenticated reservation before dispatch, binding
 the candidate, nonce, numeric workflow/actor identity and prior run-ID boundary.
 CI and Rust receive the exact head/base/merge/tree and nonce, and validate the
-live candidate before allocating paid work and again after each checkout. Every
+live candidate before allocating paid work and again after each checkout. Each
+validating cell first installs its pinned interpreter with the trusted
+setup-python action (no dependency cache) and runs the check with `python`, so
+validation does not depend on a runner-provided `python3` launcher that Windows
+images do not reliably expose. Workflow run metadata may name the workflow file
+with an `@ref` qualifier; recovery accepts that form only for the exact file and
+still binds the numeric workflow ID, actor, head, branch, nonce and attempt. Every
 candidate, including docs-only changes, runs five Python cells and five Rust
 cells. The staged `candidate-ci-gates` also requires macOS alongside Linux and
 Windows. No existing required check is renamed.

@@ -2,10 +2,12 @@
 import itertools
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import venv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +20,29 @@ FIELDS = {'pr_number': '166', 'pr_head_sha': 'a' * 40, 'pr_base_sha': 'b' * 40,
 CONTEXT = {'github.event_name': 'workflow_dispatch', 'inputs.scope': 'full',
            'github.event.pull_request.base.sha': 'b' * 40,
            **{f'inputs.{key}': value for key, value in FIELDS.items()}}
+VALIDATION = 'Validate exact full candidate'
+CANDIDATE_JOBS = {'ci.yml': ('filter', 'linux', 'windows', 'macos'), 'rust.yml': ('filter', 'rust-book')}
+# Resolve bash once: the executable tests below restrict PATH to an interpreter
+# directory, and POSIX subprocess resolves the program from the passed PATH.
+BASH = shutil.which('bash') or 'bash'
+
+
+def python_only_path(root):
+    """Return a PATH entry exposing `python` but no `python3`, as Windows cells do.
+
+    A real venv launcher, not a shell shim, keeps this executable on native
+    Windows, WSL and Linux without trusting any ambient interpreter name.
+    """
+    target = root / 'interpreter'
+    venv.EnvBuilder(with_pip=False, symlinks=False).create(target)
+    bindir = next(path for path in (target / 'Scripts', target / 'bin') if path.is_dir())
+    for entry in list(bindir.iterdir()):
+        if entry.name.lower().startswith('python3'):
+            entry.unlink()
+    names = {entry.name.lower() for entry in bindir.iterdir()}
+    if not names & {'python', 'python.exe'} or any(name.startswith('python3') for name in names):
+        raise AssertionError(f'interpreter fixture must expose only python: {sorted(names)}')
+    return bindir
 
 
 def step_env(step, context=None):
@@ -141,24 +166,46 @@ class CandidateWorkflowTests(unittest.TestCase):
         self.assertEqual(self.rust['jobs']['rust-gates']['name'], 'rust-gates')
         self.assertEqual(self.ci['jobs']['candidate-ci-gates']['name'], 'candidate-ci-gates')
 
-    def test_live_validation_runs_after_each_exact_checkout_before_test_installation(self):
-        for doc, jobs in [(self.ci, ('filter', 'linux', 'windows', 'macos')),
-                          (self.rust, ('filter', 'rust-book'))]:
-            for job in jobs:
+    def validation_steps(self):
+        for name, doc in (('ci.yml', self.ci), ('rust.yml', self.rust)):
+            for job in CANDIDATE_JOBS[name]:
                 steps = doc['jobs'][job]['steps']
-                checkout, validation = steps[:2]
+                index = next(i for i, step in enumerate(steps) if step.get('name') == VALIDATION)
+                yield name, doc, job, steps, index
+
+    def test_live_validation_runs_after_each_exact_checkout_before_test_installation(self):
+        for name, doc, job, steps, index in self.validation_steps():
+            with self.subTest(workflow=name, job=job):
+                # Exactly the exact-merge checkout and a trusted interpreter install
+                # precede validation; no candidate dependency install or test does.
+                self.assertEqual(index, 2)
+                checkout, setup, validation = steps[:3]
                 self.assertEqual(checkout['uses'], 'actions/checkout@v4')
                 self.assertEqual(evaluate(checkout['with']['ref'], **CONTEXT), FIELDS['merge_sha'])
                 self.assertEqual(checkout['with']['fetch-depth'], '2')
-                self.assertEqual(validation['name'], 'Validate exact full candidate')
+                self.assertEqual(setup['uses'], 'actions/setup-python@v5')
+                # The install runs whenever validation runs: unconditional, or the same gate.
+                self.assertEqual(setup.get('if', validation['if']), validation['if'])
                 self.assertTrue(evaluate(validation['if'], **CONTEXT))
+                # No pip cache: no cache key is derived from candidate files before validation.
+                self.assertEqual(set(setup['with']), {'python-version'})
+                cell = '${{ matrix.python-version }}' if 'strategy' in doc['jobs'][job] else '3.12'
+                self.assertEqual(setup['with']['python-version'], cell)
+                self.assertEqual(sum(step.get('uses') == 'actions/setup-python@v5' for step in steps), 1)
+                self.assertEqual(validation['shell'], 'bash')
                 self.assertEqual(step_env(validation)['DISPATCH_NONCE'], FIELDS['dispatch_nonce'])
                 self.assertEqual(step_env(validation)['PR_BASE_SHA'], FIELDS['pr_base_sha'])
                 self.assertEqual(step_env(validation)['MERGE_TREE_SHA'], FIELDS['merge_tree_sha'])
+                if name == 'ci.yml' and job != 'filter':
+                    # The pre-validation interpreter is the same cell run-gates installs.
+                    self.assertEqual(steps[3]['uses'], './.github/actions/run-gates')
+                    self.assertEqual(steps[3]['with']['python-version'], cell)
 
     def test_actual_validation_step_forwards_tuple_and_stops_on_refusal_or_wrong_scope(self):
         # A subprocess fixture isolates workflow wiring from the helper's separate
         # real-Git/API tests. A refusal must propagate before any following work.
+        # PATH exposes only `python`, as native Windows cells do, so a step that
+        # still needed a `python3` launcher fails here on every host platform.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             helper = root / 'scripts/ci/merge_candidate.py'
@@ -169,20 +216,22 @@ class CandidateWorkflowTests(unittest.TestCase):
                               "['PR_NUMBER','PR_HEAD_SHA','PR_BASE_SHA','MERGE_SHA',"
                               "'MERGE_TREE_SHA','CANDIDATE_ID','DISPATCH_NONCE']}))\n"
                               "raise SystemExit(int(os.environ['REFUSAL']))\n")
-            for doc in (self.ci, self.rust):
-                step = doc['jobs']['filter']['steps'][1]
+            bindir = python_only_path(root)
+            for name, _doc, job, steps, index in self.validation_steps():
+                step = steps[index]
                 for scope, refusal in [('full', 0), ('linux', 0), ('', 0), ('full', 1)]:
-                    result = subprocess.run(['bash', '-c', step['run']], cwd=root,
-                                            env={**os.environ, **step_env(step),
-                                                 'CANDIDATE_SCOPE': scope, 'REFUSAL': str(refusal)},
-                                            capture_output=True, text=True, check=False)
-                    self.assertEqual(result.returncode == 0, scope == 'full' and refusal == 0,
-                                     result.stderr)
-                    if scope == 'full':
-                        self.assertEqual(json.loads(result.stdout),
-                                         {key.upper(): value for key, value in FIELDS.items()})
-                    else:
-                        self.assertEqual(result.stdout, '')
+                    with self.subTest(workflow=name, job=job, scope=scope, refusal=refusal):
+                        result = subprocess.run([BASH, '-c', step['run']], cwd=root,
+                                                env={**os.environ, **step_env(step), 'PATH': str(bindir),
+                                                     'CANDIDATE_SCOPE': scope, 'REFUSAL': str(refusal)},
+                                                capture_output=True, text=True, check=False)
+                        self.assertEqual(result.returncode == 0, scope == 'full' and refusal == 0,
+                                         result.stderr)
+                        if scope == 'full':
+                            self.assertEqual(json.loads(result.stdout),
+                                             {key.upper(): value for key, value in FIELDS.items()})
+                        else:
+                            self.assertEqual(result.stdout, '')
 
     def test_docs_candidate_executes_all_five_python_and_rust_cells(self):
         for files in ('docs/example.md', '', 'app/main.py'):
