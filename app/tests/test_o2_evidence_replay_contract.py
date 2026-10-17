@@ -118,6 +118,29 @@ def test_same_key_independent_splits_are_both_required_and_rejected() -> None:
         module.validate_records(bundle)
 
 
+def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    observations = json.loads((copy / "fixtures" / "observations.json").read_text(encoding="utf-8"))
+    amended = next(item for item in observations["observations"] if item["observation_id"] == "obs-revenue-jul")
+    amended["raw_record_ids"] = ["raw-eq-10ka"]
+    (copy / "fixtures" / "observations.json").write_text(
+        json.dumps(observations, indent=2) + "\n", encoding="utf-8"
+    )
+    lineage = json.loads((copy / "fixtures" / "lineage.json").read_text(encoding="utf-8"))
+    edge = next(item for item in lineage["edges"] if item["observation_id"] == "obs-revenue-jul")
+    edge["input_raw_record_ids"] = ["raw-eq-10ka"]
+    (copy / "fixtures" / "lineage.json").write_text(json.dumps(lineage, indent=2) + "\n", encoding="utf-8")
+    manifest = json.loads((copy / "fixtures" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = {
+        rel: hashlib.sha256((copy / rel).read_bytes()).hexdigest() for rel in module.EXPECTED_FILES
+    }
+    (copy / "fixtures" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(module.ContractError, match="raw parent"):
+        module.validate_candidate(copy)
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):

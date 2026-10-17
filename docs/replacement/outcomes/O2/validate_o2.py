@@ -427,6 +427,31 @@ def validate_replay(bundle: Bundle) -> None:
                 raise ContractError(f"{check['check_id']} close_time was not preserved")
 
 
+def _missing_raw_parents(bundle: Bundle, raw_ids: list, decision: datetime) -> list[str]:
+    """Visible supersedes ancestors that the observation did not retain."""
+    missing = []
+    seen = set()
+    stack = list(raw_ids)
+    while stack:
+        raw_id = stack.pop()
+        if raw_id in seen:
+            continue
+        seen.add(raw_id)
+        record = bundle.records.get(raw_id)
+        if record is None:
+            continue
+        parent_id = record["supersedes"]
+        if not parent_id or parent_id in seen:
+            continue
+        parent = bundle.records.get(parent_id)
+        if parent is None or parse_time(parent["accepted_at"]) > decision:
+            continue
+        if parent_id not in raw_ids and parent_id not in missing:
+            missing.append(parent_id)
+        stack.append(parent_id)
+    return missing
+
+
 def _fact_value(record: dict):
     payload = record["payload"]
     return payload["value"] if "value" in payload else None
@@ -449,6 +474,11 @@ def validate_observations(bundle: Bundle) -> None:
             raise ContractError(f"{observation['observation_id']} effective raw id mismatch")
         if observation["effective_raw_record_id"] not in observation["raw_record_ids"]:
             raise ContractError(f"{observation['observation_id']} effective raw id is not retained")
+        missing_parents = _missing_raw_parents(bundle, observation["raw_record_ids"], decision)
+        if missing_parents:
+            raise ContractError(
+                f"{observation['observation_id']} dropped raw parent {','.join(missing_parents)}"
+            )
         if _fact_value(effective) != observation["value"]:
             raise ContractError(f"{observation['observation_id']} value does not match raw")
         identity = bundle.identities[observation["identity_id"]]

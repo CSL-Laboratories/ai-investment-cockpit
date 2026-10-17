@@ -102,7 +102,7 @@ Duplicates set `duplicate_of` and must share the natural key and the hash. They 
 
 ## Lineage
 
-Each derived observation has one lineage edge. `transform_id` is `o2.candidate.effective_version` and `transform_version` is `o2.candidate.v1`. The edge's input ids are the observation's raw ids, in the same order. Lineage is not a license to drop a raw parent: the late revenue observation cites both the 10-K and the 10-K/A. Every corporate action named on an observation cites that action's raw id in the same input list.
+Each derived observation has one lineage edge. `transform_id` is `o2.candidate.effective_version` and `transform_version` is `o2.candidate.v1`. The edge's input ids are the observation's raw ids, in the same order. Lineage is not a license to drop a raw parent: the late revenue observation cites both the 10-K and the 10-K/A. Every visible `supersedes` ancestor of an input is itself an input. Matching a shortened lineage list to a shortened observation does not drop that parent. Every corporate action named on an observation cites that action's raw id in the same input list.
 
 ## Clocks and calendars
 
