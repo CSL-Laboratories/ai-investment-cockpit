@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import pairwise
 from typing import Any, Callable
 
 MARKER_PREFIX = "codex-mediation:"
@@ -599,7 +600,7 @@ def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
             [
                 f"### {index}. `{loc}` ({item.reason})",
                 "",
-                f"<!-- fixer-failure-handoff:{item.thread_id} -->" if item.failure_evidence else "",
+                *([f"<!-- fixer-failure-handoff:{item.thread_id} -->"] if item.failure_evidence else []),
                 f"**Thread:** {item.thread_url}",
                 "",
                 "What Devin flagged",
@@ -644,17 +645,32 @@ def human_suffix(existing: str) -> str:
     return _legacy_human_notes(existing)
 
 
-def retain_failure_handoffs(generated: str, existing: str, resolved_thread_ids=()) -> str:
+def retain_failure_handoffs(generated: str, existing: str, resolved_thread_ids=(), rendered_thread_ids=()) -> str:
     """Keep historical handoff evidence for Linear only; never admit actions."""
-    pattern = re.compile(
-        r"^### \d+\. [^\n]*\(exhausted-fixer-failed\)\n\n"
-        r"<!-- fixer-failure-handoff:([A-Za-z0-9_=-]+) -->\n.*?"
-        r"(?=^### \d+\. |^\*Auto-filed by the in-repo stuck-thread watch)",
-        re.MULTILINE | re.DOTALL,
-    )
-    retained = [match.group(0) for match in pattern.finditer(managed_section(existing))
-                if match.group(1) not in resolved_thread_ids
-                and f"<!-- fixer-failure-handoff:{match.group(1)} -->" not in generated]
+    # quote_untrusted removes backtick fences from review text. Only the renderer's
+    # exact text fences delimit quotes, so headings/footer examples inside them
+    # cannot split an existing block, including blocks emitted by older versions.
+    section = managed_section(existing)
+    boundaries = []
+    offset, quoted = 0, False
+    for line in section.splitlines(keepends=True):
+        if line.rstrip("\r\n") == "```text" and not quoted:
+            quoted = True
+        elif line.rstrip("\r\n") == "```" and quoted:
+            quoted = False
+        elif not quoted and (re.match(r"^### \d+\. ", line)
+                             or line.startswith("*Auto-filed by the in-repo stuck-thread watch")):
+            boundaries.append(offset)
+        offset += len(line)
+    seen = set(resolved_thread_ids) | set(rendered_thread_ids)
+    retained = []
+    for start, end in pairwise(boundaries):
+        block = section[start:end]
+        match = re.match(r"^### \d+\. [^\n]*\(exhausted-fixer-failed\)\n\n"
+                         r"<!-- fixer-failure-handoff:([A-Za-z0-9_=-]+) -->\n", block)
+        if match and match.group(1) not in seen:
+            retained.append(block)
+            seen.add(match.group(1))
     if retained:
         count = re.search(r"^\*\*Stuck threads:\*\* (\d+)$", generated, re.MULTILINE)
         if count:
@@ -663,7 +679,10 @@ def retain_failure_handoffs(generated: str, existing: str, resolved_thread_ids=(
                         for index, block in enumerate(retained, 1)]
             generated = generated[:count.start(1)] + str(offset + len(retained)) + generated[count.end(1):]
         footer = "*Auto-filed by the in-repo stuck-thread watch"
-        generated = generated.replace(footer, "".join(retained) + footer, 1)
+        position = generated.rfind(footer)
+        if position < 0:
+            return generated
+        generated = generated[:position] + "".join(retained) + generated[position:]
     return generated
 
 
@@ -957,7 +976,8 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
     existing = linear_find_existing(linear, cfg, number)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
-        generated = retain_failure_handoffs(generated, existing_desc, resolved_thread_ids)
+        generated = retain_failure_handoffs(generated, existing_desc, resolved_thread_ids,
+                                           {item.thread_id for item in items})
         if rollup_is_current(existing, generated, cfg.repository, number):
             return "unchanged"
         description = with_shared_gate_key(
@@ -1108,7 +1128,8 @@ def mediate_pr(
                 resolved_ids = {str(thread.get("id")) for thread in (pr.get("reviewThreads") or {}).get("nodes", [])
                                 if thread.get("isResolved") is True}
                 if existing:
-                    generated = retain_failure_handoffs(generated, str(existing.get("description") or ""), resolved_ids)
+                    generated = retain_failure_handoffs(generated, str(existing.get("description") or ""), resolved_ids,
+                                                       {item.thread_id for item in stuck})
                 if not actionable and not recover_missing:
                     logs.append(f"stuck-thread-watch: pr={number} linear=skipped-no-actionable")
                 elif rollup_is_current(existing, generated, cfg.repository, number):

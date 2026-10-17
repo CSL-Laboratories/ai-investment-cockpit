@@ -214,8 +214,12 @@ def snapshot(read, repo, number):
 def failed_run(read, repo, number, state, run_id, attempt, workflow_id):
     run = read(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}", public=True)
     pr, key = state["pr"], state["key"]
+    # Actions attempt metadata may qualify the path with @ref. The workflow ID,
+    # repository, head and attempt-specific job context remain independently bound.
+    path = run.get("path")
+    path_matches = isinstance(path, str) and re.fullmatch(re.escape(WORKFLOW) + r"(?:@[^\s]+)?", path)
     if not (run.get("id") == run_id and run.get("run_attempt") == attempt
-            and run.get("workflow_id") == workflow_id and run.get("path") == WORKFLOW
+            and run.get("workflow_id") == workflow_id and path_matches
             and run.get("event") in {"pull_request_review", "pull_request_review_comment"}
             and run.get("status") == "completed" and run.get("conclusion") in FAILURES
             and run.get("head_sha") == key["head"] and run.get("head_branch") == pr["head"]["ref"]

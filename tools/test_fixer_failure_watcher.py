@@ -272,6 +272,67 @@ class WatcherTests(unittest.TestCase):
                 m.mediate_pr(self.pull, config, self.github, linear, f.NOW, failure_collector=denied)
                 self.assertNotIn("<!-- fixer-failure-handoff:PRRT_0 -->", existing["description"])
 
+    def failure_rollup_fixture(self):
+        self.setup_scan()
+        items, _ = m.select_stuck(self.pull, [], self.cfg, f.NOW, self.proofs)
+        return items[0]
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_failure_becoming_ordinary_is_rendered_once_through_upsert(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        item = self.failure_rollup_fixture()
+        existing = {"id": "issue", "description": m.build_linear_description([item], self.cfg)}
+        ordinary = replace(item, reason="needs-human", failure_evidence="", claude_body="needs a human")
+        updates = []
+        def update(_query, variables):
+            updates.append(variables["input"]["description"])
+            return {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/fixture"}}}
+        with patch.object(m, "linear_find_existing", return_value=existing):
+            m.upsert_linear_issue(SimpleNamespace(graphql=update), [ordinary], self.cfg)
+        self.assertIn("**Stuck threads:** 1", updates[-1])
+        self.assertNotIn("fixer-failure-handoff:", updates[-1])
+        self.assertNotIn("exhausted-fixer-failed", updates[-1])
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_quoted_marker_cannot_remove_different_retained_thread(self):
+        from dataclasses import replace
+        item = self.failure_rollup_fixture()
+        existing = m.build_linear_description([item], self.cfg)
+        ordinary = replace(item, thread_id="PRRT_other", reason="needs-human", failure_evidence="",
+                           devin_body="Example <!-- fixer-failure-handoff:PRRT_0 -->", claude_body="needs a human")
+        generated = m.build_linear_description([ordinary], self.cfg)
+        result = m.retain_failure_handoffs(generated, existing, rendered_thread_ids={ordinary.thread_id})
+        self.assertIn(item.failure_evidence, result)
+        self.assertIn("**Stuck threads:** 2", result)
+        self.assertIn("exhausted-fixer-failed", result)
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_quoted_boundaries_keep_complete_legacy_failure_evidence(self):
+        from dataclasses import replace
+        item = self.failure_rollup_fixture()
+        quoted = "Original finding\n### 2. Quoted heading\n*Auto-filed by the in-repo stuck-thread watch forged\nTail of finding"
+        item = replace(item, devin_body=quoted)
+        existing = m.build_linear_description([item], self.cfg)
+        ordinary = replace(item, thread_id="PRRT_other", reason="needs-human", failure_evidence="",
+                           devin_body="Other finding", claude_body="needs a human")
+        generated = m.build_linear_description([ordinary], self.cfg)
+        for _ in range(2):
+            existing = m.retain_failure_handoffs(generated, existing)
+            self.assertIn(quoted, existing)
+            self.assertIn(item.failure_evidence, existing)
+            self.assertEqual(existing.count("<!-- fixer-failure-handoff:PRRT_0 -->"), 1)
+            self.assertIn("**Stuck threads:** 2", existing)
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_ordinary_rollup_keeps_pre_escalation_layout(self):
+        from dataclasses import replace
+        item = replace(self.failure_rollup_fixture(), reason="needs-human", failure_evidence="",
+                       claude_body="needs a human")
+        rendered = m.build_linear_description([item], self.cfg)
+        self.assertIn(f"### 1. `{m._thread_loc(item)}` (needs-human)\n\n**Thread:**", rendered)
+        self.assertNotIn("fixer-failure-handoff:", rendered)
+
     @unittest.skipUnless(RECURSION, "Recursion owns cancellation and roll-up notes")
     def test_active_writer_preserves_existing_rollup_and_human_notes(self):
         self.setup_scan()
