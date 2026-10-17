@@ -127,6 +127,54 @@ def _assert_same_tracker(accelerated: PnLTracker, reference: PnLTracker) -> None
             assert value == other
 
 
+def _assert_nonfinite(got: Decimal, expected: Decimal) -> None:
+    """``Decimal("NaN") == Decimal("NaN")`` is False, so NaN is matched by class."""
+    if expected.is_nan():
+        assert got.is_nan(), got
+    else:
+        assert got == expected, (got, expected)
+
+
+@pytest.mark.parametrize(
+    ("mid", "expected_mid"),
+    [
+        (float("nan"), Decimal("NaN")),
+        (float("inf"), Decimal("Infinity")),
+        (float("-inf"), Decimal("-Infinity")),
+    ],
+    ids=["nan", "inf", "-inf"],
+)
+def test_nonfinite_mids_stay_on_the_python_path(mid, expected_mid):
+    """NaN and ±Inf must not reach PnlCore, which rejects them as ValueError.
+
+    The ledger is pinned from the Decimal rules rather than read off a second
+    tracker driven through the same methods: ``Decimal(str(mid)) * tick`` keeps
+    the NaN or the infinity, spread capture inherits it through
+    ``(mid - price) * signed_qty``, and the fill still lands on the cash,
+    notional and position ledgers at the fill price.
+    """
+    accelerated = _trackers(ZERO_FEES)[0]
+    accelerated.mark(mid, ts=0)
+    assert accelerated._core is None
+    assert accelerated._last_mid is not None
+    _assert_nonfinite(accelerated._last_mid, expected_mid)
+    assert accelerated._last_ts == 0
+    assert accelerated.inventory_drift == 0
+
+    accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+    assert accelerated._core is None
+    _assert_nonfinite(accelerated._last_mid, expected_mid)
+    _assert_nonfinite(accelerated.spread_capture, expected_mid)
+    assert accelerated.inventory_drift == 0
+    assert accelerated.fees == 0
+    assert accelerated.realized_notional == Decimal("10000.00")
+    assert accelerated._cash == Decimal("-10000.00")
+    assert accelerated.position == 100
+    assert accelerated.fills == accelerated.maker_fills == 1
+    _assert_nonfinite(accelerated.mark_to_market(), expected_mid)
+    _assert_nonfinite(accelerated.snapshot().total, expected_mid)
+
+
 def _extension_fee(side: Side, qty: int, price: Decimal, liquidity: Liquidity) -> Decimal:
     import cockpit_quant
     return Decimal(cockpit_quant.fee_for(
@@ -148,6 +196,62 @@ def _extension_borrow(notional: Decimal, seconds) -> Decimal:
     return Decimal(cockpit_quant.borrow_cost(
         format(SCHEDULE.borrow_rate_annual, "f"), format(notional, "f"), str(seconds),
     ))
+
+
+def _short_one_hour(tracker: PnLTracker) -> None:
+    """Sell 300 taker at 100.01 against a 100.005 mid, then mark 99.995 an hour later."""
+    tracker.mark(10_000.5, ts=0)
+    tracker.on_fill(
+        _fill(Side.SELL, 300, 10_001, liquidity=Liquidity.TAKER, ts=0), mid_ticks=10_000.5,
+    )
+    tracker.mark(9_999.5, ts=3_600 * 1_000_000_000)
+
+
+def test_pnl_custom_decimal_context_matches_python():
+    """PnLTracker must honour a non-default context instead of 28-digit Rust arithmetic.
+
+    The ledger is pinned to values only a precision-6 context produces, the way the
+    cost-bps test pins ``1428.57``. The fees are 0.9 taker + 0.83 Section 31 + 0.0498
+    TAF + 0.06 clearing + 0.0171225... borrow; precision 6 rounds that to ``1.85692``
+    where the default context keeps ``1.856922431506849315068493151``. A tracker that
+    ignored the caller's context would fail these equalities on either path.
+    """
+    with localcontext() as ctx:
+        ctx.prec = 6
+        accelerated, reference = _trackers(SCHEDULE)
+        _short_one_hour(accelerated)
+        _short_one_hour(reference)
+        _assert_same_tracker(accelerated, reference)
+        assert accelerated._core is None
+        assert accelerated.spread_capture == Decimal("1.500")
+        assert accelerated.inventory_drift == Decimal("3.000")
+        assert accelerated.fees == Decimal("1.85692")
+        assert accelerated.mark_to_market() == Decimal("4.5")
+        assert accelerated.snapshot().total == Decimal("2.64308")
+        # 100.01 * 300 is seven digits, so precision 6 drops the last place.
+        assert str(accelerated.realized_notional) == "30003.0"
+        assert str(accelerated._cash) == "30003.0"
+
+    default = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    _short_one_hour(default)
+    assert default.fees == Decimal("1.856922431506849315068493151")
+    assert default.snapshot().total == Decimal("2.643077568493150684931506849")
+    # Python's Decimal keeps the price's scale: 100.01 * 300 is "30003.00".
+    assert str(default.realized_notional) == "30003.00"
+    assert str(default._cash) == "30003.00"
+
+    # The PnlCore path must hand back the same text, not a normalized "30003".
+    core = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    core._core = _make_pnl_core(core.schedule)
+    assert core._core is not None
+    _rust_mark(core, 10_000.5, 0)
+    _rust_on_fill(
+        core, _fill(Side.SELL, 300, 10_001, liquidity=Liquidity.TAKER, ts=0), 10_000.5,
+    )
+    _rust_mark(core, 9_999.5, 3_600 * 1_000_000_000)
+    assert str(core.realized_notional) == "30003.00"
+    assert str(core._cash) == "30003.00"
+    assert core.fees == default.fees
 
 
 def _extension_bps(cost: Decimal, notional: Decimal) -> Decimal:
@@ -308,7 +412,7 @@ def test_batched_fee_and_pnl_replay_match_single_calls():
     assert Decimal(cash) == accelerated._cash
 
 
-def test_nonfinite_mids_stay_on_the_python_path():
+def test_nonfinite_mids_accelerated_matches_reference():
     """NaN and ±Inf stay on Decimal. PnlCore rejects them, so the live call does not use it."""
     for mid in (float("nan"), float("inf"), float("-inf")):
         accelerated, reference = _trackers(ZERO_FEES)
@@ -367,7 +471,7 @@ def test_position_past_i64_stays_on_the_decimal_ledger():
     _assert_same_tracker(accelerated, reference)
 
 
-def test_pnl_custom_decimal_context_matches_python():
+def test_pnl_custom_decimal_context_live_path_matches_reference():
     """PnLTracker honours a non-default context. The live call does not use 28-digit Rust."""
     with localcontext() as ctx:
         ctx.prec = 6
