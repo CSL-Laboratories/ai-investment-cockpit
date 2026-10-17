@@ -378,6 +378,30 @@ def test_a_copied_view_cannot_write_the_shared_live_index(oms):
     assert view.exposure_ticks() == 0
 
 
+def test_a_copied_view_rejects_fills_and_replaces_before_touching_shared_state(oms):
+    oms.register(_new("a", Side.BUY, 5, price=10), strategy="mm")
+    view = copy(oms)
+    with pytest.raises(TypeError):
+        view.on_fill(_fill("a", Side.BUY, 5, price=10))
+    with pytest.raises(TypeError):
+        view.on_replaced("a", new_qty=9)
+    with pytest.raises(TypeError):
+        view.register(_new("b", qty=1, price=1), strategy="mm")
+    assert oms.position("TEST") == 0
+    assert oms.get("a").filled_qty == 0
+    assert oms.get("a").qty == 5
+
+
+def test_a_retained_view_sees_a_reused_id_inserted_out_of_order(oms):
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    view = copy(oms)
+    oms.on_cancelled("a")
+    oms.register(_new("b", qty=5, price=10), strategy="mm")
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    assert [o.client_id for o in oms.live_orders()] == ["a", "b"]
+    assert [o.client_id for o in view.live_orders()] == ["a", "b"]
+
+
 def test_a_live_id_without_an_order_raises_instead_of_being_skipped(oms):
     """Nothing deletes from ``_orders`` and the guard view copies the whole map, so
     the public API cannot reach this. If the index and the map ever diverge, a

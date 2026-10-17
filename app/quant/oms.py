@@ -176,7 +176,7 @@ class OMS:
     what keeps the OMS usable identically for replay, sim execution and post-hoc analysis.
     """
 
-    __slots__ = ("_orders", "_positions", "_by_strategy", "_live", "_rank", "_next_rank")
+    __slots__ = ("_orders", "_positions", "_by_strategy", "_live", "_rank", "_next_rank", "_read_only")
 
     def __init__(self) -> None:
         self._orders: dict[str, ManagedOrder] = {}
@@ -189,6 +189,11 @@ class OMS:
         self._live: dict[str, ManagedOrder] = {}
         self._rank: dict[str, int] = {}
         self._next_rank = 0
+        self._read_only = False
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise TypeError("a copied OMS is a read-only guard view; mutate the original")
 
     def __copy__(self) -> OMS:
         """A copy is a read-only guard view, not a second OMS.
@@ -204,6 +209,7 @@ class OMS:
         for name in OMS.__slots__:
             setattr(view, name, getattr(self, name))
         view._live = MappingProxyType(self._live)
+        view._read_only = True
         return view
 
     # ---- intake ----------------------------------------------------------------------
@@ -215,6 +221,7 @@ class OMS:
         for a live order makes cancels ambiguous, and an ambiguous cancel in a simulator is
         a silently wrong fill sequence rather than an error.
         """
+        self._require_writable()
         existing = self._orders.get(intent.client_id)
         if existing is not None and existing.is_live:
             raise ValueError(
@@ -259,7 +266,9 @@ class OMS:
             placed[key] = current
         if not inserted:
             placed[client_id] = order
-        self._live = placed
+        # Mutate in place: copies hold a read-only proxy over this exact dict.
+        self._live.clear()
+        self._live.update(placed)
 
     def _transition(self, order: ManagedOrder, dst: OrderState, *, ts: int, reason: str | None = None) -> None:
         if not legal_transition(order.state, dst):
@@ -282,17 +291,20 @@ class OMS:
     # ---- venue callbacks ---------------------------------------------------------------
 
     def on_acknowledged(self, client_id: str, *, ts: int = 0) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         if order.state is OrderState.PENDING_NEW:
             self._transition(order, OrderState.WORKING, ts=ts)
         return order
 
     def on_rejected(self, client_id: str, *, reason: str, ts: int = 0) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         self._transition(order, OrderState.REJECTED, ts=ts, reason=reason)
         return order
 
     def on_cancelled(self, client_id: str, *, ts: int = 0, reason: str | None = None) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         self._transition(order, OrderState.CANCELLED, ts=ts, reason=reason)
         return order
@@ -313,6 +325,7 @@ class OMS:
         or still partially filled. It only changes the terms. ``None`` means "leave this one
         alone", so a pure reprice does not silently retire the order's size.
         """
+        self._require_writable()
         order = self._require(client_id)
         if order.is_terminal:
             raise IllegalTransition(
@@ -338,6 +351,7 @@ class OMS:
         over the disagreement and leave the position quietly short of reality — the exact
         failure that makes a live desync undetectable until reconciliation.
         """
+        self._require_writable()
         order = self._require(fill.order_id)
         if fill.qty > order.remaining_qty:
             raise IllegalTransition(
