@@ -606,6 +606,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             order = orders.get(order_id)
             if order is None:
                 continue
+            if order_id not in order_reserve_seq:
+                # The opening hold lives in the checkpoint, which carries no
+                # order_id; instrument-level reservation totals still reconcile.
+                continue
             filled_qty = (
                 order.get("checkpoint_filled_qty", 0)
                 + post_checkpoint_qty.get(order_id, 0)
