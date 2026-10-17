@@ -39,6 +39,28 @@ def _real(value) -> bool:
     return isinstance(value, numbers.Real) and not isinstance(value, bool)
 
 
+def _exact_f64(value):
+    """A binary64 with the same value, or None when the Rust step would differ.
+
+    A ``float`` is already binary64. An ``int`` converts only when every bit
+    survives: ``10**400`` raises ``OverflowError``, and ``2**53 + 1`` rounds.
+    Any other ``numbers.Real`` stays on the Python step.
+    """
+    if not _real(value):
+        return None
+    if type(value) is float:
+        return value
+    if type(value) is int:
+        try:
+            converted = float(value)
+        except OverflowError:
+            return None
+        if int(converted) != value:
+            return None
+        return converted
+    return None
+
+
 class TokenBucket:
     def __init__(self, rate_per_sec: float = 1.0, capacity: float = 1.0, now: float = 0.0):
         self.rate = rate_per_sec
@@ -48,20 +70,16 @@ class TokenBucket:
 
     def allow(self, now: float) -> bool:
         native = _NATIVE
-        if (
-            native is not None
-            and _real(self.rate)
-            and _real(self.capacity)
-            and _real(self.tokens)
-            and _real(self._last)
-            and _real(now)
-        ):
-            allowed, tokens, last = native.token_bucket_allow(
-                float(self.rate), float(self.capacity), float(self.tokens), float(self._last), float(now),
-            )
-            self.tokens = tokens
-            self._last = last
-            return allowed
+        if native is not None:
+            converted = [
+                _exact_f64(value)
+                for value in (self.rate, self.capacity, self.tokens, self._last, now)
+            ]
+            if all(value is not None for value in converted):
+                allowed, tokens, last = native.token_bucket_allow(*converted)
+                self.tokens = tokens
+                self._last = last
+                return allowed
         return python_allow(self, now)
 
 

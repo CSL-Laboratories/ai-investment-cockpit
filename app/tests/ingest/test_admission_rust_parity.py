@@ -140,6 +140,36 @@ def test_token_bucket_replay_matches_and_starts_empty():
     assert last == python._last
 
 
+@_needs_rust
+def test_a_capacity_past_the_float_range_stays_on_python():
+    huge = 10**400
+    rust = TokenBucket(rate_per_sec=1, capacity=huge, now=0)
+    python = TokenBucket(rate_per_sec=1, capacity=huge, now=0)
+    assert rust.allow(1) is python_allow(python, 1) is True
+    assert rust.tokens == python.tokens
+    assert rust._last == python._last
+
+
+def test_an_int_rust_cannot_hold_stays_off_the_extension():
+    from ingest.ratelimit import _exact_f64
+
+    assert _exact_f64(2**53 + 1) is None
+    assert _exact_f64(10**400) is None
+    assert _exact_f64(2) == 2.0
+    assert _exact_f64(1.5) == 1.5
+    assert _exact_f64(True) is None
+
+
+@_needs_rust
+def test_an_exact_integer_capacity_matches_python():
+    rust = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+    python = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+    assert rust.allow(0) is python_allow(python, 0) is False
+    assert rust.allow(1) is python_allow(python, 1) is True
+    assert rust.tokens == python.tokens
+    assert rust._last == python._last
+
+
 def test_admission_backend_is_logged(caplog):
     import ingest.dedup as dedup
     import ingest.ratelimit as ratelimit

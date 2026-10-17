@@ -59,6 +59,7 @@ impl Dedup {
         let Some(id) = self.index.remove(key) else {
             return false;
         };
+        self.slots[id as usize].key = String::new();
         self.detach(id);
         self.free.push(id);
         self.len -= 1;
@@ -123,7 +124,7 @@ impl Dedup {
         let Some(id) = self.head else {
             return;
         };
-        let key = self.slots[id as usize].key.clone();
+        let key = std::mem::take(&mut self.slots[id as usize].key);
         self.index.remove(&key);
         self.detach(id);
         self.free.push(id);
@@ -203,6 +204,31 @@ mod tests {
         assert!(seen.discard("c"));
         assert!(seen.add("c"));
         assert!(!seen.add("b"));
+    }
+
+    #[test]
+    fn a_released_slot_drops_its_key() {
+        let mut seen = Dedup::new(2);
+        assert!(seen.add("alpha"));
+        assert!(seen.add("beta"));
+        assert!(seen.discard("alpha"));
+        assert!(seen
+            .free
+            .iter()
+            .all(|&id| seen.slots[id as usize].key.is_empty()));
+        assert!(seen.add("gamma"));
+        assert!(seen.add("delta"));
+        assert!(seen
+            .free
+            .iter()
+            .all(|&id| seen.slots[id as usize].key.is_empty()));
+        assert_eq!(
+            seen.slots
+                .iter()
+                .filter(|slot| !slot.key.is_empty())
+                .count(),
+            2
+        );
     }
 
     #[test]
