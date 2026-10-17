@@ -533,7 +533,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 if (
                     order_ref is not None
                     and fill_ref is None
-                    and entry["reason"] == "reserve_collateral"
+                    and entry["reason"] in {"reserve_collateral", "void_unwind", "settlement_payout"}
                 ):
                     order_reserve_total[order_ref] = (
                         order_reserve_total.get(order_ref, 0) + collateral_delta

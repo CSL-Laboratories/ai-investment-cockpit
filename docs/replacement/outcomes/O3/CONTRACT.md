@@ -250,7 +250,10 @@ order's first fill: it is valid while the order is still resting and
 unfilled, and a reservation sequenced after a fill is rejected. Before
 any fill, that hold is not compared with a fill total of zero, unless
 the order is already in a cancel, expire, or reject terminal. A dead
-order that still carries the hold fails `balance_mismatch`. Once the
+order that still carries the hold fails `balance_mismatch`. A
+`void_unwind` or `settlement_payout` that names that `order_id` and
+credits `collateral_reserved` reduces the hold. A release that does not
+name the order leaves the hold in place. Once the
 order has an accepted fill, the order-linked reservation must equal the
 sum of those fills' `qty * price_minor` plus `fee_minor`. A reserve that
 exceeds or falls short of that executed total fails `balance_mismatch`.

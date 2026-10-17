@@ -467,6 +467,24 @@ def test_o3_unfilled_resting_order_may_hold_collateral() -> None:
     assert _evaluate(fixture) == set()
     rest["state"] = "cancelled"
     assert "balance_mismatch" in _evaluate(fixture)
+    fixture["journal"].append({
+        "entry_id": "j-release",
+        "sequence": 6,
+        "idempotency_key": "release-rest-1",
+        "order_id": "ord-rest",
+        "strategy_id": "s-event",
+        "reason": "void_unwind",
+        "lines": [
+            {"account": "cash_available", "side": "dr", "amount_minor": 830000, "instrument_id": "ev-yes"},
+            {"account": "collateral_reserved", "side": "cr", "amount_minor": 830000, "instrument_id": "ev-yes"},
+        ],
+    })
+    fixture["reported"]["cash_available"] += 830000
+    fixture["reported"]["collateral_reserved"] -= 830000
+    fixture["reported"]["open_reservations"] = [
+        row for row in fixture["reported"]["open_reservations"] if row["reservation_id"] != "reserve-rest"
+    ]
+    assert _evaluate(fixture) == set()
 
 
 def test_o3_settlement_lines_share_one_settled_instrument() -> None:
