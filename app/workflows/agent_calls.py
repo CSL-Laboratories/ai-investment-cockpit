@@ -252,9 +252,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     if not sent:
         usage_estimate = jev_extra if jev_extra is not None else Decimal("0")
         cost = quote.as_payload()
-        cost["usd"] = "0.00000000"
-        cost["usd_scope"] = "not_sent"
-        cost["billed"] = False
+        cost["usd_scope"] = "not_sent" if jev_extra is None else "jev_only"
+        cost["billed"] = jev_extra is not None
         cost["refused"] = "context_limit" if context_limited else (result.error or "not_sent")
     else:
         if quote.usd is None:
@@ -265,18 +264,30 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             usage_estimate = Decimal(quote.usd)
         cost = quote.as_payload()
         cost["billed"] = True
+    if jev_extra is not None:
+        cost["jev_usd"] = format(jev_extra.quantize(Decimal("0.00000001")), "f")
+    if not sent and jev_extra is None:
+        usage_estimate = Decimal("0")
+        cost["usd"] = "0.00000000"
+    elif usage_estimate is not None:
+        cost["usd"] = format(usage_estimate.quantize(Decimal("0.00000001")), "f")
     if jev_accepted and jev_attempt.response_model not in {None, pinned}:
         cost["response_model"] = jev_attempt.response_model
     cost["context_token_cap"] = cap
     cost["context_dropped"] = context_dropped
     job_status = _STATUS_MAP.get(result.status, "failed")
+    job_prompt_ref = prompt_ref
+    job_prompt_hash = prompt_hash
+    if jev_accepted and jev_attempt.request_hash:
+        job_prompt_ref = "jev.decision_questions.v1"
+        job_prompt_hash = jev_attempt.request_hash
     job = AgentJob(
         id=job_id,
         runtime=runtime,
         model=alias,
         model_pinned=pinned,
-        prompt_template=prompt_ref,
-        prompt_hash=prompt_hash,
+        prompt_template=job_prompt_ref,
+        prompt_hash=job_prompt_hash,
         input_refs=refs,
         schema_id=schema_name,
         status=job_status,
@@ -289,7 +300,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     payload = {
         "status": job_status, "model": alias, "runtime": runtime,
         "model_pinned": pinned, "job_class": job_class,
-        "prompt_template": prompt_ref, "schema_id": schema_name,
+        "prompt_template": job_prompt_ref, "schema_id": schema_name,
+        "decision_runtime": selected_runtime,
         "result_status": result.status, "generation": generation,
         "cost": cost,
         # Fixed internal tokens only; never model/feed text. This makes timeout and
@@ -297,6 +309,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
         "result_error": result.error,
         "repaired": bool(getattr(result, "repaired", False)),
     }
+    if "decision_route" in refs:
+        payload["decision_route"] = refs["decision_route"]
     if jev_attempt is not None and not jev_accepted:
         payload["jev_attempt"] = jev_attempt.audit_payload()
     state.audit.record_state_change(

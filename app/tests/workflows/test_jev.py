@@ -158,7 +158,7 @@ def test_jev_model_alias_is_rejected(monkeypatch):
     with pytest.raises(ValidationError):
         Settings()
     monkeypatch.delenv("COCKPIT_JEV_MODEL")
-    monkeypatch.setenv("COCKPIT_JEV_STATE_TOKEN_CAP", "32000")
+    monkeypatch.setenv("COCKPIT_JEV_STATE_TOKEN_CAP", "31999")
     with pytest.raises(ValidationError):
         Settings()
     monkeypatch.delenv("COCKPIT_JEV_STATE_TOKEN_CAP")
@@ -205,6 +205,8 @@ def test_auto_routes_a_light_paper_decision_to_jev(st, monkeypatch):
     assert "filed an 8-K" not in proposal["thesis"]
     assert job.runtime == "jev"
     assert job.model_pinned == "jev-1.14.0"
+    assert job.prompt_template == "jev.decision_questions.v1"
+    assert len(job.prompt_hash) == 64
     assert job.usage_estimate == Decimal("0.00084000")
     assert job.input_refs["decision_route"] == "jev"
     cost = _events(st)[0].payload["cost"]
@@ -293,6 +295,7 @@ def test_vendor_limit_falls_back_and_opens_jev_watch_only(st, monkeypatch):
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
     assert _events(st)[0].payload["jev_attempt"]["billed"] is False
     assert BreakerEngine(st).is_watch_only("jev") is True
+    assert BreakerEngine(st).is_watch_only() is False
     assert BreakerEngine(st).is_watch_only("claude") is False
     assert ModeLadder(st).current() is Mode.read_only
 
@@ -594,11 +597,12 @@ def test_response_model_is_recorded_when_it_differs(st, monkeypatch):
     def handler(_request: httpx.Request) -> httpx.Response:
         return _jev_response(model="jev-1.13.0")
 
-    transport = FakeTransport([])
-    _result, job = _call(st, transport, _client(handler))
-    assert job.model_pinned == "jev-1.14.0"
-    assert _events(st)[0].payload["cost"]["response_model"] == "jev-1.13.0"
-    assert _events(st)[0].payload["cost"]["usd"] == "0.00084000"
+    transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
+    result, job = _call(st, transport, _client(handler))
+    assert result.status == OK
+    assert job.runtime == "claude"
+    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_invalid"
+    assert _events(st)[0].payload["jev_attempt"]["response_model"] == "jev-1.13.0"
 
 
 def test_environment_variable_does_not_authenticate(st, monkeypatch):

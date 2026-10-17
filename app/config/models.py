@@ -31,8 +31,10 @@ DEFAULT_DECISION_MODEL = "claude-haiku-4-5"
 JEV_MODEL_PINS = frozenset({"jev-1.13.0", "jev-1.14.0"})
 DEFAULT_JEV_MODEL = "jev-1.14.0"
 # Strictly under the published 32k (state + one question) and 64k (request) limits.
+# Configurable caps stop 1_000 tokens earlier so JSON framing cannot sit on the line.
 JEV_STATE_HARD_LIMIT = 32_000
 JEV_REQUEST_HARD_LIMIT = 64_000
+JEV_CAP_MARGIN = 1_000
 DEFAULT_JEV_STATE_TOKEN_CAP = 30_000
 DEFAULT_JEV_REQUEST_TOKEN_CAP = 60_000
 # Triage score is the weight (higher = more important). 70 sits just above the

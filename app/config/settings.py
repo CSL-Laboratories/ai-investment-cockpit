@@ -41,6 +41,7 @@ from config.models import (
     HAIKU_55_LONG_CONTEXT_TOKENS,
     JEV_MODEL_PINS,
     JEV_REQUEST_HARD_LIMIT,
+    JEV_CAP_MARGIN,
     JEV_STATE_HARD_LIMIT,
 )
 from pathlib import Path
@@ -351,7 +352,9 @@ class Settings(BaseSettings):
     # runs under the hardened tool-free/read-only/ephemeral CLI profile. ``jev`` is
     # the TypeSafe HTTP decision API (paper/read-only proposals only). ``auto`` may
     # send a light paper/read-only decision to Jev and otherwise uses Claude.
-    # Neither jev nor auto can arm a live/auto rung. Env: COCKPIT_DECISION_RUNTIME.
+    # ``jev`` cannot enter review_live or a live/auto rung. ``auto`` can enter
+    # review_live, where the ladder resolves the decision to Claude, and still
+    # cannot arm auto_veto or auto_full. Env: COCKPIT_DECISION_RUNTIME.
     decision_runtime: DecisionRuntime = DecisionRuntime.claude
     # Trading-decision Claude model (CSL-42 / CSL-98). Allowlist only: Haiku 4.5 is the
     # fallback; set claude-haiku-5-5 when that id is available on the Claude CLI. This
@@ -380,15 +383,17 @@ class Settings(BaseSettings):
     # Pinned TypeSafe model for Jev decisions. ``jev-latest`` is rejected.
     # Env: COCKPIT_JEV_MODEL.
     jev_model: str = DEFAULT_JEV_MODEL
-    # State + one question, strictly under Jev's 32_000 token limit.
+    # State + one question. The ceiling leaves 1_000 tokens under Jev's 32_000 limit.
     # Env: COCKPIT_JEV_STATE_TOKEN_CAP.
     jev_state_token_cap: int = Field(
-        default=DEFAULT_JEV_STATE_TOKEN_CAP, ge=1, le=JEV_STATE_HARD_LIMIT - 1,
+        default=DEFAULT_JEV_STATE_TOKEN_CAP, ge=1,
+        le=JEV_STATE_HARD_LIMIT - JEV_CAP_MARGIN,
     )
-    # Whole Jev request, strictly under the 64_000 token limit.
+    # Whole Jev request. The ceiling leaves 1_000 tokens under the 64_000 limit.
     # Env: COCKPIT_JEV_REQUEST_TOKEN_CAP.
     jev_request_token_cap: int = Field(
-        default=DEFAULT_JEV_REQUEST_TOKEN_CAP, ge=1, le=JEV_REQUEST_HARD_LIMIT - 1,
+        default=DEFAULT_JEV_REQUEST_TOKEN_CAP, ge=1,
+        le=JEV_REQUEST_HARD_LIMIT - JEV_CAP_MARGIN,
     )
     # ``auto`` sends a paper/read-only decision to Jev only when its triage
     # score is at or below this. Missing scores stay on Claude.

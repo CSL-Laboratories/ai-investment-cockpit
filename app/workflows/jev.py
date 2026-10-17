@@ -14,6 +14,7 @@ marked so the caller can open watch-only for Jev and still fall back.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ import jsonschema
 from config.models import (
     DEFAULT_JEV_MODEL,
     JEV_MODEL_PINS,
+    JEV_CAP_MARGIN,
     JEV_REQUEST_HARD_LIMIT,
     JEV_STATE_HARD_LIMIT,
 )
@@ -65,6 +67,7 @@ class JevAttempt:
     sent_refs: tuple[str, ...]
     dropped: int
     vendor_limited: bool = False
+    request_hash: str = ""
 
     def audit_payload(self) -> dict:
         """Fixed tokens only. No state text, no answer prose, no credential."""
@@ -129,7 +132,7 @@ def _cap(settings, name: str, default: int, hard: int) -> int:
         cap = int(raw)
     except (TypeError, ValueError):
         return default
-    if 1 <= cap < hard:
+    if 1 <= cap <= hard - JEV_CAP_MARGIN:
         return cap
     return default
 
@@ -412,6 +415,11 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         return _fallback("jev_invalid", model, estimated=estimated, dropped=dropped)
     usage = _usage_pair(payload)
     returned = _safe_model_id(payload.get("model"))
+    if returned != model:
+        return _fallback(
+            "jev_invalid", model, estimated=estimated, dropped=dropped,
+            usage=usage, response_model=returned,
+        )
     answers = payload.get("answers")
     if not isinstance(answers, dict):
         return _fallback(
@@ -468,4 +476,5 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         input_token_source=source, estimated_input=estimated, usd=quote.usd,
         rate_tier=quote.rate_tier, usd_scope=quote.usd_scope, billed=True,
         raw=raw, sent_refs=tuple(refs), dropped=dropped,
+        request_hash=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
     )

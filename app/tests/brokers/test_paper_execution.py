@@ -44,8 +44,9 @@ class _MarketData:
         return self._metric
 
 
-def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
-             execution_verdict=None, edge_provider=None, generation=0, input_refs=None):
+def _service(st, *, runtime="claude", selected_runtime="claude", produced_runtime=None,
+             market_data=None, execution_verdict=None, edge_provider=None,
+             generation=0, input_refs=None):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -74,9 +75,14 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
         schema_id="TradeProposal", status="done",
         created_at=st.clock.now(),
     )
+    produced = produced_runtime if produced_runtime is not None else selected_runtime
+    signed = {"status": "done", "runtime": runtime, "generation": generation,
+              "decision_runtime": produced}
+    route = (input_refs or {}).get("decision_route")
+    if isinstance(route, str):
+        signed["decision_route"] = route
     st.audit.record_state_change(
-        job, "agent_job", actor="agent_calls",
-        payload={"status": "done", "runtime": runtime, "generation": generation},
+        job, "agent_job", actor="agent_calls", payload=signed,
     )
     proposal = ProposalRecord(
         id="p1", symbol="AAPL", side="buy", status="draft", flagged=False,
@@ -219,6 +225,41 @@ def test_jev_selection_refuses_an_older_claude_proposal(st, monkeypatch):
         assert exc.code == "runtime_not_allowed"
     else:  # pragma: no cover - explicit safety assertion
         raise AssertionError("an older Claude proposal must not run under explicit jev")
+    assert client.submitted == []
+
+
+def test_unsigned_fallback_route_cannot_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="claude", selected_runtime="jev")
+    with st.session_factory() as session, session.begin():
+        job = session.execute(select(AgentJob)).scalars().one()
+        job.input_refs = {"_generation": 0, "decision_route": "jev_fallback"}
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-unsigned-route",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "analysis_authority_unavailable"
+    else:
+        raise AssertionError("an unsigned decision_route must not authorize paper execution")
+    assert client.submitted == []
+
+
+def test_auto_refuses_a_job_stamped_under_a_different_runtime(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, runtime="claude", selected_runtime="auto", produced_runtime="claude",
+    )
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-auto-old-claude",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:
+        raise AssertionError("auto must not execute a job stamped under claude")
     assert client.submitted == []
 
 
