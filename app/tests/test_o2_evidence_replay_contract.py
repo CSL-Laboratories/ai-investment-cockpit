@@ -44,6 +44,9 @@ def test_o2_candidate_replays_and_negative_controls_fail_as_designed() -> None:
         "O2 NEGATIVE CONTROL FAIL AS DESIGNED: raw_not_reconstructable codes=raw_not_reconstructable",
         "O2 NEGATIVE CONTROL FAIL AS DESIGNED: lost_resolution_semantics codes=lost_resolution_semantics",
         "O2 NEGATIVE CONTROL FAIL AS DESIGNED: lost_corporate_action_semantics codes=lost_corporate_action_semantics",
+        "O2 NEGATIVE CONTROL FAIL AS DESIGNED: no_evidence codes=no_evidence",
+        "O2 NEGATIVE CONTROL FAIL AS DESIGNED: dedup_collapses_correction codes=dedup_collapses_correction",
+        "O2 NEGATIVE CONTROL FAIL AS DESIGNED: stock_treated_as_event codes=stock_treated_as_event",
     ]
     for line in failures:
         warnings.warn(line, O2NegativeControlWarning, stacklevel=1)

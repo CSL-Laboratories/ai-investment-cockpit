@@ -46,7 +46,13 @@
         "event_ticker": "KXSYNTH-26JAN01",
         "market_ticker": "KXSYNTH-26JAN01-B1",
         "contract_family": "binary",
-        "collateral_return_type": ""
+        "collateral_return_type": "",
+        "settlement_sources": [
+          {
+            "name": "Synthetic determination source",
+            "url": "https://example.invalid/kxsynth-determination"
+          }
+        ]
       }
     },
     {
@@ -63,7 +69,36 @@
         "event_ticker": "KXSYNTH-26JAN01",
         "market_ticker": "KXSYNTH-26JAN01-VOID",
         "contract_family": "binary",
-        "collateral_return_type": ""
+        "collateral_return_type": "",
+        "settlement_sources": [
+          {
+            "name": "Synthetic determination source",
+            "url": "https://example.invalid/kxsynth-determination"
+          }
+        ]
+      }
+    },
+    {
+      "identity_id": "idn-ev-d1",
+      "market_family": "event",
+      "identity_version": 1,
+      "venue": "kalshi_demo",
+      "currency": "USD",
+      "prior_identity_id": null,
+      "event": {
+        "environment": "demo",
+        "api_path_observed_not_selected": "trade-api/v2",
+        "series_ticker": "KXSYNTH",
+        "event_ticker": "KXSYNTH-26JAN01",
+        "market_ticker": "KXSYNTH-26JAN01-D1",
+        "contract_family": "binary",
+        "collateral_return_type": "",
+        "settlement_sources": [
+          {
+            "name": "Synthetic determination source",
+            "url": "https://example.invalid/kxsynth-determination"
+          }
+        ]
       }
     }
   ]

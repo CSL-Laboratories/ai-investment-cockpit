@@ -29,7 +29,10 @@
             "future_data_leak",
             "raw_not_reconstructable",
             "lost_resolution_semantics",
-            "lost_corporate_action_semantics"
+            "lost_corporate_action_semantics",
+            "no_evidence",
+            "dedup_collapses_correction",
+            "stock_treated_as_event"
           ]
         },
         "expect": {
@@ -40,12 +43,20 @@
               "future_data_leak",
               "raw_not_reconstructable",
               "lost_resolution_semantics",
-              "lost_corporate_action_semantics"
+              "lost_corporate_action_semantics",
+              "no_evidence",
+              "dedup_collapses_correction",
+              "stock_treated_as_event"
             ]
           }
         },
         "decision_time": {"$ref": "#/$defs/instant"},
+        "natural_key": {"type": "string", "minLength": 1},
         "claimed_visible_raw_record_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "claimed_duplicate_raw_record_ids": {
           "type": "array",
           "items": {"type": "string"}
         },

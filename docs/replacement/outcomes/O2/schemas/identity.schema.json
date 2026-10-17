@@ -94,7 +94,19 @@
             "event_ticker": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$"},
             "market_ticker": {"type": "string", "pattern": "^[A-Z0-9][A-Z0-9-]{0,63}$"},
             "contract_family": {"enum": ["binary", "scalar"]},
-            "collateral_return_type": {"enum": ["", "MECNET", "DIRECNET"]}
+            "collateral_return_type": {"enum": ["", "MECNET", "DIRECNET"]},
+            "settlement_sources": {
+              "type": ["array", "null"],
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "url"],
+                "properties": {
+                  "name": {"type": "string", "minLength": 1},
+                  "url": {"type": "string", "minLength": 1}
+                }
+              }
+            }
           }
         },
         "equity": false

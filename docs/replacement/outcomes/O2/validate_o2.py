@@ -52,6 +52,9 @@ NEGATIVE_CODES = (
     "raw_not_reconstructable",
     "lost_resolution_semantics",
     "lost_corporate_action_semantics",
+    "no_evidence",
+    "dedup_collapses_correction",
+    "stock_treated_as_event",
 )
 
 
@@ -295,16 +298,46 @@ def semantic_codes(bundle: Bundle, observation: dict, decision: datetime) -> lis
     return []
 
 
+def _is_genuine_duplicate(bundle: Bundle, raw_id: str) -> bool:
+    """A claimed duplicate must be a recorded duplicate with identical bytes."""
+    record = bundle.records.get(raw_id)
+    if record is None or record["duplicate_of"] is None:
+        return False
+    target = bundle.records.get(record["duplicate_of"])
+    return target is not None and target["raw_sha256"] == record["raw_sha256"]
+
+
+def _family_collapse_code(bundle: Bundle, observation: dict) -> list[str]:
+    """Silent semantic equivalence: an equity fact claimed under the event family."""
+    family = observation.get("market_family")
+    natural_key = str(observation.get("natural_key") or "")
+    identity = bundle.identities.get(observation.get("identity_id"))
+    if identity is not None and identity["market_family"] != family:
+        return ["stock_treated_as_event"]
+    if family == "event" and not natural_key.startswith("kalshi_demo:"):
+        return ["stock_treated_as_event"]
+    if family == "equity" and natural_key.startswith("kalshi_demo:"):
+        return ["stock_treated_as_event"]
+    return []
+
+
 def assess_control(bundle: Bundle, control: dict) -> list[str]:
     decision = parse_time(control["decision_time"])
     codes = []
     claimed = control.get("claimed_visible_raw_record_ids")
     if claimed is not None:
         codes.extend(reconstruction_codes(bundle, claimed, decision))
+    window_key = control.get("natural_key")
+    if window_key is not None and not visible_versions(bundle.records, window_key, decision):
+        codes.append("no_evidence")
+    for raw_id in control.get("claimed_duplicate_raw_record_ids") or []:
+        if not _is_genuine_duplicate(bundle, raw_id):
+            codes.append("dedup_collapses_correction")
     observation = control.get("observation")
     if observation is not None:
         raw_codes = reconstruction_codes(bundle, observation.get("raw_record_ids") or [], decision)
         codes.extend(raw_codes)
+        codes.extend(_family_collapse_code(bundle, observation))
         if "raw_not_reconstructable" not in raw_codes:
             codes.extend(semantic_codes(bundle, observation, decision))
     return _unique(codes)
@@ -365,6 +398,17 @@ def validate_records(bundle: Bundle) -> None:
                 parse_time(payload["close_time"])
             elif payload.get("close_time") is not None:
                 raise ContractError(f"{record['raw_record_id']} carries a close_time without a close-date update")
+            # Documented optionals: determination_ts/result/settlement_value exist
+            # only when determined; settled_ts only when settled; settlement_ts
+            # is the REST market field, never a market_lifecycle_v2 field.
+            if payload.get("determination_ts") is not None and payload["event_type"] != "determined":
+                raise ContractError(f"{record['raw_record_id']} carries determination_ts outside a determined event")
+            if payload.get("settlement_value") is not None and payload["event_type"] != "determined":
+                raise ContractError(f"{record['raw_record_id']} carries settlement_value outside a determined event")
+            if payload.get("settled_ts") is not None and payload["event_type"] != "settled":
+                raise ContractError(f"{record['raw_record_id']} carries settled_ts outside a settled event")
+            if payload.get("settlement_ts") is not None and payload["channel"] != "rest_get_markets":
+                raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
     by_key: dict[str, list[dict]] = {}
     for record in bundle.records.values():
         by_key.setdefault(record["natural_key"], []).append(record)

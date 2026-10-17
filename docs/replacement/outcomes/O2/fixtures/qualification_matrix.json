@@ -29,7 +29,8 @@
       "unknowns": [
         "The public page dated 2024-06-06 and reviewed 2025-04-08 describes unauthenticated submissions JSON and does not pin acceptanceDateTime as a frozen schema.",
         "SEC programmatic access requires a declared user-agent. This packet does not send one.",
-        "Real-time submissions versus the nightly bulk ZIP were not compared."
+        "Real-time submissions versus the nightly bulk ZIP were not compared.",
+        "acceptanceDateTime is EDGAR's own acceptance stamp, not our wire-arrival time. accepted_at still needs our own capture."
       ]
     },
     {
@@ -64,7 +65,11 @@
       "unknowns": [
         "Demo REST base https://external-api.demo.kalshi.co/trade-api/v2 was observed 2026-10-17. trade-api/v2 is not a selected API version.",
         "Demo credentials are not shared with production and are not authorized by this packet.",
-        "Historical cutoff timestamps move. A replay must record the cutoff it saw. That experiment was not run."
+        "Historical cutoff timestamps move. A replay must record the cutoff it saw. That experiment was not run.",
+        "Historical and candlestick endpoints carry venue timestamps only. They cannot supply our wire-arrival time, so replay of a live feed needs our own capture; a later history pull cannot reconstruct accepted_at.",
+        "settlement_ts is documented on the market object and is populated at finalized (docs.kalshi.com/api-reference/market/get-markets). No REST determination timestamp field is documented.",
+        "settlement_sources is required on the Event object, event-level, an array of {name, url} (docs.kalshi.com/api-reference/events/get-event). It is carried on the event identity, not a market payload.",
+        "disputed and amended are REST statuses with no market_lifecycle_v2 event; capturing them needs a REST poll, not the socket."
       ]
     },
     {
@@ -77,7 +82,9 @@
       "unknowns": [
         "Sequence-gap recovery was not tested.",
         "Multivariate markets use a separate channel and are outside this fixture.",
-        "The fetched lifecycle page lists REST statuses initialized, active, inactive, closed, determined, disputed, amended, and finalized. It does not list void."
+        "The fetched lifecycle page lists REST statuses initialized, active, inactive, closed, determined, disputed, amended, and finalized. It does not list void.",
+        "Optional fields confirmed 2026-10-17: determination_ts and result exist only when the market is determined; settled_ts only when settled; settlement_value is a fixed-point dollars string, only when determined (docs.kalshi.com/websockets/market-and-event-lifecycle). Whether the settled message repeats determination_ts or settlement_value is undocumented.",
+        "sending_ts_ms is when Kalshi queued the message at the network layer. It is a venue-side stamp, not our wire-arrival time, so accepted_at must remain our own capture stamp."
       ]
     },
     {

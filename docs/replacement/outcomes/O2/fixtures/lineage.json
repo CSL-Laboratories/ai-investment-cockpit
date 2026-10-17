@@ -80,6 +80,20 @@
       "input_raw_record_ids": ["raw-ev-void"],
       "transform_id": "o2.candidate.effective_version",
       "transform_version": "o2.candidate.v1"
+    },
+    {
+      "lineage_id": "lin-ev-d1-dispute",
+      "observation_id": "obs-ev-d1-dispute",
+      "input_raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed"],
+      "transform_id": "o2.candidate.effective_version",
+      "transform_version": "o2.candidate.v1"
+    },
+    {
+      "lineage_id": "lin-ev-d1-final",
+      "observation_id": "obs-ev-d1-final",
+      "input_raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed", "raw-ev-d1-amended", "raw-ev-d1-finalized"],
+      "transform_id": "o2.candidate.effective_version",
+      "transform_version": "o2.candidate.v1"
     }
   ]
 }

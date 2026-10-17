@@ -193,6 +193,32 @@
       "resolution": "voided",
       "lifecycle_status": "voided",
       "corporate_actions": null
+    },
+    {
+      "observation_id": "obs-ev-d1-dispute",
+      "decision_time": "2024-09-13T00:00:00Z",
+      "market_family": "event",
+      "identity_id": "idn-ev-d1",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "effective_raw_record_id": "raw-ev-d1-disputed",
+      "raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed"],
+      "value": null,
+      "resolution": "yes",
+      "lifecycle_status": "disputed",
+      "corporate_actions": null
+    },
+    {
+      "observation_id": "obs-ev-d1-final",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "market_family": "event",
+      "identity_id": "idn-ev-d1",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "effective_raw_record_id": "raw-ev-d1-finalized",
+      "raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed", "raw-ev-d1-amended", "raw-ev-d1-finalized"],
+      "value": null,
+      "resolution": "no",
+      "lifecycle_status": "finalized",
+      "corporate_actions": null
     }
   ]
 }

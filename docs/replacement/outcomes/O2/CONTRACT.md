@@ -17,7 +17,7 @@ Exit 0 means the frozen synthetic corpus replayed and every negative control fai
 
 ## What this candidate covers
 
-Versioned equity identities and versioned Kalshi-demo event identities stay in separate objects. A record is visible at a decision time only when its acceptance time is at or before that instant. Raw payloads stay immutable and hash-bound. Corrections are new raw records. Duplicates share a content hash and do not supersede. Equity uses the XNYS session date. Event markets use the Kalshi demo exchange clock and do not use an equity session. Event resolution (`yes`, `no`, `scalar`, `voided`) is not a corporate action. A corporate action is not a yes/no result.
+Versioned equity identities and versioned Kalshi-demo event identities stay in separate objects. A record is visible at a decision time only when its acceptance time is at or before that instant. Raw payloads stay immutable and hash-bound. Corrections are new raw records. Duplicates share a content hash and do not supersede. Equity uses the XNYS session date. Event markets use the Kalshi demo exchange clock and do not use an equity session. Event resolution (`yes`, `no`, `scalar`, `voided`) is not a corporate action. A corporate action is not a yes/no result. Event-market corrections follow Kalshi's documented `disputed` -> `amended` -> `finalized` path, not only the equity/filing amendment path.
 
 The fixture corpus is synthetic. It uses no Kalshi key, no vendor feed, and no network.
 
@@ -44,6 +44,10 @@ Embedded Parallel searches, run on Dan's box on 2026-10-17:
 - `search_c87aae75bac1d50c74541f9a97715ee9`
 - `search_f15c652feaeffd8f1eedb6be8d0d11d0`
 - `search_c7df723820f290a2e25b90fd781b9772`
+- `search_7dad5545944e08783486e8b8073f27e0`
+- `search_6de2fe07737be85eb37b6641fec6ce80`
+- `search_80db337dc10f28ae95679601790f611e`
+- `search_bf1ef6ae60b2d58373dc922eed2aee07`
 
 Those results named the URLs below. This session fetched them, plus the Kalshi market-lifecycle and market-settlement pages linked from the Kalshi docs index. No API version was selected. `trade-api/v2` is an observation dated 2026-10-17.
 
@@ -56,6 +60,11 @@ Cited URLs:
 - https://docs.kalshi.com/getting_started/historical_data
 - https://docs.kalshi.com/getting_started/market_lifecycle
 - https://docs.kalshi.com/getting_started/market_settlement
+- https://docs.kalshi.com/websockets/market-and-event-lifecycle
+- https://docs.kalshi.com/api-reference/market/get-markets
+- https://docs.kalshi.com/api-reference/events/get-event
+- https://docs.kalshi.com/api-reference/events/get-events
+- https://docs.kalshi.com/fix/market-settlement
 - https://www.sec.gov/search-filings/edgar-application-programming-interfaces
 - https://github.com/Gagan234/asof
 
@@ -64,6 +73,10 @@ Facts used, and the limits of those facts:
 - Kalshi demo REST base observed as `https://external-api.demo.kalshi.co/trade-api/v2`. Demo WebSocket base observed as `wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2`. Credentials are not shared with production. This packet does not create a key.
 - REST market statuses observed on the lifecycle page: `initialized`, `active`, `inactive`, `closed`, `determined`, `disputed`, `amended`, `finalized`. WebSocket `market_lifecycle_v2` event types include `created`, `activated`, `deactivated`, `close_date_updated`, `determined`, `settled`, and metadata updates. `settled` on the socket corresponds to REST `finalized`.
 - Settlement results observed: `yes`, `no`, and `scalar`. The fetched lifecycle page does not list `void`. The fixture keeps `voided` as a distinct synthetic resolution so normalization cannot collapse it. That is not a claim that Kalshi emits void.
+- REST statuses on the lifecycle page: `initialized`, `active`, `inactive`, `closed`, `determined`, `disputed` (result challenged, may be re-determined), `amended` (re-determined after a dispute; settlement timer restarts), `finalized` (terminal). `disputed` and `amended` have no `market_lifecycle_v2` event; observing them needs a REST poll. `determined` / `amended` -> `finalized` emits the socket `settled` event.
+- The `market_lifecycle_v2` message documents optional `determination_ts` and `result` (only when the market is determined), `settled_ts` (only when settled), and `settlement_value` as a fixed-point dollars string (only when determined). `sending_ts_ms` is when Kalshi queued the message at the network layer — a venue-side stamp, not our wire-arrival time.
+- The REST market object documents `settlement_ts`, populated at `finalized`, and `result`. No REST determination timestamp is documented.
+- `settlement_sources` is required on the Event object: an event-level array of `{name, url}` naming the official determination sources. It is event-level metadata, not a market-resolution field.
 - Historical data is partitioned by moving cutoff timestamps (`market_settled_ts`, `trades_created_ts`, `orders_updated_ts`, `market_positions_last_updated_ts`). A cutoff is not a stable as-of. This packet does not call `GET /historical/cutoff`.
 - SEC `data.sec.gov` submissions and XBRL JSON are described as unauthenticated. The page was dated 2024-06-06 and last reviewed 2025-04-08. Frames are the last filed fact that best fits a calendar period. Frames are disqualified here as an as-of source. Company facts are an aggregate, not the raw filing.
 - `Gagan234/asof` is a reference for bitemporal SEC facts: append-only raw, knowledge time separate from event time, and a no-lookahead check. It is not a dependency and it does not cover Kalshi.
@@ -94,6 +107,8 @@ A non-duplicate record is in the decision-time version set when `accepted_at <= 
 
 Ordering by `event_time` is not visibility. The out-of-order fixture has an event time before the decision and an acceptance time after it. That record is hidden at the decision.
 
+`accepted_at` is a capture-side stamp: the instant a record became visible to this cockpit, which only our own ingestion can observe. Venue data cannot supply it. Kalshi's `sending_ts_ms` is when Kalshi queued a message at the network layer, and its historical and candlestick endpoints carry venue timestamps only; SEC `acceptanceDateTime` is EDGAR's own acceptance stamp. None of these is our wire-arrival time, so a replay built from later-pulled history cannot reconstruct `accepted_at`. Honest replay of a live feed needs our own capture. This documents the limit; the two-timestamp model is unchanged.
+
 ## Immutable raw records
 
 `acquisition_route` is `synthetic_fixture` on every row. The raw image is the canonical JSON of `payload` (`sort_keys`, compact separators, UTF-8). `raw_sha256` is the SHA-256 of those bytes. A derived observation cites raw ids. Reconstruction recomputes the hash from the retained payload. A summary that cites a missing id, or a hash that does not match, is `raw_not_reconstructable`.
@@ -114,6 +129,10 @@ Resolution inputs stay on the event payload: `resolution`, `status_rest`, `resul
 
 A close-date update is a lifecycle raw record with a null resolution and a `close_time`. It is replayed on its own natural key. It is not written into the resolution field. Resolution checks apply only to natural keys that end in `:resolution`.
 
+A second synthetic market exercises event-side correction: `determined`/`yes` is superseded by a REST-observed `disputed`, then by an `amended` re-determination to `no`, then by `finalized`. Disputed and amended carry no `market_lifecycle_v2` event, so the fixture captures them as `rest_get_markets` snapshots with `event_type: status_observed`.
+
+Settlement fields stay on the payload only where official docs confirm them: `determination_ts` and `settlement_value` (socket, only when determined), `settled_ts` (socket, only when settled), and `settlement_ts` (REST market object, populated at `finalized`). `settlement_sources` is event-level (`GET /events/{event_ticker}`) and lives on the event identity, not the market payload. Unconfirmed repeats — for example whether the `settled` message also carries `determination_ts` or `settlement_value` — are listed as unknowns in the qualification matrix.
+
 ## Corporate actions
 
 The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. The chain is resolved before the listing check. A correction that points the effective action at a different listing removes it from the former listing; the superseded split is not still required there. An independent later split uses a different natural key, `corporate_action:ex-2024-10-01`, and both effective actions are required together. Two actions on one natural key, with neither superseding the other, are rejected. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping either effective action is `lost_corporate_action_semantics`.
@@ -132,6 +151,7 @@ The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-0
 - event determination before a late close message
 - settlement that keeps the determination raw
 - voided event kept distinct from the settled market
+- event dispute chain: determined, then disputed, then amended to `no`, then finalized — each correction effective at its own acceptance
 
 `fixtures/manifest.json` binds SHA-256 hashes of this document, the validator, the fixtures, and the schemas.
 
@@ -151,6 +171,9 @@ The controls live in `fixtures/negative_controls.json`. The validator must repor
 | `raw_not_reconstructable` | Observation cites `raw-missing` |
 | `lost_resolution_semantics` | Voided market is relabeled `yes` / `finalized` |
 | `lost_corporate_action_semantics` | Post-announcement equity view drops the split |
+| `no_evidence` | An empty feed window must produce an explicit no-evidence result, never a pass |
+| `dedup_collapses_correction` | A corrected payload is claimed as a duplicate fold |
+| `stock_treated_as_event` | An equity identity or natural key is claimed under the event family |
 
 The test `app/tests/test_o2_evidence_replay_contract.py` warns once per designed failure so Blacksmith CI logs show `O2 NEGATIVE CONTROL FAIL AS DESIGNED`.
 
@@ -159,8 +182,21 @@ The test `app/tests/test_o2_evidence_replay_contract.py` warns once per designed
 Not run. Listed for a later human receipt. Stop here.
 
 1. Public SEC submissions for one CIK, with the operator's user-agent, stored as raw bytes, including one amendment pair. No key. Not started.
-2. One Kalshi demo `market_lifecycle_v2` sequence and one `GET /historical/cutoff` snapshot, only after a demo key exists in the OS credential store. Not started.
-3. No scrape, no production Kalshi, no paid vendor feed.
+2. One Kalshi demo `market_lifecycle_v2` sequence, one `GET /markets` status poll across a `disputed` -> `amended` -> `finalized` path if one occurs during the capture, and one `GET /historical/cutoff` snapshot, only after a demo key exists in the OS credential store. Not started.
+3. Every captured message or poll must record our own wire-arrival stamp for `accepted_at`. Venue endpoints cannot supply it, and this limitation is why the acquisition experiments exist at all.
+4. No scrape, no production Kalshi, no paid vendor feed.
+
+## Downstream consumers
+
+Verified against `docs/replacement/program.json` outcome dependencies. O1 and O6 do not consume O2.
+
+| O2 fragment | Consumers |
+| --- | --- |
+| Identity objects (`identities.json`) | O3, O8 |
+| Provenance, source/as-of and clocks | O3, O4, O5, O7 |
+| Replay manifest and candidate command | O4, O5, O9 |
+| Corrections, calendars, event resolution | O3 |
+| Feed qualification and unknowns | O8, O9 |
 
 ## Unresolved decisions (owner: Lucas)
 

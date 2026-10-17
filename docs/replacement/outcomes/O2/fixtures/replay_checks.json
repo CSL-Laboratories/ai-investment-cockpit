@@ -134,6 +134,38 @@
       "visible_raw_record_ids": ["raw-ev-void"],
       "hidden_raw_record_ids": [],
       "effective_raw_record_id": "raw-ev-void"
+    },
+    {
+      "check_id": "event_dispute_chain_determined_only",
+      "decision_time": "2024-09-11T00:00:00Z",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "visible_raw_record_ids": ["raw-ev-d1-determined"],
+      "hidden_raw_record_ids": ["raw-ev-d1-disputed", "raw-ev-d1-amended", "raw-ev-d1-finalized"],
+      "effective_raw_record_id": "raw-ev-d1-determined"
+    },
+    {
+      "check_id": "event_dispute_correction_is_effective",
+      "decision_time": "2024-09-13T00:00:00Z",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "visible_raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed"],
+      "hidden_raw_record_ids": ["raw-ev-d1-amended", "raw-ev-d1-finalized"],
+      "effective_raw_record_id": "raw-ev-d1-disputed"
+    },
+    {
+      "check_id": "event_amendment_supersedes_dispute",
+      "decision_time": "2024-09-16T00:00:00Z",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "visible_raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed", "raw-ev-d1-amended"],
+      "hidden_raw_record_ids": ["raw-ev-d1-finalized"],
+      "effective_raw_record_id": "raw-ev-d1-amended"
+    },
+    {
+      "check_id": "event_finalized_keeps_dispute_chain",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "natural_key": "kalshi_demo:market:kxsynth-26jan01-d1:resolution",
+      "visible_raw_record_ids": ["raw-ev-d1-determined", "raw-ev-d1-disputed", "raw-ev-d1-amended", "raw-ev-d1-finalized"],
+      "hidden_raw_record_ids": [],
+      "effective_raw_record_id": "raw-ev-d1-finalized"
     }
   ]
 }

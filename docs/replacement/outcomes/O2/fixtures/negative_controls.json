@@ -55,6 +55,34 @@
         "lifecycle_status": null,
         "corporate_actions": []
       }
+    },
+    {
+      "control_id": "no_evidence",
+      "expect": ["no_evidence"],
+      "decision_time": "2024-02-01T00:00:00Z",
+      "natural_key": "sec:fact:0000000001:revenue:fy2023"
+    },
+    {
+      "control_id": "dedup_collapses_correction",
+      "expect": ["dedup_collapses_correction"],
+      "decision_time": "2024-08-11T00:00:00Z",
+      "claimed_duplicate_raw_record_ids": ["raw-eq-split-corr"]
+    },
+    {
+      "control_id": "stock_treated_as_event",
+      "expect": ["stock_treated_as_event"],
+      "decision_time": "2024-04-01T00:00:00Z",
+      "observation": {
+        "market_family": "event",
+        "identity_id": "idn-eq-v1",
+        "natural_key": "sec:fact:0000000001:revenue:fy2023",
+        "effective_raw_record_id": "raw-eq-10k",
+        "raw_record_ids": ["raw-eq-10k"],
+        "value": "100",
+        "resolution": null,
+        "lifecycle_status": "finalized",
+        "corporate_actions": null
+      }
     }
   ]
 }
