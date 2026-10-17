@@ -138,13 +138,15 @@
     "hypothesis": "One family, evaluated later on a sealed US cash-equity population and a sealed Kalshi-demo event population with one purged and embargoed tuning/evaluation split, beats matched cash after retained transaction, latency, data, and model costs on deflated Sharpe, probability of backtest overfitting, drawdown, and uncertainty. This packet does not run that comparison.",
     "leakage_controls": {
       "embargo": {
-        "applied": true,
+        "evidence": null,
         "length": "owner_unset",
-        "rule": "remove_post_evaluation_training_rows_for_serial_correlation"
+        "rule": "remove_post_evaluation_training_rows_for_serial_correlation",
+        "status": "not_run"
       },
       "purge": {
-        "applied": true,
-        "rule": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window"
+        "evidence": null,
+        "rule": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window",
+        "status": "not_run"
       }
     },
     "markets": [
@@ -386,49 +388,49 @@
   "unresolved_decisions": [
     {
       "id": "spend",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "New data acquisition, paid provider calls, or another Deep Research run."
     },
     {
       "id": "credentials",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Broker, venue, or model credentials."
     },
     {
       "id": "tax_legal",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Whether tax is inside the first net-yield metric, and account or venue eligibility."
     },
     {
       "id": "architecture",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Costly-to-reverse engine, storage, topology, or exclusive cross-validation implementation."
     },
     {
       "id": "release",
-      "owner": "Lucas",
+      "owner": "release owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Release scope and acceptance."
     },
     {
       "id": "live",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Live trading, capital movement, or strategy activation."
     },
     {
       "id": "thresholds",
-      "owner": "Lucas",
+      "owner": "owner",
       "selected_option": null,
       "status": "undecided",
       "topic": "Numeric bars for deflated Sharpe, backtest-overfitting probability, drawdown, uncertainty, capital, loss, embargo length, and the uncertainty estimator."
