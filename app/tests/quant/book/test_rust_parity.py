@@ -391,3 +391,55 @@ def test_resting_at_matches_the_python_index_order():
             rust.resting_at(bad)
         with pytest.raises(IndexError):
             python.resting_at(bad)
+
+
+def _resting_ids(book) -> list[str]:
+    return [book.resting_at(i).order_id for i in range(len(book))]
+
+
+def test_resting_at_keeps_insertion_order_through_reduce_and_replace():
+    """A partial reduce stays in its slot. A full reduce drops it.
+
+    ``replace`` cancels and re-adds, so the id moves to the end of the index
+    on both books. That is the order ``resting_at`` must keep.
+    """
+    python = PythonLimitOrderBook("S")
+    rust = LimitOrderBook("S")
+
+    def add(order_id: str, side: Side, price: int, qty: int, seq: int) -> None:
+        python.add(
+            order_id=order_id, side=side, price_ticks=price, qty=qty, seq=seq, ts=seq,
+        )
+        rust.add(
+            order_id=order_id, side=side, price_ticks=price, qty=qty, seq=seq, ts=seq,
+        )
+
+    def same(expected: list[str]) -> None:
+        assert _resting_ids(python) == expected
+        assert _resting_ids(rust) == expected
+
+    add("a", Side.BUY, 100, 10, 1)
+    add("b", Side.BUY, 100, 20, 2)
+    add("c", Side.SELL, 101, 30, 3)
+    same(["a", "b", "c"])
+
+    python.reduce("b", 5)
+    rust.reduce("b", 5)
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 15
+    same(["a", "b", "c"])
+
+    python.reduce("a", 10)
+    rust.reduce("a", 10)
+    same(["b", "c"])
+
+    python.replace("b", new_qty=12, seq=4, ts=4)
+    rust.replace("b", new_qty=12, seq=4, ts=4)
+    same(["c", "b"])
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 12
+    assert python.resting_at(1).price_ticks == rust.resting_at(1).price_ticks == 100
+
+    python.replace("c", new_price_ticks=102, new_qty=8, seq=5, ts=5)
+    rust.replace("c", new_price_ticks=102, new_qty=8, seq=5, ts=5)
+    same(["b", "c"])
+    assert python.resting_at(1).price_ticks == rust.resting_at(1).price_ticks == 102
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 8
