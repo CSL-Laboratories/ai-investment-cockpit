@@ -14,6 +14,8 @@ The properties pinned:
 """
 from __future__ import annotations
 
+import platform
+
 import pytest
 
 from quant.book.lob import LimitOrderBook
@@ -196,11 +198,57 @@ def test_rust_synthetic_matches_the_python_generator():
         assert list(feed) == list(feed._python_events())
 
 
+def _host_math_splits_the_tape() -> bool:
+    """glibc is the host where the locked one-ulp sample was recorded."""
+    return platform.libc_ver()[0] == "glibc"
+
+
+def test_a_scaled_volatility_keeps_one_tape():
+    """One ulp of host math, times a large step, crosses ``round``.
+
+    Seed 3's fourth ``gauss(0, 0.35)`` is one ulp apart on glibc. Scaling that
+    step by ``2**52`` puts the two results in different rounding bins. The
+    reference draws the same libm kernel as the cursor, so the events still
+    match. On glibc the platform generator is the one that moves a price.
+    """
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=12, seed=7,
+        params=SyntheticParams(tick_volatility=0.35 * 2**52),
+    )
+    native = list(feed)
+    assert native == list(feed._python_events())
+    if _host_math_splits_the_tape():
+        assert list(feed._python_events(portable=False)) != native
+
+
+def test_a_wide_exchange_gap_keeps_one_tape():
+    """A mean gap of 10**15 ns makes one ulp of ``ln`` a whole nanosecond."""
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=8, seed=0,
+        params=SyntheticParams(
+            exchange_gap_ns=10**15,
+            feed_latency_ns=0, feed_jitter_ns=0,
+            decode_latency_ns=0, decode_jitter_ns=0,
+        ),
+    )
+    native = list(feed)
+    assert native == list(feed._python_events())
+    if _host_math_splits_the_tape():
+        platform_tape = list(feed._python_events(portable=False))
+        assert [event.exchange_ts for event in platform_tape] != [
+            event.exchange_ts for event in native
+        ]
+
+
 def test_a_non_integer_seed_stays_on_python_and_other_overflows_raise():
     _require_cursor()
     for seed in (1.5, "generator"):
         feed = SyntheticFeed(symbols=("S",), n_events=5, seed=seed)
         assert list(feed) == list(feed._python_events())
+        # The cursor rejects this seed, so the reference stays on platform math.
+        assert list(feed._python_events()) == list(feed._python_events(portable=False))
     huge = SyntheticFeed(symbols=("S",), n_events=2**63, seed=1)
     with pytest.raises(OverflowError):
         list(huge)

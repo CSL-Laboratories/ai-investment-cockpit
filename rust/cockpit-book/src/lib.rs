@@ -16,6 +16,7 @@ mod synthetic;
 pub use book::{Book, DepthLevel, Order};
 pub use error::BookError;
 pub use matching::{match_order, Aggressive, FillOut, MatchOutput, SelfTrade, TimeInForce};
+pub use mt::{box_muller, unit_exponential};
 pub use side::Side;
 pub use synthetic::{
     synthetic_events, SynthAction, SynthCursor, SynthError, SynthEvent, SynthParams,

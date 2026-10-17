@@ -712,6 +712,28 @@ mod tests {
     }
 
     #[test]
+    fn a_one_ulp_step_crosses_round_once_volatility_scales_it() {
+        // Seed 3's fourth `gauss(0, 0.35)`: libm 0.2.15 is one ulp under
+        // CPython on glibc. At the default volatility both samples sit in
+        // the same rounding bin. Scale the underlying normal by 2^52 and
+        // the bins split, which is why the reference tape calls this kernel
+        // instead of the host libm.
+        let libm_at_default = f64::from_bits(4_599_928_597_848_966_274);
+        let glibc_at_default = f64::from_bits(4_599_928_597_848_966_275);
+        assert_eq!(
+            f64_to_i128_banker(libm_at_default),
+            f64_to_i128_banker(glibc_at_default)
+        );
+        let z_libm = libm_at_default / 0.35;
+        let z_glibc = glibc_at_default / 0.35;
+        let sigma = 0.35 * ((1u64 << 52) as f64);
+        assert_ne!(
+            f64_to_i128_banker(z_libm * sigma),
+            f64_to_i128_banker(z_glibc * sigma)
+        );
+    }
+
+    #[test]
     fn the_default_tape_stays_clear_of_the_round_and_gap_cuts() {
         // Walks `SynthCursor`, so the symbol pick, both jitters, `gauss`, the
         // roll, and the add, cancel, or trade draws all happen before the

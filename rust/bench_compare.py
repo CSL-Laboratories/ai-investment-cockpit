@@ -217,7 +217,11 @@ def _rate_deque(guards, repeats: int) -> None:
 def _python_tape(n: int) -> None:
     from quant.feed.synthetic import SyntheticFeed
 
-    list(SyntheticFeed(symbols=("S",), n_events=n, seed=3)._python_events())
+    # Platform math, not the shared libm kernel. The kernel is what keeps the
+    # reference tape on the cursor; this times the pure Python generator.
+    list(
+        SyntheticFeed(symbols=("S",), n_events=n, seed=3)._python_events(portable=False)
+    )
 
 
 def _native_tape(n: int) -> None:

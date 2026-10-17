@@ -1,7 +1,8 @@
 //! PyO3 entry point for the synthetic tape. The book crate owns the stream.
 
 use cockpit_book::{
-    synthetic_events as generate, SynthAction, SynthCursor, SynthEvent, SynthParams,
+    box_muller, synthetic_events as generate, unit_exponential, SynthAction, SynthCursor,
+    SynthEvent, SynthParams,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -169,8 +170,25 @@ fn event_row(event: SynthEvent) -> EventRow {
     )
 }
 
+/// Box-Muller pair from the libm kernel `SynthCursor` uses.
+///
+/// The first value is `cos`, which CPython's `gauss` returns. The second is
+/// `sin`, which `gauss` caches. Uniforms are angle, then radius.
+#[pyfunction]
+fn portable_box_muller(u_angle: f64, u_radius: f64) -> (f64, f64) {
+    box_muller(u_angle, u_radius)
+}
+
+/// `-ln(1 - u)` from the same libm kernel as `portable_box_muller`.
+#[pyfunction]
+fn portable_unit_exponential(u: f64) -> f64 {
+    unit_exponential(u)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(synthetic_events, m)?)?;
     m.add_function(wrap_pyfunction!(synthetic_cursor, m)?)?;
+    m.add_function(wrap_pyfunction!(portable_box_muller, m)?)?;
+    m.add_function(wrap_pyfunction!(portable_unit_exponential, m)?)?;
     Ok(())
 }

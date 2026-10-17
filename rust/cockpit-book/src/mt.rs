@@ -7,10 +7,11 @@
 //! `sin`, `cos`, and `ln` go through the pure-Rust `libm` crate. `f64::sin`,
 //! `f64::cos`, and `f64::ln` call the platform libm, and Rust does not promise
 //! those results match across platforms or versions. A one-ulp change in the
-//! raw sample can move `round` or the gap cut. With the default gap and
-//! volatility, `libm` stays within a few ulps of CPython and the rounded
-//! events match `random.Random`. A gap whose mean is large enough that one
-//! ulp is already more than a nanosecond can move the integer timestamp.
+//! raw sample, scaled by `tick_volatility` or by a large `exchange_gap_ns`,
+//! can move `round` or the gap cut. `box_muller` and `unit_exponential` are
+//! the kernel both this generator and the Python reference call, so the two
+//! tapes stay on the same side of those cuts for every parameter. Platform
+//! math remains only when the extension is not installed.
 
 const N: usize = 624;
 const M: usize = 397;
@@ -184,22 +185,34 @@ impl Mt {
         let z = if let Some(cached) = self.gauss_next.take() {
             cached
         } else {
-            let x2pi = self.random() * std::f64::consts::TAU;
-            let g2rad = (-2.0 * libm::log(1.0 - self.random())).sqrt();
-            self.gauss_next = Some(libm::sin(x2pi) * g2rad);
-            libm::cos(x2pi) * g2rad
+            let (z, next) = box_muller(self.random(), self.random());
+            self.gauss_next = Some(next);
+            z
         };
         mu + z * sigma
     }
 
     pub fn expovariate(&mut self, lambd: f64) -> f64 {
-        -libm::log(1.0 - self.random()) / lambd
+        unit_exponential(self.random()) / lambd
     }
+}
+
+/// CPython's Box-Muller pair. The first value is `cos` (returned); the second
+/// is `sin` (cached). Uniforms are consumed angle, then radius.
+pub fn box_muller(u_angle: f64, u_radius: f64) -> (f64, f64) {
+    let x2pi = u_angle * std::f64::consts::TAU;
+    let g2rad = (-2.0 * libm::log(1.0 - u_radius)).sqrt();
+    (libm::cos(x2pi) * g2rad, libm::sin(x2pi) * g2rad)
+}
+
+/// `-ln(1 - u)`, the numerator of CPython's `expovariate`.
+pub fn unit_exponential(u: f64) -> f64 {
+    -libm::log(1.0 - u)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Mt;
+    use super::{box_muller, Mt};
 
     #[test]
     fn random_matches_cpython_random_of_seed_3() {
@@ -253,5 +266,14 @@ mod tests {
         for expected in portable {
             assert_eq!(mt.gauss(0.0, 0.35).to_bits(), expected);
         }
+    }
+
+    #[test]
+    fn box_muller_is_the_pair_gauss_returns_then_caches() {
+        let mut mt = Mt::from_seed(3);
+        let (z, next) = box_muller(mt.random(), mt.random());
+        let mut again = Mt::from_seed(3);
+        assert_eq!(again.gauss(0.0, 1.0).to_bits(), z.to_bits());
+        assert_eq!(again.gauss(0.0, 1.0).to_bits(), next.to_bits());
     }
 }
