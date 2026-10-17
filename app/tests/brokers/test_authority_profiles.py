@@ -1159,6 +1159,22 @@ def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
     store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
 
 
+def test_stopped_proposal_completes_after_reconcile_and_release(tmp_path):
+    store = _store(tmp_path, "proposal.sqlite")
+    _install(store)
+    store.authorize(
+        "profile-b", action="propose", client_order_id="prop-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    store.hold("profile-b", actor="stop-owner", now=NOW, reason="operator hold")
+    assert store.reconcile_handoff(
+        "prop-1", order_ref=None, order_submitted=False, now=NOW
+    ) == "failed"
+    store.release_stop("profile-b", actor="stop-owner", now=NOW, reconciled=True)
+    assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "completed"
+    assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "replay"
+
+
 def test_expired_or_revoked_stop_owner_stays_blocked_pending_csl_280(tmp_path):
     """Documents the current fail-closed behavior pending founder decision CSL-280.
 

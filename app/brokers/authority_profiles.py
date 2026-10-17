@@ -833,7 +833,24 @@ class AuthorityProfileStore:
             generation = int(row["claim_generation"]) + 1
             if state == "failed":
                 if not awaiting_submit:
-                    return "failed"
+                    # A non-gateway action (propose / dry-run) only reaches
+                    # failed through reconcile after a stop; nothing was
+                    # submitted, so finish it without any gateway call.
+                    if not int(row["reconciled"]):
+                        return "failed"
+                    updated = conn.execute(
+                        """
+                        UPDATE reservations
+                        SET handoff_state = 'completed', handoff_done = 1,
+                            claim_generation = ?
+                        WHERE client_order_id = ? AND handoff_state = 'failed'
+                          AND handoff_done = 0 AND claim_generation = ?
+                        """,
+                        (generation, client_id, int(row["claim_generation"])),
+                    )
+                    if updated.rowcount != 1:
+                        raise ProfileRefused("store", "handoff claim was not admitted")
+                    return "completed"
                 updated = conn.execute(
                     """
                     UPDATE reservations
