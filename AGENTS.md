@@ -27,7 +27,8 @@ within its approved budget.
 Core language/runtime choices remain founder decisions; this instruction selects none.
 Lucas retains spend/new services, sensitive company credentials, company-server
 deployments and the final tie-break when founders disagree. All three founders
-participate in the final release decision; a split decision goes to Lucas's final tie-break.
+participate in the final release decision; Lucas has final say in any founder disagreement,
+including a 2-1 split.
 
 Founders merge after the required current-head reviews and checks; agents never merge.
 A founder's own PR requires another founder's approval before merge, regardless of

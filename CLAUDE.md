@@ -17,9 +17,11 @@ For the replacement program, read
 record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
 gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
 for operational authority; they do not amend accepted contracts, activate R2a or
-unlock live capital. Agents never merge; a founder's own PR requires another founder's
-approval regardless of ruleset enforcement. All three founders participate in the final
-release decision; a split decision goes to Lucas's final tie-break.
+unlock live capital. Founders merge after the required current-head reviews and checks;
+agents never merge. A founder's own PR requires another founder's approval before merge,
+regardless of ruleset enforcement. Non-author approval checks alone do not establish
+founder identity. All three founders participate in the final
+release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
 
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
