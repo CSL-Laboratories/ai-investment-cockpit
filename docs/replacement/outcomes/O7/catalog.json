@@ -1,0 +1,92 @@
+{
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "framework_selected": null,
+  "order_commands": [],
+  "commands": [
+    {
+      "name": "operator.audit.export",
+      "journey": "audit",
+      "effect": "read",
+      "required_result_fields": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]
+    },
+    {
+      "name": "operator.budgets.inspect",
+      "journey": "budgets",
+      "effect": "read",
+      "required_result_fields": ["budgets"]
+    },
+    {
+      "name": "operator.decisions.inspect",
+      "journey": "decisions_refusals",
+      "effect": "read",
+      "required_result_fields": ["decisions", "refusals"]
+    },
+    {
+      "name": "operator.evidence.inspect",
+      "journey": "evidence_provenance",
+      "effect": "read",
+      "required_result_fields": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]
+    },
+    {
+      "name": "operator.export.bundle",
+      "journey": "export",
+      "effect": "read",
+      "required_result_fields": ["bundle_id", "contents", "secrets_included"]
+    },
+    {
+      "name": "operator.health.inspect",
+      "journey": "health",
+      "effect": "read",
+      "required_result_fields": ["watch_only", "stale", "dependencies"]
+    },
+    {
+      "name": "operator.interventions.request_reconciliation",
+      "journey": "interventions",
+      "effect": "intervention",
+      "required_result_fields": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]
+    },
+    {
+      "name": "operator.interventions.request_revocation",
+      "journey": "interventions",
+      "effect": "intervention",
+      "required_result_fields": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]
+    },
+    {
+      "name": "operator.interventions.request_stop",
+      "journey": "interventions",
+      "effect": "intervention",
+      "required_result_fields": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]
+    },
+    {
+      "name": "operator.positions.inspect",
+      "journey": "positions_collateral",
+      "effect": "read",
+      "required_result_fields": ["positions", "collateral"]
+    },
+    {
+      "name": "operator.profiles.inspect",
+      "journey": "compliance_profiles",
+      "effect": "read",
+      "required_result_fields": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]
+    },
+    {
+      "name": "operator.recovery.inspect",
+      "journey": "recovery",
+      "effect": "read",
+      "required_result_fields": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]
+    },
+    {
+      "name": "operator.strategies.inspect",
+      "journey": "strategies",
+      "effect": "read",
+      "required_result_fields": ["strategy_id", "qualification", "baseline_id"]
+    },
+    {
+      "name": "operator.uncertainty.inspect",
+      "journey": "uncertainty",
+      "effect": "read",
+      "required_result_fields": ["items"]
+    }
+  ]
+}

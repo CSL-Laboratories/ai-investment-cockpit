@@ -1,0 +1,118 @@
+{
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "rows": [
+    {
+      "journey": "evidence_provenance",
+      "command": "operator.evidence.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["provenance", "raw_separated_from_summary"]
+    },
+    {
+      "journey": "strategies",
+      "command": "operator.strategies.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["qualification"]
+    },
+    {
+      "journey": "positions_collateral",
+      "command": "operator.positions.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["positions", "collateral"]
+    },
+    {
+      "journey": "decisions_refusals",
+      "command": "operator.decisions.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["refusals"]
+    },
+    {
+      "journey": "uncertainty",
+      "command": "operator.uncertainty.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["items"]
+    },
+    {
+      "journey": "health",
+      "command": "operator.health.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["stale", "watch_only"]
+    },
+    {
+      "journey": "budgets",
+      "command": "operator.budgets.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["budgets"]
+    },
+    {
+      "journey": "compliance_profiles",
+      "command": "operator.profiles.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["active_profile_class", "local_control_is_account_wide"]
+    },
+    {
+      "journey": "interventions",
+      "command": "operator.interventions.request_stop",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["intervention", "order_submitted"]
+    },
+    {
+      "journey": "interventions",
+      "command": "operator.interventions.request_reconciliation",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["intervention", "order_submitted"]
+    },
+    {
+      "journey": "interventions",
+      "command": "operator.interventions.request_revocation",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["intervention", "order_submitted"]
+    },
+    {
+      "journey": "audit",
+      "command": "operator.audit.export",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["includes_refusals", "secrets_included"]
+    },
+    {
+      "journey": "recovery",
+      "command": "operator.recovery.inspect",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["reconciliation", "unknown_orders"]
+    },
+    {
+      "journey": "export",
+      "command": "operator.export.bundle",
+      "gui": "same_api",
+      "cli": "same_api",
+      "order_path": "none",
+      "must_show": ["contents", "secrets_included"]
+    }
+  ]
+}
