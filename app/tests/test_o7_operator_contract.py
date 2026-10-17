@@ -1157,6 +1157,69 @@ def test_outcome_error_and_surface_allowlists_stay_pinned(tmp_path: Path) -> Non
         assert message in stderr, name
 
 
+def test_qualification_reference_refusal_and_persistence_stay_pinned(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    profiles = copy.deepcopy(by_request["req_profiles"])
+    assert CHECKER.validate_response(validator, profiles, commands) is None
+    profiles["result"]["qualification_reference"] = "C"
+    assert CHECKER._schema_error(validator, profiles) is not None
+    assert CHECKER.classify_response(profiles, commands) == "qualification_reference"
+    assert CHECKER.validate_response(validator, profiles, commands) is not None
+    for request_id in ("req_stop", "req_reconcile", "req_revoke"):
+        persistent = copy.deepcopy(by_request[request_id])
+        persistent["status_code"] = "refused"
+        persistent["result"]["recorded"] = False
+        persistent["result"]["survives_restart"] = True
+        persistent["presentation"]["exit_code"] = 2
+        persistent["presentation"]["text_status"] = "refused"
+        persistent["presentation"]["rendered"] = "status=refused probe"
+        assert CHECKER._schema_error(validator, persistent) is not None
+        assert CHECKER.classify_response(persistent, commands) == "refused_intervention_persists"
+        assert CHECKER.validate_response(validator, persistent, commands) is not None
+    decisions = copy.deepcopy(by_request["req_decisions"])
+    decisions["result"]["decisions"] = []
+    assert CHECKER._schema_error(validator, decisions) is None
+    assert CHECKER.classify_response(decisions, commands) == "refusal_without_decision"
+    assert CHECKER.validate_response(validator, decisions, commands) == "refusal_without_decision"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    widened = tmp_path / "qualification-reference"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["result"]["properties"]["qualification_reference"] = {"enum": ["A", "C"]}
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "qualification reference is not profile A" in stderr
+    dropped = tmp_path / "refused-persists"
+    shutil.copytree(root, dropped)
+    schema_path = dropped / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    removed = False
+    for clause in schema["allOf"]:
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        command = properties.get("command") if isinstance(properties, dict) else None
+        status = properties.get("status_code") if isinstance(properties, dict) else None
+        if (
+            isinstance(command, dict)
+            and isinstance(command.get("enum"), list)
+            and isinstance(status, dict)
+            and status.get("const") == "refused"
+        ):
+            clause["then"]["properties"]["result"]["properties"].pop("survives_restart")
+            removed = True
+    assert removed
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(dropped, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(dropped)
+    assert code == 1
+    assert stdout == ""
+    assert "refused intervention clause cannot apply" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {

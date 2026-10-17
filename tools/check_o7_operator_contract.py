@@ -768,6 +768,9 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         or set(visibility_properties or {}) != set(VISIBILITY_PROPERTIES)
     ):
         raise ContractError("visibility schema accepts an authority field")
+    reference = result_properties.get("qualification_reference") if isinstance(result_properties, dict) else None
+    if _const_value(reference) != "A":
+        raise ContractError("qualification reference is not profile A")
     _require_closed_nested_result(result_properties)
 
 
@@ -860,6 +863,7 @@ def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
         result = then_properties.get("result") if isinstance(then_properties, dict) else None
         recorded_properties = result.get("properties") if isinstance(result, dict) else None
         recorded = recorded_properties.get("recorded") if isinstance(recorded_properties, dict) else None
+        survives = recorded_properties.get("survives_restart") if isinstance(recorded_properties, dict) else None
         if (
             _assertion_keys(condition) != {"properties", "required"}
             or set(condition.get("required") or []) != {"command", "status_code"}
@@ -875,25 +879,30 @@ def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
             or not isinstance(result, dict)
             or _assertion_keys(result) != {"properties"}
             or not isinstance(recorded_properties, dict)
-            or set(recorded_properties) != {"recorded"}
+            or set(recorded_properties) != {"recorded", "survives_restart"}
             or _const_value(recorded) is not False
+            or _const_value(survives) is not False
         ):
             raise ContractError("refused intervention clause cannot apply")
         return
     raise ContractError("refused intervention can still be recorded")
 
 
-def _refused_intervention_probe(doc: dict[str, Any], recorded: bool) -> dict[str, Any]:
+def _refused_intervention_probe(
+    doc: dict[str, Any], recorded: bool, survives_restart: bool | None = None
+) -> dict[str, Any]:
     """Copy one intervention response into a refused response with one recording value."""
     result = doc.get("result")
     presentation = dict(doc.get("presentation") or {})
     presentation["exit_code"] = EXIT_CODES["refused"]
     presentation["text_status"] = "refused"
     presentation["rendered"] = "status=refused probe"
+    if survives_restart is None:
+        survives_restart = recorded
     return {
         **doc,
         "status_code": "refused",
-        "result": {**result, "recorded": recorded, "survives_restart": recorded},
+        "result": {**result, "recorded": recorded, "survives_restart": survives_restart},
         "presentation": presentation,
     }
 
@@ -912,6 +921,9 @@ def _require_recorded_refusal_rejected(validator: Draft202012Validator, response
         recorded = _refused_intervention_probe(doc, True)
         if _schema_error(validator, recorded) is None:
             raise ContractError(f"refused intervention schema accepts a recording for {doc['command']}")
+        persistent = _refused_intervention_probe(doc, False, True)
+        if _schema_error(validator, persistent) is None:
+            raise ContractError(f"refused intervention schema accepts persistence for {doc['command']}")
 
 
 def _error_probe(code: str, status: str) -> dict[str, Any]:
@@ -1381,6 +1393,16 @@ def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[d
     return all((item.get("decision_id"), item.get("reason_code")) in covered for item in refused_decisions)
 
 
+def _refusal_without_decision(refusals: list[dict[str, Any]], decision_rows: list[dict[str, Any]]) -> bool:
+    """True when a refusal does not name a refused decision with the same reason."""
+    refused = {
+        (item.get("decision_id"), item.get("reason_code"))
+        for item in decision_rows
+        if item.get("outcome") == "refused"
+    }
+    return any((item.get("decision_id"), item.get("reason_code")) not in refused for item in refusals)
+
+
 def _refusal_names_recorded_decision(
     refusals: list[dict[str, Any]], decision_rows: list[dict[str, Any]]
 ) -> bool:
@@ -1457,6 +1479,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
             return "unrecorded_intervention_success"
         if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("recorded") is True:
             return "recorded_intervention_refused"
+        if expected_intervention is not None and doc.get("status_code") == "refused" and result.get("survives_restart") is not False:
+            return "refused_intervention_persists"
         if (
             doc.get("command") == "operator.profiles.inspect"
             and result.get("active_profile_class") != profile.get("profile_class")
@@ -1476,6 +1500,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "split_profile"
     if result.get("restart_requires_reconciliation") is False:
         return "restart_without_reconciliation"
+    if "qualification_reference" in result and result.get("qualification_reference") != "A":
+        return "qualification_reference"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
         return "privileged_order_bypass"
     refusals = _dicts(result.get("refusals"))
@@ -1489,6 +1515,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "refusal_on_recorded_decision"
     if _conflicting_refusal_reasons(refusals):
         return "conflicting_refusal_reason"
+    if _refusal_without_decision(refusals, decision_rows):
+        return "refusal_without_decision"
     refused_decisions = [item for item in decision_rows if item.get("outcome") == "refused"]
     dependencies = _dicts(result.get("dependencies"))
     unknown_items = [
@@ -1594,8 +1622,9 @@ def validate_response(
 ) -> str | None:
     """Published validation path: response schema, then the semantic checks.
 
-    JSON Schema cannot express unique ``decisions[*].decision_id``, so schema
-    validation alone is not sufficient for a consumer.
+    JSON Schema cannot express unique ``decisions[*].decision_id`` or that
+    every refusal names a refused decision, so schema validation alone is not
+    sufficient for a consumer.
     """
     problem = _schema_error(validator, doc)
     if problem is not None:
