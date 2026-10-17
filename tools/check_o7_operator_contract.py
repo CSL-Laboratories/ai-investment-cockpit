@@ -478,6 +478,20 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     return None
 
 
+def validate_response(
+    validator: Draft202012Validator, doc: Any, allowed_commands: set[str]
+) -> str | None:
+    """Published validation path: response schema, then the semantic checks.
+
+    JSON Schema cannot express unique ``decisions[*].decision_id``, so schema
+    validation alone is not sufficient for a consumer.
+    """
+    problem = _schema_error(validator, doc)
+    if problem is not None:
+        return problem
+    return classify_response(doc, allowed_commands)
+
+
 def _event_error(event: dict[str, Any]) -> str | None:
     allowed = EVENT_COMMANDS.get(event.get("event_type"))
     if allowed is None or event.get("command") not in allowed:

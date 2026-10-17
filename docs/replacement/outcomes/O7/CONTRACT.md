@@ -141,6 +141,7 @@ The CHI '21 ACM page linked below was returned by the Parallel search. This sess
 ## Automation gates
 
 - GUI and CLI projections of one operation validate against the same response schema.
+- Schema validation alone is not sufficient: JSON Schema cannot enforce unique `decisions[*].decision_id`. Consumers run `validate_response` in the checker (schema, then the semantic checks) on every response.
 - CLI `--json` output is that response, on stdout, without ANSI.
 - Exit codes match the table above.
 - The provider-free checker recomputes the frozen manifest hashes and reruns the negative controls.

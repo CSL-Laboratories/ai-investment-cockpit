@@ -438,6 +438,16 @@ def test_decision_ids_are_unique() -> None:
     assert CHECKER.classify_response(conflict, commands) == "duplicate_decision_id"
 
 
+def test_validate_response_rejects_duplicate_decision_ids_the_schema_accepts() -> None:
+    by_request, commands, validator = _candidate_documents()
+    conflict = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.validate_response(validator, conflict, commands) is None
+    for item in conflict["result"]["decisions"]:
+        item["decision_id"] = "dec_refused"
+    assert CHECKER._schema_error(validator, conflict) is None
+    assert CHECKER.validate_response(validator, conflict, commands) == "duplicate_decision_id"
+
+
 def test_uncertainty_visible_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
