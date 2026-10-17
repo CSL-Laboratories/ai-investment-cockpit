@@ -1275,6 +1275,45 @@ def test_failed_new_sha_cite_on_reopened_thread_does_not_block_others():
     assert any("resolve=posted" in line for line in logs)
 
 
+def test_failed_prior_sha_cite_does_not_count_beside_later_receipt():
+    threads = [
+        thread(
+            THREAD,
+            resolved=False,
+            resolved_by=PAT_LOGIN,
+            comments=[
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=2)),
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW - timedelta(hours=1)),
+                comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2), NOW - timedelta(hours=1)),
+            ],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN, head_sha=SHA2) == 1
+
+
+def test_failed_prior_sha_cite_does_not_block_other_thread():
+    gh = ready_gh(
+        sha=SHA2,
+        threads=[
+            thread(
+                THREAD,
+                resolved=False,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=2)),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW - timedelta(hours=1)),
+                    comment(PAT_LOGIN, mod.resolved_marker(THREAD, SHA2), NOW - timedelta(hours=1)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2, sha=SHA2))]),
+        ],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2, sha=SHA2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=2), gh, NOW)
+    assert THREAD2 in gh.resolves
+    assert any("resolve=posted" in line for line in logs)
+
+
 def test_receipt_failed_same_sha_reopen_still_counts():
     threads = [
         thread(

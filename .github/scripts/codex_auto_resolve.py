@@ -1259,11 +1259,12 @@ def resolved_count_today(
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
     per ``(thread id, sha)`` when that pair has no receipt and the thread
-    is closed, or when the cite itself carries ``RESOLVED_AT``. After a
+    is closed, or when the cite itself carries ``RESOLVED_AT``.     After a
     human reopen, a receipt-failed PAT success still counts when
-    ``resolvedBy`` is the PAT and the cite is either a prior SHA or the
-    unique in-window cite for that thread (same-SHA reopen). A failed
-    current-head cite is not counted when another SHA is also cited.
+    ``resolvedBy`` is the PAT and the cite is the unique in-window cite
+    for the current head (same-SHA reopen). An earlier SHA's unmarked
+    cite is not inferred from leftover ``resolvedBy`` — that would
+    count a failed first attempt beside a later receipt.
     A PAT skip
     marker hides that pair unless a later PAT cite is strictly newer, so
     a retry-resolve success cannot be erased by an earlier human race.
@@ -1333,8 +1334,7 @@ def resolved_count_today(
         if tid in pending:
             others = cites_by_thread.get(tid, set()) - {digest}
             same_sha_reopen = current and digest == current and not others
-            prior_sha = current and digest != current
-            if tid not in pat_resolved_open or not (same_sha_reopen or prior_sha):
+            if tid not in pat_resolved_open or not same_sha_reopen:
                 continue
         if pair in skip_times:
             skip_when = skip_times[pair]
