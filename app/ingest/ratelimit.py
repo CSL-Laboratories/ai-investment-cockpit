@@ -103,14 +103,18 @@ def token_bucket_replay(rate, capacity, tokens, last, times):
     Floats, and ints that convert to ``f64`` without rounding, use the
     extension in one call. Anything else, including ``10**400``, runs
     ``python_allow`` so the result matches ``TokenBucket.allow``.
+
+    ``times`` is scanned and then replayed, so a one-shot iterable is copied
+    first. Otherwise the scan would leave the replay empty.
     """
+    times = list(times)
     native = _NATIVE
     if (
         native is not None
         and _all_float((rate, capacity, tokens, last))
         and _all_float(times)
     ):
-        return native.token_bucket_replay(rate, capacity, tokens, last, list(times))
+        return native.token_bucket_replay(rate, capacity, tokens, last, times)
     if native is not None:
         head = (
             _exact_f64(rate),

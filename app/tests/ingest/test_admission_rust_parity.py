@@ -70,6 +70,22 @@ def _drive_bucket(bucket, times, *, python: bool):
 
 
 @_needs_rust
+def test_dedup_replay_materializes_a_one_shot_script():
+    ops = [("a", "k"), ("a", "k"), ("d", "k")]
+    assert dedup_replay(4, (item for item in ops)) == dedup_replay(4, ops)
+
+
+def test_token_bucket_replay_materializes_a_one_shot_clock():
+    times = [1.0, 2.0]
+    once = token_bucket_replay(1.0, 5.0, 0.0, 0.0, (t for t in times))
+    listed = token_bucket_replay(1.0, 5.0, 0.0, 0.0, times)
+    assert list(once[0]) == list(listed[0]) == [True, True]
+    assert once[1:] == listed[1:] == (0.0, 2.0)
+    # The float scan used to consume the first int and replay only the rest.
+    mixed = token_bucket_replay(1.0, 5.0, 0.0, 0.0, (t for t in (1, 2.0)))
+    assert list(mixed[0]) == [True, True]
+
+
 def test_dedup_replay_matches_lru_eviction_and_discard():
     ops = [("a", key) for key in ("a", "b", "a", "c", "a", "b")]
     ops += [("d", "c"), ("d", "a"), ("a", "c")]
@@ -217,6 +233,30 @@ class _SlottedDedup(Dedup):
     def __init__(self, capacity):
         super().__init__(capacity)
         self.feed = "news"
+
+
+class _StringSlotDedup(Dedup):
+    __slots__ = "feed"
+
+    def __init__(self, capacity):
+        super().__init__(capacity)
+        self.feed = "news"
+
+
+def test_copy_keeps_a_string_slot_declaration():
+    """``__slots__ = "feed"`` is one name, not the characters of that string."""
+    seen = _StringSlotDedup(2)
+    seen.add("a")
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _StringSlotDedup
+        assert clone.feed == "news"
+        assert clone.add("a") is False
+        clone.feed = "other"
+    assert seen.feed == "news"
 
 
 def test_copy_keeps_a_slotted_subclass_attribute():

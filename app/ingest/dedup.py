@@ -170,11 +170,19 @@ class Dedup:
         self._core = _rebuild_core(self._cap, keys) if rust_core else None
 
 
+def _declared_slots(cls) -> tuple:
+    """Slot names on ``cls``. A single slot may be declared as a string."""
+    slots = getattr(cls, "__slots__", ())
+    if isinstance(slots, str):
+        return (slots,)
+    return tuple(slots)
+
+
 def _slot_values(obj) -> dict:
     """Slot attributes on ``obj``, including those declared by a subclass."""
     values = {}
     for cls in type(obj).__mro__:
-        for name in getattr(cls, "__slots__", ()):
+        for name in _declared_slots(cls):
             if name in ("__dict__", "__weakref__") or name in values:
                 continue
             try:
@@ -216,7 +224,11 @@ def dedup_replay(capacity: int, ops: list[tuple[str, object]]) -> list[bool]:
     cannot cross as UTF-8, so that script is escaped and retried once. Any
     other hashable stays on the OrderedDict and matches ``Dedup.add`` instead
     of raising only on the extension. ``op`` is ``"a"`` or ``"d"``.
+
+    ``ops`` is read twice when the extension is installed (a scan, then the
+    replay), so a one-shot iterable is copied first.
     """
+    ops = list(ops)
     native = _NATIVE
     if native is not None and _rust_cap(capacity) and _str_script(ops):
         try:
