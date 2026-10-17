@@ -61,7 +61,13 @@
       "id": "reliability",
       "status": "defined_not_measured",
       "may_offset_correctness": false,
-      "note": "Schema failure, timeout, limit, empty output and refusal stay visible."
+      "note": "Schema failure, timeout, limit, and empty output stay visible."
+    },
+    {
+      "id": "refusal",
+      "status": "defined_not_measured",
+      "may_offset_correctness": false,
+      "note": "Refusal is reported separately from reliability. Unmeasured here."
     },
     {
       "id": "preference_or_model_agreement",

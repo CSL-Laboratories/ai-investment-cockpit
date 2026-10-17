@@ -58,6 +58,16 @@ UNSUPPORTED_EVIDENCE = frozenset({
     "limited_live",
     "independently_verified",
 })
+REQUIRED_METRICS = frozenset({
+    "schema_compliance",
+    "value_correctness",
+    "grounding",
+    "calibration_ece",
+    "cost_usd",
+    "latency_ms_p95",
+    "reliability",
+    "refusal",
+})
 FORBIDDEN_CAPABILITIES = frozenset({"broker_tools", "order_submission", "credential_custody"})
 FORBIDDEN_DISCLOSURE = frozenset({"credentials", "order_instructions"})
 REFUSAL_BY_ACTION = {
@@ -278,17 +288,7 @@ def _admit_task_suite(document: dict[str, Any], ctx: Context) -> Admission:
         return _refuse("provider_result_rewrites_protocol", "provider results cannot rewrite the O4/O5 protocol")
     if consumption.get("o4_population_artifact_frozen") is not False:
         return _refuse("protocol_pin_mismatch", "the O4 population artifact is not frozen")
-    required_metrics = {
-        "schema_compliance",
-        "value_correctness",
-        "grounding",
-        "calibration_ece",
-        "cost_usd",
-        "latency_ms_p95",
-        "reliability",
-        "refusal",
-    }
-    if not required_metrics <= set(consumption.get("metrics") or []):
+    if not REQUIRED_METRICS <= set(consumption.get("metrics") or []):
         return _refuse("protocol_pin_mismatch", "O5 metrics dropped a required measure")
     if consumption.get("floors") != {
         "correctness": "not_worse_than_baseline",
@@ -409,13 +409,21 @@ def _admit_privacy(document: dict[str, Any], _ctx: Context) -> Admission:
 def _admit_measures(document: dict[str, Any], _ctx: Context) -> Admission:
     if document.get("measured") is not False:
         return _refuse("measures_not_observed", "no provider measure has been run")
+    seen: list[str] = []
     for item in document["measures"]:
+        measure_id = item["id"]
+        if measure_id in seen:
+            return _refuse("schema_invalid", f"duplicate measure {measure_id}")
+        seen.append(measure_id)
         if item.get("may_offset_correctness") is not False:
-            return _refuse("worse_correctness_accepted", f"{item['id']} may offset correctness")
-        if item["id"] == "grounding" and item.get("clearing_authority") is not False:
+            return _refuse("worse_correctness_accepted", f"{measure_id} may offset correctness")
+        if measure_id == "grounding" and item.get("clearing_authority") is not False:
             return _refuse("capability_grants_authority", "grounding cannot clear an order")
         if item.get("status") == "observed":
-            return _refuse("measures_not_observed", f"{item['id']} is marked observed")
+            return _refuse("measures_not_observed", f"{measure_id} is marked observed")
+    missing = REQUIRED_METRICS - set(seen)
+    if missing:
+        return _refuse("protocol_pin_mismatch", "measure report dropped a required measure")
     return _admit()
 
 

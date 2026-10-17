@@ -29,7 +29,7 @@
     {
       "class": "prose",
       "path": "docs/replacement/outcomes/O5/CONTRACT.md",
-      "sha256": "9d410d01ed9380b0d7b9997f70b0be1dbd063eb9b654b5c2084c593bb95a1013"
+      "sha256": "dd2f67579080564b4a40cf7c40f6bc8ce0e5a22abd6b3153dbc3d211546fbaa1"
     },
     {
       "class": "governing",
@@ -71,7 +71,7 @@
     {
       "kind": "measure_report",
       "path": "docs/replacement/outcomes/O5/fixtures/measures.json",
-      "sha256": "77c94a9970ff3494f2a33cf609ba6e5537581ae46bd64b3f2c8ace06d01be859"
+      "sha256": "1813bcbf534da5bd92ec2cc6d4a937eaaf735e007d6ff4d155c33a38536e2572"
     },
     {
       "kind": "experiment_list",

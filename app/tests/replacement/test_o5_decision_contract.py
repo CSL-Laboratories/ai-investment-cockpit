@@ -155,6 +155,7 @@ def test_conflicting_citations_are_not_grounded() -> None:
     case["output"]["source_refs"] = ["b", "a"]
     assert module._score_grounding(case) is False
     case["sources"]["b"]["fields"]["name"] = "composer"
+    case["output"]["claims"] = {"name": "composer"}
     assert module._score_grounding(case) is True
     case["output"]["source_refs"] = ["a", "b"]
     assert module._score_grounding(case) is True
@@ -218,6 +219,22 @@ def test_refusal_code_must_follow_the_requested_action() -> None:
     admission = module._admit_document(suite, schema, _context(module, suite))
     assert admission.admitted is False
     assert admission.code == "suite_oracle_mismatch"
+
+
+def test_measure_report_requires_refusal() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["measure_report"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/measures.json").read_text(encoding="utf-8")
+    )
+    admitted = module._admit_document(document, schema, _context(module, suite))
+    assert admitted.admitted is True
+    dropped = dict(document)
+    dropped["measures"] = [item for item in document["measures"] if item["id"] != "refusal"]
+    refused = module._admit_document(dropped, schema, _context(module, suite))
+    assert refused.admitted is False
+    assert refused.code == "protocol_pin_mismatch"
 
 
 def test_validator_imports_no_provider_or_network() -> None:

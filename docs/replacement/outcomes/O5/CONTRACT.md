@@ -218,7 +218,10 @@ This packet does not decide any of these.
   route. Inv 2 stays as implemented until a separately reviewed amendment.
   Whether a `decision_result` may carry the retained provider output, so the
   validator can rescore that output instead of the submitted boolean labels,
-  is also undecided. The wire schema does not have that field.
+  is also undecided. The wire schema does not have that field. Whether each
+  frozen task stores the canonical prompt that a request must match is also
+  undecided. A request currently proves only that its own `prompt_text` matches
+  its own `prompt_sha256`.
 - **Release.** This packet is not release evidence.
 - **Live.** No live trading, no live authority, and no capital movement.
 - **O4 artifact.** Whether a future accepted O4 population replaces this candidate
