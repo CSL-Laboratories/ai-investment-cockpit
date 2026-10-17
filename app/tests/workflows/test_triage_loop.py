@@ -825,6 +825,106 @@ def test_transport_refusal_before_launch_releases_the_unit(st, clock, tmp_path):
     assert DeepBudget(st).spent(day) == 1
 
 
+def test_low_priv_raise_after_spawn_keeps_the_unit(st, clock, tmp_path):
+    """A low-priv launcher that starts the child and then raises has used the unit.
+
+    The mark is the on_spawn callback, not transport.run returning. A retry must
+    not spend a second unit.
+    """
+    from agent_runner.transport import LowPrivSubprocessTransport
+
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+    spawned = {"n": 0}
+
+    def launch(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        spawned["n"] += 1
+        assert account == "cockpit-agent"
+        on_spawn()
+        raise TimeoutError("child started")
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=launch)
+
+    def propose(state, clock_, **kw):
+        state.settings.decision_agent_account = "cockpit-agent"
+        call_agent(
+            state, alias="decision", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=transport,
+        )
+
+    with pytest.raises(TimeoutError, match="child started"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert spawned["n"] == 1
+    assert DeepBudget(st).spent(day) == 1
+    assert DeepBudget(st).remaining(day) == 0
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+    calls: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome()
+
+    st.settings.decision_agent_account = None
+    second = _escalation(st, clock, tmp_path, ev, ok_propose)
+    assert calls == []
+    assert ev.id in second["deferred"]
+    assert ev.id not in second["escalated"]
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_exhausted"]
+    assert DeepBudget(st).spent(day) == 1
+
+
+def test_low_priv_rejection_before_spawn_releases_the_unit(st, clock, tmp_path):
+    """A low-priv launcher that rejects before any child exists frees the unit."""
+    from agent_runner.transport import LowPrivSubprocessTransport
+    from core.clock import FrozenClock
+
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+
+    def launch(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        raise NotImplementedError("rejected before spawn")
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=launch)
+
+    def propose(state, clock_, **kw):
+        state.settings.decision_agent_account = "cockpit-agent"
+        call_agent(
+            state, alias="decision", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=transport,
+        )
+
+    with pytest.raises(NotImplementedError, match="rejected before spawn"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert DeepBudget(st).spent(day) == 0
+    assert DeepBudget(st).remaining(day) == 1
+    releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+    assert len(releases) == 1
+    assert releases[0]["reason"] == "pre_dispatch_exception"
+    assert releases[0]["event_id"] == ev.id
+
+    st.settings.decision_agent_account = None
+    drafted: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        drafted.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = _escalation(
+        st, FrozenClock(NOW + timedelta(minutes=2)), tmp_path, ev, ok_propose)
+    assert drafted == [ev.id]
+    assert ev.id in second["escalated"]
+    assert DeepBudget(st).spent(day) == 1
+
+
 def test_exception_after_call_agent_keeps_the_unit(st, clock, tmp_path):
     """Once call_agent has run, a later raise keeps the unit and blocks the retry."""
     _budget_of_one(st)

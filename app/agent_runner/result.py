@@ -24,9 +24,10 @@ class AgentResult:
     usage_state: str = "ok"           # ok | degraded | exhausted (vendor window after this call)
 
 
-# Saga pivot for an unused deep-escalation reservation. Set only when a model
-# call is actually handed to a transport or a Jev attempt has dispatched.
-# Preflight refusals leave this false so the reservation can be released.
+# Saga pivot for an unused deep-escalation reservation. Set once a child
+# process exists or a Jev request is sent. Entering call_agent, run_agent
+# preflight, or transport.run is not enough: a refusal before spawn still
+# releases the reservation.
 _AGENT_DISPATCHED: ContextVar[bool] = ContextVar(
     "cockpit_agent_dispatched", default=False)
 

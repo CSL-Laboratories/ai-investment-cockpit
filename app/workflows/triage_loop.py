@@ -432,7 +432,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             continue
         if cand["holdings_match"] or cand["symbol"] in watchlist:
             # Dispatch is the saga pivot, not entering call_agent. A raise before
-            # transport.run or a dispatched Jev attempt releases this reservation.
+            # a child exists or a Jev request is sent releases this reservation.
             # A raise after that keeps the unit. The finally only restores the
             # watch — it must not release.
             watch = watch_agent_dispatch()
