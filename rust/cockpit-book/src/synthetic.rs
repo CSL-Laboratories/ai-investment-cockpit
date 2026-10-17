@@ -100,6 +100,12 @@ pub struct SynthCursor {
     exchange_ts: i64,
     last_recv: i64,
     last_ingest: i64,
+    /// Raw `expovariate` and fair from the event just drawn. The clearance
+    /// test reads these so it checks the tape's own cuts, not a side stream.
+    #[cfg(test)]
+    last_raw_gap: f64,
+    #[cfg(test)]
+    last_fair: f64,
 }
 
 impl SynthCursor {
@@ -146,6 +152,10 @@ impl SynthCursor {
             exchange_ts: 1_700_000_000 * 1_000_000_000,
             last_recv: 0,
             last_ingest: 0,
+            #[cfg(test)]
+            last_raw_gap: 0.0,
+            #[cfg(test)]
+            last_fair: 0.0,
         })
     }
 
@@ -160,7 +170,16 @@ impl SynthCursor {
             exchange_ts: 0,
             last_recv: 0,
             last_ingest: 0,
+            #[cfg(test)]
+            last_raw_gap: 0.0,
+            #[cfg(test)]
+            last_fair: 0.0,
         }
+    }
+
+    #[cfg(test)]
+    fn last_raw_draw(&self) -> (f64, f64) {
+        (self.last_raw_gap, self.last_fair)
     }
 
     pub fn next_event(&mut self) -> Result<Option<SynthEvent>, SynthError> {
@@ -171,10 +190,14 @@ impl SynthCursor {
         let index = self.rng.randbelow(self.symbols.len() as u64) as usize;
         let symbol = self.symbols[index].clone();
         let slot_index = self.slot_for[index];
-        let gap = trunc_i64(
-            self.rng
-                .expovariate(1.0 / self.params.exchange_gap_ns as f64),
-        );
+        let raw_gap = self
+            .rng
+            .expovariate(1.0 / self.params.exchange_gap_ns as f64);
+        #[cfg(test)]
+        {
+            self.last_raw_gap = raw_gap;
+        }
+        let gap = trunc_i64(raw_gap);
         self.exchange_ts = self
             .exchange_ts
             .checked_add(gap.max(1))
@@ -210,7 +233,7 @@ impl SynthCursor {
         self.last_ingest = ingest_ts;
         let exchange_ts = self.exchange_ts;
         let params = self.params.clone();
-        Self::step(
+        let event = Self::step(
             &mut self.rng,
             &mut self.state[slot_index],
             symbol,
@@ -218,8 +241,12 @@ impl SynthCursor {
             recv_ts,
             ingest_ts,
             &params,
-        )
-        .map(Some)
+        )?;
+        #[cfg(test)]
+        {
+            self.last_fair = self.state[slot_index].fair;
+        }
+        Ok(Some(event))
     }
 
     fn step(
@@ -363,9 +390,7 @@ fn trade(
     };
     let touch = match touch {
         Some(price) => price,
-        None => {
-            invented_touch(state.fair, aggressor)?
-        }
+        None => invented_touch(state.fair, aggressor)?,
     };
     let result = match_order(
         &mut state.book,
@@ -684,5 +709,41 @@ mod tests {
         let err = quote_price(fair, Side::Sell, 0, None, Some(ask)).unwrap_err();
         assert!(err.0.starts_with("price 9223372036854779905"));
         assert!(err.0.contains("does not fit in a signed 64-bit integer"));
+    }
+
+    #[test]
+    fn the_default_tape_stays_clear_of_the_round_and_gap_cuts() {
+        // Walks `SynthCursor`, so the symbol pick, both jitters, `gauss`, the
+        // roll, and the add, cancel, or trade draws all happen before the
+        // next gap. A few ulps of `libm` error sit well below 1e-8.
+        let cases = [
+            (vec!["S".to_string()], 4_000),
+            (vec!["AAA".to_string(), "BBB".to_string()], 2_000),
+            (vec!["S".to_string(), "S".to_string()], 2_000),
+        ];
+        for seed in [0, 3, 5, -1, 42] {
+            for (symbols, n_events) in &cases {
+                let mut cursor =
+                    SynthCursor::open(symbols, *n_events, seed, &SynthParams::default()).unwrap();
+                let mut seen = 0;
+                while cursor.next_event().unwrap().is_some() {
+                    seen += 1;
+                    let (gap, fair) = cursor.last_raw_draw();
+                    let frac = gap - (gap as i64 as f64);
+                    let dist_int = frac.min(1.0 - frac);
+                    assert!(
+                        dist_int > 1e-8,
+                        "seed {seed} gap {gap} sits {dist_int} from an integer"
+                    );
+                    let fair_frac = fair - fair.floor();
+                    let dist_half = (fair_frac - 0.5).abs();
+                    assert!(
+                        dist_half > 1e-8,
+                        "seed {seed} fair {fair} sits {dist_half} from a half tick"
+                    );
+                }
+                assert_eq!(seen, *n_events);
+            }
+        }
     }
 }

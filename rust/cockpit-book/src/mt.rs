@@ -241,44 +241,17 @@ mod tests {
             13822916034150412811,
             4599928597848966274,
         ];
-        let cpython = [
+        let cpython_glibc = [
             4584937924398319004u64,
             4601553072989498596,
             13822916034150412811,
             4599928597848966275,
         ];
-        for (&got, python) in portable.iter().zip(cpython) {
+        for (&got, python) in portable.iter().zip(cpython_glibc) {
             assert!(got.abs_diff(python) <= 1, "{got} vs {python}");
         }
         for expected in portable {
             assert_eq!(mt.gauss(0.0, 0.35).to_bits(), expected);
-        }
-    }
-
-    #[test]
-    fn a_few_ulps_stay_clear_of_the_tape_cuts() {
-        // Default gap and volatility. A few ulps here are far below 1e-8,
-        // which is still well clear of an integer gap and a half-tick fair.
-        let gap_lambda = 1.0 / 250_000.0;
-        for seed in [0, 3, 5, -1, 42] {
-            let mut mt = Mt::from_seed(seed);
-            let mut fair = 10_000.0_f64;
-            for _ in 0..4_000 {
-                let gap = mt.expovariate(gap_lambda);
-                let frac = gap - (gap as i64 as f64);
-                let dist_int = frac.min(1.0 - frac);
-                assert!(
-                    dist_int > 1e-8,
-                    "seed {seed} gap {gap} sits {dist_int} from an integer"
-                );
-                fair += mt.gauss(0.0, 0.35);
-                let frac = fair - fair.floor();
-                let dist_half = (frac - 0.5).abs();
-                assert!(
-                    dist_half > 1e-8,
-                    "seed {seed} fair {fair} sits {dist_half} from a half tick"
-                );
-            }
         }
     }
 }
