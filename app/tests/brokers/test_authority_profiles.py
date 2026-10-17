@@ -24,13 +24,14 @@ from brokers.authority_profiles import (
     ClaimTicket,
     ProfileRefused,
     _record_landed,
+    _settle_completed,
     handoff_to_gateway,
     load_profile,
     load_profile_file,
     model_output_grants_authority,
     reconcile_handoff_to_gateway,
 )
-from brokers.gateway import OrderGateway, PaperOrderGateway
+from brokers.gateway import GateOutcome, OrderGateway, PaperOrderGateway
 from config.settings import Mode
 from tests.brokers.conftest import build_scenario
 
@@ -105,6 +106,14 @@ def _refuse(fn) -> str:
     return caught.value.code
 
 
+def _paper_submit_kwargs(scenario, **overrides):
+    # These fixtures create analysis in generation zero. Keep that lineage
+    # fixed: a subsequent blackout must not refresh it when building kwargs.
+    kwargs = scenario.submit_kwargs(analysis_vendor="claude", analysis_generation=0)
+    kwargs.update(overrides)
+    return kwargs
+
+
 # Positive calls in this module declare the profile's own paper bindings. The
 # store still refuses an omitted or mismatched binding; those tests pass
 # enforce_bindings=False and the raw values.
@@ -159,7 +168,7 @@ def _handoff_row(path, client_order_id):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT handoff_state, handoff_done, kill FROM reservations "
+        "SELECT handoff_state, handoff_done, kill, claimed_at, claim_generation FROM reservations "
         "LEFT JOIN controls USING (account_id, venue, environment) "
         "WHERE client_order_id = ?",
         (client_order_id,),
@@ -605,7 +614,7 @@ def test_paper_handoff_still_goes_through_the_gateway(st, tmp_path):
         store, gateway, profile_id="profile-paper", action="submit_paper",
         client_order_id="gw-refused", notional=Decimal(str(scenario.order.notional)),
         actor="stop-owner", now=now, submit_args=(scenario.order,),
-        submit_kwargs=scenario.submit_kwargs(), model_output=_VALID_MODEL,
+        submit_kwargs=_paper_submit_kwargs(scenario), model_output=_VALID_MODEL,
         **_PAPER_BINDINGS,
     )
     assert refused.reached_gateway is True
@@ -617,7 +626,7 @@ def test_paper_handoff_still_goes_through_the_gateway(st, tmp_path):
         store, gateway, profile_id="profile-paper", action="submit_paper",
         client_order_id="gw-refused", notional=Decimal(str(scenario.order.notional)),
         actor="stop-owner", now=now, submit_args=(scenario.order,),
-        submit_kwargs=scenario.submit_kwargs(), model_output=_VALID_MODEL,
+        submit_kwargs=_paper_submit_kwargs(scenario), model_output=_VALID_MODEL,
         **_PAPER_BINDINGS,
     )
     assert replay.reached_gateway is True
@@ -887,17 +896,17 @@ def test_caller_set_execution_scope_is_not_paper_authority(st, tmp_path):
     assert store.consumption("profile-b") == (Decimal("0.00"), 0)
 
 
-def test_failed_submit_keeps_the_client_order_reusable(st, tmp_path):
+def test_failed_submit_keeps_the_client_order_reusable(st, tmp_path, monkeypatch):
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
     calls = {"n": 0}
-    real_submit = gateway.submit
+    real_submit = PaperOrderGateway.submit
 
-    def _counting(order, **kwargs):
+    def _counting(self, order, **kwargs):
         calls["n"] += 1
-        return real_submit(order, **kwargs)
+        return real_submit(self, order, **kwargs)
 
-    gateway.submit = _counting
+    monkeypatch.setattr(PaperOrderGateway, "submit", _counting)
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
     path = tmp_path / "failed.sqlite"
     store = AuthorityProfileStore(path)
@@ -915,7 +924,7 @@ def test_failed_submit_keeps_the_client_order_reusable(st, tmp_path):
     call = dict(
         profile_id="profile-b", action="submit_paper", client_order_id="fail-1",
         notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
-        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
         model_output=_VALID_MODEL, **_PAPER_BINDINGS,
     )
     first = handoff_to_gateway(store, gateway, **call)
@@ -934,7 +943,7 @@ def test_failed_submit_keeps_the_client_order_reusable(st, tmp_path):
     assert store.consumption("profile-b") == (Decimal(str(scenario.order.notional)), 1)
 
 
-def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
+def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path, monkeypatch):
     """A second claim on an owned in_progress handoff is refused: two retries can
     never both enter ``gateway.submit``. The abandoned claim is re-owned only
     through ``reconcile_handoff_to_gateway``, which first checks the gateway's
@@ -945,15 +954,15 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
     calls = {"n": 0}
-    real_submit = gateway.submit
+    real_submit = PaperOrderGateway.submit
 
-    def _flaky(order, **kwargs):
+    def _flaky(self, order, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("crash before submit returned")
-        return real_submit(order, **kwargs)
+        return real_submit(self, order, **kwargs)
 
-    gateway.submit = _flaky
+    monkeypatch.setattr(PaperOrderGateway, "submit", _flaky)
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
     path = tmp_path / "crash.sqlite"
     store = AuthorityProfileStore(path)
@@ -971,7 +980,7 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
     call = dict(
         profile_id="profile-b", action="submit_paper", client_order_id="crash-1",
         notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
-        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
         model_output=_VALID_MODEL, **_PAPER_BINDINGS,
     )
     with pytest.raises(RuntimeError):
@@ -988,7 +997,7 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
     assert _refuse(
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="crash-1",
-            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
             now=now,
         )
     ) == "claim_leased"
@@ -1000,9 +1009,10 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
     # on the signed chain, re-owns the claim under a new generation, and
     # submits exactly once.
     later = now + CLAIM_LEASE + timedelta(seconds=1)
+    scenario.clock._at = later
     reconciled = reconcile_handoff_to_gateway(
         store, gateway, client_order_id="crash-1",
-        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
         now=later,
     )
     assert calls["n"] == 2
@@ -1041,13 +1051,13 @@ def test_reconcile_completes_a_landed_submit_without_a_second_one(st, tmp_path):
     )
     ticket = store.claim_handoff("landed-1", now=now, awaiting_submit=True)
     assert isinstance(ticket, ClaimTicket)
-    outcome = gateway.submit(scenario.order, **scenario.submit_kwargs())
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
     assert outcome.ok is True
     assert broker.calls == 1
     # Crash between submit returning and complete_handoff: still in_progress.
     result = reconcile_handoff_to_gateway(
         store, gateway, client_order_id="landed-1",
-        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
         now=now,
     )
     assert result.reached_gateway is False
@@ -1091,15 +1101,198 @@ def test_stale_claim_generation_is_a_noop_refusal(st, tmp_path):
     assert _refuse(
         lambda: store.fail_handoff("stale-1", generation=ticket.generation + 1)
     ) == "stale_claim"
-    outcome = gateway.submit(scenario.order, **scenario.submit_kwargs())
+    outcome = gateway.submit(scenario.order, **_paper_submit_kwargs(scenario))
     assert outcome.ok is True
-    store.complete_handoff("stale-1", generation=ticket.generation)
+    store.complete_handoff(
+        "stale-1", generation=ticket.generation, gateway=gateway, ladder=scenario.ladder
+    )
     # A stale owner's write after completion is refused; the row is kept.
     assert _refuse(
         lambda: store.fail_handoff("stale-1", generation=ticket.generation)
     ) == "stale_claim"
     row = _handoff_row(path, "stale-1")
     assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
+
+
+@pytest.mark.parametrize("recovery", [False, True], ids=["fresh", "expired-claim"])
+def test_handoff_ignores_instance_submit_override(st, tmp_path, monkeypatch, recovery):
+    """4302176363: an exact gateway type still cannot supply its own submitter."""
+    from types import SimpleNamespace
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    replacements = []
+
+    def forged_submit(*args, **kwargs):
+        replacements.append((args, kwargs))
+        return GateOutcome(True, "submitted", "fabricated success")
+
+    monkeypatch.setattr(gateway, "submit", forged_submit)
+    # The order is otherwise valid, but this approval has no persisted or
+    # signed authority. The actual gateway must refuse at gate (e).
+    invalid_approval = SimpleNamespace(id="unpersisted-approval")
+    kwargs = _paper_submit_kwargs(scenario, approval=invalid_approval)
+    notional = Decimal(str(scenario.order.notional))
+    if recovery:
+        store.authorize(
+            "profile-b", action="submit_paper", client_order_id="override-1",
+            notional=notional, actor="stop-owner", now=now, order_ref=str(scenario.order.id),
+        )
+        store.claim_handoff("override-1", now=now, awaiting_submit=True)
+        result = reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="override-1", submit_args=(scenario.order,),
+            submit_kwargs=kwargs, now=now + CLAIM_LEASE + timedelta(seconds=1),
+        )
+    else:
+        result = handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="override-1", notional=notional, actor="stop-owner", now=now,
+            submit_args=(scenario.order,), submit_kwargs=kwargs, **_PAPER_BINDINGS,
+        )
+    assert replacements == []
+    assert result.reached_gateway is True
+    assert result.outcome.ok is False
+    assert result.outcome.stage == "approval"
+    assert broker.calls == 0
+    row = _handoff_row(store.path, "override-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("failed", 0)
+
+
+@pytest.mark.parametrize("disabled", [False, None, 0, 1, "true"])
+def test_paper_gateway_refuses_disabling_analysis_generation(st, disabled):
+    """4302211771: only explicit True or the safe default is admitted."""
+    with pytest.raises(ValueError, match="requires analysis generation"):
+        PaperOrderGateway(_CountingPaper(), st=st, require_analysis_generation=disabled)
+
+
+@pytest.mark.parametrize("lineage", ["missing", "missing-after-blackout", "pre-blackout"])
+def test_default_paper_gateway_requires_fresh_lineage(st, tmp_path, lineage):
+    """4302211771: default construction cannot silently skip the freshness check."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    kwargs = _paper_submit_kwargs(scenario)
+    if lineage != "missing":
+        scenario.breaker.enter_watch_only("claude", "synthetic stale-data blackout")
+        scenario.breaker.recover_from_watch_only("claude", Mode.paper)
+        scenario.ladder.set_mode(Mode.paper, actor="op")
+        assert scenario.breaker.watch_only_reason() is None
+        assert scenario.breaker.current_generation("claude") > kwargs["analysis_generation"]
+    if lineage.startswith("missing"):
+        del kwargs["analysis_vendor"]
+        del kwargs["analysis_generation"]
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    result = handoff_to_gateway(
+        store, gateway, profile_id="profile-b", action="submit_paper",
+        client_order_id="lineage-1", notional=Decimal(str(scenario.order.notional)),
+        actor="stop-owner", now=now, submit_args=(scenario.order,), submit_kwargs=kwargs,
+        **_PAPER_BINDINGS,
+    )
+    assert result.outcome.ok is False
+    assert result.outcome.stage == "analysis_freshness"
+    assert broker.calls == 0
+    row = _handoff_row(store.path, "lineage-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("failed", 0)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    ["missing-gateway", "missing-ladder", "no-transition", "forged-lookup",
+     "other-order", "invalid-signature", "unavailable-chain"],
+)
+@pytest.mark.parametrize("path", ["completion", "settlement"])
+def test_claim_ticket_cannot_complete_without_signed_submission(
+    st, tmp_path, monkeypatch, evidence, path,
+):
+    """4302211775: a valid claim ticket cannot suppress an unsubmitted order."""
+    from sqlalchemy import select
+
+    from schemas.models.audit_entry import AuditEntry
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    order_ref = str(scenario.order.id)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="completion-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=order_ref + "-other" if evidence == "other-order" else order_ref,
+    )
+    ticket = store.claim_handoff("completion-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    if evidence in {"other-order", "invalid-signature"}:
+        assert gateway.submit(scenario.order, **_paper_submit_kwargs(scenario)).ok is True
+    if evidence == "invalid-signature":
+        with st.session_factory() as session:
+            entries = session.execute(select(AuditEntry)).scalars().all()
+            submitted = [
+                entry for entry in entries
+                if (entry.refs or {}).get("row_id") == order_ref
+                and (entry.payload or {}).get("to") == "submitted"
+            ]
+            assert len(submitted) == 1
+            submitted[0].entry_hash = "0" * 64
+            session.commit()
+    if evidence == "forged-lookup":
+        monkeypatch.setattr(gateway, "_order_submitted_on_chain", lambda *_args: True)
+        monkeypatch.setattr(gateway, "_resolve_state", lambda *_args: st)
+    if evidence == "unavailable-chain":
+        def unavailable(*_args):
+            raise RuntimeError("signed chain unavailable")
+
+        monkeypatch.setattr(OrderGateway, "_order_submitted_on_chain", unavailable)
+    kwargs = {}
+    if evidence != "missing-gateway":
+        kwargs["gateway"] = gateway
+    if evidence not in {"missing-gateway", "missing-ladder"}:
+        kwargs["ladder"] = scenario.ladder
+
+    def complete():
+        if path == "completion":
+            return store.complete_handoff("completion-1", generation=ticket.generation, **kwargs)
+        return _settle_completed(
+            store, kwargs.get("gateway"), "completion-1", order_ref, ticket.generation,
+            {"ladder": kwargs.get("ladder")}, now,
+        )
+
+    assert _refuse(complete) == "gateway_identity"
+    row = _handoff_row(store.path, "completion-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+    # Completion refusal must not turn a future handoff into a completed replay.
+    assert _refuse(
+        lambda: store.claim_handoff("completion-1", now=now, awaiting_submit=True)
+    ) == "handoff_in_progress"
+    assert broker.calls == (1 if evidence in {"other-order", "invalid-signature"} else 0)
 
 
 def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
@@ -1133,7 +1326,7 @@ def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
     def reconcile(client_order_id):
         return reconcile_handoff_to_gateway(
             store, gateway, client_order_id=client_order_id,
-            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
             now=now,
         )
 
@@ -1224,7 +1417,7 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         assert isinstance(ticket, ClaimTicket)
         if state == "failed":
             store.fail_handoff("forge-1", generation=ticket.generation)
-    assert gateway.submit(scenario.order, **scenario.submit_kwargs()).ok is True
+    assert gateway.submit(scenario.order, **_paper_submit_kwargs(scenario)).ok is True
     assert gateway._order_submitted_on_chain(st, order_ref) is True
     store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
 
@@ -1241,7 +1434,7 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         assert _handoff_row(store.path, "forge-1")["kill"] == 1
         assert broker.calls == 1
 
-    kwargs = scenario.submit_kwargs()
+    kwargs = _paper_submit_kwargs(scenario)
     reconcile_paths = {
         "public": lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forge-1", submit_args=(scenario.order,),
@@ -1284,7 +1477,7 @@ def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatc
         raise RuntimeError("signed chain unavailable")
 
     with monkeypatch.context() as patch:
-        patch.setattr(gateway, "_order_submitted_on_chain", unavailable_chain)
+        patch.setattr(OrderGateway, "_order_submitted_on_chain", unavailable_chain)
         for reconcile in reconcile_paths.values():
             assert _refuse(reconcile) == "gateway_identity"
             assert_unresolved()
@@ -1364,7 +1557,7 @@ def test_reconcile_rechecks_account_and_notional_against_the_reservation(st, tmp
     assert _refuse(
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forged-1",
-            submit_args=(forged_account,), submit_kwargs=scenario.submit_kwargs(),
+            submit_args=(forged_account,), submit_kwargs=_paper_submit_kwargs(scenario),
             now=now,
         )
     ) == "account_mismatch"
@@ -1384,14 +1577,14 @@ def test_reconcile_rechecks_account_and_notional_against_the_reservation(st, tmp
     assert _refuse(
         lambda: reconcile_handoff_to_gateway(
             store, gateway, client_order_id="forged-2",
-            submit_args=(forged_notional,), submit_kwargs=scenario.submit_kwargs(),
+            submit_args=(forged_notional,), submit_kwargs=_paper_submit_kwargs(scenario),
             now=now,
         )
     ) == "notional_mismatch"
     assert broker.calls == 0
 
 
-def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path):
+def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path, monkeypatch):
     """Add a lease on in-flight claims (CSL reviewer item 4): an in_progress
     submit cannot be taken over and sent twice. Before the fix, a reconciler
     could re-own an abandoned claim immediately, with no regard for whether
@@ -1403,15 +1596,15 @@ def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path):
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
     calls = {"n": 0}
-    real_submit = gateway.submit
+    real_submit = PaperOrderGateway.submit
 
-    def _flaky(order, **kwargs):
+    def _flaky(self, order, **kwargs):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("crash before submit returned")
-        return real_submit(order, **kwargs)
+        return real_submit(self, order, **kwargs)
 
-    gateway.submit = _flaky
+    monkeypatch.setattr(PaperOrderGateway, "submit", _flaky)
     scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
     path = tmp_path / "lease-race.sqlite"
     store = AuthorityProfileStore(path)
@@ -1433,9 +1626,10 @@ def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path):
     assert isinstance(ticket, ClaimTicket)
 
     def reconcile(now_):
+        scenario.clock._at = now_
         return reconcile_handoff_to_gateway(
             store, gateway, client_order_id="lease-1",
-            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            submit_args=(scenario.order,), submit_kwargs=_paper_submit_kwargs(scenario),
             now=now_,
         )
 
@@ -1572,18 +1766,291 @@ def test_claim_fence_never_rewinds_lease_on_lagging_clock(tmp_path):
             conn.close()
 
     before = claimed_at()
-    store._confirm_claim_before_broker_call("mono-1", ticket.generation, now=NOW)
+    with pytest.raises(ProfileRefused) as exc:
+        store._confirm_claim_before_broker_call("mono-1", ticket.generation, now=NOW)
+    assert exc.value.code == "stale_claim"
     assert claimed_at() == before
 
 
 def test_claim_fence_refreshes_lease_with_current_clock(tmp_path):
     """The fence reads the clock when it fires, so claimed_at advances."""
-    from app.brokers import authority_profiles as ap
+    from brokers import authority_profiles as ap
+
+    store = _store(tmp_path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="clock-1",
+        notional="10.00", actor="stop-owner", now=NOW, order_ref="order-1",
+    )
+    ticket = store.claim_handoff("clock-1", now=NOW, awaiting_submit=True)
 
     class _Clock:
         def now(self):
             return NOW + timedelta(seconds=80)
 
-    fired = ap._fence_now(object(), {"clock": _Clock()}, NOW)()
+    fired = ap._fence_now(object(), {"clock": _Clock()})()
     assert fired == NOW + timedelta(seconds=80)
-    assert ap._fence_now(object(), {}, NOW)() == NOW
+    store._confirm_claim_before_broker_call("clock-1", ticket.generation, now=fired)
+    assert _handoff_row(store.path, "clock-1")["claimed_at"] == fired.isoformat()
+    assert _refuse(
+        lambda: ap._fence_now(object(), {})()
+    ) == "clock"
+
+
+def _claimed_paper_scenario(st, tmp_path):
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="fence-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner", now=now,
+        order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("fence-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    return scenario, store, ticket, broker
+
+
+def test_halt_set_inside_claim_fence_refuses_and_covers_intent(st, tmp_path):
+    """4303448111: HALT arriving during a successful lease CAS wins before transport."""
+    from orchestrator.halt import default_halt_path, set_halt
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    fenced = []
+
+    def fence():
+        store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        )
+        set_halt(default_halt_path(), reason="HALT during claim fence")
+        fenced.append(True)
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+    )
+    assert fenced == [True]
+    assert (outcome.ok, outcome.stage) == (False, "halt")
+    assert broker.calls == 0
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize(
+    "elapsed",
+    [timedelta(microseconds=-1), CLAIM_LEASE,
+     CLAIM_LEASE + timedelta(microseconds=1), timedelta(seconds=171)],
+    ids=["clock-regressed", "lease-boundary", "past-boundary", "171-seconds"],
+)
+def test_claim_fence_cannot_renew_an_expired_or_future_lease(st, tmp_path, elapsed):
+    """5558807159: a delayed owner must not revive its own dead lease."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    before = dict(_handoff_row(store.path, "fence-1"))
+    fence_time = scenario.clock.now() + elapsed
+
+    def fence():
+        store._confirm_claim_before_broker_call("fence-1", ticket.generation, now=fence_time)
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "claim_fence")
+    assert "stale" in outcome.reason
+    assert dict(_handoff_row(store.path, "fence-1")) == before
+    assert broker.calls == 0
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
+    """5558807159: B reclaims at t+171 while A is still running; only B sends."""
+    scenario, store_a, ticket_a, broker = _claimed_paper_scenario(st, tmp_path)
+    store_b = AuthorityProfileStore(store_a.path)
+    initial = scenario.clock.now()
+    tickets_b = []
+
+    def delayed_owner_a_fence():
+        # A has passed the gateway gates but has not entered broker I/O. A
+        # separate store connection models the reconciler taking its lease.
+        scenario.clock._at = initial + timedelta(seconds=171)
+        ticket_b = store_b._reconcile_handoff(
+            "fence-1", order_ref=str(scenario.order.id), now=scenario.clock.now(),
+            gateway=scenario.gateway, ladder=scenario.ladder,
+        )
+        assert isinstance(ticket_b, ClaimTicket)
+        assert ticket_b.generation == ticket_a.generation + 1
+        tickets_b.append(ticket_b)
+        store_a._confirm_claim_before_broker_call(
+            "fence-1", ticket_a.generation, now=scenario.clock.now(),
+        )
+
+    outcome_a = scenario.gateway.submit(
+        scenario.order, claim_fence=delayed_owner_a_fence, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome_a.ok, outcome_a.stage) == (False, "claim_fence")
+    assert broker.calls == 0
+    assert len(tickets_b) == 1
+    row_b = dict(_handoff_row(store_b.path, "fence-1"))
+    assert row_b["claim_generation"] == tickets_b[0].generation
+    assert row_b["claimed_at"] == scenario.clock.now().isoformat()
+
+    # A's consumed nonce stays burned. B needs a fresh capability through the
+    # real gateway, and completion still requires the signed submitted event.
+    scenario.gateway.mint_submit_token(
+        nonce="takeover-b", proposal_id=scenario.order.proposal_id,
+        risk_decision_id=scenario.risk_decision.id, order_tuple_hash=scenario.tuple_hash,
+    )
+    outcome_b = scenario.gateway.submit(
+        scenario.order,
+        claim_fence=lambda: store_b._confirm_claim_before_broker_call(
+            "fence-1", tickets_b[0].generation, now=scenario.clock.now(),
+        ),
+        **_paper_submit_kwargs(scenario, token_nonce="takeover-b"),
+    )
+    assert outcome_b.ok is True
+    store_b.complete_handoff(
+        "fence-1", generation=tickets_b[0].generation,
+        gateway=scenario.gateway, ladder=scenario.ladder,
+    )
+    assert broker.calls == 1
+    assert _handoff_row(store_b.path, "fence-1")["handoff_state"] == "completed"
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("failure", ["raises", "naive", "not-datetime", "missing"])
+def test_claim_fence_clock_failure_refuses_without_writing_lease(st, tmp_path, failure):
+    """5558807159: a bad current clock cannot persist the old handoff timestamp."""
+    from brokers import authority_profiles as ap
+
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    before = dict(_handoff_row(store.path, "fence-1"))
+
+    class BrokenClock:
+        def now(self):
+            if failure == "raises":
+                raise RuntimeError("clock unavailable")
+            if failure == "naive":
+                return scenario.clock.now().replace(tzinfo=None)
+            return "not a timestamp"
+
+    def fence():
+        # Use the same composition as both production handoff entry points.
+        # An unavailable state clock must also refuse, without a fallback.
+        gateway = object() if failure == "missing" else scenario.gateway
+        clock_kwargs = {} if failure == "missing" else {"clock": BrokenClock()}
+        store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=ap._fence_now(gateway, clock_kwargs)(),
+        )
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "claim_fence")
+    assert "clock" in outcome.reason
+    assert dict(_handoff_row(store.path, "fence-1")) == before
+    assert broker.calls == 0
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("recovery", [False, True], ids=["handoff", "reconcile"])
+def test_handoff_clock_failure_cannot_fall_back_to_handoff_time(
+    st, tmp_path, monkeypatch, recovery,
+):
+    """5558807159: both production entry points refuse a clock that fails at the fence."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway)
+    store = _store(tmp_path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    broken = []
+
+    class FenceClock:
+        def now(self):
+            if broken:
+                raise RuntimeError("clock failed after the final audit read")
+            return scenario.clock.now()
+
+    real_audit_check = gateway._final_audit_authority
+
+    def audit_check(st_arg):
+        result = real_audit_check(st_arg)
+        broken.append(True)
+        return result
+
+    monkeypatch.setattr(gateway, "_final_audit_authority", audit_check)
+    kwargs = _paper_submit_kwargs(scenario, clock=FenceClock())
+    notional = Decimal(str(scenario.order.notional))
+    if recovery:
+        store.authorize(
+            "profile-b", action="submit_paper", client_order_id="clock-failure-1",
+            notional=notional, actor="stop-owner", now=now, order_ref=str(scenario.order.id),
+        )
+        store.claim_handoff("clock-failure-1", now=now, awaiting_submit=True)
+        scenario.clock._at = now + CLAIM_LEASE + timedelta(seconds=1)
+        result = reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="clock-failure-1",
+            submit_args=(scenario.order,), submit_kwargs=kwargs, now=scenario.clock.now(),
+        )
+    else:
+        result = handoff_to_gateway(
+            store, gateway, profile_id="profile-b", action="submit_paper",
+            client_order_id="clock-failure-1", notional=notional, actor="stop-owner", now=now,
+            submit_args=(scenario.order,), submit_kwargs=kwargs, **_PAPER_BINDINGS,
+        )
+    assert broken == [True]
+    assert (result.outcome.ok, result.outcome.stage) == (False, "claim_fence")
+    assert "clock" in result.outcome.reason
+    assert broker.calls == 0
+    row = _handoff_row(store.path, "clock-failure-1")
+    assert row["claimed_at"] == scenario.clock.now().isoformat()
+    assert (row["handoff_state"], row["handoff_done"]) == ("failed", 0)
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+@pytest.mark.parametrize("mutation", ["paper-broker", "other-adapter", "broker-type", "scope"])
+def test_claim_fence_cannot_swap_transport_or_paper_scope(st, tmp_path, mutation):
+    """4303485166: callback mutations never reach either the old or new transport."""
+    scenario, store, ticket, broker = _claimed_paper_scenario(st, tmp_path)
+    swapped = _ProbeBroker() if mutation == "other-adapter" else _CountingPaper()
+
+    class OtherPaper(_CountingPaper):
+        pass
+
+    def fence():
+        store._confirm_claim_before_broker_call(
+            "fence-1", ticket.generation, now=scenario.clock.now(),
+        )
+        if mutation == "scope":
+            scenario.gateway._execution_scope = "live"
+        elif mutation == "broker-type":
+            broker.__class__ = OtherPaper
+        else:
+            scenario.gateway._broker = swapped
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+    )
+    assert (outcome.ok, outcome.stage) == (False, "transport_scope")
+    assert broker.calls == swapped.calls == 0
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok

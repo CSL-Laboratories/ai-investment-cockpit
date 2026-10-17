@@ -815,7 +815,7 @@ class OrderGateway:
         two-phase submit (intent -> broker.submit_order -> result), consume the single-use
         approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13).
 
-        ``claim_fence``, when given, is called immediately before the broker transport
+        ``claim_fence``, when given, is called before the final safety checks and transport
         (CSL-218): an external claim/lease owner (the paper-profile store) gets one last
         conditional-update check that its fencing token is still current, so a caller
         whose claim was already re-owned elsewhere is refused here instead of reaching
@@ -937,10 +937,51 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
+            # Pin the transport before the potentially blocking, caller-supplied fence.
+            # The callback cannot replace the adapter or widen its paper scope.
+            broker = self._broker
+            broker_type = type(broker)
+            execution_scope = self._execution_scope
+            paper_transport = isinstance(self, PaperOrderGateway)
+            if claim_fence is not None:
+                try:
+                    claim_fence()
+                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason=f"claim fence refused the broker call: {exc}",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+
+            from brokers.alpaca_paper import AlpacaPaperBroker
+
+            if (
+                self._broker is not broker
+                or type(broker) is not broker_type
+                or self._execution_scope != execution_scope
+                or (paper_transport and (
+                    self._execution_scope != "paper"
+                    or not isinstance(broker, AlpacaPaperBroker)
+                ))
+            ):
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="transport_scope",
+                    reason="broker transport changed during the claim fence",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
+
             # D3 linearization point. A denial admitted first wins. Authorization first permits
             # this already-authorized call to enter and later admissions bar subsequent calls.
-            # The short lock is released before broker I/O; nothing fallible or user-controlled
-            # occurs between that release and the private transport entry.
+            # The fence has returned before admission. The short lock is released
+            # before the final fail-closed HALT probe and private transport entry.
             final_stage = None
             final_reason = None
             with st.safety_admission_lock:
@@ -972,24 +1013,18 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
-            # CSL-218: the final fencing check, as close to the broker call as possible.
-            # ``claim_fence`` is a conditional update against the claim owner's own
-            # store, not a local predicate — a caller whose claim generation was
-            # already re-owned by a concurrent reconciler is refused HERE, before any
-            # transport, never after.
-            if claim_fence is not None:
-                try:
-                    claim_fence()
-                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
-                    return self._abort_after_intent(
-                        st,
-                        order,
-                        intent,
-                        stage="claim_fence",
-                        reason=f"claim fence refused the broker call: {exc}",
-                        actor=producing_runtime,
-                        resolved_hash=resolved_hash,
-                    )
+            # HALT may arrive while the claim store blocks or during the final
+            # admission checks. Probe after both, immediately before transport.
+            if _halt_active(default_halt_path()):
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="halt",
+                    reason="HALT set immediately before broker call (SEC-04)",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
 
             # The private broker call (SEC-03: never a module global / string dispatch).
             # ``client_order_id`` is stable transport metadata and cannot change the approved
@@ -998,7 +1033,7 @@ class OrderGateway:
                 # F1: the response-shape contract is validated INSIDE the protected region,
                 # so a broker that RETURNS garbage (None/str/non-JSON-native fields) takes
                 # the same covered abort path as a broker that raises.
-                result = _sanitize_broker_response(self._broker.submit_order(broker_request))
+                result = _sanitize_broker_response(broker.submit_order(broker_request))
             except BaseException as exc:                                 # noqa: BLE001
                 # BUG-062: a broker failure between the intent and its result used to leave
                 # the SEC-13 intent dangling FOREVER. Complete the
@@ -1160,7 +1195,7 @@ class OrderGateway:
 class PaperOrderGateway(OrderGateway):
     """Paper transport by concrete type, not by a caller-set scope string.
 
-    Construction forces the paper scope and the admitted paper adapter. A
+    Construction forces the paper scope, fresh analysis and the admitted paper adapter. A
     plain ``OrderGateway(..., execution_scope="paper")`` is a different type
     and is not paper authority for a profile handoff.
     """
@@ -1172,7 +1207,10 @@ class PaperOrderGateway(OrderGateway):
             raise ValueError("paper gateway requires the admitted paper adapter")
         if kwargs.get("execution_scope", "paper") != "paper":
             raise ValueError("paper gateway cannot select another scope")
+        if kwargs.get("require_analysis_generation", True) is not True:
+            raise ValueError("paper gateway requires analysis generation checks")
         kwargs["execution_scope"] = "paper"
+        kwargs["require_analysis_generation"] = True
         super().__init__(broker, **kwargs)
 
     def submit(self, order, **kwargs):
