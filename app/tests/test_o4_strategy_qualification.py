@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
+
+import jsonschema
 
 ROOT = Path(__file__).resolve().parents[2]
 O4 = ROOT / "docs" / "replacement" / "outcomes" / "O4"
@@ -39,6 +43,8 @@ FAILURES = (
     "O4 negative control FAIL measured_costs_on_unrun_experiment:",
     "O4 negative control FAIL promotion_stage_authorized:",
     "O4 negative control FAIL promotion_gates:",
+    "O4 negative control FAIL missing_promotion_rung:",
+    "O4 negative control FAIL promotion_gates:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -64,15 +70,66 @@ def test_o4_negative_controls_fail_as_designed(capsys) -> None:
         sys.stdout.flush()
     assert completed.returncode == 0, completed.stderr
     lines = completed.stdout.splitlines()
-    assert len(lines) == 13
+    assert len(lines) == len(FAILURES) + 1
     for line, prefix in zip(lines, FAILURES):
         assert line.startswith(prefix)
-    assert lines[12] == CHECKED
+    assert lines[-1] == CHECKED
     assert "PASS" not in completed.stdout
     assert "contract_frozen" not in completed.stdout
     source = (O4 / "validate.py").read_text(encoding="utf-8")
     for banned in ("import socket", "import urllib", "import httpx", "import requests"):
         assert banned not in source
+
+
+def test_o4_requires_every_nonlive_rung_in_order() -> None:
+    assess = runpy.run_path(str(O4 / "validate.py"))["assess"]
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    schema = json.loads((O4 / "schemas/promotion-protocol.schema.json").read_text(encoding="utf-8"))
+    validator = jsonschema.Draft202012Validator(schema)
+    stages = packet["promotion_protocol"]["stages"]
+    assert [stage["id"] for stage in stages] == ["replay", "simulation", "demo", "shadow", "paper"]
+    assert assess(packet) == []
+    assert validator.is_valid(packet["promotion_protocol"])
+    for index in range(len(stages)):
+        missing = deepcopy(packet)
+        del missing["promotion_protocol"]["stages"][index]
+        assert not validator.is_valid(missing["promotion_protocol"])
+        assert [failure.code for failure in assess(missing)] == ["missing_promotion_rung"]
+
+        if index == 0:
+            continue
+        skipped = deepcopy(packet)
+        skipped["promotion_protocol"]["stages"][index]["requires_prior_stage"] = None
+        assert [failure.code for failure in assess(skipped)] == ["schema"]
+        reordered = deepcopy(packet)
+        rungs = reordered["promotion_protocol"]["stages"]
+        rungs[index - 1], rungs[index] = rungs[index], rungs[index - 1]
+        assert not validator.is_valid(reordered["promotion_protocol"])
+        assert all(failure.code == "schema" for failure in assess(reordered))
+
+
+def test_o4_enforces_gates_and_refuses_authority_at_every_rung() -> None:
+    assess = runpy.run_path(str(O4 / "validate.py"))["assess"]
+    packet = json.loads((O4 / "fixtures/candidate-packet.json").read_text(encoding="utf-8"))
+    for index, stage in enumerate(packet["promotion_protocol"]["stages"]):
+        authorized = deepcopy(packet)
+        authorized["promotion_protocol"]["stages"][index]["authorized"] = True
+        assert [failure.code for failure in assess(authorized)] == ["promotion_stage_authorized"]
+        for gate, field in (
+            ("entry_gates", "criteria"),
+            ("entry_gates", "required_evidence"),
+            ("exit_gates", "criteria"),
+        ):
+            for position in range(len(stage[gate][field])):
+                weakened = deepcopy(packet)
+                values = weakened["promotion_protocol"]["stages"][index][gate][field]
+                # Keep schema shape valid to exercise the semantic gate checker.
+                values[position] = "irrelevant_substitute"
+                assert [failure.code for failure in assess(weakened)] == ["promotion_gates"]
+    for field in ("authorized", "limited_live_authorized", "broader_live_authorized"):
+        live = deepcopy(packet)
+        live["promotion_protocol"]["live"][field] = True
+        assert [failure.code for failure in assess(live)] == ["schema"]
 
 
 def test_o4_protocol_keeps_research_and_owner_decisions() -> None:

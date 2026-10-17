@@ -17,8 +17,8 @@
     "strategy_activation_authorized": {"const": false},
     "stages": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "minItems": 5,
+      "maxItems": 5,
       "prefixItems": [
         {
           "type": "object",
@@ -55,10 +55,76 @@
             "failure_policy"
           ],
           "properties": {
-            "id": {"const": "demo"},
+            "id": {"const": "simulation"},
             "order": {"const": 2},
             "authorized": {"type": "boolean"},
             "requires_prior_stage": {"const": "replay"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "demo"},
+            "order": {"const": 3},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "simulation"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "shadow"},
+            "order": {"const": 4},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "demo"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
+          "properties": {
+            "id": {"const": "paper"},
+            "order": {"const": 5},
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "shadow"},
             "entry_gates": {"$ref": "#/$defs/entry_gates"},
             "exit_gates": {"$ref": "#/$defs/exit_gates"},
             "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
@@ -69,10 +135,12 @@
     "live": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["authorized", "in_this_contract"],
+      "required": ["authorized", "in_this_contract", "limited_live_authorized", "broader_live_authorized"],
       "properties": {
         "authorized": {"const": false},
-        "in_this_contract": {"const": false}
+        "in_this_contract": {"const": false},
+        "limited_live_authorized": {"const": false},
+        "broader_live_authorized": {"const": false}
       }
     },
     "blocked_because": {
