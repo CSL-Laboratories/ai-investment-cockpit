@@ -10,6 +10,7 @@ starts from the same numbers.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import random
 import subprocess
@@ -140,7 +141,39 @@ def test_token_bucket_replay_matches_and_starts_empty():
     assert last == python._last
 
 
+def _same_number(left, right) -> None:
+    if (
+        isinstance(left, float)
+        and isinstance(right, float)
+        and math.isnan(left)
+        and math.isnan(right)
+    ):
+        return
+    assert left == right
+
+
 @_needs_rust
+def test_token_bucket_nan_matches_python_max_and_min():
+    """A NaN on the right of ``max`` / ``min`` does not replace the left, as in Python."""
+    cases = [
+        (1.0, 2.0, 0.0, 0.0, float("nan")),
+        (float("nan"), 2.0, 0.0, 0.0, 1.0),
+        (1.0, float("nan"), 0.0, 0.0, 1.0),
+        (1.0, 2.0, float("nan"), 0.0, 1.0),
+        (float("inf"), 2.0, 0.0, 0.0, 1.0),
+        (1.0, 2.0, 0.0, 0.0, float("inf")),
+        (0.0, 2.0, 0.0, 0.0, float("inf")),
+    ]
+    for rate, capacity, tokens, last, now in cases:
+        rust = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+        rust.tokens = tokens
+        python = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+        python.tokens = tokens
+        assert rust.allow(now) is python_allow(python, now)
+        _same_number(rust.tokens, python.tokens)
+        _same_number(rust._last, python._last)
+
+
 @_needs_rust
 def test_a_lone_surrogate_shares_one_lru_with_utf8_keys():
     key = "\ud800"
