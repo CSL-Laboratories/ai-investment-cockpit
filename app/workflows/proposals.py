@@ -28,7 +28,7 @@ from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.sell_reservations import pending_sell_reservations
-from bridge.embeds import render_proposal_embed
+from bridge.embeds import render_proposal_embed, render_size_pending_embed
 from core.ids import new_id
 from core.proposal_authority import proposal_payload_hash
 from ingest.normalize import escape_untrusted
@@ -470,10 +470,17 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                                ("outbound scrub blocked (SEC-09)",))
 
     # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
+    # No risk decision and no order. The embed is the operator's size-pending card.
     if proposal.get("quantity") is None and proposal.get("notional") is None:
         record = _persist_record(state, clock, proposal=proposal, status="needs_human",
                                  flagged=False, job_id=job.id)
-        return ProposalOutcome("needs_human", proposal, record, None, None, None,
+
+        def _excerpt(ref) -> str:
+            item = resolve_raw(parquet_root, str(ref), state=state)
+            return escape_untrusted(str(item.get("headline", "")))[:200]
+
+        embed = render_size_pending_embed(record.payload, raw_excerpt_fn=_excerpt)
+        return ProposalOutcome("needs_human", proposal, record, None, None, embed,
                                ("neither quantity nor notional present",))
 
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------

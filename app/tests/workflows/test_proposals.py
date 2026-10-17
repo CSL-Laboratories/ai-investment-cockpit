@@ -233,7 +233,14 @@ def test_sizeless_proposal_needs_human(st, clock, tmp_path):
                              parquet_root=tmp_path / "raw")
     assert outcome.status == "needs_human"
     assert outcome.order is None
+    assert outcome.embed is not None
+    assert outcome.embed["size_pending"] is True
+    assert outcome.embed["order_id"] is None
+    assert outcome.embed["risk"]["human_required"] is True
+    assert outcome.embed["risk"]["decision"] is None
     assert _rows(st, ProposalRecord)[0].status == "needs_human"
+    assert _rows(st, RiskDecision) == []
+    assert _rows(st, Order) == []
 
 
 def test_still_malformed_deep_output_mints_no_record(st, clock, tmp_path):

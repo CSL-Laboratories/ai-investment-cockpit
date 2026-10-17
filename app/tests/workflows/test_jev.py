@@ -314,7 +314,7 @@ def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
     st.settings.decision_runtime = DecisionRuntime.jev
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "upstream"})
+        return httpx.Response(400, json={"error": "bad_request"})
 
     transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
     result, job = _call(st, transport, _client(handler))
@@ -325,6 +325,59 @@ def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
     assert BreakerEngine(st).is_watch_only("jev") is False
     assert BreakerEngine(st).is_watch_only("claude") is False
     assert ModeLadder(st).current() is Mode.read_only
+
+
+def test_upstream_5xx_opens_jev_watch_only_and_falls_back(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": "unavailable"})
+
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+    )
+    assert result.status == OK
+    assert job.runtime == "claude"
+    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
+    assert BreakerEngine(st).is_watch_only("jev") is True
+    assert BreakerEngine(st).is_watch_only("claude") is False
+
+
+def test_raising_jev_client_falls_back_to_claude(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("socket melted")
+
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+    )
+    assert result.status == OK
+    assert job.runtime == "claude"
+    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_error"
+    assert BreakerEngine(st).is_watch_only("jev") is False
+
+
+def test_bad_weight_setting_falls_back_to_claude(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.auto
+    st.settings.jev_max_weight = "not-a-number"
+    called = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        called["n"] += 1
+        return _jev_response()
+
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+        decision_weight=10,
+    )
+    assert called["n"] == 0
+    assert result.status == OK
+    assert job.runtime == "claude"
+    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_error"
 
 
 def test_oversized_packet_skips_http_and_uses_claude(st, monkeypatch):

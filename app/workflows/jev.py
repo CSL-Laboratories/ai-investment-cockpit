@@ -394,7 +394,7 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
             response = _post(body, api_key=key, client=http)
         except (httpx.HTTPError, OSError):
             return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
-        if response.status_code == 429:
+        if response.status_code == 429 or response.status_code >= 500:
             return _fallback(
                 "jev_vendor_limit", model, estimated=estimated, dropped=dropped,
                 vendor_limited=True,

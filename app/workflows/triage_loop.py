@@ -442,7 +442,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             dispositions[ev.id] = "escalated"
             escalated.append(ev.id)
             if deliver is not None and outcome.embed is not None \
-                    and outcome.status in ("drafted", "flagged"):
+                    and outcome.status in ("drafted", "flagged", "needs_human"):
                 if not _safe_deliver(deliver, "#proposals", outcome.embed):
                     undelivered.append(ev.id)
         else:

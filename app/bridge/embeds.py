@@ -271,6 +271,56 @@ def render_execution_section(risk_decision, *, audit_facts: dict | None = None) 
     }
 
 
+def render_size_pending_embed(proposal: dict, raw_excerpt_fn=None) -> dict:
+    """Operator card for a proposal that has no size, no order, and no risk decision.
+
+    Risk and execution stay empty on purpose. This card must not look like an
+    approval. The operator still has to set size before any order exists.
+    """
+    p = proposal or {}
+    sources = []
+    for ref in (p.get("source_refs") or []):
+        excerpt = "[excerpt unavailable: size pending]"
+        if raw_excerpt_fn is not None:
+            try:
+                excerpt = raw_excerpt_fn(ref)
+            except Exception as exc:  # noqa: BLE001 - render must not crash
+                excerpt = f"[excerpt unavailable: {exc}]"
+        sources.append({"ref": str(ref)[:128], "excerpt": excerpt})
+    side = (p.get("side") or "").upper()
+    symbol = p.get("symbol") or "?"
+    return {
+        "title": f"{side} {symbol} — size pending",
+        "proposal_id": p.get("proposal_id"),
+        "size_pending": True,
+        "order_id": None,
+        "order": {
+            "symbol": p.get("symbol"),
+            "side": p.get("side"),
+            "asset_type": p.get("asset_type"),
+            "order_type": p.get("order_type"),
+            "quantity": None,
+            "notional": None,
+            "time_horizon": p.get("time_horizon"),
+            "sizing_basis": p.get("sizing_basis"),
+        },
+        "risk": {
+            "decision": None,
+            "checks": [],
+            "failed_checks": [],
+            "warnings": [],
+            "max_allowed_notional": None,
+            "human_required": True,
+            "verified": False,
+            "reason": "size unset; risk was not evaluated and no order was created",
+        },
+        "execution": None,
+        "model_thesis": p.get("thesis"),
+        "model_invalidation": p.get("invalidation"),
+        "sources": sources,
+    }
+
+
 def render_proposal_embed(proposal: dict, risk_decision,
                           raw_excerpt_fn: Callable[[dict], str] | None = None,
                           audit_facts: dict | None = None) -> dict:

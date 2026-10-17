@@ -126,20 +126,29 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             getattr(state.settings, "decision_model", pinned)
         )
     jev_attempt = None
-    if _jev_eligible(
-        selected_runtime, job_class, mode, decision_weight, state.settings, jev_packet,
-    ):
-        if BreakerEngine(state).is_watch_only("jev"):
-            jev_attempt = blocked_jev_attempt(state.settings, "jev_vendor_limit")
-        else:
-            jev_attempt = evaluate_decision(
-                state.settings, jev_packet, symbol=jev_symbol, schema=load_schema(schema_name),
-                client=jev_client, secret_values=_provisioned_secret_values(),
-            )
-            if jev_attempt.vendor_limited:
-                BreakerEngine(state).enter_watch_only(
-                    "jev", "jev vendor limit", actor="agent_calls", state="exhausted",
+    try:
+        jev_eligible = _jev_eligible(
+            selected_runtime, job_class, mode, decision_weight, state.settings, jev_packet,
+        )
+    except Exception:  # noqa: BLE001 - a bad weight must fall back, not skip Claude
+        jev_eligible = False
+        jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
+    if jev_eligible:
+        try:
+            if BreakerEngine(state).is_watch_only("jev"):
+                jev_attempt = blocked_jev_attempt(state.settings, "jev_vendor_limit")
+            else:
+                jev_attempt = evaluate_decision(
+                    state.settings, jev_packet, symbol=jev_symbol,
+                    schema=load_schema(schema_name), client=jev_client,
+                    secret_values=_provisioned_secret_values(),
                 )
+                if jev_attempt.vendor_limited:
+                    BreakerEngine(state).enter_watch_only(
+                        "jev", "jev vendor limit", actor="agent_calls", state="exhausted",
+                    )
+        except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
+            jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
     if jev_accepted:
