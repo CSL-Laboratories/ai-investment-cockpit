@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from config.settings import Mode, Settings
 from core.clock import FrozenClock
-from ingest.normalize import ALLOWED_SOURCES
+from ingest.normalize import ALLOWED_SOURCES, python_to_market_event, to_market_event
 from main import build_ingest_runner
 from orchestrator.ingest_runner import FEED_VIBE_TRADING, IngestRunner
 from orchestrator.scheduler import INGEST_CRON
@@ -125,6 +125,33 @@ def state(tmp_path):
 def test_source_is_allowlisted_and_off_by_default():
     assert "vibe-trading" in ALLOWED_SOURCES
     assert Settings().vibe_trading_enabled is False
+
+
+def test_vibe_trading_stays_on_the_python_normalizer_when_rust_is_loaded(monkeypatch):
+    """The installed wheel's allowlist does not include this source yet."""
+    from ingest import normalize
+
+    class Native:
+        def market_event(self, source, article, symbols, headline, summary, event_type, raw):
+            if source == "vibe-trading":
+                raise AssertionError("sidecar entered the rust normalizer")
+            return (
+                "news", ["AAPL"], "h", "s", f"{source}:{article}", "deadbeef",
+                '{"headline": "h", "summary": "s"}',
+            )
+
+    monkeypatch.setattr(normalize, "_NATIVE", Native())
+    kwargs = dict(
+        source="vibe-trading", article_id="signal:envelope:abc", symbols=[],
+        headline="research_source", summary="", ts=None, event_type="signal:envelope",
+        raw={"kind": "sidecar_envelope"},
+    )
+    assert to_market_event(**kwargs) == python_to_market_event(**kwargs)
+    routed = to_market_event(
+        source="finnhub", article_id="1", symbols=["AAPL"], headline="h",
+        summary="s", ts=None,
+    )
+    assert routed["content_hash"] == "deadbeef"
 
 
 def test_disabled_adapter_does_not_call_the_sidecar():

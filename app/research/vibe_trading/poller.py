@@ -1,9 +1,8 @@
 """Ingest poller that publishes sidecar research through the existing persist path.
 
-CSL-192 forbids workflow edits. The composition root registers this poller on
-the ingest runner when ``COCKPIT_VIBE_TRADING_ENABLED`` is on, so the next
-brew window sees parquet-backed ``vibe-trading`` events without touching
-morning_brew, triage, or OrderGateway.
+The composition root registers this poller when ``COCKPIT_VIBE_TRADING_ENABLED``
+is on. Feature rows enter the decision window. ``signal:envelope`` rows stay
+in storage for replay; morning_brew and triage ignore that event type.
 """
 from __future__ import annotations
 
