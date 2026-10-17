@@ -187,7 +187,9 @@
               "p95": {"type": "number"},
               "p99": {"type": "number"},
               "throughput": {"type": "number"},
-              "rss_bytes": {"type": "integer"}
+              "rss_bytes": {"type": "integer"},
+              "cpu": {"type": "number"},
+              "io": {"type": "number"}
             },
             "required": ["status"]
           }
