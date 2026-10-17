@@ -1626,6 +1626,31 @@ def thread_tail_vetoes(
     return oldest is None or oldest >= after
 
 
+def live_evidence_state(
+    gh: GitHub,
+    cfg: Config,
+    number: int,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Refetch threads and verdict sources. Skip is empty when evidence is complete and unedited."""
+    pr = list_pr(gh, cfg, number)
+    if review_threads_truncated(pr):
+        return "truncated-threads", {}, [], [], []
+    threads = [
+        n for n in ((pr.get("reviewThreads") or {}).get("nodes") or []) if isinstance(n, dict)
+    ]
+    if any(thread_comments_truncated(thread) for thread in threads):
+        return "truncated-comments", {}, [], [], []
+    issue_comments = list_issue_comments(gh, cfg, number)
+    reviews = list_reviews(gh, cfg, number)
+    items = all_codex_items(threads, issue_comments, reviews)
+    if any(
+        is_bot_author(item) and is_codex(login_of(item)) and not is_unedited(item)
+        for item in items
+    ):
+        return "edited-or-unknown-codex-evidence", {}, [], [], []
+    return "", pr, threads, issue_comments, reviews
+
+
 def live_resolve_skip(
     gh: GitHub,
     cfg: Config,
@@ -1636,22 +1661,17 @@ def live_resolve_skip(
     pat_login: str,
 ) -> str:
     """Empty if live evidence still authorizes this resolve; otherwise a skip."""
-    pr = list_pr(gh, cfg, number)
-    if review_threads_truncated(pr):
-        return "truncated-threads"
-    threads = [
-        n for n in ((pr.get("reviewThreads") or {}).get("nodes") or []) if isinstance(n, dict)
-    ]
-    if any(thread_comments_truncated(thread) for thread in threads):
-        return "truncated-comments"
-    issue_comments = list_issue_comments(gh, cfg, number)
-    reviews = list_reviews(gh, cfg, number)
+    skip, pr, threads, issue_comments, reviews = live_evidence_state(gh, cfg, number)
+    if skip:
+        return skip
+    live_head = safe_sha(pr.get("headRefOid"))
+    if not live_head or live_head != sha:
+        return "stale-sha"
+    if pr.get("isDraft") or str(pr.get("state") or "OPEN") not in {"OPEN", "open"}:
+        return "closed-or-draft"
+    if pr.get("isCrossRepository"):
+        return "fork"
     items = all_codex_items(threads, issue_comments, reviews)
-    if any(
-        is_bot_author(item) and is_codex(login_of(item)) and not is_unedited(item)
-        for item in items
-    ):
-        return "edited-or-unknown-codex-evidence"
     latest = latest_verdicts(items)
     live_thread = next((item for item in threads if str(item.get("id") or "") == thread_id), None)
     if live_thread is None:
@@ -1725,6 +1745,12 @@ def reply_and_resolve(
         )
         if blocked:
             return blocked
+    live, rollup = fetch_head_state(gh, cfg, number)
+    if not live or live != sha:
+        return "stale-sha"
+    ok, _reason = required_checks_green(rollup)
+    if not ok:
+        return _reason
     try:
         resolved = gh.graphql(
             RESOLVE_THREAD,
@@ -1954,6 +1980,12 @@ def scan_pr(
             pat_login=pat_login,
         )
         if reason == "retry-mark":
+            blocked, _pr, _threads, _issue, _reviews = live_evidence_state(gh, cfg, number)
+            if blocked:
+                if blocked in EVIDENCE_ABORT_SKIPS:
+                    abort_scan = True
+                logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={blocked}")
+                continue
             mark_sha = (verdict.sha if verdict else "") or head_sha
             comments = thread_comments(thread) + issue_comments
             cite_when = cite_time_for_thread(

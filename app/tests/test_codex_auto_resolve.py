@@ -2993,6 +2993,61 @@ def test_intervening_deleted_resolve_blocks_cite_and_resolve():
     assert any("skip=no-verdict" in line for line in logs)
 
 
+def test_live_pr_head_mismatch_blocks_retry_resolve():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            gh.pr_by_number[12]["headRefOid"] = SHA2
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=stale-sha" in line for line in logs)
+
+
+def test_intervening_edit_blocks_retry_mark_and_aborts_scan():
+    gh = ready_gh(
+        threads=[
+            thread(
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    edited = comment(CODEX, verdict_body())
+    edited["includesCreatedEdit"] = True
+    _mutate_reviews_after_first(gh, [edited, comment(CODEX, verdict_body(tid=THREAD2))])
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert any("skip=edited-or-unknown-codex-evidence" in line for line in logs)
+    assert any("skip=abort-scan" in line for line in logs)
+
+
 def test_intervening_edited_codex_review_aborts_pr_scan():
     other = thread(THREAD2)
     gh = ready_gh(
