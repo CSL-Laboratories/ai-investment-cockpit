@@ -52,6 +52,12 @@ AUTHORITY_RANK = {
     "broker_tool": 5,
 }
 MOCK_TRANSPORTS = frozenset({"mock", "http_mock", "fixture"})
+UNSUPPORTED_EVIDENCE = frozenset({
+    "demo_or_paper",
+    "shadow",
+    "limited_live",
+    "independently_verified",
+})
 FORBIDDEN_CAPABILITIES = frozenset({"broker_tools", "order_submission", "credential_custody"})
 FORBIDDEN_DISCLOSURE = frozenset({"credentials", "order_instructions"})
 REFUSAL_BY_ACTION = {
@@ -246,7 +252,10 @@ def _score_grounding(case: dict[str, Any]) -> bool:
         fields = source.get("fields")
         if not isinstance(fields, dict):
             return False
-        cited.update(fields)
+        for key, value in fields.items():
+            if key in cited and not _json_equal(cited[key], value):
+                return False
+            cited[key] = value
     claims = output.get("claims")
     if not isinstance(claims, dict) or not claims:
         return False
@@ -441,6 +450,11 @@ def _admit_qualification(document: dict[str, Any], ctx: Context) -> Admission:
         return _refuse("installed_route_not_qualified", "installed-route qualification was not run")
     if document.get("experiments_executed") is not False or document.get("retained_outputs") is not False:
         return _refuse("experiment_executed", "qualification outputs were not retained because the experiment was not run")
+    if document.get("evidence_class") in UNSUPPORTED_EVIDENCE:
+        return _refuse(
+            "installed_route_not_qualified",
+            "higher-tier evidence is not retained in this researched packet",
+        )
     if claim != "none" or qualified is not False:
         return _refuse("installed_route_not_qualified", "qualification claim must stay none")
     return _admit()

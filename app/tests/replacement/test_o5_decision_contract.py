@@ -141,6 +141,45 @@ def test_grounding_rejects_bool_and_number_aliases() -> None:
     assert module._score_grounding(case) is True
 
 
+def test_conflicting_citations_are_not_grounded() -> None:
+    module = _load()
+    case = {
+        "dispatched_refs": ["a", "b"],
+        "sources": {
+            "a": {"fields": {"name": "composer"}},
+            "b": {"fields": {"name": "conductor"}},
+        },
+        "output": {"source_refs": ["a", "b"], "claims": {"name": "conductor"}},
+    }
+    assert module._score_grounding(case) is False
+    case["output"]["source_refs"] = ["b", "a"]
+    assert module._score_grounding(case) is False
+    case["sources"]["b"]["fields"]["name"] = "composer"
+    assert module._score_grounding(case) is True
+    case["output"]["source_refs"] = ["a", "b"]
+    assert module._score_grounding(case) is True
+
+
+def test_higher_tier_evidence_is_not_admitted() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["qualification_record"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/qualification-current-decision.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live"):
+        higher = dict(document)
+        higher["evidence_class"] = evidence_class
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
 def test_grounding_and_refusal_results_fail_closed() -> None:
     module = _load()
     suite = json.loads(SUITE.read_text(encoding="utf-8"))
