@@ -176,6 +176,7 @@ _MERGER_AMENDMENT = re.compile(
     r"(?:amend(?:ed|ment|ments|ing)?[^.]{0,80}(?:merger|transaction)|"
     r"(?:merger|transaction)[^.]{0,80}amend(?:ed|ment|ments|ing)?)"
 )
+_REMAINS_PENDING = re.compile(r"(?:merger|transaction)\s+remains\s+pending")
 
 
 def _text(raw: bytes) -> str:
@@ -206,18 +207,34 @@ def _source_date(value: str, *, field: str) -> date:
         raise SemanticEvidenceUnavailable(f"{field} is not an unambiguous calendar date") from exc
 
 
-def _unique_match(pattern: re.Pattern, text: str, *, field: str) -> str:
-    values = {match.group(1) for match in _assertion_matches(pattern, text)}
+def _unique_match(
+    pattern: re.Pattern, text: str, *, field: str, fragments: list[str] | None = None
+) -> str:
+    values = {
+        match.group(1) for match in _assertion_matches(pattern, text, fragments=fragments)
+    }
     if len(values) != 1:
         raise SemanticEvidenceUnavailable(f"SEC source does not state one unambiguous {field}")
     return values.pop()
 
 
-def _assertion_matches(pattern: re.Pattern, text: str):
+def _sentence_fragments(text: str) -> list[str]:
     # Decimal periods stay inside the sentence. A pinned negative predicate such as
     # "transaction will not proceed" is an affirmative failure assertion; negation
     # outside the matched predicate still refuses ("it is not true that ...").
-    sentences = re.split(r"([!?]|\.(?!\d))", text)
+    return re.split(r"([!?]|\.(?!\d))", text)
+
+
+def _assertion_matches(
+    pattern: re.Pattern, text: str, *, fragments: list[str] | None = None
+):
+    # The sentence split depends only on the text, so callers matching several
+    # patterns over the same text may pass one shared fragment list. A list
+    # split from anything else is refused rather than trusted: the capturing
+    # split keeps its delimiters, so the join must reproduce the text.
+    if fragments is not None and "".join(fragments) != text:
+        raise SemanticEvidenceUnavailable("sentence fragments do not match source text")
+    sentences = fragments if fragments is not None else _sentence_fragments(text)
     for index in range(0, len(sentences), 2):
         sentence = sentences[index]
         if index + 1 < len(sentences) and sentences[index + 1] == "?":
@@ -238,7 +255,9 @@ def _assertion_matches(pattern: re.Pattern, text: str):
                 yield match
 
 
-def _asserted(pattern: re.Pattern, text: str) -> bool:
+def _asserted(
+    pattern: re.Pattern, text: str, *, fragments: list[str] | None = None
+) -> bool:
     """Accept an outcome only from an unconditional sentence-sized assertion.
 
     Merger agreements routinely describe what happens *if* a transaction terminates. Treating
@@ -246,11 +265,18 @@ def _asserted(pattern: re.Pattern, text: str) -> bool:
     intentionally conservative: a sentence containing conditional/modal language is not an
     outcome authority even when it also contains one of the pinned phrases.
     """
-    return next(_assertion_matches(pattern, text), None) is not None
+    return next(_assertion_matches(pattern, text, fragments=fragments), None) is not None
 
 
-def _derive_eligibility(text: str, *, amended: bool) -> dict:
-    offers = {str(Decimal(match.group(1))) for match in _assertion_matches(_CASH, text)}
+def _derive_eligibility(
+    text: str, *, amended: bool, fragments: list[str] | None = None
+) -> dict:
+    if fragments is None:
+        fragments = _sentence_fragments(text)
+    offers = {
+        str(Decimal(match.group(1)))
+        for match in _assertion_matches(_CASH, text, fragments=fragments)
+    }
     if len(offers) != 1:
         raise SemanticEvidenceUnavailable("SEC source does not state one cash-per-share value")
     if "common stock" not in text:
@@ -262,11 +288,11 @@ def _derive_eligibility(text: str, *, amended: bool) -> dict:
         exchanges.append("nyse")
     if len(set(exchanges)) != 1:
         raise SemanticEvidenceUnavailable("SEC source does not identify one supported US exchange")
-    definitive = _asserted(_DEFINITIVE, text)
+    definitive = _asserted(_DEFINITIVE, text, fragments=fragments)
     if not definitive or _NOT_DEFINITIVE.search(text):
         raise SemanticEvidenceUnavailable("SEC source does not state a definitive merger")
-    resolved = _asserted(_CLOSED, text)
-    terminated = _asserted(_FAILED, text)
+    resolved = _asserted(_CLOSED, text, fragments=fragments)
+    terminated = _asserted(_FAILED, text, fragments=fragments)
     return {
         "cash_offer": offers.pop(),
         "security_type": "common_equity",
@@ -307,12 +333,13 @@ def _require_strategy_eligible(label: dict) -> None:
 
 
 def _outcome_states(text: str) -> set[str]:
+    fragments = _sentence_fragments(text)
     states = set()
-    if _asserted(_CLOSED, text):
+    if _asserted(_CLOSED, text, fragments=fragments):
         states.add("closed")
-    if _asserted(_FAILED, text):
+    if _asserted(_FAILED, text, fragments=fragments):
         states.add("failed")
-    if _asserted(re.compile(r"(?:merger|transaction)\s+remains\s+pending"), text):
+    if _asserted(_REMAINS_PENDING, text, fragments=fragments):
         states.add("open")
     return states
 
@@ -727,20 +754,32 @@ class CashMergerSemanticVerifier:
             except (OSError, RawStoreError, ValueError) as exc:
                 raise SemanticEvidenceUnavailable("deal SEC source is missing or corrupt") from exc
         combined = _combined_source_text(texts)
+        combined_fragments = _sentence_fragments(combined)
         # BUG-122: a new current filing is not itself an amendment. Use the same complete
         # source-set predicate as prospective selection/calibration, including intervening
         # amendments even when the absolute current head is a routine filing.
         amended = any(_MERGER_AMENDMENT.search(text) for text in texts)
-        derived = _derive_eligibility(combined, amended=amended)
+        derived = _derive_eligibility(combined, amended=amended, fragments=combined_fragments)
         for name, value in derived.items():
             if document[name] != value:
                 raise SemanticEvidenceUnavailable(f"deal {name} is not source-derived")
         expected = _source_date(
-            _unique_match(_EXPECTED_DATE, combined, field="expected resolution date"),
+            _unique_match(
+                _EXPECTED_DATE,
+                combined,
+                field="expected resolution date",
+                fragments=combined_fragments,
+            ),
             field="expected resolution date",
         )
         outside = _source_date(
-            _unique_match(_OUTSIDE_DATE, combined, field="outside date"), field="outside date"
+            _unique_match(
+                _OUTSIDE_DATE,
+                combined,
+                field="outside date",
+                fragments=combined_fragments,
+            ),
+            field="outside date",
         )
         if (
             expected.isoformat() != document["expected_resolution_date"]
