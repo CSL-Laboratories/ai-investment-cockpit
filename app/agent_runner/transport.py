@@ -6,12 +6,15 @@ G1b is hermetic (no real ``claude``/``codex`` process).
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import shutil
 import signal
 import subprocess
 from dataclasses import dataclass
+
+from agent_runner.result import mark_agent_dispatched
 
 log = logging.getLogger(__name__)
 
@@ -132,16 +135,22 @@ def _log_failure(argv: list[str], result: ProcResult) -> None:
 class SubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
         argv = resolve_executable(argv)
+        # The child must not inherit a Jev bearer left in the parent environment.
+        # The credential itself lives in keyring (Inv 4), not in this env.
+        child_env = os.environ.copy()
+        child_env.pop("JEV_API_KEY", None)
         popen_kwargs = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "text": True,
             "cwd": cwd,
+            "env": child_env,
         }
         if os.name != "nt":
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(argv, **popen_kwargs)
+        mark_agent_dispatched()
         try:
             out, err = proc.communicate(input_text, timeout=timeout_s)
             result = ProcResult(proc.returncode, out or "", err or "", False)
@@ -160,17 +169,50 @@ class SubprocessTransport:
         return result
 
 
-def _logon_launch(account, argv, input_text, timeout_s, cwd):  # pragma: no cover - Windows/logon
+def _logon_launch(  # pragma: no cover - Windows/logon
+    account, argv, input_text, timeout_s, cwd, on_spawn=None,
+):
     """Production spawn-under-account launcher. Launches ``argv`` with the low-priv ``account``'s
     token via ``CreateProcessWithLogonW`` (credential provisioned per
     docs/setup/low-priv-agent-account.md), pipes stdio, enforces the timeout, and returns a
     ``ProcResult``. Not built on this host — raising here is the fail-closed posture: SEC-05 is
     ACTIVE only once the launcher + credential are provisioned (a W17 live-enablement precondition),
-    exactly as the SEC-11 witness activates only once the Discord bot is provisioned."""
+    exactly as the SEC-11 witness activates only once the Discord bot is provisioned.
+
+    ``on_spawn`` is the deep-budget dispatch mark. This stub raises before any child exists and
+    must not call it. A real launcher calls ``on_spawn`` exactly once, after the child exists and
+    before a later timeout or pipe error. Calling it earlier keeps an unused unit; skipping it
+    after spawn lets a retry exceed the daily cap.
+    """
     raise NotImplementedError(
         "spawn-under-account launcher is not provisioned on this host; supply the low-priv account "
         "credential + a CreateProcessWithLogonW launcher (docs/setup/low-priv-agent-account.md)"
     )
+
+
+def _launch_accepts_on_spawn(launch) -> bool:
+    """True when ``launch(..., on_spawn=...)`` will not raise ``TypeError``.
+
+    A named ``on_spawn`` parameter accepts the keyword. ``**kwargs`` does too
+    only when a ``functools.wraps`` target names it. A bare ``**kwargs``
+    forwarder has no such proof and keeps the five-argument call, as does a
+    five-argument wrapper.
+    """
+    seen: set[int] = set()
+    current = launch
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        try:
+            params = inspect.signature(current, follow_wrapped=False).parameters
+        except (TypeError, ValueError):
+            return False
+        named = params.get("on_spawn")
+        if named is not None:
+            return named.kind is not inspect.Parameter.POSITIONAL_ONLY
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return False
+        current = getattr(current, "__wrapped__", None)
+    return False
 
 
 class LowPrivSubprocessTransport:
@@ -191,4 +233,14 @@ class LowPrivSubprocessTransport:
         self._launch = launch or _logon_launch
 
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
-        return self._launch(self.account, argv, input_text, timeout_s, cwd)
+        # Mark only once a launcher reports that the child exists. Passing the
+        # callback before launch would keep a unit when the launcher rejects
+        # the spawn. Launchers that cannot accept ``on_spawn`` keep the
+        # five-argument call; ``run_agent`` still marks after a successful return.
+        launch = self._launch
+        if _launch_accepts_on_spawn(launch):
+            return launch(
+                self.account, argv, input_text, timeout_s, cwd,
+                on_spawn=mark_agent_dispatched,
+            )
+        return launch(self.account, argv, input_text, timeout_s, cwd)

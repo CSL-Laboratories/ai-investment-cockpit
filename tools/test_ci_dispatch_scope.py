@@ -341,6 +341,8 @@ class DispatchScopeTests(unittest.TestCase):
                     'app/tests/quant/test_costs_rust_parity.py', 'app/tests/quant/test_signals.py',
                     'app/tests/quant/test_signals_rust_parity.py', 'app/tests/quant/test_w21_cost_model.py',
                     'app/tests/ingest/test_normalize.py', 'app/tests/ingest/test_normalize_rust_parity.py',
+                    'app/ingest/dedup.py', 'app/ingest/ratelimit.py',
+                    'app/tests/ingest/test_admission_rust_parity.py',
                     '.github/workflows/rust.yml', 'tools/required_ci_gate.py', 'tools/test_queue_gates.py']
         ignored = ['docs/ci-queue-rollout.md', 'app/ingest/edgar.py', 'app/ingest/normalize_edgar.py',
                    'app/quant/signals.py.bak', 'app/quant/strategies/market_maker.py',
@@ -359,14 +361,17 @@ class DispatchScopeTests(unittest.TestCase):
         for test_path in ('tests/quant/test_signals.py', 'tests/quant/test_signals_rust_parity.py',
                           'tests/ingest/test_normalize.py', 'tests/ingest/test_normalize_rust_parity.py',
                           'tests/quant/book', 'tests/quant/test_pnl.py',
-                          'tests/quant/test_costs_rust_parity.py', 'tests/quant/test_w21_cost_model.py'):
+                          'tests/quant/test_costs_rust_parity.py', 'tests/quant/test_w21_cost_model.py',
+                          'tests/ingest/test_admission_rust_parity.py'):
             self.assertIn(f' {test_path}', pytest_step['run'])
         bench_step = next(step for step in self.rust['jobs']['rust-book']['steps']
                           if step.get('name') == 'Benchmark Rust against the Python reference')
         self.assertEqual(bench_step['run'].split(),
                          ['python', 'rust/bench_compare.py', 'python', 'rust/bench_costs.py',
-                          'python', 'rust/bench_normalize.py', 'python', 'rust/bench_signals.py'])
-        for script in ('bench_compare.py', 'bench_costs.py', 'bench_normalize.py', 'bench_signals.py'):
+                          'python', 'rust/bench_normalize.py', 'python', 'rust/bench_signals.py',
+                          'python', 'rust/bench_admission.py'])
+        for script in ('bench_compare.py', 'bench_costs.py', 'bench_normalize.py', 'bench_signals.py',
+                       'bench_admission.py'):
             self.assertTrue((ROOT / 'rust' / script).is_file(), script)
 
     def test_actual_rust_merge_tree_filter_with_diverged_base(self):

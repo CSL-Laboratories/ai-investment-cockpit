@@ -221,3 +221,16 @@ finish. Enabling it is an owner decision gated on authenticated records (CSL-272
 
 Budget/cadence (P2) remains an owner decision. Timestamp-derived runtime times
 published rates is an estimate, not reconciled billed usage or remaining credit.
+
+## Published head
+
+Job B composed cockpit #166 by a normal merge of #165
+`4c579b0df0aff5cca0ed8798656da9e0152c29b5` into
+`fe1227b9e145c4f2de8eed000a26b34e50ca6ac0`. The published head is this merge.
+Those parents replace the older combined-head pointer `d118181f0a9c96a62f2b066801b4aa7df88b56ac`.
+
+Historical full-matrix receipts on `d118181f0a9c96a62f2b066801b4aa7df88b56ac`
+remain and do not validate this head:
+
+- [Full CI 38980660457](https://github.com/CSL-Laboratories/ai-investment-cockpit/actions/runs/38980660457)
+- [Full Rust 38980663366](https://github.com/CSL-Laboratories/ai-investment-cockpit/actions/runs/38980663366)
