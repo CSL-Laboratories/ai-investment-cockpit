@@ -374,6 +374,8 @@ class LimitOrderBook:
         """
         if order_id in self._index:
             raise ValueError(f"duplicate order_id {order_id!r} already resting in the book")
+        if qty <= 0:
+            raise ValueError(f"resting order {order_id!r} must have positive qty, got {qty}")
         level = self._level_for_write(side, price_ticks)
         order = RestingOrder(
             order_id=order_id,
