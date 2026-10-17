@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 # Split so this module can be scanned with the rest of app/ and still not match itself.
 _DEPRECATED_HTTP_422 = "HTTP_422_" + "UNPROCESSABLE_ENTITY"
 _CURRENT_HTTP_422 = "HTTP_422_UNPROCESSABLE_CONTENT"
@@ -43,3 +45,62 @@ def test_deprecated_http_422_guard_detects_a_hit(tmp_path: Path):
     rogue = tmp_path / "rogue.py"
     rogue.write_text("status_code = status." + _DEPRECATED_HTTP_422 + "\n", encoding="utf-8")
     assert _deprecated_http_422_offenders(tmp_path) == ["rogue.py"]
+
+
+def test_project_requires_starlette_with_rfc9110_status_names():
+    text = (APP / "pyproject.toml").read_text(encoding="utf-8")
+    assert "starlette>=0.48.0" in text
+
+
+def test_ceiling_breach_returns_422_and_disarms_to_review_live(tmp_path: Path):
+    """A ceiling breach stays HTTP 422 and reports the disarm. Starlette < 0.48
+    would raise AttributeError here and the operator would see a 500."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from datetime import datetime, timezone
+
+    from fastapi import status
+    from fastapi.testclient import TestClient
+
+    from config.settings import Mode, Settings
+    from core.clock import FrozenClock
+    from orchestrator.app import create_app
+    from orchestrator.auth import API_KEY_HEADER, ApiKeyAuth
+    from orchestrator.gate import GateResult
+    from orchestrator.mode_ladder import ModeLadder
+    from orchestrator.state import OrchestratorState
+    from storage.engine import create_all, make_engine, make_session_factory
+
+    assert status.HTTP_422_UNPROCESSABLE_CONTENT == 422
+
+    key = "csl227-api-key-123456"
+    engine = make_engine(f"sqlite:///{(tmp_path / 'csl227.db').as_posix()}")
+    create_all(engine)
+    state = OrchestratorState.build(
+        make_session_factory(engine),
+        hmac_key=b"csl227",
+        settings=Settings(),
+        clock=FrozenClock(datetime(2026, 7, 7, 14, 0, tzinfo=timezone.utc)),
+    )
+    ladder = ModeLadder(state)
+    ladder.set_mode(Mode.paper, actor="op")
+    ladder.set_mode(Mode.review_live, actor="op")
+    armed = ladder.arm_auto_mode(
+        Mode.auto_veto,
+        decision_stage_runtimes=["claude", "claude"],
+        gate_result=GateResult(unlockable=True, target="auto_veto"),
+        operator="op",
+    )
+    assert armed.armed and ladder.current() is Mode.auto_veto
+
+    client = TestClient(create_app(state, auth=ApiKeyAuth(key_provider=lambda: key)))
+    response = client.put(
+        "/limits",
+        headers={API_KEY_HEADER: key},
+        json={"max_notional": "30000", "actor": "op", "confirm": True},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["rejected"] == "ceiling_exceeded"
+    assert body["mode_after"] == "review_live"
+    assert client.get("/mode", headers={API_KEY_HEADER: key}).json()["mode"] == "review_live"
