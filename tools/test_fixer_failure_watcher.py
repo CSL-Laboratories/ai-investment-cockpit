@@ -137,6 +137,79 @@ class WatcherTests(unittest.TestCase):
             self.assertEqual(len(self.scan(lambda *_: (evidence, evidence.collect()))), 3)
             self.assertLessEqual(reader.calls, 60)
 
+    def test_linear_dispatch_budget_defers_without_consuming_daily_slot(self):
+        import json
+        from dataclasses import replace
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location("failure_evidence_fixtures", ROOT / "tools/test_fixer_failure_escalation.py")
+        core = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(core)
+        api = core.EvidenceTests()
+        api.setUp()
+        api.threads = [core.f.thread(BODY, root=index+1) | {"id": f"PRRT_{index}"} for index in range(3)]
+        api.comments = core.f.root_comments(api.threads)
+        api.history = []
+        api.items = core.f.findings(api.threads)
+        if hasattr(core.f, "prepare"):
+            api.items = core.f.prepare(api.items, history=api.history)
+        api.key = core.m.receipts.attempt_key(core.HEAD, api.items)
+        for run in (10, 11, 12):
+            api.history.append({"id": 100+run, "user": core.f.actor("github-actions[bot]", core.f.m.ACTIONS_ID),
+                                "body": core.f.m.marker("attempt", {**api.key, "run": str(run), "attempt": "1"})})
+        api.job["steps"][0]["name"] = core.m.CONTEXT_PREFIX + core.HEAD + ":" + api.key["fingerprint"]
+        self.setup_scan(3)
+        if RECURSION:
+            self.cfg = replace(self.cfg, repo=core.REPO)
+            self.pull = replace(self.pull, number=7)
+            self.github.pulls = {7: self.pull}
+        else:
+            self.cfg = replace(self.cfg, repository=core.REPO, owner="acme", name="example")
+            self.pull["number"] = 7
+            self.github.issue_comments = {7: []}
+        def transport(args, **kwargs):
+            body = json.loads(kwargs["input"]) if kwargs.get("input") else None
+            return SimpleNamespace(stdout=json.dumps(api.read(args[2], body)))
+        from contextlib import ExitStack
+        api.run.update(event="repository_dispatch", head_sha="d" * 40, head_branch="main", pull_requests=[])
+        existing = [None]
+        if RECURSION:
+            self.cfg = replace(self.cfg, linear_repos=frozenset({core.REPO}))
+            linear = f.FakeLinear()
+        else:
+            self.cfg = replace(self.cfg, file_linear=True, linear_api_key="fixture")
+            def write(_query, variables):
+                existing[0] = {"id": "issue", "description": variables["input"]["description"]}
+                return {"issueCreate": {"success": True, "issue": {"url": "https://linear.app/fixture"}},
+                        "issueUpdate": {"success": True, "issue": {"url": "https://linear.app/fixture"}}}
+            linear = SimpleNamespace(graphql=write)
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(core.m.os.environ, {"GH_TOKEN": "fixture"}))
+            stack.enter_context(patch.object(core.m.subprocess, "run", side_effect=transport))
+            if not RECURSION:
+                stack.enter_context(patch.object(m, "linear_find_existing", side_effect=lambda *_: existing[0]))
+                stack.enter_context(patch.object(m, "linear_resolve_ids", return_value={
+                    "teamId": "team", "labelIds": [], "projectId": "project"}))
+            for round_index in range(2):
+                reader = core.m.Reader()
+                evidence = core.m.Evidence(core.REPO, 7, reader.read)
+                def collector(*_, evidence=evidence):
+                    return evidence, evidence.collect()
+                before = len(api.calls)
+                if RECURSION:
+                    m.scan(self.cfg, self.github, linear, failure_collector=collector)
+                    bodies = [body for _, body in self.github.comments]
+                    marker = m.rollup_marker(self.pull)
+                    linear.existing_descriptions[marker] = (linear.updated[-1][1] if linear.updated else linear.created[0][1])
+                    self.pull = replace(self.pull, issue_comments=tuple(f.comment("pat-user", body) for body in bodies))
+                    self.github.pulls[7] = self.pull
+                else:
+                    m.mediate_pr(self.pull, self.cfg, self.github, linear, f.NOW, failure_collector=collector)
+                    bodies = [body["body"] for _, body in self.github.posts]
+                    self.github.issue_comments[7] = [f.comment("pat-user", body) for body in bodies]
+                self.assertLessEqual(len(api.calls) - before, 60)
+                self.assertEqual(len(bodies), 2 if round_index == 0 else 3)
+            self.assertEqual(len(set(bodies)), 3)
+
     def test_no_proof_keeps_no_claude_ineligible(self):
         self.setup_scan()
         self.assertEqual(self.scan(lambda *_: (self.evidence, {})), [])
@@ -209,10 +282,52 @@ class WatcherTests(unittest.TestCase):
                             return existing
                         linear = SimpleNamespace(graphql=Mock())
                         with patch.object(m, "linear_find_existing", side_effect=lookup), patch.object(
-                                m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": []}):
+                                m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": [], "projectId": "project"}):
                             m.mediate_pr(self.pull, cfg, self.github, linear, f.NOW, failure_collector=collector)
                         linear.graphql.assert_not_called()
                         self.assertEqual(self.github.posts, [])
+
+    def test_stale_failure_does_not_suppress_ordinary_linear_delivery(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        self.setup_scan()
+        live = [True]
+        self.evidence.fresh = lambda: live[0]
+        if RECURSION:
+            ordinary = f.thread(tid="PRRT_ordinary", comments=f.stuck_pair())
+            self.pull = replace(self.pull, threads=self.pull.threads + (ordinary,))
+            self.github.pulls[self.pull.number] = self.pull
+            linear = f.FakeLinear()
+            lookup = linear.find_by_marker
+            def find(*args, **kwargs):
+                live[0] = False
+                return lookup(*args, **kwargs)
+            linear.find_by_marker = find
+            m.scan(f.cfg(), self.github, linear, failure_collector=lambda *_: (self.evidence, self.proofs))
+            self.assertEqual(len(linear.created), 1)
+            self.assertIn("PRRT_ordinary", linear.created[0][1])
+            self.assertNotIn("PRRT_0", linear.created[0][1])
+            self.assertEqual(len(self.github.comments), 1)
+            self.assertIn("https://linear.app/", self.github.comments[0][1])
+        else:
+            ordinary = f.thread(thread_id="PRRT_ordinary", comments=[
+                f.comment(f.DEVIN, "Other bug"), f.comment("claude[bot]", "needs a human")])
+            self.pull["reviewThreads"]["nodes"].append(ordinary)
+            cfg = replace(self.cfg, file_linear=True, linear_api_key="fixture")
+            mutations = []
+            def write(_query, args):
+                mutations.append(args)
+                return {"issueCreate": {"success": True, "issue": {"url": "https://linear.app/fixture"}}}
+            def find(*_):
+                live[0] = False
+            with patch.object(m, "linear_find_existing", side_effect=find), patch.object(
+                    m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": [], "projectId": "project"}):
+                m.mediate_pr(self.pull, cfg, self.github, SimpleNamespace(graphql=write), f.NOW,
+                             failure_collector=lambda *_: (self.evidence, self.proofs))
+            self.assertEqual(len(mutations), 1)
+            self.assertIn("Other bug", mutations[0]["input"]["description"])
+            self.assertNotIn("fixer-failure-handoff:PRRT_0", mutations[0]["input"]["description"])
+            self.assertEqual(len(self.github.posts), 1)
 
     def test_new_run_after_first_delivery_defers_remaining_threads(self):
         self.setup_scan(3)

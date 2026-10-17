@@ -1000,13 +1000,25 @@ def linear_resolve_ids(linear: Linear, cfg: Config) -> dict[str, Any]:
     }
 
 
-def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=(), delivery_check=None) -> str:
+def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=(), failure_evidence=None) -> str:
     if not items:
         raise ValueError("no stuck threads")
     number = items[0].pr_number
     title = build_linear_title(cfg.repository, number)
-    generated = build_linear_description(items, cfg)
     existing = linear_find_existing(linear, cfg, number)
+    ids = linear_resolve_ids(linear, cfg) if not (existing and existing.get("id")) else None
+    # The last evidence read follows Linear lookups. A stale failure must not
+    # suppress independently eligible ordinary items in the same roll-up.
+    if any(item.failure_evidence for item in items):
+        try:
+            fresh = failure_evidence is not None and failure_evidence.fresh()
+        except Exception:  # noqa: BLE001 - evidence denial defers only new failure intake
+            fresh = False
+        if not fresh:
+            items = [item for item in items if not item.failure_evidence]
+            if not items:
+                return "deferred-stale-failure"
+    generated = build_linear_description(items, cfg)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
         generated = retain_failure_handoffs(generated, existing_desc, resolved_thread_ids,
@@ -1018,8 +1030,6 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
             cfg.repository,
             number,
         )
-        if delivery_check is not None:
-            delivery_check()
         updated = linear.graphql(
             LINEAR_UPDATE,
             {"id": existing["id"], "input": {"title": title, "description": description}},
@@ -1029,7 +1039,6 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
         if result.get("success") is not True or not issue:
             raise RuntimeError("linear update failed")
         return str(issue.get("url") or issue.get("identifier") or "")
-    ids = linear_resolve_ids(linear, cfg)
     payload: dict[str, Any] = {
         "teamId": ids["teamId"],
         "title": title,
@@ -1042,8 +1051,6 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
         raise RuntimeError("linear project missing")
     if ids.get("projectId"):
         payload["projectId"] = ids["projectId"]
-    if delivery_check is not None:
-        delivery_check()
     created = linear.graphql(LINEAR_CREATE, {"input": payload})
     result = created.get("issueCreate") or {}
     issue = result.get("issue") or {}
@@ -1172,11 +1179,8 @@ def mediate_pr(
                 elif rollup_is_current(existing, generated, cfg.repository, number):
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
                 else:
-                    def delivery_check():
-                        if any(item.failure_evidence for item in stuck) and not evidence.fresh():
-                            raise RuntimeError("failure evidence changed before Linear delivery")
                     url = upsert_linear_issue(linear, stuck, cfg, resolved_thread_ids=resolved_ids,
-                                              delivery_check=delivery_check)
+                                              failure_evidence=evidence)
                     logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} linear=error")

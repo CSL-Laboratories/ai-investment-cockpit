@@ -129,3 +129,14 @@ structure and writer-trigger sanitization intact.
 Dispatch event semantics follow [GitHub’s workflow event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch).
 No genuine repository-dispatch failure was available during this review; its
 provenance regressions are offline fixtures, not live qualification.
+
+Linear admission is centralized after its lookups: stale or unavailable failure
+evidence removes only new failure items and preserves independently eligible
+ordinary delivery and previously recorded handoffs. Recursion applies the same
+check to the existing-rollup sweep and refreshes retained entries alongside
+ordinary items on approved/green PRs.
+
+The 60-read ceiling is unchanged. A real-reader dispatch/Linear fixture posts
+two of three comments before budget exhaustion, then posts the remaining one on
+a later scan within the same daily cap. Only actual posts consume slots; bounded
+deferral is not a lost slot or a handled finding.
