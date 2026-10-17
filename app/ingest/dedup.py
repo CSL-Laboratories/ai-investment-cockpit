@@ -56,7 +56,9 @@ def _core_key(key: str) -> str:
             pass
         else:
             return key
-    return "\x00" + key.encode("utf-16", "surrogatepass").hex()
+    # UTF-32 keeps a non-BMP character distinct from the surrogate pair that
+    # UTF-16 would fold into the same bytes.
+    return "\x00" + key.encode("utf-32", "surrogatepass").hex()
 
 
 class Dedup:

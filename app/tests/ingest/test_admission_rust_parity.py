@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from ingest.dedup import DEDUP_BACKEND, Dedup
+from ingest.dedup import DEDUP_BACKEND, Dedup, _core_key
 from ingest.ratelimit import RATELIMIT_BACKEND, TokenBucket, python_allow
 
 # The rust.yml job sets this so a wheel that installs but does not activate
@@ -160,6 +160,16 @@ def test_a_lone_surrogate_shares_one_lru_with_utf8_keys():
     assert rust.add("a") is python.add("a") is False
     assert rust.discard(key) is python.discard(key) is True
     assert rust.add("b") is python.add("b") is True
+
+    folded = "alpaca:benzinga:\ud800\U0001f600"
+    pair = "alpaca:benzinga:\ud800\ud83d\ude00"
+    assert folded != pair
+    assert _core_key(folded) != _core_key(pair)
+    rust, python = _dedup(4)
+    assert rust.add(folded) is python.add(folded) is True
+    assert rust.add(pair) is python.add(pair) is True
+    assert rust.add("\x00" + folded) is python.add("\x00" + folded) is True
+    assert rust.add("\x00" + pair) is python.add("\x00" + pair) is True
 
     marked = "\x00a"
     rust, python = _dedup(2)
