@@ -13,7 +13,9 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from agent_runner.result import OK
+from agent_runner.result import (
+    OK, agent_dispatched, restore_agent_dispatch_watch, watch_agent_dispatch,
+)
 from config.models import runtime_for
 from config.settings import DecisionRuntime, Mode, Settings
 from orchestrator.breakers import BreakerEngine
@@ -165,6 +167,40 @@ def test_jev_model_alias_is_rejected(monkeypatch):
     monkeypatch.setenv("COCKPIT_JEV_REQUEST_TOKEN_CAP", "64000")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_owned_client_close_after_http_keeps_the_dispatch_mark(st, monkeypatch):
+    """http.close() can raise after the request was sent and hide the attempt.
+
+    The dispatch watch must already be set, or a later preflight failure would
+    release a unit Jev already used.
+    """
+    _provision(monkeypatch)
+    posted = {}
+
+    class Client:
+        def __init__(self, timeout=None):
+            pass
+
+        def post(self, url, headers=None, json=None, timeout=None):
+            posted["url"] = str(url)
+            return _jev_response()
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    monkeypatch.setattr("workflows.jev.httpx.Client", Client)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(RuntimeError, match="close failed"):
+            evaluate_decision(
+                st.settings, _packet(), symbol="AAPL",
+                schema=load_schema("TradeProposal"),
+            )
+        assert posted["url"] == JEV_URL
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
 
 
 def test_runtime_map_keeps_non_decisions_on_claude():

@@ -25,6 +25,7 @@ from decimal import Decimal
 import httpx
 import jsonschema
 
+from agent_runner.result import mark_agent_dispatched
 from config.models import (
     DEFAULT_JEV_MODEL,
     JEV_MODEL_PINS,
@@ -418,6 +419,9 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         http = httpx.Client(timeout=30.0)
     try:
         try:
+            # Mark before close(). A cleanup error can escape after HTTP was sent
+            # and before this function returns a JevAttempt.
+            mark_agent_dispatched()
             response = _post(body, api_key=key, client=http)
         except Exception:
             # Any failure after the client is invoked was a dispatch, including

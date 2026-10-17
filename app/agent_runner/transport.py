@@ -13,6 +13,8 @@ import signal
 import subprocess
 from dataclasses import dataclass
 
+from agent_runner.result import mark_agent_dispatched
+
 log = logging.getLogger(__name__)
 
 # Bound on the stderr excerpt carried into a log line. See _log_failure.
@@ -147,6 +149,7 @@ class SubprocessTransport:
         if os.name != "nt":
             popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(argv, **popen_kwargs)
+        mark_agent_dispatched()
         try:
             out, err = proc.communicate(input_text, timeout=timeout_s)
             result = ProcResult(proc.returncode, out or "", err or "", False)

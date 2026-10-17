@@ -782,6 +782,49 @@ def test_preflight_refusal_before_spawn_releases_the_unit(st, clock, tmp_path):
     assert budget.spent(day) == 1
 
 
+def test_transport_refusal_before_launch_releases_the_unit(st, clock, tmp_path):
+    """A transport that fails before any process exists does not keep the unit."""
+    from agent_runner.transport import ExecutableNotFound
+    from core.clock import FrozenClock
+
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+
+    class MissingCli:
+        def run(self, argv, input_text, timeout_s, cwd):
+            raise ExecutableNotFound("claude is not on PATH")
+
+    def propose(state, clock_, **kw):
+        call_agent(
+            state, alias="triage", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=MissingCli(),
+        )
+
+    with pytest.raises(ExecutableNotFound):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert DeepBudget(st).spent(day) == 0
+    releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+    assert len(releases) == 1
+    assert releases[0]["reason"] == "pre_dispatch_exception"
+    assert releases[0]["event_id"] == ev.id
+
+    drafted: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        drafted.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = _escalation(
+        st, FrozenClock(NOW + timedelta(minutes=2)), tmp_path, ev, ok_propose)
+    assert drafted == [ev.id]
+    assert ev.id in second["escalated"]
+    assert DeepBudget(st).spent(day) == 1
+
+
 def test_exception_after_call_agent_keeps_the_unit(st, clock, tmp_path):
     """Once call_agent has run, a later raise keeps the unit and blocks the retry."""
     _budget_of_one(st)
