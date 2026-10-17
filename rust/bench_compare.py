@@ -15,6 +15,9 @@ Two workloads:
 * per-call mutate — 20k individual add/cancel/reduce calls. Each one crosses
   the Python boundary, so this row measures binding overhead as well as the
   book.
+* batch mutate — the same 20k ops in one ``apply_quiet`` or ``apply_many``
+  call. Quiet skips per-op result tuples. A third row builds the op list
+  inside the timer, which is the cost when the tape is not already packed.
 """
 from __future__ import annotations
 
@@ -89,6 +92,47 @@ def _mutate_once(book_cls, n: int) -> None:
         live.append(order_id)
 
 
+def _mutate_ops(n: int) -> list[tuple]:
+    """The same add/cancel/reduce pattern as ``_mutate_once``, already packed."""
+    ops = []
+    live: list[tuple[str, int]] = []
+    for i in range(n):
+        if i % 5 == 4 and live:
+            order_id, _qty = live.pop()
+            ops.append(("c", order_id))
+            continue
+        if i % 5 == 3 and live:
+            order_id, qty = live.pop()
+            ops.append(("r", order_id, qty))
+            continue
+        order_id = f"o{i}"
+        qty = 10 + (i % 7)
+        ops.append((
+            "a",
+            order_id,
+            "buy" if i % 2 == 0 else "sell",
+            100 + (i % 16),
+            qty,
+            i,
+            i,
+            None,
+        ))
+        live.append((order_id, qty))
+    return ops
+
+
+def _batch_quiet(ops) -> None:
+    LimitOrderBook("S").apply_quiet(ops)
+
+
+def _batch_detailed(ops) -> None:
+    LimitOrderBook("S").apply_many(ops)
+
+
+def _pack_and_quiet(n: int) -> None:
+    LimitOrderBook("S").apply_quiet(_mutate_ops(n))
+
+
 def _time(fn, repeats: int = 5) -> float:
     samples = []
     for _ in range(repeats):
@@ -112,6 +156,10 @@ def main() -> None:
     py_sweep = _median_match(PythonLimitOrderBook)
     rust_mutate = _time(lambda: _mutate_once(LimitOrderBook, MUTATE_N))
     py_mutate = _time(lambda: _mutate_once(PythonLimitOrderBook, MUTATE_N))
+    packed = _mutate_ops(MUTATE_N)
+    rust_quiet = _time(lambda: _batch_quiet(packed))
+    rust_detailed = _time(lambda: _batch_detailed(packed))
+    rust_pack = _time(lambda: _pack_and_quiet(MUTATE_N))
 
     def row(name: str, rust: float, python: float) -> str:
         ratio = python / rust if rust else float("inf")
@@ -122,6 +170,9 @@ def main() -> None:
     print("|---|---:|---:|---:|")
     print(row(f"match walk ({SWEEP_N} resting)", rust_sweep, py_sweep))
     print(row(f"per-call mutate ({MUTATE_N})", rust_mutate, py_mutate))
+    print(row(f"batch quiet, ops packed ({MUTATE_N})", rust_quiet, py_mutate))
+    print(row(f"batch detailed, ops packed ({MUTATE_N})", rust_detailed, py_mutate))
+    print(row(f"batch quiet, pack included ({MUTATE_N})", rust_pack, py_mutate))
 
 
 if __name__ == "__main__":
