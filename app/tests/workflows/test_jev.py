@@ -95,7 +95,7 @@ def _answers(confidence=0.81, side="buy"):
     }
 
 
-def _jev_response(confidence=0.81, side="buy", model="jev-1.14.0", usage=None):
+def _jev_response(confidence=0.81, side="buy", model="jev-1.13.0", usage=None):
     body = {
         "model": model,
         "answers": _answers(confidence, side),
@@ -193,7 +193,7 @@ def test_auto_routes_a_light_paper_decision_to_jev(st, monkeypatch):
     assert transport.calls == []
     assert seen["url"] == JEV_URL
     assert seen["auth"] == f"Bearer {_KEY}"
-    assert seen["body"]["model"] == "jev-1.14.0"
+    assert seen["body"]["model"] == "jev-1.13.0"
     assert set(seen["body"]["questions"]) == {
         "side", "asset_type", "order_type", "time_horizon",
     }
@@ -204,7 +204,7 @@ def test_auto_routes_a_light_paper_decision_to_jev(st, monkeypatch):
     assert proposal["source_refs"] == ["ref-0"]
     assert "filed an 8-K" not in proposal["thesis"]
     assert job.runtime == "jev"
-    assert job.model_pinned == "jev-1.14.0"
+    assert job.model_pinned == "jev-1.13.0"
     assert job.prompt_template == "jev.decision_questions.v1"
     assert len(job.prompt_hash) == 64
     assert job.usage_estimate == Decimal("0.00084000")
@@ -249,18 +249,18 @@ def test_auto_without_a_weight_stays_on_claude(st, monkeypatch):
 def test_explicit_jev_ignores_weight_and_pins_the_model(st, monkeypatch):
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.jev
-    st.settings.jev_model = "jev-1.13.0"
+    st.settings.jev_model = "jev-1.14.0"
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["model"] = json.loads(request.content)["model"]
-        return _jev_response(model="jev-1.13.0")
+        return _jev_response(model="jev-1.14.0")
 
     transport = FakeTransport([])
     result, job = _call(st, transport, _client(handler), decision_weight=99)
     assert result.status == OK
-    assert seen["model"] == "jev-1.13.0"
-    assert job.model_pinned == "jev-1.13.0"
+    assert seen["model"] == "jev-1.14.0"
+    assert job.model_pinned == "jev-1.14.0"
     assert job.runtime == "jev"
 
 
@@ -299,6 +299,8 @@ def test_vendor_limit_falls_back_and_opens_jev_watch_only(st, monkeypatch):
     assert BreakerEngine(st).is_watch_only("jev") is True
     assert BreakerEngine(st).is_watch_only() is False
     assert BreakerEngine(st).is_watch_only("claude") is False
+    assert st.usage.denial_reason() is None
+    assert st.usage.denial_reason("jev") == "watch_only_active"
     assert ModeLadder(st).current() is Mode.read_only
 
     called = {"n": 0}
@@ -345,12 +347,13 @@ def test_in_flight_jev_success_does_not_inherit_a_concurrent_limit(st, monkeypat
     assert st.usage.window("jev").used == 1
 
 
-def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
+@pytest.mark.parametrize("status", [400, 404, 422])
+def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch, status):
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.jev
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, json={"error": "bad_request"})
+        return httpx.Response(status, json={"error": "bad_request"})
 
     transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
     result, job = _call(st, transport, _client(handler))
@@ -360,16 +363,77 @@ def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
     assert _events(st)[0].payload["jev_attempt"]["billed"] is False
     assert BreakerEngine(st).is_watch_only("jev") is False
     assert BreakerEngine(st).is_watch_only("claude") is False
+    assert st.usage.denial_reason() is None
     assert ModeLadder(st).current() is Mode.read_only
     assert st.usage.window("jev").used == 1
 
 
-def test_upstream_5xx_opens_jev_watch_only_and_falls_back(st, monkeypatch):
+def test_transient_500_does_not_leave_jev_in_watch_only(st, monkeypatch):
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.jev
+    calls = {"n": 0}
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"error": "unavailable"})
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(500, headers={"Retry-After": "15"}, json={"error": "transient"})
+        return _jev_response()
+
+    client = _client(handler)
+    result, job = _call(st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), client)
+    assert result.status == OK
+    assert job.runtime == "claude"
+    attempt = _events(st)[0].payload["jev_attempt"]
+    assert attempt["fallback"] == "jev_error"
+    assert attempt["billed"] is False
+    assert BreakerEngine(st).is_watch_only("jev") is False
+    assert BreakerEngine(st).is_watch_only() is False
+    assert st.usage.denial_reason() is None
+    assert st.usage.denial_reason("jev") is None
+    assert st.usage.window("jev").used == 1
+
+    second, second_job = _call(st, FakeTransport([]), client)
+    assert calls["n"] == 2
+    assert second.status == OK
+    assert second_job.runtime == "jev"
+    assert second_job.model_pinned == "jev-1.13.0"
+    assert second.validated["quantity"] is None
+    assert second.validated["notional"] is None
+    assert st.usage.window("jev").used == 2
+
+
+def test_503_without_retry_after_does_not_open_jev_cooldown(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503, headers={"Retry-After": "   "}, json={"error": "unavailable"})
+        return _jev_response()
+
+    client = _client(handler)
+    result, job = _call(st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), client)
+    assert result.status == OK
+    assert job.runtime == "claude"
+    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_error"
+    assert BreakerEngine(st).is_watch_only("jev") is False
+    assert st.usage.denial_reason() is None
+
+    second, second_job = _call(st, FakeTransport([]), client)
+    assert calls["n"] == 2
+    assert second_job.runtime == "jev"
+
+
+def test_503_with_retry_after_opens_jev_watch_only(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(503, headers={"Retry-After": "30"}, json={"error": "unavailable"})
 
     result, job = _call(
         st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
@@ -378,7 +442,19 @@ def test_upstream_5xx_opens_jev_watch_only_and_falls_back(st, monkeypatch):
     assert job.runtime == "claude"
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
     assert BreakerEngine(st).is_watch_only("jev") is True
+    assert BreakerEngine(st).is_watch_only() is False
     assert BreakerEngine(st).is_watch_only("claude") is False
+    assert st.usage.denial_reason() is None
+    assert st.usage.denial_reason("jev") == "watch_only_active"
+
+    second, second_job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+    )
+    assert calls["n"] == 1
+    assert second.status == OK
+    assert second_job.runtime == "claude"
+    assert _events(st)[-1].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
+    assert st.usage.window("jev").used == 1
 
 
 def test_raising_jev_client_falls_back_to_claude(st, monkeypatch):
@@ -653,19 +729,143 @@ def test_secret_in_state_is_not_posted(monkeypatch):
     assert attempt.billed is False
 
 
-def test_response_model_is_recorded_when_it_differs(st, monkeypatch):
+def test_default_jev_model_is_the_stable_pin():
+    from config.models import DEFAULT_JEV_MODEL, JEV_MODEL_PINS, pinned_model_for
+
+    assert DEFAULT_JEV_MODEL == "jev-1.13.0"
+    assert "jev-1.14.0" in JEV_MODEL_PINS
+    assert Settings().jev_model == "jev-1.13.0"
+    assert pinned_model_for("decision", "jev") == "jev-1.13.0"
+
+
+def test_response_model_must_match_the_selected_pin(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+
+    def mismatch(_request: httpx.Request) -> httpx.Response:
+        return _jev_response(model="jev-1.14.0")
+
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(mismatch),
+    )
+    assert result.status == OK
+    assert job.runtime == "claude"
+    attempt = _events(st)[0].payload["jev_attempt"]
+    assert attempt["fallback"] == "jev_invalid"
+    assert attempt["model_pinned"] == "jev-1.13.0"
+    assert attempt["response_model"] == "jev-1.14.0"
+
+    st.settings.jev_model = "jev-1.14.0"
+
+    def match(_request: httpx.Request) -> httpx.Response:
+        return _jev_response(model="jev-1.14.0")
+
+    accepted, accepted_job = _call(st, FakeTransport([]), _client(match))
+    assert accepted.status == OK
+    assert accepted_job.runtime == "jev"
+    assert accepted_job.model_pinned == "jev-1.14.0"
+    assert accepted.validated["quantity"] is None
+    assert accepted.validated["notional"] is None
+
+    def other_pin(_request: httpx.Request) -> httpx.Response:
+        return _jev_response(model="jev-1.13.0")
+
+    rejected, rejected_job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(other_pin),
+    )
+    assert rejected.status == OK
+    assert rejected_job.runtime == "claude"
+    rejected_attempt = _events(st)[-1].payload["jev_attempt"]
+    assert rejected_attempt["fallback"] == "jev_invalid"
+    assert rejected_attempt["model_pinned"] == "jev-1.14.0"
+    assert rejected_attempt["response_model"] == "jev-1.13.0"
+
+
+def test_later_raise_keeps_billed_jev_fields(st, monkeypatch):
+    """A dispatched attempt replaced after HTTP still carries its billed cost.
+
+    The same handler runs when ``enter_watch_only`` raises after a billed
+    dispatch: ``replace`` keeps usd and tokens, and the proposal is dropped.
+    """
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+
+    def later_step(_state, _generation):
+        raise RuntimeError("enter_watch_only failed after the billed attempt")
+
+    monkeypatch.setattr("workflows.agent_calls._jev_window_moved", later_step)
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(lambda _request: _jev_response()),
+    )
+    assert result.status == OK
+    assert result.validated["side"] == "sell"
+    assert result.validated["proposal_id"] == "prop_claude_fallback"
+    assert job.runtime == "claude"
+    assert job.input_refs["decision_route"] == "jev_fallback"
+    attempt = _events(st)[0].payload["jev_attempt"]
+    assert attempt["fallback"] == "jev_error"
+    assert attempt["billed"] is True
+    assert attempt["usd"] == "0.00084000"
+    assert attempt["input_tokens"] == 20_000
+    assert attempt["output_tokens"] == 40
+    assert attempt["input_token_source"] == "vendor"
+    assert _events(st)[0].payload["cost"]["jev_usd"] == "0.00084000"
+    assert st.usage.window("jev").used == 1
+
+
+def test_watch_only_raise_after_429_still_falls_back(st, monkeypatch):
+    """A failed Jev cooldown admission does not skip Claude or drop the dispatch count."""
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.jev
 
     def handler(_request: httpx.Request) -> httpx.Response:
-        return _jev_response(model="jev-1.13.0")
+        return httpx.Response(429, json={"error": "rate_limit"})
 
-    transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
-    result, job = _call(st, transport, _client(handler))
+    def explode(self, vendor, reason, **kwargs):
+        raise RuntimeError("watch-only admission failed")
+
+    monkeypatch.setattr(BreakerEngine, "enter_watch_only", explode)
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+    )
+    assert result.status == OK
+    assert result.validated["side"] == "sell"
+    assert job.runtime == "claude"
+    attempt = _events(st)[0].payload["jev_attempt"]
+    assert attempt["fallback"] == "jev_error"
+    assert attempt["billed"] is False
+    assert attempt["usd"] is None
+    assert st.usage.window("jev").used == 1
+    assert BreakerEngine(st).is_watch_only("jev") is False
+
+
+def test_preflight_failure_bills_nothing(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return _jev_response()
+
+    def fit_explodes(*_args, **_kwargs):
+        raise RuntimeError("fit failed before HTTP")
+
+    monkeypatch.setattr("workflows.jev._fit_state", fit_explodes)
+    result, job = _call(
+        st, FakeTransport([envelope(CLAUDE_PROPOSAL)]), _client(handler),
+    )
+    assert calls["n"] == 0
     assert result.status == OK
     assert job.runtime == "claude"
-    assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_invalid"
-    assert _events(st)[0].payload["jev_attempt"]["response_model"] == "jev-1.13.0"
+    attempt = _events(st)[0].payload["jev_attempt"]
+    assert attempt["fallback"] == "jev_error"
+    assert attempt["billed"] is False
+    assert attempt["usd"] is None
+    assert "input_tokens" not in attempt
+    assert "output_tokens" not in attempt
+    assert _events(st)[0].payload["cost"].get("jev_usd") is None
+    assert st.usage.window("jev").used == 0
 
 
 def test_caller_supplied_route_is_dropped_when_jev_does_not_run(st):
@@ -766,10 +966,12 @@ def test_framed_state_plus_question_stays_inside_the_cap():
 
 def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     import subprocess
+    import sys
 
     from agent_runner.transport import SubprocessTransport
 
     monkeypatch.setenv("JEV_API_KEY", _KEY)
+    monkeypatch.setenv("JEV_TEST_KEEP", "1")
     seen = {}
 
     class _Proc:
@@ -783,5 +985,10 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", _popen)
-    SubprocessTransport().run(["/bin/true"], "", 1.0, None)
+    # sys.executable resolves on every platform: /bin/true is not on Windows PATH,
+    # and run() resolves argv[0] via shutil.which before the mocked Popen is reached.
+    SubprocessTransport().run([sys.executable], "", 1.0, None)
     assert "JEV_API_KEY" not in seen["env"]
+    # The rest of the parent env must still reach the child — an env={} bug would
+    # starve it of PATH etc. while still passing the assertion above.
+    assert seen["env"].get("JEV_TEST_KEEP") == "1"

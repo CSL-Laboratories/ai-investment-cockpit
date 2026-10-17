@@ -21,6 +21,8 @@ EVENT_AGENT_JOB = "agent_job"
 EVENT_TRIAGE_BATCH = "triage_batch"
 # payload: {date, event_id, symbol, reason, corroborated:bool}  <- SEC-21 budget ledger
 EVENT_DEEP_ESCALATION = "deep_escalation"
+# payload: {date, event_id, releases_entry_id, reason}  <- unused reservation refund
+EVENT_DEEP_ESCALATION_RELEASE = "deep_escalation_release"
 # payload: {event_id, symbol, reason}
 EVENT_ESCALATION_DEFERRED = "escalation_deferred"
 # via record_state_change on BriefRecord

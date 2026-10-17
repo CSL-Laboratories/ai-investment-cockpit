@@ -9,8 +9,10 @@ It is never read from the environment, logged, or written into ``.env``.
 
 Live and auto-trading modes never reach this module. Oversized packets, low
 confidence, and ordinary transport errors are returned as fallback reasons so
-the caller can use Claude. An HTTP 429 is a vendor limit: the attempt is
-marked so the caller can open watch-only for Jev and still fall back.
+the caller can use Claude. HTTP 429, and HTTP 503 only when ``Retry-After`` is
+present, are vendor limits: the attempt is marked so the caller can open
+watch-only for Jev and still fall back. A transient 500 and every other 4xx
+or 5xx fall back without that cooldown.
 """
 from __future__ import annotations
 
@@ -350,12 +352,27 @@ def _post(body: dict, *, api_key: str, client) -> httpx.Response:
     return client.post(JEV_URL, headers=headers, json=body, timeout=30.0)
 
 
+def _opens_jev_cooldown(response: httpx.Response) -> bool:
+    """429 always. 503 only with a non-empty Retry-After. Nothing else.
+
+    A single 500 must not stick Jev in watch-only. Other 4xx stay ordinary
+    fallbacks. The caller opens the Jev window only; it does not freeze triage.
+    """
+    if response.status_code == 429:
+        return True
+    if response.status_code != 503:
+        return False
+    retry_after = response.headers.get("Retry-After")
+    return isinstance(retry_after, str) and bool(retry_after.strip())
+
+
 def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: dict,
                       client=None, secret_values=None) -> JevAttempt:
     """Ask Jev for one proposal, or return a fallback reason without raising.
 
     Ordinary HTTP failures, low confidence, and schema-invalid answers do not
-    open watch-only. HTTP 429 is marked ``vendor_limited`` so the caller can.
+    open watch-only. HTTP 429, and HTTP 503 with Retry-After, are marked
+    ``vendor_limited`` so the caller can.
     """
     model = _model_pin(settings) or DEFAULT_JEV_MODEL
     ticker = str(symbol or "").strip().upper()
@@ -406,7 +423,7 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
             # Any failure after the client is invoked was a dispatch, including
             # an unexpected raise. Preflight returns never reach this call.
             return _sent("jev_error")
-        if response.status_code == 429 or response.status_code >= 500:
+        if _opens_jev_cooldown(response):
             return _sent("jev_vendor_limit", vendor_limited=True)
         if response.status_code != 200:
             return _sent("jev_error")
