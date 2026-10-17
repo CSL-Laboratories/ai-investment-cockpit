@@ -77,14 +77,14 @@
     }
   ],
   "candidate_id": "phase-a-protocol-only",
-  "fixture_sha256": "17cca169d664e3fbecb9092a284cd4ee651ab3d4bea65046803df54aa99d47a8",
+  "fixture_sha256": "26b3568519c225383ed0637db4c5fed09b4ba519012d20aa8b57d8aa0605a627",
   "baseline": {
     "commit": "ebbaa34489f171e079834d02098135711e1d4755",
     "workload_id": "ingest_to_raw_store",
-    "fixture_sha256": "17cca169d664e3fbecb9092a284cd4ee651ab3d4bea65046803df54aa99d47a8",
+    "fixture_sha256": "26b3568519c225383ed0637db4c5fed09b4ba519012d20aa8b57d8aa0605a627",
     "outputs": {
       "path": "docs/replacement/outcomes/O8/fixtures/negative/baseline-metadata-only-outputs.json",
-      "sha256": "f0371219fc60c29afacb95f2098db6581004ce0f286c76c06effc500de89f65a"
+      "sha256": "b821c504e6088ab57848a79d502b682f0f677559bdcfc5da0f26ab1836220731"
     }
   },
   "commit": "ffffffffffffffffffffffffffffffffffffffff",

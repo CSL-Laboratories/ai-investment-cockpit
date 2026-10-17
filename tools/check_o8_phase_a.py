@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +29,10 @@ REGISTRY_BASELINE = "73ab78d9d69494c757cec875855121b1d29320a4"
 SEARCH_IDS = (
     "search_8afa65003c515c3b57197de5f5cd25c4",
     "search_902e146c8a56d6e091750abdb2b9d763",
+    "search_b6290caf1f31d7a8a710db6b71f76c7e",
+    "search_86967d451c3ce6e3c60de7a6868def47",
+    "search_4b647f1aa2547fad5b4062554a71c354",
+    "search_41e4072e4bc070139371640730ea2eb3",
 )
 CITED_URLS = (
     "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig",
@@ -36,6 +40,11 @@ CITED_URLS = (
     "https://pyperf.readthedocs.io/en/latest/analyze.html",
     "https://github.com/psf/pyperf",
     "https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026",
+    "https://adaptive-enforcement-lab.com/patterns/architecture/strangler-fig/migration-guide/",
+    "https://martinfowler.com/bliki/ParallelChange.html",
+    "https://asv.readthedocs.io/en/stable/writing_benchmarks.html",
+    "https://asv.readthedocs.io/en/stable/using.html",
+    "https://github.com/sharkdp/hyperfine",
 )
 ACCEPTED_DIGESTS = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",
@@ -154,6 +163,15 @@ NEGATIVES = (
     ("helper-set-mismatch.json", "benchmark", "helper set does not match the workload"),
     ("replay-from-duplicate.json", "packet", "replay sources must be distinct"),
     ("shared-stores-duplicate.json", "packet", "shared stores must be distinct"),
+    ("baseline-outputs-backslash-root.json", "benchmark", "baseline outputs path must be relative"),
+    ("baseline-outputs-unc-slash.json", "benchmark", "baseline outputs path must be relative"),
+    ("baseline-outputs-drive-abs.json", "benchmark", "baseline outputs path must be relative"),
+    ("baseline-outputs-drive-abs-slash.json", "benchmark", "baseline outputs path must be relative"),
+    ("baseline-outputs-drive-rel.json", "benchmark", "baseline outputs path must be relative"),
+    ("baseline-outputs-mid-backslash.json", "benchmark", "baseline outputs path must be relative"),
+    ("helper-duplicate.json", "benchmark", "helper set does not match the workload"),
+    ("tokens-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
+    ("cost-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
 )
 
 
@@ -205,8 +223,17 @@ def _schema_errors(instance: Any, schema_path: Path) -> list[str]:
 
 
 def _is_rooted(value: str) -> bool:
-    """True for absolute or rooted paths on any platform (e.g. '/etc/passwd' on Windows)."""
-    return Path(value).is_absolute() or value.startswith(("/", "\\"))
+    """True for absolute or rooted paths on POSIX or Windows, and for any backslash form.
+
+    Covers leading '/' or '\\', drive-absolute (C:\\x and C:/x), drive-relative
+    (C:foo), UNC (\\\\server\\share and //server/share), and any backslash at all,
+    so a packet-supplied path cannot smuggle a platform-specific escape.
+    """
+    if "\\" in value:
+        return True
+    if PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        return True
+    return bool(PureWindowsPath(value).drive)
 
 
 def _resolve_local_path(value: str) -> Path | None:
@@ -220,7 +247,7 @@ def _resolve_local_path(value: str) -> Path | None:
 
 
 def _local_path_exists(locator: str) -> bool:
-    if locator.startswith("https://") or locator.startswith("http://"):
+    if locator.startswith(("https://", "http://")):
         return True
     resolved = _resolve_local_path(locator)
     return resolved is not None and resolved.exists()
@@ -314,6 +341,15 @@ def benchmark_reasons(document: Any) -> list[str]:
             and math.isfinite(observation.get(key))
             and observation.get(key) >= 0
             for key in ("p50", "p95", "p99", "throughput", "cpu", "io")
+        ) and all(
+            observation.get(key) is None
+            or (
+                isinstance(observation.get(key), (int, float))
+                and not isinstance(observation.get(key), bool)
+                and math.isfinite(observation.get(key))
+                and observation.get(key) >= 0
+            )
+            for key in ("tokens", "cost")
         ) and isinstance(observation.get("rss_bytes"), int) and not isinstance(
             observation.get("rss_bytes"), bool
         ) and observation.get("rss_bytes") >= 0

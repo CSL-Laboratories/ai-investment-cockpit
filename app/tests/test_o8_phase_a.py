@@ -31,7 +31,16 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: helper-set-mismatch: helper set does not match the workload",
     "O8 negative control failed as designed: replay-from-duplicate: replay sources must be distinct",
     "O8 negative control failed as designed: shared-stores-duplicate: shared stores must be distinct",
-    "O8 negative controls: 21 failed as designed",
+    "O8 negative control failed as designed: baseline-outputs-backslash-root: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-unc-slash: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-drive-abs: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-drive-abs-slash: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-drive-rel: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-mid-backslash: baseline outputs path must be relative",
+    "O8 negative control failed as designed: helper-duplicate: helper set does not match the workload",
+    "O8 negative control failed as designed: tokens-negative: tier-3 evidence lacks measured observation",
+    "O8 negative control failed as designed: cost-negative: tier-3 evidence lacks measured observation",
+    "O8 negative controls: 30 failed as designed",
 )
 
 

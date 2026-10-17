@@ -25,14 +25,23 @@
   "research": {
     "parallel_search_ids": [
       "search_8afa65003c515c3b57197de5f5cd25c4",
-      "search_902e146c8a56d6e091750abdb2b9d763"
+      "search_902e146c8a56d6e091750abdb2b9d763",
+      "search_b6290caf1f31d7a8a710db6b71f76c7e",
+      "search_86967d451c3ce6e3c60de7a6868def47",
+      "search_4b647f1aa2547fad5b4062554a71c354",
+      "search_41e4072e4bc070139371640730ea2eb3"
     ],
     "cited_urls": [
       "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig",
       "https://pyperf.readthedocs.io/en/stable/run_benchmark.html",
       "https://pyperf.readthedocs.io/en/latest/analyze.html",
       "https://github.com/psf/pyperf",
-      "https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026"
+      "https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026",
+      "https://adaptive-enforcement-lab.com/patterns/architecture/strangler-fig/migration-guide/",
+      "https://martinfowler.com/bliki/ParallelChange.html",
+      "https://asv.readthedocs.io/en/stable/writing_benchmarks.html",
+      "https://asv.readthedocs.io/en/stable/using.html",
+      "https://github.com/sharkdp/hyperfine"
     ],
     "retrieved_on": "2026-10-17",
     "retrieved_by": "embedded Parallel results run on Dan's box"

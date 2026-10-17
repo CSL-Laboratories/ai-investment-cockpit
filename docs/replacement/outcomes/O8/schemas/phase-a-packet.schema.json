@@ -61,15 +61,15 @@
       "properties": {
         "parallel_search_ids": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true,
           "items": {"type": "string", "minLength": 1}
         },
         "cited_urls": {
           "type": "array",
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 10,
+          "maxItems": 10,
           "uniqueItems": true,
           "items": {"type": "string", "minLength": 1}
         },
