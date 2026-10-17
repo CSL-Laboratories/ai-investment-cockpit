@@ -68,6 +68,7 @@ class JevAttempt:
     dropped: int
     vendor_limited: bool = False
     request_hash: str = ""
+    dispatched: bool = False
 
     def audit_payload(self) -> dict:
         """Fixed tokens only. No state text, no answer prose, no credential."""
@@ -255,7 +256,7 @@ def blocked_jev_attempt(settings, reason: str) -> JevAttempt:
 
 def _fallback(reason: str, model: str, *, estimated: int = 0, dropped: int = 0,
               usage: tuple[int, int] | None = None, response_model: str | None = None,
-              raw: str = "", vendor_limited: bool = False) -> JevAttempt:
+              raw: str = "", vendor_limited: bool = False, dispatched: bool = False) -> JevAttempt:
     usd = rate = scope = source = None
     billed = False
     inp = out = None
@@ -271,7 +272,7 @@ def _fallback(reason: str, model: str, *, estimated: int = 0, dropped: int = 0,
         response_model=response_model, input_tokens=inp, output_tokens=out,
         input_token_source=source, estimated_input=estimated, usd=usd,
         rate_tier=rate, usd_scope=scope, billed=billed, raw=raw, sent_refs=(),
-        dropped=dropped, vendor_limited=vendor_limited,
+        dropped=dropped, vendor_limited=vendor_limited, dispatched=dispatched,
     )
 
 
@@ -388,6 +389,12 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
     # Scan the state itself: JSON escaping can hide a value that would still be sent.
     if any(secret in state or secret in encoded for secret in secrets):
         return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
+
+    def _sent(reason: str, **kwargs) -> JevAttempt:
+        return _fallback(
+            reason, model, estimated=estimated, dropped=dropped, dispatched=True, **kwargs,
+        )
+
     owns_client = client is None
     http = client
     if owns_client:
@@ -396,36 +403,27 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         try:
             response = _post(body, api_key=key, client=http)
         except (httpx.HTTPError, OSError):
-            return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
+            return _sent("jev_error")
         if response.status_code == 429 or response.status_code >= 500:
-            return _fallback(
-                "jev_vendor_limit", model, estimated=estimated, dropped=dropped,
-                vendor_limited=True,
-            )
+            return _sent("jev_vendor_limit", vendor_limited=True)
         if response.status_code != 200:
-            return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
+            return _sent("jev_error")
         try:
             payload = response.json()
         except ValueError:
-            return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
+            return _sent("jev_error")
     finally:
         if owns_client and http is not None:
             http.close()
     if not isinstance(payload, dict):
-        return _fallback("jev_invalid", model, estimated=estimated, dropped=dropped)
+        return _sent("jev_invalid")
     usage = _usage_pair(payload)
     returned = _safe_model_id(payload.get("model"))
     if returned != model:
-        return _fallback(
-            "jev_invalid", model, estimated=estimated, dropped=dropped,
-            usage=usage, response_model=returned,
-        )
+        return _sent("jev_invalid", usage=usage, response_model=returned)
     answers = payload.get("answers")
     if not isinstance(answers, dict):
-        return _fallback(
-            "jev_invalid", model, estimated=estimated, dropped=dropped,
-            usage=usage, response_model=returned,
-        )
+        return _sent("jev_invalid", usage=usage, response_model=returned)
     parsed = (
         _read_choice(answers, "side", _SIDES),
         _read_choice(answers, "asset_type", _ASSETS),
@@ -433,25 +431,16 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         _read_choice(answers, "time_horizon", _HORIZONS),
     )
     if any(item is None for item in parsed):
-        return _fallback(
-            "jev_invalid", model, estimated=estimated, dropped=dropped,
-            usage=usage, response_model=returned,
-        )
+        return _sent("jev_invalid", usage=usage, response_model=returned)
     floor = Decimal(str(getattr(settings, "jev_min_confidence", "0.6")))
     if any(item[1] < floor for item in parsed):
-        return _fallback(
-            "jev_low_confidence", model, estimated=estimated, dropped=dropped,
-            usage=usage, response_model=returned,
-        )
+        return _sent("jev_low_confidence", usage=usage, response_model=returned)
     refs = sorted(ref for ref in fitted.dispatched_refs if _REF.fullmatch(ref))
     proposal = _proposal(ticker, model, *parsed, refs)
     try:
         jsonschema.validate(proposal, schema)
     except jsonschema.ValidationError:
-        return _fallback(
-            "jev_invalid", model, estimated=estimated, dropped=dropped,
-            usage=usage, response_model=returned,
-        )
+        return _sent("jev_invalid", usage=usage, response_model=returned)
     if usage is not None:
         quote = quote_cost(
             model, input_tokens=usage[0], output_tokens=usage[1],
@@ -475,6 +464,6 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         response_model=returned, input_tokens=inp, output_tokens=out,
         input_token_source=source, estimated_input=estimated, usd=quote.usd,
         rate_tier=quote.rate_tier, usd_scope=quote.usd_scope, billed=True,
-        raw=raw, sent_refs=tuple(refs), dropped=dropped,
+        raw=raw, sent_refs=tuple(refs), dropped=dropped, dispatched=True,
         request_hash=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
     )

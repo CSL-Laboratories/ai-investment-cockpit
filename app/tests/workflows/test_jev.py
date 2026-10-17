@@ -216,6 +216,7 @@ def test_auto_routes_a_light_paper_decision_to_jev(st, monkeypatch):
     assert _KEY not in json.dumps(_events(st)[0].payload)
     assert BreakerEngine(st).is_watch_only("claude") is False
     assert BreakerEngine(st).is_watch_only("jev") is False
+    assert st.usage.window("jev").used == 1
 
 
 def test_auto_stays_on_claude_above_the_weight_threshold(st, monkeypatch):
@@ -279,6 +280,7 @@ def test_low_confidence_falls_back_to_claude_without_watch_only(st, monkeypatch)
     assert attempt["rate_tier"] == "jev"
     assert job.usage_estimate > Decimal("0.00084000")
     assert BreakerEngine(st).is_watch_only("claude") is False
+    assert st.usage.window("jev").used == 1
 
 
 def test_vendor_limit_falls_back_and_opens_jev_watch_only(st, monkeypatch):
@@ -310,6 +312,7 @@ def test_vendor_limit_falls_back_and_opens_jev_watch_only(st, monkeypatch):
     assert second.status == OK
     assert second_job.runtime == "claude"
     assert _events(st)[-1].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
+    assert st.usage.window("jev").used == 1
 
 
 def test_in_flight_jev_success_does_not_inherit_a_concurrent_limit(st, monkeypatch):
@@ -339,6 +342,7 @@ def test_in_flight_jev_success_does_not_inherit_a_concurrent_limit(st, monkeypat
     assert payload["jev_attempt"]["billed"] is True
     assert BreakerEngine(st).is_watch_only("jev") is True
     assert BreakerEngine(st).is_watch_only() is False
+    assert st.usage.window("jev").used == 1
 
 
 def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
@@ -357,6 +361,7 @@ def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
     assert BreakerEngine(st).is_watch_only("jev") is False
     assert BreakerEngine(st).is_watch_only("claude") is False
     assert ModeLadder(st).current() is Mode.read_only
+    assert st.usage.window("jev").used == 1
 
 
 def test_upstream_5xx_opens_jev_watch_only_and_falls_back(st, monkeypatch):
@@ -431,6 +436,7 @@ def test_oversized_packet_skips_http_and_uses_claude(st, monkeypatch):
     assert result.status == OK
     assert job.runtime == "claude"
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_over_cap"
+    assert st.usage.window("jev").used == 0
 
 
 def test_missing_api_key_falls_back(st, monkeypatch):
@@ -448,6 +454,7 @@ def test_missing_api_key_falls_back(st, monkeypatch):
     assert result.status == OK
     assert job.runtime == "claude"
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_unconfigured"
+    assert st.usage.window("jev").used == 0
 
 
 def test_invalid_choice_falls_back(st, monkeypatch):
@@ -689,6 +696,7 @@ def test_environment_variable_does_not_authenticate(st, monkeypatch):
     assert result.status == OK
     assert job.runtime == "claude"
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_unconfigured"
+    assert st.usage.window("jev").used == 0
 
 
 def test_live_role_marker_is_not_posted(monkeypatch):

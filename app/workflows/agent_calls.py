@@ -168,6 +168,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
                     jev_attempt = replace(
                         jev_attempt, accepted=False, reason="jev_stale_attempt", proposal=None,
                     )
+                if jev_attempt.dispatched:
+                    state.usage.record("jev")
         except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
             jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
