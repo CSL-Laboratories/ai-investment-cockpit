@@ -5,27 +5,27 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "d0b6346f857de981e9a91fd216a10eea96cd37e1b4ab813c69f76489117cc24d"
+      "sha256": "4e3327ee5c6d68d034d7336e37d651c7ce8ad1ed707cd43636f46f5f8befeee9"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "0505a3697fae060997081b1289d440a897fd22ac3613d60159379efa42156814"
+      "sha256": "e3dfa68a2dda56ddc6761c8ac08d7c8316de33e029d8fe4b648eb87d43efa40e"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "4cde2355e758ea478a3c682f587205b99ce84cba4a6e6ea8863985c6f66c5674"
+      "sha256": "7941118f624b09bbbb7673a5c7104adfc15cd0c66efbf880a7b3a09edd937e0a"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "c3f64d3e166eefc03ffb5508049625ef557265666011a9509f3eca3c77228bf9"
+      "sha256": "4c6f3e8ba6815f93cd408caebd1b17f400e8bb720dd3c4a0df5c5c9cba9d0e99"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "16b2a6f9e52bed48ecdb0198820f048669f4151a4f651268a66051ee7fdb37a9"
+      "sha256": "3331b8e0cd7a070c683501f7ce2a5f81966f8886b4af068b57a4acb8a6014195"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "5b5aa4c5f8b68c0b9a3232ed09b5a0bc9e84876976ce50607b0d025511bbe4d7"
+      "sha256": "487bbfe799fd0821ff8200f49e9e6625a13dd6986f1d9134bf833eb23bdda472"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -37,7 +37,7 @@
     },
     {
       "path": "schemas/experiment.schema.json",
-      "sha256": "9f0a24a119a06d64d799f73705fc9bb0279a717234241ff3a528738e9d348273"
+      "sha256": "eea622739837bef92cd3c34e86040747dddebfe0af7703b0556e1dbd4b5925cd"
     },
     {
       "path": "schemas/metric-registry.schema.json",
@@ -61,7 +61,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "7e2cb70a5ca97bb71aff9d888a6c0f836e2be321d1c54a8bfbc81cf2897052eb"
+      "sha256": "78a000628cac54885f8ea1d3dbe90efc981f4a14246df0b247f834808595ef40"
     }
   ],
   "linear_issue": "CSL-216",

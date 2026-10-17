@@ -93,9 +93,10 @@ would have to be stored as `retained_measured`. This packet has no such
 measurement.
 
 Hypothesis under test, once a later authorized measurement exists: the family
-does not beat matched cash after those four costs, on the metric registry
-below, with the recorded empty outcome still visible. This packet does not
-compute that comparison.
+beats matched cash after those four costs, on the metric registry below, with
+the recorded empty outcome still visible. The null is that it does not beat
+matched cash; a net result that fails matched cash retains the null and
+falsifies the hypothesis. This packet does not compute that comparison.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.

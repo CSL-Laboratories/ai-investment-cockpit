@@ -141,7 +141,17 @@
         },
         "amount": {"type": ["string", "null"]},
         "unit": {"const": "owner_unset"}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "retained_unmeasured"}}},
+          "then": {"properties": {"amount": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "retained_measured"}}},
+          "then": {"properties": {"amount": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"}}}
+        }
+      ]
     }
   }
 }
