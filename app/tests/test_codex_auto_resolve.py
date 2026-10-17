@@ -2959,6 +2959,60 @@ def test_scan_full_tail_same_second_as_stamp_is_human_veto():
     assert any("skip=human-veto" in line for line in logs)
 
 
+def _mutate_reviews_after_first(gh: FakeGitHub, later: list[dict]) -> None:
+    seen = {"n": 0}
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviews(first: 100, after: $after)" in query:
+            seen["n"] += 1
+            if seen["n"] > 1:
+                gh.reviews[12] = later
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+
+
+def test_intervening_decide_review_blocks_cite_and_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    _mutate_reviews_after_first(gh, [comment(CODEX, verdict_body("DECIDE"))])
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+    assert any("skip=decide" in line for line in logs)
+
+
+def test_intervening_deleted_resolve_blocks_cite_and_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    _mutate_reviews_after_first(gh, [])
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+    assert any("skip=no-verdict" in line for line in logs)
+
+
+def test_intervening_edited_codex_review_aborts_pr_scan():
+    other = thread(THREAD2)
+    gh = ready_gh(
+        threads=[thread(), other],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    edited = comment(CODEX, verdict_body())
+    edited["includesCreatedEdit"] = True
+    _mutate_reviews_after_first(gh, [edited, comment(CODEX, verdict_body(tid=THREAD2))])
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+    assert any("skip=edited-or-unknown-codex-evidence" in line for line in logs)
+    assert any("skip=abort-scan" in line for line in logs)
+
+
 def test_scan_has_previous_page_without_reaching_stamp_is_human_veto():
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     gh.thread_tails[THREAD] = [

@@ -63,6 +63,13 @@ REVIEW_THREAD_PAGES = 100
 # Open-PR listing pages (50 PRs each). Remaining truncation logs and
 # continues with the PRs already fetched; omitted PRs stay unresolved.
 OPEN_PR_PAGES = 10
+# Live evidence refresh before writes. These skip reasons abort the rest of
+# the PR: an intervening Codex edit or truncated page can hide a veto.
+EVIDENCE_ABORT_SKIPS = frozenset({
+    "edited-or-unknown-codex-evidence",
+    "truncated-comments",
+    "truncated-threads",
+})
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
@@ -1619,6 +1626,48 @@ def thread_tail_vetoes(
     return oldest is None or oldest >= after
 
 
+def live_resolve_skip(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread_id: str,
+    sha: str,
+    pat_login: str,
+) -> str:
+    """Empty if live evidence still authorizes this resolve; otherwise a skip."""
+    pr = list_pr(gh, cfg, number)
+    if review_threads_truncated(pr):
+        return "truncated-threads"
+    threads = [
+        n for n in ((pr.get("reviewThreads") or {}).get("nodes") or []) if isinstance(n, dict)
+    ]
+    if any(thread_comments_truncated(thread) for thread in threads):
+        return "truncated-comments"
+    issue_comments = list_issue_comments(gh, cfg, number)
+    reviews = list_reviews(gh, cfg, number)
+    items = all_codex_items(threads, issue_comments, reviews)
+    if any(
+        is_bot_author(item) and is_codex(login_of(item)) and not is_unedited(item)
+        for item in items
+    ):
+        return "edited-or-unknown-codex-evidence"
+    latest = latest_verdicts(items)
+    live_thread = next((item for item in threads if str(item.get("id") or "") == thread_id), None)
+    if live_thread is None:
+        return "no-verdict"
+    reason, _verdict = classify_thread(
+        live_thread,
+        head_sha=sha,
+        latest=latest,
+        issue_comments=issue_comments,
+        pat_login=pat_login,
+    )
+    if reason not in {"resolve", "retry-resolve"}:
+        return reason
+    return ""
+
+
 def reply_and_resolve(
     gh: GitHub,
     cfg: Config,
@@ -1644,6 +1693,11 @@ def reply_and_resolve(
         gh, cfg, thread_id=thread_id, after=after, pat_login=actor
     ):
         return "human-veto"
+    blocked = live_resolve_skip(
+        gh, cfg, number=number, thread_id=thread_id, sha=sha, pat_login=actor or "",
+    )
+    if blocked:
+        return blocked
     if not retry:
         try:
             gh.graphql(
@@ -1666,6 +1720,11 @@ def reply_and_resolve(
             gh, cfg, thread_id=thread_id, after=after, pat_login=actor
         ):
             return "human-veto"
+        blocked = live_resolve_skip(
+            gh, cfg, number=number, thread_id=thread_id, sha=sha, pat_login=actor or "",
+        )
+        if blocked:
+            return blocked
     try:
         resolved = gh.graphql(
             RESOLVE_THREAD,
@@ -1956,6 +2015,10 @@ def scan_pr(
         if result == "error":
             abort_scan = True
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=error")
+            continue
+        if result in EVIDENCE_ABORT_SKIPS:
+            abort_scan = True
+            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={result}")
             continue
         if result in {"posted", "posted-unmarked", "resolve-error"}:
             posted_today += 1
