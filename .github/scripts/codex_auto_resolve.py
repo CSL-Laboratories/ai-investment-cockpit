@@ -2035,13 +2035,22 @@ def scan_pr(
             )
             if live_reason != "retry-mark":
                 if live_reason == "already-resolved":
+                    skip_sha = (
+                        cite_sha_for_thread(
+                            thread_comments(live_thread) + live_issue,
+                            live_id,
+                            actor_login=pat_login,
+                        )
+                        or (verdict.sha if verdict else "")
+                        or head_sha
+                    )
                     note_non_pat_resolve(
                         gh,
                         cfg,
                         number=number,
                         thread=live_thread,
                         thread_id=live_id,
-                        sha=head_sha,
+                        sha=skip_sha,
                         pat_login=pat_login,
                     )
                 logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={live_reason}")

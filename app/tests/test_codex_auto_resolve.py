@@ -3092,6 +3092,49 @@ def test_retry_mark_does_not_claim_human_resolver():
     assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
 
 
+def test_retry_mark_human_skip_uses_cite_sha_not_head():
+    gh = ready_gh(
+        sha=SHA2,
+        threads=[
+            thread(
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body(sha=SHA)),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(sha=SHA))],
+    )
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["resolvedBy"] = {
+                "login": "alice"
+            }
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert any("skip=already-resolved" in line for line in logs)
+    skip_bodies = [body for _n, body in gh.issue_posts if mod.SKIP_PREFIX in body]
+    assert skip_bodies
+    assert mod.skip_marker(THREAD, SHA) in skip_bodies[0]
+    assert mod.skip_marker(THREAD, SHA2) not in skip_bodies[0]
+    skipped = thread(
+        resolved=True,
+        resolved_by="alice",
+        comments=[
+            comment(CODEX, verdict_body(sha=SHA)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, skip_bodies[0]),
+        ],
+    )
+    assert mod.resolved_count_today([skipped], [], NOW, PAT_LOGIN, head_sha=SHA2) == 0
+
+
 def test_retry_mark_does_not_claim_after_cite_removed():
     gh = ready_gh(
         threads=[
