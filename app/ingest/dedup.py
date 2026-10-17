@@ -1,6 +1,7 @@
 """WP3 — bounded dedup by (source, article id). LRU-evicts past capacity."""
 from __future__ import annotations
 
+import copy
 import importlib.util
 import logging
 from collections import OrderedDict
@@ -20,7 +21,8 @@ def _load_native() -> None:
     A missing module keeps the pure-Python path. A present extension that
     fails to import is broken and the error propagates. A present module
     missing ``DedupCore`` is a partial wheel, not a silent Python fallback.
-    The map is memory only.
+    The map is memory only. Per-call ``Dedup.add`` stays on the OrderedDict;
+    ``dedup_replay`` is the batch path that uses the extension.
     """
     global _NATIVE, DEDUP_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
@@ -36,7 +38,11 @@ def _load_native() -> None:
 
 
 def _rust_cap(capacity: int) -> bool:
-    return isinstance(capacity, int) and not isinstance(capacity, bool) and _I64_MIN <= capacity <= _I64_MAX
+    return (
+        isinstance(capacity, int)
+        and not isinstance(capacity, bool)
+        and _I64_MIN <= capacity <= _I64_MAX
+    )
 
 
 def _core_key(key: str) -> str:
@@ -61,21 +67,39 @@ def _core_key(key: str) -> str:
     return "\x00" + key.encode("utf-32", "surrogatepass").hex()
 
 
+def _rebuild_core(capacity, keys):
+    """A fresh extension map for ``keys``, or None when it cannot hold them.
+
+    Non-str keys are legal on the OrderedDict and cannot be stored in the
+    extension, so a mixed map has no core. The rebuilt core is a new object.
+    """
+    native = _NATIVE
+    if native is None or not _rust_cap(capacity):
+        return None
+    if any(not isinstance(key, str) for key in keys):
+        return None
+    core = native.DedupCore(capacity)
+    for key in keys:
+        core.add(_core_key(key))
+    return core
+
+
 class Dedup:
     def __init__(self, capacity: int = 50_000):
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._cap = capacity
+        # Pollers call add/discard once per item. A per-call hop into
+        # DedupCore is slower than this map, so the hot path does not attach
+        # one. dedup_replay is the batch path. A core set by a caller is
+        # rebuilt on copy so it is not shared.
         self._core = None
-        native = _NATIVE
-        if native is not None and _rust_cap(capacity):
-            self._core = native.DedupCore(capacity)
 
     def add(self, key: str) -> bool:
-        """Return True if newly added (not a duplicate)."""
-        if self._core is not None:
-            if not isinstance(key, str):
-                raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            return self._core.add(_core_key(key))
+        """Return True if newly added (not a duplicate).
+
+        Any hashable is accepted, with or without the extension installed.
+        An unhashable key raises ``TypeError``, as an OrderedDict does.
+        """
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
@@ -100,11 +124,66 @@ class Dedup:
         capacity window — a bounded duplicate, never a loss. Losing evidence is the failure we
         refuse; a stale duplicate is not.
         """
-        if self._core is not None:
-            if not isinstance(key, str):
-                raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            return self._core.discard(_core_key(key))
         return self._seen.pop(key, _MISSING) is not _MISSING
+
+    def __copy__(self) -> Dedup:
+        """Independent map. A Rust core is rebuilt rather than shared."""
+        return _restore_dedup(self._cap, list(self._seen), self._core is not None)
+
+    def __deepcopy__(self, memo: dict) -> Dedup:
+        cloned = Dedup.__new__(Dedup)
+        memo[id(self)] = cloned
+        cloned._cap = copy.deepcopy(self._cap, memo)
+        keys = copy.deepcopy(list(self._seen), memo)
+        cloned._seen = OrderedDict.fromkeys(keys)
+        cloned._core = _rebuild_core(cloned._cap, keys) if self._core is not None else None
+        return cloned
+
+    def __reduce__(self):
+        return (_restore_dedup, (self._cap, list(self._seen), self._core is not None))
+
+
+def _restore_dedup(capacity, keys, rust_core: bool) -> Dedup:
+    """Rebuild a dedup from its ordered keys. Used by copy and pickle."""
+    seen = Dedup.__new__(Dedup)
+    seen._cap = capacity
+    seen._seen = OrderedDict.fromkeys(keys)
+    seen._core = _rebuild_core(capacity, keys) if rust_core else None
+    return seen
+
+
+def _str_script(ops) -> bool:
+    for op, key in ops:
+        if op not in ("a", "d") or not isinstance(key, str):
+            return False
+    return True
+
+
+def dedup_replay(capacity: int, ops: list[tuple[str, object]]) -> list[bool]:
+    """Run an add/discard script.
+
+    A script of ``str`` keys uses the extension in one call. A lone surrogate
+    cannot cross as UTF-8, so that script is escaped and retried once. Any
+    other hashable stays on the OrderedDict and matches ``Dedup.add`` instead
+    of raising only on the extension. ``op`` is ``"a"`` or ``"d"``.
+    """
+    native = _NATIVE
+    if native is not None and _rust_cap(capacity) and _str_script(ops):
+        try:
+            return list(native.dedup_replay(capacity, ops))
+        except UnicodeEncodeError:
+            encoded = [(op, _core_key(key)) for op, key in ops]
+            return list(native.dedup_replay(capacity, encoded))
+    seen = Dedup(capacity)
+    out = []
+    for op, key in ops:
+        if op == "a":
+            out.append(seen.add(key))
+        elif op == "d":
+            out.append(seen.discard(key))
+        else:
+            raise ValueError(f"unknown dedup op {op}")
+    return out
 
 
 _load_native()

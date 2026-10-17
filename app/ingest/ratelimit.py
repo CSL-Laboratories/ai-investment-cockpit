@@ -18,7 +18,8 @@ def _load_native() -> None:
     A missing module keeps the pure-Python path. A present extension that
     fails to import is broken and the error propagates. A present module
     missing ``token_bucket_allow`` is a partial wheel, not a silent Python
-    fallback. Time stays caller-supplied.
+    fallback. Time stays caller-supplied. Per-call ``TokenBucket.allow`` stays
+    on Python; ``token_bucket_replay`` is the batch path that uses the extension.
     """
     global _NATIVE, RATELIMIT_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
@@ -61,6 +62,13 @@ def _exact_f64(value):
     return None
 
 
+def _all_float(values) -> bool:
+    for value in values:
+        if type(value) is not float:
+            return False
+    return True
+
+
 class TokenBucket:
     def __init__(self, rate_per_sec: float = 1.0, capacity: float = 1.0, now: float = 0.0):
         self.rate = rate_per_sec
@@ -69,46 +77,61 @@ class TokenBucket:
         self._last = now
 
     def allow(self, now: float) -> bool:
-        native = _NATIVE
-        if native is None:
-            return python_allow(self, now)
-        rate, capacity, tokens, last = self.rate, self.capacity, self.tokens, self._last
-        # Floats are already binary64. This is the poller path: no list and no scan.
-        if (
-            type(rate) is float
-            and type(capacity) is float
-            and type(tokens) is float
-            and type(last) is float
-            and type(now) is float
-        ):
-            allowed, tokens, last = native.token_bucket_allow(rate, capacity, tokens, last, now)
-            self.tokens = tokens
-            self._last = last
-            return allowed
-        converted = (
+        """Admit one timestamp.
+
+        Pollers call this once per item. Crossing into the extension for one
+        step is slower than the arithmetic, so the hot path stays here.
+        ``token_bucket_replay`` is the batch path.
+        """
+        elapsed = max(0.0, now - self._last)
+        self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+        self._last = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        return False
+
+
+def python_allow(bucket: TokenBucket, now: float) -> bool:
+    """The reference step. ``TokenBucket.allow`` is this step."""
+    return bucket.allow(now)
+
+
+def token_bucket_replay(rate, capacity, tokens, last, times):
+    """Replay ``times`` from one bucket state.
+
+    Floats, and ints that convert to ``f64`` without rounding, use the
+    extension in one call. Anything else, including ``10**400``, runs
+    ``python_allow`` so the result matches ``TokenBucket.allow``.
+    """
+    native = _NATIVE
+    if (
+        native is not None
+        and _all_float((rate, capacity, tokens, last))
+        and _all_float(times)
+    ):
+        return native.token_bucket_replay(rate, capacity, tokens, last, list(times))
+    if native is not None:
+        head = (
             _exact_f64(rate),
             _exact_f64(capacity),
             _exact_f64(tokens),
             _exact_f64(last),
-            _exact_f64(now),
         )
-        if None in converted:
-            return python_allow(self, now)
-        allowed, tokens, last = native.token_bucket_allow(*converted)
-        self.tokens = tokens
-        self._last = last
-        return allowed
-
-
-def python_allow(bucket: TokenBucket, now: float) -> bool:
-    """The reference step. ``TokenBucket.allow`` uses this when Rust is absent."""
-    elapsed = max(0.0, now - bucket._last)
-    bucket.tokens = min(bucket.capacity, bucket.tokens + elapsed * bucket.rate)
-    bucket._last = now
-    if bucket.tokens >= 1.0:
-        bucket.tokens -= 1.0
-        return True
-    return False
+        if None not in head:
+            steps = []
+            for now in times:
+                step = _exact_f64(now)
+                if step is None:
+                    steps = None
+                    break
+                steps.append(step)
+            if steps is not None:
+                return native.token_bucket_replay(*head, steps)
+    bucket = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+    bucket.tokens = tokens
+    allowed = [python_allow(bucket, now) for now in times]
+    return allowed, bucket.tokens, bucket._last
 
 
 _load_native()

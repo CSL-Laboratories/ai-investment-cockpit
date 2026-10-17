@@ -1,17 +1,22 @@
 """CSL-42 — Rust dedup and token bucket must match the Python admission controls.
 
-Parity cases are skipped when the extension is not installed, which is the
-hosted Python gate. ``COCKPIT_REQUIRE_RUST=1`` fails the file instead of
-skipping, so a wheel that installs but does not activate admission fails CI.
-Dedup compares a Rust-backed instance with a twin whose ``_core`` is cleared.
-The bucket compares ``TokenBucket.allow`` with ``python_allow`` on a twin that
-starts from the same numbers.
+Per-call ``Dedup.add`` / ``TokenBucket.allow`` stay on the OrderedDict and the
+Python step: a poller calls them once per item, and one FFI hop is slower than
+that work. Batch scripts use ``dedup_replay`` and ``token_bucket_replay``, which
+call the extension when the values are ones it can store.
+
+Parity cases that need the extension are skipped when it is not installed,
+which is the hosted Python gate. ``COCKPIT_REQUIRE_RUST=1`` fails the file
+instead of skipping, so a wheel that installs but does not activate admission
+fails CI.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import os
+import pickle
 import random
 import subprocess
 import sys
@@ -20,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from ingest.dedup import DEDUP_BACKEND, Dedup, _core_key
-from ingest.ratelimit import RATELIMIT_BACKEND, TokenBucket, python_allow
+from ingest.dedup import DEDUP_BACKEND, Dedup, _core_key, dedup_replay
+from ingest.ratelimit import RATELIMIT_BACKEND, TokenBucket, python_allow, token_bucket_replay
 
 # The rust.yml job sets this so a wheel that installs but does not activate
 # fails the job. Hosted Python gates leave it unset and skip the parity cases.
@@ -35,11 +40,16 @@ _needs_rust = pytest.mark.skipif(
 )
 
 
-def _dedup(capacity):
-    accelerated = Dedup(capacity)
-    reference = Dedup(capacity)
-    reference._core = None
-    return accelerated, reference
+def _script(capacity, ops) -> list[bool]:
+    seen = Dedup(capacity)
+    seen._core = None
+    out = []
+    for op, key in ops:
+        if op == "a":
+            out.append(seen.add(key))
+        else:
+            out.append(seen.discard(key))
+    return out
 
 
 def _drive_bucket(bucket, times, *, python: bool):
@@ -53,27 +63,18 @@ def _drive_bucket(bucket, times, *, python: bool):
 
 
 @_needs_rust
-def test_dedup_matches_lru_eviction_and_discard():
-    rust, python = _dedup(2)
-    script = ["a", "b", "a", "c", "a", "b"]
-    for key in script:
-        assert rust.add(key) is python.add(key)
-    assert rust.discard("c") is python.discard("c")
-    assert rust.discard("a") is python.discard("a")
-    assert rust.add("c") is python.add("c")
+def test_dedup_replay_matches_lru_eviction_and_discard():
+    ops = [("a", key) for key in ("a", "b", "a", "c", "a", "b")]
+    ops += [("d", "c"), ("d", "a"), ("a", "c")]
+    assert dedup_replay(2, ops) == _script(2, ops)
 
     for cap in (0, -1, -50):
-        rust, python = _dedup(cap)
-        assert rust.add("k") is python.add("k") is True
-        assert rust.add("k") is python.add("k") is True
-        assert rust.discard("k") is python.discard("k") is False
+        cap_ops = [("a", "k"), ("a", "k"), ("d", "k")]
+        assert dedup_replay(cap, cap_ops) == _script(cap, cap_ops) == [True, True, False]
 
-    rust, python = _dedup(3)
-    for key in ("a", "b", "c", "d"):
-        assert rust.add(key) is python.add(key)
-    assert rust.discard("a") is python.discard("a") is False
-    assert rust.discard("c") is python.discard("c") is True
-    assert rust.add("c") is python.add("c") is True
+    ops = [("a", key) for key in ("a", "b", "c", "d")]
+    ops += [("d", "a"), ("d", "c"), ("a", "c")]
+    assert dedup_replay(3, ops) == _script(3, ops)
 
 
 @_needs_rust
@@ -86,25 +87,127 @@ def test_dedup_replay_matches_a_random_script():
     for _ in range(400):
         key = rng.choice(keys)
         ops.append(("d" if rng.random() < 0.25 else "a", key))
-    replay = cockpit_quant.dedup_replay(11, ops)
-    python = Dedup(11)
-    python._core = None
-    for (op, key), replayed in zip(ops, replay):
-        if op == "a":
-            assert replayed is python.add(key)
-        else:
-            assert replayed is python.discard(key)
+    replay = dedup_replay(11, ops)
+    direct = list(cockpit_quant.dedup_replay(11, ops))
+    assert replay == direct == _script(11, ops)
+
+
+def test_a_non_str_key_matches_on_both_backends():
+    """A hashable that is not a str is admitted the same way with or without a core.
+
+    The extension's ``DedupCore.add`` only accepts ``str``. Per-call admission
+    does not use it, so an int or a tuple is not a TypeError on one backend.
+    """
+    plain = Dedup(4)
+    assert plain._core is None
+    assert plain.add(1) is True
+    assert plain.add(1) is False
+    assert plain.add(("src", "id")) is True
+    assert plain.discard(("src", "id")) is True
+    assert plain.discard(("src", "id")) is False
+    with pytest.raises(TypeError):
+        plain.add([])
+
+    ops = [("a", 1), ("a", 1), ("d", 1), ("a", ("k", 2)), ("d", ("k", 2))]
+    assert dedup_replay(4, ops) == _script(4, ops) == [True, False, True, True, True]
+    with pytest.raises(ValueError, match="unknown dedup op"):
+        dedup_replay(2, [("z", "a")])
 
 
 @_needs_rust
-def test_a_non_str_key_is_refused_on_the_rust_path():
-    rust, python = _dedup(4)
-    with pytest.raises(TypeError, match="dedup key must be a str"):
-        rust.add(1)
-    assert python.add(1) is True
+def test_a_non_str_key_agrees_when_a_rust_core_is_attached(monkeypatch):
+    import cockpit_quant
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("non-str replay entered the extension")
+
+    monkeypatch.setattr(cockpit_quant, "dedup_replay", boom)
+    rust = Dedup(4)
+    rust._core = cockpit_quant.DedupCore(4)
+    python = Dedup(4)
+    for key in (1, ("src", "id"), frozenset({"a"})):
+        assert rust.add(key) is python.add(key) is True
+        assert rust.add(key) is python.add(key) is False
+        assert rust.discard(key) is python.discard(key) is True
+    with pytest.raises(TypeError):
+        rust.add([])
+    with pytest.raises(TypeError):
+        python.add([])
+    assert dedup_replay(4, [("a", 1), ("d", 1)]) == [True, True]
     odd = Dedup(capacity=True)
     assert odd._core is None
     assert odd.add("a") is True
+
+
+def _assert_copies_are_independent(seen: Dedup, *, core: bool) -> None:
+    seen.add("a")
+    seen.add("b")
+    seen.add("a")
+    if core:
+        for key in seen._seen:
+            assert seen._core.add(_core_key(key)) is True
+    clones = [
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+        copy.deepcopy({"seen": seen})["seen"],
+    ]
+    for clone in clones:
+        assert clone is not seen
+        assert clone._seen is not seen._seen
+        assert list(clone._seen) == ["b", "a"]
+        if core:
+            assert clone._core is not None
+            assert clone._core is not seen._core
+            assert clone._core.add(_core_key("b")) is False
+            assert seen._core.add(_core_key("b")) is False
+            assert clone._core.discard(_core_key("b")) is True
+        else:
+            assert clone._core is None
+        assert clone.add("b") is False
+        assert clone.add("c") is True
+        assert clone.discard("a") is True
+    assert seen.add("b") is False
+    assert seen.add("a") is False
+    assert seen.add("c") is True
+    if core:
+        assert seen._core.discard(_core_key("b")) is True
+
+
+def test_a_python_dedup_copy_is_independent_and_picklable():
+    _assert_copies_are_independent(Dedup(3), core=False)
+
+
+@_needs_rust
+def test_a_rust_core_copy_is_independent_and_picklable():
+    import cockpit_quant
+
+    seen = Dedup(3)
+    seen._core = cockpit_quant.DedupCore(3)
+    _assert_copies_are_independent(seen, core=True)
+
+    mixed = Dedup(4)
+    mixed._core = cockpit_quant.DedupCore(4)
+    mixed._core.add("z")
+    mixed.add(1)
+    mixed.add("a")
+    cloned = pickle.loads(pickle.dumps(mixed))
+    assert list(cloned._seen) == [1, "a"]
+    assert cloned._core is None
+    assert cloned._seen is not mixed._seen
+    assert cloned.add(1) is False
+    assert mixed.add(1) is False
+    assert mixed._core.add("z") is False
+
+
+@_needs_rust
+def test_per_call_dedup_does_not_attach_a_rust_core():
+    seen = Dedup(50_000)
+    assert seen._core is None
+    assert seen.add("alpaca:1") is True
+    assert seen.add("alpaca:1") is False
+    assert seen.discard("alpaca:1") is True
+    assert seen._core is None
 
 
 @_needs_rust
@@ -115,6 +218,11 @@ def test_token_bucket_matches_including_a_backwards_clock():
     assert _drive_bucket(rust, times, python=False) == _drive_bucket(python, times, python=True)
     assert rust.tokens == python.tokens
     assert rust._last == python._last
+    allowed, tokens, last = token_bucket_replay(2.0, 1.5, 0.0, 0.0, times)
+    fresh = TokenBucket(rate_per_sec=2.0, capacity=1.5, now=0.0)
+    assert allowed == _drive_bucket(fresh, times, python=True)
+    assert tokens == fresh.tokens
+    assert last == fresh._last
 
     rust.tokens = 0.25
     python.tokens = 0.25
@@ -133,12 +241,13 @@ def test_token_bucket_replay_matches_and_starts_empty():
     times = [0.0]
     for _ in range(200):
         times.append(times[-1] + rng.choice((-0.1, 0.0, 0.05, 0.5, 2.0)))
-    allowed, tokens, last = cockpit_quant.token_bucket_replay(1.5, 3.0, 0.0, 0.0, times)
+    allowed, tokens, last = token_bucket_replay(1.5, 3.0, 0.0, 0.0, times)
+    direct, direct_tokens, direct_last = cockpit_quant.token_bucket_replay(1.5, 3.0, 0.0, 0.0, times)
     python = TokenBucket(rate_per_sec=1.5, capacity=3.0, now=0.0)
-    for now, bit in zip(times, allowed):
-        assert bit is python_allow(python, now)
-    assert tokens == python.tokens
-    assert last == python._last
+    for now, bit, direct_bit in zip(times, allowed, direct):
+        assert bit is direct_bit is python_allow(python, now)
+    assert tokens == direct_tokens == python.tokens
+    assert last == direct_last == python._last
 
 
 def _same_number(left, right) -> None:
@@ -155,6 +264,8 @@ def _same_number(left, right) -> None:
 @_needs_rust
 def test_token_bucket_nan_matches_python_max_and_min():
     """A NaN on the right of ``max`` / ``min`` does not replace the left, as in Python."""
+    import cockpit_quant
+
     cases = [
         (1.0, 2.0, 0.0, 0.0, float("nan")),
         (float("nan"), 2.0, 0.0, 0.0, 1.0),
@@ -165,60 +276,93 @@ def test_token_bucket_nan_matches_python_max_and_min():
         (0.0, 2.0, 0.0, 0.0, float("inf")),
     ]
     for rate, capacity, tokens, last, now in cases:
-        rust = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
-        rust.tokens = tokens
+        allowed, new_tokens, new_last = cockpit_quant.token_bucket_allow(
+            rate, capacity, tokens, last, now
+        )
+        replayed, replay_tokens, replay_last = token_bucket_replay(
+            rate, capacity, tokens, last, [now]
+        )
         python = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
         python.tokens = tokens
-        assert rust.allow(now) is python_allow(python, now)
-        _same_number(rust.tokens, python.tokens)
-        _same_number(rust._last, python._last)
+        assert python_allow(python, now) is allowed is replayed[0]
+        _same_number(new_tokens, python.tokens)
+        _same_number(replay_tokens, python.tokens)
+        _same_number(new_last, python._last)
+        _same_number(replay_last, python._last)
+        hot = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+        hot.tokens = tokens
+        assert hot.allow(now) is allowed
+        _same_number(hot.tokens, python.tokens)
+        _same_number(hot._last, python._last)
 
 
 @_needs_rust
-def test_a_lone_surrogate_shares_one_lru_with_utf8_keys():
-    key = "\ud800"
-    rust, python = _dedup(2)
-    assert rust.add("a") is python.add("a") is True
-    assert rust.add(key) is python.add(key) is True
-    assert rust.add("b") is python.add("b") is True
-    # "a" was the oldest. One window of 2 has already dropped it.
-    assert rust.add("a") is python.add("a") is True
-    assert rust.discard(key) is python.discard(key) is False
+def test_a_lone_surrogate_shares_one_lru_with_utf8_keys(monkeypatch):
+    import cockpit_quant
 
-    rust, python = _dedup(2)
-    assert rust.add("a") is python.add("a") is True
-    assert rust.add("b") is python.add("b") is True
-    assert rust.add("a") is python.add("a") is False
-    assert rust.add(key) is python.add(key) is True
-    assert rust.add("a") is python.add("a") is False
-    assert rust.discard(key) is python.discard(key) is True
-    assert rust.add("b") is python.add("b") is True
+    calls = {"n": 0}
+    real = cockpit_quant.dedup_replay
+
+    def wrap(capacity, ops):
+        calls["n"] += 1
+        return real(capacity, ops)
+
+    monkeypatch.setattr(cockpit_quant, "dedup_replay", wrap)
+    key = "\ud800"
+    ops = [("a", "a"), ("a", key), ("a", "b"), ("a", "a"), ("d", key)]
+    assert dedup_replay(2, ops) == _script(2, ops) == [True, True, True, True, False]
+
+    ops = [
+        ("a", "a"),
+        ("a", "b"),
+        ("a", "a"),
+        ("a", key),
+        ("a", "a"),
+        ("d", key),
+        ("a", "b"),
+    ]
+    assert dedup_replay(2, ops) == _script(2, ops) == [True, True, False, True, False, True, True]
 
     folded = "alpaca:benzinga:\ud800\U0001f600"
     pair = "alpaca:benzinga:\ud800\ud83d\ude00"
     assert folded != pair
     assert _core_key(folded) != _core_key(pair)
-    rust, python = _dedup(4)
-    assert rust.add(folded) is python.add(folded) is True
-    assert rust.add(pair) is python.add(pair) is True
-    assert rust.add("\x00" + folded) is python.add("\x00" + folded) is True
-    assert rust.add("\x00" + pair) is python.add("\x00" + pair) is True
+    ops = [("a", folded), ("a", pair), ("a", "\x00" + folded), ("a", "\x00" + pair)]
+    assert dedup_replay(4, ops) == _script(4, ops) == [True, True, True, True]
 
     marked = "\x00a"
-    rust, python = _dedup(2)
-    assert rust.add(marked) is python.add(marked) is True
-    assert rust.add("b") is python.add("b") is True
-    assert rust.add("c") is python.add("c") is True
-    assert rust.add(marked) is python.add(marked) is True
+    ops = [("a", marked), ("a", "b"), ("a", "c"), ("a", marked)]
+    assert dedup_replay(2, ops) == _script(2, ops) == [True, True, True, True]
+    # Three scripts contain a surrogate: the extension rejects the first pass
+    # and the escaped retry is the one that runs. The NUL id is valid UTF-8.
+    assert calls["n"] == 7
+
+    # Per-call stays on the OrderedDict, including a lone surrogate.
+    seen = Dedup(2)
+    assert seen._core is None
+    assert seen.add(key) is True
+    assert seen.add(key) is False
 
 
-def test_a_capacity_past_the_float_range_stays_on_python():
+def test_a_capacity_past_the_float_range_stays_on_python(monkeypatch):
+    if RATELIMIT_BACKEND == "rust":
+        import cockpit_quant
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("huge capacity entered the extension")
+
+        monkeypatch.setattr(cockpit_quant, "token_bucket_replay", boom)
+        monkeypatch.setattr(cockpit_quant, "token_bucket_allow", boom)
     huge = 10**400
     rust = TokenBucket(rate_per_sec=1, capacity=huge, now=0)
     python = TokenBucket(rate_per_sec=1, capacity=huge, now=0)
     assert rust.allow(1) is python_allow(python, 1) is True
     assert rust.tokens == python.tokens
     assert rust._last == python._last
+    allowed, tokens, last = token_bucket_replay(1, huge, 0, 0, [1])
+    assert allowed == [True]
+    assert tokens == rust.tokens
+    assert last == rust._last
 
 
 def test_an_int_rust_cannot_hold_stays_off_the_extension():
@@ -232,13 +376,46 @@ def test_an_int_rust_cannot_hold_stays_off_the_extension():
 
 
 @_needs_rust
-def test_an_exact_integer_capacity_matches_python():
-    rust = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+def test_an_exact_integer_capacity_matches_python(monkeypatch):
+    import cockpit_quant
+
+    seen = {}
+    real = cockpit_quant.token_bucket_replay
+
+    def wrap(*args):
+        seen["args"] = args
+        return real(*args)
+
+    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
+    allowed, tokens, last = token_bucket_replay(1, 2, 0, 0, [0, 1])
     python = TokenBucket(rate_per_sec=1, capacity=2, now=0)
-    assert rust.allow(0) is python_allow(python, 0) is False
-    assert rust.allow(1) is python_allow(python, 1) is True
-    assert rust.tokens == python.tokens
-    assert rust._last == python._last
+    assert allowed[0] is python_allow(python, 0) is False
+    assert allowed[1] is python_allow(python, 1) is True
+    assert tokens == python.tokens
+    assert last == python._last
+    assert seen["args"][0] == 1.0
+    assert seen["args"][1] == 2.0
+
+    hot = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+    ref = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+    assert hot.allow(0) is python_allow(ref, 0) is False
+    assert hot.allow(1) is python_allow(ref, 1) is True
+
+
+@_needs_rust
+def test_per_call_allow_does_not_enter_the_extension(monkeypatch):
+    import cockpit_quant
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("per-call allow entered the extension")
+
+    monkeypatch.setattr(cockpit_quant, "token_bucket_allow", boom)
+    hot = TokenBucket(rate_per_sec=1.0, capacity=2.0, now=0.0)
+    ref = TokenBucket(rate_per_sec=1.0, capacity=2.0, now=0.0)
+    for now in (0.0, 0.0, 1.0, 0.5):
+        assert hot.allow(now) is python_allow(ref, now)
+    assert hot.tokens == ref.tokens
+    assert hot._last == ref._last
 
 
 def test_admission_backend_is_logged(caplog):
