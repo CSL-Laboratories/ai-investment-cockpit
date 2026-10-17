@@ -622,12 +622,22 @@ impl Book {
         price: i64,
         total: i64,
     ) -> Result<(), BookError> {
-        let level = self
-            .side_book_mut(side)
-            .levels
-            .get_mut(&price)
-            .ok_or_else(|| BookError::NotFound(format!("level {price}")))?;
-        level.total_qty = total;
+        let changed = {
+            let level = self
+                .side_book_mut(side)
+                .levels
+                .get_mut(&price)
+                .ok_or_else(|| BookError::NotFound(format!("level {price}")))?;
+            if level.total_qty == total {
+                false
+            } else {
+                level.total_qty = total;
+                true
+            }
+        };
+        if changed {
+            self.bump();
+        }
         Ok(())
     }
 
@@ -800,10 +810,15 @@ mod tests {
         assert_eq!(book.generation(), 1);
         assert!(book.add("a", Side::Buy, 100, 10, 1, 1, None).is_err());
         assert_eq!(book.generation(), 1);
-        book.reduce_qty("a", 4).unwrap();
+        book.set_cached_total(Side::Buy, 100, 10).unwrap();
+        assert_eq!(book.generation(), 1);
+        book.set_cached_total(Side::Buy, 100, 11).unwrap();
         assert_eq!(book.generation(), 2);
-        book.cancel("a").unwrap();
+        assert_eq!(book.depth(Side::Buy, 1)[0].qty, 11);
+        book.reduce_qty("a", 4).unwrap();
         assert_eq!(book.generation(), 3);
+        book.cancel("a").unwrap();
+        assert_eq!(book.generation(), 4);
     }
 
     #[test]

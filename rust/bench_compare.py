@@ -207,9 +207,11 @@ def _rate_copy(recent, repeats: int) -> None:
         recent.append(500 + ts)
 
 
-def _rate_deque(guards, intent, repeats: int) -> None:
+def _rate_deque(guards, repeats: int) -> None:
+    """Time the window only. ``Guards.check`` also prices position and loss limits."""
+    rate_ok = guards._rate_ok
     for ts in range(repeats):
-        guards.check(intent, ts=1_000 + ts)
+        rate_ok(1_000 + ts)
 
 
 def _python_tape(n: int) -> None:
@@ -304,13 +306,13 @@ def main() -> None:
     print(row(f"snapshot, {snap_n} unchanged reads", cached, rebuilt))
     if rebuilt / cached < 1.0:
         sys.exit("snapshot cache regressed below rebuilding the depth")
-    guards, intent = _rate_burst()
+    guards, _intent = _rate_burst()
     rate_n = 5_000
     copied = [500 - 1]
     _rate_copy(copied, 4)
-    _rate_deque(guards, intent, 4)
+    _rate_deque(guards, 4)
     copy_time = _time(lambda: _rate_copy(list(range(500)), rate_n))
-    deque_time = _time(lambda: _rate_deque(guards, intent, rate_n))
+    deque_time = _time(lambda: _rate_deque(guards, rate_n))
     print(row(f"order-rate window, {rate_n} checks", deque_time, copy_time))
     if copy_time / deque_time < 1.0:
         sys.exit("order-rate window regressed below copying the stamp list")
