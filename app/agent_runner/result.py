@@ -18,4 +18,6 @@ class AgentResult:
     session_id: str | None = None
     repaired: bool = False
     error: str | None = None
-    usage_state: str = "ok"             # ok | degraded | exhausted (vendor window after this call)
+    prior_raw: str = ""                 # first attempt's raw output when a repair call replaced it
+    dispatched: bool = True             # False when refused before any subprocess was spawned
+    usage_state: str = "ok"           # ok | degraded | exhausted (vendor window after this call)

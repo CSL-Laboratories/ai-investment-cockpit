@@ -24,12 +24,15 @@ from orchestrator.mode_ladder import ModeLadder
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.portfolio_snapshot import PortfolioSnapshot
+from schemas.models.agent_job import AgentJob
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
 from tests.workflows.conftest import NOW, FakeTransport, envelope
 from workflows.constants import EVENT_GROUNDING, EVENT_PROPOSAL, EVENT_SCRUB
+from workflows.context_limit import estimate_tokens, repair_reserve_tokens
 from workflows.events import persist_events
-from workflows.packets import build_packet
+from workflows.packets import Packet, PacketItem, build_packet
+from workflows.prompts import load_prompt
 from workflows.proposals import draft_proposal
 
 HOLDINGS = frozenset({"AAPL"})
@@ -306,3 +309,27 @@ def test_replayed_proposal_id_keeps_risk_and_order_rows_on_the_final_id(st, cloc
     assert outcome.order is not None
     assert outcome.order.proposal_id == outcome.record.id, \
         "the order must reference the FINAL proposal id, not the replayed one"
+
+
+def test_subject_evidence_that_does_not_fit_defers_without_a_decision_call(
+        st, clock, tmp_path):
+    row = _persist_event(st, clock, tmp_path)
+    tmpl = load_prompt("trade_proposal")
+    overhead = estimate_tokens(tmpl.render(symbol=row.symbol, packet_block=""))
+    cap = overhead + repair_reserve_tokens()
+    st.settings.context_token_cap = cap
+    huge = PacketItem(
+        event_id=row.id, raw_ref=row.raw_ref, symbol=row.symbol, text="x" * 4_000,
+    )
+    packet = Packet(items=(huge,))
+    transport = FakeTransport([])
+    outcome = draft_proposal(
+        st, clock, event=row, packet=packet, transport=transport,
+        parquet_root=tmp_path / "raw", quote_fn=_quote_fn,
+        holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
+    )
+    assert outcome.status == "context_limited"
+    assert transport.calls == []
+    assert outcome.proposal is None and outcome.record is None
+    assert _rows(st, ProposalRecord) == []
+    assert _rows(st, AgentJob) == []
