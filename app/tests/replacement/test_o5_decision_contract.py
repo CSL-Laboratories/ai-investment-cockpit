@@ -108,6 +108,14 @@ def test_relabeling_a_frozen_task_fails_closed() -> None:
     assert admission.code == "suite_oracle_mismatch"
 
 
+def _bind(context, document: dict) -> None:
+    context.requests[document["request_id"]] = {
+        "task_id": document["task_id"],
+        "route_id": document["route_id"],
+        "suite_digest": document["suite_digest"],
+    }
+
+
 def _context(module, suite: dict) -> object:
     return module.Context(
         root=ROOT,
@@ -191,6 +199,7 @@ def test_result_rejects_unsupported_evidence() -> None:
     )
     context = _context(module, suite)
     context.suite_digest = document["suite_digest"]
+    _bind(context, document)
     admitted = module._admit_document(document, schema, context)
     assert admitted.admitted is True
     for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
@@ -213,6 +222,8 @@ def test_request_and_refusal_reject_unsupported_evidence() -> None:
         document = json.loads(path.read_text(encoding="utf-8"))
         context = _context(module, suite)
         context.suite_digest = document["suite_digest"]
+        if kind == "decision_refusal":
+            _bind(context, document)
         admitted = module._admit_document(document, schemas[kind], context)
         assert admitted.admitted is True
         for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
@@ -221,6 +232,58 @@ def test_request_and_refusal_reject_unsupported_evidence() -> None:
             refused = module._admit_document(higher, schemas[kind], context)
             assert refused.admitted is False
             assert refused.code == "installed_route_not_qualified"
+
+
+def test_outcome_must_match_an_admitted_request() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schemas = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    result = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = result["suite_digest"]
+    missing = module._admit_document(result, schemas["decision_result"], context)
+    assert missing.admitted is False
+    assert missing.code == "suite_digest_mismatch"
+    mismatched = dict(result)
+    _bind(context, result)
+    mismatched["task_id"] = "task.ungrounded_claim"
+    refused = module._admit_document(mismatched, schemas["decision_result"], context)
+    assert refused.admitted is False
+    assert refused.code == "suite_digest_mismatch"
+    request = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-request-refuse-order.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    refusal = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-refusal.json").read_text(encoding="utf-8")
+    )
+    unbound = module._admit_document(refusal, schemas["decision_refusal"], context)
+    assert unbound.admitted is False
+    admitted_request = module._admit_document(request, schemas["decision_request"], context)
+    assert admitted_request.admitted is True
+    admitted_refusal = module._admit_document(refusal, schemas["decision_refusal"], context)
+    assert admitted_refusal.admitted is True
+
+
+def test_primary_disclosure_is_not_saved_by_fallback() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["fallback_policy"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/fallback-withhold.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for name in ("credentials", "public_market_text"):
+        leaked = json.loads(json.dumps(document))
+        leaked["primary"]["disclosure_classes"] = [name]
+        refused = module._admit_document(leaked, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "disclosure_forbidden"
 
 
 def test_grounding_and_refusal_results_fail_closed() -> None:
@@ -235,6 +298,7 @@ def test_grounding_and_refusal_results_fail_closed() -> None:
     matched = dict(base)
     matched["task_id"] = "task.ungrounded_claim"
     matched["grounding_ok"] = False
+    _bind(context, matched)
     admitted = module._admit_document(matched, schema, context)
     assert admitted.admitted is True
     flipped = dict(base)
@@ -245,6 +309,7 @@ def test_grounding_and_refusal_results_fail_closed() -> None:
     assert refused.code == "result_contradicts_suite"
     order = dict(base)
     order["task_id"] = "task.refuse_order"
+    _bind(context, order)
     order_result = module._admit_document(order, schema, context)
     assert order_result.admitted is False
     assert order_result.code == "result_contradicts_suite"

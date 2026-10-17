@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -87,6 +87,7 @@ WIRE_ORDER = (
     "fallback_policy",
     "route_comparison",
     "decision_request",
+    "decision_request",
     "decision_result",
     "decision_refusal",
 )
@@ -131,6 +132,7 @@ class Context:
     cases: dict[str, dict[str, Any]]
     route_ids: set[str]
     negative_ids: set[str]
+    requests: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def _refuse(code: str, detail: str) -> Admission:
@@ -487,6 +489,10 @@ def _admit_fallback(document: dict[str, Any], ctx: Context) -> Admission:
         or int(fallback["max_latency_ms"]) > int(primary["max_latency_ms"])
     ):
         return _refuse("fallback_widens_budget", "fallback cost or latency budget is wider than the primary budget")
+    for side in (primary, fallback):
+        classes = set(side["disclosure_classes"])
+        if classes & FORBIDDEN_DISCLOSURE or classes - FORBIDDEN_DISCLOSURE:
+            return _refuse("disclosure_forbidden", "a disclosure class is not admitted on the primary or the fallback")
     if document.get("effect") != "withhold_and_record":
         return _refuse("order_authority_claimed", "fallback effect must withhold and record")
     if primary["authority_ceiling"] != "evidence_only":
@@ -553,13 +559,44 @@ def _admit_request(document: dict[str, Any], ctx: Context) -> Admission:
             "installed_route_not_qualified",
             "higher-tier evidence is not retained in this researched packet",
         )
+    retained = _retain_request(document, ctx)
+    if retained is not None:
+        return retained
     return _admit()
+
+
+def _retain_request(document: dict[str, Any], ctx: Context) -> Admission | None:
+    request_id = document["request_id"]
+    if request_id in ctx.requests:
+        return _refuse("suite_digest_mismatch", "request id is already admitted")
+    ctx.requests[request_id] = {
+        "task_id": document["task_id"],
+        "route_id": document["route_id"],
+        "suite_digest": document["suite_digest"],
+    }
+    return None
+
+
+def _bound_request(document: dict[str, Any], ctx: Context) -> Admission | None:
+    binding = ctx.requests.get(document.get("request_id"))
+    if binding is None:
+        return _refuse("suite_digest_mismatch", "outcome request was not admitted")
+    if (
+        binding["task_id"] != document.get("task_id")
+        or binding["route_id"] != document.get("route_id")
+        or binding["suite_digest"] != document.get("suite_digest")
+    ):
+        return _refuse("suite_digest_mismatch", "outcome does not match the admitted request")
+    return None
 
 
 def _admit_result(document: dict[str, Any], ctx: Context) -> Admission:
     unknown = _known_route(document["route_id"], ctx)
     if unknown:
         return unknown
+    unbound = _bound_request(document, ctx)
+    if unbound is not None:
+        return unbound
     if document.get("suite_digest") != ctx.suite_digest:
         return _refuse("suite_digest_mismatch", "result is not bound to the frozen task suite")
     case = ctx.cases.get(document.get("task_id"))
@@ -593,6 +630,9 @@ def _admit_refusal(document: dict[str, Any], ctx: Context) -> Admission:
     unknown = _known_route(document["route_id"], ctx)
     if unknown:
         return unknown
+    unbound = _bound_request(document, ctx)
+    if unbound is not None:
+        return unbound
     if document.get("suite_digest") != ctx.suite_digest:
         return _refuse("suite_digest_mismatch", "refusal is not bound to the frozen task suite")
     case = ctx.cases.get(document.get("task_id"))

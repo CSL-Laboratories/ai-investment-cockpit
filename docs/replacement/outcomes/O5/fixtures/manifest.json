@@ -29,7 +29,7 @@
     {
       "class": "prose",
       "path": "docs/replacement/outcomes/O5/CONTRACT.md",
-      "sha256": "ca0984ce3eeb44e7166f652684c5559f045969cc71b02f7eb059ea923e76e502"
+      "sha256": "0a73dc8fa07a0e605bdb7b5da5d40ca48c273d81d6c666b4bf53aaae8eceed0d"
     },
     {
       "class": "governing",
@@ -97,6 +97,11 @@
       "kind": "decision_request",
       "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-request.json",
       "sha256": "a84ebd02644390a5c0414940319f6c58264741218c7ff07df12ddec9273aca4c"
+    },
+    {
+      "kind": "decision_request",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-request-refuse-order.json",
+      "sha256": "4592ab4ff62ff0d80381cd49a8f26e0e9263785b559ab72f01c2f353e8978079"
     },
     {
       "kind": "decision_result",

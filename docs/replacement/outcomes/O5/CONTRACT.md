@@ -118,18 +118,21 @@ Positive examples live in `fixtures/positive/` and the manifests beside them.
 - **Decision request.** Bound to a frozen task id and the suite digest. Authority
   ceiling `evidence_only`. No order, no credential, no authorized spend, no
   admitted disclosure. A request cannot report `demo_or_paper`, `shadow`,
-  `limited_live`, or `independently_verified`.
+  `limited_live`, or `independently_verified`. An admitted request is retained
+  by request id, task, route, and suite digest.
 - **Decision result.** Schema compliance and value correctness are separate
   booleans. The worked example is schema-valid and value-wrong, and the
   disposition is `withhold`. A result cannot grant authority, emit an order, or
   carry a credential. A result that relabels the frozen task is refused. A result
   cannot report `demo_or_paper`, `shadow`, `limited_live`, or
-  `independently_verified`, because those outputs were not retained.
+  `independently_verified`, because those outputs were not retained. A result
+  must match an admitted request on request id, task, route, and suite digest.
 - **Decision refusal.** First-class object, not a schema-invalid success. The
   frozen refusal tasks cover an order request, a credential request, and a budget
   widening. A refusal adds no disclosure and does not change the budget. A
   refusal cannot report `demo_or_paper`, `shadow`, `limited_live`, or
-  `independently_verified`, because those outputs were not retained.
+  `independently_verified`, because those outputs were not retained. A refusal
+  must match an admitted request on request id, task, route, and suite digest.
 - **Capability manifest.** Schema validation and explicit refusal are capabilities.
   Broker tools, order submission, and credential custody are forbidden. No
   capability grants authority.
@@ -146,7 +149,10 @@ Positive examples live in `fixtures/positive/` and the manifests beside them.
   cannot offset correctness. Grounding cannot clear an order.
 - **Fallback policy.** A fallback may only narrow authority, disclosure, and
   budget, or leave them unchanged. The admitted example withholds and records.
-  The primary ceiling in this packet stays `evidence_only`.
+  The primary ceiling in this packet stays `evidence_only`. Both sides are
+  checked against the admitted disclosure matrix. No class is admitted, and
+  `credentials` and `order_instructions` stay forbidden. A class on the primary
+  is refused even when the fallback removes it.
 
 ## Frozen task suite
 
