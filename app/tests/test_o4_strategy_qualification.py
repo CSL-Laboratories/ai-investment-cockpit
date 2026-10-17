@@ -33,6 +33,10 @@ FAILURES = (
     "O4 negative control FAIL parameter_variants_as_distinct_strategies:",
     "O4 negative control FAIL decision_owner_role:",
     "O4 negative control FAIL leakage_controls_satisfied:",
+    "O4 negative control FAIL variant_configuration:",
+    "O4 negative control FAIL unbound_population:",
+    "O4 negative control FAIL metric_registry:",
+    "O4 negative control FAIL measured_costs_on_unrun_experiment:",
 )
 CHECKED = (
     "O4 candidate packet checked at maturity researched; "
@@ -58,10 +62,10 @@ def test_o4_negative_controls_fail_as_designed(capsys) -> None:
         sys.stdout.flush()
     assert completed.returncode == 0, completed.stderr
     lines = completed.stdout.splitlines()
-    assert len(lines) == 7
+    assert len(lines) == 11
     for line, prefix in zip(lines, FAILURES):
         assert line.startswith(prefix)
-    assert lines[6] == CHECKED
+    assert lines[10] == CHECKED
     assert "PASS" not in completed.stdout
     assert "contract_frozen" not in completed.stdout
     source = (O4 / "validate.py").read_text(encoding="utf-8")
@@ -95,6 +99,11 @@ def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     assert owners["release"] == "release owner"
     assert owners["spend"] == owners["credentials"] == "reserved authority"
     assert set(owners.values()) == {"owner", "release owner", "reserved authority"}
+    registry_ids = [item["id"] for item in packet["metric_registry"]["measures"]]
+    assert "net_yield" in registry_ids and "capital_use" in registry_ids
+    for variant in packet["strategy_contract"]["parameter_variants"]:
+        assert variant["configuration"]["legs"]
+        assert len(variant["configuration_sha256"]) == 64
 
 
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:

@@ -5,35 +5,51 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "b5fa7d3d632319aad3cc35feb94fef4cd20afcb6e3805a6f89f5f3ca20a8611e"
+      "sha256": "2a258b7fc7dda3238aff8db2bd9c7696624aef2511644733d0a953a395b25799"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "77a9208045656a22557e2522399bfccabb8ef575c2a205088d62fe3cd7540d3b"
+      "sha256": "b55011cf222c77e57bdd03f5773c9d7c17fac368de0d8ed068fc11acb125f271"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "092fbf315912cb541c9522196a83babd3b79f1f4235b3fe215314a31adc85e47"
+      "sha256": "11d56d82ff578ff4c58669b3a96eefe9e5d4a382c7d90ebaa2270674b3b188fe"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "e902f72442ca94d351241182af881580ca20601310d81fc9cccd409bd4337030"
+      "sha256": "45a5f958f022c848a962f98bf4aca1edab73e7c71d44f56a7dfcb91ddb283dfb"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
-      "sha256": "1e8ead6717e4746ba44de67a3f176a02b7ca537d562f9a8e4d9d121997c7529b"
+      "sha256": "fe8af9087962d8c901bbf0d64862a21537b48e118e705b42d26efd63cf66aeab"
+    },
+    {
+      "path": "fixtures/negative/measured-costs.json",
+      "sha256": "caa0fdadafe76e5c5a0e5c57d0c5fbdc6b79956a59f98ce134f1d04690002924"
+    },
+    {
+      "path": "fixtures/negative/metric-registry-incomplete.json",
+      "sha256": "e9a45244489f159c0631a66eba854b66b52db3a7e3cc1af02b19baf6e6bb603e"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "d51381c00b5ffed1f8053a258cc1253a06d0ac064b320f7657300ae851f518b3"
+      "sha256": "7d1655f4ef087badeaac3f906178b38063ad76a3046783180d6bf6905fd6236a"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "3b474cf59906559efa093f51e3157a50548be6b25e81a7157302eed7671d2b68"
+      "sha256": "b056d19c2e66a84fe099430da27759a4446fb93e44e95e024afab2c565682913"
+    },
+    {
+      "path": "fixtures/negative/population-members-rebound.json",
+      "sha256": "61a8a1a3dad61f0953bf4baa5ca6ef5cf7a367dece9cdd78298dce47943e93c3"
     },
     {
       "path": "fixtures/negative/release-owner-person.json",
-      "sha256": "b58a6552ff09013af16383ada995da7b217f5289e6a50d50db11a292c469ac35"
+      "sha256": "c11f731a13dd524216983728803be160ac8c111ed1880bcfcba0cd2c21682dc3"
+    },
+    {
+      "path": "fixtures/negative/variant-configuration.json",
+      "sha256": "12511530c497ba3a36be6eb563592dc3f023cc53ea7d553e664fe521e9217b34"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -45,11 +61,11 @@
     },
     {
       "path": "schemas/experiment.schema.json",
-      "sha256": "d1a0a0b83bbd1498f54b7541dc541d31a02bc5536e3ec3761b250ad1023fd525"
+      "sha256": "6fe6e41ce03a2e4a245de15d249951edc6dadc12506f34350489dd29788dc957"
     },
     {
       "path": "schemas/metric-registry.schema.json",
-      "sha256": "b9ff5ca0bfa32537c0c90306e58acb66991f647720f749d58cbee77fa377e37f"
+      "sha256": "9c3a80175d266a9c52df92c35b7aa50c3897d77a562f0411079b01296db8862a"
     },
     {
       "path": "schemas/promotion-protocol.schema.json",
@@ -65,11 +81,11 @@
     },
     {
       "path": "schemas/strategy-contract.schema.json",
-      "sha256": "d5863fb842959d8d8e3e492a2f9fe892b523bcef62101a38b4977bb427bca764"
+      "sha256": "b910661334b04342cfa16069c35202f142332a33d5efff29842db9ebd6f1aa9f"
     },
     {
       "path": "validate.py",
-      "sha256": "314d4137b97013730cf2b485df634e51d752d94ccaf9923df5d9698030ddf628"
+      "sha256": "6d450eb27e9c12a886bd73c74e2e560fd0dab7499e86ecbda3dc526b36871f24"
     }
   ],
   "linear_issue": "CSL-216",
@@ -98,6 +114,22 @@
     {
       "expect": "leakage_controls_satisfied",
       "path": "fixtures/negative/leakage-control-satisfied.json"
+    },
+    {
+      "expect": "variant_configuration",
+      "path": "fixtures/negative/variant-configuration.json"
+    },
+    {
+      "expect": "unbound_population",
+      "path": "fixtures/negative/population-members-rebound.json"
+    },
+    {
+      "expect": "metric_registry",
+      "path": "fixtures/negative/metric-registry-incomplete.json"
+    },
+    {
+      "expect": "measured_costs_on_unrun_experiment",
+      "path": "fixtures/negative/measured-costs.json"
     }
   ],
   "outcome": "O4",

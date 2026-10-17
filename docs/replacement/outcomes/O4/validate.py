@@ -68,6 +68,8 @@ METRIC_IDS = (
     "probability_of_backtest_overfitting",
     "drawdown",
     "uncertainty",
+    "net_yield",
+    "capital_use",
 )
 METRIC_INPUTS = {
     "deflated_sharpe_ratio": (
@@ -85,6 +87,12 @@ METRIC_INPUTS = {
     ),
     "drawdown": ("peak_to_trough_net_loss", "drawdown_duration"),
     "uncertainty": ("estimator_owner_unset", "net_result_series"),
+    "net_yield": (
+        "net_result_series",
+        "matched_cash_baseline_series",
+        "retained_cost_amounts",
+    ),
+    "capital_use": ("capital_employed_series", "peak_capital_employed"),
 }
 METRIC_CITATIONS = {
     "deflated_sharpe_ratio": CITATION_URLS[0],
@@ -116,6 +124,10 @@ CONTROL_ORDER = (
     "parameter_variants_as_distinct_strategies",
     "decision_owner_role",
     "leakage_controls_satisfied",
+    "variant_configuration",
+    "unbound_population",
+    "metric_registry",
+    "measured_costs_on_unrun_experiment",
 )
 
 
@@ -134,6 +146,11 @@ class Failure:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _canonical_sha256(obj: Any) -> str:
+    canonical = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _load_json(path: Path) -> Any:
@@ -240,6 +257,17 @@ def _populations(packet: dict[str, Any], failures: list[Failure]) -> None:
         "acquired_population",
         "this design has no acquired population",
     )
+    members = {
+        "tuning_member_ids": tuning,
+        "evaluation_member_ids": evaluation,
+    }
+    recorded = population.get("selection_manifest", {}).get("members_sha256")
+    _fail_if(
+        failures,
+        recorded != _canonical_sha256(members),
+        "unbound_population",
+        "population member ids do not match the recorded selection-manifest digest",
+    )
 
 
 def _leakage(packet: dict[str, Any], failures: list[Failure]) -> None:
@@ -276,6 +304,13 @@ def _costs(packet: dict[str, Any], failures: list[Failure]) -> None:
     bad = [key for key in COST_KEYS if key not in costs or not _cost_ok(costs[key])]
     if bad:
         failures.append(Failure("dropped_costs", "required cost is dropped or missing: " + ", ".join(bad)))
+    measured = [key for key in COST_KEYS if costs.get(key, {}).get("status") == "retained_measured"]
+    _fail_if(
+        failures,
+        packet["experiment"].get("status") == "not_run" and bool(measured),
+        "measured_costs_on_unrun_experiment",
+        "an unrun experiment cannot carry measured costs: " + ", ".join(measured),
+    )
 
 
 def _variants(packet: dict[str, Any], failures: list[Failure]) -> None:
@@ -307,6 +342,18 @@ def _variants(packet: dict[str, Any], failures: list[Failure]) -> None:
         bool(mismatched),
         "parameter_variants_as_distinct_strategies",
         "a parameter variant is marked as its own strategy: " + ", ".join(mismatched),
+    )
+    rebound = [
+        item["variant_id"]
+        for item in contract["parameter_variants"]
+        if item.get("configuration_sha256") != _canonical_sha256(item.get("configuration"))
+    ]
+    _fail_if(
+        failures,
+        bool(rebound),
+        "variant_configuration",
+        "a parameter variant's configuration digest does not match its recorded configuration: "
+        + ", ".join(rebound),
     )
 
 

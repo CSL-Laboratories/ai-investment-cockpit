@@ -52,7 +52,8 @@
         "status",
         "member_ids_are_acquired_observations",
         "tuning_member_ids",
-        "evaluation_member_ids"
+        "evaluation_member_ids",
+        "selection_manifest"
       ],
       "properties": {
         "status": {"const": "illustrative_design_not_acquired"},
@@ -66,6 +67,17 @@
           "type": "array",
           "minItems": 2,
           "items": {"type": "string", "minLength": 1}
+        },
+        "selection_manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["universe", "as_of", "split_rule", "members_sha256"],
+          "properties": {
+            "universe": {"const": "owner_unset"},
+            "as_of": {"type": "null"},
+            "split_rule": {"const": "purged_embargoed_disjoint_tuning_evaluation"},
+            "members_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
         }
       }
     },

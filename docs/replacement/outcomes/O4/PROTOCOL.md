@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints six negative-control failures and one researched-maturity
+A clean command prints ten negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -60,7 +60,12 @@ Family `xm_us_equity_kalshi_demo` is one strategy. Its three configurations
 (`equity_leg`, `event_leg`, `joint_legs`) are parameter variants. They count
 as multiple-testing trials. They do not count as three strategies.
 `distinct_strategy_count` is 1. `counted_as_distinct_strategies` is false.
-`multiple_testing_trial_count` is 3.
+`multiple_testing_trial_count` is 3. Each variant also records its frozen
+`configuration` — the market legs it runs — and `configuration_sha256`, the
+checker-verified SHA-256 of that configuration's canonical JSON (sorted keys,
+compact separators). A variant id cannot silently denote different logic
+during tuning and evaluation: a configuration that drifts from its recorded
+digest fails the packet.
 
 The contract states a hypothesis, three alternatives, and falsifiers. The
 research quota on this family is one bounded reconciliation pass, zero Deep
@@ -80,6 +85,13 @@ The population is an illustrative disjoint split, not an acquired sample:
 - tuning: `illustrative:us-equity:tune`, `illustrative:kalshi-demo:tune`
 - evaluation: `illustrative:us-equity:eval`, `illustrative:kalshi-demo:eval`
 
+The split is bound to a `selection_manifest`. Its `universe` and `as_of` stay
+`owner_unset` because no observation set is acquired; `split_rule` declares
+the purged and embargoed disjoint tuning/evaluation design; `members_sha256`
+is the checker-verified SHA-256 of the member-id lists' canonical JSON.
+Member ids cannot be reassigned or swapped after results are seen without
+failing the digest.
+
 Leakage controls are required on that split, and each records an explicit
 `status`: `run` with retained evidence, or `not_run`. Purge removes training
 labels whose outcome window overlaps the evaluation window. Embargo removes
@@ -92,15 +104,18 @@ The matched baseline is cash on the same population and the same clock. Cash
 flows are retained and matched to that baseline. Their values are unmeasured.
 Transaction, latency, data, and model costs are retained and unmeasured. A
 dropped or missing cost is a failed packet. A zero that was actually measured
-would have to be stored as `retained_measured`. This packet has no such
-measurement.
+would have to be stored as `retained_measured` — and while the experiment is
+`not_run`, a `retained_measured` cost is asserted measurement evidence the
+checker rejects. This packet has no such measurement.
 
 Hypothesis under test, once a later authorized measurement exists: the family
-beats matched cash after those four costs, on the metric registry below, with
-the recorded empty outcome still visible. The null is that it does not beat
-matched cash. A net result that does not beat matched cash retains the null
-and rejects the strategy hypothesis; only a net result that beats matched cash
-rejects the null. This packet does not compute that comparison.
+beats matched cash after those four costs, measured on net yield against the
+matched-cash baseline and capital use together with the statistical registry
+below, with the recorded empty outcome still visible. The null is that it
+does not beat matched cash. A net result that does not beat matched cash
+retains the null and rejects the strategy hypothesis; only a net result that
+beats matched cash rejects the null. This packet does not compute that
+comparison.
 
 Alternatives: equity leg only, event leg only, and the awareness-only fallback
 that supplies no execution edge.
@@ -121,6 +136,8 @@ Threshold values are owner decisions. Every threshold in this packet is
 | Probability of backtest overfitting | Variant return matrix, combinatorial symmetric cross-validation splits, and the out-of-sample rank of the in-sample winner. The measure is the share of splits where that winner lands below the out-of-sample median. | [Bailey, Borwein, López de Prado, and Zhu](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253) |
 | Drawdown | Peak-to-trough loss on the matched net cash flow, and the length of that drawdown. | Local accounting requirement. No numeric bar. |
 | Uncertainty | The net-result series and an estimator. The estimator is `owner_unset`. | Local accounting requirement. No numeric bar. |
+| Net yield | Net-of-cost result against the matched-cash baseline: the net-result series, the matched-cash baseline series, and the retained cost amounts. This is the primary economic outcome the hypothesis names. | Local accounting requirement. No numeric bar. |
+| Capital use | The capital the family requires: the capital-employed series and peak capital employed. | Local accounting requirement. No numeric bar. |
 
 [Arian, Norouzi, and Seco](https://doi.org/10.1016/j.knosys.2024.112477) compare
 out-of-sample methods in a synthetic controlled environment and report lower
@@ -172,6 +189,10 @@ must be rejected for exactly one designed reason:
 | `parameter-variants.json` | The three configurations are counted as three strategies. |
 | `release-owner-person.json` | The release decision routes to a person instead of its role. |
 | `leakage-control-satisfied.json` | The purge control reads `run` with evidence on an experiment that has not run. |
+| `variant-configuration.json` | A parameter variant's configuration digest does not match its recorded configuration. |
+| `population-members-rebound.json` | A member id is reassigned while the selection-manifest digest is left stale. |
+| `metric-registry-incomplete.json` | The net-yield measure does not retain its matched-baseline input. |
+| `measured-costs.json` | A cost reads `retained_measured` on an experiment that has not run. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.
