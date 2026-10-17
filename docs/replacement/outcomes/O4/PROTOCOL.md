@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints twelve negative-control failures and one researched-maturity
+A clean command prints fourteen negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -166,11 +166,16 @@ not to the number of cross-validation paths.
 
 ## Promotion protocol and candidate queue
 
-Promotion order is replay, then demo. Demo requires a prior replay stage. Both
-stages are unauthorized. Live is outside this contract. Strategy activation is
-unauthorized. Promotion stays unauthorized while thresholds are unset, the
-recorded qualify count is 0, and an independent verifier has not rerun the
-candidate.
+The non-live promotion ladder follows SCOPE-AUDIT RC-8: replay, simulation,
+official demo/test venue, shadow/live-data observation, then paper or
+venue-equivalent execution. The packet ids are `replay`, `simulation`, `demo`,
+`shadow`, and `paper`. Every stage requires the immediately preceding stage;
+none may be skipped or reordered. All five stages are unauthorized. Limited
+live and broader live are explicitly unauthorized in the `live` block and
+outside this candidate contract; their separately accepted gates remain
+required before any future live operation. Strategy activation is unauthorized.
+Promotion stays unauthorized while thresholds are unset, the recorded qualify
+count is 0, and an independent verifier has not rerun the candidate.
 
 Each stage records its exact entry and exit gates (`entry_gates`,
 `exit_gates`, `failure_policy`) so later consumers do not invent or amend
@@ -178,12 +183,32 @@ policy after observing results. Replay entry requires the packet and manifest
 digests to be pinned to a separately accepted, versioned pre-result receipt
 (`preresult_receipt`) kept outside this artifact set — self-recorded digests
 are consistency checks only — plus an authorized independent verifier rerun
-(`verifier_rerun_record`); its exit records the replay output matched to those
-receipt digests. Demo entry requires the replay exit gates met
-(`replay_output_record`); its exit records the demo output and routes the
-outcome to the release owner for decision. A stage's `failure_policy` is
-`blocked_and_recorded_no_promotion`. A stage marked `authorized`, or one whose
-declared gates drop a required criterion or evidence, fails the packet.
+(`verifier_rerun_record`) and separate unit/property-test evidence
+(`unit_property_test_record`); its exit records the replay output matched to
+those receipt digests. Unit/property results remain distinct from replay or
+economic qualification.
+
+| Stage | Entry gates and retained evidence | Exit gates |
+| --- | --- | --- |
+| Simulation | Replay exit met (`replay_output_record`); simulation model, costs, thresholds and coverage pinned before results (`preresult_receipt`). | Simulation output recorded with all costs; meets the pre-result thresholds and coverage. |
+| Official demo/test venue | Simulation exit met (`simulation_output_record`); official demo venue profile and non-live scope accepted before results (`venue_conformance_record`, `nonlive_scope_receipt`). | Demo output recorded; reconciliation and recovery meet the pre-result thresholds and coverage. |
+| Shadow/live-data observation | Demo exit met (`demo_output_record`); acquisition scope accepted before observation (`data_scope_receipt`); observation only, no order authority; pre-result protocol retained (`preresult_receipt`). | Shadow output records data gaps, latency and costs; meets the pre-result thresholds and coverage. |
+| Paper or venue-equivalent execution | Shadow exit met (`shadow_output_record`); non-live execution scope accepted before results (`nonlive_scope_receipt`, `preresult_receipt`); current risk, mode, approval and gateway path preserved. | Execution output recorded; reconciliation, recovery and economics meet the pre-result thresholds and coverage; outcome routed to the release owner for decision. |
+
+Each rung retains separate output for the exact candidate and receipt. Evidence
+from an earlier rung does not satisfy a later one. The pre-result receipt must
+bind the stage-specific thresholds, coverage and environment before any results
+are observed; unset values block entry. Elapsed time and order count do not
+replace coverage, and demo/paper P&L does not establish production profitability.
+These gates specify required evidence, not completed tests or selected numeric
+bars. This candidate packet remains at maturity `researched` and does not claim
+to be a frozen, accepted contract.
+
+A stage's `failure_policy` is `blocked_and_recorded_no_promotion`. A missing
+rung, a stage marked `authorized`, or gates that drop a required criterion or
+evidence fail the packet. Invalid order or a bypassed prior-stage link also
+fails validation. The checker enforces the required criteria for every rung;
+schema-shaped placeholder gates cannot stand in for them.
 
 The queue retains the six RW-28 verdicts, in file order, all unqualified:
 
@@ -201,8 +226,9 @@ The design family is a seventh queue row with verdict `not_run`. Queue
 
 ## Negative controls
 
-The frozen fixtures under `fixtures/negative/` are schema-shaped packets that
-must be rejected for exactly one designed reason:
+The frozen fixtures under `fixtures/negative/` must be rejected for exactly one
+designed reason. The missing-rung control deliberately retains the former
+two-stage ladder; the other controls preserve the complete schema shape:
 
 | Fixture | Designed failure |
 | --- | --- |
@@ -218,6 +244,8 @@ must be rejected for exactly one designed reason:
 | `measured-costs.json` | A cost reads `retained_measured` on an experiment that has not run. |
 | `promotion-stage-authorized.json` | The replay stage is marked authorized. |
 | `preresult-receipt-dropped.json` | The replay entry gates drop the pre-result receipt criterion and evidence. |
+| `stages-missing-rung.json` | The former replay/demo ladder omits simulation, shadow and paper; rejected as `missing_promotion_rung`. |
+| `shadow-data-scope-dropped.json` | Shadow entry drops the acquisition-scope criterion and its required receipt; rejected as `promotion_gates`. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.

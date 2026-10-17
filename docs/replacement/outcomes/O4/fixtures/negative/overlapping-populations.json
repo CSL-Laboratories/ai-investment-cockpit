@@ -306,7 +306,9 @@
     ],
     "live": {
       "authorized": false,
-      "in_this_contract": false
+      "broader_live_authorized": false,
+      "in_this_contract": false,
+      "limited_live_authorized": false
     },
     "promotion_authorized": false,
     "schema_version": "o4.promotion-protocol.v1",
@@ -316,11 +318,13 @@
         "entry_gates": {
           "criteria": [
             "packet_and_manifest_digests_pinned_to_separately_accepted_preresult_receipt",
-            "independent_verifier_rerun_authorized"
+            "independent_verifier_rerun_authorized",
+            "unit_property_checks_recorded"
           ],
           "required_evidence": [
             "preresult_receipt",
-            "verifier_rerun_record"
+            "verifier_rerun_record",
+            "unit_property_test_record"
           ]
         },
         "exit_gates": {
@@ -337,22 +341,99 @@
         "authorized": false,
         "entry_gates": {
           "criteria": [
-            "replay_exit_gates_met"
+            "replay_exit_gates_met",
+            "simulation_model_costs_thresholds_and_coverage_pinned_before_results"
           ],
           "required_evidence": [
-            "replay_output_record"
+            "replay_output_record",
+            "preresult_receipt"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "simulation_output_recorded_with_all_costs",
+            "simulation_meets_preresult_thresholds_and_coverage"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
+        "id": "simulation",
+        "order": 2,
+        "requires_prior_stage": "replay"
+      },
+      {
+        "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "simulation_exit_gates_met",
+            "official_demo_venue_profile_and_nonlive_scope_accepted_before_results"
+          ],
+          "required_evidence": [
+            "simulation_output_record",
+            "nonlive_scope_receipt",
+            "venue_conformance_record"
           ]
         },
         "exit_gates": {
           "criteria": [
             "demo_output_recorded",
-            "outcome_routed_to_release_owner_for_decision"
+            "demo_reconciliation_and_recovery_meet_preresult_thresholds_and_coverage"
           ]
         },
         "failure_policy": "blocked_and_recorded_no_promotion",
         "id": "demo",
-        "order": 2,
-        "requires_prior_stage": "replay"
+        "order": 3,
+        "requires_prior_stage": "simulation"
+      },
+      {
+        "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "demo_exit_gates_met",
+            "live_data_acquisition_scope_accepted_before_observation",
+            "observation_only_no_order_authority"
+          ],
+          "required_evidence": [
+            "demo_output_record",
+            "data_scope_receipt",
+            "preresult_receipt"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "shadow_output_recorded_with_data_gaps_latency_and_costs",
+            "shadow_meets_preresult_thresholds_and_coverage"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
+        "id": "shadow",
+        "order": 4,
+        "requires_prior_stage": "demo"
+      },
+      {
+        "authorized": false,
+        "entry_gates": {
+          "criteria": [
+            "shadow_exit_gates_met",
+            "paper_or_venue_equivalent_execution_scope_accepted_before_results",
+            "current_risk_mode_approval_and_gateway_path_preserved"
+          ],
+          "required_evidence": [
+            "shadow_output_record",
+            "nonlive_scope_receipt",
+            "preresult_receipt"
+          ]
+        },
+        "exit_gates": {
+          "criteria": [
+            "paper_or_venue_equivalent_execution_output_recorded",
+            "paper_reconciliation_recovery_and_economics_meet_preresult_thresholds_and_coverage",
+            "outcome_routed_to_release_owner_for_decision"
+          ]
+        },
+        "failure_policy": "blocked_and_recorded_no_promotion",
+        "id": "paper",
+        "order": 5,
+        "requires_prior_stage": "shadow"
       }
     ],
     "strategy_activation_authorized": false

@@ -130,21 +130,63 @@ CONTROL_ORDER = (
     "measured_costs_on_unrun_experiment",
     "promotion_stage_authorized",
     "promotion_gates",
+    "missing_promotion_rung",
+    "promotion_gates",
 )
 REQUIRED_STAGE_GATES = {
     "replay": {
         "entry_criteria": (
             "packet_and_manifest_digests_pinned_to_separately_accepted_preresult_receipt",
             "independent_verifier_rerun_authorized",
+            "unit_property_checks_recorded",
         ),
-        "entry_evidence": ("preresult_receipt", "verifier_rerun_record"),
+        "entry_evidence": ("preresult_receipt", "verifier_rerun_record", "unit_property_test_record"),
         "exit_criteria": ("replay_output_recorded_and_matched_to_receipt_digests",),
     },
+    "simulation": {
+        "entry_criteria": (
+            "replay_exit_gates_met",
+            "simulation_model_costs_thresholds_and_coverage_pinned_before_results",
+        ),
+        "entry_evidence": ("replay_output_record", "preresult_receipt"),
+        "exit_criteria": (
+            "simulation_output_recorded_with_all_costs",
+            "simulation_meets_preresult_thresholds_and_coverage",
+        ),
+    },
     "demo": {
-        "entry_criteria": ("replay_exit_gates_met",),
-        "entry_evidence": ("replay_output_record",),
+        "entry_criteria": (
+            "simulation_exit_gates_met",
+            "official_demo_venue_profile_and_nonlive_scope_accepted_before_results",
+        ),
+        "entry_evidence": ("simulation_output_record", "nonlive_scope_receipt", "venue_conformance_record"),
         "exit_criteria": (
             "demo_output_recorded",
+            "demo_reconciliation_and_recovery_meet_preresult_thresholds_and_coverage",
+        ),
+    },
+    "shadow": {
+        "entry_criteria": (
+            "demo_exit_gates_met",
+            "live_data_acquisition_scope_accepted_before_observation",
+            "observation_only_no_order_authority",
+        ),
+        "entry_evidence": ("demo_output_record", "data_scope_receipt", "preresult_receipt"),
+        "exit_criteria": (
+            "shadow_output_recorded_with_data_gaps_latency_and_costs",
+            "shadow_meets_preresult_thresholds_and_coverage",
+        ),
+    },
+    "paper": {
+        "entry_criteria": (
+            "shadow_exit_gates_met",
+            "paper_or_venue_equivalent_execution_scope_accepted_before_results",
+            "current_risk_mode_approval_and_gateway_path_preserved",
+        ),
+        "entry_evidence": ("shadow_output_record", "nonlive_scope_receipt", "preresult_receipt"),
+        "exit_criteria": (
+            "paper_or_venue_equivalent_execution_output_recorded",
+            "paper_reconciliation_recovery_and_economics_meet_preresult_thresholds_and_coverage",
             "outcome_routed_to_release_owner_for_decision",
         ),
     },
@@ -565,6 +607,12 @@ def _contracts(packet: dict[str, Any], repo: Path, failures: list[Failure]) -> N
 
 def assess(packet: dict[str, Any], repo: Path | None = None) -> list[Failure]:
     repo = ROOT if repo is None else repo
+    protocol = packet.get("promotion_protocol")
+    stages = protocol.get("stages") if isinstance(protocol, dict) else None
+    if isinstance(stages, list) and all(isinstance(stage, dict) for stage in stages):
+        missing = [name for name in REQUIRED_STAGE_GATES if not any(stage.get("id") == name for stage in stages)]
+        if missing:
+            return [Failure("missing_promotion_rung", "required non-live promotion rungs missing: " + ", ".join(missing))]
     schema_errors = _section_failures(packet)
     if schema_errors:
         return schema_errors
