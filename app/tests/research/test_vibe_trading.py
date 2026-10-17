@@ -225,6 +225,33 @@ def test_raw_payload_is_kept_out_of_the_headline():
     assert summary["raw_input"]["source_payload_sha256"] == envelope["raw_input"]["sha256"]
 
 
+def test_trim_lines_keeps_a_fitting_prefix_of_a_long_list():
+    import time
+
+    from research.vibe_trading.features import FeatureLine, _wrapped, trim_lines
+
+    lines = [
+        FeatureLine(
+            priority=(1, index, "a"),
+            text=f"alpha factor={index} " + ("x" * 40),
+            event_type="signal:alpha",
+            symbols=(),
+            raw={"kind": "alpha"},
+            tool="alpha_bench",
+        )
+        for index in range(3000)
+    ]
+    started = time.perf_counter()
+    kept, dropped = trim_lines(lines, budget_tokens=400)
+    assert time.perf_counter() - started < 2
+    assert dropped == 3000 - len(kept)
+    assert kept
+    block = "\n\n".join(_wrapped(line) for line in kept)
+    assert estimate_tokens(block) <= 400
+    longer = block + "\n\n" + _wrapped(lines[len(kept)])
+    assert estimate_tokens(longer) > 400
+
+
 def test_token_budget_trims_instead_of_overflowing(tmp_path):
     rows = []
     for index in range(30):

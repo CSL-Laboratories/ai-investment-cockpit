@@ -21,7 +21,6 @@ from pathlib import Path
 
 from ingest.dedup import Dedup
 from ingest.normalize import content_hash, escape_untrusted, to_market_event
-from workflows.context_limit import estimate_tokens
 from workflows.packets import wrap_untrusted
 
 SOURCE = "vibe-trading"
@@ -823,16 +822,25 @@ def _wrapped(line: FeatureLine) -> str:
 
 
 def trim_lines(lines: list[FeatureLine], *, budget_tokens: int) -> tuple[list[FeatureLine], int]:
-    """Drop the lowest-priority tail until the wrapped block fits. Never overflow."""
-    if budget_tokens < 1:
+    """Drop the lowest-priority tail until the wrapped block fits. Never overflow.
+
+    Each line is wrapped once. The kept prefix is the longest one whose joined
+    byte length scores at or under ``budget_tokens``, matching
+    ``estimate_tokens`` on ``"\\n\\n".join(...)``.
+    """
+    if budget_tokens < 1 or not lines:
         return [], len(lines)
     ordered = sorted(lines, key=lambda line: line.priority)
-    while ordered:
-        block = "\n\n".join(_wrapped(line) for line in ordered)
-        if estimate_tokens(block) <= budget_tokens:
-            return ordered, len(lines) - len(ordered)
-        ordered.pop()
-    return [], len(lines)
+    total = 0
+    keep = 0
+    for index, line in enumerate(ordered):
+        total += len(_wrapped(line).encode("utf-8"))
+        # ``k`` lines have ``k - 1`` separators. ``index`` is that count.
+        joined = total + 2 * index
+        if (joined + 1) // 2 > budget_tokens:
+            break
+        keep = index + 1
+    return ordered[:keep], len(lines) - keep
 
 
 def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> list[dict]:
