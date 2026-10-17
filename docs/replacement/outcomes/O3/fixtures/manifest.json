@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "outcome": "O3",
+  "linear_issue": "CSL-215",
+  "maturity_claimed": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "hash_pinned": true,
+  "hash_pin_is_not_contract_freeze": true,
+  "candidate_command": "python docs/replacement/outcomes/O3/validate_candidate.py",
+  "oracle": {
+    "path": "oracle/designed-failures.json",
+    "sha256": "04e89c5bef8ca314503171a58b2afe1669a7f07ae104e8f10395a8114947f228"
+  },
+  "fixtures": [
+    {
+      "id": "equity_partial_then_dividend",
+      "path": "fixtures/equity_partial_then_dividend.json",
+      "role": "positive",
+      "sha256": "6112f300045b59677581d44cafb197952932cdd7b88d20bb24f3097dea3be67a",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_yes_settlement",
+      "path": "fixtures/event_yes_settlement.json",
+      "role": "positive",
+      "sha256": "8709a20128762508d028c5988369ea40ecfe73a47cb165c1087ddd027286132a",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_restart_idempotent",
+      "path": "fixtures/event_restart_idempotent.json",
+      "role": "positive",
+      "sha256": "69f9f220b43eeab6f465354901e0c3ef1bd858385a9c8eaf163ce2854d5db411",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "event_void_reconciled",
+      "path": "fixtures/event_void_reconciled.json",
+      "role": "positive",
+      "sha256": "0b89986568f7589a8b7026315eab38e58db1ae69b13f384bb3b9c38e5ce842de",
+      "expected_failure_codes": []
+    },
+    {
+      "id": "neg_double_counted_collateral_after_restart",
+      "path": "fixtures/neg_double_counted_collateral_after_restart.json",
+      "role": "negative",
+      "sha256": "fa1f0218c391bce8a30a78ad2ed88e22600ab38a4a5c2e5cf626c582c1d5dee2",
+      "expected_failure_codes": [
+        "collateral_double_count"
+      ]
+    },
+    {
+      "id": "neg_voided_market_unreconciled",
+      "path": "fixtures/neg_voided_market_unreconciled.json",
+      "role": "negative",
+      "sha256": "4495bc955a51b7241337c18b8b437e1854704bd2e18d335947170a861b648935",
+      "expected_failure_codes": [
+        "void_unreconciled"
+      ]
+    },
+    {
+      "id": "neg_partial_fill_divergence",
+      "path": "fixtures/neg_partial_fill_divergence.json",
+      "role": "negative",
+      "sha256": "dd4f3abed2250a86070686629afba20bce708c33bf145e9a2aced0c0320c7512",
+      "expected_failure_codes": [
+        "partial_fill_divergence"
+      ]
+    },
+    {
+      "id": "neg_duplicate_fill_divergence",
+      "path": "fixtures/neg_duplicate_fill_divergence.json",
+      "role": "negative",
+      "sha256": "988df68453969c18ef4b4a3c7e3b436e209fcc10a2638470c6048dc9813c3634",
+      "expected_failure_codes": [
+        "duplicate_fill_divergence"
+      ]
+    },
+    {
+      "id": "neg_late_fill_divergence",
+      "path": "fixtures/neg_late_fill_divergence.json",
+      "role": "negative",
+      "sha256": "4808b01a4ed06640f78a3efd33b0053e8ff43c3bda53a27b8cc63fb68a9bb418",
+      "expected_failure_codes": [
+        "late_fill_divergence"
+      ]
+    }
+  ]
+}

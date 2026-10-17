@@ -1,0 +1,43 @@
+{
+  "outcome": "O3",
+  "linear_issue": "CSL-215",
+  "maturity_claimed": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "negative_controls": [
+    {
+      "id": "neg_double_counted_collateral_after_restart",
+      "failure_codes": ["collateral_double_count"],
+      "catches": "double-counted collateral after restart"
+    },
+    {
+      "id": "neg_voided_market_unreconciled",
+      "failure_codes": ["void_unreconciled"],
+      "catches": "a voided market that cannot reconcile to retained evidence"
+    },
+    {
+      "id": "neg_partial_fill_divergence",
+      "failure_codes": ["partial_fill_divergence"],
+      "catches": "silent position divergence from a partial fill"
+    },
+    {
+      "id": "neg_duplicate_fill_divergence",
+      "failure_codes": ["duplicate_fill_divergence"],
+      "catches": "silent position divergence from a duplicate fill"
+    },
+    {
+      "id": "neg_late_fill_divergence",
+      "failure_codes": ["late_fill_divergence"],
+      "catches": "silent position divergence from a late fill"
+    }
+  ]
+}

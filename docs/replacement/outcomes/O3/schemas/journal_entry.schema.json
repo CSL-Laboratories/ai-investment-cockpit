@@ -1,0 +1,48 @@
+{
+  "title": "O3 candidate double-entry journal entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entry_id", "sequence", "idempotency_key", "strategy_id", "reason", "lines"],
+  "properties": {
+    "entry_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "reason": {
+      "enum": [
+        "reserve_collateral",
+        "trade_fee",
+        "fill",
+        "settlement_payout",
+        "corporate_action",
+        "void_unwind"
+      ]
+    },
+    "lines": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/line"}
+    }
+  },
+  "$defs": {
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account", "side", "amount_minor", "instrument_id"],
+      "properties": {
+        "account": {
+          "enum": [
+            "cash_available",
+            "collateral_reserved",
+            "fees_expense",
+            "position_cost",
+            "realized_pnl"
+          ]
+        },
+        "side": {"enum": ["dr", "cr"]},
+        "amount_minor": {"type": "integer", "minimum": 0},
+        "instrument_id": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

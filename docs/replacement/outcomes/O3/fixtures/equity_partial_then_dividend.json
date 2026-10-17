@@ -1,0 +1,165 @@
+{
+  "fixture_id": "equity_partial_then_dividend",
+  "book": {
+    "book_id": "equity",
+    "currency": "USD",
+    "scale": 2
+  },
+  "instruments": [
+    {
+      "instrument_id": "eq-aapl",
+      "family": "equity_share",
+      "venue_id": "venue-equity-candidate",
+      "venue_symbol": "AAPL",
+      "currency": "USD",
+      "unit": "share"
+    }
+  ],
+  "orders": [
+    {
+      "order_id": "ord-eq-1",
+      "instrument_id": "eq-aapl",
+      "family": "equity",
+      "side": "buy",
+      "qty": 100,
+      "state": "filled"
+    }
+  ],
+  "fills": [
+    {
+      "fill_id": "f1",
+      "order_id": "ord-eq-1",
+      "instrument_id": "eq-aapl",
+      "sequence": 1,
+      "qty": 40,
+      "price_minor": 1000,
+      "fee_minor": 1,
+      "side": "buy"
+    },
+    {
+      "fill_id": "f2",
+      "order_id": "ord-eq-1",
+      "instrument_id": "eq-aapl",
+      "sequence": 2,
+      "qty": 60,
+      "price_minor": 1000,
+      "fee_minor": 1,
+      "side": "buy"
+    }
+  ],
+  "journal": [
+    {
+      "entry_id": "j1",
+      "sequence": 1,
+      "idempotency_key": "fill-f1",
+      "strategy_id": "s-equity",
+      "reason": "fill",
+      "lines": [
+        {
+          "account": "position_cost",
+          "side": "dr",
+          "amount_minor": 40000,
+          "instrument_id": "eq-aapl"
+        },
+        {
+          "account": "fees_expense",
+          "side": "dr",
+          "amount_minor": 1,
+          "instrument_id": "eq-aapl"
+        },
+        {
+          "account": "cash_available",
+          "side": "cr",
+          "amount_minor": 40001,
+          "instrument_id": "eq-aapl"
+        }
+      ]
+    },
+    {
+      "entry_id": "j2",
+      "sequence": 2,
+      "idempotency_key": "fill-f2",
+      "strategy_id": "s-equity",
+      "reason": "fill",
+      "lines": [
+        {
+          "account": "position_cost",
+          "side": "dr",
+          "amount_minor": 60000,
+          "instrument_id": "eq-aapl"
+        },
+        {
+          "account": "fees_expense",
+          "side": "dr",
+          "amount_minor": 1,
+          "instrument_id": "eq-aapl"
+        },
+        {
+          "account": "cash_available",
+          "side": "cr",
+          "amount_minor": 60001,
+          "instrument_id": "eq-aapl"
+        }
+      ]
+    },
+    {
+      "entry_id": "j3",
+      "sequence": 3,
+      "idempotency_key": "div-1",
+      "strategy_id": "s-equity",
+      "reason": "corporate_action",
+      "lines": [
+        {
+          "account": "cash_available",
+          "side": "dr",
+          "amount_minor": 5000,
+          "instrument_id": "eq-aapl"
+        },
+        {
+          "account": "realized_pnl",
+          "side": "cr",
+          "amount_minor": 5000,
+          "instrument_id": "eq-aapl"
+        }
+      ]
+    }
+  ],
+  "markets": [],
+  "corporate_actions": [
+    {
+      "corporate_action_id": "div-1",
+      "instrument_id": "eq-aapl",
+      "kind": "cash_dividend",
+      "cash_minor": 5000,
+      "sequence": 3
+    }
+  ],
+  "corrections": [],
+  "evidence": [],
+  "checkpoint": {
+    "sequence": 0,
+    "applied_keys": [],
+    "cash_available": 10000000,
+    "collateral_reserved": 0,
+    "positions": [],
+    "open_reservations": []
+  },
+  "reported": {
+    "cash_available": 9904998,
+    "collateral_reserved": 0,
+    "positions": [
+      {
+        "instrument_id": "eq-aapl",
+        "qty": 100
+      }
+    ],
+    "open_reservations": [],
+    "attribution": [
+      {
+        "strategy_id": "s-equity",
+        "realized_pnl_minor": 5000,
+        "fees_minor": 2
+      }
+    ]
+  }
+}

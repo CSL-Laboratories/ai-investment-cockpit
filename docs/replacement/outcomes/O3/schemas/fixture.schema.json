@@ -1,0 +1,116 @@
+{
+  "title": "O3 candidate accounting fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_id",
+    "book",
+    "instruments",
+    "orders",
+    "fills",
+    "journal",
+    "markets",
+    "corporate_actions",
+    "corrections",
+    "evidence",
+    "checkpoint",
+    "reported"
+  ],
+  "properties": {
+    "fixture_id": {"type": "string", "minLength": 1},
+    "book": {"$ref": "#/$defs/book"},
+    "instruments": {"type": "array", "minItems": 1},
+    "orders": {"type": "array"},
+    "fills": {"type": "array"},
+    "journal": {"type": "array"},
+    "markets": {"type": "array"},
+    "corporate_actions": {"type": "array"},
+    "corrections": {"type": "array"},
+    "evidence": {"type": "array"},
+    "checkpoint": {"$ref": "#/$defs/balances"},
+    "reported": {"$ref": "#/$defs/reported"}
+  },
+  "$defs": {
+    "book": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["book_id", "currency", "scale"],
+      "properties": {
+        "book_id": {"enum": ["equity", "event"]},
+        "currency": {"enum": ["USD"]},
+        "scale": {"type": "integer", "minimum": 0}
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instrument_id", "qty"],
+      "properties": {
+        "instrument_id": {"type": "string", "minLength": 1},
+        "qty": {"type": "integer", "minimum": 0}
+      }
+    },
+    "reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reservation_id", "instrument_id", "amount_minor"],
+      "properties": {
+        "reservation_id": {"type": "string", "minLength": 1},
+        "instrument_id": {"type": "string", "minLength": 1},
+        "amount_minor": {"type": "integer", "minimum": 0}
+      }
+    },
+    "balances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "applied_keys",
+        "cash_available",
+        "collateral_reserved",
+        "positions",
+        "open_reservations"
+      ],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 0},
+        "applied_keys": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "cash_available": {"type": "integer", "minimum": 0},
+        "collateral_reserved": {"type": "integer", "minimum": 0},
+        "positions": {"type": "array", "items": {"$ref": "#/$defs/position"}},
+        "open_reservations": {"type": "array", "items": {"$ref": "#/$defs/reservation"}}
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy_id", "realized_pnl_minor", "fees_minor"],
+      "properties": {
+        "strategy_id": {"type": "string", "minLength": 1},
+        "realized_pnl_minor": {"type": "integer"},
+        "fees_minor": {"type": "integer", "minimum": 0}
+      }
+    },
+    "reported": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cash_available",
+        "collateral_reserved",
+        "positions",
+        "open_reservations",
+        "attribution"
+      ],
+      "properties": {
+        "cash_available": {"type": "integer", "minimum": 0},
+        "collateral_reserved": {"type": "integer", "minimum": 0},
+        "positions": {"type": "array", "items": {"$ref": "#/$defs/position"}},
+        "open_reservations": {"type": "array", "items": {"$ref": "#/$defs/reservation"}},
+        "attribution": {"type": "array", "items": {"$ref": "#/$defs/attribution"}}
+      }
+    }
+  }
+}
