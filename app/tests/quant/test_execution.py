@@ -28,7 +28,7 @@ from quant.execution.autoloop import AutoLoop, VenueContainmentError
 from quant.execution.sim_venue import LatencyModel, SimVenue
 from quant.feed.synthetic import SyntheticFeed
 from quant.guards import GuardLimits, Guards
-from quant.oms import CancelOrder, NewOrder
+from quant.oms import CancelOrder, NewOrder, ReplaceOrder
 from quant.strategies.base import Strategy
 from quant.strategies.market_maker import MarketMaker, MarketMakerParams
 
@@ -194,6 +194,124 @@ def test_rate_window_matches_a_full_scan_including_a_backwards_stamp():
     guards.reset()
     assert guards.check(intent, ts=0).allowed
     assert list(guards._recent_orders) == [0]
+
+
+def _one_lot() -> NewOrder:
+    return NewOrder(client_id="c", symbol="S", side=Side.BUY, qty=1, price_ticks=1)
+
+
+def test_the_rate_window_keeps_a_stamp_sitting_on_the_opening_edge():
+    """max=2, window=100, stamps 0 and 10. ``ts=100`` is still inside (the edge
+    is exclusive on the left) and the full window denies without dropping either
+    stamp. ``ts=101`` expires 0 and admits, leaving ``[10, 101]``."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=2, order_rate_window_ns=100))
+    intent = _one_lot()
+    assert guards.check(intent, ts=0).allowed
+    assert guards.check(intent, ts=10).allowed
+    assert not guards.check(intent, ts=100).allowed
+    assert list(guards._recent_orders) == [0, 10]
+    assert guards.check(intent, ts=101).allowed
+    assert list(guards._recent_orders) == [10, 101]
+
+
+def test_a_full_unordered_window_denies_on_the_scan_path():
+    """0 then 80 then 10 leaves the window unordered, so the next check scans.
+    ``ts=90`` is still inside a window of 100 and the three stamps fill max=3,
+    so the scan denies and keeps ``[0, 80, 10]``. The rebuilt deque is how this
+    is distinguished from the prefix drop, which would have left the same stamps
+    in the same object."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=3, order_rate_window_ns=100))
+    intent = _one_lot()
+    for ts in (0, 80, 10):
+        assert guards.check(intent, ts=ts).allowed
+    assert list(guards._recent_orders) == [0, 80, 10]
+    assert guards._rate_ordered is False
+    scanned = guards._recent_orders
+    assert not guards.check(intent, ts=90).allowed
+    assert guards._recent_orders is not scanned
+    assert list(guards._recent_orders) == [0, 80, 10]
+    assert guards._rate_ordered is False
+
+
+def test_the_scan_path_drops_an_expired_interior_stamp_the_prefix_would_keep():
+    """``[100, 0]`` is unordered. At ``ts=60`` with window 50, 0 is expired and
+    100 is not. The prefix drop would see 100 first, deny, and keep the expired
+    0. The scan drops 0 and admits 60."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=2, order_rate_window_ns=50))
+    intent = _one_lot()
+    assert guards.check(intent, ts=100).allowed
+    assert guards.check(intent, ts=0).allowed
+    assert guards._rate_ordered is False
+    assert list(guards._recent_orders) == [100, 0]
+    assert guards.check(intent, ts=60).allowed
+    assert list(guards._recent_orders) == [100, 60]
+    assert guards._rate_ordered is False
+
+
+def test_a_denied_backwards_stamp_stays_off_the_fast_path_window():
+    """The window is full and still ordered. A backwards stamp is denied before
+    it is stored, and ``_rate_ordered`` stays True so the next check is still
+    the prefix drop."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=2, order_rate_window_ns=100))
+    intent = _one_lot()
+    assert guards.check(intent, ts=0).allowed
+    assert guards.check(intent, ts=10).allowed
+    assert guards._rate_ordered is True
+    assert not guards.check(intent, ts=5).allowed
+    assert list(guards._recent_orders) == [0, 10]
+    assert guards._rate_ordered is True
+    assert guards.check(intent, ts=101).allowed
+    assert list(guards._recent_orders) == [10, 101]
+    assert guards._rate_ordered is True
+
+
+def test_a_zero_window_counts_duplicate_timestamps():
+    """``window_ns=0`` keeps a stamp only when it equals ``ts``. Duplicates each
+    take a slot and do not clear ``_rate_ordered``. The next timestamp expires
+    both."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=2, order_rate_window_ns=0))
+    intent = _one_lot()
+    assert guards.check(intent, ts=5).allowed
+    assert guards.check(intent, ts=5).allowed
+    assert list(guards._recent_orders) == [5, 5]
+    assert guards._rate_ordered is True
+    assert not guards.check(intent, ts=5).allowed
+    assert list(guards._recent_orders) == [5, 5]
+    assert guards._rate_ordered is True
+    assert guards.check(intent, ts=6).allowed
+    assert list(guards._recent_orders) == [6]
+    assert guards._rate_ordered is True
+
+
+def test_cancel_leaves_the_rate_window_and_replace_uses_a_slot():
+    guards = Guards(limits=GuardLimits(max_orders_per_window=2, order_rate_window_ns=100))
+    assert guards.check(_one_lot(), ts=0).allowed
+    assert guards.check(CancelOrder(client_id="c"), ts=50).allowed
+    assert list(guards._recent_orders) == [0]
+    assert guards.check(ReplaceOrder(client_id="c", new_qty=2), ts=60).allowed
+    assert list(guards._recent_orders) == [0, 60]
+    denied = guards.check(ReplaceOrder(client_id="c", new_qty=3), ts=70)
+    assert not denied.allowed
+    assert list(guards._recent_orders) == [0, 60]
+    assert guards.check(CancelOrder(client_id="c"), ts=70).allowed
+    assert list(guards._recent_orders) == [0, 60]
+
+
+def test_reset_turns_rate_ordering_back_on_before_another_check_can():
+    """By the ``reset()`` in the differential test the window is ordered again
+    (the stamp at 200 sorted it), and the next check is an empty deque whose
+    scan would set the flag itself. Assert the flag the moment ``reset()``
+    returns, while it is still false."""
+    guards = Guards(limits=GuardLimits(max_orders_per_window=5, order_rate_window_ns=100))
+    intent = _one_lot()
+    assert guards.check(intent, ts=0).allowed
+    assert guards.check(intent, ts=10).allowed
+    assert guards.check(intent, ts=5).allowed
+    assert guards._rate_ordered is False
+    assert list(guards._recent_orders) == [0, 10, 5]
+    guards.reset()
+    assert guards._rate_ordered is True
+    assert list(guards._recent_orders) == []
 
 
 def test_the_order_rate_ceiling_catches_a_requote_loop():

@@ -255,9 +255,13 @@ class Guards:
 
         The paper loop calls this on every non-cancel intent. A full window used
         to allocate a new list and copy every stamp still inside it. Event time
-        does not go backwards, so expired stamps are a prefix and fall off the
-        front. A backwards stamp keeps the old scan, once, and the following
-        check scans too until the window is ordered again.
+        usually does not go backwards — ``Runner._permitted`` passes
+        ``event.ingest_ts``, while ``validate_ordering`` only requires
+        non-decreasing ``recv_ts`` — so expired stamps are a prefix and fall off
+        the front. AutoLoop refuses a backwards ingest on its own feed. When a
+        stamp does go backwards and is admitted, the next check uses the scan
+        fallback, which drops every expired time rather than only the prefix,
+        until the window is ordered again.
         """
         window_start = ts - self.limits.order_rate_window_ns
         recent = self._recent_orders

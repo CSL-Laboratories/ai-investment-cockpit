@@ -214,6 +214,62 @@ def _rate_deque(guards, repeats: int) -> None:
         rate_ok(1_000 + ts)
 
 
+# A full window of 500 stamps spaced 1ns apart, measured at ts=501 so each
+# check expires exactly one stamp and admits the new one. The other row uses
+# order_rate_window_ns=10**18, so nothing there ever expires.
+_RATE_EXPIRE_CAP = 500
+_RATE_EXPIRE_WINDOW = 500
+_RATE_EXPIRE_TS0 = 501
+
+
+def _expiring_guards():
+    from quant.guards import GuardLimits, Guards
+
+    guards = Guards(limits=GuardLimits(
+        max_orders_per_window=_RATE_EXPIRE_CAP,
+        order_rate_window_ns=_RATE_EXPIRE_WINDOW,
+    ))
+    guards._recent_orders.extend(range(_RATE_EXPIRE_CAP))
+    return guards
+
+
+def _require_expiring_drop() -> None:
+    """Fail the bench if this row is another full-window deny in disguise."""
+    guards = _expiring_guards()
+    oldest = guards._recent_orders[0]
+    admitted = guards._rate_ok(_RATE_EXPIRE_TS0)
+    if not admitted or guards._recent_orders[0] == oldest:
+        sys.exit("expiring order-rate bench did not drop the oldest stamp")
+
+
+def _rate_copy_expiring(repeats: int) -> None:
+    recent = list(range(_RATE_EXPIRE_CAP))
+    window = _RATE_EXPIRE_WINDOW
+    cap = _RATE_EXPIRE_CAP
+    for i in range(repeats):
+        ts = _RATE_EXPIRE_TS0 + i
+        window_start = ts - window
+        recent = [stamp for stamp in recent if stamp >= window_start]
+        if len(recent) >= cap:
+            continue
+        recent.append(ts)
+
+
+def _rate_deque_expiring(guards, repeats: int) -> None:
+    recent = guards._recent_orders
+    recent.clear()
+    recent.extend(range(_RATE_EXPIRE_CAP))
+    guards._rate_ordered = True
+    rate_ok = guards._rate_ok
+    for i in range(repeats):
+        rate_ok(_RATE_EXPIRE_TS0 + i)
+
+
+def _window_row(name: str, copy_s: float, deque_s: float) -> str:
+    ratio = copy_s / deque_s if deque_s else float("inf")
+    return f"| {name} | {copy_s * 1e3:.1f} ms | {deque_s * 1e3:.1f} ms | {ratio:.2f}x |"
+
+
 def _repeat_snapshot(book, repeats: int) -> None:
     for _ in range(repeats):
         book.snapshot()
@@ -301,9 +357,25 @@ def main() -> None:
     _rate_deque(guards, 4)
     copy_time = _time(lambda: _rate_copy(list(range(500)), rate_n))
     deque_time = _time(lambda: _rate_deque(guards, rate_n))
-    print(row(f"order-rate window, {rate_n} checks", deque_time, copy_time))
+    _require_expiring_drop()
+    expiring = _expiring_guards()
+    _rate_copy_expiring(4)
+    _rate_deque_expiring(expiring, 4)
+    copy_expire = _time(lambda: _rate_copy_expiring(rate_n))
+    deque_expire = _time(lambda: _rate_deque_expiring(expiring, rate_n))
     if copy_time / deque_time < 1.0:
-        sys.exit("order-rate window regressed below copying the stamp list")
+        sys.exit("full order-rate window regressed below copying the stamp list")
+    if copy_expire / deque_expire < 1.0:
+        sys.exit("expiring order-rate window regressed below copying the stamp list")
+    # Both sides are Python. The table above is python | rust for the book;
+    # printing this row there labeled the deque "rust".
+    print()
+    print("| workload | list copy | deque | list/deque |")
+    print("|---|---:|---:|---:|")
+    print(_window_row(f"order-rate window, full ({rate_n} denies)", copy_time, deque_time))
+    print(_window_row(
+        f"order-rate window, expiring ({rate_n} drops)", copy_expire, deque_expire,
+    ))
 
 
 if __name__ == "__main__":
