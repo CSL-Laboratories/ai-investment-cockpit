@@ -406,10 +406,12 @@ jobs:
 
   # CSL-221 provider-free evidence. Not a DEC-09 cell, not linux-gates, and not
   # a release decision. Checkout is the PR head, because pull_request GITHUB_SHA
-  # is the merge commit. The six-cell matrix uses the Windows gate: main,
-  # ci:full, or a full dispatch. Ordinary PRs and scope=linux do not start
-  # Windows or macOS. Artifact names include the run attempt so a rerun does
-  # not collide, and a partial rerun cannot mix attempts.
+  # is the merge commit. The six-cell matrix runs only when Linux, Windows, and
+  # macOS are all authorized: a pull request with ci:full, or a full dispatch.
+  # Ordinary PRs, scope=linux, the nightly schedule, and an ordinary push to
+  # main do not start it. A partial matrix is not a pass. Artifact names
+  # include the run attempt so a rerun does not collide, and a partial rerun
+  # cannot mix attempts.
   qualification:
     name: qualification (${{ matrix.platform }}, ${{ matrix.python-version }})
     permissions:
@@ -420,8 +422,10 @@ jobs:
       needs.filter.outputs.run-tests == 'true' &&
       (
         (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
-        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-        (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+        (
+          github.event_name == 'pull_request' &&
+          contains(github.event.pull_request.labels.*.name, 'ci:full')
+        )
       )
     strategy:
       fail-fast: false

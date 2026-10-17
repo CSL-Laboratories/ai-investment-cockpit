@@ -275,8 +275,28 @@ class DispatchScopeTests(unittest.TestCase):
         negative = self.ci['jobs']['qualification-negative-controls']
         validate = self.ci['jobs']['qualification-validate']
         self.assertEqual(qualification['needs'], 'filter')
-        self.assertEqual(qualification['if'], self.ci['jobs']['windows']['if'])
+        self.assertNotIn("github.ref == 'refs/heads/main'", qualification['if'])
         self.assertEqual(negative['if'], self.ci['jobs']['linux']['if'])
+        for event, scope, labels, expected in [
+            ('workflow_dispatch', '', [], True),
+            ('workflow_dispatch', 'full', [], True),
+            ('workflow_dispatch', 'linux', [], False),
+            ('pull_request', '', [], False),
+            ('pull_request', '', ['enhancement'], False),
+            ('pull_request', '', ['ci:full'], True),
+            ('push', '', [], False),
+            ('schedule', '', [], False),
+        ]:
+            with self.subTest(event=event, scope=scope, labels=labels):
+                context = {'github.event_name': event, 'inputs.scope': scope,
+                           'github.ref': 'refs/heads/main',
+                           'github.event.pull_request.labels.*.name': labels}
+                self.assertEqual(bool(evaluate(qualification['if'], **context)), expected)
+        self.assertFalse(evaluate(qualification['if'], **{
+            'github.event_name': 'pull_request',
+            'github.event.pull_request.labels.*.name': ['ci:full'],
+            'needs.filter.outputs.run-tests': 'false',
+        }))
         self.assertEqual(qualification['strategy']['fail-fast'], 'false')
         self.assertEqual(qualification['strategy']['matrix']['platform'], ['linux', 'windows', 'macos'])
         self.assertEqual(qualification['strategy']['matrix']['python-version'], ['3.11', '3.12'])
