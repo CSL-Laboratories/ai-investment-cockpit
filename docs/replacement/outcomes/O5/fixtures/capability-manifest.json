@@ -1,0 +1,64 @@
+{
+  "kind": "capability_manifest",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "capabilities": [
+    {
+      "id": "schema_validated_output",
+      "status": "present_on_current_choke_point",
+      "grants_authority": false,
+      "note": "Inv 3 validates model output. Schema validity is not value correctness, grounding, or authority."
+    },
+    {
+      "id": "explicit_refusal",
+      "status": "required_by_contract",
+      "grants_authority": false,
+      "note": "A refusal is a first-class wire result because a safety refusal may not match the success schema."
+    },
+    {
+      "id": "repair_then_quarantine",
+      "status": "present_on_current_choke_point",
+      "grants_authority": false,
+      "note": "The current runner allows one schema repair and then quarantines. This packet does not change that path."
+    },
+    {
+      "id": "broker_tools",
+      "status": "forbidden",
+      "grants_authority": false,
+      "note": "No route in this packet may receive broker tools."
+    },
+    {
+      "id": "order_submission",
+      "status": "forbidden",
+      "grants_authority": false,
+      "note": "Model output remains evidence. Orders stay on the current risk, mode, approval and OrderGateway path."
+    },
+    {
+      "id": "credential_custody",
+      "status": "forbidden",
+      "grants_authority": false,
+      "note": "This packet provisions no credential and does not read the OS credential store."
+    },
+    {
+      "id": "installed_route_qualification",
+      "status": "not_run",
+      "grants_authority": false,
+      "note": "Installed-route qualification is specified and was not executed."
+    }
+  ]
+}
