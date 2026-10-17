@@ -428,7 +428,7 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
         if (
             _assertion_keys(then) != {"properties"}
             or set(result_properties) != {"result"}
-            or not _result_consequent_applies(result_schema, required)
+            or not _result_consequent_applies(result_schema, required, _result_property_schemas(schema))
         ):
             raise ContractError(f"schema result consequent cannot apply for {command}")
         by_status = found.setdefault(command, {})
@@ -438,58 +438,107 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
     return found
 
 
-def _plain_value(schema: Any) -> bool:
-    """True when a property schema admits a string or boolean and nothing else."""
+def _result_property_schemas(schema: dict[str, Any]) -> dict[str, Any]:
+    result = schema.get("properties", {}).get("result") if isinstance(schema.get("properties"), dict) else None
+    properties = result.get("properties") if isinstance(result, dict) else None
+    return properties if isinstance(properties, dict) else {}
+
+
+def _admitted_literals(schema: Any) -> set[Any] | None:
+    """Literals a plain const or enum schema admits."""
     if not isinstance(schema, dict):
-        return False
+        return None
     keys = _assertion_keys(schema)
     if keys == {"const"}:
         value = schema.get("const")
-        return isinstance(value, str) or type(value) is bool
+        if isinstance(value, str) or type(value) is bool:
+            return {value}
+        return None
     values = schema.get("enum")
-    return (
-        keys == {"enum"}
-        and isinstance(values, list)
-        and bool(values)
-        and all(isinstance(item, str) for item in values)
-    )
+    if keys == {"enum"} and isinstance(values, list) and values:
+        if all(isinstance(item, str) or type(item) is bool for item in values):
+            return set(values)
+    return None
 
 
-def _result_clause_applies(clause: Any, names: set[str]) -> bool:
-    """True when an allOf item can still be satisfied by the required result fields."""
+def _value_fits_base(value: Any, base: Any) -> bool:
+    """True when one literal is inside the base result property schema."""
+    if not isinstance(base, dict):
+        return False
+    if "const" in base and base.get("const") != value:
+        return False
+    enum = base.get("enum")
+    if isinstance(enum, list) and value not in enum:
+        return False
+    base_type = base.get("type")
+    if base_type == "boolean":
+        return type(value) is bool
+    if base_type == "string":
+        if not isinstance(value, str):
+            return False
+        pattern = base.get("pattern")
+        return not isinstance(pattern, str) or re.fullmatch(pattern, value) is not None
+    if base_type == "integer":
+        return type(value) is int
+    if base_type == "number":
+        return type(value) is int or type(value) is float
+    return "const" in base or isinstance(enum, list)
+
+
+def _property_constraints(properties: Any, names: set[str], bases: dict[str, Any]) -> dict[str, set[Any]] | None:
+    """Admitted literals for each property, or None when one cannot be satisfied."""
+    if not isinstance(properties, dict) or not set(properties) <= names:
+        return None
+    found: dict[str, set[Any]] = {}
+    for name, child in properties.items():
+        admitted = _admitted_literals(child)
+        if admitted is None:
+            return None
+        fitting = {value for value in admitted if _value_fits_base(value, bases.get(name))}
+        if not fitting:
+            return None
+        found[name] = fitting
+    return found
+
+
+def _result_clause_applies(clause: Any, names: set[str], bases: dict[str, Any], outer: dict[str, set[Any]]) -> bool:
+    """True when an allOf item can still be satisfied together with the outer properties."""
     if not isinstance(clause, dict) or clause.get("then") is False:
         return False
     if _assertion_keys(clause) - {"if", "then"}:
         return False
     then = clause.get("then")
     properties = then.get("properties") if isinstance(then, dict) else None
-    if not isinstance(then, dict) or _assertion_keys(then) != {"properties"} or not isinstance(properties, dict):
+    if not isinstance(then, dict) or _assertion_keys(then) != {"properties"}:
         return False
-    if not set(properties) <= names:
+    inner = _property_constraints(properties, names, bases)
+    if inner is None:
         return False
-    return all(_plain_value(child) for child in properties.values())
+    return all(not outer.get(name) or bool(outer[name] & values) for name, values in inner.items())
 
 
-def _result_consequent_applies(result_schema: dict[str, Any], required: list[Any]) -> bool:
-    """Reject a result consequent that cannot be satisfied by its own required fields."""
+def _result_consequent_applies(
+    result_schema: dict[str, Any], required: list[Any], bases: dict[str, Any]
+) -> bool:
+    """Reject a result consequent that no value allowed by the base schema can satisfy."""
     if _assertion_keys(result_schema) - {"required", "properties", "allOf"}:
         return False
     if not required or not all(isinstance(item, str) for item in required):
         return False
     names = set(required)
+    properties = result_schema.get("properties", {})
     if "properties" in result_schema:
-        properties = result_schema.get("properties")
-        if not isinstance(properties, dict) or not set(properties) <= names:
+        outer = _property_constraints(properties, names, bases)
+        if outer is None:
             return False
-        if any(not _plain_value(child) for child in properties.values()):
-            return False
-    if "allOf" in result_schema:
-        clauses = result_schema.get("allOf")
-        if not isinstance(clauses, list) or not clauses:
-            return False
-        if any(not _result_clause_applies(clause, names) for clause in clauses):
-            return False
-    return True
+    else:
+        outer = {}
+    if "allOf" not in result_schema:
+        return True
+    clauses = result_schema.get("allOf")
+    if not isinstance(clauses, list) or not clauses:
+        return False
+    return all(_result_clause_applies(clause, names, bases, outer) for clause in clauses)
 
 
 def _const_value(schema: Any) -> Any:

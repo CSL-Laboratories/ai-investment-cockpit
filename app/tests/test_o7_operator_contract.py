@@ -652,6 +652,25 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result consequent cannot apply for operator.evidence.inspect" in stderr
+    contradicted = tmp_path / "halt"
+    shutil.copytree(root, contradicted)
+    schema_path = contradicted / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    patched = False
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        status = properties.get("status_code", {}).get("const") if isinstance(properties, dict) else None
+        if command == "operator.interventions.request_stop" and status == "unavailable":
+            clause["then"]["properties"]["result"]["properties"]["intervention"] = {"const": "halt"}
+            patched = True
+    assert patched
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(contradicted, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(contradicted)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result consequent cannot apply for operator.interventions.request_stop" in stderr
 
 
 def test_schema_annotations_do_not_block_result_clauses(tmp_path: Path) -> None:
