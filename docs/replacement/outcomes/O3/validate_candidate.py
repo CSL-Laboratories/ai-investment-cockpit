@@ -221,7 +221,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
-    filled_order_ids: set[str] = set()
+    order_first_fill_seq: dict[str, int] = {}
+    order_reserve_seq: dict[str, int] = {}
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -256,7 +257,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             defect_instruments.add(fill["instrument_id"])
             continue
         accepted_qty[order["order_id"]] = filled + fill["qty"]
-        filled_order_ids.add(fill["order_id"])
+        first_seq = order_first_fill_seq.get(fill["order_id"])
+        if first_seq is None or fill["sequence"] < first_seq:
+            order_first_fill_seq[fill["order_id"]] = fill["sequence"]
         if fill["sequence"] <= checkpoint["sequence"]:
             checkpointed_fill_ids.add(fill["fill_id"])
             continue
@@ -382,7 +385,10 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("position_divergence")
         if order_ref is not None and order_ref not in orders:
             failures.add("position_divergence")
-        if order_ref is not None and order_ref in filled_order_ids:
+        if fill_ref is not None and order_ref is not None:
+            failures.add("position_divergence")
+        first_fill_seq = order_first_fill_seq.get(order_ref) if order_ref is not None else None
+        if first_fill_seq is not None and entry["sequence"] > first_fill_seq:
             failures.add("position_divergence")
         if entry["reason"] == "fill" and fill_ref is None:
             failures.add("balance_mismatch")
@@ -463,11 +469,19 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if fill_ref is not None:
             posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
             posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
+        elif (
+            order_ref is not None
+            and entry["reason"] == "reserve_collateral"
+            and (order_ref not in order_reserve_seq or entry["sequence"] < order_reserve_seq[order_ref])
+        ):
+            order_reserve_seq[order_ref] = entry["sequence"]
 
     if not (failures & FILL_DEFECTS):
         for fill in accepted_fills:
-            if posted_premium.get(fill["fill_id"], 0) != fill["qty"] * fill["price_minor"]:
-                failures.add("balance_mismatch")
+            reserve_seq = order_reserve_seq.get(fill["order_id"])
+            if reserve_seq is None or reserve_seq > fill["sequence"]:
+                if posted_premium.get(fill["fill_id"], 0) != fill["qty"] * fill["price_minor"]:
+                    failures.add("balance_mismatch")
             if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
                 failures.add("fee_mismatch")
 

@@ -79,6 +79,9 @@ def test_o3_resting_order_reservation_is_not_fill_cost() -> None:
     fixture["journal"][2]["order_id"] = "ord-yes"
     assert "position_divergence" in _evaluate(fixture)
     fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][0]["order_id"] = "ord-rest"
+    assert "position_divergence" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
     fixture["journal"].append({
         "entry_id": "j-order-fee",
         "sequence": 4,
@@ -94,6 +97,17 @@ def test_o3_resting_order_reservation_is_not_fill_cost() -> None:
     fixture["reported"]["cash_available"] -= 50000
     fixture["reported"]["attribution"][0]["fees_minor"] += 50000
     assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_order_reservation_before_partial_fill() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    for entry in fixture["journal"]:
+        if entry["entry_id"] == "j-reserve-rest":
+            entry["sequence"] = 6
+    fixture["journal"].sort(key=lambda entry: entry["sequence"])
+    assert "position_divergence" in _evaluate(fixture)
 
 
 def test_o3_fill_lines_must_match_fill_instrument() -> None:

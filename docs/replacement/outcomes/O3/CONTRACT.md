@@ -236,15 +236,19 @@ Posting references tie each entry to its cause. An entry with reason
 entries must equal that fill's `qty * price_minor` and `fee_minor`
 per fill, not just in aggregate. `reserve_collateral` entries carry a
 `fill_id` when they post an executed fill, or an `order_id` when they
-post the reservation of a resting (unfilled) order; a `trade_fee` is
-execution cost and always carries a `fill_id`. A resting-order
-reservation is not fill cost and is exempt from the per-fill premium
-check; it still reserves collateral and still needs a reference. An
-`order_id` must name an order with no accepted fills — a filled order is
-not a resting reservation. Every line on a referenced entry must post
-the referenced fill's or order's own `instrument_id`, never a different
-declared instrument. A posting with a missing, unknown, checkpointed,
-or cross-instrument reference fails the fixture.
+post the reservation of a resting order; a `trade_fee` is execution
+cost and always carries a `fill_id`. One entry carries at most one
+causal reference — an entry naming both `fill_id` and `order_id` is
+ambiguous and fails. An `order_id` reservation must post before the
+order's first fill: it is valid while the order is still resting, and a
+reservation sequenced after a fill is rejected. When an order reserved
+collateral up front, its later fills do not re-post premium — the
+reservation already holds it — so those fills are exempt from the
+per-fill premium check while their fees still reconcile per fill.
+Every line on a referenced entry must post the referenced fill's or
+order's own `instrument_id`, never a different declared instrument. A
+posting with a missing, unknown, checkpointed, conflicting, or
+cross-instrument reference fails the fixture.
 
 ## Fills
 
@@ -331,7 +335,7 @@ checkpoint.
 | `neg_partial_fill_divergence` | negative | 40 of 100 shares filled; reported position is 100. |
 | `neg_duplicate_fill_divergence` | negative | The same fill id is applied twice; reported position is 80. |
 | `neg_late_fill_divergence` | negative | A fill is sequenced after cancel; reported position includes it. |
-| `event_resting_order_reservation` | positive | A filled position plus a resting order's `order_id`-linked reservation. The reservation is collateral, not fill cost. |
+| `event_resting_order_reservation` | positive | A filled position plus an order's `order_id`-linked reservation posted while it was resting; the order then partially fills without re-posting premium. |
 | `neg_offsetting_fill_prices` | negative | Two fills whose prices disagree with their postings but net out in aggregate. Per-fill linkage fails it. |
 
 The retained oracle is [oracle/designed-failures.json](oracle/designed-failures.json).
