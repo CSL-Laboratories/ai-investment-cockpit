@@ -43,18 +43,14 @@ straight into the risk engine.
 """
 from __future__ import annotations
 
-import math
+import importlib.util
+import logging
 from dataclasses import dataclass
-from decimal import (
-    ROUND_HALF_EVEN,
-    Decimal,
-    DivisionByZero,
-    InvalidOperation,
-    Overflow,
-    getcontext,
-)
+from decimal import Decimal
 
 from quant.events import Fill, Liquidity, PriceScale, Side
+
+log = logging.getLogger(__name__)
 
 
 SECONDS_PER_DAY = 24 * 60 * 60
@@ -117,10 +113,11 @@ class FeeSchedule:
         Signed rather than absolute so the caller cannot accidentally add a rebate as a cost.
         A rebate that arrives as a positive "fee" and is subtracted is a sign error worth
         roughly twice the rebate, and it silently makes passive strategies look unprofitable.
+
+        One fill stays on Decimal. Formatting the schedule into strings and parsing a
+        Decimal back measured slower than this function, and ``fee_for_many`` did too.
+        The extension remains for a caller that already holds those strings.
         """
-        accelerated = _native_fee_for(self, side=side, qty=qty, price=price, liquidity=liquidity)
-        if accelerated is not _USE_PYTHON:
-            return accelerated
         return python_fee_for(self, side=side, qty=qty, price=price, liquidity=liquidity)
 
     def borrow_cost(self, *, short_notional: Decimal, seconds: float) -> Decimal:
@@ -129,10 +126,9 @@ class FeeSchedule:
         Charged on ELAPSED TIME rather than per day, because a high-frequency strategy holds
         for seconds and a daily accrual would round its entire borrow cost to zero — which is
         the assumption that makes an intraday short look free.
+
+        One interval stays on Decimal. The string crossing measured slower.
         """
-        accelerated = _native_borrow_cost(self, short_notional=short_notional, seconds=seconds)
-        if accelerated is not _USE_PYTHON:
-            return accelerated
         return python_borrow_cost(self, short_notional=short_notional, seconds=seconds)
 
 
@@ -158,10 +154,10 @@ def fee_for_fill(fill: Fill, scale: PriceScale, schedule: FeeSchedule) -> Decima
 
 
 def cost_bps(cost: Decimal, notional: Decimal) -> Decimal:
-    """Cost as basis points of notional. Sign preserved, so a rebate reads negative."""
-    accelerated = _native_cost_bps(cost, notional)
-    if accelerated is not _USE_PYTHON:
-        return accelerated
+    """Cost as basis points of notional. Sign preserved, so a rebate reads negative.
+
+    One ratio stays on Decimal. The string crossing measured slower.
+    """
     return python_cost_bps(cost, notional)
 
 
@@ -201,106 +197,32 @@ def python_cost_bps(cost: Decimal, notional: Decimal) -> Decimal:
     return cost / notional * Decimal("10000")
 
 
-_USE_PYTHON = object()
-_I64_MAX = 2**63 - 1
 COSTS_BACKEND = "python"
-_NATIVE = None
 
 
 def _load_native() -> None:
-    """Use the Rust arithmetic when the extension is installed.
+    """Record that the costs extension is installed. Per-call methods stay on Decimal.
 
-    A missing module is the pure-Python path (hosted gates do not build Rust).
-    Any other import failure is a broken extension and is not swallowed.
+    A missing module keeps that path. A present extension that fails to import is
+    broken and the error propagates. A present module missing ``fee_for``,
+    ``borrow_cost``, ``cost_bps``, or ``fee_for_many`` is a partial wheel.
     ``cockpit_quant`` is arithmetic only: it does not enter the impure set that
     ``quant/verify.py`` is forbidden to reach.
     """
-    global _NATIVE, COSTS_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    global COSTS_BACKEND
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("COSTS_BACKEND=%s", COSTS_BACKEND)
         return
-    if not all(hasattr(native, name) for name in ("fee_for", "borrow_cost", "cost_bps")):
-        return
-    _NATIVE = native
+    import cockpit_quant as native
+
+    required = ("fee_for", "borrow_cost", "cost_bps", "fee_for_many")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
+        raise ImportError(
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
+        )
     COSTS_BACKEND = "rust"
-
-
-# Signals the default context traps. Clearing one of these (or enabling another)
-# changes whether an operation raises, so that call cannot use the fixed Rust path.
-_DEFAULT_TRAPS = frozenset({InvalidOperation, DivisionByZero, Overflow})
-
-
-def _enabled_traps(traps) -> frozenset:
-    return frozenset(signal for signal, enabled in traps.items() if enabled)
-
-
-def _default_context() -> bool:
-    """The Rust arithmetic is the default context only.
-
-    Precision 28, half-even, ``Emin``/``Emax`` at the default limits, clamp off,
-    and the default trap set. Any other active context stays in Python, including
-    a caller who only clears ``InvalidOperation`` or narrows ``prec``.
-    """
-    ctx = getcontext()
-    return (
-        ctx.prec == 28
-        and ctx.rounding == ROUND_HALF_EVEN
-        and ctx.Emin == -999999
-        and ctx.Emax == 999999
-        and not ctx.clamp
-        and _enabled_traps(ctx.traps) == _DEFAULT_TRAPS
-    )
-
-
-def _native_fee_for(schedule: FeeSchedule, *, side: Side, qty: int, price: Decimal, liquidity: Liquidity):
-    native = _NATIVE
-    if native is None or not _default_context():
-        return _USE_PYTHON
-    if (
-        isinstance(qty, bool)
-        or not isinstance(qty, int)
-        or qty <= 0
-        or qty > _I64_MAX
-        or not isinstance(price, Decimal)
-    ):
-        return _USE_PYTHON
-    return Decimal(native.fee_for(
-        format(schedule.maker_rebate_per_share, "f"),
-        format(schedule.taker_fee_per_share, "f"),
-        format(schedule.sec_fee_rate, "f"),
-        format(schedule.taf_per_share, "f"),
-        format(schedule.taf_cap, "f"),
-        format(schedule.clearing_per_share, "f"),
-        "sell" if side is Side.SELL else "buy",
-        qty,
-        format(price, "f"),
-        "maker" if liquidity is Liquidity.MAKER else "taker",
-    ))
-
-
-def _native_borrow_cost(schedule: FeeSchedule, *, short_notional: Decimal, seconds: float):
-    native = _NATIVE
-    if native is None or not _default_context() or not isinstance(short_notional, Decimal):
-        return _USE_PYTHON
-    if isinstance(seconds, bool) or not isinstance(seconds, (int, float, Decimal)):
-        return _USE_PYTHON
-    if isinstance(seconds, float) and not math.isfinite(seconds):
-        return _USE_PYTHON
-    if isinstance(seconds, Decimal) and not seconds.is_finite():
-        return _USE_PYTHON
-    return Decimal(native.borrow_cost(
-        format(schedule.borrow_rate_annual, "f"),
-        format(short_notional, "f"),
-        str(seconds),
-    ))
-
-
-def _native_cost_bps(cost: Decimal, notional: Decimal):
-    native = _NATIVE
-    if native is None or not _default_context() or not isinstance(cost, Decimal) or not isinstance(notional, Decimal):
-        return _USE_PYTHON
-    return Decimal(native.cost_bps(format(cost, "f"), format(notional, "f")))
+    log.info("COSTS_BACKEND=%s", COSTS_BACKEND)
 
 
 _load_native()

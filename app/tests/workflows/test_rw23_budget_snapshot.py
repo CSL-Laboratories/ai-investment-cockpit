@@ -140,7 +140,9 @@ def test_independent_writers_cannot_both_take_last_unit(st, monkeypatch):
         synchronize(state)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda state: _consume(DeepBudget(state, limit=1)), (st, other)))
-    assert sorted(results) == [False, True]
+    taken = [result for result in results if isinstance(result, str) and result]
+    refused = [result for result in results if result is False]
+    assert len(taken) == 1 and len(refused) == 1
     assert len(_spends(st)) == 1
     assert st.audit.verify_chain().ok
 
