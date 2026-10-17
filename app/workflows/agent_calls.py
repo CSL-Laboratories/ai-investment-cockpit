@@ -15,6 +15,7 @@ to here so tests inject a FakeTransport (never a real subprocess).
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
@@ -95,6 +96,19 @@ def _jev_eligible(selected: str, job_class: str, mode, weight, settings, packet)
     return number <= ceiling
 
 
+def _jev_window_moved(state, admitted_generation: int) -> bool:
+    """True when this Jev call no longer belongs to the generation it was admitted under.
+
+    A sibling 429/5xx can commit a new exhausted generation while this HTTP call is in
+    flight. Stamping that new generation would make the overlapping success look current.
+    """
+    if isinstance(admitted_generation, bool) or not isinstance(admitted_generation, int):
+        return True
+    if BreakerEngine(state).is_watch_only("jev"):
+        return True
+    return state.usage.window("jev").generation != admitted_generation
+
+
 def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: str,
                schema_name: str, input_refs: dict, transport=None, timeout_s: float = 120.0,
                max_turns: int = 6, decision_weight=None, jev_packet=None,
@@ -126,6 +140,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             getattr(state.settings, "decision_model", pinned)
         )
     jev_attempt = None
+    jev_generation = None
     try:
         jev_eligible = _jev_eligible(
             selected_runtime, job_class, mode, decision_weight, state.settings, jev_packet,
@@ -138,6 +153,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             if BreakerEngine(state).is_watch_only("jev"):
                 jev_attempt = blocked_jev_attempt(state.settings, "jev_vendor_limit")
             else:
+                jev_generation = state.usage.window("jev").generation
                 jev_attempt = evaluate_decision(
                     state.settings, jev_packet, symbol=jev_symbol,
                     schema=load_schema(schema_name), client=jev_client,
@@ -146,6 +162,11 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
                 if jev_attempt.vendor_limited:
                     BreakerEngine(state).enter_watch_only(
                         "jev", "jev vendor limit", actor="agent_calls", state="exhausted",
+                    )
+                elif jev_attempt.accepted and _jev_window_moved(state, jev_generation):
+                    # Keep the billed usage. Drop the proposal so Claude still runs.
+                    jev_attempt = replace(
+                        jev_attempt, accepted=False, reason="jev_stale_attempt", proposal=None,
                     )
         except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
             jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
@@ -167,7 +188,11 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     runtime = "jev" if jev_accepted else cli_runtime
     if jev_accepted:
         pinned = jev_attempt.model_pinned
-    generation = state.usage.window(runtime).generation
+        # The generation captured before HTTP, not a reread. A limit that commits
+        # after this point leaves the job stale instead of current.
+        generation = jev_generation
+    else:
+        generation = state.usage.window(runtime).generation
     job_id = new_id("job")
     pinned_cwd = getattr(state.settings, "decision_agent_cwd", None)
     started = state.clock.now()

@@ -312,6 +312,35 @@ def test_vendor_limit_falls_back_and_opens_jev_watch_only(st, monkeypatch):
     assert _events(st)[-1].payload["jev_attempt"]["fallback"] == "jev_vendor_limit"
 
 
+def test_in_flight_jev_success_does_not_inherit_a_concurrent_limit(st, monkeypatch):
+    _provision(monkeypatch)
+    st.settings.decision_runtime = DecisionRuntime.jev
+    admitted = BreakerEngine(st).current_generation("jev")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        BreakerEngine(st).enter_watch_only(
+            "jev", "overlap", actor="test", state="exhausted",
+        )
+        return _jev_response()
+
+    transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
+    result, job = _call(st, transport, _client(handler))
+    assert result.status == OK
+    assert len(transport.calls) == 1
+    assert job.runtime == "claude"
+    assert job.input_refs["decision_route"] == "jev_fallback"
+    assert job.input_refs["_generation"] == BreakerEngine(st).current_generation("claude")
+    assert job.input_refs["_generation"] == admitted
+    assert job.input_refs["_generation"] != BreakerEngine(st).current_generation("jev")
+    payload = _events(st)[0].payload
+    assert payload["generation"] == job.input_refs["_generation"]
+    assert payload["runtime"] == "claude"
+    assert payload["jev_attempt"]["fallback"] == "jev_stale_attempt"
+    assert payload["jev_attempt"]["billed"] is True
+    assert BreakerEngine(st).is_watch_only("jev") is True
+    assert BreakerEngine(st).is_watch_only() is False
+
+
 def test_http_error_falls_back_and_does_not_open_watch_only(st, monkeypatch):
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.jev
