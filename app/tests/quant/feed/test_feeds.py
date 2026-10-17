@@ -242,6 +242,20 @@ def test_a_wide_exchange_gap_keeps_one_tape():
         ]
 
 
+def test_a_cursor_without_the_portable_kernel_is_refused(monkeypatch):
+    """An older wheel still exports ``synthetic_cursor`` and calls host math."""
+    cockpit = _require_cursor()
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("host cursor selected")
+
+    monkeypatch.setattr(cockpit, "synthetic_cursor", boom)
+    monkeypatch.delattr(cockpit, "portable_box_muller")
+    feed = SyntheticFeed(symbols=("S",), n_events=2, seed=3)
+    with pytest.raises(RuntimeError, match="portable_box_muller"):
+        list(feed)
+
+
 def test_a_non_integer_seed_stays_on_python_and_other_overflows_raise():
     _require_cursor()
     for seed in (1.5, "generator"):

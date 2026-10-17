@@ -334,8 +334,11 @@ def _rust_cursor(feed: SyntheticFeed):
     A seed ``random.Random`` accepts and the i64 binding does not — a float, a
     str, or an int outside i64 — stays on the Python generator. Any other
     failure from a present extension is raised: a broken build must not
-    silently change the stream. The cursor keeps the book and
-    the RNG in Rust, so the first event does not wait on the rest of the tape.
+    silently change the stream. A wheel that exposes ``synthetic_cursor``
+    without ``portable_box_muller`` and ``portable_unit_exponential`` is
+    partial: that cursor still calls host math, so iteration raises instead
+    of selecting it. The cursor keeps the book and the RNG in Rust, so the
+    first event does not wait on the rest of the tape.
     """
     try:
         import cockpit_quant
@@ -350,6 +353,11 @@ def _rust_cursor(feed: SyntheticFeed):
     seed = feed.seed
     if type(seed) is not int or seed < -2**63 or seed > 2**63 - 1:
         return None
+    if _portable_kernel() is None:
+        raise RuntimeError(
+            "cockpit_quant.synthetic_cursor is installed without "
+            "portable_box_muller and portable_unit_exponential"
+        )
     params = feed.params
     return open_cursor(
         list(feed.symbols),
