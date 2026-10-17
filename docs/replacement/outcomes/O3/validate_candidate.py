@@ -192,6 +192,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     for action in fixture["corporate_actions"]:
         if action["kind"] != "cash_dividend":
             failures.add("corporate_action_unsupported")
+        if action["instrument_id"] not in known_instruments:
+            failures.add("unknown_instrument")
 
     journal_entry_ids = {entry["entry_id"] for entry in fixture["journal"]}
     admitted = set()
@@ -218,6 +220,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
     applied_fill_fees = 0
     fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
+    orders_with_fills = {fill["order_id"] for fill in fixture["fills"]}
     fills_by_id = {fill["fill_id"]: fill for fill in fixture["fills"]}
     posted_premium: dict[str, int] = {}
     posted_fees: dict[str, int] = {}
@@ -266,6 +269,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         accepted_fills.append(fill)
         derived[fill["instrument_id"]] = derived.get(fill["instrument_id"], 0) + fill["qty"]
         applied_fill_fees += fill["fee_minor"]
+
+    if not (failures & FILL_DEFECTS):
+        for order in fixture["orders"]:
+            terminal = order.get("terminal_state") or order["state"]
+            if (
+                terminal == "filled"
+                and order["order_id"] in orders_with_fills
+                and accepted_qty.get(order["order_id"], 0) != order["qty"]
+            ):
+                failures.add("partial_fill_divergence")
 
     pre_settlement = dict(derived)
     for market in fixture["markets"]:
@@ -408,6 +421,15 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     ("realized_pnl", "cr"),
                 }:
                     failures.add("corporate_action_mismatch")
+        if entry["reason"] == "settlement_payout":
+            for line in entry["lines"]:
+                if (line["account"], line["side"]) not in {
+                    ("cash_available", "dr"),
+                    ("collateral_reserved", "cr"),
+                    ("realized_pnl", "cr"),
+                    ("fees_expense", "dr"),
+                }:
+                    failures.add("settlement_unreconciled")
         premium_delta = 0
         fee_delta = 0
         for line in entry["lines"]:

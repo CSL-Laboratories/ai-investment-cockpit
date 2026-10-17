@@ -134,6 +134,31 @@ def test_o3_fill_lines_must_match_fill_instrument() -> None:
     assert "position_divergence" in _evaluate(fixture)
 
 
+def test_o3_filled_order_must_be_fully_executed() -> None:
+    for name in ("equity_partial_then_dividend", "event_yes_settlement"):
+        path = VALIDATOR.parent / "fixtures" / f"{name}.json"
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        fixture["orders"][0]["qty"] += 1
+        assert "partial_fill_divergence" in _evaluate(fixture)
+
+
+def test_o3_corporate_action_must_reference_declared_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["corporate_actions"][0]["instrument_id"] = "ghost"
+    assert "unknown_instrument" in _evaluate(fixture)
+
+
+def test_o3_settlement_payout_posting_shape() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][2]["lines"].extend([
+        {"account": "realized_pnl", "side": "dr", "amount_minor": 1, "instrument_id": "ev-yes"},
+        {"account": "cash_available", "side": "cr", "amount_minor": 1, "instrument_id": "ev-yes"},
+    ])
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
 def test_o3_market_must_reference_declared_instrument() -> None:
     path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
     fixture = json.loads(path.read_text(encoding="utf-8"))
