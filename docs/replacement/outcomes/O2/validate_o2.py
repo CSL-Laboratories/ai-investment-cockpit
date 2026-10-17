@@ -362,6 +362,8 @@ def validate_records(bundle: Bundle) -> None:
         if identity is None or identity["market_family"] != record["market_family"]:
             raise ContractError(f"{record['raw_record_id']} identity family does not match")
         _require_family_clock(record)
+        parse_time(record["event_time"])
+        parse_time(record["accepted_at"])
         if payload_sha256(record["payload"]) != record["raw_sha256"]:
             raise ContractError(f"{record['raw_record_id']} raw bytes do not reconstruct")
         prior = families.setdefault(record["natural_key"], record["market_family"])
@@ -381,6 +383,14 @@ def validate_records(bundle: Bundle) -> None:
             target = bundle.records.get(record["supersedes"])
             if target is None or target["natural_key"] != record["natural_key"]:
                 raise ContractError(f"{record['raw_record_id']} supersedes a different fact")
+            if target["source"] != record["source"]:
+                raise ContractError(f"{record['raw_record_id']} correction changes its source")
+            kind = record["payload"].get("kind")
+            compatible = kind == target["payload"].get("kind") or (
+                target["payload"].get("kind") == "filing" and kind == "filing_amendment"
+            )
+            if not compatible:
+                raise ContractError(f"{record['raw_record_id']} correction changes payload kind")
             if parse_time(target["accepted_at"]) >= parse_time(record["accepted_at"]):
                 raise ContractError(f"{record['raw_record_id']} correction is not later knowledge")
         payload = record["payload"]

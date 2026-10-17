@@ -176,6 +176,51 @@ def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def _rewrite_manifest(module, copy: Path) -> None:
+    manifest = json.loads((copy / "fixtures" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = {
+        rel: hashlib.sha256((copy / rel).read_bytes()).hexdigest() for rel in module.EXPECTED_FILES
+    }
+    (copy / "fixtures" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def test_unparseable_record_timestamp_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    cases = [
+        ("raw-eq-ooo", "event_time", "2024-02-31T21:30:05Z"),
+        ("raw-eq-10k-dup", "accepted_at", "2024-02-30T21:30:05Z"),
+    ]
+    for raw_id, field, bad_value in cases:
+        copy = tmp_path / ("O2-" + field)
+        shutil.copytree(O2, copy)
+        records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+        record = next(item for item in records["records"] if item["raw_record_id"] == raw_id)
+        record[field] = bad_value
+        (copy / "fixtures" / "raw_records.json").write_text(
+            json.dumps(records, indent=2) + "\n", encoding="utf-8"
+        )
+        _rewrite_manifest(module, copy)
+        with pytest.raises(module.ContractError, match="timestamp"):
+            module.validate_candidate(copy)
+
+
+def test_incompatible_correction_payload_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    amendment = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-10ka")
+    quote = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-quote")
+    amendment["payload"] = quote["payload"]
+    amendment["raw_sha256"] = module.payload_sha256(amendment["payload"])
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="payload kind"):
+        module.validate_candidate(copy)
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):
