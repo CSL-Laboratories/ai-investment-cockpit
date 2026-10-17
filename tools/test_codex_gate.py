@@ -1511,7 +1511,7 @@ class WorkflowStructureTests(unittest.TestCase):
         gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
         header = gates.split("steps:", 1)[0]
         self.assertIn("name: linux-gates", self.ci)
-        self.assertIn("always() && !cancelled() && github.event_name != 'schedule'", header)
+        self.assertIn("always() && github.event_name != 'schedule'", header)
         self.assertNotIn("needs.filter.result != 'skipped'", header)
         self.assertIn('FILTER_RESULT" != "success"', gates)
         self.assertNotIn("required check passes.", self.ci)

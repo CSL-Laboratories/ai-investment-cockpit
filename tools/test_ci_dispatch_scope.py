@@ -41,6 +41,8 @@ def evaluate(expression, **overrides):
         'github.event.pull_request.labels.*.name': [],
         'github.event.label.name': '',
         'github.event.pull_request.number': 149,
+        'needs.filter.result': 'success',
+        'needs.settle.result': 'success',
         'inputs.scope': '',
         'inputs.pr_number': '',
         'inputs.pr_head_sha': '',
@@ -52,6 +54,7 @@ def evaluate(expression, **overrides):
     expression = expression.strip().removeprefix('${{').removesuffix('}}').strip()
     tokens = '|'.join(re.escape(k) for k in sorted(values, key=len, reverse=True))
     expression = re.sub(tokens, lambda m: repr(values[m.group()]), expression)
+    expression = re.sub(r'!cancelled\(\)', ' (not cancelled()) ', expression)
     expression = expression.replace('&&', ' and ').replace('||', ' or ')
     expression = re.sub(r'\btrue\b', 'True', expression)
     expression = re.sub(r'\bfalse\b', 'False', expression)
@@ -59,7 +62,8 @@ def evaluate(expression, **overrides):
     # contains, and indexed string format. No arbitrary external input reaches
     # this evaluation. format fixtures use only GitHub's supported {N} form.
     return eval(expression, {'__builtins__': {}, 'contains': lambda a, b: b in a,
-                             'format': lambda template, *args: template.format(*args)})
+                             'format': lambda template, *args: template.format(*args),
+                             'always': lambda: True, 'cancelled': lambda: False})
 
 
 def concurrency_group(doc, **context):
@@ -143,18 +147,51 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
 
+    def test_settle_debounce_gates_blacksmith_only_on_pr_synchronize(self):
+        for doc, billed in ((self.ci, ('linux', 'windows', 'benchmarks')),
+                            (self.rust, ('rust-book',))):
+            settle = doc['jobs']['settle']
+            self.assertEqual(settle['runs-on'], 'ubuntu-latest')
+            self.assertEqual(settle['steps'][0]['run'], 'sleep 120')
+            self.assertTrue(evaluate(settle['if'], **{
+                'github.event_name': 'pull_request',
+                'github.event.action': 'synchronize',
+                'github.event.pull_request.draft': False}))
+            for event, action, draft in [
+                ('pull_request', 'opened', False),
+                ('pull_request', 'reopened', False),
+                ('pull_request', 'ready_for_review', False),
+                ('pull_request', 'synchronize', True),
+                ('push', 'synchronize', False),
+                ('workflow_dispatch', 'synchronize', False),
+                ('schedule', 'synchronize', False),
+            ]:
+                self.assertFalse(evaluate(settle['if'], **{
+                    'github.event_name': event, 'github.event.action': action,
+                    'github.event.pull_request.draft': draft}))
+            for job in billed:
+                self.assertEqual(doc['jobs'][job]['needs'], ['filter', 'settle'])
+                self.assertIn('always() && !cancelled()',
+                              ' '.join(doc['jobs'][job]['if'].split()))
+        self.assertEqual(self.ci['jobs']['filter'].get('needs'), None)
+        self.assertIn('settle', self.ci['jobs']['macos']['needs'])
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'settle', 'linux'])
+        self.assertNotIn('settle', self.rust['jobs']['filter'].get('needs', []))
+
     def test_linux_gate_fails_closed(self):
         gate = self.ci['jobs']['linux-gates']
-        self.assertEqual(gate['if'], "always() && !cancelled() && github.event_name != 'schedule'")
+        self.assertEqual(gate['if'], "always() && github.event_name != 'schedule'")
         self.assertEqual(self.ci['jobs']['linux']['strategy']['matrix']['python-version'], ['3.11', '3.12'])
         for filter_result in ('success', 'failure', 'skipped', 'cancelled'):
             for linux_result in ('success', 'failure', 'skipped', 'cancelled'):
                 with self.subTest(filter=filter_result, linux=linux_result):
                     result = subprocess.run(['bash', '-c', gate['steps'][0]['run']],
                                             capture_output=True, check=False, env={**os.environ,
-                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result})
+                                            'FILTER_RESULT': filter_result, 'LINUX_RESULT': linux_result,
+                                            'SETTLE_RESULT': 'success', 'SETTLE_EXPECTED': 'true',
+                                            'RUN_TESTS': 'true'})
                     self.assertEqual(result.returncode == 0,
-                                     filter_result == 'success' and linux_result in ('success', 'skipped'))
+                                     filter_result == 'success' and linux_result == 'success')
 
     def test_dispatch_runs_linux_and_drafts_keep_existing_guard(self):
         for doc in (self.ci, self.rust):
