@@ -306,13 +306,12 @@ class LimitOrderBook:
         feed used that to pick one cancel target, and the copies dominated the
         generator. This asks the book for that one row.
         """
-        if type(index) is not int or index < 0:
+        # Reject before the extension. A Python int past ``usize`` becomes
+        # ``OverflowError`` inside PyO3, while the pure book raises ``IndexError``
+        # for every nonnegative index that is not a live slot.
+        if type(index) is not int or index < 0 or index >= len(self):
             raise IndexError(index)
-        try:
-            row = self._core.order_at(index)
-        except IndexError:
-            raise IndexError(index) from None
-        return _take_row(self, row)
+        return _take_row(self, self._core.order_at(index))
 
     @property
     def _bid_prices(self) -> _Ladder:
