@@ -1894,6 +1894,72 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.receipts.revoke_owned_ci.assert_not_called()
         self.legacy._act.assert_not_called()
 
+    # --- Regressions for Dan's 2026-10-17 re-review on f785b732 (CSL-259) ---
+
+    def test_known_rejection_on_review_mention_releases_reservation_and_reposts(self):
+        """A definitive 4xx/429 on the @codex review POST records request-aborted and re-requests next time."""
+        original = self.gh.post
+
+        def rejected(path, payload):
+            if path.endswith("/comments"):
+                raise ApiError(429)
+            return original(path, payload)
+
+        self.gh.post = rejected
+        with self.assertRaises(ApiError):
+            self.reconcile()
+        requests = self.journal("request")
+        aborted = self.journal("request-aborted")
+        self.assertEqual(len(requests), 1)
+        self.assertEqual([x["request"] for x in aborted], [requests[0]["id"]])
+        self.assertEqual(aborted[0]["status"], 429)
+        self.assertEqual(self.gh.mentions, [])
+        self.gh.post = original
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 1)
+        self.assertEqual(len(self.journal("request")), 2)
+        self.assertNotEqual(self.journal("request")[-1]["nonce"], requests[0]["nonce"])
+
+    def test_unknown_review_mention_outcome_stays_held_without_duplicate(self):
+        """An unclassified failure leaves the reservation active: no abort receipt, no second mention."""
+        original = self.gh.post
+
+        def unknown(path, payload):
+            if path.endswith("/comments"):
+                raise RuntimeError("connection reset")
+            return original(path, payload)
+
+        self.gh.post = unknown
+        with self.assertRaises(RuntimeError):
+            self.reconcile()
+        self.assertEqual(self.journal("request-aborted"), [])
+        self.gh.post = original
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(self.gh.mentions, [])
+        self.assertEqual(len(self.journal("request")), 1)
+
+    def test_edited_release_record_is_skipped_not_raised(self):
+        """A forged-then-edited abort/rejection record no longer halts every reconcile."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-request-aborted", {"request": 1}))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:00:01Z"
+        self.assertEqual(self.journal("request-aborted"), [])
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_edited_reservation_record_still_fails_closed(self):
+        """Dropping an edited request/dispatch record could duplicate a dispatch, so it still holds."""
+        self.prime_ready()
+        record = next(c for c in self.gh.comments if "<!-- candidate-request:" in c["body"])
+        record["updated_at"] = "2026-10-16T00:00:01Z"
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation"):
+            self.reconcile()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_whole_comment_bot_record_is_still_trusted_by_login_only(self):
+        """Documents Major 3 (open): any github-actions[bot] whole-comment record is accepted by journal()."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-request-aborted", {"request": 123}))
+        self.assertEqual([x["request"] for x in self.journal("request-aborted")], [123])
+
 
 if __name__ == "__main__":
     unittest.main()

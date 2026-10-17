@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import merge_candidate as candidate_api
 
+RESERVATION_KINDS = frozenset({"request", "dispatch"})
 KINDS = {"ci": ".github/workflows/ci.yml", "rust": ".github/workflows/rust.yml"}
 HOLD_LABELS = frozenset({"hold", "ci:hold", "do-not-merge", "needs-decision"})
 POLICY_ENV = ("CODEX_POLICY_SHA", "CODEX_POLICY_BRANCH")
@@ -116,7 +117,13 @@ class Coordinator:
             records = self.receipts.records(body, "candidate-" + kind)
             for record in records:
                 if not comment.get("created_at") or comment.get("updated_at") != comment["created_at"]:
-                    raise ValueError("edited or unversioned candidate journal; reconcile manually")
+                    # An edited or unversioned record fails verification. A release
+                    # record (abort/rejection) is skipped, so a forged copy cannot
+                    # halt every reconcile. A reservation record stays fail-closed:
+                    # dropping it would let a new reservation duplicate a dispatch.
+                    if kind in RESERVATION_KINDS:
+                        raise ValueError("edited or unversioned candidate reservation; reconcile manually")
+                    continue
                 # A machine record must be the whole comment, not a quoted example.
                 if body.strip() != self.receipts.marker("candidate-" + kind, record):
                     continue
@@ -334,9 +341,19 @@ class Coordinator:
             "If a human decision is needed, end with CODEX-GATE: MEDIATE. Findings without READY never authorize CI.\n\n"
             f"CODEX-CANDIDATE: {candidate.key}\nCODEX-REQUEST: {request['nonce']}"
         )
-        # Reservation precedes mention. Unknown delivery is not retried. A
-        # legitimate manually repeated mention can reference the same nonce.
-        self.gh.post(f"{self.issue}/comments", {"body": prompt})
+        # Reservation precedes mention. A definitive rejection (known 4xx/429)
+        # is positive evidence nothing was posted, so the reservation is
+        # released and the next reconcile re-requests. An unknown outcome is
+        # not retried: the reservation stays and holds against a duplicate
+        # mention. A legitimate manually repeated mention can reference the
+        # same nonce.
+        try:
+            self.gh.post(f"{self.issue}/comments", {"body": prompt})
+        except Exception as error:
+            status = self.receipts.known_label_rejection(error)
+            if status:
+                self.record("request-aborted", {"request": request["id"], "status": status})
+            raise
         return request
 
     def action_get(self, path):
