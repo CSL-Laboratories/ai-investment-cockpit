@@ -23,13 +23,16 @@ stays import-clean enough for ``risk/`` to consume under Invariant 5.
 """
 from __future__ import annotations
 
+import importlib.util
 import math
-import numbers
+import sys
 from collections import deque
 from dataclasses import dataclass, field
 
 _I64_MIN = -2**63
 _I64_MAX = 2**63 - 1
+# CPython 3.12's ``sum`` is Neumaier. 3.11 adds floats left to right.
+_COMPENSATED_SUM = sys.version_info >= (3, 12)
 SIGNALS_BACKEND = "python"
 _NATIVE = None
 
@@ -38,24 +41,20 @@ def _load_native() -> None:
     """Use the Rust estimators when the extension is installed.
 
     A missing module keeps the pure-Python path, so the hosted gates do not
-    need a Rust toolchain. Any other import failure is a broken extension and
-    is not swallowed. The extension is arithmetic only.
+    need a Rust toolchain. A present extension that fails to import is broken
+    and the error propagates. A non-float observation, a non-float lambda, or
+    an order-flow quantity that is not a signed 64-bit int leaves the extension
+    and finishes on the Python path. The extension is arithmetic only.
     """
     global _NATIVE, SIGNALS_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    if importlib.util.find_spec("cockpit_quant") is None:
         return
+    import cockpit_quant as native
+
     if not all(hasattr(native, name) for name in ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")):
         return
     _NATIVE = native
     SIGNALS_BACKEND = "rust"
-
-
-def _real(value) -> float:
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        raise TypeError(f"estimator observation must be a real number, got {type(value).__name__}")
-    return float(value)
 
 
 def _rust_window(window: int) -> bool:
@@ -84,13 +83,45 @@ class EwmaVolatility:
 
     def __post_init__(self) -> None:
         native = _NATIVE
-        if native is not None and isinstance(self.lam, numbers.Real) and not isinstance(self.lam, bool):
-            self._core = native.EwmaCore(float(self.lam))
+        if (
+            native is not None
+            and type(self.lam) is float
+            and self._variance == 0.0
+            and self._last is None
+            and self._count == 0
+        ):
+            self._core = native.EwmaCore(self.lam)
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not EwmaVolatility:
+            return NotImplemented
+        return self.lam == other.lam and self._snapshot() == other._snapshot()
+
+    def _snapshot(self) -> tuple[float, float | None, int]:
+        core = self._core
+        if core is None:
+            return (self._variance, self._last, self._count)
+        return (core.variance, core.last, core.count)
+
+    def _leave_rust(self) -> None:
+        core = self._core
+        if core is None:
+            return
+        self._variance = core.variance
+        self._last = core.last
+        self._count = core.count
+        self._core = None
 
     def update(self, price: float) -> float | None:
         """Feed one price; return the current volatility estimate, or None if not yet warm."""
-        if self._core is not None:
-            return self._core.update(_real(price))
+        core = self._core
+        if core is not None and (type(self.lam) is not float or self.lam != core.lam):
+            self._leave_rust()
+            core = None
+        if core is not None and type(price) is float:
+            return core.update(price)
+        if core is not None:
+            self._leave_rust()
         if price <= 0:
             return self.value
         if self._last is None:
@@ -140,11 +171,32 @@ class RollingZScore:
         self._values = deque(maxlen=self.window)
         native = _NATIVE
         if native is not None and _rust_window(self.window):
-            self._core = native.ZScoreCore(self.window)
+            self._core = native.ZScoreCore(self.window, _COMPENSATED_SUM)
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not RollingZScore:
+            return NotImplemented
+        return self.window == other.window and self._snapshot() == other._snapshot()
+
+    def _snapshot(self) -> tuple[float, ...]:
+        core = self._core
+        if core is None:
+            return tuple(self._values)
+        return tuple(core.samples())
+
+    def _leave_rust(self) -> None:
+        core = self._core
+        if core is None:
+            return
+        self._values = deque(core.samples(), maxlen=self.window)
+        self._core = None
 
     def update(self, value: float) -> float | None:
-        if self._core is not None:
-            return self._core.update(_real(value))
+        core = self._core
+        if core is not None and type(value) is float:
+            return core.update(value)
+        if core is not None:
+            self._leave_rust()
         self._values.append(value)
         return self.value
 
@@ -213,15 +265,35 @@ class OrderFlowImbalance:
         if native is not None and _rust_window(self.window):
             self._core = native.OfiCore(self.window)
 
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not OrderFlowImbalance:
+            return NotImplemented
+        return self.window == other.window and self._snapshot() == other._snapshot()
+
+    def _snapshot(self) -> tuple[int, ...]:
+        core = self._core
+        if core is None:
+            return tuple(self._flow)
+        return tuple(core.quantities())
+
+    def _leave_rust(self) -> None:
+        core = self._core
+        if core is None:
+            return
+        self._flow = deque(core.quantities(), maxlen=self.window)
+        self._core = None
+
     def update(self, *, signed_qty: int) -> float:
-        if self._core is not None:
-            if isinstance(signed_qty, bool) or not isinstance(signed_qty, int):
-                raise TypeError(
-                    f"signed quantity must be an int, got {type(signed_qty).__name__}"
-                )
-            if signed_qty < _I64_MIN or signed_qty > _I64_MAX:
-                raise ValueError("signed quantity must fit in a signed 64-bit integer")
-            return self._core.update(signed_qty)
+        core = self._core
+        if core is not None and type(signed_qty) is int and _I64_MIN <= signed_qty <= _I64_MAX:
+            try:
+                return core.update(signed_qty)
+            except ValueError:
+                # The running total does not fit in the widened accumulator.
+                # Keep the prints and finish the ratio in Python.
+                self._leave_rust()
+        elif core is not None:
+            self._leave_rust()
         self._flow.append(signed_qty)
         return self.value
 
@@ -265,11 +337,33 @@ class RollingBeta:
         self._ys = deque(maxlen=self.window)
         native = _NATIVE
         if native is not None and _rust_window(self.window):
-            self._core = native.BetaCore(self.window)
+            self._core = native.BetaCore(self.window, _COMPENSATED_SUM)
+
+    def __eq__(self, other: object) -> bool:
+        if type(other) is not RollingBeta:
+            return NotImplemented
+        return self.window == other.window and self._snapshot() == other._snapshot()
+
+    def _snapshot(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        core = self._core
+        if core is None:
+            return (tuple(self._xs), tuple(self._ys))
+        return (tuple(core.xs()), tuple(core.ys()))
+
+    def _leave_rust(self) -> None:
+        core = self._core
+        if core is None:
+            return
+        self._xs = deque(core.xs(), maxlen=self.window)
+        self._ys = deque(core.ys(), maxlen=self.window)
+        self._core = None
 
     def update(self, x: float, y: float) -> float | None:
-        if self._core is not None:
-            return self._core.update(_real(x), _real(y))
+        core = self._core
+        if core is not None and type(x) is float and type(y) is float:
+            return core.update(x, y)
+        if core is not None:
+            self._leave_rust()
         self._xs.append(x)
         self._ys.append(y)
         return self.beta
@@ -307,8 +401,6 @@ class RollingBeta:
 
     def residual(self, x: float, y: float) -> float | None:
         """The spread: how far y sits from where beta says it should be, given x."""
-        if self._core is not None:
-            return self._core.residual(_real(x), _real(y))
         beta, alpha = self.beta, self.alpha
         if beta is None or alpha is None:
             return None
