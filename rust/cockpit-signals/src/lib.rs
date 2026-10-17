@@ -38,9 +38,17 @@ impl EwmaVolatility {
             self.last = Some(price);
             return Ok(None);
         };
-        // ``math.log`` raises on a non-positive ratio. A non-finite ratio would
-        // publish an infinite volatility, so it is the same error.
         let ratio = price / last;
+        // ``math.log(nan)`` is nan and does not raise, so the observation is
+        // stored and later volatilities are nan. An infinite ratio is refused
+        // so a quote cannot see infinite volatility.
+        if ratio.is_nan() {
+            self.last = Some(price);
+            self.count = self.count.saturating_add(1);
+            let decay = 1.0 - self.lam;
+            self.variance = self.lam * self.variance + decay * f64::NAN;
+            return self.value();
+        }
         if !(ratio.is_finite() && ratio > 0.0) {
             return Err("math domain error");
         }

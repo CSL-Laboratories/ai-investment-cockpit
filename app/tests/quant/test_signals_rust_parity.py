@@ -139,6 +139,15 @@ def test_ewma_non_float_inputs_match_python():
         finite.update(float("inf"))
     assert finite.value is None
 
+    # ``math.log(nan)`` is nan and advances the estimator. The core stays.
+    nan_r, nan_p = _pair(EwmaVolatility, lam=0.94)
+    for price in (float("nan"), 100.0, 101.0, float("nan")):
+        _same(nan_r.update(price), nan_p.update(price))
+        _same(nan_r.value, nan_p.value)
+    assert nan_r._core is not None
+    assert math.isnan(nan_r.value)
+    assert math.isnan(nan_p.value)
+
 
 def test_zscore_matches_through_rollover_and_a_constant_window():
     rust, python = _pair(RollingZScore, window=8)
