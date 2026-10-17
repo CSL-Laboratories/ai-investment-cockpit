@@ -221,6 +221,36 @@ def test_closed_jev_client_does_not_mark_dispatch(st, monkeypatch):
         restore_agent_dispatch_watch(token)
 
 
+def test_hookless_post_that_sends_then_raises_keeps_the_mark(st, monkeypatch):
+    """A client with no request hook can send and then raise inside post()."""
+    _provision(monkeypatch)
+    sent = {}
+
+    def handler(request):
+        sent["url"] = str(request.url)
+        return _jev_response()
+
+    inner = _client(handler)
+
+    class Hookless:
+        def post(self, *args, **kwargs):
+            inner.post(*args, **kwargs)
+            raise RuntimeError("wrapper cleanup after send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=Hookless(),
+        )
+        assert sent["url"] == JEV_URL
+        assert attempt.dispatched is True
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+        inner.close()
+
+
 def test_transport_error_after_the_request_hook_keeps_the_mark(st, monkeypatch):
     """Once httpx has passed the request hook, a transport failure has sent."""
     _provision(monkeypatch)

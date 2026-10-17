@@ -431,21 +431,22 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
     if isinstance(candidate, list):
         candidate.append(_mark_on_send)
         hooks = candidate
+    else:
+        # No request hook, so a send-then-raise inside post() cannot be seen.
+        # Mark first. A real httpx client uses the hook, so a closed client
+        # still raises before any mark.
+        mark_agent_dispatched()
     try:
         try:
             response = _post(body, api_key=key, client=http)
         except Exception:
             # A closed client raises before the request hook. A failure after
-            # that hook has started the send and keeps the unit.
+            # that hook, or any failure from a hook-less client, keeps the unit.
             if not agent_dispatched():
                 return _fallback(
                     "jev_error", model, estimated=estimated, dropped=dropped,
                 )
             return _sent("jev_error")
-        if hooks is None:
-            # A hook-less double has no send boundary. post() returned, so the
-            # call completed before close() can discard this attempt.
-            mark_agent_dispatched()
         if _opens_jev_cooldown(response):
             return _sent("jev_vendor_limit", vendor_limited=True)
         if response.status_code != 200:

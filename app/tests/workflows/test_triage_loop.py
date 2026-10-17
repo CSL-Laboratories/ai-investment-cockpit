@@ -993,6 +993,70 @@ def test_closed_jev_client_then_pre_spawn_refusal_releases_the_unit(
             pass
 
 
+def test_hookless_jev_send_then_raise_keeps_the_unit(st, clock, tmp_path, monkeypatch):
+    """A hookless client that sends and then raises has used the unit."""
+    import httpx
+    import keyring
+
+    from agent_runner.transport import ExecutableNotFound
+    from config.settings import DecisionRuntime
+    from core.secrets import SERVICE, set_secret
+    from workflows.jev import JEV_SECRET_NAME, JEV_URL
+    from workflows.packets import Packet, PacketItem
+
+    monkeypatch.delenv("JEV_API_KEY", raising=False)
+    set_secret(JEV_SECRET_NAME, "jev-test-secret")
+    inner = None
+    try:
+        _budget_of_one(st)
+        ev = _one_filing(st, clock, tmp_path)
+        day = NOW.date()
+        packet = Packet(items=(PacketItem(
+            event_id=ev.id, raw_ref=ev.raw_ref, symbol="AAPL", text="AAPL filed an 8-K",
+        ),))
+        sent = {}
+
+        def handler(request):
+            sent["url"] = str(request.url)
+            return httpx.Response(200, json={"model": "jev-1.13.0", "answers": {}})
+
+        inner = httpx.Client(transport=httpx.MockTransport(handler))
+
+        class Hookless:
+            def post(self, *args, **kwargs):
+                inner.post(*args, **kwargs)
+                raise RuntimeError("wrapper cleanup after send")
+
+        class MissingCli:
+            def run(self, argv, input_text, timeout_s, cwd):
+                raise ExecutableNotFound("claude is not on PATH")
+
+        def propose(state, clock_, **kw):
+            state.settings.decision_runtime = DecisionRuntime.jev
+            call_agent(
+                state, alias="decision", prompt_ref="trade_proposal.v1",
+                prompt_hash="h" * 16, prompt="decide for AAPL",
+                schema_name="TradeProposal",
+                input_refs={"event_id": kw["event"].id},
+                transport=MissingCli(),
+                jev_packet=packet, jev_symbol="AAPL", jev_client=Hookless(),
+                decision_weight=60,
+            )
+
+        with pytest.raises(ExecutableNotFound):
+            _escalation(st, clock, tmp_path, ev, propose)
+        assert sent["url"] == JEV_URL
+        assert DeepBudget(st).spent(day) == 1
+        assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+    finally:
+        if inner is not None:
+            inner.close()
+        try:
+            keyring.delete_password(SERVICE, JEV_SECRET_NAME)
+        except keyring.errors.PasswordDeleteError:
+            pass
+
+
 def test_low_priv_rejection_before_spawn_releases_the_unit(st, clock, tmp_path):
     """A low-priv launcher that rejects before any child exists frees the unit."""
     from agent_runner.transport import LowPrivSubprocessTransport
