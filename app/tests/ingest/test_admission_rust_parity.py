@@ -881,7 +881,7 @@ def _load_probe(path: str) -> str:
     """Load one admission module by path so package init cannot hide the other."""
     return textwrap.dedent(
         f"""
-        spec = importlib.util.spec_from_file_location("admission_probe", "{path}")
+        spec = importlib.util.spec_from_file_location("admission_probe", {path!r})
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         """

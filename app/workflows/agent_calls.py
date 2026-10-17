@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
-from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
+from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult, mark_agent_dispatched
 from agent_runner.runner import run_agent, worst_case_repair_overhead
 from agent_runner.spec import AgentSpec
 from config.models import (
@@ -170,10 +170,13 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
                         jev_attempt, accepted=False, reason="jev_stale_attempt", proposal=None,
                     )
                 if jev_attempt.dispatched:
+                    # HTTP already happened. A later raise must keep the unit.
+                    mark_agent_dispatched()
                     state.usage.record("jev")
         except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
             dispatched = jev_attempt is not None and jev_attempt.dispatched
             if dispatched:
+                mark_agent_dispatched()
                 # HTTP already happened. A later step (watch-only admission, the
                 # usage record) must not drop the billed usd and token fields.
                 jev_attempt = replace(

@@ -21,7 +21,10 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
+from agent_runner.result import (
+    LIMIT_HIT, OK, TIMEOUT, agent_dispatched, restore_agent_dispatch_watch,
+    watch_agent_dispatch,
+)
 from core.ids import new_id
 from orchestrator.breakers import BreakerEngine, BreakerSignals, unsampled
 from orchestrator.limits import current_limits
@@ -35,7 +38,11 @@ from workflows.budget import (
     make_event_type_verifier,
     rank_candidates,
 )
-from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
+from workflows.constants import (
+    DEEP_BUDGET_RELEASE_NOOP,
+    EVENT_ESCALATION_DEFERRED,
+    EVENT_TRIAGE_BATCH,
+)
 from workflows.context_limit import (
     context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.events import events_in_window
@@ -413,32 +420,58 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             _defer(state, dispositions, ev, "context_limit")
             continue
         try:
-            consumed = budget.try_consume(
+            entry_id = budget.try_consume(
                 day=day, event_id=ev.id, symbol=cand["symbol"],
                 reason=cand["reason"], corroborated=cand["corroborated"])
         except BudgetIntegrityError:
             # tampered budget ledger -> treat as NO budget (fail closed), never spent=0
             _defer(state, dispositions, ev, "deep_budget_integrity")
             continue
-        if not consumed:
+        if not entry_id:
             _defer(state, dispositions, ev, "deep_budget_exhausted")
             continue
         if cand["holdings_match"] or cand["symbol"] in watchlist:
-            outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
-                         parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist, decision_weight=cand["score"])
+            # Dispatch is the saga pivot, not entering call_agent. A raise before
+            # a child exists or a Jev request is sent releases this reservation.
+            # A raise after that keeps the unit. The finally only restores the
+            # watch — it must not release.
+            watch = watch_agent_dispatch()
+            dispatched = False
+            try:
+                outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
+                             parquet_root=parquet_root, holdings_symbols=holdings_symbols,
+                             watchlist=watchlist, decision_weight=cand["score"])
+                # Snapshot before finally restores the watch. A context_limited
+                # status after a real send must not refund the unit.
+                dispatched = agent_dispatched()
+            except Exception:
+                if not agent_dispatched():
+                    try:
+                        budget.release(
+                            day=day, event_id=ev.id, reason="pre_dispatch_exception",
+                            entry_id=entry_id)
+                    except Exception:
+                        pass  # leave the unit spent; the handler exception still aborts
+                raise
+            finally:
+                restore_agent_dispatch_watch(watch)
             if outcome.status == "context_limited":
-                # No model call: the reservation is unused. Release it before
-                # deferring so a retry or another escalation is not blocked.
+                if dispatched:
+                    _defer(state, dispositions, ev, "context_limit")
+                    continue
+                # No model call: the reservation is unused. Release the exact
+                # row try_consume wrote so a retry is not blocked.
                 try:
                     released = budget.release(
-                        day=day, event_id=ev.id, reason="context_limit")
+                        day=day, event_id=ev.id, reason="context_limit",
+                        entry_id=entry_id)
                 except BudgetIntegrityError:
-                    released = False
-                if released:
-                    _defer(state, dispositions, ev, "context_limit")
-                else:
                     _defer(state, dispositions, ev, "deep_budget_integrity")
+                else:
+                    _defer(
+                        state, dispositions, ev,
+                        "context_limit" if released else DEEP_BUDGET_RELEASE_NOOP,
+                    )
                 continue
             jobs_total += 1
             if outcome.status == "degraded":
