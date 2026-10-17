@@ -75,7 +75,7 @@ REQUIRED_PRIVILEGED = {
     "forbidden_key": ("privileged_order_bypass", "bypass_gateway", True, None),
 }
 PRIVILEGED_BASELINE_ID = "req_positions"
-SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only"} - COMMAND_SCHEMA_CONTROLS
+SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only", "contradictory_status_text"} - COMMAND_SCHEMA_CONTROLS
 CONTROL_REASONS = {
     "gui_cli_semantic_divergence": "semantic_projection_mismatch",
     "hidden_refusal": "refusal_not_visible",
@@ -313,14 +313,15 @@ def _contains_ansi(value: Any) -> bool:
     return False
 
 
-def _rendered_status_tokens(rendered: str) -> set[str]:
-    return set(re.findall(r"(?:^|\s)status=([A-Za-z0-9_]+)(?=$|\s)", rendered))
+def _rendered_status_tokens(rendered: str) -> list[str]:
+    """Every delimited ``status=`` field, in order, without deduplication."""
+    return re.findall(r"(?:^|\s)status=(\S*)", rendered)
 
 
 def _status_text_mismatch(status: Any, text_status: Any, rendered: Any) -> bool:
     if text_status != status or not isinstance(rendered, str):
         return True
-    return _rendered_status_tokens(rendered) != {status}
+    return _rendered_status_tokens(rendered) != [status]
 
 
 def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | None:
