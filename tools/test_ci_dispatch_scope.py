@@ -384,7 +384,18 @@ class DispatchScopeTests(unittest.TestCase):
         validate = self.ci['jobs']['qualification-validate']
         self.assertEqual(qualification['needs'], 'filter')
         self.assertNotIn("github.ref == 'refs/heads/main'", qualification['if'])
-        self.assertEqual(negative['if'], self.ci['jobs']['linux']['if'])
+        # linux/windows now wait on settle; negative-controls is still the
+        # cheap Linux-only control and follows the filter's run-tests bit.
+        self.assertEqual(
+            ' '.join(negative['if'].split()),
+            "needs.filter.outputs.run-tests == 'true'",
+        )
+        self.assertTrue(evaluate(negative['if'], **{
+            'needs.filter.outputs.run-tests': 'true',
+        }))
+        self.assertFalse(evaluate(negative['if'], **{
+            'needs.filter.outputs.run-tests': 'false',
+        }))
         for event, scope, labels, expected in [
             ('workflow_dispatch', '', [], True),
             ('workflow_dispatch', 'full', [], True),
@@ -433,7 +444,7 @@ class DispatchScopeTests(unittest.TestCase):
             f"{job.get('permissions')}" for job in (qualification, negative, validate)
         )
         self.assertNotIn("actions': 'write'", joined_permissions)
-        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'linux'])
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'settle', 'linux'])
         self.assertEqual(self.ci['jobs']['macos']['runs-on'], 'macos-latest')
         head_ref = '${{ github.event.pull_request.head.sha || inputs.pr_head_sha || github.sha }}'
         for job in (qualification, negative, validate):
