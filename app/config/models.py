@@ -28,8 +28,9 @@ DECISION_MODEL_PINS = {
 DEFAULT_DECISION_MODEL = "claude-haiku-4-5"
 
 # TypeSafe Jev pins. ``jev-latest`` is intentionally absent: it moves.
+# ``jev-1.13.0`` is the stable default. ``jev-1.14.0`` is preview and opt-in.
 JEV_MODEL_PINS = frozenset({"jev-1.13.0", "jev-1.14.0"})
-DEFAULT_JEV_MODEL = "jev-1.14.0"
+DEFAULT_JEV_MODEL = "jev-1.13.0"
 # Strictly under the published 32k (state + one question) and 64k (request) limits.
 # Configurable caps stop 1_000 tokens earlier so JSON framing cannot sit on the line.
 JEV_STATE_HARD_LIMIT = 32_000
