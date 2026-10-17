@@ -245,6 +245,7 @@ def emit(items: list[dict], head: str, reason: str = "") -> None:
     ids = [item["root"] for item in items]
     thread_ids = [item["thread"] for item in items]
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write(f"attempt_key={head}:{attempt_key(head, items)['fingerprint']}\n")
         output.write(f"skip={'false' if items else 'true'}\ncomment_ids={json.dumps(ids)}\nthread_ids={json.dumps(thread_ids)}\nreceipt_context={json.dumps(context, separators=(',', ':'))}\nreason={reason}\n")
     print(json.dumps(ids))
 
