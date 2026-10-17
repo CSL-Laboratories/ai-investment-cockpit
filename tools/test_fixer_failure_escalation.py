@@ -102,6 +102,20 @@ class EvidenceTests(unittest.TestCase):
                 self.run["conclusion"] = status
                 self.assertEqual(self.collect(), {})
 
+    def test_ref_qualified_attempt_path_preserves_all_other_provenance_checks(self):
+        for suffix in ("", "@main", "@refs/heads/fix", "@refs/pull/7/merge", "@" + HEAD):
+            with self.subTest(suffix=suffix):
+                self.run["path"] = m.WORKFLOW + suffix
+                self.assertEqual(set(self.collect()), {"thread1"})
+                self.run["workflow_id"] = 100
+                self.assertEqual(self.collect(), {})
+                self.run["workflow_id"] = 99
+        for path in (None, "", m.WORKFLOW + "@", m.WORKFLOW + "@main\n", "other.yml@main",
+                     m.WORKFLOW + ".evil@main", "evil/" + m.WORKFLOW + "@main"):
+            with self.subTest(path=path):
+                self.run["path"] = path
+                self.assertEqual(self.collect(), {})
+
     def test_no_exhaustion_and_forged_reservation_identity_refused(self):
         for user in (f.actor("claude[bot]", f.m.CLAUDE_ID),
                      f.actor("github-actions[bot]", 1),

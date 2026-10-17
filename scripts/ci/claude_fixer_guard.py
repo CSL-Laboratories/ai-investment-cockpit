@@ -119,13 +119,17 @@ def current_pr(config, read=api):
     return head["sha"]
 
 
-def guard(config, updates, remote, state_path, read=api, git=command):
+def guard(config, updates, remote, state_path, read=api, git=command, remote_url=""):
     """One ordinary push at most; consume the attempt even on a rejected check."""
     validate(config)
     # Exclusive creation prevents retry after either a hook refusal or a later
     # server rejection. A fresh authorized workflow run gets a fresh directory.
     with state_path.open("x", encoding="utf-8") as handle:
         handle.write("{}")
+    allowed_urls = {f"https://github.com/{config['repo']}", f"https://github.com/{config['repo']}.git",
+                    f"git@github.com:{config['repo']}.git", f"ssh://git@github.com/{config['repo']}.git"}
+    if remote_url not in allowed_urls:
+        raise ValueError("unexpected remote URL")
     rows = [line.split() for line in updates.splitlines() if line.strip()]
     if remote != "origin" or len(rows) != 1 or len(rows[0]) != 4:
         raise ValueError("unexpected push target")
@@ -198,6 +202,47 @@ def terminal(config, state_path, execution, outcome, read=api, consumer=None):
             "The PR author should relay any remaining blocker to its Linear issue.")
 
 
+def model_api(config, args, run=command):
+    """Fixed same-PR API operations. No model-supplied endpoint, method or flags."""
+    validate(config)
+    root = f"repos/{config['repo']}"
+    pull = f"{root}/pulls/{config['number']}"
+    reads = {"read": pull, "comments": f"{root}/issues/{config['number']}/comments",
+             "review-comments": f"{pull}/comments", "reviews": f"{pull}/reviews"}
+    if args == ["threads"]:
+        owner, name = config["repo"].split("/")
+        # Fixed read-only query. The root maps REST review comments to a current
+        # thread; pagination covers all thread states without accepting a query.
+        query = """query($owner:String!,$name:String!,$number:Int!,$endCursor:String){
+          repository(owner:$owner,name:$name){pullRequest(number:$number){
+            reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor}
+              nodes{id isResolved isOutdated path line comments(first:1){nodes{databaseId body url}}}}}}}"""
+        return run(["gh", "api", "graphql", "--paginate", "-f", "query=" + query,
+                    "-f", "owner=" + owner, "-f", "name=" + name, "-F", "number=" + config["number"]])
+    if len(args) == 1 and args[0] in reads:
+        paging = [] if args[0] == "read" else ["--paginate"]
+        return run(["gh", "api", "--method", "GET", reads[args[0]], *paging])
+    if len(args) == 2 and args[0] == "comment":
+        endpoint, body_path = f"{root}/issues/{config['number']}/comments", args[1]
+    elif len(args) == 3 and args[0] == "reply" and re.fullmatch(r"[1-9][0-9]*", args[1]):
+        endpoint, body_path = f"{pull}/comments/{args[1]}/replies", args[2]
+    else:
+        raise ValueError("unsupported PR API operation")
+    # Do not let a comment-file read bypass the model's denied .env/secret reads.
+    if not re.fullmatch(r"\.claude-fixer-replies/[A-Za-z0-9_-]+\.txt", body_path):
+        raise ValueError("invalid comment file")
+    workspace = Path.cwd().resolve()
+    directory = workspace / ".claude-fixer-replies"
+    file = workspace / body_path
+    if directory.is_symlink() or file.is_symlink() or file.resolve().parent != directory:
+        raise ValueError("comment file escapes reply directory")
+    body = file.read_text(encoding="utf-8")
+    if not body.strip() or len(body) > 65000:
+        raise ValueError("invalid comment body")
+    return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"],
+               input=json.dumps({"body": body}))
+
+
 def main():
     directory = Path(__file__).resolve().parent
     config_path, state_path = directory / "context.json", directory / "attempt.json"
@@ -213,6 +258,13 @@ def main():
         command(["git", "config", "--local", "core.hooksPath", str(directory)])
         return 0
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    if mode == "model-api" and len(sys.argv) >= 4 and sys.argv[2] == "--":
+        try:
+            print(model_api(config, sys.argv[3:]))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            print("PR API operation failed or is not permitted.", file=sys.stderr)
+            return 1
+        return 0
     if mode == "terminal" and len(sys.argv) == 2:
         consumer = None
         try:
@@ -241,7 +293,7 @@ def main():
     try:
         if len(sys.argv) != 3:
             raise ValueError("invalid hook invocation")
-        guard(config, sys.stdin.read(), mode, state_path)
+        guard(config, sys.stdin.read(), mode, state_path, remote_url=sys.argv[2])
     except (OSError, ValueError, subprocess.SubprocessError):
         print("Claude fixer push stopped: stale/invalid head, unavailable read, or attempt already used. "
               "Stop this run; no fetch, rebase, merge or second push.", file=sys.stderr)

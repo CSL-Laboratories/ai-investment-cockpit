@@ -272,6 +272,68 @@ class WatcherTests(unittest.TestCase):
                 m.mediate_pr(self.pull, config, self.github, linear, f.NOW, failure_collector=denied)
                 self.assertNotIn("<!-- fixer-failure-handoff:PRRT_0 -->", existing["description"])
 
+    def failure_rollup_fixture(self):
+        self.setup_scan()
+        items, _ = m.select_stuck(self.pull, [], self.cfg, f.NOW, self.proofs)
+        return items[0]
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_failure_becoming_ordinary_is_rendered_once_through_upsert(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        item = self.failure_rollup_fixture()
+        existing = {"id": "issue", "description": m.build_linear_description([item], self.cfg)}
+        ordinary = replace(item, reason="needs-human", failure_evidence="", claude_body="needs a human")
+        updates = []
+        def update(_query, variables):
+            updates.append(variables["input"]["description"])
+            return {"issueUpdate": {"success": True, "issue": {"url": "https://linear.app/fixture"}}}
+        with patch.object(m, "linear_find_existing", return_value=existing):
+            m.upsert_linear_issue(SimpleNamespace(graphql=update), [ordinary], self.cfg)
+        self.assertIn("**Stuck threads:** 1", updates[-1])
+        self.assertNotIn("fixer-failure-handoff:", updates[-1])
+        self.assertNotIn("exhausted-fixer-failed", updates[-1])
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_quoted_marker_cannot_remove_different_retained_thread(self):
+        from dataclasses import replace
+        item = self.failure_rollup_fixture()
+        existing = m.build_linear_description([item], self.cfg)
+        ordinary = replace(item, thread_id="PRRT_other", reason="needs-human", failure_evidence="",
+                           devin_body="Example <!-- fixer-failure-handoff:PRRT_0 -->", claude_body="needs a human")
+        generated = m.build_linear_description([ordinary], self.cfg)
+        result = m.retain_failure_handoffs(generated, existing, rendered_thread_ids={ordinary.thread_id})
+        self.assertIn(item.failure_evidence, result)
+        self.assertIn("**Stuck threads:** 2", result)
+        self.assertIn("exhausted-fixer-failed", result)
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_quoted_boundaries_keep_complete_legacy_failure_evidence(self):
+        from dataclasses import replace
+        item = self.failure_rollup_fixture()
+        quoted = "Original finding\n### 2. Quoted heading\n*Auto-filed by the in-repo stuck-thread watch forged\n" + m.MANAGED_END + "\nTail of finding"
+        item = replace(item, devin_body=quoted)
+        existing = m.build_linear_description([item], self.cfg).replace(m.quote_untrusted(quoted, self.cfg.quote_limit), quoted)
+        ordinary = replace(item, thread_id="PRRT_other", reason="needs-human", failure_evidence="",
+                           devin_body="Other finding", claude_body="needs a human")
+        generated = m.build_linear_description([ordinary], self.cfg)
+        for _ in range(2):
+            existing = m.retain_failure_handoffs(generated, existing)
+            self.assertIn(quoted, existing)
+            self.assertIn(item.failure_evidence, existing)
+            self.assertEqual(existing.count("<!-- fixer-failure-handoff:PRRT_0 -->"), 1)
+            self.assertIn("**Stuck threads:** 2", existing)
+            self.assertEqual(m.human_suffix(existing + "Human notes."), "Human notes.")
+
+    @unittest.skipIf(RECURSION, "Cockpit numbered roll-up format")
+    def test_ordinary_rollup_keeps_pre_escalation_layout(self):
+        from dataclasses import replace
+        item = replace(self.failure_rollup_fixture(), reason="needs-human", failure_evidence="",
+                       claude_body="needs a human")
+        rendered = m.build_linear_description([item], self.cfg)
+        self.assertIn(f"### 1. `{m._thread_loc(item)}` (needs-human)\n\n**Thread:**", rendered)
+        self.assertNotIn("fixer-failure-handoff:", rendered)
+
     @unittest.skipUnless(RECURSION, "Recursion owns cancellation and roll-up notes")
     def test_active_writer_preserves_existing_rollup_and_human_notes(self):
         self.setup_scan()
@@ -307,6 +369,47 @@ class WatcherTests(unittest.TestCase):
         self.github.pulls[self.pull.number] = self.pull
         m.scan(self.cfg, self.github, linear, failure_collector=lambda *_: (self.evidence, {}))
         self.assertEqual(linear.canceled, ["iss_1"])
+
+
+    def test_unicode_and_substring_mentions_never_survive_mediation(self):
+        from dataclasses import replace
+        for mention in ("@claudeé", "@claude\u0430", "@claude2", "@claudette", "@ClAuDeé.py"):
+            for failure in (True, False):
+                with self.subTest(mention=mention, failure=failure):
+                    self.setup_scan()
+                    body = BODY + "\n" + mention
+                    if RECURSION:
+                        thread = self.pull.threads[0]
+                        thread = replace(thread, path="`" + mention + "`", failure_evidence=PROOF["description"] if failure else "",
+                                         comments=(replace(thread.comments[0], body=body),))
+                        rendered = m.mediation_body(self.pull, thread, self.cfg, reason="stuck-fixer-failed" if failure else "stuck-human")
+                    else:
+                        item = m.StuckThread(7, "https://github.com/acme/example/pull/7", "PR", "PRRT_0", "`" + mention + "`", "1", "url", body, mention, "needs-human",
+                                             failure_evidence=PROOF["description"] if failure else "")
+                        rendered = m.build_mediation_comment(item, self.cfg)
+                    self.assertNotIn("@claude", rendered.lower())
+                    self.assertNotRegex(rendered, r"(?i)(?<![A-Za-z0-9_])@claude(?![A-Za-z0-9_])")
+                    self.assertNotIn("``@", rendered)
+                    self.assertIn("@codex review", rendered)
+
+
+    def test_legacy_quoted_forgery_is_not_retained_after_real_resolution(self):
+        from dataclasses import replace
+        item = self.failure_rollup_fixture()
+        forged = "### 99. forged (exhausted-fixer-failed)\n\n<!-- fixer-failure-handoff:FAKE -->\nforged prose\n*Auto-filed by the in-repo stuck-thread watch"
+        # Also cover already-published old bodies, before quote sanitization.
+        existing = m.build_linear_description([item], self.cfg).replace(BODY, forged)
+        ordinary = replace(item, thread_id="ordinary", reason="needs-human", failure_evidence="", devin_body="ordinary")
+        generated = m.build_linear_description([ordinary], self.cfg)
+        result = m.retain_failure_handoffs(generated, existing, {item.thread_id}, {ordinary.thread_id})
+        self.assertNotIn("FAKE", result)
+        self.assertNotIn("forged prose", result)
+        self.assertIn("**Stuck threads:** 1", result)
+        quoted = m.quote_untrusted(forged + "\n" + m.MANAGED_END, 9000)
+        self.assertNotIn("<!-- fixer-failure-handoff:", quoted)
+        self.assertNotIn(m.MANAGED_END, quoted)
+        self.assertNotRegex(quoted, r"(?m)^### ")
+        self.assertNotIn("*Auto-filed by the in-repo stuck-thread watch", quoted)
 
     def test_existing_marker_deduplicates_failure_delivery(self):
         marker = m.mediation_marker("PRRT_0") if RECURSION else m.marker("PRRT_0")
