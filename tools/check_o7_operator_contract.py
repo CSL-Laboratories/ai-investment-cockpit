@@ -286,6 +286,11 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         and result.get("survives_restart") is not True
     ):
         return "recorded_stop_not_persistent"
+    if (
+        doc.get("command") == "operator.profiles.inspect"
+        and result.get("active_profile_class") != profile.get("profile_class")
+    ):
+        return "profile_class_mismatch"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
@@ -416,6 +421,11 @@ def _oracle_response_error(doc: dict[str, Any], commands: dict[str, dict[str, An
         return "oracle treats a local control as account-wide"
     if doc.get("profile", {}).get("profile_class") != "A":
         return "illustrative oracle must stay on profile A"
+    if (
+        doc.get("command") == "operator.profiles.inspect"
+        and result.get("active_profile_class") != doc.get("profile", {}).get("profile_class")
+    ):
+        return "active profile class does not match the response profile"
     expected_intervention = INTERVENTION_NAMES.get(doc["command"])
     if expected_intervention is not None:
         if result.get("intervention") != expected_intervention or result.get("recorded") is not True:
@@ -722,6 +732,18 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle errors do not cover the failure statuses")
 
 
+def _repaired_command_body(control: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only the safeguard named by a command negative control."""
+    repaired = dict(body)
+    if control == "unconfirmed_intervention":
+        repaired["confirmation"] = "explicit"
+        return repaired
+    arguments = body.get("arguments")
+    repaired["arguments"] = dict(arguments) if isinstance(arguments, dict) else {}
+    repaired["arguments"]["scope"] = "operator_session"
+    return repaired
+
+
 def _require_schema(validator: Draft202012Validator, instance: Any, label: str) -> None:
     error = _schema_error(validator, instance)
     if error is not None:
@@ -740,9 +762,14 @@ def _check_negative(
     if control in COMMAND_SCHEMA_CONTROLS:
         body = document.get("body")
         schema_error = None if not isinstance(body, dict) else _schema_error(command_validator, body)
-        if schema_error is not None:
-            return _control_line(control, "FAIL as designed")
-        return _control_line(control, "UNEXPECTED_ACCEPT")
+        if schema_error is None:
+            return _control_line(control, "UNEXPECTED_ACCEPT")
+        if not isinstance(body, dict):
+            return _control_line(control, "WRONG_FAILURE")
+        repaired_error = _schema_error(command_validator, _repaired_command_body(control, body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
     if control == "gui_cli_semantic_divergence":
         gui, cli = document.get("gui"), document.get("cli")
         gui_error = _schema_error(validator, gui)

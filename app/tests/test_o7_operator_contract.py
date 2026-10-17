@@ -312,6 +312,37 @@ def test_recorded_stop_persists_and_ansi_is_absent_from_every_string() -> None:
     assert CHECKER._schema_error(response_validator, tainted) is not None
 
 
+def test_profile_class_agrees_and_intervention_controls_fail_on_their_own_field(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    by_request, commands, response_validator = _candidate_documents()
+    catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
+    catalog_commands = {row["name"]: row for row in catalog["commands"]}
+    profiles = copy.deepcopy(by_request["req_profiles"])
+    profiles["result"]["active_profile_class"] = "C"
+    assert profiles["profile"]["profile_class"] == "A"
+    assert CHECKER.classify_response(profiles, commands) == "profile_class_mismatch"
+    assert CHECKER._schema_error(response_validator, profiles) is not None
+    assert CHECKER._oracle_response_error(profiles, catalog_commands) is not None
+    command_schema = json.loads((root / "schemas" / "operator-command.schema.json").read_text(encoding="utf-8"))
+    command_validator = CHECKER._validator(command_schema)
+    for name in ("unconfirmed-intervention.json", "unscoped-intervention.json"):
+        document = json.loads((root / "fixtures" / "negative" / name).read_text(encoding="utf-8"))
+        body = document["body"]
+        assert CHECKER._schema_error(command_validator, body) is not None
+        assert CHECKER._schema_error(command_validator, CHECKER._repaired_command_body(document["control"], body)) is None
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "fixtures" / "negative" / "unconfirmed-intervention.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    document["body"]["api_version"] = "o7.operator.v1"
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/negative/unconfirmed-intervention.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert "NEGATIVE CONTROL unconfirmed_intervention: WRONG_FAILURE" in stdout
+    assert stderr.startswith("o7-operator-contract: FAIL:")
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)
