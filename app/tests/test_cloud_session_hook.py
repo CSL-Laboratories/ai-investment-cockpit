@@ -75,13 +75,29 @@ def project(tmp_path):
     return proj
 
 
-def _run(project: Path, stubs: dict[str, str], *, remote: bool = True, **env: str):
+# Real commands the hook and the stubs need when PATH is isolated.
+CORE_TOOLS = ("cat", "sha256sum", "cut", "mktemp", "rm", "mkdir", "chmod")
+
+
+def _run(
+    project: Path, stubs: dict[str, str], *, remote: bool = True,
+    isolated_path: bool = False, **env: str,
+):
     bin_dir = project.parent / "stubs"
     for name, body in stubs.items():
         _write(bin_dir / name, body)
+    path = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+    if isolated_path:
+        # Only the stubs plus core utilities: a command that is not stubbed
+        # (e.g. rustup) is truly absent, even if the host has it installed.
+        core = project.parent / "core"
+        core.mkdir(exist_ok=True)
+        for tool in CORE_TOOLS:
+            (core / tool).symlink_to(shutil.which(tool))
+        path = f"{bin_dir}{os.pathsep}{core}"
     full_env = {
         **os.environ,
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "PATH": path,
         "CLAUDE_PROJECT_DIR": str(project),
         "CLAUDE_ENV_FILE": str(project.parent / "claude.env"),
         "PIP_NO_INDEX": "1",
@@ -92,7 +108,7 @@ def _run(project: Path, stubs: dict[str, str], *, remote: bool = True, **env: st
     if remote:
         full_env["CLAUDE_CODE_REMOTE"] = "true"
     result = subprocess.run(
-        ["bash", str(HOOK)], cwd=project, env=full_env,
+        [shutil.which("bash"), str(HOOK)], cwd=project, env=full_env,
         capture_output=True, text=True, timeout=120,
     )
     return result.returncode, result.stdout
@@ -126,6 +142,16 @@ def test_cached_healthy_venv_with_matching_stamp_is_ok(project):
     assert "Setup incomplete" not in out
     env_file = (project.parent / "claude.env").read_text()
     assert f"{project}/.venv/bin" in env_file
+
+
+def test_missing_rustup_is_a_failed_rust_step(project):
+    tools = {name: body for name, body in HEALTHY_TOOLS.items() if name != "rustup"}
+    _write(project / ".venv/bin/python", GOOD)
+    (project / STAMP).write_text(_deps_hash(project) + "\n")
+    code, out = _run(project, tools, isolated_path=True)
+    assert code == 0
+    assert "venv=ok deps=ok rust=FAIL(no rustup)" in out
+    assert "Setup incomplete" in out
 
 
 @pytest.mark.parametrize("broken", [NO_PIP, OLD_PY], ids=["no-pip", "python-below-3.11"])

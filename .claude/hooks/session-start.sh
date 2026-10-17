@@ -11,7 +11,7 @@ set -uo pipefail
 cd "$CLAUDE_PROJECT_DIR" || { echo "cockpit bootstrap: FAIL (cannot enter project dir)"; exit 0; }
 export GIT_TERMINAL_PROMPT=0
 
-fetch=ok venv=ok deps=ok rust=skipped
+fetch=ok venv=ok deps=ok rust=ok
 py=.venv/bin/python
 
 git fetch --quiet origin '+refs/heads/main:refs/remotes/origin/main' || fetch=FAIL
@@ -126,14 +126,15 @@ if [ "$venv" = ok ] && [ -n "${CLAUDE_ENV_FILE:-}" ]; then
 fi
 
 # Rust: older rustup installs rust/rust-toolchain.toml's toolchain on first
-# cargo use; newer rustup needs `rustup toolchain install`. The maturin wheel
-# build is left to tasks that need it.
-if command -v rustup >/dev/null 2>&1; then
-  if (cd rust && { rustup toolchain install >/dev/null 2>&1 || true; } && cargo fetch --quiet); then
-    rust=ok
-  else
-    rust=FAIL
-  fi
+# cargo use; newer rustup needs `rustup toolchain install`. Without rustup the
+# 1.83.0 pin cannot be honored, so that is a failed step, not a skip. The
+# maturin wheel build is left to tasks that need it.
+if ! command -v rustup >/dev/null 2>&1; then
+  rust="FAIL(no rustup)"
+elif (cd rust && { rustup toolchain install >/dev/null 2>&1 || true; } && cargo fetch --quiet); then
+  rust=ok
+else
+  rust=FAIL
 fi
 
 main="$(git rev-parse --short origin/main 2>/dev/null || echo unknown)"
