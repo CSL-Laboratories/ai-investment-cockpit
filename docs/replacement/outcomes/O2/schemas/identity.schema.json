@@ -85,7 +85,8 @@
             "event_ticker",
             "market_ticker",
             "contract_family",
-            "collateral_return_type"
+            "collateral_return_type",
+            "settlement_sources"
           ],
           "properties": {
             "environment": {"const": "demo"},
@@ -96,7 +97,7 @@
             "contract_family": {"enum": ["binary", "scalar"]},
             "collateral_return_type": {"enum": ["", "MECNET", "DIRECNET"]},
             "settlement_sources": {
-              "type": ["array", "null"],
+              "type": "array",
               "items": {
                 "type": "object",
                 "additionalProperties": false,

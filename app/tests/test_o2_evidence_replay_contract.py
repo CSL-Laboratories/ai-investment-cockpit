@@ -270,6 +270,53 @@ def test_unresolved_listing_reference_is_rejected(tmp_path: Path) -> None:
             module.validate_candidate(copy)
 
 
+def test_status_observed_must_be_a_rest_poll(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-ev-d1-disputed")
+    record["payload"]["channel"] = "market_lifecycle_v2"
+    record["raw_sha256"] = module.payload_sha256(record["payload"])
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="pairs status_observed"):
+        module.validate_candidate(copy)
+
+
+def test_unreal_settlement_instant_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-ev-d1-disputed")
+    record["payload"]["settlement_ts"] = "2024-02-31T14:59:00Z"
+    record["raw_sha256"] = module.payload_sha256(record["payload"])
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="timestamp"):
+        module.validate_candidate(copy)
+
+
+def test_event_identity_requires_settlement_sources(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    identities = json.loads((copy / "fixtures" / "identities.json").read_text(encoding="utf-8"))
+    entry = next(item for item in identities["identities"] if item["identity_id"] == "idn-ev-d1")
+    del entry["event"]["settlement_sources"]
+    (copy / "fixtures" / "identities.json").write_text(
+        json.dumps(identities, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="schema: fixtures/identities.json"):
+        module.validate_candidate(copy)
+
+
 def test_event_observation_on_non_resolution_key_fails() -> None:
     module = _load_validator()
     documents = {rel: json.loads((O2 / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR}

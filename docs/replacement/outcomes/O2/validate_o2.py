@@ -432,6 +432,11 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} carries settled_ts outside a settled event")
             if payload.get("settlement_ts") is not None and payload["channel"] != "rest_get_markets":
                 raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
+            if payload.get("settlement_ts") is not None:
+                parse_time(payload["settlement_ts"])
+            # status_observed is a REST poll; the socket never emits it (disputed/amended).
+            if (payload["event_type"] == "status_observed") != (payload["channel"] == "rest_get_markets"):
+                raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
         if payload.get("kind") == "corporate_action":
             for field in ("listing_identity_before", "listing_identity_after"):
                 ref = bundle.identities.get(payload[field])
