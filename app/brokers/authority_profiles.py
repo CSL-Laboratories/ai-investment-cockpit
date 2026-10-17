@@ -208,7 +208,7 @@ def _validate_model_output(model_output: object) -> None:
             raise ProfileRefused("model_output", "model output field is malformed")
     if "confidence" in model_output:
         value = model_output["confidence"]
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= float(value) <= 1:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
             raise ProfileRefused("model_output", "model output confidence is malformed")
 
 
@@ -433,6 +433,25 @@ class AuthorityProfileStore:
                     raise ProfileRefused("revoked", "profile is revoked")
                 self._require_capability(conn, profile.profile_id, capability)
                 return profile, _as_capability(profile.profile_id, capability)
+            # A perimeter with no profile history has no controls row yet; that is
+            # a new perimeter, not corruption. A missing row for a perimeter that
+            # already has profiles stays fail-closed in _refuse_if_blocked.
+            has_history = conn.execute(
+                """
+                SELECT 1 FROM profiles
+                WHERE account_id = ? AND venue = ? AND environment = ?
+                """,
+                profile.binding(),
+            ).fetchone()
+            if has_history is None:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO controls (
+                        account_id, venue, environment, kill, hold
+                    ) VALUES (?, ?, ?, 0, 0)
+                    """,
+                    profile.binding(),
+                )
             self._refuse_if_blocked(conn, profile)
             occupied = conn.execute(
                 """

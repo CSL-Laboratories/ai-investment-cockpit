@@ -898,3 +898,17 @@ def test_profile_module_has_no_live_flag_or_credential_path():
         assert token not in text
         assert token not in contract
     assert "live" not in ADMITTED_ENVIRONMENTS
+
+
+def test_first_profile_installs_on_fresh_store_and_oversized_confidence_refuses(tmp_path):
+    store = _store(tmp_path)
+    _install(store)
+    huge = {"provider": "claude", "model_version": "claude-pinned", "confidence": 10**400}
+    code = _refuse(
+        lambda: handoff_to_gateway(
+            store, None, profile_id="profile-b", action="propose",
+            client_order_id="c-huge", notional="10.00", actor="stop-owner",
+            now=NOW, model_output=huge,
+        )
+    )
+    assert code == "model_output"
