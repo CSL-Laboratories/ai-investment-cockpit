@@ -13,6 +13,7 @@ fails CI.
 """
 from __future__ import annotations
 
+import ast
 import copy
 import logging
 import math
@@ -878,10 +879,16 @@ def _python(script: str) -> subprocess.CompletedProcess[str]:
 
 
 def _load_probe(path: str) -> str:
-    """Load one admission module by path so package init cannot hide the other."""
+    """Load one admission module by path so package init cannot hide the other.
+
+    The path is a Python literal. An absolute Windows path contains ``\\a``
+    inside ``ai-investment-cockpit``, and a plain quoted path turns that into
+    a bell character before the file is opened.
+    """
+    literal = repr(path)
     return textwrap.dedent(
         f"""
-        spec = importlib.util.spec_from_file_location("admission_probe", "{path}")
+        spec = importlib.util.spec_from_file_location("admission_probe", {literal})
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         """
@@ -950,6 +957,14 @@ def test_partial_extension_is_not_a_silent_python_fallback(path, symbol):
     ran = _python(script)
     assert ran.returncode != 0, ran.stderr
     assert symbol in ran.stderr
+
+
+def test_load_probe_keeps_a_windows_path_with_a_bell_escape():
+    path = "C:\\runner\\_work\\ai-investment-cockpit\\app\\ingest\\ratelimit.py"
+    tree = ast.parse("import importlib\n" + _load_probe(path))
+    assert any(
+        isinstance(node, ast.Constant) and node.value == path for node in ast.walk(tree)
+    )
 
 
 def test_a_bucket_without_replay_is_a_partial_wheel():

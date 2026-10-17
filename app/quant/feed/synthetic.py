@@ -24,7 +24,12 @@ DETERMINISTIC FROM A SEED
 Everything derives from ``seed``. Two runs produce byte-identical event streams, so a
 strategy change is measurable as a diff rather than as a difference of two noisy averages.
 Uses ``random.Random`` explicitly rather than the module-level RNG so a caller elsewhere in
-the process cannot perturb a run by drawing from the global generator.
+the process cannot perturb a run by drawing from the global generator. When the Rust
+extension is installed, ``gauss`` and ``expovariate`` call its libm kernel — the same
+``sin``, ``cos``, and ``ln`` the native cursor uses — so the two tapes match on every
+parameter. A one-ulp host difference, scaled by ``tick_volatility`` or by a large
+``exchange_gap_ns``, would otherwise cross ``round`` or the gap cut and change the
+events. Without the extension, CPython's platform math is the only generator.
 
 THE THREE TIMESTAMPS ARE MODELLED, NOT FAKED EQUAL
 ----------------------------------------------------
@@ -105,8 +110,11 @@ class SyntheticFeed:
             return _events_from_cursor(cursor)
         return self._python_events()
 
-    def _python_events(self) -> Iterator[Event]:
-        rng = random.Random(self.seed)
+    def _python_events(self, *, portable: bool | None = None) -> Iterator[Event]:
+        # `portable=False` keeps CPython's platform math. The bench times that
+        # generator. The default follows the cursor: the shared libm kernel
+        # when the extension can take this seed, platform math otherwise.
+        rng = _reference_rng(self.seed, _portable_math(self, portable))
         p = self.params
         state = {
             symbol: {
@@ -256,14 +264,81 @@ class SyntheticFeed:
         return len(s["book"]) > 0
 
 
+class _PortableRandom(random.Random):
+    """``random.Random`` whose normal and exponential draws use the libm kernel."""
+
+    def __init__(self, seed, box_muller, unit_exponential) -> None:
+        self._box_muller = box_muller
+        self._unit_exponential = unit_exponential
+        super().__init__(seed)
+
+    def gauss(self, mu: float = 0.0, sigma: float = 1.0) -> float:
+        z = self.gauss_next
+        self.gauss_next = None
+        if z is None:
+            # Angle, then radius. ``cos`` is returned; ``sin`` is cached.
+            z, nxt = self._box_muller(self.random(), self.random())
+            self.gauss_next = nxt
+        return mu + z * sigma
+
+    def expovariate(self, lambd: float = 1.0) -> float:
+        return self._unit_exponential(self.random()) / lambd
+
+
+def _seed_fits_cursor(seed: object) -> bool:
+    return type(seed) is int and -2**63 <= seed <= 2**63 - 1
+
+
+def _portable_kernel():
+    try:
+        import cockpit_quant
+    except ImportError:
+        return None
+    box = getattr(cockpit_quant, "portable_box_muller", None)
+    unit = getattr(cockpit_quant, "portable_unit_exponential", None)
+    if box is None or unit is None:
+        return None
+    return box, unit
+
+
+def _portable_math(feed: SyntheticFeed, portable: bool | None):
+    """The shared kernel, or None to keep CPython's platform math.
+
+    A seed the cursor rejects stays on platform math, so installing the
+    extension does not retarget a float or string seed. ``portable=False``
+    is the bench's pure-Python generator. ``portable=True`` forces the kernel
+    and raises when the extension does not export it.
+    """
+    if portable is False:
+        return None
+    kernel = _portable_kernel()
+    if portable is True and kernel is None:
+        raise RuntimeError("portable synthetic math requires cockpit_quant")
+    if kernel is None:
+        return None
+    if portable is None and not _seed_fits_cursor(feed.seed):
+        return None
+    return kernel
+
+
+def _reference_rng(seed, kernel):
+    if kernel is None:
+        return random.Random(seed)
+    box, unit = kernel
+    return _PortableRandom(seed, box, unit)
+
+
 def _rust_cursor(feed: SyntheticFeed):
     """One native event at a time, or None when the extension is not installed.
 
     A seed ``random.Random`` accepts and the i64 binding does not — a float, a
     str, or an int outside i64 — stays on the Python generator. Any other
     failure from a present extension is raised: a broken build must not
-    silently change the stream. The cursor keeps the book and
-    the RNG in Rust, so the first event does not wait on the rest of the tape.
+    silently change the stream. A wheel that exposes ``synthetic_cursor``
+    without ``portable_box_muller`` and ``portable_unit_exponential`` is
+    partial: that cursor still calls host math, so iteration raises instead
+    of selecting it. The cursor keeps the book and the RNG in Rust, so the
+    first event does not wait on the rest of the tape.
     """
     try:
         import cockpit_quant
@@ -278,6 +353,11 @@ def _rust_cursor(feed: SyntheticFeed):
     seed = feed.seed
     if type(seed) is not int or seed < -2**63 or seed > 2**63 - 1:
         return None
+    if _portable_kernel() is None:
+        raise RuntimeError(
+            "cockpit_quant.synthetic_cursor is installed without "
+            "portable_box_muller and portable_unit_exponential"
+        )
     params = feed.params
     return open_cursor(
         list(feed.symbols),
