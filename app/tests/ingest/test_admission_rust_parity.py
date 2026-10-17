@@ -2,8 +2,9 @@
 
 Per-call ``Dedup.add`` / ``TokenBucket.allow`` stay on the OrderedDict and the
 Python step: a poller calls them once per item, and one FFI hop is slower than
-that work. Batch scripts use ``dedup_replay`` and ``token_bucket_replay``, which
-call the extension when the values are ones it can store.
+that work. ``dedup_replay`` calls the extension for an exact-``str`` script.
+``token_bucket_replay`` calls it only for an all-float script; an ``int``
+batch stays on ``python_allow`` so intermediate arithmetic does not round.
 
 Parity cases that need the extension are skipped when it is not installed,
 which is the hosted Python gate. ``COCKPIT_REQUIRE_RUST=1`` fails the file
@@ -742,41 +743,28 @@ def test_a_capacity_past_the_float_range_stays_on_python(monkeypatch):
     assert last == rust._last
 
 
-def test_an_int_rust_cannot_hold_stays_off_the_extension():
-    from ingest.ratelimit import _exact_f64
+def test_an_int_batch_stays_on_python_even_when_each_input_is_exact(monkeypatch):
+    """Integer replay matches ``python_allow``, including a step f64 would round."""
+    if RATELIMIT_BACKEND == "rust":
+        import cockpit_quant
 
-    assert _exact_f64(2**53 + 1) is None
-    assert _exact_f64(10**400) is None
-    assert _exact_f64(2) == 2.0
-    assert _exact_f64(1.5) == 1.5
-    assert _exact_f64(True) is None
+        def boom(*_args, **_kwargs):
+            raise AssertionError("int batch entered the extension")
 
+        monkeypatch.setattr(cockpit_quant, "token_bucket_replay", boom)
+    allowed, tokens, last = token_bucket_replay(1, 2**54 + 4, 1, 1, [2**53 + 2])
+    python = TokenBucket(rate_per_sec=1, capacity=2**54 + 4, now=1)
+    python.tokens = 1
+    assert allowed == [python_allow(python, 2**53 + 2)]
+    assert tokens == python.tokens == float(2**53)
+    assert last == python._last == 2**53 + 2
 
-@_needs_rust
-def test_an_exact_integer_capacity_matches_python(monkeypatch):
-    import cockpit_quant
-
-    seen = {}
-    real = cockpit_quant.token_bucket_replay
-
-    def wrap(*args):
-        seen["args"] = args
-        return real(*args)
-
-    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
-    allowed, tokens, last = token_bucket_replay(1, 2, 0, 0, [0, 1])
-    python = TokenBucket(rate_per_sec=1, capacity=2, now=0)
-    assert allowed[0] is python_allow(python, 0) is False
-    assert allowed[1] is python_allow(python, 1) is True
-    assert tokens == python.tokens
-    assert last == python._last
-    assert seen["args"][0] == 1.0
-    assert seen["args"][1] == 2.0
-
-    hot = TokenBucket(rate_per_sec=1, capacity=2, now=0)
-    ref = TokenBucket(rate_per_sec=1, capacity=2, now=0)
-    assert hot.allow(0) is python_allow(ref, 0) is False
-    assert hot.allow(1) is python_allow(ref, 1) is True
+    small_allowed, small_tokens, small_last = token_bucket_replay(1, 2, 0, 0, [0, 1])
+    small = TokenBucket(rate_per_sec=1, capacity=2, now=0)
+    assert small_allowed[0] is python_allow(small, 0) is False
+    assert small_allowed[1] is python_allow(small, 1) is True
+    assert small_tokens == small.tokens
+    assert small_last == small._last
 
 
 @_needs_rust
