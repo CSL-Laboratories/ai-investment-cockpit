@@ -12,6 +12,30 @@ implementation and the boundaries below remain authoritative until their separat
 scoped, reviewed implementation amendments. Product ratification grants no runtime
 permission or empirical PASS.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Their accepted bytes and
+scoped gates remain controlling; these operating instructions do not amend them.
+
+## Founder decisions and integration
+
+The recorded [CSL-44 authority direction](https://linear.app/csl-laboratories/issue/CSL-44#comment-bbe42521-10fa-4ef0-b799-1c56fec9ddad)
+allows any founder to decide product and implementation questions from research,
+feature admission within a lane and continuation within its approved budget.
+Core language/runtime choices remain founder decisions; this instruction selects none.
+Lucas retains spend/new services, sensitive company credentials, company-server
+deployments and the final tie-break. All three founders make the final release decision.
+
+Founders merge after the required current-head reviews and checks; agents never merge.
+Until rulesets enforce it, no founder merges their own PR without another founder's
+approval. Protected-path amendments require a separately recorded founder-approved
+authoring session; this paragraph grants no blanket editing permission.
+Accepted contracts require their own versioned amendment, exact acceptance and reviewed
+promotion. No person-level decision unlocks live capital or bypasses the nine invariants,
+paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
+remain in force; this wording does not activate R2a or grant a live run.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
@@ -53,7 +77,7 @@ Naming and installation alone do not qualify a CLI or grant production authority
   resets. ChatGPT is manual steering only. Chiron/Recursion remain future PD-029
   integrations, not a prerequisite or a current routing destination.
 - Head prepares reviewable changes and draft PR material. Existing operator
-  commit/publication instructions apply; Lucas remains the merger. Swarm tests
+  commit/publication instructions and the founder integration rules above apply. Swarm tests
   and receipts never satisfy empirical, paper-day or pre-live gates.
 
 Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
