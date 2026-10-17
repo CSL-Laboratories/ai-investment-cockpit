@@ -18,7 +18,8 @@ from types import SimpleNamespace
 
 import merge_candidate as candidate_api
 
-RESERVATION_KINDS = frozenset({"request", "dispatch", "mediate-intent"})
+# Reservation kinds, each with the field that attributes it to one candidate key or head.
+RESERVATION_KINDS = {"request": "candidate", "dispatch": "candidate", "mediate-intent": "head"}
 REQUEST_BUDGET = 3
 KINDS = {"ci": ".github/workflows/ci.yml", "rust": ".github/workflows/rust.yml"}
 HOLD_LABELS = frozenset({"hold", "ci:hold", "do-not-merge", "needs-decision"})
@@ -109,27 +110,49 @@ class Coordinator:
     def comments(self):
         return self.listing(f"{self.issue}/comments")
 
-    def journal(self, comments, kind):
-        result = []
+    def bot_records(self, comments, kind):
         for comment in comments:
             if not self.receipts.bot(comment.get("user") or {}, "github-actions[bot]", self.receipts.ACTIONS_ID):
                 continue
             body = str(comment.get("body") or "")
-            records = self.receipts.records(body, "candidate-" + kind)
-            for record in records:
-                if not comment.get("created_at") or comment.get("updated_at") != comment["created_at"]:
-                    # An edited or unversioned record fails verification. A release
-                    # record (abort/rejection) is skipped, so a forged copy cannot
-                    # halt every reconcile. A reservation record stays fail-closed:
-                    # dropping it would let a new reservation duplicate a dispatch
-                    # or a mediation handoff.
-                    if kind in RESERVATION_KINDS:
-                        raise ValueError("edited or unversioned candidate reservation; reconcile manually")
-                    continue
-                # A machine record must be the whole comment, not a quoted example.
-                if body.strip() != self.receipts.marker("candidate-" + kind, record):
-                    continue
-                result.append({**record, "id": comment["id"], "created_at": comment.get("created_at")})
+            for record in self.receipts.records(body, "candidate-" + kind):
+                edited = not comment.get("created_at") or comment.get("updated_at") != comment["created_at"]
+                yield comment, body, record, edited
+
+    @staticmethod
+    def attribution(kind, record):
+        value = record.get(RESERVATION_KINDS[kind])
+        if not isinstance(value, str) or not value:
+            # An edit nobody can attribute to one candidate holds them all.
+            raise ValueError("edited or unversioned candidate reservation; reconcile manually")
+        return value
+
+    def tainted(self, comments):
+        """Candidate keys and heads that carry an edited or unversioned reservation record."""
+        found = {kind: {self.attribution(kind, record) for _c, _b, record, edited in self.bot_records(comments, kind) if edited}
+                 for kind in RESERVATION_KINDS}
+        return frozenset(found["request"] | found["dispatch"]), frozenset(found["mediate-intent"])
+
+    def held(self, comments, key=None, head=None):
+        keys, heads = self.tainted(comments)
+        return key in keys or head in heads
+
+    def journal(self, comments, kind):
+        result = []
+        for comment, body, record, edited in self.bot_records(comments, kind):
+            if edited:
+                # An edited or unversioned record fails verification and is
+                # skipped, so a forged copy cannot halt every reconcile. A
+                # reservation record must still be attributable: dropping it
+                # could let a new reservation duplicate a dispatch or mediation
+                # handoff, so its candidate or head is held via tainted().
+                if kind in RESERVATION_KINDS:
+                    self.attribution(kind, record)
+                continue
+            # A machine record must be the whole comment, not a quoted example.
+            if body.strip() != self.receipts.marker("candidate-" + kind, record):
+                continue
+            result.append({**record, "id": comment["id"], "created_at": comment.get("created_at")})
         return sorted(result, key=lambda x: x["id"])
 
     def record(self, kind, data):
@@ -237,6 +260,9 @@ class Coordinator:
         if not review:
             return None
         head = identity[2]
+        if self.held(comments, head=head):
+            self.revoke(SimpleNamespace(head=head))
+            return "held-edited-reservation"
         pause = self.receipts.latest_pause_id(comments, head)
         self.fresh_mediate(identity, review, pause)
         invalidations = []
@@ -259,6 +285,8 @@ class Coordinator:
         if any(x.get("nonce") not in completed and x["id"] not in aborted
                for x in self.journal(comments, "mediate-intent")):
             return "mediate-delivery-uncertain"
+        if self.held(comments, head=head):
+            raise ValueError("candidate reservation edited during reconcile; reconcile manually")
         intent = self.record("mediate-intent", {"head": head, "review": review["id"], "pause": pause, "nonce": nonce})
         try:
             comments, reviews = self.fresh_mediate(identity, review, pause, origin)
@@ -322,14 +350,16 @@ class Coordinator:
         return comments, events
 
     def request(self, candidate, comments):
+        if self.held(comments, key=candidate.key):
+            raise ValueError("candidate reservation edited during reconcile; reconcile manually")
         pause = self.receipts.latest_pause_id(comments, candidate.head)
         aborted = {x.get("request") for x in self.journal(comments, "request-aborted")}
         matching = [x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key and x.get("pause") == pause and x["id"] not in aborted]
         if matching:
             return matching[-1]
-        # Every reservation ever made for this candidate, aborted or not and
-        # under any pause, consumes the same request budget.
-        if len([x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key]) >= REQUEST_BUDGET:
+        # Every reservation made for this candidate and pause generation,
+        # aborted or not, consumes the same request budget.
+        if len([x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key and x.get("pause") == pause]) >= REQUEST_BUDGET:
             return "request-budget-exhausted"
         request = self.record("request", {"candidate": candidate.key, "nonce": uuid.uuid4().hex, "pause": pause, "identity": candidate.record()})
         try:
@@ -458,6 +488,8 @@ class Coordinator:
         if type(actor.get("id")) is not int or not actor.get("login"):
             raise ValueError("dispatch actor unavailable")
         comments = self.comments()
+        if self.held(comments, key=candidate.key):
+            raise ValueError("candidate reservation edited during reconcile; reconcile manually")
         intents = [x for x in self.journal(comments, "dispatch") if x.get("candidate") == candidate.key and x.get("kind") == kind]
         rejected = {x.get("nonce") for x in self.journal(comments, "rejected") if x.get("status") in {400, 401, 403, 404, 409, 422, 429}}
         aborted = {x.get("nonce") for x in self.journal(comments, "aborted") if x.get("reason") == "pre-dispatch-refused"}
@@ -538,6 +570,9 @@ class Coordinator:
         if ineligible:
             return ineligible
         candidate, comments, reviews, _events, blocked = self.snapshot()
+        if self.held(comments, key=candidate.key):
+            self.revoke(candidate)
+            return "held-edited-reservation"
         if blocked:
             self.revoke(candidate)
             return "held-or-fixer-pending"
