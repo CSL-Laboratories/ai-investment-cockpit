@@ -217,6 +217,25 @@ def test_forwarding_wrapper_around_five_arg_launcher_is_not_passed_on_spawn():
         restore_agent_dispatch_watch(token)
 
 
+def test_unwrapped_kwargs_forwarder_is_not_passed_on_spawn():
+    """A bare **kwargs wrapper is not proof that the target accepts on_spawn."""
+    def five_arg(account, argv, input_text, timeout_s, cwd):
+        assert account == "cockpit-agent"
+        return ProcResult(0, "", "", False)
+
+    def wrapped(*args, **kwargs):
+        return five_arg(*args, **kwargs)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        result = transport.run(["claude"], "prompt", 1.0, None)
+        assert result.returncode == 0
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
 def test_no_account_configured_spawns_normally_dev_posture():
     """Dev posture: no account configured => the runner does not require a low-priv transport."""
     captured = {}

@@ -1078,6 +1078,65 @@ def test_exception_after_call_agent_keeps_the_unit(st, clock, tmp_path):
     assert DeepBudget(st).spent(day) == 1
 
 
+def test_context_limited_after_dispatch_does_not_release(st, clock, tmp_path):
+    """A handler that dispatches and then returns context_limited keeps the unit."""
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+    answer = {"question": "q?", "answer": "grounded answer", "pattern": "fresh",
+              "session_id": None, "generated_at": NOW.isoformat()}
+
+    def propose(state, clock_, **kw):
+        call_agent(
+            state, alias="triage", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=FakeTransport([envelope(answer)]),
+        )
+        return _stub_outcome(status="context_limited")
+
+    result = _escalation(st, clock, tmp_path, ev, propose)
+    assert result["status"] == "ok"
+    assert ev.id in result["deferred"]
+    assert ev.id not in result["escalated"]
+    assert _deferred_reasons(st, ev.id) == ["context_limit"]
+    assert DeepBudget(st).spent(day) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+    calls: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = _escalation(st, clock, tmp_path, ev, ok_propose)
+    assert second["status"] == "ok"
+    assert calls == []
+    assert ev.id in second["deferred"]
+    assert _deferred_reasons(st, ev.id) == ["context_limit", "deep_budget_exhausted"]
+    assert DeepBudget(st).spent(day) == 1
+
+
+def test_release_error_does_not_replace_the_handler_exception(st, clock, tmp_path, monkeypatch):
+    """A release failure leaves the unit spent and the handler exception wins."""
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+
+    def boom(self, **kwargs):
+        raise RuntimeError("release failed")
+
+    monkeypatch.setattr(DeepBudget, "release", boom)
+
+    def propose(state, clock_, **kw):
+        raise RuntimeError("handler failed")
+
+    with pytest.raises(RuntimeError, match="handler failed"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert DeepBudget(st).spent(NOW.date()) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+
 def test_false_release_is_noop_not_integrity(st, clock, tmp_path, monkeypatch):
     """release() returning False is not an HMAC failure, and the unit stays spent."""
     _budget_of_one(st)

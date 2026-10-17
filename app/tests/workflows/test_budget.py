@@ -190,11 +190,13 @@ def test_release_restores_one_unused_unit_and_does_not_mint(st):
     """An unused reservation nets back to zero. A second release of that row, or a
     duplicate signed release, must not push remaining above the audited limit."""
     b = DeepBudget(st, limit=1)
-    assert _entry_id(consume(b, 1))
+    entry_id = _entry_id(consume(b, 1))
     assert b.spent(DAY) == 1 and b.remaining(DAY) == 0
-    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is True
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=entry_id) is True
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 1
-    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is False
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=entry_id) is False
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 1
     fresh = DeepBudget(st, limit=1)
     assert fresh.spent(DAY) == 0 and fresh.remaining(DAY) == 1
@@ -216,7 +218,7 @@ def test_release_binds_to_the_try_consume_entry_id(st):
     ``state.lock`` is process-local, so binding to the latest unreleased row
     can attribute a release to a row this caller did not reserve. The id
     ``try_consume`` returns is the only row ``release`` may cancel. Omitting
-    the id still releases the latest unreleased row.
+    the id releases nothing.
     """
     b = DeepBudget(st, limit=2)
     first = _entry_id(consume(b, 1))
@@ -253,19 +255,27 @@ def test_release_binds_to_the_try_consume_entry_id(st):
     assert release.payload["releases_entry_id"] == first
     assert st.audit.verify_entry(release)
 
-    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is True
-    assert b.spent(DAY) == 0 and b.remaining(DAY) == 2
     assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is False
+    assert b.spent(DAY) == 1 and b.remaining(DAY) == 1
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=second) is True
+    assert b.spent(DAY) == 0 and b.remaining(DAY) == 2
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=second) is False
     assert b.remaining(DAY) == 2
 
 
 def test_release_does_not_refund_a_different_event_or_day(st):
     b = DeepBudget(st, limit=2)
-    assert _entry_id(consume(b, 1))
+    entry_id = _entry_id(consume(b, 1))
     other_day = (NOW + timedelta(days=1)).date()
-    assert b.release(day=DAY, event_id="evt-other", reason="context_limit") is False
-    assert b.release(day=other_day, event_id="evt-1", reason="context_limit") is False
-    assert b.release(day=DAY, event_id="", reason="context_limit") is False
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is False
+    assert b.release(day=DAY, event_id="evt-other", reason="context_limit",
+                     entry_id=entry_id) is False
+    assert b.release(day=other_day, event_id="evt-1", reason="context_limit",
+                     entry_id=entry_id) is False
+    assert b.release(day=DAY, event_id="", reason="context_limit",
+                     entry_id=entry_id) is False
     assert b.spent(DAY) == 1 and b.remaining(DAY) == 1
     assert b.spent(other_day) == 0
     with st.session_factory() as s:
@@ -276,8 +286,9 @@ def test_release_does_not_refund_a_different_event_or_day(st):
 
 def test_tampered_release_fails_closed(st):
     b = DeepBudget(st, limit=2)
-    consume(b, 1)
-    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is True
+    entry_id = _entry_id(consume(b, 1))
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=entry_id) is True
     assert b.spent(DAY) == 0
     with st.session_factory() as s, s.begin():
         row = s.execute(select(AuditEntry).where(
@@ -289,7 +300,7 @@ def test_tampered_release_fails_closed(st):
     with pytest.raises(BudgetIntegrityError):
         b.remaining(DAY)
     with pytest.raises(BudgetIntegrityError):
-        b.release(day=DAY, event_id="evt-1", reason="context_limit")
+        b.release(day=DAY, event_id="evt-1", reason="context_limit", entry_id=entry_id)
     with pytest.raises(BudgetIntegrityError):
         consume(b, 2)
 

@@ -193,10 +193,10 @@ def _logon_launch(  # pragma: no cover - Windows/logon
 def _launch_accepts_on_spawn(launch) -> bool:
     """True when ``launch(..., on_spawn=...)`` will not raise ``TypeError``.
 
-    A named ``on_spawn`` parameter accepts the keyword. ``**kwargs`` does too,
-    but only when every ``functools.wraps`` target can accept it as well. A
-    five-argument wrapper cannot, even when the function it wraps declares
-    ``on_spawn``, so that launcher keeps the five-argument call.
+    A named ``on_spawn`` parameter accepts the keyword. ``**kwargs`` does too
+    only when a ``functools.wraps`` target names it. A bare ``**kwargs``
+    forwarder has no such proof and keeps the five-argument call, as does a
+    five-argument wrapper.
     """
     seen: set[int] = set()
     current = launch
@@ -212,7 +212,7 @@ def _launch_accepts_on_spawn(launch) -> bool:
         if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
             return False
         current = getattr(current, "__wrapped__", None)
-    return True
+    return False
 
 
 class LowPrivSubprocessTransport:

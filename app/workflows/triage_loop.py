@@ -436,22 +436,29 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             # A raise after that keeps the unit. The finally only restores the
             # watch — it must not release.
             watch = watch_agent_dispatch()
+            dispatched = False
             try:
                 outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                              parquet_root=parquet_root, holdings_symbols=holdings_symbols,
                              watchlist=watchlist, decision_weight=cand["score"])
+                # Snapshot before finally restores the watch. A context_limited
+                # status after a real send must not refund the unit.
+                dispatched = agent_dispatched()
             except Exception:
                 if not agent_dispatched():
                     try:
                         budget.release(
                             day=day, event_id=ev.id, reason="pre_dispatch_exception",
                             entry_id=entry_id)
-                    except BudgetIntegrityError:
-                        pass  # leave the unit spent; still abort the tick
+                    except Exception:
+                        pass  # leave the unit spent; the handler exception still aborts
                 raise
             finally:
                 restore_agent_dispatch_watch(watch)
             if outcome.status == "context_limited":
+                if dispatched:
+                    _defer(state, dispositions, ev, "context_limit")
+                    continue
                 # No model call: the reservation is unused. Release the exact
                 # row try_consume wrote so a retry is not blocked.
                 try:

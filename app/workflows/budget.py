@@ -190,35 +190,18 @@ def _net_spent(entries: Sequence[AuditEntry], day: date) -> int:
     )
 
 
-def _latest_unreleased(
-    entries: Sequence[AuditEntry], *, day: date, event_id: str,
-) -> AuditEntry | None:
-    released = _released_consumption_ids(entries)
-    day_s = day.isoformat()
-    matches = [
-        entry for entry in entries
-        if entry.event_type == EVENT_DEEP_ESCALATION
-        and entry.id not in released
-        and (entry.payload or {}).get("date") == day_s
-        and (entry.payload or {}).get("event_id") == event_id
-    ]
-    if not matches:
-        return None
-    return max(matches, key=lambda entry: entry.seq)
-
-
 def _unreleased_target(
     entries: Sequence[AuditEntry], *, day: date, event_id: str,
     entry_id: str | None,
 ) -> AuditEntry | None:
     """The consumption a release may cancel.
 
-    An explicit ``entry_id`` binds to that row only. Omitting it keeps the
-    previous behavior: the latest unreleased consumption for this event and day.
-    A mismatch releases nothing — it does not fall through to another row.
+    Only the id ``try_consume`` returned. Omitting it releases nothing:
+    ``state.lock`` is process-local, so the latest unreleased row can belong
+    to another process. A mismatch does not fall through to another row.
     """
-    if entry_id is None:
-        return _latest_unreleased(entries, day=day, event_id=event_id)
+    if not isinstance(entry_id, str) or not entry_id:
+        return None
     released = _released_consumption_ids(entries)
     day_s = day.isoformat()
     for entry in entries:
@@ -348,24 +331,23 @@ class DeepBudget:
         """Release one unused same-day reservation for ``event_id``.
 
         ``try_consume`` records the spend before the proposal handler runs and
-        returns that row's id. Pass it as ``entry_id`` so the release cancels
-        that row even if another process consumed the same event later.
-        ``state.lock`` is process-local, so "latest unreleased" can attribute
-        the release to the wrong row. Omitting ``entry_id`` keeps that latest
-        binding for callers that do not have the id.
+        returns that row's id. ``entry_id`` is required. ``state.lock`` is
+        process-local, so falling back to the latest unreleased row can cancel
+        a reservation this caller does not own. Omitting the id appends nothing
+        and returns False.
 
-        A ``context_limited`` outcome made no model call, so the reservation is
-        unused. The ledger is append-only: this appends a signed release that
-        nets that one row out of ``spent``. A second release of the same row,
-        a release for another event or day, or an unknown id appends nothing
-        and returns False — it cannot mint a unit. Chain tamper raises
-        ``BudgetIntegrityError``.
+        A ``context_limited`` outcome that never dispatched made no model call,
+        so the reservation is unused. The ledger is append-only: this appends a
+        signed release that nets that one row out of ``spent``. A second release
+        of the same row, a release for another event or day, or an unknown id
+        appends nothing and returns False — it cannot mint a unit. Chain tamper
+        raises ``BudgetIntegrityError``.
         """
         if not isinstance(event_id, str) or not event_id:
             return False
         if not isinstance(reason, str) or not reason:
             return False
-        if entry_id is not None and (not isinstance(entry_id, str) or not entry_id):
+        if not isinstance(entry_id, str) or not entry_id:
             return False
         for attempt in range(1, 7):
             try:
