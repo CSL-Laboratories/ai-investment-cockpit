@@ -506,22 +506,58 @@ def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
             continue
         condition = clause.get("if")
         properties = condition.get("properties") if isinstance(condition, dict) else None
-        if not isinstance(properties, dict):
+        if not isinstance(condition, dict) or not isinstance(properties, dict):
             continue
-        if _admitted_strings(properties.get("command")) != commands:
-            continue
-        if _admitted_strings(properties.get("status_code")) != {"refused"}:
-            continue
-        if set(condition.get("required") or []) != {"command", "status_code"}:
+        command_schema = properties.get("command")
+        status_schema = properties.get("status_code")
+        if _admitted_strings(command_schema) != commands or _admitted_strings(status_schema) != {"refused"}:
             continue
         then = clause.get("then")
         then_properties = then.get("properties") if isinstance(then, dict) else None
         result = then_properties.get("result") if isinstance(then_properties, dict) else None
         recorded_properties = result.get("properties") if isinstance(result, dict) else None
         recorded = recorded_properties.get("recorded") if isinstance(recorded_properties, dict) else None
-        if _const_value(recorded) is False:
-            return
+        if (
+            _assertion_keys(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "status_code"}
+            or set(properties) != {"command", "status_code"}
+            or not isinstance(command_schema, dict)
+            or _assertion_keys(command_schema) != {"enum"}
+            or not isinstance(status_schema, dict)
+            or _assertion_keys(status_schema) != {"const"}
+            or not isinstance(then, dict)
+            or _assertion_keys(then) != {"properties"}
+            or not isinstance(then_properties, dict)
+            or set(then_properties) != {"result"}
+            or not isinstance(result, dict)
+            or _assertion_keys(result) != {"properties"}
+            or not isinstance(recorded_properties, dict)
+            or set(recorded_properties) != {"recorded"}
+            or _const_value(recorded) is not False
+        ):
+            raise ContractError("refused intervention clause cannot apply")
+        return
     raise ContractError("refused intervention can still be recorded")
+
+
+def _require_recorded_refusal_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """The response schema itself rejects a refused intervention that was recorded."""
+    for doc in responses:
+        if not isinstance(doc, dict) or doc.get("command") not in INTERVENTION_NAMES:
+            continue
+        result = doc.get("result")
+        if not isinstance(result, dict):
+            raise ContractError("refused intervention schema accepts a recording")
+        recorded = {**doc, "status_code": "refused", "result": {**result, "recorded": True}}
+        if _schema_error(validator, recorded) is None:
+            raise ContractError(f"refused intervention schema accepts a recording for {doc['command']}")
+        unrecorded = {
+            **doc,
+            "status_code": "refused",
+            "result": {**result, "recorded": False, "survives_restart": False},
+        }
+        if _schema_error(validator, unrecorded) is not None:
+            raise ContractError(f"refused intervention schema rejects an unrecorded {doc['command']}")
 
 
 def _error_probe(code: str, status: str) -> dict[str, Any]:
@@ -1430,8 +1466,9 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         for error in doc["errors"]:
             _require_schema(error_validator, error, "oracle error")
         seen.add(doc["command"])
-    if seen != set(commands):
-        raise ContractError("oracle responses do not cover the catalog")
+        if seen != set(commands):
+            raise ContractError("oracle responses do not cover the catalog")
+        _require_recorded_refusal_rejected(response_validator, responses)
     by_request: dict[str, dict[str, Any]] = {}
     for doc in responses:
         if not isinstance(doc, dict):

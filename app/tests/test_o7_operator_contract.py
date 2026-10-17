@@ -820,6 +820,32 @@ def test_refused_intervention_cannot_be_recorded(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "refused intervention can still be recorded" in stderr
+    unreachable = tmp_path / "unreachable-refusal"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", unreachable)
+    schema_path = unreachable / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    patched = False
+    for clause in schema["allOf"]:
+        condition = clause.get("if")
+        properties = condition.get("properties") if isinstance(condition, dict) else None
+        command = properties.get("command") if isinstance(properties, dict) else None
+        status = properties.get("status_code") if isinstance(properties, dict) else None
+        if (
+            isinstance(command, dict)
+            and "enum" in command
+            and isinstance(status, dict)
+            and status.get("const") == "refused"
+        ):
+            condition["maxProperties"] = 0
+            condition["required"] = ["command", "status_code", "absent_field"]
+            patched = True
+    assert patched
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(unreachable, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(unreachable)
+    assert code == 1
+    assert stdout == ""
+    assert "refused intervention clause cannot apply" in stderr
 
 
 def test_error_schema_binds_every_code_to_its_status(tmp_path: Path) -> None:
