@@ -367,3 +367,14 @@ def test_rust_fit_i64_extraction_bounds_and_types():
     with pytest.raises(TypeError):
         rust.add(order_id="str", side=Side.BUY, price_ticks=100, qty="1")
     rust.check_integrity()
+
+
+def test_rust_module_keeps_the_gil_contract_on_free_threaded_builds():
+    """``gil_used = true`` must survive the PyO3 0.28 default flip."""
+    import sys
+
+    import cockpit_quant  # noqa: F401
+
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+    if is_gil_enabled is not None:
+        assert is_gil_enabled()
