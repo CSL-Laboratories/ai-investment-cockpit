@@ -216,6 +216,56 @@ def _listing_key(identities: dict, identity_id: str):
     return identity["equity"]["listing_key"]
 
 
+def _cik_in_listing_key(listing_key: object) -> str | None:
+    if type(listing_key) is not str:
+        return None
+    parts = listing_key.split(":")
+    if len(parts) < 5 or parts[:2] != ["us-equity", "cik"] or parts[3] != "class":
+        return None
+    cik = parts[2]
+    if len(cik) != 10 or not cik.isdigit():
+        return None
+    return cik
+
+
+def _issuer_cik_in_natural_key(natural_key: object) -> str | None:
+    """Issuer CIK embedded in a key. An accession key names the filer, not the issuer."""
+    if type(natural_key) is not str:
+        return None
+    if natural_key.startswith("sec:fact:"):
+        parts = natural_key.split(":")
+        cik = parts[2] if len(parts) > 2 else ""
+    elif natural_key.startswith("us-equity:listing:"):
+        parts = natural_key.split(":")
+        cik = parts[2] if len(parts) > 2 else ""
+    else:
+        return None
+    if len(cik) != 10 or not cik.isdigit():
+        return None
+    return cik
+
+
+def _listing_key_in_natural_key(natural_key: object) -> str | None:
+    if type(natural_key) is not str or not natural_key.startswith("us-equity:listing:"):
+        return None
+    parts = natural_key.split(":")
+    if len(parts) < 4:
+        return None
+    cik, share = parts[2], parts[3]
+    if len(cik) != 10 or not cik.isdigit() or not share:
+        return None
+    return f"us-equity:cik:{cik}:class:{share}"
+
+
+# A form may supersede only its own family: the base form, or that base form's amendment.
+FORM_FAMILY = {
+    "10-K": frozenset({"10-K"}),
+    "10-K/A": frozenset({"10-K", "10-K/A"}),
+    "8-K": frozenset({"8-K"}),
+    "8-K/A": frozenset({"8-K", "8-K/A"}),
+}
+
+
 def _action_tuple(record: dict) -> tuple:
     payload = record["payload"]
     return (
@@ -227,13 +277,25 @@ def _action_tuple(record: dict) -> tuple:
     )
 
 
+def _split_listing_key(bundle: Bundle, record: dict) -> str | None:
+    """The one listing key shared by the record, its natural key, and both endpoints."""
+    payload = record["payload"]
+    keys = (
+        _listing_key(bundle.identities, record.get("identity_id")),
+        _listing_key(bundle.identities, payload.get("listing_identity_before")),
+        _listing_key(bundle.identities, payload.get("listing_identity_after")),
+        _listing_key_in_natural_key(record.get("natural_key")),
+    )
+    if any(key is None for key in keys) or len(set(keys)) != 1:
+        return None
+    return keys[0]
+
+
 def _action_applies(bundle: Bundle, record: dict, listing: str) -> bool:
     payload = record["payload"]
     if payload.get("kind") != "corporate_action" or record["duplicate_of"] is not None:
         return False
-    before = _listing_key(bundle.identities, payload["listing_identity_before"])
-    after = _listing_key(bundle.identities, payload["listing_identity_after"])
-    return listing in (before, after)
+    return _split_listing_key(bundle, record) == listing
 
 
 def _input_identity_ok(bundle: Bundle, observation: dict, record: dict, decision: datetime) -> bool:
@@ -247,8 +309,8 @@ def _input_identity_ok(bundle: Bundle, observation: dict, record: dict, decision
     if _action_applies(bundle, record, listing):
         return True
     # A superseded ancestor stays lineage-only when a correction already visible
-    # at the decision moves that chain onto this listing. A later correction
-    # cannot authorize the ancestor.
+    # at the decision is on this same listing. A later correction cannot
+    # authorize the ancestor.
     if record["payload"].get("kind") != "corporate_action":
         return False
     return any(
@@ -438,6 +500,39 @@ def _filer_cik(accession: object) -> str | None:
     return prefix
 
 
+def _identity_issuer(identity: dict) -> str:
+    """Issuer CIK bound to this equity identity's listing key and share class."""
+    equity = identity["equity"]
+    issuer = equity["issuer_cik"]
+    expected = f"us-equity:cik:{issuer}:class:{equity['share_class']}"
+    if equity.get("listing_key") != expected or _cik_in_listing_key(equity.get("listing_key")) != issuer:
+        raise ContractError(
+            f"{identity['identity_id']} listing_key contradicts its issuer_cik or share_class"
+        )
+    return issuer
+
+
+def _bind_record_issuer(record: dict, identity: dict) -> str:
+    """One issuer CIK for every equity record, whatever natural-key shape it uses.
+
+    The identity, its listing key, and any issuer CIK embedded in the natural key
+    must agree. A filing or amendment then binds that same CIK to its accession,
+    on a sec:fact key, an accession key, or a listing key.
+    """
+    raw_id = record["raw_record_id"]
+    issuer = _identity_issuer(identity)
+    key_cik = _issuer_cik_in_natural_key(record.get("natural_key"))
+    if key_cik is not None and key_cik != issuer:
+        raise ContractError(f"{raw_id} issuer CIK is not bound")
+    payload = record["payload"]
+    explicit = payload.get("issuer_cik")
+    if explicit is not None and explicit != issuer:
+        raise ContractError(f"{raw_id} issuer CIK is not bound")
+    if payload.get("kind") in {"filing", "filing_amendment"}:
+        _require_accession_issuer(raw_id, payload.get("accession"), issuer, payload)
+    return issuer
+
+
 def _require_accession_issuer(raw_id: str, accession: object, issuer_cik: str, payload: dict) -> None:
     """The filer prefix may be the issuer or a filing agent.
 
@@ -461,23 +556,20 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
     """The CIK, listing, accession, and fact embedded in an equity key must match the record."""
     key = record["natural_key"]
     equity = identity["equity"]
-    cik = equity["issuer_cik"]
     share = equity["share_class"]
     payload = record["payload"]
     kind = payload.get("kind")
     raw_id = record["raw_record_id"]
+    cik = _bind_record_issuer(record, identity)
     if key.startswith("sec:fact:"):
         parts = key.split(":")
         if len(parts) < 5 or parts[2] != cik or parts[3] != payload.get("concept"):
             raise ContractError(f"{raw_id} natural key does not name its equity fact")
-        if kind in {"filing", "filing_amendment"}:
-            _require_accession_issuer(raw_id, payload.get("accession"), cik, payload)
         return
     if key.startswith("sec:accession:"):
         accession = key[len("sec:accession:") :]
         if accession != payload.get("accession"):
             raise ContractError(f"{raw_id} natural key does not name its accession")
-        _require_accession_issuer(raw_id, accession, cik, payload)
         return
     listing_prefix = f"us-equity:listing:{cik}:{share}:"
     if key.startswith(listing_prefix):
@@ -581,6 +673,12 @@ def validate_records(bundle: Bundle) -> None:
             )
             if not compatible:
                 raise ContractError(f"{record['raw_record_id']} correction changes payload kind")
+            if record["payload"].get("kind") in {"filing", "filing_amendment"}:
+                allowed = FORM_FAMILY.get(record["payload"].get("form"))
+                if allowed is None or target["payload"].get("form") not in allowed:
+                    raise ContractError(
+                        f"{record['raw_record_id']} form family does not match its predecessor"
+                    )
             if kind == "filing_amendment":
                 amended = target["payload"]
                 amendment = record["payload"]
@@ -672,13 +770,11 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
         if payload.get("kind") == "corporate_action":
             parse_date(payload["ex_date"])
-            listing_keys = []
             for field in ("listing_identity_before", "listing_identity_after"):
                 ref = bundle.identities.get(payload[field])
                 if ref is None or ref["market_family"] != "equity":
                     raise ContractError(f"{record['raw_record_id']} has an unresolved listing reference")
-                listing_keys.append(_listing_key(bundle.identities, payload[field]))
-            if listing_keys[0] is None or listing_keys[0] != listing_keys[1]:
+            if _split_listing_key(bundle, record) is None:
                 raise ContractError(f"{record['raw_record_id']} split endpoints are not one listing")
     by_key: dict[str, list[dict]] = {}
     for record in bundle.records.values():
@@ -687,10 +783,7 @@ def validate_records(bundle: Bundle) -> None:
         _require_version_chain(group)
     for identity in bundle.identities.values():
         if identity["market_family"] == "equity":
-            equity = identity["equity"]
-            expected = f"us-equity:cik:{equity['issuer_cik']}:class:{equity['share_class']}"
-            if equity["listing_key"] != expected:
-                raise ContractError(f"{identity['identity_id']} listing_key contradicts its issuer_cik or share_class")
+            _identity_issuer(identity)
         prior_id = identity["prior_identity_id"]
         if prior_id is None:
             continue

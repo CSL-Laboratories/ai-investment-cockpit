@@ -139,8 +139,7 @@ def test_listing_change_drops_the_revoked_split() -> None:
     correction["raw_sha256"] = module.payload_sha256(correction["payload"])
     decision = module.parse_time("2024-08-11T00:00:00Z")
     assert module.required_corporate_actions(bundle, "idn-eq-v1", decision) == set()
-    moved = {(item[1], item[4]) for item in module.required_corporate_actions(bundle, "idn-eq-other", decision)}
-    assert moved == {(3, "raw-eq-split-corr")}
+    assert module.required_corporate_actions(bundle, "idn-eq-other", decision) == set()
     observation = {
         "market_family": "equity",
         "identity_id": "idn-eq-v1",
@@ -149,9 +148,11 @@ def test_listing_change_drops_the_revoked_split() -> None:
     }
     assert module.semantic_codes(bundle, observation, decision) == []
     new_obs = {"market_family": "equity", "identity_id": "idn-eq-other"}
-    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split-corr"], decision)
-    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split"], decision)
+    assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split-corr"], decision)
+    assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split"], decision)
     assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-10ka"], decision)
+    with pytest.raises(module.ContractError, match="split endpoints are not one listing"):
+        module.validate_records(bundle)
 
 
 def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
@@ -746,7 +747,7 @@ def test_future_correction_does_not_authorize_lineage_input() -> None:
         "corporate_actions": [],
     }
     assert not module._input_identity_ok(bundle, observation, bundle.records["raw-eq-split"], early)
-    assert module._input_identity_ok(bundle, observation, bundle.records["raw-eq-split"], later)
+    assert not module._input_identity_ok(bundle, observation, bundle.records["raw-eq-split"], later)
     bundle.observations.append(observation)
     bundle.edges.append(
         {
@@ -776,7 +777,7 @@ def test_equity_natural_key_must_match_identity(tmp_path: Path) -> None:
         if check["natural_key"] == old:
             check["natural_key"] = new
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
-    with pytest.raises(module.ContractError, match="natural key does not name its equity identity"):
+    with pytest.raises(module.ContractError, match="issuer CIK is not bound"):
         module.validate_candidate(copy)
 
 
@@ -829,6 +830,91 @@ def test_settlement_timestamp_after_acceptance_is_rejected(tmp_path: Path) -> No
     record["payload"]["settlement_ts"] = "2099-01-01T00:00:00Z"
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
     with pytest.raises(module.ContractError, match="settlement_ts is after accepted_at"):
+        module.validate_candidate(copy)
+
+
+def _other_listing(documents: dict) -> None:
+    documents["fixtures/identities.json"]["identities"].append(
+        {
+            "identity_id": "idn-eq-other",
+            "market_family": "equity",
+            "identity_version": 1,
+            "venue": "us_equity",
+            "currency": "USD",
+            "prior_identity_id": None,
+            "equity": {
+                "issuer_cik": "0000000002",
+                "listing_key": "us-equity:cik:0000000002:class:common",
+                "ticker": "OTHER",
+                "share_class": "common",
+            },
+        }
+    )
+
+
+def test_listing_key_filing_without_issuer_binding_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    records = documents["fixtures/raw_records.json"]["records"]
+    filing = json.loads(json.dumps(next(item for item in records if item["raw_record_id"] == "raw-eq-10k")))
+    filing.update(
+        raw_record_id="raw-eq-listing-filing",
+        source_record_key="0000000099-24-000051",
+        natural_key="us-equity:listing:0000000001:common:filing",
+        duplicate_of=None,
+        supersedes=None,
+    )
+    filing["payload"] = dict(filing["payload"])
+    filing["payload"]["accession"] = "0000000099-24-000051"
+    filing["payload"].pop("issuer_cik", None)
+    records.append(filing)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="agent-filed accession lacks its issuer CIK"):
+        module.validate_candidate(copy)
+
+
+def test_listing_key_agent_filing_is_accepted_when_issuer_matches(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    records = documents["fixtures/raw_records.json"]["records"]
+    filing = json.loads(json.dumps(next(item for item in records if item["raw_record_id"] == "raw-eq-10k")))
+    filing.update(
+        raw_record_id="raw-eq-listing-filing",
+        source_record_key="0000000099-24-000051",
+        natural_key="us-equity:listing:0000000001:common:filing",
+        duplicate_of=None,
+        supersedes=None,
+    )
+    filing["payload"] = dict(filing["payload"])
+    filing["payload"]["accession"] = "0000000099-24-000051"
+    filing["payload"]["issuer_cik"] = "0000000001"
+    records.append(filing)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
+def test_split_record_must_share_endpoint_listing(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _other_listing(documents)
+    record = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-split"
+    )
+    record["payload"]["listing_identity_before"] = "idn-eq-other"
+    record["payload"]["listing_identity_after"] = "idn-eq-other"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="split endpoints are not one listing"):
+        module.validate_candidate(copy)
+
+
+def test_amendment_form_must_match_predecessor_family(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        if record["raw_record_id"] in {"raw-eq-10k", "raw-eq-10k-dup"}:
+            record["payload"]["form"] = "8-K"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="form family does not match its predecessor"):
         module.validate_candidate(copy)
 
 
