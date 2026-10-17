@@ -355,3 +355,31 @@ def test_rust_qty_domain_is_signed_64_bit():
     rust.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
     with pytest.raises(ValueError, match="signed 64-bit"):
         rust.total_qty(Side.SELL)
+
+
+def test_rust_fit_i64_extraction_bounds_and_types():
+    """FitI64 keeps its contract on the migrated PyO3 extractor."""
+    import cockpit_quant
+
+    rust = LimitOrderBook("EXT")
+    rust.add(order_id="max", side=Side.BUY, price_ticks=2**63 - 1, qty=1)
+    assert rust.get("max").price_ticks == 2**63 - 1
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.add(order_id="low", side=Side.BUY, price_ticks=-(2**63) - 1, qty=1)
+    rust.check_integrity()
+
+    # LimitOrderBook.add coerces with int(), so a str qty never reaches FitI64.
+    core = cockpit_quant.BookCore("EXT")
+    with pytest.raises(TypeError):
+        core.add("str", "buy", 100, "1", 0, 0, None)
+
+
+def test_rust_module_keeps_the_gil_contract_on_free_threaded_builds():
+    """``gil_used = true`` must survive the PyO3 0.28 default flip."""
+    import sys
+
+    import cockpit_quant  # noqa: F401
+
+    is_gil_enabled = getattr(sys, "_is_gil_enabled", None)
+    if is_gil_enabled is not None:
+        assert is_gil_enabled()
