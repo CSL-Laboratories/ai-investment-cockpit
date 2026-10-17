@@ -220,7 +220,9 @@ def test_pnl_custom_decimal_context_matches_python():
     _short_one_hour(default)
     assert default.fees == Decimal("1.856922431506849315068493151")
     assert default.snapshot().total == Decimal("2.643077568493150684931506849")
-    assert str(default.realized_notional) == "30003.00"
+    # The default context may run on PnlCore, which hands back "30003" rather than
+    # "30003.00", so the default-path pin is numeric; only the prec-6 pin is textual.
+    assert default.realized_notional == Decimal("30003.00")
 
 
 def test_nonfinite_borrow_seconds_stay_on_the_python_path():
