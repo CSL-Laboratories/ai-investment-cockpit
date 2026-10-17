@@ -47,6 +47,20 @@ DENIED_FALSE_RESULTS = (
     "order_submitted",
     "secrets_included",
 )
+REQUIRED_TRUE_RESULTS = (
+    "raw_separated_from_summary",
+    "restart_requires_reconciliation",
+    "surfaces_share_one_profile",
+)
+COMMAND_PROPERTIES = (
+    "api_version",
+    "arguments",
+    "candidate_maturity",
+    "command",
+    "confirmation",
+    "request_id",
+    "surface",
+)
 REQUIRED_CONTROLS = (
     "gui_cli_semantic_divergence",
     "hidden_refusal",
@@ -554,16 +568,29 @@ def _const_value(schema: Any) -> Any:
     return None
 
 
-def _require_denied_result_consts(schema: dict[str, Any]) -> None:
-    """Safety results that cannot be true stay a false const on the base schema."""
+def _result_property_map(schema: dict[str, Any]) -> dict[str, Any]:
     properties = schema.get("properties")
     result = properties.get("result") if isinstance(properties, dict) else None
     fields = result.get("properties") if isinstance(result, dict) else None
     if not isinstance(fields, dict):
-        raise ContractError("denied result const missing")
+        raise ContractError("result property schema missing")
+    return fields
+
+
+def _require_denied_result_consts(schema: dict[str, Any]) -> None:
+    """Safety results that cannot be true stay a false const on the base schema."""
+    fields = _result_property_map(schema)
     for name in DENIED_FALSE_RESULTS:
         if _const_value(fields.get(name)) is not False:
             raise ContractError(f"{name} is not limited to false")
+
+
+def _require_required_result_consts(schema: dict[str, Any]) -> None:
+    """Safety results that must stay true stay a true const on the base schema."""
+    fields = _result_property_map(schema)
+    for name in REQUIRED_TRUE_RESULTS:
+        if _const_value(fields.get(name)) is not True:
+            raise ContractError(f"{name} is not limited to true")
 
 
 def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
@@ -752,6 +779,47 @@ def _require_intervention_safeguards(validator: Draft202012Validator) -> None:
         account = _intervention_probe(name, confirmation="explicit", arguments={"scope": "account"})
         if _schema_error(validator, account) is None:
             raise ContractError(f"non-session intervention schema accepts {name}")
+
+
+def _object_is_closed(schema: Any) -> bool:
+    """True when an object schema cannot carry properties it does not name."""
+    if not isinstance(schema, dict) or schema.get("additionalProperties") is not False:
+        return False
+    return "patternProperties" not in _assertion_keys(schema) and "unevaluatedProperties" not in _assertion_keys(schema)
+
+
+def _require_closed_command_schema(schema: dict[str, Any]) -> None:
+    """The command and its arguments cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    arguments = properties.get("arguments") if isinstance(properties, dict) else None
+    argument_properties = arguments.get("properties") if isinstance(arguments, dict) else None
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(COMMAND_PROPERTIES)
+        or not _object_is_closed(arguments)
+        or set(argument_properties or {}) != {"scope"}
+    ):
+        raise ContractError("command schema accepts an authority field")
+
+
+def _require_command_authority_rejected(validator: Draft202012Validator) -> None:
+    """A closed command schema rejects an order path and a gateway bypass."""
+    read = _intervention_probe(
+        "operator.positions.inspect", confirmation="not_required", arguments={}
+    )
+    if _schema_error(validator, read) is not None:
+        raise ContractError("command schema rejects a read")
+    with_order_path = {**read, "order_path": "broker_direct"}
+    if _schema_error(validator, with_order_path) is None:
+        raise ContractError("command schema accepts order_path")
+    bypass = _intervention_probe(
+        "operator.interventions.request_stop",
+        confirmation="explicit",
+        arguments={"scope": "operator_session", "bypass_gateway": True},
+    )
+    if _schema_error(validator, bypass) is None:
+        raise ContractError("command schema accepts bypass_gateway")
 
 
 def _require_session_scope_schema(schema: dict[str, Any]) -> None:
@@ -1017,6 +1085,12 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "account_wide_local_control"
     if result.get("secrets_included") is True:
         return "secrets_included"
+    if result.get("raw_separated_from_summary") is False:
+        return "raw_not_separated"
+    if result.get("surfaces_share_one_profile") is False:
+        return "split_profile"
+    if result.get("restart_requires_reconciliation") is False:
+        return "restart_without_reconciliation"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
         return "privileged_order_bypass"
     refusals = _dicts(result.get("refusals"))
@@ -1473,10 +1547,13 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         _require_event_clauses(event_schema)
         _require_refused_intervention_unrecorded(response_schema)
         _require_denied_result_consts(response_schema)
+        _require_required_result_consts(response_schema)
+        _require_closed_command_schema(command_schema)
         _require_error_clauses(error_schema)
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)
         _require_intervention_safeguards(command_validator)
+        _require_command_authority_rejected(command_validator)
         event_validator = _validator(event_schema)
         _require_event_schema_rejections(event_validator)
         error_validator = _validator(error_schema)

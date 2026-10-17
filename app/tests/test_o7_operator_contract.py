@@ -700,6 +700,55 @@ def test_direct_authorization_stays_false(tmp_path: Path) -> None:
     assert "bounded_direct_authorized is not limited to false" in stderr
 
 
+def test_command_schema_rejects_authority_fields(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    for key, message in (
+        ("arguments", "command schema accepts an authority field"),
+        ("root", "command schema accepts an authority field"),
+    ):
+        widened = tmp_path / key
+        shutil.copytree(root, widened)
+        schema_path = widened / "schemas" / "operator-command.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        if key == "arguments":
+            schema["properties"]["arguments"]["additionalProperties"] = True
+        else:
+            schema["additionalProperties"] = True
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, "schemas/operator-command.schema.json")
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1
+        assert stdout == ""
+        assert message in stderr
+
+
+def test_positive_safety_consts_stay_true(tmp_path: Path) -> None:
+    by_request, commands, _validator = _candidate_documents()
+    evidence = copy.deepcopy(by_request["req_evidence"])
+    assert evidence["result"]["raw_separated_from_summary"] is True
+    assert CHECKER.classify_response(evidence, commands) is None
+    evidence["result"]["raw_separated_from_summary"] = False
+    assert CHECKER.classify_response(evidence, commands) == "raw_not_separated"
+    profiles = copy.deepcopy(by_request["req_profiles"])
+    profiles["result"]["surfaces_share_one_profile"] = False
+    assert CHECKER.classify_response(profiles, commands) == "split_profile"
+    stop = copy.deepcopy(by_request["req_stop"])
+    stop["result"]["restart_requires_reconciliation"] = False
+    assert CHECKER.classify_response(stop, commands) == "restart_without_reconciliation"
+    widened = tmp_path / "raw-combined"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["result"]["properties"]["raw_separated_from_summary"] = {"type": "boolean"}
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "raw_separated_from_summary is not limited to true" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
