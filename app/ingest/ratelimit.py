@@ -70,17 +70,34 @@ class TokenBucket:
 
     def allow(self, now: float) -> bool:
         native = _NATIVE
-        if native is not None:
-            converted = [
-                _exact_f64(value)
-                for value in (self.rate, self.capacity, self.tokens, self._last, now)
-            ]
-            if all(value is not None for value in converted):
-                allowed, tokens, last = native.token_bucket_allow(*converted)
-                self.tokens = tokens
-                self._last = last
-                return allowed
-        return python_allow(self, now)
+        if native is None:
+            return python_allow(self, now)
+        rate, capacity, tokens, last = self.rate, self.capacity, self.tokens, self._last
+        # Floats are already binary64. This is the poller path: no list and no scan.
+        if (
+            type(rate) is float
+            and type(capacity) is float
+            and type(tokens) is float
+            and type(last) is float
+            and type(now) is float
+        ):
+            allowed, tokens, last = native.token_bucket_allow(rate, capacity, tokens, last, now)
+            self.tokens = tokens
+            self._last = last
+            return allowed
+        converted = (
+            _exact_f64(rate),
+            _exact_f64(capacity),
+            _exact_f64(tokens),
+            _exact_f64(last),
+            _exact_f64(now),
+        )
+        if None in converted:
+            return python_allow(self, now)
+        allowed, tokens, last = native.token_bucket_allow(*converted)
+        self.tokens = tokens
+        self._last = last
+        return allowed
 
 
 def python_allow(bucket: TokenBucket, now: float) -> bool:
