@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
-from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
+from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult, mark_agent_dispatched
 from agent_runner.runner import run_agent, worst_case_repair_overhead
 from agent_runner.spec import AgentSpec
 from config.models import (
@@ -99,8 +99,9 @@ def _jev_eligible(selected: str, job_class: str, mode, weight, settings, packet)
 def _jev_window_moved(state, admitted_generation: int) -> bool:
     """True when this Jev call no longer belongs to the generation it was admitted under.
 
-    A sibling 429/5xx can commit a new exhausted generation while this HTTP call is in
-    flight. Stamping that new generation would make the overlapping success look current.
+    A sibling 429, or a 503 with Retry-After, can commit a new exhausted generation
+    while this HTTP call is in flight. Stamping that new generation would make the
+    overlapping success look current.
     """
     if isinstance(admitted_generation, bool) or not isinstance(admitted_generation, int):
         return True
@@ -169,12 +170,22 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
                         jev_attempt, accepted=False, reason="jev_stale_attempt", proposal=None,
                     )
                 if jev_attempt.dispatched:
+                    # HTTP already happened. A later raise must keep the unit.
+                    mark_agent_dispatched()
                     state.usage.record("jev")
         except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
             dispatched = jev_attempt is not None and jev_attempt.dispatched
-            jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
             if dispatched:
+                mark_agent_dispatched()
+                # HTTP already happened. A later step (watch-only admission, the
+                # usage record) must not drop the billed usd and token fields.
+                jev_attempt = replace(
+                    jev_attempt, accepted=False, reason="jev_error", proposal=None,
+                )
                 state.usage.record("jev")
+            else:
+                # Preflight never reached HTTP, so this attempt bills nothing.
+                jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
     if jev_accepted:
