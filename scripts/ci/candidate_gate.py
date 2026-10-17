@@ -134,6 +134,11 @@ class Coordinator:
                 result.append({**record, "id": comment["id"], "created_at": comment.get("created_at")})
         return sorted(result, key=lambda x: x["id"])
 
+    def verify_reservations(self, comments):
+        """Fail closed on any edited or unversioned reservation, whatever kind the caller reads next."""
+        for kind in RESERVATION_KINDS:
+            self.journal(comments, kind)
+
     def record(self, kind, data):
         body = self.receipts.marker("candidate-" + kind, data)
         result = self.gh.post_read_token(f"{self.issue}/comments", {"body": body})
@@ -233,6 +238,13 @@ class Coordinator:
         if pr.get("state") != "open" or pr.get("draft") is not False:
             return None
         identity, comments, reviews, held = self.head_snapshot()
+        try:
+            self.verify_reservations(comments)
+        except ValueError:
+            # Refuse only after removing a receipt-proven gate-owned label;
+            # revoke never deletes a human-owned one.
+            self.revoke(SimpleNamespace(head=identity[2]))
+            raise
         if held:
             return None
         review = candidate_api.head_mediate_review(reviews, identity[2])
@@ -248,6 +260,7 @@ class Coordinator:
         origin = (pause, frozenset(invalidations))
         pause = max([pause, *invalidations])
         comments, reviews = self.fresh_mediate(identity, review, pause, origin)
+        self.verify_reservations(comments)
         nonce = hashlib.sha256(f"{head}:{review['id']}:{pause}".encode()).hexdigest()[:32]
         trusted = self.legacy.trusted_comments(comments, self.legacy.marker_authors(self.gh))
         # Keep the established head-scoped MEDIATE idempotence when upgrading
@@ -460,6 +473,7 @@ class Coordinator:
         if type(actor.get("id")) is not int or not actor.get("login"):
             raise ValueError("dispatch actor unavailable")
         comments = self.comments()
+        self.verify_reservations(comments)
         intents = [x for x in self.journal(comments, "dispatch") if x.get("candidate") == candidate.key and x.get("kind") == kind]
         rejected = {x.get("nonce") for x in self.journal(comments, "rejected") if x.get("status") in {400, 401, 403, 404, 409, 422, 429}}
         aborted = {x.get("nonce") for x in self.journal(comments, "aborted") if x.get("reason") == "pre-dispatch-refused"}
@@ -540,6 +554,11 @@ class Coordinator:
         if ineligible:
             return ineligible
         candidate, comments, reviews, _events, blocked = self.snapshot()
+        try:
+            self.verify_reservations(comments)
+        except ValueError:
+            self.revoke(candidate)
+            raise
         if blocked:
             self.revoke(candidate)
             return "held-or-fixer-pending"
@@ -558,6 +577,7 @@ class Coordinator:
             current, refreshed, _reviews, _events, held = self.snapshot()
             if current != candidate or held:
                 raise ValueError("request changed before mention")
+            self.verify_reservations(refreshed)
             state = self.request(candidate, refreshed)
             if state == "request-budget-exhausted":
                 return state

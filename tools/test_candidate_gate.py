@@ -2072,39 +2072,42 @@ class CandidateCoordinatorTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
                         self.reconcile()
                 self.gh.drift("head")
-                if kind == "dispatch":
-                    # B's review request is a different kind; B's dispatch still holds.
-                    self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
-                    request = self.journal("request")[-1]
-                    self.gh.reviews.append({"id": 6000, "state": "COMMENTED", "node_id": "PRR_test_6000",
-                        "user": {"id": gate.candidate_api.CODEX_ID, "login": gate.candidate_api.CODEX_LOGIN, "type": "Bot"},
-                        "commit_id": self.candidate().head, "submitted_at": "2026-10-16T00:04:00Z",
-                        "body": f"CODEX-CANDIDATE: {request['candidate']}\nCODEX-REQUEST: {request['nonce']}\nCODEX-GATE: READY"})
+                # Every reservation kind is verified before any side effect, so
+                # candidate B gets neither a review request nor a dispatch.
                 with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
                     self.reconcile()
                 self.assertEqual(len(self.gh.dispatches), 2)
+                self.assertEqual(len(self.gh.mentions), 1)
+                self.assertEqual(len([c for c in self.gh.comments
+                                      if self.receipts.records(c["body"], "candidate-request")]), 1)
                 dispatches = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-dispatch")]
                 self.assertEqual(len(dispatches), 2)
 
     def test_reservation_edited_between_listings_fails_closed(self):
-        """An edit that lands after reconcile's listing is caught on deliver()'s own listing."""
-        self.dispatch()
-        original = self.gh._run
+        """An edit that lands after reconcile's listing is caught by deliver()'s re-scan of its own listing."""
+        # A request edit is invisible to deliver()'s dispatch journal; only the
+        # all-kinds re-scan of the refreshed listing catches it.
+        for kind in ("dispatch", "request"):
+            with self.subTest(kind=kind):
+                self.setUp()
+                self.dispatch()
+                original = self.gh._run
 
-        def edit_after_listing(args, token):
-            if args == ["api", "user"]:
-                receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-dispatch"))
-                receipt["updated_at"] = "2026-10-16T00:03:00Z"
-            return original(args, token)
+                def edit_after_listing(args, token, kind=kind, original=original):
+                    if args == ["api", "user"]:
+                        receipt = next(c for c in self.gh.comments
+                                       if self.receipts.records(c["body"], "candidate-" + kind))
+                        receipt["updated_at"] = "2026-10-16T00:03:00Z"
+                    return original(args, token)
 
-        self.gh._run = edit_after_listing
-        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
-            self.reconcile()
-        self.assertEqual(len(self.gh.dispatches), 2)
-        self.gh._run = original
-        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
-            self.reconcile()
-        self.assertEqual(len(self.gh.dispatches), 2)
+                self.gh._run = edit_after_listing
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
+                self.gh._run = original
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.dispatches), 2)
 
     def edit_on_revoke(self, kind):
         def edit(*args, **kwargs):
@@ -2181,6 +2184,120 @@ class CandidateCoordinatorTests(unittest.TestCase):
         intents = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")]
         self.assertEqual(len(intents), 1)
         self.legacy._act.assert_called_once()
+
+    # --- Verify every reservation kind first; revoke before refusing (Devin 4301979507, 4301979544) ---
+
+    def add_edited(self, kind, record):
+        self.gh.add_comment(FakeReceipts.marker("candidate-" + kind, record))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:03:00Z"
+
+    def label_ci_full(self, owned):
+        """Real receipt ownership: only a ci-owned record for the current label event proves gate ownership."""
+        from scripts.ci import codex_gate as legacy
+        real = legacy.FIXER_RECEIPTS
+        self.gh.pr["labels"] = [{"name": "ci:full"}]
+        self.gh.events = [{"id": 700, "event": "labeled", "label": {"name": "ci:full"}}]
+        if owned:
+            self.gh.add_comment(real.marker("ci-owned", {"head": HEAD, "event": 700}))
+        self.receipts.revoke_owned_ci = Mock(side_effect=real.revoke_owned_ci)
+
+        def delete(path):
+            self.assertEqual(path, f"{PREFIX}/issues/{PR}/labels/ci:full")
+            self.gh.pr["labels"] = []
+        self.gh.delete_read_token = Mock(side_effect=delete)
+
+    def test_edited_reservation_revokes_owned_full_ci_label_before_refusing(self):
+        """An edited reservation refuses only after removing a gate-owned ci:full; a human label stays."""
+        for owned in (True, False):
+            with self.subTest(owned=owned):
+                self.setUp()
+                self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+                self.label_ci_full(owned)
+                receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request"))
+                receipt["updated_at"] = "2026-10-16T00:03:00Z"
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.receipts.revoke_owned_ci.assert_called()
+                if owned:
+                    self.gh.delete_read_token.assert_called_once()
+                    self.assertEqual(self.gh.pr["labels"], [])
+                    self.assertTrue(any("claude-fixer-ci-invalidated:" in c["body"] for c in self.gh.comments))
+                else:
+                    self.gh.delete_read_token.assert_not_called()
+                    self.assertEqual(self.gh.pr["labels"], [{"name": "ci:full"}])
+                self.assertEqual(len(self.gh.mentions), 1)
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_edited_dispatch_blocks_review_request_after_pause_change(self):
+        """request() reads only request records; the all-kinds scan stops a new mention on an edited dispatch."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        key = self.candidate().key
+        self.add_edited("dispatch", {"candidate": key, "kind": "ci", "nonce": "2" * 32})
+        self.receipts.pause = 1
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual(len(self.gh.mentions), 1)
+        requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_edited_mediate_intent_blocks_request_and_dispatch(self):
+        """An edited mediate-intent stops a review request and a full dispatch, not only a handoff."""
+        for path in ("request", "dispatch"):
+            with self.subTest(path=path):
+                self.setUp()
+                if path == "request":
+                    self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+                    self.receipts.pause = 1
+                else:
+                    self.prime_ready()
+                self.add_edited("mediate-intent", {"head": HEAD, "review": 1, "pause": 0, "nonce": "3" * 32})
+                with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+                    self.reconcile()
+                self.assertEqual(len(self.gh.mentions), 1)
+                requests = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")]
+                self.assertEqual(len(requests), 1)
+                self.assertEqual(self.gh.dispatches, [])
+                self.legacy._act.assert_not_called()
+
+    def test_reservation_edited_after_mediate_check_revokes_before_refusing(self):
+        """reconcile()'s own scan, not only mediate()'s, removes the owned label before refusing."""
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.label_ci_full(owned=True)
+        original = gate.Coordinator.ineligible
+
+        def edit_then_check(coordinator):
+            receipt = next(c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request"))
+            receipt["updated_at"] = "2026-10-16T00:03:00Z"
+            return original(coordinator)
+
+        with (patch.object(gate.Coordinator, "ineligible", edit_then_check),
+              self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually")):
+            self.reconcile()
+        self.gh.delete_read_token.assert_called_once()
+        self.assertEqual(self.gh.pr["labels"], [])
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_dispatch_edited_before_review_request_blocks_mention(self):
+        """The refreshed listing handed to request() is scanned for every kind, not only requests."""
+        self.gh.add_comment(FakeReceipts.marker("candidate-dispatch",
+            {"candidate": self.candidate().key, "kind": "ci", "nonce": "2" * 32}))
+        self.edit_on_revoke("dispatch")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual(self.gh.mentions, [])
+        self.assertEqual([c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-request")], [])
+
+    def test_request_edited_before_mediate_intent_blocks_handoff(self):
+        """mediate() scans its refreshed listing for every kind before recording an intent."""
+        self.prime_head_mediate()
+        self.gh.add_comment(FakeReceipts.marker("candidate-request",
+            {"candidate": self.candidate().key, "nonce": "4" * 32, "pause": 0}))
+        self.edit_on_revoke("request")
+        with self.assertRaisesRegex(ValueError, "edited or unversioned candidate reservation; reconcile manually"):
+            self.reconcile()
+        self.assertEqual([c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")], [])
+        self.legacy._act.assert_not_called()
 
 
 if __name__ == "__main__":
