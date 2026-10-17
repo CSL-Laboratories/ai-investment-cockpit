@@ -180,6 +180,15 @@ def benchmark_reasons(document: Any) -> list[str]:
         measured = isinstance(variance, dict) and variance.get("status") == "measured"
         if document.get("tier") != 3 or document.get("floors_attached") is not True or not measured:
             reasons.append("tier-3 evidence claimed before measurement")
+    if document.get("csl42_evidence") is True:
+        baseline = document.get("baseline")
+        if (
+            not isinstance(baseline, dict)
+            or baseline.get("commit") == document.get("commit")
+            or baseline.get("workload_id") != document.get("workload_id")
+            or baseline.get("fixture_sha256") != document.get("fixture_sha256")
+        ):
+            reasons.append("tier-3 evidence lacks a matched baseline")
     reasons.extend(_schema_errors(document, BENCHMARK_SCHEMA))
     return reasons
 
@@ -204,6 +213,13 @@ def candidate_reasons(document: Any) -> list[str]:
             if not isinstance(floor, dict) or floor.get("enforced_by") != "tests" or floor.get("benchmark_eligible") is not False:
                 reasons.append("candidate missing floors")
                 break
+        for floor in floors:
+            if isinstance(floor, dict) and (
+                floor.get("test_locator") != FLOOR_LOCATORS.get(floor.get("id"))
+                or not _local_path_exists(str(floor.get("test_locator")))
+            ):
+                reasons.append("candidate missing floors")
+                break
         missing = [floor_id for floor_id in FLOOR_IDS if floor_id not in _floor_ids(floors)]
         if missing:
             reasons.append("candidate missing floors")
@@ -223,6 +239,9 @@ def _check_floors(floors: Any, reasons: list[str]) -> None:
         reasons.append("candidate missing floors")
         return
     for floor in floors:
+        if not isinstance(floor, dict):
+            reasons.append("candidate missing floors")
+            return
         if floor.get("enforced_by") != "tests" or floor.get("benchmark_eligible") is not False:
             reasons.append("candidate missing floors")
             return
@@ -294,7 +313,8 @@ def validate_packet(document: Any) -> None:
                 reasons.append("tier-3 evidence claimed before measurement")
             if workload.get("commit") != INSPECTION_COMMIT:
                 reasons.append("workload commit is not the inspection commit")
-            if workload.get("variance", {}).get("status") != "required_on_run":
+            variance = workload.get("variance")
+            if not isinstance(variance, dict) or variance.get("status") != "required_on_run":
                 reasons.append("phase A workload records a measurement")
     decisions = document.get("unresolved_decisions") if isinstance(document.get("unresolved_decisions"), list) else []
     classes = [item.get("class") for item in decisions if isinstance(item, dict)]

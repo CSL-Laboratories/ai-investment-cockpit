@@ -40,6 +40,17 @@
     "csl42_evidence": {"type": "boolean"},
     "floors_attached": {"type": "boolean"},
     "candidate_id": {"type": "string", "minLength": 1},
+    "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workload_id", "fixture_sha256"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "workload_id": {"type": "string", "minLength": 1},
+        "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
     "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "host": {
       "type": "object",
@@ -148,7 +159,7 @@
             "required": ["status"]
           }
         },
-        "required": ["tier", "floors_attached", "variance", "candidate_id"]
+        "required": ["tier", "floors_attached", "variance", "candidate_id", "baseline", "fixture_sha256"]
       }
     },
     {
@@ -165,7 +176,21 @@
             }
           },
           "host": {"properties": {"status": {"const": "measured"}}, "required": ["status"]},
-          "io": {"properties": {"status": {"const": "measured"}}, "required": ["status"]}
+          "io": {"properties": {"status": {"const": "measured"}}, "required": ["status"]},
+          "helper_processes": {
+            "items": {"properties": {"status": {"const": "measured"}}, "required": ["status"]}
+          },
+          "observation": {
+            "properties": {
+              "status": {"const": "measured"},
+              "p50": {"type": "number"},
+              "p95": {"type": "number"},
+              "p99": {"type": "number"},
+              "throughput": {"type": "number"},
+              "rss_bytes": {"type": "integer"}
+            },
+            "required": ["status"]
+          }
         }
       }
     }
