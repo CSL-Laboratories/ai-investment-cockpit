@@ -1,0 +1,170 @@
+{
+  "candidate_packet": "fixtures/candidate-packet.json",
+  "contract_frozen_claimed": false,
+  "empirical_pass_claimed": false,
+  "files": [
+    {
+      "path": "PROTOCOL.md",
+      "sha256": "6d874c25972741de5f0742e8a7ce248c0aee64bf7ac38867a0f8c5461e6707b8"
+    },
+    {
+      "path": "fixtures/candidate-packet.json",
+      "sha256": "eafdf19442db39c4734e75ee56aa3f5b1a4fb729140b1d6f8b26d9293e26094a"
+    },
+    {
+      "path": "fixtures/negative/dropped-costs.json",
+      "sha256": "dc23793f94f89f953abe78a34711224c213f1ea06bd666bd0bef8d07a322a453"
+    },
+    {
+      "path": "fixtures/negative/dropped-empty-outcome.json",
+      "sha256": "0d102cbeb3692d21d04e01628ecfc149aec7023b8429e82844dbba5cc369c741"
+    },
+    {
+      "path": "fixtures/negative/leakage-control-satisfied.json",
+      "sha256": "000b74482c1fbdb85f4344db1248751de1073da9dc84ca298841c5eca810e957"
+    },
+    {
+      "path": "fixtures/negative/measured-costs.json",
+      "sha256": "56bd8f1b31e49541723bc671209614a2555087a1f86d7a9da0ce3f3b9856a530"
+    },
+    {
+      "path": "fixtures/negative/metric-registry-incomplete.json",
+      "sha256": "e5663aad914852819588c30a5edf382ea17def6a9315fcd80123021d2503a2fa"
+    },
+    {
+      "path": "fixtures/negative/overlapping-populations.json",
+      "sha256": "0a2fc9dbe311ff3c5e106b57a83e14dceb220f5a26b39d70420a09fe007526f4"
+    },
+    {
+      "path": "fixtures/negative/parameter-variants.json",
+      "sha256": "3754bba1b81d23a073093543cc9d85b1f025bba90f55b1bb3ebd336325676a09"
+    },
+    {
+      "path": "fixtures/negative/population-members-rebound.json",
+      "sha256": "653dace95ffdc0c55ffdbcc5411d8b8ac47fbd834291b19aad82fa4b7a1a6142"
+    },
+    {
+      "path": "fixtures/negative/preresult-receipt-dropped.json",
+      "sha256": "f7f424428c971e530785a7cb88695abd0e9e7de9cf18d2310492ba73f4d2905f"
+    },
+    {
+      "path": "fixtures/negative/promotion-stage-authorized.json",
+      "sha256": "40e44724f026cfde19c70fef0a43d7050a0ce4ad7919ef1665c0d731408314f8"
+    },
+    {
+      "path": "fixtures/negative/release-owner-person.json",
+      "sha256": "58abc3c36c77b8ddea0bfb5868cacc5636e089a78f7077e4d3744dfb3dfa813d"
+    },
+    {
+      "path": "fixtures/negative/shadow-data-scope-dropped.json",
+      "sha256": "5a832fb91ff84b5af0edf4e98975a386b74db2fae5a43f09b3e7d649714d1cfc"
+    },
+    {
+      "path": "fixtures/negative/stages-missing-rung.json",
+      "sha256": "675cc0e997c4b6748a49b64915f5da5e998353e57d0cd7c29446afe7324bd1be"
+    },
+    {
+      "path": "fixtures/negative/variant-configuration.json",
+      "sha256": "975e520cb408996819a8d87b630aa99b47eb79809b29088586189d0fcf0f7df6"
+    },
+    {
+      "path": "schemas/candidate-queue.schema.json",
+      "sha256": "09edec19aaad9b8888dbb7ba3b525abd4fa01771a071544d7bf654baf8fa109e"
+    },
+    {
+      "path": "schemas/envelope.schema.json",
+      "sha256": "b0503fa58e0880fb785ab75ca2578686819a4dc3549c70f6ecc2c1d81340eee1"
+    },
+    {
+      "path": "schemas/experiment.schema.json",
+      "sha256": "6fe6e41ce03a2e4a245de15d249951edc6dadc12506f34350489dd29788dc957"
+    },
+    {
+      "path": "schemas/metric-registry.schema.json",
+      "sha256": "9c3a80175d266a9c52df92c35b7aa50c3897d77a562f0411079b01296db8862a"
+    },
+    {
+      "path": "schemas/promotion-protocol.schema.json",
+      "sha256": "db7b537085cd86e372dbdcfb8db8f46a4af64b818dbcbac2e1015cec0a64ecce"
+    },
+    {
+      "path": "schemas/recorded-empty-outcome.schema.json",
+      "sha256": "cd3e5b0bdf93259cf78d6740704a29a70abd4ec342954a1c5ece13f133b4e73b"
+    },
+    {
+      "path": "schemas/research.schema.json",
+      "sha256": "cc22e0e864641fa887e3ea150b5a0f33cdd5bb878a20c0ad63db60ea56d9f1bd"
+    },
+    {
+      "path": "schemas/strategy-contract.schema.json",
+      "sha256": "b910661334b04342cfa16069c35202f142332a33d5efff29842db9ebd6f1aa9f"
+    },
+    {
+      "path": "validate.py",
+      "sha256": "b63da09606c87ed762e26deecae01964479c589cda52b2d1967a1f9b8e4dac3e"
+    }
+  ],
+  "linear_issue": "CSL-216",
+  "maturity_claimed": "researched",
+  "negative_controls": [
+    {
+      "expect": "overlapping_populations",
+      "path": "fixtures/negative/overlapping-populations.json"
+    },
+    {
+      "expect": "dropped_costs",
+      "path": "fixtures/negative/dropped-costs.json"
+    },
+    {
+      "expect": "dropped_empty_outcome",
+      "path": "fixtures/negative/dropped-empty-outcome.json"
+    },
+    {
+      "expect": "parameter_variants_as_distinct_strategies",
+      "path": "fixtures/negative/parameter-variants.json"
+    },
+    {
+      "expect": "decision_owner_role",
+      "path": "fixtures/negative/release-owner-person.json"
+    },
+    {
+      "expect": "leakage_controls_satisfied",
+      "path": "fixtures/negative/leakage-control-satisfied.json"
+    },
+    {
+      "expect": "variant_configuration",
+      "path": "fixtures/negative/variant-configuration.json"
+    },
+    {
+      "expect": "unbound_population",
+      "path": "fixtures/negative/population-members-rebound.json"
+    },
+    {
+      "expect": "metric_registry",
+      "path": "fixtures/negative/metric-registry-incomplete.json"
+    },
+    {
+      "expect": "measured_costs_on_unrun_experiment",
+      "path": "fixtures/negative/measured-costs.json"
+    },
+    {
+      "expect": "promotion_stage_authorized",
+      "path": "fixtures/negative/promotion-stage-authorized.json"
+    },
+    {
+      "expect": "promotion_gates",
+      "path": "fixtures/negative/preresult-receipt-dropped.json"
+    },
+    {
+      "expect": "missing_promotion_rung",
+      "path": "fixtures/negative/stages-missing-rung.json"
+    },
+    {
+      "expect": "promotion_gates",
+      "path": "fixtures/negative/shadow-data-scope-dropped.json"
+    }
+  ],
+  "outcome": "O4",
+  "qualification_claimed": false,
+  "schema_version": "o4.fixture-manifest.v1"
+}
