@@ -87,6 +87,15 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.push(updates=rows, remote=remote)
 
+    def test_remote_authority_rejects_ambiguous_or_encoded_delimiters(self):
+        for authority in ("x-access-token:fixture@evil.invalid@github.com",
+                          "x-access-token:fixture%40evil.invalid@github.com",
+                          "x-access-token:fixture:other@github.com", "github.com:",
+                          "x-access-token:fixture@github.com:", "github.com%2f.evil.invalid",
+                          "github.com.evil.invalid", "github.com.", "gıthub.com", "gİthub.com", "github.com\x00.evil.invalid"):
+            with self.subTest(authority=authority):
+                self.assertFalse(m.expected_remote(CONFIG, "https://" + authority + "/acme/example.git"))
+
     def test_remote_url_must_bind_exact_repository(self):
         for url in ("https://github.com/acme/other.git", "https://evil.invalid/acme/example.git",
                     "https://github.com@evil.invalid/acme/example.git", "https://github.com/acme/example.git/evil",
