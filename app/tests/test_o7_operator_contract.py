@@ -408,6 +408,23 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_uncertainty_visible_event_keeps_compound_status() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    base = next(event for event in events["events"] if event["event_type"] == "uncertainty_visible")
+    for status in ("ok", "refused", "stale_or_unreconciled", "unavailable"):
+        event = copy.deepcopy(base)
+        event["status_code"] = status
+        assert CHECKER._schema_error(event_validator, event) is None
+        assert CHECKER._event_error(event) is None
+    usage = copy.deepcopy(base)
+    usage["status_code"] = "usage"
+    assert CHECKER._schema_error(event_validator, usage) is not None
+    assert CHECKER._event_error(usage) == "event status does not match the event type"
+
+
 def test_stale_visible_event_matches_any_catalog_command() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
