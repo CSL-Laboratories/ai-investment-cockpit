@@ -391,8 +391,10 @@ impl Book {
             level.remove(order_id)?
         };
         self.index.remove(loc.node);
-        self.drop_level_if_empty(loc.side, loc.price)?;
+        // The order is already gone. Bump before cleanup: a missing ladder
+        // entry removes the level and then returns Integrity.
         self.bump();
+        self.drop_level_if_empty(loc.side, loc.price)?;
         Ok(order)
     }
 
@@ -424,12 +426,14 @@ impl Book {
                 .ok_or_else(|| BookError::Integrity(format!("missing level for {order_id}")))?;
             level.reduce(order_id, qty)?
         };
+        // Quantity already changed. Bump before cleanup so a failed
+        // drop_level_if_empty cannot leave the cached snapshot on the old depth.
+        self.bump();
         if remaining == 0 {
             self.by_id.remove(order_id);
             self.index.remove(loc.node);
             self.drop_level_if_empty(loc.side, loc.price)?;
         }
-        self.bump();
         Ok(())
     }
 
@@ -614,6 +618,19 @@ impl Book {
     /// (`_bid_prices.append`) uses this to prove the check can fail.
     pub fn append_price(&mut self, side: Side, price: i64) {
         self.side_book_mut(side).prices.push(price);
+        self.bump();
+    }
+
+    /// Drop a price from the ladder and leave its level. Tests use this to
+    /// make ``drop_level_if_empty`` fail after it has already removed the level.
+    #[cfg(test)]
+    fn forget_indexed_price(&mut self, side: Side, price: i64) {
+        let prices = &mut self.side_book_mut(side).prices;
+        let pos = prices
+            .iter()
+            .position(|&existing| existing == price)
+            .expect("price is on the ladder");
+        prices.remove(pos);
     }
 
     pub fn set_cached_total(
@@ -819,6 +836,30 @@ mod tests {
         assert_eq!(book.generation(), 3);
         book.cancel("a").unwrap();
         assert_eq!(book.generation(), 4);
+        let before_ladder = book.generation();
+        book.append_price(Side::Buy, 105);
+        assert_eq!(book.generation(), before_ladder + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
+    }
+
+    #[test]
+    fn a_failed_cleanup_still_moves_generation() {
+        let mut book = fresh();
+        book.add("a", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        let before = book.generation();
+        book.forget_indexed_price(Side::Buy, 100);
+        let err = book.cancel("a").unwrap_err();
+        assert!(matches!(err, BookError::Integrity(_)));
+        assert_eq!(book.generation(), before + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
+
+        book.add("b", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        let before_reduce = book.generation();
+        book.forget_indexed_price(Side::Buy, 100);
+        let err = book.reduce_qty("b", 10).unwrap_err();
+        assert!(matches!(err, BookError::Integrity(_)));
+        assert_eq!(book.generation(), before_reduce + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
     }
 
     #[test]

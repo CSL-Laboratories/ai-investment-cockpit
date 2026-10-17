@@ -304,8 +304,8 @@ def main() -> None:
     cached = _time(lambda: _repeat_snapshot(snap_book, snap_n))
     rebuilt = _time(lambda: _rebuild_snapshot(snap_book, snap_n))
     print(row(f"snapshot, {snap_n} unchanged reads", cached, rebuilt))
-    if rebuilt / cached < 1.0:
-        sys.exit("snapshot cache regressed below rebuilding the depth")
+    if rebuilt / cached < 5.0:
+        sys.exit("snapshot cache regressed below 5x the cost of rebuilding the depth")
     guards, _intent = _rate_burst()
     rate_n = 5_000
     copied = [500 - 1]
