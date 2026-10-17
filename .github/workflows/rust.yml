@@ -1,6 +1,6 @@
 name: rust
 
-# CSL-42: Rust book, costs, PnL, feed normalization, and online estimators. This job builds the crate, runs its tests,
+# CSL-42: Rust book, costs, PnL, feed normalization, online estimators, and ingest admission. This job builds the crate, runs its tests,
 # installs the PyO3 extension, and re-runs the Python tests against that extension.
 #
 # Hosted cells follow the split already used by ci.yml:
@@ -151,6 +151,8 @@ jobs:
               "app/quant/pnl.py",
               "app/quant/signals.py",
               "app/ingest/normalize.py",
+              "app/ingest/dedup.py",
+              "app/ingest/ratelimit.py",
               "app/tests/quant/book/",
               "app/tests/quant/test_pnl.py",
               "app/tests/quant/test_costs_rust_parity.py",
@@ -159,6 +161,7 @@ jobs:
               "app/tests/quant/test_w21_cost_model.py",
               "app/tests/ingest/test_normalize.py",
               "app/tests/ingest/test_normalize_rust_parity.py",
+              "app/tests/ingest/test_admission_rust_parity.py",
               ".github/",
               "tools/required_ci_gate.py",
               "tools/test_queue_gates.py",
@@ -257,13 +260,14 @@ jobs:
           COCKPIT_REQUIRE_RUST: "1"
         run: |
           python -m pip install pytest keyring
-          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_signals.py tests/quant/test_signals_rust_parity.py tests/quant/strategies tests/quant/test_verify.py tests/test_invariants.py tests/ingest/test_normalize.py tests/ingest/test_normalize_rust_parity.py
+          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_signals.py tests/quant/test_signals_rust_parity.py tests/quant/strategies tests/quant/test_verify.py tests/test_invariants.py tests/ingest/test_normalize.py tests/ingest/test_normalize_rust_parity.py tests/ingest/test_admission_rust_parity.py
       - name: Benchmark Rust against the Python reference
         run: |
           python rust/bench_compare.py
           python rust/bench_costs.py
           python rust/bench_normalize.py
           python rust/bench_signals.py
+          python rust/bench_admission.py
 
   rust-gates:
     name: rust-gates

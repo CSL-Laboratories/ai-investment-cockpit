@@ -8,6 +8,7 @@ from brokers.capability import TokenRegistry
 from brokers.gateway import OrderGateway
 from brokers.paper_execution import PaperExecutionError, PaperExecutionService
 from config.settings import DecisionRuntime, Mode
+from orchestrator.mode_ladder import ModeLadder
 from core.ids import new_id
 from core.proposal_authority import proposal_payload_hash
 from orchestrator.breakers import BreakerEngine
@@ -17,6 +18,7 @@ from quant.verify import VerifyParams
 from sqlalchemy import select
 from schemas.models.approval_record import ApprovalRecord
 from schemas.models.agent_job import AgentJob
+from schemas.models.audit_entry import AuditEntry
 from schemas.models.order import Order
 from schemas.models.proposal_record import ProposalRecord
 from tests.brokers.conftest import build_scenario
@@ -44,8 +46,9 @@ class _MarketData:
         return self._metric
 
 
-def _service(st, *, runtime="claude", selected_runtime="claude", market_data=None,
-             execution_verdict=None, edge_provider=None, generation=0):
+def _service(st, *, runtime="claude", selected_runtime="claude", produced_runtime=None,
+             market_data=None, execution_verdict=None, edge_provider=None,
+             generation=0, input_refs=None, stamp_decision_runtime=True):
     from config.settings import Settings
 
     # Production freezes the operator allowlist during Settings construction. Build the same
@@ -70,12 +73,19 @@ def _service(st, *, runtime="claude", selected_runtime="claude", market_data=Non
     job = AgentJob(
         id=new_id("job"), runtime=runtime, model="deep", model_pinned="pinned",
         prompt_template="trade_proposal.v1", prompt_hash="h" * 16,
-        input_refs={"_generation": generation}, schema_id="TradeProposal", status="done",
+        input_refs={"_generation": generation, **(input_refs or {})},
+        schema_id="TradeProposal", status="done",
         created_at=st.clock.now(),
     )
+    produced = produced_runtime if produced_runtime is not None else selected_runtime
+    signed = {"status": "done", "runtime": runtime, "generation": generation}
+    if stamp_decision_runtime:
+        signed["decision_runtime"] = produced
+    route = (input_refs or {}).get("decision_route")
+    if isinstance(route, str):
+        signed["decision_route"] = route
     st.audit.record_state_change(
-        job, "agent_job", actor="agent_calls",
-        payload={"status": "done", "runtime": runtime, "generation": generation},
+        job, "agent_job", actor="agent_calls", payload=signed,
     )
     proposal = ProposalRecord(
         id="p1", symbol="AAPL", side="buy", status="draft", flagged=False,
@@ -178,6 +188,174 @@ def test_runtime_mismatch_cannot_enter_paper_order_path(st, monkeypatch):
         assert exc.code == "runtime_not_allowed"
     else:  # pragma: no cover - explicit safety assertion
         raise AssertionError("a proposal from the non-selected runtime must not reach paper broker")
+    assert client.submitted == []
+
+
+def test_jev_proposal_round_trips_when_jev_is_configured(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="jev", selected_runtime="jev")
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-jev-approved",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
+
+
+def test_auto_accepts_the_runtime_that_produced_the_proposal(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="jev", selected_runtime="auto")
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-auto-jev",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
+
+
+def test_jev_selection_refuses_an_older_claude_proposal(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="claude", selected_runtime="jev")
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-jev-stale-claude",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:  # pragma: no cover - explicit safety assertion
+        raise AssertionError("an older Claude proposal must not run under explicit jev")
+    assert client.submitted == []
+
+
+def test_unsigned_fallback_route_cannot_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="claude", selected_runtime="jev")
+    with st.session_factory() as session, session.begin():
+        job = session.execute(select(AgentJob)).scalars().one()
+        job.input_refs = {"_generation": 0, "decision_route": "jev_fallback"}
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-unsigned-route",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "analysis_authority_unavailable"
+    else:
+        raise AssertionError("an unsigned decision_route must not authorize paper execution")
+    assert client.submitted == []
+
+
+def test_auto_refuses_a_job_stamped_under_a_different_runtime(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, runtime="claude", selected_runtime="auto", produced_runtime="claude",
+    )
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-auto-old-claude",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:
+        raise AssertionError("auto must not execute a job stamped under claude")
+    assert client.submitted == []
+
+
+def test_jev_fallback_claude_proposal_can_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, runtime="claude", selected_runtime="jev",
+        input_refs={"decision_route": "jev_fallback"},
+    )
+
+    out = service.decide(
+        scenario.order.id, actor=OPERATOR_ID, decision="approve",
+        confirm_symbol="AAPL", request_id="paper-jev-fallback",
+    )
+    assert out["status"] == "submitted"
+    assert len(client.submitted) == 1
+
+
+def test_missing_signed_decision_runtime_cannot_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, stamp_decision_runtime=False)
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-missing-runtime",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:
+        raise AssertionError("a job with no signed decision_runtime must not enter paper")
+    assert client.submitted == []
+
+
+def test_forged_decision_runtime_payload_cannot_enter_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(st, runtime="claude", selected_runtime="claude")
+    st.settings.decision_runtime = DecisionRuntime.auto
+    with st.session_factory() as session, session.begin():
+        entry = session.execute(
+            select(AuditEntry).where(AuditEntry.event_type == "agent_job")
+        ).scalars().one()
+        entry.payload = {
+            **dict(entry.payload),
+            "decision_runtime": "auto",
+            "decision_route": "jev",
+        }
+        job = session.execute(select(AgentJob)).scalars().one()
+        job.input_refs = {**dict(job.input_refs), "decision_route": "jev"}
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-forged-runtime",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "lineage_unverified"
+    else:
+        raise AssertionError("an unsigned decision_runtime edit must not authorize paper")
+    assert client.submitted == []
+
+
+def test_jev_routed_job_cannot_execute_after_leaving_paper(st, monkeypatch):
+    monkeypatch.setenv("COCKPIT_OPERATOR_IDS", OPERATOR_ID)
+    service, scenario, client = _service(
+        st, runtime="jev", selected_runtime="auto",
+        input_refs={"decision_route": "jev"},
+    )
+    ladder = ModeLadder(st)
+    ladder.set_mode(Mode.review_live, actor="op")
+
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-jev-left-paper",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "paper_mode_required"
+    else:
+        raise AssertionError("a Jev job must not execute after the ladder leaves paper")
+    assert client.submitted == []
+
+    st.settings.decision_runtime = DecisionRuntime.claude
+    ladder.set_mode(Mode.paper, actor="op")
+    try:
+        service.decide(
+            scenario.order.id, actor=OPERATOR_ID, decision="approve",
+            confirm_symbol="AAPL", request_id="paper-jev-stamp-mismatch",
+        )
+    except PaperExecutionError as exc:
+        assert exc.code == "runtime_not_allowed"
+    else:
+        raise AssertionError("switching the setting must not execute a job stamped under auto")
     assert client.submitted == []
 
 

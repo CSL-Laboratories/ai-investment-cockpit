@@ -772,7 +772,7 @@ def test_discord_secret_name_matches_the_provisioning_doc():
     text = doc.read_text(encoding="utf-8")
     assert f"keyring set ai-investment-cockpit {main_mod._DISCORD_TOKEN_NAME}" in text
     for name in (main_mod._ALPACA_KEY_NAME, main_mod._ALPACA_SECRET_NAME,
-                 main_mod._FINNHUB_KEY_NAME):
+                 main_mod._FINNHUB_KEY_NAME, main_mod._JEV_API_KEY_NAME):
         assert f"keyring set ai-investment-cockpit {name}" in text
 
 

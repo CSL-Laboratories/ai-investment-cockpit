@@ -11,6 +11,18 @@ order and the reviewed migration from the current implementation described below
 The nine invariants and runtime rules here remain in force until their separately
 scoped, reviewed implementation amendments; ratification alone grants no new authority.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
+gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+for operational authority; they do not amend accepted contracts, activate R2a or
+unlock live capital. Founders merge after the required current-head reviews and checks;
+agents never merge. A founder's own PR requires another founder's approval before merge,
+regardless of ruleset enforcement. Non-author approval checks alone do not establish
+founder identity. All three founders participate in the final
+release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
@@ -56,7 +68,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
+  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
