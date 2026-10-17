@@ -1120,6 +1120,8 @@ def _require_closed_event_schema(schema: dict[str, Any]) -> None:
         raise ContractError("event schema accepts an authority field")
     if _const_value(properties.get("api_version")) != API_VERSION:
         raise ContractError("event api_version is not o7.operator.v0")
+    if _admitted_strings(properties.get("event_type")) != set(EVENT_COMMANDS):
+        raise ContractError("event type allowlist drifted")
 
 
 def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
@@ -1134,6 +1136,9 @@ def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
         raise ContractError("event schema rejects a recorded stop")
     if _schema_error(validator, {**probe, "order_submitted": True}) is None:
         raise ContractError("event schema accepts order_submitted")
+    unknown = _event_probe("order_submitted", "operator.positions.inspect", "ok", "visible")
+    if _schema_error(validator, unknown) is None:
+        raise ContractError("event schema accepts event type order_submitted")
     if _schema_error(validator, {**probe, "api_version": "o7.operator.v1"}) is None:
         raise ContractError("event schema accepts o7.operator.v1")
 

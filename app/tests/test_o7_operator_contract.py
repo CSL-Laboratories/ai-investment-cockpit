@@ -994,6 +994,25 @@ def test_visibility_stays_closed(tmp_path: Path) -> None:
         assert "visibility schema accepts an authority field" in stderr, name
 
 
+def test_event_type_allowlist_stays_pinned(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    validator = CHECKER._validator(event_schema)
+    unknown = CHECKER._event_probe("order_submitted", "operator.positions.inspect", "ok", "visible")
+    assert CHECKER._schema_error(validator, unknown) is not None
+    widened = tmp_path / "extra-event"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-event.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["event_type"]["enum"].append("order_submitted")
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-event.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "event type allowlist drifted" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
