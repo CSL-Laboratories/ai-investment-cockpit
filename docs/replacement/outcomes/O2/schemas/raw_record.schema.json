@@ -113,13 +113,13 @@
       "required": ["kind", "form", "accession", "amends_accession", "concept", "value", "unit"],
       "properties": {
         "kind": {"const": "filing_amendment"},
-        "form": {"const": "10-K/A"},
+        "form": {"enum": ["10-K/A", "8-K/A"]},
         "accession": {"type": "string", "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"},
         "amends_accession": {"type": "string", "pattern": "^[0-9]{10}-[0-9]{2}-[0-9]{6}$"},
         "issuer_cik": {"type": "string", "pattern": "^[0-9]{10}$"},
         "concept": {"type": "string", "minLength": 1},
         "value": {"type": "string", "minLength": 1},
-        "unit": {"const": "USD"}
+        "unit": {"enum": ["USD", "text"]}
       }
     },
     "corporate_action": {

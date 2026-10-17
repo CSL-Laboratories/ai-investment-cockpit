@@ -14,7 +14,7 @@
     "fixtures/qualification_matrix.json": "8ace962049aa57e68921b4f23a739f570d6b8ee809077cbf40d29cc41d511ea6",
     "fixtures/negative_controls.json": "35cfaf12b7e11de1a5d2f1ec934956ae643de8551b42880f8e52a0df33a4a2fc",
     "schemas/identity.schema.json": "69b02870f8dedf8d9cc1da76d6268f2912f282e75141c5d37f3d84b7f7819be2",
-    "schemas/raw_record.schema.json": "d34184154f38f6c77f05cc184c7fd839729993395925d7c9df9b4e304481f65d",
+    "schemas/raw_record.schema.json": "e6f8aa8ff1e989b72cd2be0efdee8621430e9da65004fcb62b3122d22c5289e5",
     "schemas/observation.schema.json": "8b4875b2101644cc06b317f573bb44d7d4bb3a8d987f060c8bdd58a1284b9102",
     "schemas/lineage.schema.json": "37fd07f7b72da3487ee3a2a9ed0f2cdba6c29cde9586bf297050918689331de0",
     "schemas/replay_manifest.schema.json": "53e56da8beca1fdad80d414a40a232b91e7fcba91170e9eb8deca103efca256d",

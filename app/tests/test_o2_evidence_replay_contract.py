@@ -918,6 +918,19 @@ def test_amendment_form_must_match_predecessor_family(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def test_8k_amendment_passes_schema_and_form_family(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        payload = record["payload"]
+        if payload.get("form") == "10-K":
+            payload["form"] = "8-K"
+        elif payload.get("form") == "10-K/A":
+            payload["form"] = "8-K/A"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
 def test_split_endpoints_must_share_one_listing(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)
