@@ -2088,6 +2088,22 @@ def test_reply_cites_ruling_and_sha():
     assert mod.resolved_marker(THREAD, SHA) not in body
 
 
+def test_ruling_excerpt_ignores_user_with_codex_login():
+    real = comment(
+        CODEX, verdict_body() + "\nReal Codex ruling.\n", NOW - timedelta(seconds=30)
+    )
+    fake = comment(CODEX, verdict_body() + "\nImpostor quote me.\n", NOW)
+    fake["author"]["__typename"] = "User"
+    fake["user"]["type"] = "User"
+    text = mod.ruling_excerpt([real, fake], THREAD, SHA, 400)
+    assert "Real Codex ruling" in text
+    assert "Impostor" not in text
+    fake_only = comment(CODEX, verdict_body() + "\nImpostor quote me.\n")
+    fake_only["author"]["__typename"] = "User"
+    fake_only.pop("user")
+    assert mod.ruling_excerpt([fake_only], THREAD, SHA, 400) == ""
+
+
 def test_ruling_excerpt_strips_receipt_markers():
     planted = (
         verdict_body()

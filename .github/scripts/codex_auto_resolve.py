@@ -1425,7 +1425,7 @@ def _stamp_latest(
 def ruling_excerpt(items: list[dict[str, Any]], thread_id: str, sha: str, limit: int) -> str:
     latest: tuple[datetime, str] | None = None
     for item in items:
-        if not is_codex(login_of(item)):
+        if not is_bot_author(item) or not is_codex(login_of(item)):
             continue
         verdicts = parse_thread_verdicts(body_of(item))
         if not any(v.thread_id == thread_id and v.sha == sha for v in verdicts):
