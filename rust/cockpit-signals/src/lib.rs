@@ -370,7 +370,12 @@ where
         }
         sum = next;
     }
-    sum + correction
+    // CPython adds the compensation only when it is finite and non-zero.
+    // Otherwise an overflowed sum of inf would become NaN.
+    if correction != 0.0 && correction.is_finite() {
+        sum += correction;
+    }
+    sum
 }
 
 fn magnitude(qty: i64) -> i128 {
@@ -545,6 +550,13 @@ mod tests {
         let partial = [1e16, 1.0, -1e16, 2.0, 3.0];
         assert_eq!(sum_mapped(partial, true, |value| value), 6.0);
         assert_eq!(sum_mapped(partial, false, |value| value), 5.0);
+        let overflowed = [1e308, 1e308];
+        assert_eq!(sum_mapped(overflowed, true, |value| value), f64::INFINITY);
+        assert_eq!(
+            sum_mapped([-1e308, -1e308], true, |value| value),
+            f64::NEG_INFINITY
+        );
+        assert!(sum_mapped([f64::INFINITY, f64::NEG_INFINITY], true, |value| value).is_nan());
     }
 
     #[test]

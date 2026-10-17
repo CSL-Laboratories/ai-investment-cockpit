@@ -396,6 +396,24 @@ def test_non_finite_samples_stay_on_rust():
     assert beta_r._core is not None
 
 
+def test_overflowed_covariance_matches_python_infinity():
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    pairs = ((-2.0, -1e308), (0.0, 0.0), (2.0, 1e308))
+    for x, y in pairs:
+        _same(beta_r.update(x, y), beta_p.update(x, y))
+    assert beta_r.beta == math.inf
+    assert beta_p.beta == math.inf
+    assert beta_r._core is not None
+
+    z_r, z_p = _pair(RollingZScore, window=2)
+    z_r.update(1e308)
+    z_p.update(1e308)
+    _same(z_r.update(1e308), z_p.update(1e308))
+    assert z_r.mean == math.inf
+    assert z_p.mean == math.inf
+    assert z_r._core is not None
+
+
 def test_estimators_compare_by_observation_state():
     left, right = RollingZScore(window=3), RollingZScore(window=3)
     assert left == right
