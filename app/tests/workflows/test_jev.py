@@ -605,6 +605,21 @@ def test_response_model_is_recorded_when_it_differs(st, monkeypatch):
     assert _events(st)[0].payload["jev_attempt"]["response_model"] == "jev-1.13.0"
 
 
+def test_caller_supplied_route_is_dropped_when_jev_does_not_run(st):
+    st.settings.decision_runtime = DecisionRuntime.claude
+    transport = FakeTransport([envelope(CLAUDE_PROPOSAL)])
+    _result, job = _call(
+        st, transport, _client(lambda _r: _jev_response()),
+        input_refs={
+            "event_id": "e0", "raw_refs": ["ref-0"], "context_dropped": 0,
+            "decision_route": "jev_fallback",
+        },
+    )
+    assert job.runtime == "claude"
+    assert "decision_route" not in job.input_refs
+    assert "decision_route" not in _events(st)[0].payload
+
+
 def test_environment_variable_does_not_authenticate(st, monkeypatch):
     monkeypatch.setenv("JEV_API_KEY", _KEY)
     st.settings.decision_runtime = DecisionRuntime.jev

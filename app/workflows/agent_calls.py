@@ -213,6 +213,9 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     completed = state.clock.now()
 
     refs = dict(input_refs or {})
+    # Only this function may stamp the route. A caller-supplied value must not
+    # survive into the signed job when no Jev attempt ran.
+    refs.pop("decision_route", None)
     refs["_generation"] = generation
     if jev_accepted:
         refs["decision_route"] = "jev"
