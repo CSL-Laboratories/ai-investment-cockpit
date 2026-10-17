@@ -99,7 +99,7 @@
       "id": "event_resting_order_reservation",
       "path": "fixtures/event_resting_order_reservation.json",
       "role": "positive",
-      "sha256": "c822b09d5f4a7362927c928a1e8bc0ac8be1eee109943c7dfe8f01745551582e",
+      "sha256": "fc6b06f7f9f607a8da6a798217ed80b356cf123ccbb7474b9b424ba19b42ebd0",
       "expected_failure_codes": []
     },
     {

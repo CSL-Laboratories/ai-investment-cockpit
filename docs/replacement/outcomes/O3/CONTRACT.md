@@ -177,6 +177,12 @@ fixtures. The fee schedule above says a cancel, by itself, is not a fill and
 is not a fee. This candidate does not turn that sentence into a permanent
 fee rule.
 
+When accepted quantity is greater than zero and less than the order
+quantity, and the order is not in a cancel, expire, or reject terminal,
+its state is `partially_filled`. A `resting` label on that partial fill
+fails `partial_fill_divergence`. `partially_filled` with no accepted
+quantity, or with the full order quantity, fails the same way.
+
 ### Event-contract market
 
 `listed` → `open` → `closed_pending_determination` → `determined` → `settled`
@@ -240,15 +246,20 @@ post the reservation of a resting order; a `trade_fee` is execution
 cost and always carries a `fill_id`. One entry carries at most one
 causal reference — an entry naming both `fill_id` and `order_id` is
 ambiguous and fails. An `order_id` reservation must post before the
-order's first fill: it is valid while the order is still resting, and a
-reservation sequenced after a fill is rejected. An order-linked
-reservation must equal the total posted by all of that order's fills —
-the sum of each fill's `qty * price_minor` plus its `fee_minor` — not
-more and not less; a reserve that exceeds or falls short of that total
-fails `balance_mismatch`. When an order reserved collateral up front,
-its later fills do not re-post premium — the reservation already holds
-it — so those fills are exempt from the per-fill premium check while
-their fees still reconcile per fill.
+order's first fill: it is valid while the order is still resting and
+unfilled, and a reservation sequenced after a fill is rejected. Before
+any fill, that hold is not compared with a fill total of zero. Once the
+order has an accepted fill, the order-linked reservation must equal the
+sum of those fills' `qty * price_minor` plus `fee_minor`. A reserve that
+exceeds or falls short of that executed total fails `balance_mismatch`.
+A hold for the still-unfilled remainder, above that executed total, is
+not represented in this candidate. When an order reserved collateral up
+front, its later fills do not re-post premium — the reservation already
+holds it — so those fills are exempt from the per-fill premium check
+while their fees still reconcile per fill. Only `fill`,
+`reserve_collateral`, and `trade_fee` entries contribute to a fill's
+posted premium and fee. A `void_unwind` that carries a `fill_id` does
+not satisfy that fill.
 A `fill` debits `position_cost` and any `fees_expense` and credits
 `cash_available` for the same total. A `reserve_collateral` debits
 `collateral_reserved` and credits `cash_available` for the same total.
@@ -313,6 +324,10 @@ settlement entry's sequence: a collateral posting sequenced after the
 settlement cannot count toward it, so a reserve raised after the payout
 fails `settlement_unreconciled`.
 
+Every line on a `settlement_payout` names the same instrument, and that
+instrument's market is `settled`. A line on another instrument, or a mix
+of instruments on one entry, fails `settlement_unreconciled`.
+
 The P&L side of a binary settlement reconciles too: when the reserved
 premium exceeds the payout the journal debits `realized_pnl` for the
 loss, and when the payout exceeds the reservation it credits
@@ -372,7 +387,7 @@ checkpoint.
 | `neg_partial_fill_divergence` | negative | 40 of 100 shares filled; reported position is 100. |
 | `neg_duplicate_fill_divergence` | negative | The same fill id is applied twice; reported position is 80. |
 | `neg_late_fill_divergence` | negative | A fill is sequenced after cancel; reported position includes it. |
-| `event_resting_order_reservation` | positive | A filled position plus an order's `order_id`-linked reservation posted while it was resting; the order then partially fills without re-posting premium. |
+| `event_resting_order_reservation` | positive | A filled position plus an order-linked reservation posted before the first match. After a partial fill the order state is `partially_filled`, and the reservation equals the executed premium and fee. |
 | `neg_offsetting_fill_prices` | negative | Two fills whose prices disagree with their postings but net out in aggregate. Per-fill linkage fails it. |
 | `event_no_settlement` | positive | A losing NO-side binary: zero payout, reserved premium released, realized loss debited, position flat. |
 
@@ -451,3 +466,7 @@ None of these are decided in this candidate.
 - **Freezing.** Promoting this candidate to `human_decided` or
   `contract_frozen` needs a human-authored digest-bound receipt on
   CSL-215. Labels, CI, and this document are not that receipt.
+- **Unfilled remainder.** After a partial fill, this candidate requires
+  the order-linked reserve to equal the executed premium and fees. It
+  does not represent an additional hold for the unfilled quantity. That
+  needs a limit price on the order, which is not decided here.

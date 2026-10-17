@@ -33,7 +33,7 @@
             "family": "event",
             "side": "buy",
             "qty": 5,
-            "state": "resting"
+            "state": "partially_filled"
         }
     ],
     "fills": [

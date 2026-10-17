@@ -443,6 +443,50 @@ def test_o3_checkpointed_entry_id_replay_detected() -> None:
     assert "collateral_double_count" in _evaluate(fixture)
 
 
+def test_o3_void_unwind_does_not_count_as_fill_premium() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    reserve = next(entry for entry in fixture["journal"] if entry["entry_id"] == "j-reserve")
+    reserve["reason"] = "void_unwind"
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_unfilled_resting_order_may_hold_collateral() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    rest = next(order for order in fixture["orders"] if order["order_id"] == "ord-rest")
+    rest["state"] = "resting"
+    assert "partial_fill_divergence" in _evaluate(fixture)
+    fixture["fills"] = [fill for fill in fixture["fills"] if fill["fill_id"] != "f-rest"]
+    fixture["journal"] = [entry for entry in fixture["journal"] if entry["entry_id"] != "j-fee-rest"]
+    fixture["reported"]["positions"][0]["qty"] = 10
+    fixture["reported"]["cash_available"] += 30000
+    fixture["reported"]["attribution"][0]["fees_minor"] = 70000
+    assert _evaluate(fixture) == set()
+
+
+def test_o3_settlement_lines_share_one_settled_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["instruments"].append({
+        "instrument_id": "ev-other",
+        "family": "event_contract",
+        "venue_id": "venue-event-candidate",
+        "venue_symbol": "OTHER-23DEC31",
+        "currency": "USD",
+        "unit": "contract",
+        "contract_style": "binary",
+        "outcome_side": "yes",
+        "collateral_model": "fully_collateralized",
+    })
+    settle = next(entry for entry in fixture["journal"] if entry["reason"] == "settlement_payout")
+    gain = next(line for line in settle["lines"] if line["account"] == "realized_pnl")
+    gain["instrument_id"] = "ev-other"
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
 def test_o3_every_evidence_instrument_must_be_declared() -> None:
     path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
     fixture = json.loads(path.read_text(encoding="utf-8"))

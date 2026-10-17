@@ -291,11 +291,16 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     if not (failures & FILL_DEFECTS):
         for order in fixture["orders"]:
             terminal = order.get("terminal_state") or order["state"]
-            if terminal == "filled" and (
+            filled_qty = (
                 order.get("checkpoint_filled_qty", 0)
                 + post_checkpoint_qty.get(order["order_id"], 0)
-                != order["qty"]
-            ):
+            )
+            if terminal == "filled" and filled_qty != order["qty"]:
+                failures.add("partial_fill_divergence")
+            partial = 0 < filled_qty < order["qty"]
+            if terminal == "partially_filled" and not partial:
+                failures.add("partial_fill_divergence")
+            if partial and terminal not in LATE_TERMINALS and terminal != "partially_filled":
                 failures.add("partial_fill_divergence")
 
     pre_settlement = dict(derived)
@@ -345,6 +350,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         derived[instrument_id] = 0
 
     voided = {market["instrument_id"] for market in fixture["markets"] if market["state"] == "voided"}
+    settled_ids = {market["instrument_id"] for market in fixture["markets"] if market["state"] == "settled"}
     reported_positions = {row["instrument_id"]: row["qty"] for row in fixture["reported"]["positions"]}
     for instrument_id in set(reported_positions) | set(derived):
         if instrument_id not in known_instruments:
@@ -474,6 +480,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 } or line["instrument_id"] not in action_instruments:
                     failures.add("corporate_action_mismatch")
         if entry["reason"] == "settlement_payout":
+            line_instruments = {line["instrument_id"] for line in entry["lines"]}
+            if len(line_instruments) != 1 or not line_instruments <= settled_ids:
+                failures.add("settlement_unreconciled")
             for line in entry["lines"]:
                 if (line["account"], line["side"]) not in {
                     ("cash_available", "dr"),
@@ -494,7 +503,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 failures.add("position_divergence")
             account = line["account"]
             side = line["side"]
-            if fill_ref is not None:
+            if fill_ref is not None and entry["reason"] in {"fill", "reserve_collateral", "trade_fee"}:
                 signed = amount if side == "dr" else -amount
                 if account in {"position_cost", "collateral_reserved"}:
                     premium_delta += signed
@@ -592,7 +601,17 @@ def evaluate_semantics(fixture: dict) -> set[str]:
 
     if not (failures & FILL_DEFECTS):
         for order_id, reserved in order_reserve_total.items():
-            if reserved != order_fills_total.get(order_id, 0):
+            order = orders.get(order_id)
+            if order is None:
+                continue
+            filled_qty = (
+                order.get("checkpoint_filled_qty", 0)
+                + post_checkpoint_qty.get(order_id, 0)
+            )
+            filled_notional = order_fills_total.get(order_id, 0)
+            if filled_qty == 0 and filled_notional == 0:
+                continue
+            if reserved != filled_notional:
                 failures.add("balance_mismatch")
 
     if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
