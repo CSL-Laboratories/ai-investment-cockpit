@@ -330,7 +330,10 @@ def pr_payload(
         "url": f"https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/{number}",
         "title": "CSL-179 demo",
         "headRefOid": sha,
-        "reviewThreads": {"nodes": threads or []},
+        "reviewThreads": {
+            "nodes": threads or [],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        },
     }
 
 
@@ -1046,6 +1049,102 @@ def test_expand_thread_comments_stays_truncated_after_page_cap():
     out = mod.expand_thread_comments(gh, cfg(), node)
     assert gh.calls == mod.THREAD_COMMENT_EXTRA_PAGES
     assert out["comments"]["pageInfo"]["hasNextPage"] is True
+
+
+class _PagingThreads:
+    def __init__(self, pages: list[dict]) -> None:
+        self.pages = list(pages)
+        self.calls = 0
+
+    def graphql(self, query, variables, token=None):
+        del query, variables, token
+        self.calls += 1
+        return {
+            "repository": {
+                "pullRequest": {
+                    "number": 12,
+                    "isDraft": False,
+                    "state": "OPEN",
+                    "isCrossRepository": False,
+                    "headRefOid": SHA,
+                    "reviewThreads": self.pages.pop(0),
+                }
+            }
+        }
+
+
+def test_list_pr_reads_past_ten_thread_pages():
+    extra = 11
+    pages = []
+    for i in range(extra):
+        more = i < extra - 1
+        pages.append(
+            {
+                "nodes": [thread(f"PRRT_TH{i}")],
+                "pageInfo": {
+                    "hasNextPage": more,
+                    "endCursor": f"t{i + 1}" if more else None,
+                },
+            }
+        )
+    gh = _PagingThreads(pages)
+    out = mod.list_pr(gh, cfg(), 12)
+    assert gh.calls == extra
+    assert out["reviewThreads"]["pageInfo"]["hasNextPage"] is False
+    assert len(out["reviewThreads"]["nodes"]) == extra
+
+
+def test_list_pr_stays_truncated_after_page_cap():
+    pages = [
+        {
+            "nodes": [thread(f"PRRT_TH{i}")],
+            "pageInfo": {"hasNextPage": True, "endCursor": f"t{i + 1}"},
+        }
+        for i in range(mod.REVIEW_THREAD_PAGES)
+    ]
+    gh = _PagingThreads(pages)
+    out = mod.list_pr(gh, cfg(), 12)
+    assert gh.calls == mod.REVIEW_THREAD_PAGES
+    assert out["reviewThreads"]["pageInfo"]["hasNextPage"] is True
+
+
+def test_list_pr_repeat_cursor_stays_truncated():
+    gh = _PagingThreads(
+        [
+            {
+                "nodes": [thread()],
+                "pageInfo": {"hasNextPage": True, "endCursor": "t0"},
+            },
+            {
+                "nodes": [thread(THREAD2)],
+                "pageInfo": {"hasNextPage": True, "endCursor": "t0"},
+            },
+        ]
+    )
+    out = mod.list_pr(gh, cfg(), 12)
+    assert gh.calls == 2
+    assert out["reviewThreads"]["pageInfo"]["hasNextPage"] is True
+
+
+def test_truncated_thread_list_aborts_entire_pr_scan():
+    other = thread(THREAD2)
+    gh = ready_gh(
+        threads=[thread(), other],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.pr_by_number[12]["reviewThreads"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": "more",
+    }
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+    assert any("skip=truncated-threads" in line for line in logs)
+    assert not any("resolve=posted" in line for line in logs)
 
 
 def test_truncated_thread_aborts_entire_pr_scan():

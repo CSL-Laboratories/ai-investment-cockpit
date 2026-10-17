@@ -57,6 +57,9 @@ CITE_REFRESH_AGE = timedelta(hours=20)
 # Extra GraphQL pages after the first 80 comments. 100 pages of 50 still
 # fail closed if the connection remains truncated.
 THREAD_COMMENT_EXTRA_PAGES = 100
+# Review-thread connection pages (50 threads each). Remaining truncation
+# aborts the PR scan; omitted threads are global verdict sources.
+REVIEW_THREAD_PAGES = 100
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
@@ -1013,7 +1016,9 @@ def list_pr(gh: GitHub, cfg: Config, number: int) -> dict[str, Any]:
     threads: list[dict[str, Any]] = []
     after = None
     pr_meta: dict[str, Any] = {}
-    for _ in range(10):
+    cursors: set[str] = set()
+    truncated = True
+    for _ in range(REVIEW_THREAD_PAGES):
         data = gh.graphql(
             GITHUB_GRAPHQL_PR,
             {"owner": cfg.owner, "name": cfg.name, "number": number, "after": after},
@@ -1023,16 +1028,29 @@ def list_pr(gh: GitHub, cfg: Config, number: int) -> dict[str, Any]:
         if not pr_meta:
             pr_meta = pr
         conn = pr.get("reviewThreads") or {}
-        threads.extend(n for n in (conn.get("nodes") or []) if isinstance(n, dict))
+        nodes = conn.get("nodes")
+        if not isinstance(nodes, list) or not all(isinstance(n, dict) for n in nodes):
+            break
+        threads.extend(nodes)
         page = conn.get("pageInfo") or {}
-        if not page.get("hasNextPage"):
+        if page.get("hasNextPage") is False:
+            truncated = False
             break
         after = page.get("endCursor")
+        if page.get("hasNextPage") is not True or not isinstance(after, str) or not after or after in cursors:
+            break
+        cursors.add(after)
     filled: list[dict[str, Any]] = []
-    for node in threads:
-        filled.append(expand_thread_comments(gh, cfg, node))
+    if not truncated:
+        for node in threads:
+            filled.append(expand_thread_comments(gh, cfg, node))
+    else:
+        filled = threads
     pr_meta = dict(pr_meta)
-    pr_meta["reviewThreads"] = {"nodes": filled}
+    pr_meta["reviewThreads"] = {
+        "nodes": filled,
+        "pageInfo": {"hasNextPage": truncated},
+    }
     return pr_meta
 
 
@@ -1161,6 +1179,11 @@ def thread_comments(thread: dict[str, Any]) -> list[dict[str, Any]]:
 
 def thread_comments_truncated(thread: dict[str, Any]) -> bool:
     page = (thread.get("comments") or {}).get("pageInfo") or {}
+    return bool(page.get("hasNextPage"))
+
+
+def review_threads_truncated(pr: dict[str, Any]) -> bool:
+    page = (pr.get("reviewThreads") or {}).get("pageInfo") or {}
     return bool(page.get("hasNextPage"))
 
 
@@ -1804,6 +1827,12 @@ def scan_pr(
         logs.append(f"codex-auto-resolve: pr={number} skip=stale-sha")
         return logs
     checks_ok, checks_reason = required_checks_green(rollup)
+    # Omitted review threads are global verdict sources. A truncated
+    # connection can hide a DECIDE/AMBIGUOUS/edited Codex item, so do not
+    # resolve visible threads from a partial thread list.
+    if review_threads_truncated(pr):
+        logs.append(f"codex-auto-resolve: pr={number} skip=truncated-threads")
+        return logs
     threads = [n for n in ((pr.get("reviewThreads") or {}).get("nodes") or []) if isinstance(n, dict)]
     # Thread comments are global verdict sources. A truncated connection can
     # hide a DECIDE/AMBIGUOUS/edited Codex item for another thread, so do not
