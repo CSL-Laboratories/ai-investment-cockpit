@@ -71,7 +71,7 @@ def test_window_messages_stay_on_the_python_path():
         RollingZScore(window=2.5)
 
 
-def test_ewma_matches_including_non_positive_prices():
+def test_ewma_update_matches_including_non_positive_prices():
     rust, python = _pair(EwmaVolatility, lam=0.94)
     prices = [100.0, 101.0, 100.5, 0.0, -3.0, 102.0, 99.0, 100.0, 1e-6, 1e6, -0.0]
     for price in prices:
@@ -89,6 +89,74 @@ def test_ewma_matches_including_non_positive_prices():
         python.update("nope")
 
 
+def test_ewma_update_many_matches_the_python_loop_and_resumes():
+    rust = EwmaVolatility(lam=0.94)
+    python = EwmaVolatility(lam=0.94)
+    assert rust._core is not None
+    python._core = None
+    first = [100.0, 101.0, 100.5, 0.0, -3.0]
+    got = rust.update_many(first)
+    expected = [python.update(price) for price in first]
+    for left, right in zip(got, expected, strict=True):
+        _same(left, right)
+    _same(rust.value, python.value)
+    assert rust.is_warm is python.is_warm
+    assert rust._core is not None
+    rest = [102.0, 99.0, 100.0, 1e-6, 1e6]
+    got = rust.update_many(rest)
+    expected = [python.update(price) for price in rest]
+    for left, right in zip(got, expected, strict=True):
+        _same(left, right)
+    _same(rust.value, python.value)
+
+    # A one-shot iterable is copied before the float scan.
+    again = (price for price in (103.0, 104.0))
+    got = rust.update_many(again)
+    expected = [python.update(price) for price in (103.0, 104.0)]
+    for left, right in zip(got, expected, strict=True):
+        _same(left, right)
+
+    # NaN is a float, so the batch stays on the extension and matches math.log.
+    nan_series = [float("nan"), 100.0, 101.0, float("nan")]
+    for got, expected in zip(
+        rust.update_many(nan_series),
+        [python.update(price) for price in nan_series],
+        strict=True,
+    ):
+        _same(got, expected)
+    assert rust._core is not None
+    assert math.isnan(rust.value)
+    assert math.isnan(python.value)
+
+    # An int leaves the extension. The Python path accepts it.
+    got = rust.update_many([100, True])
+    expected = [python.update(100), python.update(True)]
+    for left, right in zip(got, expected, strict=True):
+        _same(left, right)
+    assert rust._core is None
+
+    # A finite price then +inf is a non-finite ratio. The batch raises and
+    # does not publish an infinite volatility. Prices before the failure stay
+    # on the core, so the next finite price matches the Python loop.
+    finite = EwmaVolatility(lam=0.94)
+    plain = EwmaVolatility(lam=0.94)
+    plain._core = None
+    with pytest.raises(ValueError, match="math domain error"):
+        finite.update_many([100.0, 101.0, float("inf")])
+    plain.update(100.0)
+    plain.update(101.0)
+    assert finite.value is None
+    assert finite._core is not None
+    assert finite._core.last == 101.0
+    _same(finite.update(100.5), plain.update(100.5))
+    _same(finite.value, plain.value)
+
+    with pytest.raises(TypeError):
+        rust.update_many(["nope"])
+    with pytest.raises(TypeError):
+        python.update_many(["nope"])
+
+
 def test_ewma_replay_matches_the_python_loop():
     import cockpit_quant
 
@@ -99,7 +167,6 @@ def test_ewma_replay_matches_the_python_loop():
     prices[50] = 0.0
     replay = cockpit_quant.ewma_replay(0.94, prices)
     python = EwmaVolatility(lam=0.94)
-    python._core = None
     for price, replayed in zip(prices, replay):
         _same(replayed, python.update(price))
 
@@ -523,6 +590,42 @@ def test_partial_extension_is_not_a_silent_python_fallback():
     ran = _python(script)
     assert ran.returncode != 0
     assert "EwmaCore" in ran.stderr
+
+
+def test_a_core_without_feed_is_a_partial_wheel():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                module = types.ModuleType("cockpit_quant")
+                module.EwmaCore = type("EwmaCore", (), {})
+                module.ZScoreCore = type("ZScoreCore", (), {})
+                module.OfiCore = type("OfiCore", (), {})
+                module.BetaCore = type("BetaCore", (), {})
+                return module
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.signals
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "EwmaCore.feed" in ran.stderr
 
 
 def test_missing_extension_stays_on_python():

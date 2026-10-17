@@ -35,6 +35,10 @@ def test_decision_runtime_accepts_only_supported_providers(monkeypatch):
 
     monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "codex")
     assert Settings().decision_runtime is DecisionRuntime.codex
+    monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "jev")
+    assert Settings().decision_runtime is DecisionRuntime.jev
+    monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "auto")
+    assert Settings().decision_runtime is DecisionRuntime.auto
     monkeypatch.setenv("COCKPIT_DECISION_RUNTIME", "other")
     with pytest.raises(ValidationError):
         Settings()

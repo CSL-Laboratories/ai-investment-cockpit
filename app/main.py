@@ -52,6 +52,7 @@ _DISCORD_TOKEN_NAME = "discord_bot_token"   # keyring-only (Inv 4); #audit-log w
 _ALPACA_KEY_NAME = "alpaca_key"
 _ALPACA_SECRET_NAME = "alpaca_secret"
 _FINNHUB_KEY_NAME = "finnhub_key"
+_JEV_API_KEY_NAME = "jev_api_key"
 _WITNESS_S3_ACCESS_KEY_NAME = "witness_s3_access_key_id"
 _WITNESS_S3_SECRET_KEY_NAME = "witness_s3_secret_access_key"
 
