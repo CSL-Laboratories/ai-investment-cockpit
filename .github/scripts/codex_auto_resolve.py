@@ -60,6 +60,9 @@ THREAD_COMMENT_EXTRA_PAGES = 100
 # Review-thread connection pages (50 threads each). Remaining truncation
 # aborts the PR scan; omitted threads are global verdict sources.
 REVIEW_THREAD_PAGES = 100
+# Open-PR listing pages (50 PRs each). Remaining truncation logs and
+# continues with the PRs already fetched; omitted PRs stay unresolved.
+OPEN_PR_PAGES = 10
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
@@ -995,20 +998,29 @@ def list_open_prs(gh: GitHub, cfg: Config) -> list[dict[str, Any]]:
         return [{"number": int(cfg.pr_number)}]
     found: list[dict[str, Any]] = []
     after = None
-    for _ in range(10):
+    cursors: set[str] = set()
+    truncated = True
+    for _ in range(OPEN_PR_PAGES):
         data = gh.graphql(
             GITHUB_GRAPHQL_PRS,
             {"owner": cfg.owner, "name": cfg.name, "after": after},
             token=cfg.github_token,
         )
         conn = ((data.get("repository") or {}).get("pullRequests")) or {}
-        for node in conn.get("nodes") or []:
-            if isinstance(node, dict):
-                found.append(node)
+        nodes = conn.get("nodes")
+        if not isinstance(nodes, list) or not all(isinstance(n, dict) for n in nodes):
+            break
+        found.extend(nodes)
         page = conn.get("pageInfo") or {}
-        if not page.get("hasNextPage"):
+        if page.get("hasNextPage") is False:
+            truncated = False
             break
         after = page.get("endCursor")
+        if page.get("hasNextPage") is not True or not isinstance(after, str) or not after or after in cursors:
+            break
+        cursors.add(after)
+    if truncated:
+        print("codex-auto-resolve: skip=truncated-open-prs")
     return found
 
 

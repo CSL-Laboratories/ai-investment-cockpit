@@ -2190,6 +2190,51 @@ def test_forged_resolved_markers_do_not_burn_daily_cap():
     assert any("resolve=posted" in line for line in logs)
 
 
+class _PagingOpenPrs:
+    def __init__(self, pages: list[dict]) -> None:
+        self.pages = list(pages)
+        self.calls = 0
+
+    def graphql(self, query, variables, token=None):
+        del query, variables, token
+        self.calls += 1
+        return {"repository": {"pullRequests": self.pages.pop(0)}}
+
+
+def test_list_open_prs_logs_when_page_cap_remains_truncated(capsys):
+    pages = [
+        {
+            "nodes": [{"number": i + 1}],
+            "pageInfo": {"hasNextPage": True, "endCursor": f"p{i + 1}"},
+        }
+        for i in range(mod.OPEN_PR_PAGES)
+    ]
+    gh = _PagingOpenPrs(pages)
+    prs = mod.list_open_prs(gh, cfg(pr_number=""))
+    assert gh.calls == mod.OPEN_PR_PAGES
+    assert [p["number"] for p in prs] == list(range(1, mod.OPEN_PR_PAGES + 1))
+    assert "skip=truncated-open-prs" in capsys.readouterr().out
+
+
+def test_list_open_prs_missing_cursor_does_not_reread_page_one(capsys):
+    gh = _PagingOpenPrs(
+        [
+            {
+                "nodes": [{"number": 1}, {"number": 2}],
+                "pageInfo": {"hasNextPage": True, "endCursor": None},
+            },
+            {
+                "nodes": [{"number": 1}, {"number": 2}],
+                "pageInfo": {"hasNextPage": False},
+            },
+        ]
+    )
+    prs = mod.list_open_prs(gh, cfg(pr_number=""))
+    assert gh.calls == 1
+    assert [p["number"] for p in prs] == [1, 2]
+    assert "skip=truncated-open-prs" in capsys.readouterr().out
+
+
 def test_run_wide_cap_is_shared_across_prs():
     gh = FakeGitHub()
     for number, tid in ((12, THREAD), (13, THREAD2)):
