@@ -619,12 +619,16 @@ def test_retry_mark_uses_newer_thread_cite_over_older_issue_cite():
     t = thread(
         resolved=True,
         resolved_by=PAT_LOGIN,
-        comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW)],
+        comments=[
+            comment(CODEX, verdict_body(sha=SHA2)),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA2), NOW),
+        ],
     )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
     reason, verdict = mod.classify_thread(
         t,
         head_sha=SHA2,
-        latest={},
+        latest=latest,
         issue_comments=[
             comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), NOW - timedelta(hours=2))
         ],
@@ -654,6 +658,33 @@ def test_retry_mark_newer_issue_cite_beats_older_thread_cite():
     )
     assert reason == "retry-mark"
     assert verdict is not None and verdict.sha == SHA2
+
+
+def test_classify_retry_mark_requires_resolve_for_cite_sha():
+    t = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[
+            comment(CODEX, verdict_body("DECIDE")),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+        ],
+    )
+    latest = mod.latest_verdicts(mod.thread_comments(t))
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "decide"
+    assert verdict is not None and verdict.verdict == "DECIDE"
+
+    missing = thread(
+        resolved=True,
+        resolved_by=PAT_LOGIN,
+        comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
+    )
+    reason, _ = mod.classify_thread(
+        missing, head_sha=SHA, latest={}, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "no-verdict"
 
 
 def test_human_resolve_after_cite_does_not_retry_mark():
@@ -3133,6 +3164,39 @@ def test_retry_mark_human_skip_uses_cite_sha_not_head():
         ],
     )
     assert mod.resolved_count_today([skipped], [], NOW, PAT_LOGIN, head_sha=SHA2) == 0
+
+
+def test_retry_mark_does_not_publish_when_live_verdict_is_decide():
+    gh = ready_gh(
+        threads=[
+            thread(
+                resolved=True,
+                resolved_by=PAT_LOGIN,
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ],
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["comments"]["nodes"] = [
+                comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+                comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            ]
+        if "reviews(first: 100, after: $after)" in query:
+            gh.reviews[12] = [comment(CODEX, verdict_body("DECIDE"))]
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.issue_posts == []
+    assert any("skip=decide" in line for line in logs)
+    assert not any("retry-mark=posted" in line for line in logs)
 
 
 def test_retry_mark_does_not_claim_after_cite_removed():

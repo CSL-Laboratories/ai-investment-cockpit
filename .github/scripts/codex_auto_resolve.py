@@ -1542,6 +1542,11 @@ def classify_thread(
         ):
             return "already-resolved", None
         if pat_login and login_matches(resolved_by_login(thread), pat_login) and cite_sha:
+            stamped = latest.get((thread_id, cite_sha))
+            if stamped is None:
+                return "no-verdict", None
+            if stamped.verdict.verdict != "RESOLVE":
+                return stamped.verdict.verdict.lower(), stamped.verdict
             return "retry-mark", ThreadVerdict(thread_id, cite_sha, "RESOLVE")
         return "already-resolved", None
     if already_resolved_on_sha(comments, thread_id, head_sha, actor_login=pat_login):
