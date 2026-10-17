@@ -13,67 +13,120 @@
       "id": "invariant_1_single_order_path",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/tests/test_invariants.py"
+      "test_locators": [
+        "app/tests/test_invariants.py::test_invariant_1_order_calls_only_in_brokers",
+        "app/tests/brokers/test_gateway.py::test_b_mode_without_order_authority_refuses",
+        "app/tests/brokers/test_gateway.py::test_d_toctou_risk_flip_to_fail_voids_and_records_bypass",
+        "app/tests/brokers/test_gateway.py::test_e_consumed_approval_replay_refused",
+        "app/tests/brokers/test_gateway.py::test_g_no_token_refuses_at_capability",
+        "app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected"
+      ]
     },
     {
       "id": "invariant_2_decision_pinned_in_auto_modes",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/orchestrator/mode_ladder.py"
+      "test_locators": [
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_arm_refuses_non_claude_decision_stage_explicit",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm",
+        "app/tests/brokers/test_gateway.py::test_f_auto_mode_non_claude_runtime_refused"
+      ]
     },
     {
       "id": "invariant_3_schema_validate_model_output",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/workflows/schema_loader.py"
+      "test_locators": [
+        "app/tests/agent_runner/test_runner.py::test_decision_job_requires_schema",
+        "app/tests/agent_runner/test_runner.py::test_repair_success",
+        "app/tests/workflows/test_agent_calls.py::test_still_malformed_output_quarantines_job"
+      ]
     },
     {
       "id": "invariant_4_secrets_os_credential_store",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/core/secrets.py"
+      "test_locators": [
+        "app/tests/test_wp0.py::test_secret_roundtrip_via_keyring",
+        "app/tests/test_invariants.py::test_invariant_4_no_plaintext_secrets_in_app_or_operator_tools",
+        "app/tests/workflows/test_agent_calls.py::test_provisioned_secret_in_the_prompt_is_refused",
+        "app/tests/system/test_secrets_in_logs.py::test_g9_no_secrets_or_pii_in_logs"
+      ]
     },
     {
       "id": "invariant_5_risk_pure",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/risk/engine.py"
+      "test_locators": [
+        "app/tests/test_invariants.py::test_invariant_5_risk_engine_has_no_llm",
+        "app/tests/test_invariants.py::test_the_risk_engine_itself_did_not_acquire_an_impure_import",
+        "app/tests/test_invariants.py::test_the_execution_verifier_stays_pure_because_risk_imports_it"
+      ]
     },
     {
       "id": "invariant_6_human_gate_hash_chain_audit",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/storage/audit.py"
+      "test_locators": [
+        "app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected",
+        "app/tests/storage/test_audit.py::test_append_and_verify",
+        "app/tests/storage/test_audit.py::test_tamper_is_detected",
+        "app/tests/storage/test_audit.py::test_truncation_detected_by_watermark",
+        "app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state"
+      ]
     },
     {
       "id": "invariant_7_fail_closed",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/orchestrator/breakers.py"
+      "test_locators": [
+        "app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged",
+        "app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live",
+        "app/tests/brokers/test_gateway.py::test_b_watch_only_refuses",
+        "app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker"
+      ]
     },
     {
       "id": "invariant_8_raw_inputs_separate_from_summaries",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/filings/raw_store.py"
+      "test_locators": [
+        "app/tests/workflows/test_rw23_raw_news.py::test_long_original_news_is_recoverable_without_entering_prompt",
+        "app/tests/ingest/test_characterization.py::test_evidence_writer_separates_raw_and_summary_and_hash_binds_them"
+      ]
     },
     {
       "id": "invariant_9_post_pdt",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/risk/engine.py"
+      "test_locators": [
+        "app/tests/test_o8_floor_regressions.py::test_post_pdt_reg_t_exact_equity_boundary",
+        "app/tests/test_o8_floor_regressions.py::test_post_pdt_has_no_day_trade_counter_gate"
+      ]
     },
     {
       "id": "fail_closed",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/orchestrator/breakers.py"
+      "test_locators": [
+        "app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged",
+        "app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live",
+        "app/tests/brokers/test_gateway.py::test_b_watch_only_refuses",
+        "app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker"
+      ]
     },
     {
       "id": "hash_chain_audit",
       "enforced_by": "tests",
       "benchmark_eligible": false,
-      "test_locator": "app/storage/audit.py"
+      "test_locators": [
+        "app/tests/storage/test_audit.py::test_append_and_verify",
+        "app/tests/storage/test_audit.py::test_tamper_is_detected",
+        "app/tests/storage/test_audit.py::test_truncation_detected_by_watermark",
+        "app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state"
+      ]
     }
   ],
   "candidate_id": "validator-only-synthetic",
@@ -141,8 +194,8 @@
     "status": "measured"
   },
   "candidate": {
-    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/candidate.json",
-    "sha256": "5070d643b167ffb8201cf7267722fd724f184a52fcf746eb48c7eb62ad656b29"
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/candidate-test-cases.json",
+    "sha256": "ac4bbbb8d09e24dae891d85d3a03c4573e1ecc4a5eac784e0c7aba2a13611637"
   },
   "configuration": {
     "batch_size": 1

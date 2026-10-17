@@ -8,6 +8,7 @@ or select a language, storage layout, or topology.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import math
@@ -68,17 +69,70 @@ FLOOR_IDS = (
     "hash_chain_audit",
 )
 FLOOR_LOCATORS = {
-    "invariant_1_single_order_path": "app/tests/test_invariants.py",
-    "invariant_2_decision_pinned_in_auto_modes": "app/orchestrator/mode_ladder.py",
-    "invariant_3_schema_validate_model_output": "app/workflows/schema_loader.py",
-    "invariant_4_secrets_os_credential_store": "app/core/secrets.py",
-    "invariant_5_risk_pure": "app/risk/engine.py",
-    "invariant_6_human_gate_hash_chain_audit": "app/storage/audit.py",
-    "invariant_7_fail_closed": "app/orchestrator/breakers.py",
-    "invariant_8_raw_inputs_separate_from_summaries": "app/filings/raw_store.py",
-    "invariant_9_post_pdt": "app/risk/engine.py",
-    "fail_closed": "app/orchestrator/breakers.py",
-    "hash_chain_audit": "app/storage/audit.py",
+    "invariant_1_single_order_path": [
+        "app/tests/test_invariants.py::test_invariant_1_order_calls_only_in_brokers",
+        "app/tests/brokers/test_gateway.py::test_b_mode_without_order_authority_refuses",
+        "app/tests/brokers/test_gateway.py::test_d_toctou_risk_flip_to_fail_voids_and_records_bypass",
+        "app/tests/brokers/test_gateway.py::test_e_consumed_approval_replay_refused",
+        "app/tests/brokers/test_gateway.py::test_g_no_token_refuses_at_capability",
+        "app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected"
+    ],
+    "invariant_2_decision_pinned_in_auto_modes": [
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_arm_refuses_non_claude_decision_stage_explicit",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm",
+        "app/tests/brokers/test_gateway.py::test_f_auto_mode_non_claude_runtime_refused"
+    ],
+    "invariant_3_schema_validate_model_output": [
+        "app/tests/agent_runner/test_runner.py::test_decision_job_requires_schema",
+        "app/tests/agent_runner/test_runner.py::test_repair_success",
+        "app/tests/workflows/test_agent_calls.py::test_still_malformed_output_quarantines_job"
+    ],
+    "invariant_4_secrets_os_credential_store": [
+        "app/tests/test_wp0.py::test_secret_roundtrip_via_keyring",
+        "app/tests/test_invariants.py::test_invariant_4_no_plaintext_secrets_in_app_or_operator_tools",
+        "app/tests/workflows/test_agent_calls.py::test_provisioned_secret_in_the_prompt_is_refused",
+        "app/tests/system/test_secrets_in_logs.py::test_g9_no_secrets_or_pii_in_logs"
+    ],
+    "invariant_5_risk_pure": [
+        "app/tests/test_invariants.py::test_invariant_5_risk_engine_has_no_llm",
+        "app/tests/test_invariants.py::test_the_risk_engine_itself_did_not_acquire_an_impure_import",
+        "app/tests/test_invariants.py::test_the_execution_verifier_stays_pure_because_risk_imports_it"
+    ],
+    "invariant_6_human_gate_hash_chain_audit": [
+        "app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected",
+        "app/tests/storage/test_audit.py::test_append_and_verify",
+        "app/tests/storage/test_audit.py::test_tamper_is_detected",
+        "app/tests/storage/test_audit.py::test_truncation_detected_by_watermark",
+        "app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state"
+    ],
+    "invariant_7_fail_closed": [
+        "app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged",
+        "app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live",
+        "app/tests/brokers/test_gateway.py::test_b_watch_only_refuses",
+        "app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker"
+    ],
+    "invariant_8_raw_inputs_separate_from_summaries": [
+        "app/tests/workflows/test_rw23_raw_news.py::test_long_original_news_is_recoverable_without_entering_prompt",
+        "app/tests/ingest/test_characterization.py::test_evidence_writer_separates_raw_and_summary_and_hash_binds_them"
+    ],
+    "invariant_9_post_pdt": [
+        "app/tests/test_o8_floor_regressions.py::test_post_pdt_reg_t_exact_equity_boundary",
+        "app/tests/test_o8_floor_regressions.py::test_post_pdt_has_no_day_trade_counter_gate"
+    ],
+    "fail_closed": [
+        "app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged",
+        "app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only",
+        "app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live",
+        "app/tests/brokers/test_gateway.py::test_b_watch_only_refuses",
+        "app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker"
+    ],
+    "hash_chain_audit": [
+        "app/tests/storage/test_audit.py::test_append_and_verify",
+        "app/tests/storage/test_audit.py::test_tamper_is_detected",
+        "app/tests/storage/test_audit.py::test_truncation_detected_by_watermark",
+        "app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state"
+    ]
 }
 WORKLOAD_IDS = (
     "ingest_to_raw_store",
@@ -300,6 +354,56 @@ def _local_path_exists(locator: str) -> bool:
         return True
     resolved = _resolve_local_path(locator)
     return resolved is not None and _safe_exists(resolved)
+
+
+def _test_locator_exists(locator: Any) -> bool:
+    """Resolve a registered pytest function selector without importing test code.
+
+    The bounded grammar selects a top-level test function and all of its
+    parameter cases. Collection and execution are separate validation steps;
+    source existence is never a passing test result.
+    """
+    if not isinstance(locator, str) or locator.count("::") != 1:
+        return False
+    relative, name = locator.split("::")
+    path = PurePosixPath(relative)
+    if (
+        not relative.startswith("app/tests/")
+        or path.as_posix() != relative
+        or ".." in path.parts
+        or not path.name.startswith("test_")
+        or path.suffix != ".py"
+        or not name.startswith("test_")
+        or not name.isidentifier()
+    ):
+        return False
+    resolved = _resolve_local_path(relative)
+    # No symlink/junction aliases: a locator names the actual in-repository test.
+    if resolved is None or resolved != ROOT / relative:
+        return False
+    raw = _read_regular_file(resolved)
+    if raw is None:
+        return False
+    try:
+        tree = ast.parse(raw.decode("utf-8"), filename=relative)
+    except (UnicodeError, SyntaxError, ValueError, RecursionError):
+        return False
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+        for node in tree.body
+    )
+
+
+def _floor_locators_valid(floor: dict[str, Any]) -> bool:
+    floor_id = floor.get("id")
+    if not isinstance(floor_id, str):
+        return False
+    expected = FLOOR_LOCATORS.get(floor_id)
+    return (
+        expected is not None
+        and floor.get("test_locators") == expected
+        and all(_test_locator_exists(locator) for locator in expected)
+    )
 
 
 def _is_finite_nonneg(value: Any) -> bool:
@@ -587,7 +691,7 @@ def _floor_results_bound(document: dict[str, Any]) -> bool:
         floor_id = item.get("id")
         if not isinstance(floor_id, str) or floor_id not in FLOOR_LOCATORS or floor_id in found:
             return False
-        if item.get("outcome") != "pass" or item.get("test_locator") != FLOOR_LOCATORS[floor_id]:
+        if item.get("outcome") != "pass" or not _floor_locators_valid(item):
             return False
         found[floor_id] = True
     return set(found) == set(FLOOR_IDS)
@@ -685,8 +789,7 @@ def candidate_reasons(document: Any) -> list[str]:
                 break
         for floor in floors:
             if isinstance(floor, dict) and (
-                floor.get("test_locator") != FLOOR_LOCATORS.get(floor.get("id"))
-                or not _local_path_exists(str(floor.get("test_locator")))
+                not _floor_locators_valid(floor)
             ):
                 reasons.append("candidate missing floors")
                 break
@@ -736,10 +839,12 @@ def _check_floors(floors: Any, reasons: list[str], label: str = "candidate missi
             reasons.append(label)
             return
         expected = FLOOR_LOCATORS.get(floor.get("id"))
-        if floor.get("test_locator") != expected:
+        if floor.get("test_locators") != expected:
             reasons.append(f"floor locator drift: {floor.get('id')}")
         elif expected is not None:
-            _require_local(reasons, expected, "floor test")
+            for locator in expected:
+                if not _test_locator_exists(locator):
+                    reasons.append(f"missing floor test case: {locator}")
 
 
 def validate_packet(document: Any) -> None:

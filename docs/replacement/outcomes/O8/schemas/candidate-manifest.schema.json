@@ -80,7 +80,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "enforced_by", "benchmark_eligible", "test_locator"],
+        "required": ["id", "enforced_by", "benchmark_eligible", "test_locators"],
         "properties": {
           "id": {
             "enum": [
@@ -99,7 +99,7 @@
           },
           "enforced_by": {"const": "tests"},
           "benchmark_eligible": {"const": false},
-          "test_locator": {"type": "string", "minLength": 1}
+          "test_locators": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^app/tests/(?:[A-Za-z0-9_]+/)*test_[A-Za-z0-9_]+\\.py::test_[A-Za-z0-9_]+$"}}
         }
       },
       "allOf": [

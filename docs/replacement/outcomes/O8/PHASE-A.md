@@ -60,19 +60,47 @@ Rows are `retain`, `measure`, `rework`, `replace`, or `undecided`. Nothing is `r
 
 Floors are enforced by tests. `benchmark_eligible` is false on every floor. A candidate that omits a floor, or that moves a floor into a benchmark, is rejected.
 
-| Floor | Test locator |
+Lucas authorized this bounded locator amendment in nine-item decision-list item 5;
+the attributed coordination record is [CSL-220](https://linear.app/csl-laboratories/issue/CSL-220#comment-6ca1c352-7b09-4e4d-af89-4dae647e9024).
+It preserves every floor and does not constitute exact-digest contract acceptance.
+Each floor now carries `test_locators`, the complete ordered array below, instead
+of a production-module `test_locator`. Candidate, packet, attached-floor and
+receipt validation require the registered array and resolve every named top-level
+test function in a repository-contained `app/tests/**/test_*.py` file. Production
+files, directories, URLs, escapes, file-only references, missing functions and
+partial/duplicate selections are rejected. Validation parses source without
+importing or executing tests. Pytest must independently collect and run the listed
+selectors; a parameterized function selects all its cases.
+
+Run a listed selector from the repository root with
+`python -m pytest -q app/tests/path/test_module.py::test_function`, passing all
+selectors required by a floor as separate arguments. The real test command,
+exact candidate and actual results still belong in independently retained evidence.
+The amended synthetic controls use `*-test-cases.json`; the old synthetic
+candidate and floor receipts remain byte-for-byte historical controls and do not
+validate as current floor evidence. No receipt is retroactively promoted.
+
+**Coverage limitation:** the timeout selector proves an agent timeout enters
+`watch_only`; the out-of-band HALT selector proves the next submit is refused.
+Neither proves automatic detection of a hung orchestrator. No heartbeat-expiry
+implementation/test was found in this inspected tree. The invariant's hung
+orchestrator requirement remains binding and unqualified; this amendment does
+not implement a watchdog, declare the whole floor complete, or permit a PASS.
+The follow-up remains in [CSL-312](https://linear.app/csl-laboratories/issue/CSL-312).
+
+| Floor | Required pytest function selectors (all parameter cases) |
 | --- | --- |
-| invariant_1_single_order_path | `app/tests/test_invariants.py` |
-| invariant_2_decision_pinned_in_auto_modes | `app/orchestrator/mode_ladder.py` (`arm_auto_mode` refuses a non-Claude decision runtime) |
-| invariant_3_schema_validate_model_output | `app/workflows/schema_loader.py` |
-| invariant_4_secrets_os_credential_store | `app/core/secrets.py` |
-| invariant_5_risk_pure | `app/risk/engine.py` |
-| invariant_6_human_gate_hash_chain_audit | `app/storage/audit.py` |
-| invariant_7_fail_closed | `app/orchestrator/breakers.py` |
-| invariant_8_raw_inputs_separate_from_summaries | `app/filings/raw_store.py` |
-| invariant_9_post_pdt | `app/risk/engine.py` (`REG_T_MIN_EQUITY` is 2000; no day-trade count) |
-| fail_closed | `app/orchestrator/breakers.py` |
-| hash_chain_audit | `app/storage/audit.py` |
+| invariant_1_single_order_path | `app/tests/test_invariants.py::test_invariant_1_order_calls_only_in_brokers`<br>`app/tests/brokers/test_gateway.py::test_b_mode_without_order_authority_refuses`<br>`app/tests/brokers/test_gateway.py::test_d_toctou_risk_flip_to_fail_voids_and_records_bypass`<br>`app/tests/brokers/test_gateway.py::test_e_consumed_approval_replay_refused`<br>`app/tests/brokers/test_gateway.py::test_g_no_token_refuses_at_capability`<br>`app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected` |
+| invariant_2_decision_pinned_in_auto_modes | `app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_arm_refuses_non_claude_decision_stage_explicit`<br>`app/tests/orchestrator/test_g5_acceptance.py::test_g5_3_sec08_execution_runtime_refused_even_after_valid_arm`<br>`app/tests/brokers/test_gateway.py::test_f_auto_mode_non_claude_runtime_refused` |
+| invariant_3_schema_validate_model_output | `app/tests/agent_runner/test_runner.py::test_decision_job_requires_schema`<br>`app/tests/agent_runner/test_runner.py::test_repair_success`<br>`app/tests/workflows/test_agent_calls.py::test_still_malformed_output_quarantines_job` |
+| invariant_4_secrets_os_credential_store | `app/tests/test_wp0.py::test_secret_roundtrip_via_keyring`<br>`app/tests/test_invariants.py::test_invariant_4_no_plaintext_secrets_in_app_or_operator_tools`<br>`app/tests/workflows/test_agent_calls.py::test_provisioned_secret_in_the_prompt_is_refused`<br>`app/tests/system/test_secrets_in_logs.py::test_g9_no_secrets_or_pii_in_logs` |
+| invariant_5_risk_pure | `app/tests/test_invariants.py::test_invariant_5_risk_engine_has_no_llm`<br>`app/tests/test_invariants.py::test_the_risk_engine_itself_did_not_acquire_an_impure_import`<br>`app/tests/test_invariants.py::test_the_execution_verifier_stays_pure_because_risk_imports_it` |
+| invariant_6_human_gate_hash_chain_audit | `app/tests/system/test_forged_interaction.py::test_g9_forged_interaction_is_rejected`<br>`app/tests/storage/test_audit.py::test_append_and_verify`<br>`app/tests/storage/test_audit.py::test_tamper_is_detected`<br>`app/tests/storage/test_audit.py::test_truncation_detected_by_watermark`<br>`app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state` |
+| invariant_7_fail_closed | `app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged`<br>`app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only`<br>`app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live`<br>`app/tests/brokers/test_gateway.py::test_b_watch_only_refuses`<br>`app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker` |
+| invariant_8_raw_inputs_separate_from_summaries | `app/tests/workflows/test_rw23_raw_news.py::test_long_original_news_is_recoverable_without_entering_prompt`<br>`app/tests/ingest/test_characterization.py::test_evidence_writer_separates_raw_and_summary_and_hash_binds_them` |
+| invariant_9_post_pdt | `app/tests/test_o8_floor_regressions.py::test_post_pdt_reg_t_exact_equity_boundary`<br>`app/tests/test_o8_floor_regressions.py::test_post_pdt_has_no_day_trade_counter_gate` |
+| fail_closed | `app/tests/workflows/test_agent_calls.py::test_limit_hit_enters_watch_only_once_and_mode_unchanged`<br>`app/tests/workflows/test_agent_calls.py::test_timeout_enters_watch_only`<br>`app/tests/orchestrator/test_g5_acceptance.py::test_g5_4_stale_market_data_goes_watch_only_not_review_live`<br>`app/tests/brokers/test_gateway.py::test_b_watch_only_refuses`<br>`app/tests/orchestrator/test_oob_kill.py::test_out_of_band_cli_set_refuses_next_submit_before_broker` |
+| hash_chain_audit | `app/tests/storage/test_audit.py::test_append_and_verify`<br>`app/tests/storage/test_audit.py::test_tamper_is_detected`<br>`app/tests/storage/test_audit.py::test_truncation_detected_by_watermark`<br>`app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state` |
 
 `fail_closed` and `hash_chain_audit` repeat invariants 7 and 6 under the names this outcome uses, so a candidate cannot drop them by renaming.
 

@@ -12,3 +12,8 @@ controls. `unbound-fixture-baseline.json` deliberately repeats an invented fixtu
 digest; `baseline-units-mismatched.json` deliberately uses the wrong throughput
 unit. Their references carry the actual SHA-256 of these control files so a failed
 digest check cannot mask the intended semantic failure.
+
+The original `candidate.json` and `floor-results*.json` receipts are retained
+unchanged as historical synthetic controls. The new `*-test-cases.json` copies
+bind the amended explicit test selectors; `benchmark.json` and current negative
+controls reference those copies. They still describe no real run.
