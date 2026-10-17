@@ -254,6 +254,15 @@ REQUIRED_JOURNEYS = (
 )
 CATALOG_ROOT_FIELDS = ("api_version", "commands", "framework_selected", "maturity", "order_commands")
 CATALOG_COMMAND_FIELDS = ("effect", "journey", "name", "required_result_fields")
+GATE_AUTHORITY_FIELDS = (
+    "enforcement_route",
+    "local_control_implies_account_wide",
+    "o6_fragment",
+    "o6_fragment_digest",
+    "o6_outcome_artifact",
+    "surface_order_path",
+    "widens_o6_authority",
+)
 REQUIRED_COMMANDS = {
     "operator.audit.export": {
         "journey": "audit",
@@ -1928,7 +1937,9 @@ def _check_supporting_documents(root: Path, commands: dict[str, dict[str, Any]])
         raise ContractError("validator is marked networked")
     if automation.get("stable_exit_codes") != EXIT_CODES:
         raise ContractError("exit-code map drifted")
-    authority = gates.get("authority") if isinstance(gates.get("authority"), dict) else {}
+    authority = gates.get("authority")
+    if not isinstance(authority, dict) or set(authority) != set(GATE_AUTHORITY_FIELDS):
+        raise ContractError("authority gate accepts an extra field")
     if authority.get("enforcement_route") != SOLE_ROUTE or authority.get("surface_order_path") != "none":
         raise ContractError("authority gate widened the order path")
     if authority.get("widens_o6_authority") is not False or authority.get("local_control_implies_account_wide") is not False:

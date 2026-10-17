@@ -1421,6 +1421,20 @@ def test_catalog_root_stays_closed(tmp_path: Path) -> None:
     assert "catalog root accepts an extra field" in stderr
 
 
+def test_authority_gate_stays_closed(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    gates_path = copied / "gates.json"
+    gates = json.loads(gates_path.read_text(encoding="utf-8"))
+    gates["authority"]["order_commands"] = ["operator.orders.submit"]
+    gates_path.write_text(json.dumps(gates, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "gates.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "authority gate accepts an extra field" in stderr
+
+
 def test_error_color_only_stays_false(tmp_path: Path) -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     error_schema = json.loads((root / "schemas" / "operator-error.schema.json").read_text(encoding="utf-8"))
