@@ -7,9 +7,11 @@
 
 #![forbid(unsafe_code)]
 
+mod admission;
 mod json;
 mod normalize;
 
+pub use admission::{token_bucket_allow, Dedup};
 pub use json::{content_hash, dumps, Json};
 pub use normalize::{
     escape_untrusted, market_event, source_allowlisted, EventParts, MAX_LEN, MAX_SYMBOLS,
