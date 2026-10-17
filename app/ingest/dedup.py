@@ -67,6 +67,13 @@ def _core_key(key: str) -> str:
     return "\x00" + key.encode("utf-32", "surrogatepass").hex()
 
 
+def _decode_core_key(stored: str) -> str:
+    """Inverse of ``_core_key``. A pass-through key is stored unchanged."""
+    if not stored.startswith("\x00"):
+        return stored
+    return bytes.fromhex(stored[1:]).decode("utf-32", "surrogatepass")
+
+
 def _rebuild_core(capacity, keys):
     """A fresh extension map for ``keys``, or None when it cannot hold them.
 
