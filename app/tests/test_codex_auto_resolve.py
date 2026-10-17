@@ -1900,6 +1900,23 @@ def test_classify_empty_thread_is_human_root():
     assert reason == "human-root"
 
 
+def test_classify_human_pat_owner_root_is_human_root():
+    t = thread(
+        comments=[
+            comment("NotSkittlz", "REQUEST_CHANGES: still needs a human decision"),
+            comment(CODEX, verdict_body()),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t,
+        head_sha=SHA,
+        latest=_latest_from_thread(t),
+        issue_comments=[],
+        pat_login="NotSkittlz",
+    )
+    assert reason == "human-root"
+
+
 def test_classify_devin_root_can_resolve():
     t = thread(
         comments=[

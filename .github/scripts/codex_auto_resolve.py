@@ -332,11 +332,14 @@ def is_bot_login(login: str) -> bool:
     return name.lower().endswith("[bot]") or is_codex(name)
 
 
-def thread_root_is_human(thread: dict[str, Any], pat_login: str = "") -> bool:
+def thread_root_is_human(thread: dict[str, Any]) -> bool:
     """True when the thread was opened by a human, or the root cannot be read.
 
     GraphQL ``comments(first: ...)`` is chronological, so node 0 is the root.
     An empty thread or a root with no login fails closed (do not auto-resolve).
+    The PAT login is not treated as a bot here: ``CODEX_TRIGGER_PAT`` may be a
+    human founder's account, and that person's own review threads must stay
+    on the needs-decision path.
     """
     comments = thread_comments(thread)
     if not comments:
@@ -344,9 +347,7 @@ def thread_root_is_human(thread: dict[str, Any], pat_login: str = "") -> bool:
     login = login_of(comments[0])
     if not login:
         return True
-    if is_bot_login(login) or login_matches(login, pat_login):
-        return False
-    return True
+    return not is_bot_login(login)
 
 
 def is_trusted_human(comment: dict[str, Any], pat_login: str = "") -> bool:
@@ -1383,7 +1384,7 @@ def classify_thread(
         return "no-verdict", None
     if stamped.verdict.verdict != "RESOLVE":
         return stamped.verdict.verdict.lower(), stamped.verdict
-    if thread_root_is_human(thread, pat_login):
+    if thread_root_is_human(thread):
         return "human-root", stamped.verdict
     comments = thread_comments(thread)
     if later_human_veto(comments, stamped.when, pat_login):
