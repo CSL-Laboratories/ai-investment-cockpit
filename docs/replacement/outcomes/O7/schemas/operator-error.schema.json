@@ -10,5 +10,11 @@
     "message": {"type": "string", "minLength": 1},
     "recovery": {"type": "string", "minLength": 1},
     "color_only": {"const": false}
-  }
+  },
+  "allOf": [
+    {"if": {"properties": {"code": {"const": "usage"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "usage"}}}},
+    {"if": {"properties": {"code": {"const": "refused"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "refused"}}}},
+    {"if": {"properties": {"code": {"const": "stale_or_unreconciled"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "stale_or_unreconciled"}}}},
+    {"if": {"properties": {"code": {"const": "unavailable"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "unavailable"}}}}
+  ]
 }

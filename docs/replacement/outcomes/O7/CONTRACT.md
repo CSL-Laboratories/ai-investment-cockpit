@@ -79,7 +79,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`.
 
-Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error has a text message, a recovery step, and `color_only=false`.
+Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation.
 
 ### Status and exit codes
 

@@ -216,7 +216,13 @@
           "message": {"type": "string", "minLength": 1},
           "recovery": {"type": "string", "minLength": 1},
           "color_only": {"const": false}
-        }
+        },
+        "allOf": [
+          {"if": {"properties": {"code": {"const": "usage"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "usage"}}}},
+          {"if": {"properties": {"code": {"const": "refused"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "refused"}}}},
+          {"if": {"properties": {"code": {"const": "stale_or_unreconciled"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "stale_or_unreconciled"}}}},
+          {"if": {"properties": {"code": {"const": "unavailable"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "unavailable"}}}}
+        ]
       }
     },
     "presentation": {
@@ -247,9 +253,9 @@
     {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
     {"if": {"properties": {"command": {"const": "operator.export.bundle"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
     {"if": {"properties": {"command": {"const": "operator.health.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}}}}},
     {"if": {"properties": {"command": {"const": "operator.positions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
     {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
     {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},

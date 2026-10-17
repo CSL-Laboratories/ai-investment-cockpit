@@ -122,7 +122,7 @@
     },
     {
       "path": "schemas/operator-error.schema.json",
-      "sha256": "404ecce4f3f1c8f38c5b32f53d4be0b591a939becd5273a6fa4efa530a4730cc",
+      "sha256": "f73ef041e8febb0e13bcdd0f45c31eee2aed77ce910e473f62cd442918970c54",
       "role": "pinned"
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "path": "schemas/operator-response.schema.json",
-      "sha256": "1fda5f2f743e9e3afbd652f9121a276f2237b04d3d4efcaafe3ace56c1e3d4f1",
+      "sha256": "5a4a716d56175d29c5cad21a636e4c8995d28048b33a3d169d35ec554d1aa9e6",
       "role": "pinned"
     },
     {

@@ -266,6 +266,9 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     expected_effect = "intervention_request" if doc.get("command") in INTERVENTION_NAMES else "none"
     if doc.get("authority_effect") != expected_effect:
         return "authority_effect_mismatch"
+    expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
+    if expected_intervention is not None and result.get("intervention") != expected_intervention:
+        return "intervention_mismatch"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
@@ -696,6 +699,8 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle events are incomplete")
     for error in kinds["errors"].get("errors", []):
         _require_schema(error_validator, error, "oracle error catalog")
+        if error.get("code") != error.get("status_code"):
+            raise ContractError("oracle error code does not match its status")
     if {item["code"] for item in kinds["errors"].get("errors", [])} != set(EXIT_CODES) - {"ok"}:
         raise ContractError("oracle errors do not cover the failure statuses")
 

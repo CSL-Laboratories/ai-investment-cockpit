@@ -267,6 +267,24 @@ def test_authority_effect_and_event_type_follow_the_command() -> None:
     assert CHECKER._event_error(mismatched) == "event type does not match the command"
 
 
+def test_error_codes_and_intervention_names_match() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    by_request, commands, response_validator = _candidate_documents()
+    stop = copy.deepcopy(by_request["req_stop"])
+    stop["result"]["intervention"] = "revocation"
+    assert CHECKER.classify_response(stop, commands) == "intervention_mismatch"
+    assert CHECKER._schema_error(response_validator, stop) is not None
+    error_schema = json.loads((root / "schemas" / "operator-error.schema.json").read_text(encoding="utf-8"))
+    error_validator = CHECKER._validator(error_schema)
+    errors = json.loads((root / "fixtures" / "oracle" / "errors.json").read_text(encoding="utf-8"))
+    for error in errors["errors"]:
+        assert error["code"] == error["status_code"]
+        assert CHECKER._schema_error(error_validator, error) is None
+    mismatched = copy.deepcopy(errors["errors"][0])
+    mismatched["status_code"] = "unavailable" if mismatched["code"] != "unavailable" else "refused"
+    assert CHECKER._schema_error(error_validator, mismatched) is not None
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)
