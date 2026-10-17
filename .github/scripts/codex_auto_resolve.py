@@ -49,7 +49,9 @@ SELF_CHECK_NAMES = frozenset({"codex auto-resolve", "resolve"})
 LINUX_GATES_NAMES = frozenset({"linux-gates"})
 # On retry-resolve GraphQL exceptions, refresh the PAT cite only when it is
 # missing or older than 20h. That still lands before the 24h cap window
-# closes, without posting a comment every 20-minute cron.
+# closes, without posting a comment every 20-minute cron. The 4h margin
+# holds only if cron actually runs in that gap; a stall longer than ~4h
+# can still let a retry cite age out of the 24h count.
 CITE_REFRESH_AGE = timedelta(hours=20)
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
@@ -1252,23 +1254,26 @@ def resolved_count_today(
 ) -> int:
     """Count unique PAT-attributed successful resolves in the last 24h.
 
-    A completed resolve is a ``(thread id, sha)`` pair from a PAT success
-    marker whose ``RESOLVED_AT`` falls in the window (new resolve / delayed
-    ``retry-resolve``), or a legacy marker whose comment time and matching
-    PAT cite both fall in the window. Marker retries copy the original cite
-    time into ``RESOLVED_AT`` so they do not consume a later day's cap.
-    Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt and the thread
-    is closed, or when the cite itself carries ``RESOLVED_AT``.     After a
-    human reopen, a receipt-failed PAT success still counts when
-    ``resolvedBy`` is the PAT and the cite is the unique in-window cite
-    for the current head (same-SHA reopen). An earlier SHA's unmarked
-    cite is not inferred from leftover ``resolvedBy`` — that would
-    count a failed first attempt beside a later receipt.
-    A PAT skip
-    marker hides that pair unless a later PAT cite is strictly newer, so
-    a retry-resolve success cannot be erased by an earlier human race.
-    Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
+    Counts:
+
+    * success marker whose ``RESOLVED_AT`` falls in the window (new resolve
+      or delayed ``retry-resolve``; marker retries copy the original cite
+      time so they do not consume a later day)
+    * legacy marker whose comment time and matching PAT cite both fall in
+      the window
+    * unmarked PAT cite with no receipt when the thread is closed
+    * open-thread cite that itself carries ``RESOLVED_AT``
+    * receipt-failed same-SHA reopen: PAT ``resolvedBy`` and the cite is
+      the unique in-window cite for the current head
+
+    Does not count:
+
+    * failed cites on still-open threads
+    * an earlier SHA's unmarked cite inferred from leftover ``resolvedBy``
+      (that would count a failed first attempt beside a later receipt)
+    * a PAT skip unless a later PAT cite is strictly newer (skip markers
+      are posted only for a confirmed non-PAT ``resolvedBy``)
+
     A missing resolver does not skip (fail closed). A failed skip post
     over-counts. Missing timestamps fail closed.
     """
