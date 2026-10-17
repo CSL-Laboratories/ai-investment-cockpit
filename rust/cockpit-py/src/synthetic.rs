@@ -53,6 +53,9 @@ fn synthetic_events(
 #[pyclass]
 struct SyntheticCursor {
     inner: SynthCursor,
+    /// A batch that already returned earlier events keeps the later failure
+    /// here. The next read raises it, so those events are not dropped.
+    pending_error: Option<String>,
 }
 
 #[pymethods]
@@ -66,22 +69,37 @@ impl SyntheticCursor {
     }
 
     fn next_batch(&mut self, limit: usize) -> PyResult<Vec<EventRow>> {
+        self.raise_pending()?;
         let mut out = Vec::new();
-        let cap = limit.max(1);
-        for _ in 0..cap {
-            match self.pull()? {
-                Some(row) => out.push(row),
-                None => break,
+        for _ in 0..limit {
+            match self.inner.next_event() {
+                Ok(Some(event)) => out.push(event_row(event)),
+                Ok(None) => break,
+                Err(err) => {
+                    if out.is_empty() {
+                        return Err(PyValueError::new_err(err.0));
+                    }
+                    self.pending_error = Some(err.0);
+                    break;
+                }
             }
         }
         Ok(out)
     }
 
     fn pull(&mut self) -> PyResult<Option<EventRow>> {
+        self.raise_pending()?;
         match self.inner.next_event() {
             Ok(Some(event)) => Ok(Some(event_row(event))),
             Ok(None) => Ok(None),
             Err(err) => Err(PyValueError::new_err(err.0)),
+        }
+    }
+
+    fn raise_pending(&mut self) -> PyResult<()> {
+        match &self.pending_error {
+            Some(err) => Err(PyValueError::new_err(err.clone())),
+            None => Ok(()),
         }
     }
 }
@@ -125,7 +143,10 @@ fn synthetic_cursor(
     };
     let inner = SynthCursor::open(&symbols, n_events, seed, &params)
         .map_err(|err| PyValueError::new_err(err.0))?;
-    Ok(SyntheticCursor { inner })
+    Ok(SyntheticCursor {
+        inner,
+        pending_error: None,
+    })
 }
 
 fn event_row(event: SynthEvent) -> EventRow {

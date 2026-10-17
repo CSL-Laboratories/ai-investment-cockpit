@@ -201,6 +201,53 @@ def test_rust_synthetic_matches_python_on_repeated_names_and_edges():
         list(nonfinite)
 
 
+def test_a_batch_keeps_events_that_preceded_an_error():
+    """A later overflow must not swallow events already drawn in that batch.
+
+    ``next_batch(0)`` also has to leave the cursor where it is. A zero limit
+    used to draw one event and shift every later read.
+    """
+    cockpit = pytest.importorskip("cockpit_quant")
+    if not hasattr(cockpit, "synthetic_cursor"):
+        pytest.skip("synthetic_cursor is not installed")
+
+    def open_cursor():
+        return cockpit.synthetic_cursor(
+            ["S"], 40, 0, 10_000, 0.35, 5, 0.55, 100, 1_000, 0.35, 40, 0.08,
+            10**18, 0, 0, 0, 0,
+        )
+
+    one = open_cursor()
+    singles = []
+    with pytest.raises(ValueError, match="exchange timestamp overflow"):
+        while True:
+            rows = one.next_batch(1)
+            if not rows:
+                break
+            singles.extend(rows)
+    assert singles
+
+    batched = open_cursor()
+    assert batched.next_batch(0) == []
+    prefix = batched.next_batch(1024)
+    assert prefix == singles
+    with pytest.raises(ValueError, match="exchange timestamp overflow"):
+        batched.next_batch(1)
+
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=40, seed=0,
+        params=SyntheticParams(
+            exchange_gap_ns=10**18, feed_latency_ns=0, feed_jitter_ns=0,
+            decode_latency_ns=0, decode_jitter_ns=0,
+        ),
+    )
+    seen = []
+    with pytest.raises(ValueError, match="exchange timestamp overflow"):
+        for event in feed:
+            seen.append(event.seq)
+    assert seen == list(range(1, len(singles) + 1))
+
+
 def test_a_quiet_generator_still_stabilises_depth():
     feed = SyntheticFeed(symbols=("S",), n_events=4_000, seed=8,
                          params=SyntheticParams(target_resting_orders=15))
