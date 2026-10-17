@@ -19,11 +19,13 @@ from pathlib import Path
 from ingest.dedup import Dedup
 from research.vibe_trading.features import (
     FeatureLine,
+    envelope_event,
     load_research_config,
     project_alpha_bench,
     project_contracts,
     project_etf,
     project_holdings,
+    reset_payload_cache,
     scan_run_tree,
     to_events,
     trim_lines,
@@ -78,6 +80,7 @@ class _Attempt:
     duration_ms: int
     arguments: dict
     lines: list[FeatureLine]
+    payload: dict | None = None
 
 
 class ResearchAdapter:
@@ -122,6 +125,7 @@ class ResearchAdapter:
         if not getattr(self._settings, "vibe_trading_enabled", False):
             return ResearchBatch("disabled", (), (), 0)
         self._down = False
+        reset_payload_cache()
         attempts = self._run(request)
         ts = self._timestamp(clock)
         budget = min(
@@ -132,7 +136,9 @@ class ResearchAdapter:
         produced = [line for attempt in attempts for line in attempt.lines]
         kept, dropped = trim_lines(produced, budget_tokens=budget)
         kept_ids = {id(line) for line in kept}
-        events = tuple(to_events(kept, ts=ts, dedup=Dedup()))
+        # Envelopes come from every accepted payload, including an explicit empty
+        # list and a tool whose feature lines were all trimmed away.
+        events = self._with_envelopes(attempts, to_events(kept, ts=ts, dedup=Dedup()), ts)
         calls = tuple(
             self._audit(audit, attempt, kept_ids=kept_ids, cap=cap, budget=budget)
             for attempt in attempts
@@ -148,7 +154,26 @@ class ResearchAdapter:
             status = "unavailable"
         else:
             status = "partial" if events else "quarantined"
+        reset_payload_cache()
         return ResearchBatch(status, events, calls, dropped)
+
+    def _with_envelopes(self, attempts, feature_events, ts) -> tuple:
+        seen = {
+            event["raw_input"]["sha256"]
+            for event in feature_events
+            if event.get("event_type") == "signal:envelope"
+        }
+        extra = []
+        for attempt in attempts:
+            if attempt.status != "ok" or type(attempt.payload) is not dict:
+                continue
+            event = envelope_event(attempt.payload, ts=ts)
+            digest = event["raw_input"]["sha256"]
+            if digest in seen:
+                continue
+            seen.add(digest)
+            extra.append(event)
+        return tuple([*extra, *feature_events])
 
     def publish(self, state, request: ResearchRequest | None = None, *,
                 parquet_root=None) -> PublishResult:
@@ -187,14 +212,17 @@ class ResearchAdapter:
                 continue
             payload, attempt = self._invoke(tool, args, timeout_s=remaining)
             if payload is not None and attempt.status == "ok":
+                attempt.payload = payload if type(payload) is dict else None
                 try:
                     projected = self._project(tool, args, payload, universe=universe)
                 except (OverflowError, ZeroDivisionError, ValueError, TypeError):
                     attempt.status = "quarantined"
+                    attempt.payload = None
                     attempt.lines = []
                 else:
                     if projected is None:
                         attempt.status = "quarantined"
+                        attempt.payload = None
                         attempt.lines = []
                     else:
                         attempt.lines = projected

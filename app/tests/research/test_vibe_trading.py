@@ -394,6 +394,67 @@ def test_duplicate_envelope_rows_resolve_deterministically(tmp_path):
     )
 
 
+def test_impossible_contract_dates_are_not_published():
+    payload = {
+        "ok": True,
+        "data": {"query": "Fed cut", "events": [{
+            "event_id": "fed-cut-2026",
+            "title": "Fed cut by December",
+            "end_date": "2026-99-99",
+            "implied_probability": 0.42,
+        }]},
+    }
+    lines = project_contracts(payload, query="Fed cut")
+    assert lines
+    assert "2026-99-99" not in lines[0].text
+    assert "as_of=" in lines[0].text
+
+
+def test_trimmed_and_empty_payloads_still_store_an_envelope(tmp_path):
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="Fed cut", vibe_trading_token_budget=1,
+    )
+    empty = {"ok": True, "data": {"query": "Fed cut", "events": []}}
+    transport = FakeSidecar({
+        "alpha_bench": _load("alpha_bench.json"),
+        "prediction_market": empty,
+    })
+    state = _state(tmp_path, settings, name="empty-envelope.db")
+    result = ResearchAdapter(settings, transport=transport).publish(
+        state, parquet_root=tmp_path / "raw",
+    )
+    assert result.status == "ok"
+    assert result.stored == ()
+    window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
+    envelopes = [row for row in window if row.event_type == "signal:envelope"]
+    assert len(envelopes) == 2
+    from workflows.events import resolve_raw
+    images = [
+        resolve_raw(tmp_path / "raw", row.raw_ref, state=state, row=row)["raw_input"]["source_payload"]
+        for row in envelopes
+    ]
+    assert empty in images
+    assert any(image.get("zoo") == "alpha101" for image in images)
+
+
+def test_brew_does_not_packetize_source_envelopes():
+    from workflows.morning_brew import partition_by_relevance
+
+    class Row:
+        def __init__(self, event_type, symbol=""):
+            self.event_type = event_type
+            self.symbol = symbol
+
+    archive = Row("signal:envelope")
+    feature = Row("signal:alpha", "AAPL")
+    eligible, ignored = partition_by_relevance(
+        [archive, feature], frozenset(), frozenset({"AAPL"}),
+    )
+    assert feature in eligible
+    assert archive in ignored
+
+
 def test_republish_dedupes_the_same_feature(state, tmp_path):
     adapter = ResearchAdapter(_settings(), transport=FakeSidecar(_responses()))
     first = adapter.publish(state, parquet_root=tmp_path / "raw")

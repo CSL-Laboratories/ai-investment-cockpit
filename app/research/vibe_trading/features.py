@@ -195,6 +195,38 @@ def _identity_echo(payload: dict, key: str, requested: str) -> str:
     return "match"
 
 
+_PAYLOADS: dict[int, tuple[str, dict]] = {}
+
+
+def remember_payload(payload: dict) -> tuple[str, dict]:
+    """Canonicalize and hash one sidecar object once, then reuse that pair."""
+    found = _PAYLOADS.get(id(payload))
+    if found is None:
+        canonical = json.loads(json.dumps(payload, sort_keys=True, default=str))
+        found = (content_hash(canonical), canonical)
+        _PAYLOADS[id(payload)] = found
+    return found
+
+
+def reset_payload_cache() -> None:
+    _PAYLOADS.clear()
+
+
+def envelope_event(payload: dict, *, ts) -> dict:
+    """One content-addressed raw image. Not a decision-packet feature."""
+    digest, canonical = remember_payload(payload)
+    return to_market_event(
+        source=SOURCE,
+        article_id=f"signal:envelope:{digest}",
+        symbols=[],
+        headline=f"research_source sha256={digest}",
+        summary="",
+        ts=ts,
+        event_type="signal:envelope",
+        raw={"kind": "sidecar_envelope", "sha256": digest, "source_payload": canonical},
+    )
+
+
 def _with_source(raw: dict, payload: dict, row: dict | None = None) -> dict:
     """Point the row at one content-addressed envelope instead of copying it.
 
@@ -203,8 +235,8 @@ def _with_source(raw: dict, payload: dict, row: dict | None = None) -> dict:
     ``source_ref`` after that envelope is persisted, including when an earlier row
     from the same response was deduped.
     """
-    canonical = json.loads(json.dumps(payload, sort_keys=True, default=str))
-    image = {**raw, "source_payload_sha256": content_hash(canonical), "_payload": canonical}
+    digest, canonical = remember_payload(payload)
+    image = {**raw, "source_payload_sha256": digest, "_payload": canonical}
     if row is not None:
         image["source_row"] = row
     return image
@@ -511,7 +543,7 @@ def project_contracts(payload: dict, *, query: str) -> list[FeatureLine] | None:
         if (type(contract_id) is not str or _FACTOR_ID.fullmatch(contract_id) is None
                 or type(question) is not str or not question.strip() or len(question) > 200):
             continue
-        if type(as_of) is not str or (as_of and _AS_OF.fullmatch(as_of) is None):
+        if type(as_of) is not str or (as_of and _aware_dt(as_of) is None):
             as_of = ""
         question = " ".join(question.split())
         prob_text = "" if probability is None else f" implied_probability={probability:.4f}"
