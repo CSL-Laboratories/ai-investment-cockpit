@@ -1,0 +1,103 @@
+# Codex auto-resolve for review threads (CSL-179).
+# GitHub-hosted ubuntu-latest on purpose: do not spend Blacksmith minutes.
+# Parses the shared per-thread marker contract (recursion CSL-178 uses the same):
+#
+#   <!-- codex-thread-verdict:<thread_id> -->
+#   CODEX-THREAD: RESOLVE|DECIDE|MISSING|AMBIGUOUS
+#   HEAD: <full 40-character commit SHA>
+#
+# RESOLVE + current head SHA + green required checks → cite on the thread,
+# then GraphQL resolveReviewThread, then a success marker. DECIDE / MISSING /
+# AMBIGUOUS / stale SHA / pending required checks leave the Linear
+# needs-decision path in place.
+#
+# Does not post @codex review (that is #124 / #131). Never pushes or merges.
+# Missing CODEX_TRIGGER_PAT is a ::notice:: skip, not a failure.
+#
+# Token: writes (thread reply + resolveReviewThread) use repo secret
+# CODEX_TRIGGER_PAT — the same PAT that posts @codex review for the gate and
+# stuck-thread watcher. GITHUB_TOKEN is read-only. The PAT identity is what
+# GitHub records as resolving the thread.
+#
+# Review/comment events are intentionally omitted: GitHub would run this YAML
+# from the PR head, so a same-repo edit of this file would receive the PAT.
+# schedule always runs the default-branch copy. workflow_dispatch is omitted
+# because a writer can dispatch a non-default --ref and that YAML would see
+# CODEX_TRIGGER_PAT.
+name: Codex auto-resolve
+
+on:
+  schedule:
+    # Codex reviews do not start this workflow. The next cron scans open PRs.
+    # Offset from the gate (7/17/27/...) and stuck-thread watch (23 */2).
+    - cron: "11,31,51 * * * *"
+
+env:
+  MAX_RESOLVES_PER_PR_PER_DAY: "20"
+  MAX_RESOLVES_PER_RUN: "10"
+  QUOTE_LIMIT: "240"
+
+# Writes go through CODEX_TRIGGER_PAT. GITHUB_TOKEN only reads.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: codex-auto-resolve
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    # Default-branch copy only (schedule). Forks are skipped in the script
+    # via isCrossRepository.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Check trigger PAT
+        id: pat
+        env:
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CODEX_TRIGGER_PAT}" ]; then
+            echo "::notice::CODEX_TRIGGER_PAT is not configured; skipping Codex auto-resolve."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        if: steps.pat.outputs.skip != 'true'
+        with:
+          # Trusted default-branch copy. Never run the PR head with the PAT.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Auto-resolve Codex-ruled threads
+        if: steps.pat.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_TRIGGER_PAT: ${{ secrets.CODEX_TRIGGER_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        run: |
+          set -euo pipefail
+          # First-merge bootstrap: this workflow ships in the PR, but the
+          # PAT job checks out the default branch so it never runs PR-head
+          # code. Until the script lands on main, skip with a notice.
+          if [ ! -f .github/scripts/codex_auto_resolve.py ]; then
+            echo "::notice::codex_auto_resolve.py is not on the default branch yet; skipping until first merge."
+            exit 0
+          fi
+          python3 -X utf8 -B .github/scripts/codex_auto_resolve.py
