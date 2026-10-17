@@ -408,7 +408,8 @@ def _composed_paper_service(merger):
     )
     st.audit.record_state_change(
         job, "agent_job", actor="agent_calls",
-        payload={"status": "done", "runtime": "claude", "generation": 0},
+        payload={"status": "done", "runtime": "claude", "generation": 0,
+                 "decision_runtime": "claude"},
     )
     payload = {
         **_proposal(quantity=1), "order_type": "limit", "sizing_basis": "capped",
