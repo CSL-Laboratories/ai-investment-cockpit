@@ -379,17 +379,28 @@ def test_a_copied_view_cannot_write_the_shared_live_index(oms):
 
 
 def test_a_copied_view_rejects_fills_and_replaces_before_touching_shared_state(oms):
+    """A partial fill never touches the live index, so the read-only proxy cannot
+    be what stops it. The view has to refuse the callback before shared fill
+    accounting moves. A completing fill, a replace, and a register do the same."""
     oms.register(_new("a", Side.BUY, 5, price=10), strategy="mm")
     view = copy(oms)
+    with pytest.raises(TypeError):
+        view.on_fill(_fill("a", Side.BUY, 1, price=10))
     with pytest.raises(TypeError):
         view.on_fill(_fill("a", Side.BUY, 5, price=10))
     with pytest.raises(TypeError):
         view.on_replaced("a", new_qty=9)
     with pytest.raises(TypeError):
+        view.on_acknowledged("a")
+    with pytest.raises(TypeError):
         view.register(_new("b", qty=1, price=1), strategy="mm")
+    order = oms.get("a")
+    assert order.state is OrderState.PENDING_NEW
+    assert order.filled_qty == 0
+    assert order.qty == 5
     assert oms.position("TEST") == 0
-    assert oms.get("a").filled_qty == 0
-    assert oms.get("a").qty == 5
+    assert oms.get("b") is None
+    assert [live.client_id for live in oms.live_orders()] == ["a"]
 
 
 def test_a_retained_view_sees_a_reused_id_inserted_out_of_order(oms):
