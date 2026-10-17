@@ -236,9 +236,22 @@ def test_pnl_custom_decimal_context_matches_python():
     _short_one_hour(default)
     assert default.fees == Decimal("1.856922431506849315068493151")
     assert default.snapshot().total == Decimal("2.643077568493150684931506849")
-    # The default context may run on PnlCore, which hands back "30003" rather than
-    # "30003.00", so the default-path pin is numeric; only the prec-6 pin is textual.
-    assert default.realized_notional == Decimal("30003.00")
+    # Python's Decimal keeps the price's scale: 100.01 * 300 is "30003.00".
+    assert str(default.realized_notional) == "30003.00"
+    assert str(default._cash) == "30003.00"
+
+    # The PnlCore path must hand back the same text, not a normalized "30003".
+    core = PnLTracker(scale=PENNY, schedule=SCHEDULE)
+    core._core = _make_pnl_core(core.schedule)
+    assert core._core is not None
+    _rust_mark(core, 10_000.5, 0)
+    _rust_on_fill(
+        core, _fill(Side.SELL, 300, 10_001, liquidity=Liquidity.TAKER, ts=0), 10_000.5,
+    )
+    _rust_mark(core, 9_999.5, 3_600 * 1_000_000_000)
+    assert str(core.realized_notional) == "30003.00"
+    assert str(core._cash) == "30003.00"
+    assert core.fees == default.fees
 
 
 def _extension_bps(cost: Decimal, notional: Decimal) -> Decimal:
