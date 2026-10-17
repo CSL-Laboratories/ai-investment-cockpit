@@ -627,8 +627,12 @@ def scan(gh, repository, event_name, event):
 
 if __name__ == "__main__":
     import os
-    # Off by default: only the exact repo variable value "true" enables the
-    # coordinator, and turning it on is an owner decision gated on CSL-272.
+    # Off by default. CANDIDATE_SCAN carries `vars.CANDIDATE_COORDINATOR`: the
+    # repository variable or an organization variable of the same name
+    # (precedence: environment, then repository, then organization). Only the
+    # exact string "true" enables the coordinator; turning it on is Lucas's
+    # decision after CSL-272. Switching it off stops new scans only: gate jobs
+    # already queued behind `claude-<PR>` still finish.
     if os.environ.get("CANDIDATE_SCAN") != "true":
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
             output.write("prs=[]\n")

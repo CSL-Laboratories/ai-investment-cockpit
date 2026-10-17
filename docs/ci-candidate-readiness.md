@@ -211,5 +211,13 @@ The bootstrap limit is unchanged: until the default branch contains this
 coordinator, no policy commit can be pinned or compared, and the first live
 default-branch advancement is the first point at which release can be exercised.
 
+The coordinator is off by default behind the `CANDIDATE_COORDINATOR` Actions
+variable. Only the exact value `true` enables it, and an organization variable of
+the same name applies when no repository variable is set, so an explicit
+repository-level `false` is recommended. While it is off, the legacy head-scoped
+Codex gate job keeps running as it did before CSL-259. Off is not an instant kill
+switch: it stops new scans, but gate jobs already queued behind `claude-<PR>` still
+finish. Enabling it is an owner decision gated on authenticated records (CSL-272).
+
 Budget/cadence (P2) remains an owner decision. Timestamp-derived runtime times
 published rates is an estimate, not reconciled billed usage or remaining credit.
