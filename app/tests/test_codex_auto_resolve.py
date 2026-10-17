@@ -971,6 +971,83 @@ def test_scan_skips_truncated_thread_comments():
     assert any("skip=truncated-comments" in line for line in logs)
 
 
+class _PagingComments:
+    def __init__(self, pages: list[dict]) -> None:
+        self.pages = list(pages)
+        self.calls = 0
+
+    def graphql(self, query, variables, token=None):
+        del query, variables, token
+        self.calls += 1
+        return {"node": {"comments": self.pages.pop(0)}}
+
+
+def test_expand_thread_comments_reads_past_twenty_extra_pages():
+    node = thread(truncated=True)
+    node["comments"]["pageInfo"]["endCursor"] = "c0"
+    pages = []
+    extra = 25
+    for i in range(extra):
+        more = i < extra - 1
+        pages.append(
+            {
+                "nodes": [{"body": f"p{i}"}],
+                "pageInfo": {
+                    "hasNextPage": more,
+                    "endCursor": f"c{i + 1}" if more else None,
+                },
+            }
+        )
+    gh = _PagingComments(pages)
+    out = mod.expand_thread_comments(gh, cfg(), node)
+    assert gh.calls == extra
+    assert out["comments"]["pageInfo"]["hasNextPage"] is False
+    assert len(out["comments"]["nodes"]) == 1 + extra
+
+
+def test_expand_thread_comments_malformed_page_stays_truncated():
+    node = thread(truncated=True)
+    node["comments"]["pageInfo"]["endCursor"] = "c0"
+    gh = _PagingComments(
+        [{"nodes": [None], "pageInfo": {"hasNextPage": False}}]
+    )
+    out = mod.expand_thread_comments(gh, cfg(), node)
+    assert gh.calls == 1
+    assert out["comments"]["pageInfo"]["hasNextPage"] is True
+
+
+def test_expand_thread_comments_repeat_cursor_stays_truncated():
+    node = thread(truncated=True)
+    node["comments"]["pageInfo"]["endCursor"] = "c0"
+    gh = _PagingComments(
+        [
+            {
+                "nodes": [{"body": "p0"}],
+                "pageInfo": {"hasNextPage": True, "endCursor": "c0"},
+            }
+        ]
+    )
+    out = mod.expand_thread_comments(gh, cfg(), node)
+    assert gh.calls == 1
+    assert out["comments"]["pageInfo"]["hasNextPage"] is True
+
+
+def test_expand_thread_comments_stays_truncated_after_page_cap():
+    node = thread(truncated=True)
+    node["comments"]["pageInfo"]["endCursor"] = "c0"
+    pages = [
+        {
+            "nodes": [{"body": f"p{i}"}],
+            "pageInfo": {"hasNextPage": True, "endCursor": f"c{i + 1}"},
+        }
+        for i in range(mod.THREAD_COMMENT_EXTRA_PAGES)
+    ]
+    gh = _PagingComments(pages)
+    out = mod.expand_thread_comments(gh, cfg(), node)
+    assert gh.calls == mod.THREAD_COMMENT_EXTRA_PAGES
+    assert out["comments"]["pageInfo"]["hasNextPage"] is True
+
+
 def test_truncated_thread_aborts_entire_pr_scan():
     other = thread(THREAD2)
     gh = ready_gh(

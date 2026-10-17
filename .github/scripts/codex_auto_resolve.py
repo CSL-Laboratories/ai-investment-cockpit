@@ -54,6 +54,9 @@ LINUX_GATES_NAMES = frozenset({"linux-gates"})
 # holds only if cron actually runs in that gap; a stall longer than ~4h
 # can still let a retry cite age out of the 24h count.
 CITE_REFRESH_AGE = timedelta(hours=20)
+# Extra GraphQL pages after the first 80 comments. 100 pages of 50 still
+# fail closed if the connection remains truncated.
+THREAD_COMMENT_EXTRA_PAGES = 100
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
@@ -1041,19 +1044,26 @@ def expand_thread_comments(gh: GitHub, cfg: Config, node: dict[str, Any]) -> dic
         return node
     nodes = list(conn.get("nodes") or [])
     cursor = page.get("endCursor")
-    for _ in range(20):
-        if not cursor:
+    cursors: set[str] = set()
+    for _ in range(THREAD_COMMENT_EXTRA_PAGES):
+        if not isinstance(cursor, str) or not cursor or cursor in cursors:
             break
+        cursors.add(cursor)
         data = gh.graphql(
             GITHUB_GRAPHQL_THREAD_COMMENTS,
             {"id": thread_id, "cursor": cursor},
             token=cfg.github_token,
         )
         nxt = ((data.get("node") or {}).get("comments")) or {}
-        nodes.extend(n for n in (nxt.get("nodes") or []) if isinstance(n, dict))
+        page_nodes = nxt.get("nodes")
+        if not isinstance(page_nodes, list) or not all(isinstance(n, dict) for n in page_nodes):
+            break
+        nodes.extend(page_nodes)
         info = nxt.get("pageInfo") or {}
-        if not info.get("hasNextPage"):
+        if info.get("hasNextPage") is False:
             return {**node, "comments": {"nodes": nodes, "pageInfo": {"hasNextPage": False}}}
+        if info.get("hasNextPage") is not True:
+            break
         cursor = info.get("endCursor")
     return {**node, "comments": {"nodes": nodes, "pageInfo": {"hasNextPage": True}}}
 
