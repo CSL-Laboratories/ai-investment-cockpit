@@ -1,0 +1,23 @@
+# Pinned CI install set for .github/actions/run-gates.
+# Direct packages only — the same names as the previous unpinned
+# `pip install -U pip pydantic … ruff` line — resolved 2026-10-16 from PyPI
+# on CPython 3.12. Transitives resolve per platform so Windows/macOS/Linux
+# keyring extras stay installable. The pip cache and venv cache key off this
+# file; bump a pin here when CI should pick up a release.
+pydantic==2.14.1
+pydantic-settings==2.16.0
+keyring==25.7.0
+pyyaml==6.0.3
+jsonschema==4.26.0
+sqlalchemy==2.1.4
+pyarrow==26.0.0
+duckdb==1.5.6
+fastapi==0.143.3
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+websockets==17.2
+apscheduler==3.11.3
+boto3==1.43.114
+discord.py==2.7.1
+pytest==9.1.1
+ruff==0.17.1
