@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.negative_control.schema",
+  "title": "O2 candidate negative controls",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "maturity", "contract_frozen", "synthetic", "pass_claimed", "controls"],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "synthetic": {"const": true},
+    "pass_claimed": {"const": false},
+    "controls": {
+      "type": "array",
+      "minItems": 4,
+      "items": {"$ref": "#/$defs/control"}
+    }
+  },
+  "$defs": {
+    "instant": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control_id", "expect"],
+      "properties": {
+        "control_id": {
+          "enum": [
+            "future_data_leak",
+            "raw_not_reconstructable",
+            "lost_resolution_semantics",
+            "lost_corporate_action_semantics",
+            "no_evidence",
+            "dedup_collapses_correction",
+            "stock_treated_as_event"
+          ]
+        },
+        "expect": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "future_data_leak",
+              "raw_not_reconstructable",
+              "lost_resolution_semantics",
+              "lost_corporate_action_semantics",
+              "no_evidence",
+              "dedup_collapses_correction",
+              "stock_treated_as_event"
+            ]
+          }
+        },
+        "decision_time": {"$ref": "#/$defs/instant"},
+        "natural_key": {"type": "string", "minLength": 1},
+        "claimed_visible_raw_record_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "claimed_duplicate_raw_record_ids": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "observation": {"type": "object"}
+      }
+    }
+  }
+}

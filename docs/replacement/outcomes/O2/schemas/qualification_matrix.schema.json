@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.qualification_matrix.schema",
+  "title": "O2 candidate feed qualification and unknowns",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "maturity",
+    "contract_frozen",
+    "qualification_claimed",
+    "empirical_pass_claimed",
+    "source_commit",
+    "issue_baseline_commit",
+    "checked_on",
+    "feeds"
+  ],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "qualification_claimed": {"const": false},
+    "empirical_pass_claimed": {"const": false},
+    "source_commit": {
+      "const": "ebbaa34489f171e079834d02098135711e1d4755"
+    },
+    "issue_baseline_commit": {
+      "const": "73ab78d9d69494c757cec875855121b1d29320a4"
+    },
+    "checked_on": {"const": "2026-10-17"},
+    "feeds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "feed_id",
+          "market_family",
+          "qualification",
+          "credentials_required",
+          "admitted_for_acquisition",
+          "documentation_url",
+          "unknowns"
+        ],
+        "properties": {
+          "feed_id": {"type": "string", "minLength": 1},
+          "market_family": {"enum": ["equity", "event", "cross_market", "none"]},
+          "qualification": {
+            "enum": [
+              "public_documented",
+              "local_observed",
+              "disqualified_as_asof_source",
+              "not_qualified"
+            ]
+          },
+          "credentials_required": {"type": "boolean"},
+          "admitted_for_acquisition": {"const": false},
+          "documentation_url": {"type": ["string", "null"]},
+          "unknowns": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}
