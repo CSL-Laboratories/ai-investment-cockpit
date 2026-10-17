@@ -739,8 +739,10 @@ def _repaired_command_body(control: str, body: dict[str, Any]) -> dict[str, Any]
         repaired["confirmation"] = "explicit"
         return repaired
     arguments = body.get("arguments")
-    repaired["arguments"] = dict(arguments) if isinstance(arguments, dict) else {}
-    repaired["arguments"]["scope"] = "operator_session"
+    if not isinstance(arguments, dict):
+        # Leave a malformed value alone so the repaired body still fails.
+        return repaired
+    repaired["arguments"] = {**arguments, "scope": "operator_session"}
     return repaired
 
 
