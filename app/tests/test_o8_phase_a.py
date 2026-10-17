@@ -90,3 +90,30 @@ def test_o8_validator_does_not_import_network_or_credentials() -> None:
     )
     for banned in ("keyring", "httpx", "urllib", "socket", "discord", "alpaca", "boto3"):
         assert banned not in imported
+
+
+def _packet_with(tmp_path: Path, mutate) -> subprocess.CompletedProcess[str]:
+    packet = json.loads((ROOT / "docs/replacement/outcomes/O8/fixtures/phase-a-packet.json").read_text(encoding="utf-8"))
+    mutate(packet)
+    path = tmp_path / "packet.json"
+    path.write_text(json.dumps(packet), encoding="utf-8")
+    return _run("--manifest", str(path), "--kind", "packet")
+
+
+def test_o8_rejects_experiment_that_does_not_exercise_the_seam(tmp_path: Path) -> None:
+    def mutate(packet: dict) -> None:
+        packet["candidate"]["smallest_experiment"]["workload_id"] = "ingest_to_raw_store"
+        packet["candidate"]["seam"] = "paper_order_lifecycle"
+
+    result = _packet_with(tmp_path, mutate)
+    assert result.returncode == 1
+    assert "candidate experiment does not exercise its seam" in result.stderr
+
+
+def test_o8_rejects_numeric_latency_on_provider_free_workload(tmp_path: Path) -> None:
+    def mutate(packet: dict) -> None:
+        packet["workloads"][0]["provider_latency"] = 42.0
+
+    result = _packet_with(tmp_path, mutate)
+    assert result.returncode == 1
+    assert "omits provider latency" in result.stderr

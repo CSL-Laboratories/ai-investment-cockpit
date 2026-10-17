@@ -94,18 +94,13 @@
       }
     },
     "provider_latency": {
-      "oneOf": [
-        {"type": "number", "minimum": 0},
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "reason"],
-          "properties": {
-            "status": {"const": "excluded_with_reason"},
-            "reason": {"type": "string", "minLength": 1}
-          }
-        }
-      ]
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"const": "excluded_with_reason"},
+        "reason": {"type": "string", "minLength": 1}
+      }
     },
     "variance": {
       "type": "object",

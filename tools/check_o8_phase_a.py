@@ -184,11 +184,8 @@ def benchmark_reasons(document: Any) -> list[str]:
     if not variance_ok:
         reasons.append("omits variance")
     provider_latency = document.get("provider_latency")
+    # Benchmarks are provider-free (network_calls == 0), so a numeric latency would be fictitious.
     provider_latency_ok = (
-        isinstance(provider_latency, (int, float))
-        and not isinstance(provider_latency, bool)
-        and provider_latency >= 0
-    ) or (
         isinstance(provider_latency, dict)
         and provider_latency.get("status") == "excluded_with_reason"
         and isinstance(provider_latency.get("reason"), str)
@@ -253,6 +250,8 @@ def candidate_reasons(document: Any) -> list[str]:
         reasons.append("candidate missing smallest experiment")
     if not isinstance(document, dict) or document.get("seam") not in WORKLOAD_IDS:
         reasons.append("candidate missing seam")
+    elif isinstance(experiment, dict) and experiment.get("workload_id") != document.get("seam"):
+        reasons.append("candidate experiment does not exercise its seam")
     rollback = document.get("rollback") if isinstance(document, dict) else None
     if not (
         isinstance(rollback, dict)
