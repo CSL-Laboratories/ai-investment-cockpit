@@ -193,20 +193,13 @@ def _identity_echo(payload: dict, key: str, requested: str) -> str:
     return "match"
 
 
-def _with_source(raw: dict, payload: dict, row: dict | None = None, *,
-                 embed_payload: bool = True) -> dict:
+def _with_source(raw: dict, payload: dict, row: dict | None = None) -> dict:
     """Keep the exact sidecar object beside the normalized projection (Invariant 8).
 
-    The envelope is embedded once per response (``embed_payload``); sibling rows carry
-    its digest so a multi-row response is not written once per row.
+    Every row is persisted and deduplicated independently, so each carries the full
+    envelope: a digest or a sibling's copy could not be resolved from its own raw_ref.
     """
-    if embed_payload:
-        image = {**raw, "source_payload": payload}
-    else:
-        digest = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
-        image = {**raw, "source_payload_sha256": digest}
+    image = {**raw, "source_payload": payload}
     if row is not None:
         image["source_row"] = row
     return image
@@ -335,7 +328,7 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
             raw=_with_source({"kind": "alpha_factor", "factor": {
                 "id": row["id"], "ic_mean": row["ic_mean"], "ir": row["ir"],
                 "category": row["category"], "category_source": row["category_source"],
-            }}, payload, row["_row"], embed_payload=False),
+            }}, payload, row["_row"]),
             tool="alpha_bench",
         ))
     return lines
@@ -381,7 +374,7 @@ def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine] | None:
             raw=_with_source({"kind": "13f_holder", "ticker": ticker, "holder": {
                 "manager": manager, "quarter": quarter, "shares": shares,
                 "value_usd": value, "held": held if type(held) is bool else None,
-            }}, payload, row, embed_payload=not lines),
+            }}, payload, row),
             tool="get_institutional_holdings",
         ))
     return lines
@@ -519,8 +512,7 @@ def project_contracts(payload: dict, *, query: str) -> list[FeatureLine] | None:
             event_type=EVENT_PROBABILITY,
             symbols=(),
             raw=_with_source({"kind": "event_probability", "contract_id": contract_id,
-                              "implied_probability": probability, "as_of": as_of}, payload, row,
-                              embed_payload=not lines),
+                              "implied_probability": probability, "as_of": as_of}, payload, row),
             tool="prediction_market",
         ))
     return lines
