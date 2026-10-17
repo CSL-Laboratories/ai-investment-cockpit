@@ -18,7 +18,8 @@ from types import SimpleNamespace
 
 import merge_candidate as candidate_api
 
-RESERVATION_KINDS = frozenset({"request", "dispatch"})
+RESERVATION_KINDS = frozenset({"request", "dispatch", "mediate-intent"})
+REQUEST_BUDGET = 3
 KINDS = {"ci": ".github/workflows/ci.yml", "rust": ".github/workflows/rust.yml"}
 HOLD_LABELS = frozenset({"hold", "ci:hold", "do-not-merge", "needs-decision"})
 POLICY_ENV = ("CODEX_POLICY_SHA", "CODEX_POLICY_BRANCH")
@@ -120,7 +121,8 @@ class Coordinator:
                     # An edited or unversioned record fails verification. A release
                     # record (abort/rejection) is skipped, so a forged copy cannot
                     # halt every reconcile. A reservation record stays fail-closed:
-                    # dropping it would let a new reservation duplicate a dispatch.
+                    # dropping it would let a new reservation duplicate a dispatch
+                    # or a mediation handoff.
                     if kind in RESERVATION_KINDS:
                         raise ValueError("edited or unversioned candidate reservation; reconcile manually")
                     continue
@@ -325,6 +327,10 @@ class Coordinator:
         matching = [x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key and x.get("pause") == pause and x["id"] not in aborted]
         if matching:
             return matching[-1]
+        # Every reservation ever made for this candidate, aborted or not and
+        # under any pause, consumes the same request budget.
+        if len([x for x in self.journal(comments, "request") if x.get("candidate") == candidate.key]) >= REQUEST_BUDGET:
+            return "request-budget-exhausted"
         request = self.record("request", {"candidate": candidate.key, "nonce": uuid.uuid4().hex, "pause": pause, "identity": candidate.record()})
         try:
             current, refreshed, _reviews, _events, held = self.snapshot()
@@ -550,7 +556,9 @@ class Coordinator:
             current, refreshed, _reviews, _events, held = self.snapshot()
             if current != candidate or held:
                 raise ValueError("request changed before mention")
-            self.request(candidate, refreshed)
+            state = self.request(candidate, refreshed)
+            if state == "request-budget-exhausted":
+                return state
             return "awaiting-independent-candidate-review"
         # READY is candidate-scoped, not a persistent label. Adding ci:full here
         # would make later ordinary pushes start duplicate full matrices before

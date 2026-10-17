@@ -1934,7 +1934,8 @@ class CandidateCoordinatorTests(unittest.TestCase):
             self.reconcile()
         self.assertEqual(self.journal("request-aborted"), [])
         self.gh.post = original
-        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        for _ in range(4):
+            self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
         self.assertEqual(self.gh.mentions, [])
         self.assertEqual(len(self.journal("request")), 1)
 
@@ -1959,6 +1960,80 @@ class CandidateCoordinatorTests(unittest.TestCase):
         """Documents Major 3 (open): any github-actions[bot] whole-comment record is accepted by journal()."""
         self.gh.add_comment(FakeReceipts.marker("candidate-request-aborted", {"request": 123}))
         self.assertEqual([x["request"] for x in self.journal("request-aborted")], [123])
+
+    # --- Regressions for Devin findings on 8533e522 (CSL-259) ---
+
+    def test_edited_mediate_intent_fails_closed_without_second_handoff(self):
+        """An edited mediate-intent is a reservation: dropping it could repeat the mediation handoff."""
+        review = self.prime_head_mediate()
+        self.gh.add_comment(FakeReceipts.marker("candidate-mediate-intent",
+            {"head": HEAD, "review": review["id"], "pause": 0, "nonce": "0" * 32}))
+        self.gh.comments[-1]["updated_at"] = "2026-10-16T00:00:01Z"
+        message = "edited or unversioned candidate reservation; reconcile manually"
+        with self.assertRaisesRegex(ValueError, message):
+            self.journal("mediate-intent")
+        with self.assertRaisesRegex(ValueError, message):
+            self.reconcile()
+        intents = [c for c in self.gh.comments if self.receipts.records(c["body"], "candidate-mediate-intent")]
+        self.assertEqual(len(intents), 1)
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.gh.mentions, [])
+
+    def reject_mentions(self, status):
+        original = self.gh.post
+
+        def rejected(path, payload):
+            if path.endswith("/comments"):
+                raise ApiError(status)
+            return original(path, payload)
+
+        self.gh.post = rejected
+        return original
+
+    def test_permanent_review_mention_rejection_exhausts_request_budget(self):
+        """A permanent 403 is re-requested at most REQUEST_BUDGET times for one candidate."""
+        original = self.reject_mentions(403)
+        for _ in range(gate.REQUEST_BUDGET):
+            with self.assertRaises(ApiError):
+                self.reconcile()
+        self.assertEqual(len(self.journal("request")), 3)
+        self.assertEqual(len(self.journal("request-aborted")), 3)
+        self.gh.post = original
+        comments = len(self.gh.comments)
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        self.assertEqual(len(self.gh.comments), comments)
+        self.assertEqual(self.gh.mentions, [])
+
+    def test_request_budget_resets_for_a_new_candidate(self):
+        """The budget is per candidate key: a new head records a fresh request."""
+        original = self.reject_mentions(403)
+        for _ in range(gate.REQUEST_BUDGET):
+            with self.assertRaises(ApiError):
+                self.reconcile()
+        self.gh.post = original
+        old_key = self.candidate().key
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        self.gh.drift("head")
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        latest = self.journal("request")[-1]
+        self.assertNotEqual(latest["candidate"], old_key)
+        self.assertEqual(latest["candidate"], self.candidate().key)
+        self.assertEqual(len(self.gh.mentions), 1)
+
+    def test_active_reservation_is_reused_before_the_request_budget(self):
+        """An unaborted matching reservation is returned, not counted out; any pause consumes budget."""
+        for pause in range(gate.REQUEST_BUDGET):
+            self.receipts.pause = pause
+            self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        requests = self.journal("request")
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(self.coordinator.request(self.candidate(), self.gh.comments), requests[-1])
+        self.assertEqual(self.reconcile(), "awaiting-independent-candidate-review")
+        self.assertEqual(len(self.gh.mentions), 3)
+        self.receipts.pause = gate.REQUEST_BUDGET
+        self.assertEqual(self.reconcile(), "request-budget-exhausted")
+        self.assertEqual(len(self.journal("request")), 3)
+        self.assertEqual(len(self.gh.mentions), 3)
 
 
 if __name__ == "__main__":
