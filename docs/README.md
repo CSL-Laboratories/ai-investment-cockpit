@@ -118,7 +118,7 @@ the repair record. Missing prospective observations and independent labels remai
 |---|---|
 | **[PRODUCT](../PRODUCT.md)** | Product purpose, scope and acceptance, with its adopted operating, tax and acceptance contracts. |
 | **[[PLAN]]** | Current delivery order, package lifecycle and scope reconciliation. Its RW-25 section supersedes conflicting older MVP/strategy/order text while retaining applicable evidence gates. |
-| **[[REGISTER]]** | One ID space, one claim board. **Claim work here before writing code.** |
+| **[[REGISTER]]** | One ID space, one claim board. **Claim work here before writing code.** Linear issues cite these IDs; allocation stays on this board (see its Linear section). |
 
 Then [[CLAUDE]] at the repo root for the 9 invariants and the session workflow — that is the
 canonical invariant list, and nothing else restates it.
@@ -294,7 +294,7 @@ defects got fixed twice on two branches.
 | Doc | What it owns |
 |---|---|
 | [[PLAN]] | MVP, milestones, intake gate, scope boundaries |
-| [[REGISTER]] | Every open ID and who has it |
+| [[REGISTER]] | Every open ID and who has it. Linear (`CSL-N`) cites those IDs; see the Linear section |
 | [[adr/README]] | Architecture decision records. Written when a Linear `decision` issue closes; cite any `DEC-xx` from [[REGISTER]] |
 | [[security-hardening-backlog]] | The **SEC-series** write-ups. Claims go in [[REGISTER]] |
 | [[quant-engine]] | The **QT-series** — `app/quant/` |

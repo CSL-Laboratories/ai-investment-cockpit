@@ -1515,7 +1515,9 @@ blocks promotion and returns the system to the appropriate lower/watch-only post
 Every production package follows this loop:
 
 1. **Claim:** change exactly one [[REGISTER]] row to `claimed`, name the branch
-   `work/<id>-<slug>`, and answer the seven intake questions in §5 before editing code. Paired
+   `work/<id>-<slug>`, and answer the seven intake questions in §5 before editing code.
+   Cite that same ID in the Linear issue title or description. Linear tracks the issue;
+   it does not allocate the ID (see the Linear section of [[REGISTER]]). Paired
    retirement IDs such as `RW-11`/`RW-12` are claimed/scheduled together but retain separate
    deletion gates.
 2. **Pin the baseline:** start from latest merged `main`, record its CI-attestation state, clear

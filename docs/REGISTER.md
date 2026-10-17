@@ -82,6 +82,47 @@ messages and no register at all — which is precisely why that work got duplica
 43 production files — do not move it). `QT-*` is in [[quant-engine]]. This table is the index
 and the claim board, not the specification.
 
+## Linear tracks the issue; this board keeps the claim
+
+Linear (team **CSL laboratories**, project **ai-investment-cockpit**, key `CSL-N`) is
+where status, assignment, discussion, and cycle membership live. PRODUCT assigns work
+claims to this file. A Linear issue references an ID already on this board. It does
+not allocate, split, renumber, or close one.
+
+1. **Take the next free ID here, then cite it.** Read this board and use the next
+   unused ID in the existing series (`SEC-*`, `BUG-*`, `RW-*`, `W-*`, `QT-*`, `G*`).
+   Checked 2026-10-16: the highest `RW-*` row is `RW-37`. `RW-32` is the remote seal
+   package and is not free, so `RW-38` is the next free refactor ID until a later row
+   takes it. This section reserves nothing.
+2. **Put that ID in the issue title or the first line of the description**
+   (`RW-N: …`). One issue cites one ID. A new scope is a new row here, then a new
+   issue. `CSL-N` links the pull request and the discussion.
+3. **Leave scope, the completion contract, and evidence on this board** and in the
+   owning doc. Linear holds status and the link. Moving or closing the issue leaves
+   the row unchanged until the claim itself changes.
+4. **Process work states that it has no package ID.** Agreeing this convention is
+   process work. It does not mint an `RW`/`W`/`BUG`/`SEC` ID in order to look claimed.
+5. **Name both keys on the pull request** when a claim exists: `CSL-N` in the title,
+   and the REGISTER ID on the `REGISTER:` line of the PR template.
+
+The same ID space covers research, paper, and later live packages. Paper-first and
+the pre-live gates stay in force until they pass. A Linear citation does not admit a
+symbol, change mode, or move capital.
+
+### Cycle 1 stays with CSL-8
+
+Checked 2026-10-16. [CSL-8](https://linear.app/csl-laboratories/issue/CSL-8/define-cycle-length-and-first-cycle-scope)
+is still in **Triage**. It owns cycle length (1 or 2 weeks), the start day, and which
+issues enter Cycle 1. Linear already has future weekly calendar rows (Cycle 1
+scheduled 2026-10-19 through 2026-10-26, Cycle 2 the week after). Neither row is the
+current cycle, and neither contains issues. Those rows are not the CSL-8 agreement.
+This convention does not enable cycles, choose a length, or place any issue in Cycle 1.
+
+Once CSL-8 is done and Cycle 1 has started, the five rules above apply inside the
+cycle. Membership schedules attention for that window. An issue enters the cycle with
+its REGISTER ID already cited, or with an explicit note that it is process work and
+has no package ID. Cycle membership leaves completion contracts and gates on this board.
+
 ## RW-31 slice A screen intake and cohort/label plan — merged 2026-09-12
 
 | ID | Scope | Status | Owner | Completion contract |

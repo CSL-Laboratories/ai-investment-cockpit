@@ -1,4 +1,5 @@
 Linear: CSL-___
+REGISTER: RW-___ | W-___ | BUG-___ | SEC-___ | none
 Touches other repos? (link the cross-repo Linear issue)
 
 ## Summary
