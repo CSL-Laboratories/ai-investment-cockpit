@@ -290,6 +290,24 @@ class BookSnapshot:
         return (bid_qty - ask_qty) / total
 
 
+class _PriceLadder(list):
+    """Ascending price index. ``append`` is the integrity-test corruption hook.
+
+    A phantom price changes the touch. The snapshot cache has to notice, or a
+    later ``depth(levels=1)`` keeps the old best bid.
+    """
+
+    __slots__ = ("_book",)
+
+    def __init__(self, book: "LimitOrderBook") -> None:
+        super().__init__()
+        self._book = book
+
+    def append(self, price: int) -> None:
+        super().append(price)
+        self._book._snap = None
+
+
 class LimitOrderBook:
     """A single symbol's two-sided book with exact per-order queue positions.
 
@@ -315,8 +333,8 @@ class LimitOrderBook:
         # Both kept ASCENDING. Best bid is the last element, best ask the first — one sort
         # order for both sides means bisect is used identically and there is no reversed
         # comparator to get backwards.
-        self._bid_prices: list[int] = []
-        self._ask_prices: list[int] = []
+        self._bid_prices: list[int] = _PriceLadder(self)
+        self._ask_prices: list[int] = _PriceLadder(self)
         self._index: dict[str, RestingOrder] = {}
         self._last_seq = 0
         self._last_ts = 0
