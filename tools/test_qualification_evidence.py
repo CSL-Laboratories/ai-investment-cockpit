@@ -63,7 +63,19 @@ class QualificationEvidenceTests(unittest.TestCase):
         self.assertTrue(excluded)
         self.assertTrue(all(cell["requirement"] == "excluded" for cell in excluded))
         self.assertTrue(all(cell["pass_allowed"] is False for cell in excluded))
-        self.assertTrue(all(cell["owner"] == "Lucas" for cell in excluded))
+        self.assertEqual(
+            self.matrix["owners"],
+            {
+                "required": "CSL-221 qualification evidence",
+                "excluded": "release owner",
+            },
+        )
+        self.assertTrue(all(cell["owner"] == self.matrix["owners"]["required"] for cell in required))
+        self.assertTrue(all(cell["owner"] == self.matrix["owners"]["excluded"] for cell in excluded))
+        self.assertNotIn(
+            "Lucas",
+            (ROOT / "tools" / "qualification_evidence.py").read_text(encoding="utf-8"),
+        )
         self.assertTrue(all(record["pass_allowed"] is False for record in self.matrix["historical_records"]))
         self.assertEqual(self.matrix["does_not_replace"], "DEC-09")
         self.assertEqual(self.matrix["release_decision"], "not_made")
@@ -122,16 +134,20 @@ class QualificationEvidenceTests(unittest.TestCase):
         self.assertIn(MOD.MISSING_JUNIT, codes(self.validate()))
 
     def test_suite_summary_must_match_testcases(self) -> None:
-        mismatched = (
-            b'<testsuite tests="2" errors="1">'
-            b'<testcase classname="qualification.fixture" name="ok"></testcase>'
-            b"</testsuite>"
-        )
-        with self.assertRaises(MOD.JunitSuiteError):
-            MOD.parse_junit(mismatched)
         target = self.root / self.bundle["cells"][0]["artifact_dir"] / "junit.xml"
-        target.write_bytes(mismatched)
-        self.assertIn(MOD.NOT_PASS, codes(self.validate()))
+        original = target.read_bytes()
+        mutated = MOD.increment_one_declared_count(original)
+        self.assertIn(b'classname="qualification.fixture"', mutated)
+        self.assertIn(b'name="test_provider_free"', mutated)
+        self.assertEqual(original.count(b"<testcase"), mutated.count(b"<testcase"))
+        with self.assertRaises(MOD.JunitSuiteError) as caught:
+            MOD.parse_junit(mutated)
+        self.assertIn("junit suite tests=", str(caught.exception))
+        self.assertIn("does not match", str(caught.exception))
+        target.write_bytes(mutated)
+        errors = self.validate()
+        self.assertIn(MOD.NOT_PASS, codes(errors))
+        self.assertTrue(any("junit suite tests=" in item for item in errors))
 
     def test_junit_skip_is_not_pass(self) -> None:
         cell = json.loads(json.dumps(self.bundle["cells"][0]))
@@ -187,6 +203,8 @@ class QualificationEvidenceTests(unittest.TestCase):
             "suite-counts",
         ):
             self.assertIn(f"negative-control {name}: rejected", text)
+        self.assertIn("junit suite tests=", text)
+        self.assertIn("does not match", text)
 
     def test_real_bundle_negative_controls_use_that_bundle(self) -> None:
         lines = MOD.run_negative_controls(

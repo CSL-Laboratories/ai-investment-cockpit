@@ -29,6 +29,8 @@ or elapsed time. Lucas owns release scope.
 | B13 | Dependency lock | Lucas | Each cell records the digest of the interpreter environment that ran. The suite does not install from a hash-locked application lockfile. |
 | B14 | App `macos` job stays on GitHub-hosted `macos-latest` | Lucas | The qualification macOS cells use `blacksmith-6vcpu-macos-15`. The existing application-suite macOS job stays on the best-effort GitHub-hosted runner. Moving it is a cost decision, outside this evidence slice. |
 | B15 | `linux-gates` and `filter` stay on GitHub-hosted `ubuntu-latest` | Lucas | Those jobs are the required-check aggregator and the path filter. This slice does not move them onto Blacksmith. |
+| B16 | Qualification macOS spend on `ci:full` and full dispatch | release owner | The six-cell gate is already in the workflow. Whether two macOS qualification cells on those events are acceptable spend is a human cost decision. |
+| B17 | Partial qualification rerun | — | Artifact names include the run attempt. A rerun of only the failed jobs uploads that new attempt, and validation downloads only that attempt. Fewer than six cells is `missing-cell`. A complete attempt needs all six cells rerun. |
 
 Registry evidence for O9 stays `researched`. This document does not set
 `provider_free_verified`, `release_qualified`, or any live-authority claim.

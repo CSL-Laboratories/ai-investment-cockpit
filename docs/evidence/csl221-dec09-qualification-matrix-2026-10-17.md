@@ -57,7 +57,7 @@ Axes are platform, CPython, and tier. Tiers are `provider-free`, `replay`,
 | linux | `blacksmith-2vcpu-ubuntu-2404` | Linux | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
 | windows | `blacksmith-2vcpu-windows-2025` | Windows | X64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
 | macos | `blacksmith-6vcpu-macos-15` | macOS | ARM64 | 3.11, 3.12 | provider-free | required | CSL-221 qualification evidence |
-| linux, windows, macos | same labels | same | same | 3.11, 3.12 | replay, simulation, paper-demo | excluded | Lucas |
+| linux, windows, macos | same labels | same | same | 3.11, 3.12 | replay, simulation, paper-demo | excluded | release owner |
 
 Required evidence for a provider-free cell is the exact-candidate bundle:
 commit SHA, Git tree SHA, workflow run id, numeric job id, runner image,

@@ -230,7 +230,13 @@ def load_matrix(path: Path) -> dict:
             raise QualificationError(f"{cell_id} requirement")
         if cell.get("pass_allowed") is not required:
             raise QualificationError(f"{cell_id} pass_allowed")
-        owner = "CSL-221 qualification evidence" if required else "Lucas"
+        owners = document.get("owners")
+        if not isinstance(owners, dict):
+            raise QualificationError("matrix owners")
+        owner_key = "required" if required else "excluded"
+        owner = owners.get(owner_key)
+        if not isinstance(owner, str) or not owner.strip():
+            raise QualificationError(f"matrix owners.{owner_key}")
         if cell.get("owner") != owner:
             raise QualificationError(f"{cell_id} owner")
         evidence = cell.get("evidence_requirement")
@@ -712,6 +718,31 @@ def _codes(errors: list[str]) -> set[str]:
     return {item.split(":", 1)[0] for item in errors}
 
 
+def increment_one_declared_count(data: bytes) -> bytes:
+    """Return the same JUnit document with one suite ``tests`` count increased by one.
+
+    Testcases and every other declared count stay as they were. The suite-count
+    control uses this so a rejection is the count check, not a different inventory.
+    """
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError as exc:
+        raise QualificationError(f"junit xml: {exc}") from exc
+    chosen = None
+    for element in root.iter():
+        if _local(element.tag) in {"testsuite", "testsuites"} and "tests" in element.attrib:
+            chosen = element
+            break
+    if chosen is None:
+        raise QualificationError("suite-counts control found no tests count")
+    try:
+        declared = int(chosen.attrib["tests"])
+    except ValueError as exc:
+        raise QualificationError("suite-counts control tests count") from exc
+    chosen.attrib["tests"] = str(declared + 1)
+    return ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
 def run_negative_controls(
     matrix: dict,
     *,
@@ -824,22 +855,27 @@ def run_negative_controls(
         suite_root = work / "suite-counts"
         shutil.copytree(artifact_root, suite_root)
         suite_target = suite_root / bundle["cells"][0]["artifact_dir"] / "junit.xml"
-        suite_target.write_bytes(
-            b'<testsuite tests="2" errors="1">'
-            b'<testcase classname="qualification.fixture" name="ok"></testcase>'
-            b"</testsuite>"
+        original = suite_target.read_bytes()
+        mutated = increment_one_declared_count(original)
+        if mutated == original:
+            raise QualificationError("suite-counts control did not change the JUnit")
+        suite_target.write_bytes(mutated)
+        suite_errors = validate_bundle(
+            bundle,
+            matrix=matrix,
+            expected_commit=commit,
+            expected_tree=tree,
+            artifact_root=suite_root,
         )
-        expect(
-            "suite-counts",
-            NOT_PASS,
-            validate_bundle(
-                bundle,
-                matrix=matrix,
-                expected_commit=commit,
-                expected_tree=tree,
-                artifact_root=suite_root,
-            ),
-        )
+        expect("suite-counts", NOT_PASS, suite_errors)
+        details = [
+            item for item in suite_errors if "junit suite tests=" in item and "does not match" in item
+        ]
+        if len(details) != 1:
+            raise QualificationError(
+                f"suite-counts control missed the declared-count failure: {suite_errors}"
+            )
+        lines.append(f"negative-control suite-counts: reason {details[0]}")
         return lines
     finally:
         if cleanup:
