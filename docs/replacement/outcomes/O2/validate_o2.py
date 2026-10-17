@@ -280,7 +280,14 @@ def reconstruction_codes(bundle: Bundle, raw_ids: list, decision: datetime) -> l
 def semantic_codes(bundle: Bundle, observation: dict, decision: datetime) -> list[str]:
     family = observation.get("market_family")
     natural_key = str(observation.get("natural_key") or "")
-    if family == "event" and natural_key.endswith(":resolution"):
+    if family == "event":
+        identity = bundle.identities.get(observation.get("identity_id"))
+        if identity is not None and identity["market_family"] != "event":
+            return []
+        if not natural_key.endswith(":resolution"):
+            # Event observations exist only on resolution keys; a close_date or
+            # other record's nullable fields must not surface as resolution data.
+            return ["lost_resolution_semantics"]
         effective = effective_record(bundle.records, natural_key, decision)
         payload = effective["payload"] if effective is not None else None
         if (
@@ -361,6 +368,10 @@ def validate_records(bundle: Bundle) -> None:
         identity = bundle.identities.get(record["identity_id"])
         if identity is None or identity["market_family"] != record["market_family"]:
             raise ContractError(f"{record['raw_record_id']} identity family does not match")
+        if record["market_family"] == "event":
+            expected = f"{identity['venue']}:market:{identity['event']['market_ticker'].lower()}:"
+            if not record["natural_key"].startswith(expected):
+                raise ContractError(f"{record['raw_record_id']} natural key does not name its market identity")
         _require_family_clock(record)
         parse_time(record["event_time"])
         parse_time(record["accepted_at"])
@@ -402,6 +413,8 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} claims void was an observed official result")
             if not voided and not payload["official_lifecycle_status_observed"]:
                 raise ContractError(f"{record['raw_record_id']} drops an observed lifecycle status")
+            if payload["result"] is not None and payload["result"] != payload["resolution"]:
+                raise ContractError(f"{record['raw_record_id']} result contradicts its resolution")
             if payload["event_type"] == "close_date_updated":
                 if payload.get("close_time") is None:
                     raise ContractError(f"{record['raw_record_id']} close-date update has no close_time")
@@ -419,6 +432,11 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} carries settled_ts outside a settled event")
             if payload.get("settlement_ts") is not None and payload["channel"] != "rest_get_markets":
                 raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
+        if payload.get("kind") == "corporate_action":
+            for field in ("listing_identity_before", "listing_identity_after"):
+                ref = bundle.identities.get(payload[field])
+                if ref is None or ref["market_family"] != "equity":
+                    raise ContractError(f"{record['raw_record_id']} has an unresolved listing reference")
     by_key: dict[str, list[dict]] = {}
     for record in bundle.records.values():
         by_key.setdefault(record["natural_key"], []).append(record)

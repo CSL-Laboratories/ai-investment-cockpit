@@ -221,6 +221,72 @@ def test_incompatible_correction_payload_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def test_contradictory_event_result_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    for raw_id in ("raw-ev-determined", "raw-ev-settled"):
+        copy = tmp_path / ("O2-" + raw_id)
+        shutil.copytree(O2, copy)
+        records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+        record = next(item for item in records["records"] if item["raw_record_id"] == raw_id)
+        record["payload"]["result"] = "no"
+        record["raw_sha256"] = module.payload_sha256(record["payload"])
+        (copy / "fixtures" / "raw_records.json").write_text(
+            json.dumps(records, indent=2) + "\n", encoding="utf-8"
+        )
+        _rewrite_manifest(module, copy)
+        with pytest.raises(module.ContractError, match="contradicts"):
+            module.validate_candidate(copy)
+
+
+def test_event_record_must_name_its_market_identity(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-ev-close-ooo")
+    record["identity_id"] = "idn-ev-void"
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="market identity"):
+        module.validate_candidate(copy)
+
+
+def test_unresolved_listing_reference_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    for bad_ref in ("idn-eq-ghost", "idn-ev-b1"):
+        copy = tmp_path / ("O2-" + bad_ref)
+        shutil.copytree(O2, copy)
+        records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+        record = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-split")
+        record["payload"]["listing_identity_before"] = bad_ref
+        record["raw_sha256"] = module.payload_sha256(record["payload"])
+        (copy / "fixtures" / "raw_records.json").write_text(
+            json.dumps(records, indent=2) + "\n", encoding="utf-8"
+        )
+        _rewrite_manifest(module, copy)
+        with pytest.raises(module.ContractError, match="listing reference"):
+            module.validate_candidate(copy)
+
+
+def test_event_observation_on_non_resolution_key_fails() -> None:
+    module = _load_validator()
+    documents = {rel: json.loads((O2 / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR}
+    bundle = module.Bundle(documents)
+    observation = {
+        "market_family": "event",
+        "identity_id": "idn-ev-b1",
+        "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:close_date",
+        "raw_record_ids": ["raw-ev-close-ooo"],
+        "resolution": "yes",
+        "lifecycle_status": "finalized",
+    }
+    assert module.semantic_codes(bundle, observation, module.parse_time("2024-09-02T00:00:00Z")) == [
+        "lost_resolution_semantics"
+    ]
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):
