@@ -159,5 +159,9 @@
     "io": "bytes",
     "tokens": "tokens",
     "cost": "USD"
+  },
+  "floor_results": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/floor-results.json",
+    "sha256": "12ba610431ab279a078a8a5b5b7652f5b4105138ea188f2c877cdc880affa3ee"
   }
 }

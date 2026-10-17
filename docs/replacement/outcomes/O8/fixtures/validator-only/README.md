@@ -1,10 +1,11 @@
 # Synthetic validator controls
 
-These invented input bytes, candidate, baseline outputs and observations exercise
-the manifest validator only. No benchmark was run. The commits, host, timings and
-configuration are synthetic; acceptance by the validator proves structural checks,
-not provenance of a real run, empirical evidence or qualification. O8's measured
-tier-3 result count remains zero.
+These invented input bytes, candidate, baseline outputs, host, configuration,
+floor-result receipts and observations exercise the manifest validator only.
+No benchmark was run and no floor test was executed. The commits, host, timings,
+configuration and passing floor receipts are synthetic; acceptance by the
+validator proves structural checks, not provenance of a real run, empirical
+evidence or qualification. O8's measured tier-3 result count remains zero.
 
 `benchmark.json` is the otherwise valid comparison used to isolate negative
 controls. `unbound-fixture-baseline.json` deliberately repeats an invented fixture

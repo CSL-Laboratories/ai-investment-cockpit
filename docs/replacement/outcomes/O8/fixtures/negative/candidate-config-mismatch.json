@@ -83,8 +83,8 @@
     "workload_id": "ingest_to_raw_store",
     "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
     "outputs": {
-      "path": "docs/replacement/outcomes/O8/fixtures/validator-only/baseline-outputs.json",
-      "sha256": "caadfc042fbf9cec664b73e67c585557d43b1e1f4d8101bf2fe327e6b8189ebe"
+      "path": "docs/replacement/outcomes/O8/fixtures/validator-only/baseline-config-batch-2.json",
+      "sha256": "72593743dcebbdb86f3ab589f7c849f477d9a0968c429d553e99837a63e08802"
     }
   },
   "commit": "ffffffffffffffffffffffffffffffffffffffff",
@@ -159,5 +159,9 @@
     "io": "bytes",
     "tokens": "tokens",
     "cost": "USD"
+  },
+  "floor_results": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/floor-results.json",
+    "sha256": "12ba610431ab279a078a8a5b5b7652f5b4105138ea188f2c877cdc880affa3ee"
   }
 }

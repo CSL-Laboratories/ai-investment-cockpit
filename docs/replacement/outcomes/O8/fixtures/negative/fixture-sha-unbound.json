@@ -84,7 +84,7 @@
     "fixture_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "outputs": {
       "path": "docs/replacement/outcomes/O8/fixtures/validator-only/unbound-fixture-baseline.json",
-      "sha256": "a7e19790c9a4363861436b1f8d26665dc47113c0d01addc854a42e4675788b75"
+      "sha256": "77d087fcf9f4aa7a540f2c01cb1aab8f1da8d5ec796404c684aec1593c9c570c"
     }
   },
   "commit": "ffffffffffffffffffffffffffffffffffffffff",
@@ -159,5 +159,9 @@
     "io": "bytes",
     "tokens": "tokens",
     "cost": "USD"
+  },
+  "floor_results": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/floor-results.json",
+    "sha256": "12ba610431ab279a078a8a5b5b7652f5b4105138ea188f2c877cdc880affa3ee"
   }
 }

@@ -195,6 +195,10 @@ NEGATIVES = (
     ("candidate-id-unbound.json", "benchmark", "candidate does not match retained candidate manifest"),
     ("candidate-commit-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
     ("candidate-config-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
+    ("baseline-host-mismatch.json", "benchmark", "tier-3 baseline host does not match the candidate"),
+    ("floor-results-missing.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
+    ("floor-results-wrong-commit.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
+    ("floor-results-failed.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
 )
 
 
@@ -443,10 +447,18 @@ def benchmark_reasons(document: Any) -> list[str]:
                             raw = None
                         if raw is not None and hashlib.sha256(raw).hexdigest() == outputs_digest:
                             outputs_ok = _baseline_outputs_bound(raw, baseline)
+                            if outputs_ok and not _baseline_host_matches(raw, document):
+                                reasons.append("tier-3 baseline host does not match the candidate")
         if not outputs_ok and not outputs_rejected:
             reasons.append("tier-3 baseline lacks retained outputs")
     if document.get("floors_attached") is True:
         _check_floors(document.get("floors"), reasons, "attached floors invalid")
+    if (
+        document.get("csl42_evidence") is True
+        and "attached floors invalid" not in reasons
+        and not _floor_results_bound(document)
+    ):
+        reasons.append("tier-3 floor results are not bound to the candidate")
     if isinstance(variance, dict) and variance.get("status") == "measured":
         if document.get("units") != OBSERVATION_UNITS:
             reasons.append("observation units missing or invalid")
@@ -472,6 +484,73 @@ def benchmark_reasons(document: Any) -> list[str]:
             reasons.append("impossible measured observation")
     reasons.extend(_schema_errors(document, BENCHMARK_SCHEMA))
     return reasons
+
+
+def _execution_identity(host: Any, configuration: Any) -> tuple[str, str, str] | None:
+    """Runner, Python runtime, and exact execution configuration, or None when incomplete."""
+    if not isinstance(host, dict) or not isinstance(configuration, dict) or not configuration:
+        return None
+    runner = host.get("runner")
+    python = host.get("python")
+    if not isinstance(runner, str) or not runner.strip():
+        return None
+    if not isinstance(python, str) or not python.strip():
+        return None
+    return (runner, python, json.dumps(configuration, sort_keys=True, separators=(",", ":")))
+
+
+def _baseline_host_matches(raw: bytes, document: dict[str, Any]) -> bool:
+    """True when the retained baseline was measured on the candidate host and configuration."""
+    try:
+        retained = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        return False
+    if not isinstance(retained, dict):
+        return False
+    retained_identity = _execution_identity(retained.get("host"), retained.get("configuration"))
+    candidate_identity = _execution_identity(document.get("host"), document.get("configuration"))
+    return retained_identity is not None and retained_identity == candidate_identity
+
+
+def _floor_results_bound(document: dict[str, Any]) -> bool:
+    """True when retained floor results pass and name this candidate commit.
+
+    The checker binds the receipt. It does not execute the floor tests.
+    """
+    raw = _retained_bytes(document.get("floor_results"))
+    if raw is None:
+        return False
+    try:
+        retained = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        return False
+    if not isinstance(retained, dict):
+        return False
+    commit = retained.get("commit")
+    if not isinstance(commit, str) or commit != document.get("commit"):
+        return False
+    results = retained.get("results")
+    if not isinstance(results, list) or len(results) != len(FLOOR_IDS):
+        return False
+    found: dict[str, bool] = {}
+    for item in results:
+        if not isinstance(item, dict):
+            return False
+        floor_id = item.get("id")
+        if not isinstance(floor_id, str) or floor_id not in FLOOR_LOCATORS or floor_id in found:
+            return False
+        if item.get("outcome") != "pass" or item.get("test_locator") != FLOOR_LOCATORS[floor_id]:
+            return False
+        found[floor_id] = True
+    return set(found) == set(FLOOR_IDS)
 
 
 def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:

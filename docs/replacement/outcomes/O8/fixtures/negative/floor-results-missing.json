@@ -1,0 +1,163 @@
+{
+  "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+  "tier": 3,
+  "workload_id": "ingest_to_raw_store",
+  "provider_free": true,
+  "network_calls": 0,
+  "credentials_used": false,
+  "live_orders": false,
+  "csl42_evidence": true,
+  "floors_attached": true,
+  "floors": [
+    {
+      "id": "invariant_1_single_order_path",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/tests/test_invariants.py"
+    },
+    {
+      "id": "invariant_2_decision_pinned_in_auto_modes",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/mode_ladder.py"
+    },
+    {
+      "id": "invariant_3_schema_validate_model_output",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/workflows/schema_loader.py"
+    },
+    {
+      "id": "invariant_4_secrets_os_credential_store",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/core/secrets.py"
+    },
+    {
+      "id": "invariant_5_risk_pure",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "invariant_6_human_gate_hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    },
+    {
+      "id": "invariant_7_fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "invariant_8_raw_inputs_separate_from_summaries",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/filings/raw_store.py"
+    },
+    {
+      "id": "invariant_9_post_pdt",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    }
+  ],
+  "candidate_id": "validator-only-synthetic",
+  "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
+  "baseline": {
+    "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+    "workload_id": "ingest_to_raw_store",
+    "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
+    "outputs": {
+      "path": "docs/replacement/outcomes/O8/fixtures/validator-only/baseline-outputs.json",
+      "sha256": "12f06403b7d8fb5163e530966e2d9fd93857f605d1cb6bdd8771af36df36e873"
+    }
+  },
+  "commit": "ffffffffffffffffffffffffffffffffffffffff",
+  "host": {
+    "runner": "blacksmith-4vcpu-ubuntu-2204",
+    "python": "3.12.3",
+    "status": "measured"
+  },
+  "io": {
+    "included": true,
+    "kinds": [
+      "disk"
+    ],
+    "status": "measured"
+  },
+  "helper_processes": [
+    {
+      "name": "ingest-worker",
+      "role": "primary",
+      "included": true,
+      "status": "measured"
+    },
+    {
+      "name": "raw-store",
+      "role": "storage-helper",
+      "included": true,
+      "status": "measured"
+    }
+  ],
+  "provider_latency": {
+    "status": "excluded_with_reason",
+    "reason": "provider_free run; no provider call exists"
+  },
+  "variance": {
+    "statistic": "relative_iqr",
+    "repetitions": 5,
+    "relative_iqr": 0.03,
+    "status": "measured"
+  },
+  "observation": {
+    "p50": 10.0,
+    "p95": 20.0,
+    "p99": 30.0,
+    "throughput": 1000.0,
+    "rss_bytes": 123456,
+    "cpu": 0.5,
+    "io": 2.0,
+    "tokens": null,
+    "cost": null,
+    "correctness": "synthetic control only; not measured evidence",
+    "failure": "synthetic control",
+    "recovery": "synthetic control",
+    "growth": "synthetic control",
+    "status": "measured"
+  },
+  "candidate": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/candidate.json",
+    "sha256": "5070d643b167ffb8201cf7267722fd724f184a52fcf746eb48c7eb62ad656b29"
+  },
+  "configuration": {
+    "batch_size": 1
+  },
+  "fixture": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/input.json",
+    "sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3"
+  },
+  "units": {
+    "latency": "ms",
+    "throughput": "workload_completions_per_second",
+    "rss_bytes": "bytes",
+    "cpu": "cpu_seconds",
+    "io": "bytes",
+    "tokens": "tokens",
+    "cost": "USD"
+  }
+}

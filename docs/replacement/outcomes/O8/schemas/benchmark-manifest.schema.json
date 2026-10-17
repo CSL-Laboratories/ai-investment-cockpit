@@ -88,6 +88,7 @@
         "cost": "USD"
       }
     },
+    "floor_results": {"$ref": "#/$defs/retainedFile"},
     "baseline": {
       "type": "object",
       "additionalProperties": false,
@@ -224,7 +225,7 @@
             "required": ["status"]
           }
         },
-        "required": ["tier", "floors_attached", "variance", "candidate_id", "candidate", "configuration", "baseline", "fixture", "fixture_sha256"]
+        "required": ["tier", "floors_attached", "variance", "candidate_id", "candidate", "configuration", "baseline", "fixture", "fixture_sha256", "floor_results"]
       }
     },
     {

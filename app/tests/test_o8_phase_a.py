@@ -57,7 +57,11 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: candidate-id-unbound: candidate does not match retained candidate manifest",
     "O8 negative control failed as designed: candidate-commit-mismatch: candidate does not match retained candidate manifest",
     "O8 negative control failed as designed: candidate-config-mismatch: candidate does not match retained candidate manifest",
-    "O8 negative controls: 39 failed as designed",
+    "O8 negative control failed as designed: baseline-host-mismatch: tier-3 baseline host does not match the candidate",
+    "O8 negative control failed as designed: floor-results-missing: tier-3 floor results are not bound to the candidate",
+    "O8 negative control failed as designed: floor-results-wrong-commit: tier-3 floor results are not bound to the candidate",
+    "O8 negative control failed as designed: floor-results-failed: tier-3 floor results are not bound to the candidate",
+    "O8 negative controls: 43 failed as designed",
 )
 
 
@@ -279,6 +283,10 @@ def test_o8_candidate_cannot_be_reused_for_a_different_workload_seam() -> None:
     ("candidate-id-unbound", "candidate does not match retained candidate manifest"),
     ("candidate-commit-mismatch", "candidate does not match retained candidate manifest"),
     ("candidate-config-mismatch", "candidate does not match retained candidate manifest"),
+    ("baseline-host-mismatch", "tier-3 baseline host does not match the candidate"),
+    ("floor-results-missing", "tier-3 floor results are not bound to the candidate"),
+    ("floor-results-wrong-commit", "tier-3 floor results are not bound to the candidate"),
+    ("floor-results-failed", "tier-3 floor results are not bound to the candidate"),
 ])
 def test_o8_review_negative_controls_isolate_the_intended_failure(name: str, expected: str) -> None:
     document = CHECK_O8._load_json(CHECK_O8.NEGATIVE_DIR / f"{name}.json")

@@ -26,5 +26,12 @@
     "recovery": "synthetic control",
     "growth": "synthetic control",
     "status": "measured"
+  },
+  "host": {
+    "runner": "blacksmith-4vcpu-ubuntu-2204",
+    "python": "3.12.3"
+  },
+  "configuration": {
+    "batch_size": 1
   }
 }
