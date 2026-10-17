@@ -69,8 +69,8 @@ dependency digest, JUnit inventory, and SHA-256s of `junit.xml`,
 substitute for those observed fields. The hosted suite is
 `tools/test_qualification_evidence.py`. It does not call a broker, a model
 provider, or a market-data vendor. The hosted six-cell matrix runs only when
-Linux, Windows, and macOS are all authorized: a pull request with `ci:full`,
-or a full workflow dispatch. An ordinary pull request, a `scope=linux`
+Linux, Windows, and macOS are all authorized: an eligible same-repository pull
+request with `ci:full`, or a full workflow dispatch. An ordinary pull request, a `scope=linux`
 dispatch, the nightly schedule, and an ordinary push to `main` do not start
 it. A partial matrix is not a pass. On a full run, validation starts
 unless the qualification job itself was skipped, and it fails when any
@@ -79,6 +79,49 @@ bundle validates, the workflow writes `manifest.json` with the SHA-256
 of `bundle.json` and attests that directory with
 `actions/attest-build-provenance@v3`. Whether the organization allows
 that attestation is blocker B18.
+
+### Qualification admission and cost boundary
+
+The owner approved same-repository-only attested qualification, rejection of unsupported
+fork/Dependabot qualification before the six paid cells, and no automatic nightly
+expansion. The attributed approval and writer coordination are recorded on
+[CSL-221](https://linear.app/csl-laboratories/issue/CSL-221#comment-eb53e49a-9e02-4104-8efe-23405eb2a53f).
+This refinement is stacked after #174, which remains dependent on #166.
+
+`qualification-admission` runs on standard GitHub-hosted `ubuntu-latest` (free
+runner compute for this public repository), with read-only repository/PR access
+and no checkout. It rejects fork PRs, Dependabot actors and Dependabot-authored
+PRs before the matrix. For a PR-context dispatch, it reads the current PR and
+requires the expected head, open/non-draft state and same repository. Lookup
+failure or missing identity fails admission and never becomes qualification PASS.
+The six cells require its explicit `eligible=true` output. Ordinary application
+CI and the cheap qualification negative controls do not depend on admission.
+
+The existing explicit full manual branch dispatch remains available: GitHub
+resolves that ref inside this repository, without an originating PR identity.
+A maintainer may bring a contribution to a reviewed same-repository candidate
+and explicitly qualify that candidate. A direct fork/Dependabot PR, a partial
+PR dispatch context, or an unresolved PR lookup cannot use the PR-context path.
+The bundle still binds the exact checked-out head/tree. Admission is eligibility,
+not attestation, coverage, release approval or a successful qualification result.
+
+There is no added periodic trigger. Qualification stays off nightly and ordinary
+main pushes; `ci:full` on eligible PRs and explicit full dispatch retain the
+existing cadence. Settle the candidate before requesting expensive qualification
+and avoid pushing over a running paid matrix. Account for every actual billable
+job start and rerun, including cancelled/failed attempts, the negative-control
+job and validation. The two Blacksmith macOS cells need separate pricing (B16):
+the public-repository free GitHub macOS assumption does not apply to them.
+The $100/month target and $60–75 planned core-compute envelope are planning
+targets, not enforced limits or billing receipts; qualification is an additional,
+separately priced item. Account usage and credit allocation are unverified.
+
+Implementation reference: GitHub documents the
+[Dependabot token restrictions](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-on-actions)
+and [workflow dispatch and PR event contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+Offline regression tests execute the checked-in admission script with a fake API
+for fork, Dependabot, stale/invalid context and failed lookup, and retain the
+matrix, least-privilege, exact-head, provenance and partial-attempt assertions.
 
 Excluded tiers are defined so they cannot be reported as pass. Hetzner is not
 a cell. Native Windows and Ubuntu WSL2 remain DEC-09's package-acceptance
