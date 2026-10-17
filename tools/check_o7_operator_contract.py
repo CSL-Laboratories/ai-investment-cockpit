@@ -238,10 +238,11 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     collateral = result.get("collateral") if isinstance(result.get("collateral"), dict) else {}
     has_refusal = bool(refusals or refused_decisions)
     stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
+    unavailable = any(item.get("status") == "unavailable" for item in dependencies)
     unreconciled = result.get("reconciliation") == "unreconciled" or (
         isinstance(result.get("unknown_orders"), int) and result.get("unknown_orders", 0) > 0
     )
-    higher_status = stale or unreconciled
+    higher_status = stale or unreconciled or unavailable
     has_uncertainty = bool(unknown_items) or collateral.get("state") == "unknown"
     if visibility.get("refusal") == "hidden" or has_refusal:
         disclosed = visibility.get("refusal") == "visible" and _refusal_disclosed(refusals, refused_decisions)
@@ -251,16 +252,26 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         if visibility.get("uncertainty") != "visible" or any(item.get("visible") is not True for item in unknown_items):
             return "hidden_uncertainty"
     if visibility.get("stale_data") == "hidden" or stale:
-        if visibility.get("stale_data") != "visible" or doc.get("status_code") != "stale_or_unreconciled":
+        expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
+        if visibility.get("stale_data") != "visible" or doc.get("status_code") != expected_status:
             return "hidden_stale_data"
     if visibility.get("reconciliation") == "hidden" or unreconciled:
+        expected_status = "unavailable" if unavailable else "stale_or_unreconciled"
         visible = (
             visibility.get("reconciliation") == "unreconciled_visible"
-            and doc.get("status_code") == "stale_or_unreconciled"
+            and doc.get("status_code") == expected_status
             and result.get("restart_allowed") is False
         )
         if not visible:
             return "hidden_unreconciled"
+    if unavailable and doc.get("status_code") != "unavailable":
+        return "hidden_unavailable"
+    if (
+        doc.get("command") == "operator.health.inspect"
+        and (stale or unavailable)
+        and result.get("watch_only") is not True
+    ):
+        return "stale_not_watch_only"
     if (
         presentation.get("color_only_signal") is True
         or presentation.get("ansi_in_machine_output") is True
@@ -285,11 +296,13 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     if not isinstance(errors, list):
         return "status_error_mismatch"
     active_codes: set[str] = set()
+    if unavailable or status == "unavailable":
+        active_codes.add("unavailable")
     if stale or unreconciled:
         active_codes.add("stale_or_unreconciled")
     if has_refusal:
         active_codes.add("refused")
-    if status in {"usage", "unavailable"}:
+    if status == "usage":
         active_codes.add(status)
     if status == "ok":
         if errors or active_codes:
@@ -607,9 +620,11 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle pair ids drifted")
     for command in kinds["commands"].get("commands", []):
         _require_schema(command_validator, command, "oracle command")
-        if command["command"] in INTERVENTION_NAMES and command.get("confirmation") != "explicit":
-            raise ContractError("intervention command skips confirmation")
-        if command["command"] not in INTERVENTION_NAMES and command.get("confirmation") != "not_required":
+        arguments = command.get("arguments") if isinstance(command.get("arguments"), dict) else {}
+        if command["command"] in INTERVENTION_NAMES:
+            if command.get("confirmation") != "explicit" or arguments.get("scope") != "operator_session":
+                raise ContractError("intervention command skips confirmation or session scope")
+        elif command.get("confirmation") != "not_required":
             raise ContractError("read command requires a confirmation it does not need")
     if {item["command"] for item in kinds["commands"].get("commands", [])} != set(commands):
         raise ContractError("oracle commands do not cover the catalog")

@@ -192,6 +192,39 @@ def test_hidden_result_states_and_empty_results_fail() -> None:
     assert CHECKER._schema_error(validator, empty) is not None
 
 
+def test_intervention_commands_require_explicit_session_scope() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    schema = json.loads((root / "schemas" / "operator-command.schema.json").read_text(encoding="utf-8"))
+    validator = CHECKER._validator(schema)
+    commands = json.loads((root / "fixtures" / "oracle" / "commands.json").read_text(encoding="utf-8"))
+    stop = next(item for item in commands["commands"] if item["command"] == "operator.interventions.request_stop")
+    assert CHECKER._schema_error(validator, stop) is None
+    unconfirmed = copy.deepcopy(stop)
+    unconfirmed["confirmation"] = "not_required"
+    assert CHECKER._schema_error(validator, unconfirmed) is not None
+    unscoped = copy.deepcopy(stop)
+    unscoped["arguments"] = {}
+    assert CHECKER._schema_error(validator, unscoped) is not None
+
+
+def test_unavailable_and_stale_health_fail_closed() -> None:
+    by_request, commands, validator = _candidate_documents()
+    unavailable = by_request["req_health_unavailable"]
+    assert CHECKER._schema_error(validator, unavailable) is None
+    assert CHECKER.classify_response(unavailable, commands) is None
+    assert unavailable["presentation"]["exit_code"] == 4
+    hidden = copy.deepcopy(unavailable)
+    hidden["status_code"] = "ok"
+    hidden["errors"] = []
+    hidden["presentation"]["exit_code"] = 0
+    hidden["presentation"]["text_status"] = "ok"
+    hidden["presentation"]["rendered"] = "status=ok canonical health"
+    assert CHECKER.classify_response(hidden, commands) == "hidden_unavailable"
+    stale = copy.deepcopy(by_request["req_health_stale"])
+    stale["result"]["watch_only"] = False
+    assert CHECKER.classify_response(stale, commands) == "stale_not_watch_only"
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)

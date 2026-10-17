@@ -44,5 +44,33 @@
       }
     },
     "confirmation": {"enum": ["not_required", "explicit"]}
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "enum": [
+              "operator.interventions.request_reconciliation",
+              "operator.interventions.request_revocation",
+              "operator.interventions.request_stop"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "confirmation": {"const": "explicit"},
+          "arguments": {
+            "required": ["scope"],
+            "properties": {"scope": {"const": "operator_session"}}
+          }
+        }
+      },
+      "else": {
+        "properties": {"confirmation": {"const": "not_required"}}
+      }
+    }
+  ]
 }

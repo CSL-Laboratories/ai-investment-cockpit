@@ -71,7 +71,7 @@ The profile object in the frozen fixtures uses `signature_state=illustrative_uns
 
 Reads: evidence, strategies, positions, decisions, uncertainty, health, budgets, profiles, recovery, audit export, bundle export.
 
-Intervention requests: `operator.interventions.request_stop`, `request_reconciliation`, `request_revocation`. Confirmation is `explicit` and scope is `operator_session` only. There is no `account` scope. A noninteractive flag may supply the explicit confirmation. It may not skip the shared enforcement route.
+Intervention requests: `operator.interventions.request_stop`, `request_reconciliation`, `request_revocation`. Confirmation is `explicit` and scope is `operator_session` only. The command schema rejects `not_required`, an empty `arguments` object, and any other scope on those three commands. There is no `account` scope. A noninteractive flag may supply the explicit confirmation. It may not skip the shared enforcement route.
 
 There is no submit, approve, or broker command in the allowlist.
 
@@ -87,22 +87,23 @@ Both surfaces carry the same `status_code`. The CLI maps it to a process exit co
 
 | status_code | CLI exit | When |
 | --- | --- | --- |
-| `ok` | 0 | No refusal, stale data, or unreconciled state in the payload |
+| `ok` | 0 | No refusal, stale data, unreconciled state, or unavailable dependency |
 | `usage` | 1 | Malformed command |
-| `refused` | 2 | A refusal is visible and no stale or unreconciled condition outranks it |
-| `stale_or_unreconciled` | 3 | Stale data or unreconciled state is visible. A coexisting refusal stays visible |
-| `unavailable` | 4 | A dependency cannot be read |
+| `refused` | 2 | A refusal is visible and no unavailable, stale, or unreconciled condition outranks it |
+| `stale_or_unreconciled` | 3 | Stale data or unreconciled state is visible, and no dependency is unavailable |
+| `unavailable` | 4 | A dependency status is `unavailable`. Coexisting conditions stay visible |
 
 Machine-readable JSON goes to stdout with no ANSI. Diagnostics go to stderr. `NO_COLOR` and `--no-color` are required of a future CLI. Color, a spinner, or an icon cannot be the only status signal. Cancellation does not imply that a recorded stop or fill was undone.
 
 One response has one `status_code`. When more than one condition is present, precedence picks that code and every condition stays visible:
 
-1. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled`.
-2. Stale data selects the same status. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
-3. A refusal selects `refused` only when neither condition above is present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`.
-4. `ok` is allowed only when none of those conditions are present.
+1. An unavailable dependency (`dependencies[*].status=unavailable`) selects `unavailable`.
+2. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled` when no dependency is unavailable.
+3. Stale data selects the same status when no dependency is unavailable. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
+4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`.
+5. `ok` is allowed only when none of those conditions are present.
 
-A refusal that loses the status to stale or unreconciled data still requires `visibility.refusal=visible`, the matching visible refusal, and an error whose code is `refused`. The winning status also has its own error. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
+A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. A health read that is stale or has an unavailable dependency sets `watch_only` true. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
 
 An empty `positions` array is a known empty portfolio. Position `quantity` is a signed decimal string: an unsigned value is long, a leading `-` is short, and a fractional part is allowed. An empty `result` object is invalid for every catalog command. The response schema requires that command's result fields.
 

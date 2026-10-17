@@ -854,6 +854,56 @@
         "text_status": "stale_or_unreconciled",
         "rendered": "status=stale_or_unreconciled refused and stale"
       }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.health.inspect",
+      "request_id": "req_health_unavailable",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "unavailable",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "watch_only": true,
+        "stale": false,
+        "dependencies": [
+          {
+            "name": "evidence",
+            "status": "unavailable"
+          }
+        ]
+      },
+      "errors": [
+        {
+          "code": "unavailable",
+          "status_code": "unavailable",
+          "message": "Unavailable: evidence cannot be read. No order was submitted.",
+          "recovery": "Restore the evidence feed and read health again.",
+          "color_only": false
+        }
+      ],
+      "presentation": {
+        "exit_code": 4,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "unavailable",
+        "rendered": "status=unavailable canonical health"
+      }
     }
   ]
 }
