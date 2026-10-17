@@ -250,6 +250,10 @@ class Coordinator:
         review = candidate_api.head_mediate_review(reviews, identity[2])
         if not review:
             return None
+        # A stale MEDIATE on an already-approved PR: _act would skip the handoff,
+        # so stop before revoke withdraws a gate-owned ci:full.
+        if self.legacy.pr_is_approved(reviews):
+            return "mediate-skip-approved"
         head = identity[2]
         pause = self.receipts.latest_pause_id(comments, head)
         self.fresh_mediate(identity, review, pause)
@@ -261,6 +265,8 @@ class Coordinator:
         pause = max([pause, *invalidations])
         comments, reviews = self.fresh_mediate(identity, review, pause, origin)
         self.verify_reservations(comments)
+        if self.legacy.pr_is_approved(reviews):
+            return "mediate-skip-approved"
         nonce = hashlib.sha256(f"{head}:{review['id']}:{pause}".encode()).hexdigest()[:32]
         trusted = self.legacy.trusted_comments(comments, self.legacy.marker_authors(self.gh))
         # Keep the established head-scoped MEDIATE idempotence when upgrading

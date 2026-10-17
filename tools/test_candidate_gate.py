@@ -28,6 +28,7 @@ try:
     SPEC = importlib.util.spec_from_file_location("candidate_gate_under_test", ROOT / "scripts/ci/candidate_gate.py")
     gate = importlib.util.module_from_spec(SPEC)
     SPEC.loader.exec_module(gate)
+    import codex_gate as legacy_gate
 finally:
     sys.path.pop(0)
 
@@ -258,7 +259,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
             _act=Mock(return_value=["mediation-enqueued"]),
             trusted_comments=Mock(return_value=[]), marker_authors=Mock(return_value={"trusted"}),
             action_for_sha=Mock(return_value=""), ready_comments=lambda comments, head: comments,
-            utc_day=Mock(return_value="2026-10-16"))
+            utc_day=Mock(return_value="2026-10-16"), pr_is_approved=legacy_gate.pr_is_approved)
         self.coordinator = gate.Coordinator(self.legacy, self.gh, REPO, PR, POLICY)
 
     def reconcile(self, policy=POLICY):
@@ -954,6 +955,59 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.reconcile(), "mediation-enqueued")
         self.legacy._act.assert_called_once()
         self.assertEqual(self.gh.dispatches, [])
+
+    def human_review(self, state, identifier, submitted_at):
+        return {"id": identifier, "user": {"id": 55, "login": "owner", "type": "User"},
+                "state": state, "submitted_at": submitted_at}
+
+    def test_mediate_skips_approved_pr_before_any_side_effect(self):
+        self.prime_head_mediate()
+        self.gh.reviews.append(self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z"))
+        before = copy.deepcopy(self.gh.comments)
+        self.assertEqual(self.reconcile(), "mediate-skip-approved")
+        self.receipts.revoke_owned_ci.assert_not_called()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.gh.comments, before)
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_mediate_still_runs_when_latest_human_review_is_not_approval(self):
+        for later in ("CHANGES_REQUESTED", "DISMISSED", "COMMENTED"):
+            with self.subTest(later=later):
+                self.setUp()
+                self.prime_head_mediate()
+                approval = self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z")
+                self.gh.reviews.append(approval)
+                if later == "DISMISSED":
+                    # GitHub rewrites the dismissed review's own state.
+                    approval["state"] = "DISMISSED"
+                else:
+                    self.gh.reviews.append(self.human_review(later, 8001, "2026-10-16T00:03:00Z"))
+                result = self.reconcile()
+                if later == "CHANGES_REQUESTED":
+                    # The human hold wins before mediation, as before.
+                    self.assertEqual(result, "held-or-fixer-pending")
+                    self.legacy._act.assert_not_called()
+                    continue
+                # DISMISSED drops the approval; a plain COMMENTED leaves it in force.
+                if later == "DISMISSED":
+                    self.assertEqual(result, "mediation-enqueued")
+                    self.legacy._act.assert_called_once()
+                    self.assertEqual(len(self.journal("mediate-intent")), 1)
+                else:
+                    self.assertEqual(result, "mediate-skip-approved")
+                    self.legacy._act.assert_not_called()
+
+    def test_mediate_skips_when_approval_arrives_between_listings(self):
+        self.prime_head_mediate()
+        approval = self.human_review("APPROVED", 8000, "2026-10-16T00:02:00Z")
+        self.receipts.revoke_owned_ci.side_effect = (
+            lambda *args, **kwargs: self.gh.reviews.append(approval) or "nothing-owned")
+        self.assertEqual(self.reconcile(), "mediate-skip-approved")
+        self.receipts.revoke_owned_ci.assert_called_once()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.journal("mediate"), [])
 
     def test_forged_mediate_neither_dispatches_nor_starts_mediation(self):
         self.prime_ready()
