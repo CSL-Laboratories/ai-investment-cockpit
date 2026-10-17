@@ -1838,7 +1838,7 @@ def test_halt_set_inside_claim_fence_refuses_and_covers_intent(st, tmp_path):
     outcome = scenario.gateway.submit(
         scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
     )
-    assert fenced == [True]
+    assert fenced  # the fence also re-runs right before transport
     assert (outcome.ok, outcome.stage) == (False, "halt")
     assert broker.calls == 0
     assert st.audit.unresolved_intents() == []
@@ -1923,6 +1923,36 @@ def test_running_owner_fenced_out_after_expired_lease_takeover(st, tmp_path):
     )
     assert broker.calls == 1
     assert _handoff_row(store_b.path, "fence-1")["handoff_state"] == "completed"
+    assert st.audit.unresolved_intents() == []
+    assert st.audit.verify_chain().ok
+
+
+def test_owner_fenced_out_when_takeover_happens_after_final_admission(st, tmp_path):
+    """4303610145: the fence re-runs right before transport, after admission."""
+    scenario, store_a, ticket_a, broker = _claimed_paper_scenario(st, tmp_path)
+    store_b = AuthorityProfileStore(store_a.path)
+    initial = scenario.clock.now()
+    calls = []
+
+    def fence():
+        calls.append(True)
+        if len(calls) == 2:
+            # Blocking work between the first fence and transport outlives the lease.
+            scenario.clock._at = initial + timedelta(seconds=171)
+            store_b._reconcile_handoff(
+                "fence-1", order_ref=str(scenario.order.id), now=scenario.clock.now(),
+                gateway=scenario.gateway, ladder=scenario.ladder,
+            )
+        store_a._confirm_claim_before_broker_call(
+            "fence-1", ticket_a.generation, now=scenario.clock.now(),
+        )
+
+    outcome = scenario.gateway.submit(
+        scenario.order, claim_fence=fence, **_paper_submit_kwargs(scenario),
+    )
+    assert len(calls) == 2
+    assert (outcome.ok, outcome.stage) == (False, "claim_fence")
+    assert broker.calls == 0
     assert st.audit.unresolved_intents() == []
     assert st.audit.verify_chain().ok
 

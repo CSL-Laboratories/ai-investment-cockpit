@@ -1013,6 +1013,37 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
+            # The final admission read can block past the claim lease, letting a reconciler
+            # take over. Re-run the fence (generation + unexpired lease CAS) immediately
+            # before transport so a stale owner never reaches the broker.
+            if claim_fence is not None:
+                try:
+                    claim_fence()
+                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason=f"claim fence refused the broker call: {exc}",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+                if (
+                    self._broker is not broker
+                    or type(broker) is not broker_type
+                    or self._execution_scope != execution_scope
+                ):
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="transport_scope",
+                        reason="broker transport changed during the claim fence",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+
             # HALT may arrive while the claim store blocks or during the final
             # admission checks. Probe after both, immediately before transport.
             if _halt_active(default_halt_path()):
