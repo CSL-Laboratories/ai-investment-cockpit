@@ -334,11 +334,7 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "false_unavailable"
     if unavailable and doc.get("status_code") != "unavailable":
         return "hidden_unavailable"
-    if (
-        doc.get("command") == "operator.health.inspect"
-        and (stale or unavailable)
-        and result.get("watch_only") is not True
-    ):
+    if (stale or unavailable) and result.get("watch_only") is not True:
         return "stale_not_watch_only"
     if (
         presentation.get("color_only_signal") is True

@@ -102,7 +102,7 @@
     },
     {
       "path": "fixtures/oracle/responses.json",
-      "sha256": "503b89f328767500afe58999e4b43fee622e0e0a72aee2e92d09110ff8f85c44",
+      "sha256": "f32c2bb0dc5d4bae364f72ba8e212c2d6727563bcf7efa69c33efca887a87dfc",
       "role": "oracle"
     },
     {
@@ -132,7 +132,7 @@
     },
     {
       "path": "schemas/operator-response.schema.json",
-      "sha256": "ce1016a158614150a4c5194ac3a67ac5ec8f2b30f9ccf6fe30e521f3448b4422",
+      "sha256": "665933dbf83835b0f2672c2b0096a3861995db2a25a1496e6b65e322dcd7158b",
       "role": "pinned"
     },
     {

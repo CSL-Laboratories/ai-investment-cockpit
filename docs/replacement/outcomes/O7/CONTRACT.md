@@ -103,7 +103,7 @@ One response has one `status_code`. When more than one condition is present, pre
 4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`. `unavailable` is not a valid status when every dependency is readable.
 5. `ok` is allowed only when none of those conditions are present.
 
-A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. A health read that is stale or has an unavailable dependency sets `watch_only` true. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
+A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. Any response that is stale or has an unavailable dependency sets `watch_only` true, including a positions or decisions read. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
 
 An empty `positions` array is a known empty portfolio. Position `quantity` is a signed decimal string: an unsigned value is long, a leading `-` is short, and a fractional part is allowed. An empty `result` object is invalid for every catalog command. The response schema requires that command's result fields.
 
@@ -163,7 +163,7 @@ Each fixture is schema-valid except the privileged bypass, which the response sc
 | `contradictory_status_text` | `fixtures/negative/contradictory-status-text.json` | Refused status whose visible text says `ok` |
 | `unconfirmed_intervention` | `fixtures/negative/unconfirmed-intervention.json` | Stop request with session scope and `confirmation=not_required` |
 | `unscoped_intervention` | `fixtures/negative/unscoped-intervention.json` | Stop request with explicit confirmation and empty arguments |
-| `stale_not_watch_only` | `fixtures/negative/stale-not-watch-only.json` | Stale health read with `watch_only=false` |
+| `stale_not_watch_only` | `fixtures/negative/stale-not-watch-only.json` | Stale read with `watch_only=false`. The fixture is health; the rule applies to every command |
 
 ## Optional TUI decision packet
 

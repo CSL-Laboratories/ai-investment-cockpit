@@ -828,7 +828,8 @@
             "visible": true
           }
         ],
-        "stale": true
+        "stale": true,
+        "watch_only": true
       },
       "errors": [
         {

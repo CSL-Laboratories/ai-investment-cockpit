@@ -226,6 +226,28 @@ def test_unavailable_and_stale_health_fail_closed() -> None:
     stale = copy.deepcopy(by_request["req_health_stale"])
     stale["result"]["watch_only"] = False
     assert CHECKER.classify_response(stale, commands) == "stale_not_watch_only"
+    positions = copy.deepcopy(by_request["req_positions"])
+    positions["result"]["stale"] = True
+    positions["result"]["watch_only"] = False
+    positions["status_code"] = "stale_or_unreconciled"
+    positions["visibility"]["stale_data"] = "visible"
+    positions["errors"] = [
+        {
+            "code": "stale_or_unreconciled",
+            "status_code": "stale_or_unreconciled",
+            "message": "Positions are stale.",
+            "recovery": "Refresh the positions read.",
+            "color_only": False,
+        }
+    ]
+    positions["presentation"]["exit_code"] = 3
+    positions["presentation"]["text_status"] = "stale_or_unreconciled"
+    positions["presentation"]["rendered"] = "status=stale_or_unreconciled positions"
+    assert CHECKER.classify_response(positions, commands) == "stale_not_watch_only"
+    assert CHECKER._schema_error(validator, positions) is not None
+    positions["result"]["watch_only"] = True
+    assert CHECKER.classify_response(positions, commands) is None
+    assert CHECKER._schema_error(validator, positions) is None
 
 
 def test_healthy_dependencies_cannot_claim_an_outage() -> None:
@@ -341,6 +363,14 @@ def test_profile_class_agrees_and_intervention_controls_fail_on_their_own_field(
     assert code == 1
     assert "NEGATIVE CONTROL unconfirmed_intervention: WRONG_FAILURE" in stdout
     assert stderr.startswith("o7-operator-contract: FAIL:")
+    unscoped = copied / "fixtures" / "negative" / "unscoped-intervention.json"
+    unscoped_document = json.loads(unscoped.read_text(encoding="utf-8"))
+    unscoped_document["body"]["arguments"] = []
+    unscoped.write_text(json.dumps(unscoped_document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/negative/unscoped-intervention.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert "NEGATIVE CONTROL unscoped_intervention: WRONG_FAILURE" in stdout
 
 
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
