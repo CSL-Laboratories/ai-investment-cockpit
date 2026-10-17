@@ -13,6 +13,7 @@ use pyo3::types::{PyInt, PyList};
 mod batch;
 mod costs;
 mod ingest;
+mod signals;
 
 pyo3::create_exception!(cockpit_quant, NotFound, PyException);
 pyo3::create_exception!(cockpit_quant, IntegrityError, PyException);
@@ -356,5 +357,6 @@ fn cockpit_quant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BookValueError", m.py().get_type::<BookValueError>())?;
     costs::register(m)?;
     ingest::register(m)?;
+    signals::register(m)?;
     Ok(())
 }

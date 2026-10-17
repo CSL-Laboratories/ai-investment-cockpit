@@ -260,6 +260,24 @@ def test_budget_gate_ranks_holdings_first_and_defers_over_budget(st, clock, tmp_
                for p in deferred), "the over-budget candidate must be deferred, never dropped"
 
 
+def test_size_pending_proposal_is_delivered(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path, [
+        _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),
+    ])
+    transport = FakeTransport([envelope(_triage_body([
+        _scored(rows[0].raw_ref, "AAPL", "urgent", 90),
+    ]))])
+    deliver = Recorder()
+
+    def propose_stub(state, clock_, **kw):
+        return _stub_outcome(status="needs_human", embed={"proposal_id": "p", "size_pending": True})
+
+    triage_loop(st, clock, transport=transport, deliver=deliver,
+                parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+                watchlist=frozenset(), propose_fn=propose_stub)
+    assert ("#proposals", {"proposal_id": "p", "size_pending": True}) in deliver.posts
+
+
 def test_mid_loop_degradation_defers_everything_and_window_is_recovered(st, clock, tmp_path):
     rows = _persist(st, clock, tmp_path, [
         _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),

@@ -57,8 +57,13 @@ dependencies = [
  "cockpit-book",
  "cockpit-costs",
  "cockpit-ingest",
+ "cockpit-signals",
  "pyo3",
 ]
+
+[[package]]
+name = "cockpit-signals"
+version = "0.1.0"
 
 [[package]]
 name = "cpufeatures"

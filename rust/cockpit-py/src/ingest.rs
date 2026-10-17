@@ -4,7 +4,8 @@ use std::collections::HashSet;
 use std::ffi::CString;
 
 use cockpit_ingest::{
-    content_hash, escape_untrusted, market_event, source_allowlisted, Json, MAX_LEN, MAX_SYMBOLS,
+    content_hash, escape_untrusted, market_event, source_allowlisted, token_bucket_allow, Dedup,
+    Json, MAX_LEN, MAX_SYMBOLS,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -429,6 +430,7 @@ fn content_hash_py(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<String>
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(name = "market_event", signature = (source, article_id, symbols, headline, summary, event_type, raw=None))]
 fn market_event_py(
@@ -514,10 +516,93 @@ fn market_event_many(
     Ok(out)
 }
 
+#[pyclass]
+struct DedupCore {
+    inner: Dedup,
+}
+
+#[pymethods]
+impl DedupCore {
+    #[new]
+    fn new(capacity: i64) -> Self {
+        Self {
+            inner: Dedup::new(capacity),
+        }
+    }
+
+    fn add(&mut self, key: &str) -> bool {
+        self.inner.add(key)
+    }
+
+    fn discard(&mut self, key: &str) -> bool {
+        self.inner.discard(key)
+    }
+
+    fn keys(&self) -> Vec<String> {
+        self.inner.keys()
+    }
+}
+
+#[pyfunction]
+#[pyo3(name = "token_bucket_allow")]
+fn token_bucket_allow_py(
+    rate: f64,
+    capacity: f64,
+    tokens: f64,
+    last: f64,
+    now: f64,
+) -> (bool, f64, f64) {
+    token_bucket_allow(rate, capacity, tokens, last, now)
+}
+
+/// Replay `("a" | "d", key)` pairs. Keys are raw UTF-8 strings.
+///
+/// A lone surrogate cannot be passed in, and this function does not escape
+/// one. Callers use `ingest.dedup.dedup_replay`, which catches that UTF-8
+/// rejection, escapes the script, and retries. A direct call skips that guard.
+#[pyfunction]
+fn dedup_replay(capacity: i64, ops: Vec<(String, String)>) -> PyResult<Vec<bool>> {
+    let mut seen = Dedup::new(capacity);
+    let mut out = Vec::with_capacity(ops.len());
+    for (op, key) in ops {
+        match op.as_str() {
+            "a" => out.push(seen.add(&key)),
+            "d" => out.push(seen.discard(&key)),
+            _ => return Err(invalid(format!("unknown dedup op {op}"))),
+        }
+    }
+    Ok(out)
+}
+
+#[pyfunction]
+fn token_bucket_replay(
+    rate: f64,
+    capacity: f64,
+    tokens: f64,
+    last: f64,
+    times: Vec<f64>,
+) -> (Vec<bool>, f64, f64) {
+    let mut tokens = tokens;
+    let mut last = last;
+    let mut out = Vec::with_capacity(times.len());
+    for now in times {
+        let (allowed, next_tokens, next_last) =
+            token_bucket_allow(rate, capacity, tokens, last, now);
+        tokens = next_tokens;
+        last = next_last;
+        out.push(allowed);
+    }
+    (out, tokens, last)
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<DedupCore>()?;
     m.add_function(wrap_pyfunction!(escape_untrusted_py, m)?)?;
     m.add_function(wrap_pyfunction!(content_hash_py, m)?)?;
     m.add_function(wrap_pyfunction!(market_event_py, m)?)?;
     m.add_function(wrap_pyfunction!(market_event_many, m)?)?;
+    m.add_function(wrap_pyfunction!(token_bucket_allow_py, m)?)?;
+    m.add_function(wrap_pyfunction!(dedup_replay, m)?)?;
+    m.add_function(wrap_pyfunction!(token_bucket_replay, m)?)?;
     Ok(())
 }
