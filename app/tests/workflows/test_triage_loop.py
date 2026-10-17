@@ -26,8 +26,10 @@ from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_BREAKER_TRIP, EVENT_WATCH_ONLY
 from schemas.models.audit_entry import AuditEntry
 from tests.workflows.conftest import NOW, FakeTransport, envelope
+from workflows.budget import DeepBudget
 from workflows.constants import (
     EVENT_DEEP_ESCALATION,
+    EVENT_DEEP_ESCALATION_RELEASE,
     EVENT_ESCALATION_DEFERRED,
     EVENT_TRIAGE_BATCH,
 )
@@ -520,3 +522,136 @@ def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path)
         p["event_id"] == ev.id and p["reason"] == "context_limit"
         for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
     )
+
+
+def _budget_of_one(st):
+    st.audit.append(EVENT_LIMITS_CHANGE, actor="op",
+                    payload={"limits": {"deep_model_daily_budget": 1}})
+
+
+def test_context_limited_deferral_leaves_no_consumed_budget_and_retry_escalates(
+        st, clock, tmp_path):
+    """A handler that returns context_limited after try_consume must not keep the unit.
+
+    The next loop can still escalate that same event on the restored budget.
+    """
+    from core.clock import FrozenClock
+
+    _budget_of_one(st)
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    day = NOW.date()
+
+    def limited_propose(state, clock_, **kw):
+        return _stub_outcome(status="context_limited")
+
+    first = triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=limited_propose,
+    )
+    assert first["status"] == "ok"
+    assert ev.id in first["deferred"]
+    assert ev.id not in first["escalated"]
+    assert any(
+        p["event_id"] == ev.id and p["reason"] == "context_limit"
+        for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+    )
+    budget = DeepBudget(st)
+    assert budget.spent(day) == 0
+    assert budget.remaining(day) == 1
+    spends = _payloads(st, EVENT_DEEP_ESCALATION)
+    releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+    assert len(spends) == 1 and spends[0]["event_id"] == ev.id
+    assert len(releases) == 1
+    assert releases[0]["event_id"] == ev.id
+    assert releases[0]["reason"] == "context_limit"
+    assert releases[0]["releases_entry_id"]
+
+    drafted: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        drafted.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = triage_loop(
+        st, FrozenClock(NOW + timedelta(minutes=2)),
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=ok_propose,
+    )
+    assert second["status"] == "ok"
+    assert drafted == [ev.id]
+    assert ev.id in second["escalated"]
+    assert budget.spent(day) == 1
+    assert budget.remaining(day) == 0
+
+
+def test_context_limited_release_lets_another_escalation_proceed(st, clock, tmp_path):
+    """Budget of one: releasing the deferred candidate must leave the unit for the next."""
+    _budget_of_one(st)
+    rows = _persist(st, clock, tmp_path, [
+        _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),
+        _mk("f-m", "MSFT", "8-K filing: MSFT agreement", event_type="filing"),
+    ])
+    by = {r.symbol: r for r in rows}
+    holdings = frozenset({"AAPL", "MSFT"})
+    calls: list[str] = []
+
+    def propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        if kw["event"].id == by["AAPL"].id:
+            return _stub_outcome(status="context_limited")
+        return _stub_outcome()
+
+    result = triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(by["AAPL"].raw_ref, "AAPL", "urgent", 95),
+            _scored(by["MSFT"].raw_ref, "MSFT", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=holdings,
+        propose_fn=propose,
+    )
+    assert result["status"] == "ok"
+    assert calls == [by["AAPL"].id, by["MSFT"].id]
+    assert by["AAPL"].id in result["deferred"]
+    assert result["escalated"] == [by["MSFT"].id]
+    day = NOW.date()
+    assert DeepBudget(st).spent(day) == 1
+    assert DeepBudget(st).remaining(day) == 0
+    spends = _payloads(st, EVENT_DEEP_ESCALATION)
+    releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+    assert {p["event_id"] for p in spends} == {by["AAPL"].id, by["MSFT"].id}
+    assert [p["event_id"] for p in releases] == [by["AAPL"].id]
+
+
+def test_drafted_escalation_still_consumes_one_deep_budget_unit(st, clock, tmp_path):
+    """A normal proposal is unchanged: one unreleased spend, and no release row."""
+    _budget_of_one(st)
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    result = triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=lambda *a, **k: _stub_outcome(),
+    )
+    assert result["status"] == "ok"
+    assert result["escalated"] == [ev.id]
+    assert ev.id not in result["deferred"]
+    day = NOW.date()
+    assert DeepBudget(st).spent(day) == 1
+    assert DeepBudget(st).remaining(day) == 0
+    spends = _payloads(st, EVENT_DEEP_ESCALATION)
+    assert len(spends) == 1 and spends[0]["event_id"] == ev.id
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
