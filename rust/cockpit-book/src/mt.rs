@@ -41,8 +41,9 @@ impl Mt {
         self.state[0] = seed;
         for index in 1..N {
             let prev = self.state[index - 1];
-            self.state[index] =
-                1_812_433_253u32.wrapping_mul(prev ^ (prev >> 30)).wrapping_add(index as u32);
+            self.state[index] = 1_812_433_253u32
+                .wrapping_mul(prev ^ (prev >> 30))
+                .wrapping_add(index as u32);
         }
         self.index = N;
     }
@@ -209,7 +210,13 @@ mod tests {
     #[test]
     fn getrandbits_matches_cpython_for_seed_3() {
         let mut mt = Mt::from_seed(3);
-        let samples = [(1, 0u64), (17, 77678), (17, 71333), (32, 560161641), (40, 1006611292580)];
+        let samples = [
+            (1, 0u64),
+            (17, 77678),
+            (17, 71333),
+            (32, 560161641),
+            (40, 1006611292580),
+        ];
         for (k, expected) in samples {
             assert_eq!(mt.getrandbits(k), expected);
         }

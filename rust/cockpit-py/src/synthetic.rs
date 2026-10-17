@@ -43,8 +43,8 @@ fn synthetic_events(
         decode_latency_ns,
         decode_jitter_ns,
     };
-    let events = generate(&symbols, n_events, seed, &params)
-        .map_err(|err| PyValueError::new_err(err.0))?;
+    let events =
+        generate(&symbols, n_events, seed, &params).map_err(|err| PyValueError::new_err(err.0))?;
     Ok(events
         .into_iter()
         .map(|event| {

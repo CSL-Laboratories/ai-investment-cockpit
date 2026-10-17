@@ -175,7 +175,11 @@ fn add(
     params: &SynthParams,
     stamps: &Stamps,
 ) -> Result<SynthEvent, SynthError> {
-    let side = if rng.random() < 0.5 { Side::Buy } else { Side::Sell };
+    let side = if rng.random() < 0.5 {
+        Side::Buy
+    } else {
+        Side::Sell
+    };
     let mut distance = 0i64;
     let depth_limit = params.depth_levels - 1;
     while distance < depth_limit && rng.random() > params.arrival_decay {
@@ -199,12 +203,24 @@ fn add(
     state.next_ref += 1;
     state
         .book
-        .add(order_ref.to_string(), side, price, qty, stamps.seq, stamps.exchange_ts, None)
+        .add(
+            order_ref.to_string(),
+            side,
+            price,
+            qty,
+            stamps.seq,
+            stamps.exchange_ts,
+            None,
+        )
         .map_err(|err| SynthError(err.to_string()))?;
     Ok(event(SynthAction::Add, stamps, side, price, qty, order_ref))
 }
 
-fn cancel(rng: &mut Mt, state: &mut SymbolState, stamps: &Stamps) -> Result<SynthEvent, SynthError> {
+fn cancel(
+    rng: &mut Mt,
+    state: &mut SymbolState,
+    stamps: &Stamps,
+) -> Result<SynthEvent, SynthError> {
     let n = state.book.len() as u64;
     let index = rng.randbelow(n) as usize;
     let order = state
@@ -235,7 +251,11 @@ fn trade(
     params: &SynthParams,
     stamps: &Stamps,
 ) -> Result<Option<SynthEvent>, SynthError> {
-    let aggressor = if rng.random() < 0.5 { Side::Buy } else { Side::Sell };
+    let aggressor = if rng.random() < 0.5 {
+        Side::Buy
+    } else {
+        Side::Sell
+    };
     let qty = draw_size(rng, params)?;
     let touch = match aggressor {
         Side::Buy => state.book.best_ask(),
@@ -245,7 +265,11 @@ fn trade(
         Some(price) => price,
         None => {
             let base = py_round(state.fair);
-            if aggressor == Side::Buy { base + 1 } else { base - 1 }
+            if aggressor == Side::Buy {
+                base + 1
+            } else {
+                base - 1
+            }
         }
     };
     let result = match_order(
