@@ -1392,6 +1392,21 @@ def test_catalog_command_set_is_pinned(tmp_path: Path) -> None:
     assert "catalog command set drifted" in stderr
 
 
+def test_catalog_command_row_stays_closed(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    catalog_path = copied / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    audit = next(row for row in catalog["commands"] if row["name"] == "operator.audit.export")
+    audit["order_path"] = "broker_direct"
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "catalog.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "catalog command accepts an extra field for operator.audit.export" in stderr
+
+
 def test_event_schema_rejects_an_unconstrained_intervention(tmp_path: Path) -> None:
     copied = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)

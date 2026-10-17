@@ -252,6 +252,7 @@ REQUIRED_JOURNEYS = (
     "recovery",
     "export",
 )
+CATALOG_COMMAND_FIELDS = ("effect", "journey", "name", "required_result_fields")
 REQUIRED_COMMANDS = {
     "operator.audit.export": {
         "journey": "audit",
@@ -2034,6 +2035,8 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             raise ContractError("catalog command set drifted")
         for name, row in commands.items():
             spec = REQUIRED_COMMANDS[name]
+            if set(row) != set(CATALOG_COMMAND_FIELDS):
+                raise ContractError(f"catalog command accepts an extra field for {name}")
             if row.get("journey") != spec["journey"]:
                 raise ContractError(f"catalog journey drifted for {name}")
             if row.get("effect") != spec["effect"]:
