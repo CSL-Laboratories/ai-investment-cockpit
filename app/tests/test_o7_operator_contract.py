@@ -448,6 +448,80 @@ def test_validate_response_rejects_duplicate_decision_ids_the_schema_accepts() -
     assert CHECKER.validate_response(validator, conflict, commands) == "duplicate_decision_id"
 
 
+def test_refusal_cannot_name_a_recorded_decision() -> None:
+    by_request, commands, validator = _candidate_documents()
+    conflict = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.classify_response(conflict, commands) is None
+    recorded = next(item for item in conflict["result"]["decisions"] if item["outcome"] == "recorded")
+    conflict["result"]["refusals"].append(
+        {
+            "decision_id": recorded["decision_id"],
+            "reason_code": recorded["reason_code"],
+            "visible": True,
+        }
+    )
+    assert CHECKER._schema_error(validator, conflict) is None
+    assert CHECKER.classify_response(conflict, commands) == "refusal_on_recorded_decision"
+    assert CHECKER.validate_response(validator, conflict, commands) == "refusal_on_recorded_decision"
+
+
+def _drop_catalog_command(root: Path, name: str) -> None:
+    """Remove one command from every place the checker compares to the catalog."""
+    catalog_path = root / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["commands"] = [row for row in catalog["commands"] if row["name"] != name]
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    for relative in (
+        "schemas/operator-command.schema.json",
+        "schemas/operator-event.schema.json",
+    ):
+        path = root / relative
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        schema["properties"]["command"]["enum"] = [
+            item for item in schema["properties"]["command"]["enum"] if item != name
+        ]
+        path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    response_path = root / "schemas" / "operator-response.schema.json"
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    for clause in response["allOf"]:
+        enum = clause.get("else", {}).get("properties", {}).get("command", {}).get("enum")
+        if isinstance(enum, list) and name in enum:
+            clause["else"]["properties"]["command"]["enum"] = [item for item in enum if item != name]
+    response_path.write_text(json.dumps(response, indent=2) + "\n", encoding="utf-8")
+    parity_path = root / "parity-matrix.json"
+    parity = json.loads(parity_path.read_text(encoding="utf-8"))
+    parity["rows"] = [row for row in parity["rows"] if row["command"] != name]
+    parity_path.write_text(json.dumps(parity, indent=2) + "\n", encoding="utf-8")
+    for relative, key in (
+        ("fixtures/oracle/responses.json", "responses"),
+        ("fixtures/oracle/commands.json", "commands"),
+    ):
+        path = root / relative
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document[key] = [item for item in document[key] if item["command"] != name]
+        path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    for relative in (
+        "catalog.json",
+        "schemas/operator-command.schema.json",
+        "schemas/operator-event.schema.json",
+        "schemas/operator-response.schema.json",
+        "parity-matrix.json",
+        "fixtures/oracle/responses.json",
+        "fixtures/oracle/commands.json",
+    ):
+        _retarget(root, relative)
+
+
+def test_catalog_command_set_is_pinned(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    _drop_catalog_command(copied, "operator.interventions.request_reconciliation")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "catalog command set drifted" in stderr
+
+
 def test_uncertainty_visible_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
@@ -753,6 +827,37 @@ def test_visible_refusal_requires_refusal_evidence() -> None:
     assert "refusals" not in invented["result"]
     assert CHECKER.classify_response(invented, commands) == "hidden_refusal"
     assert CHECKER._schema_error(response_validator, invented) is not None
+
+
+def test_events_match_their_originating_response(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "fixtures" / "oracle" / "events.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    for event in document["events"]:
+        if event["event_type"] == "refusal_visible":
+            event["request_id"] = "req_health"
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/oracle/events.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "event command does not match the response" in stderr
+    conditioned = tmp_path / "conditioned"
+    shutil.copytree(root, conditioned)
+    stale_fixture = conditioned / "fixtures" / "oracle" / "events.json"
+    stale = json.loads(stale_fixture.read_text(encoding="utf-8"))
+    for event in stale["events"]:
+        if event["event_type"] == "stale_visible":
+            event["request_id"] = "req_recovery_open"
+            event["command"] = "operator.recovery.inspect"
+    stale_fixture.write_text(json.dumps(stale, indent=2) + "\n", encoding="utf-8")
+    _retarget(conditioned, "fixtures/oracle/events.json")
+    code, stdout, stderr = CHECKER.evaluate(conditioned)
+    assert code == 1
+    assert stdout == ""
+    assert "event condition does not match the response" in stderr
 
 
 def test_oracle_events_cover_every_event_type(tmp_path: Path) -> None:

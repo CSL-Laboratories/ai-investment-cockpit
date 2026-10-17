@@ -302,6 +302,16 @@ def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[d
     return all((item.get("decision_id"), item.get("reason_code")) in covered for item in refused_decisions)
 
 
+def _refusal_names_recorded_decision(
+    refusals: list[dict[str, Any]], decision_rows: list[dict[str, Any]]
+) -> bool:
+    """True when a refusal row names a decision whose outcome is recorded."""
+    recorded = {
+        item.get("decision_id") for item in decision_rows if item.get("outcome") == "recorded"
+    }
+    return any(item.get("decision_id") in recorded for item in refusals)
+
+
 def _contains_ansi(value: Any) -> bool:
     """True when any serialized string contains an ANSI escape."""
     if isinstance(value, str):
@@ -378,6 +388,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     decision_ids = [item.get("decision_id") for item in decision_rows]
     if len(decision_ids) != len(set(decision_ids)):
         return "duplicate_decision_id"
+    if _refusal_names_recorded_decision(refusals, decision_rows):
+        return "refusal_on_recorded_decision"
     refused_decisions = [item for item in decision_rows if item.get("outcome") == "refused"]
     dependencies = _dicts(result.get("dependencies"))
     unknown_items = [
@@ -500,6 +512,53 @@ def _event_error(event: dict[str, Any]) -> str | None:
         return "event visibility does not match the event type"
     if event.get("status_code") not in EVENT_STATUSES.get(event.get("event_type"), ()):
         return "event status does not match the event type"
+    return None
+
+
+def _response_claims_event(event_type: Any, response: dict[str, Any]) -> bool:
+    """True when the response actually has the condition the event claims."""
+    result = response.get("result") if isinstance(response.get("result"), dict) else {}
+    visibility = response.get("visibility") if isinstance(response.get("visibility"), dict) else {}
+    if event_type == "evidence_viewed":
+        return response.get("command") == "operator.evidence.inspect" and "provenance" in result
+    if event_type == "refusal_visible":
+        refused = [item for item in _dicts(result.get("decisions")) if item.get("outcome") == "refused"]
+        return visibility.get("refusal") == "visible" and bool(_dicts(result.get("refusals")) or refused)
+    if event_type == "uncertainty_visible":
+        unknown = [
+            item for item in _dicts(result.get("items")) if item.get("state") in {"unknown", "uncertain"}
+        ]
+        collateral = result.get("collateral") if isinstance(result.get("collateral"), dict) else {}
+        return visibility.get("uncertainty") == "visible" and bool(unknown or collateral.get("state") == "unknown")
+    if event_type == "stale_visible":
+        dependencies = _dicts(result.get("dependencies"))
+        stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
+        return visibility.get("stale_data") == "visible" and stale
+    if event_type == "unreconciled_visible":
+        unreconciled = result.get("reconciliation") == "unreconciled" or (
+            isinstance(result.get("unknown_orders"), int) and result.get("unknown_orders", 0) > 0
+        )
+        return visibility.get("reconciliation") == "unreconciled_visible" and unreconciled
+    if event_type == "intervention_recorded":
+        expected = INTERVENTION_NAMES.get(response.get("command"))
+        return expected is not None and result.get("intervention") == expected and result.get("recorded") is True
+    if event_type == "export_recorded":
+        return response.get("command") in {"operator.audit.export", "operator.export.bundle"} and (
+            "export_id" in result or "bundle_id" in result
+        )
+    return False
+
+
+def _event_response_error(event: dict[str, Any], response: dict[str, Any] | None) -> str | None:
+    """Return why an event does not belong to the response with its request id."""
+    if response is None:
+        return "event request does not match a response"
+    if event.get("command") != response.get("command"):
+        return "event command does not match the response"
+    if event.get("status_code") != response.get("status_code"):
+        return "event status does not match the response"
+    if not _response_claims_event(event.get("event_type"), response):
+        return "event condition does not match the response"
     return None
 
 
@@ -734,6 +793,8 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             commands[row["name"]] = row
         if len(commands) != len(command_rows):
             raise ContractError("catalog command names repeat")
+        if set(commands) != set(REQUIRED_MUST_SHOW):
+            raise ContractError("catalog command set drifted")
         _check_supporting_documents(candidate, commands)
         response_schema = _load_json(candidate / "schemas" / "operator-response.schema.json")
         command_schema = _load_json(candidate / "schemas" / "operator-command.schema.json")
@@ -830,6 +891,14 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         seen.add(doc["command"])
     if seen != set(commands):
         raise ContractError("oracle responses do not cover the catalog")
+    by_request: dict[str, dict[str, Any]] = {}
+    for doc in responses:
+        if not isinstance(doc, dict):
+            continue
+        request_id = doc.get("request_id")
+        if not isinstance(request_id, str) or request_id in by_request:
+            raise ContractError("oracle response request ids drifted")
+        by_request[request_id] = doc
     pairs = kinds["pairs"].get("pairs")
     if not isinstance(pairs, list):
         raise ContractError("oracle pairs missing")
@@ -877,6 +946,9 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         event_problem = _event_error(event)
         if event_problem is not None:
             raise ContractError(f"oracle event: {event_problem}")
+        match_problem = _event_response_error(event, by_request.get(event.get("request_id")))
+        if match_problem is not None:
+            raise ContractError(f"oracle event: {match_problem}")
     seen_types = {
         event.get("event_type") for event in kinds["events"].get("events", []) if isinstance(event, dict)
     }
