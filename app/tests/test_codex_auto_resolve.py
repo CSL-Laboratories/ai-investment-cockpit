@@ -2993,6 +2993,47 @@ def test_intervening_deleted_resolve_blocks_cite_and_resolve():
     assert any("skip=no-verdict" in line for line in logs)
 
 
+def test_live_human_resolve_posts_skip_on_retry_resolve():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            node = gh.pr_by_number[12]["reviewThreads"]["nodes"][0]
+            node["isResolved"] = True
+            node["resolvedBy"] = {"login": "alice"}
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=already-resolved" in line for line in logs)
+    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    skipped = thread(
+        resolved=True,
+        resolved_by="alice",
+        comments=[
+            comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+            comment(CODEX, verdict_body()),
+            comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+            comment(PAT_LOGIN, next(body for _n, body in gh.issue_posts if mod.SKIP_PREFIX in body)),
+        ],
+    )
+    assert mod.resolved_count_today([skipped], [], NOW, PAT_LOGIN, head_sha=SHA) == 0
+
+
 def test_live_pr_head_mismatch_blocks_retry_resolve():
     gh = ready_gh(
         threads=[
@@ -3045,9 +3086,10 @@ def test_retry_mark_does_not_claim_human_resolver():
 
     gh.graphql = graphql  # type: ignore[method-assign]
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
-    assert gh.issue_posts == []
-    assert any("skip=already-resolved" in line for line in logs)
     assert not any("retry-mark=posted" in line for line in logs)
+    assert any("skip=already-resolved" in line for line in logs)
+    assert any(mod.SKIP_PREFIX in body for _n, body in gh.issue_posts)
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
 
 
 def test_retry_mark_does_not_claim_after_cite_removed():

@@ -1684,8 +1684,37 @@ def live_resolve_skip(
         pat_login=pat_login,
     )
     if reason not in {"resolve", "retry-resolve"}:
+        if reason == "already-resolved":
+            note_non_pat_resolve(
+                gh,
+                cfg,
+                number=number,
+                thread=live_thread,
+                thread_id=thread_id,
+                sha=sha,
+                pat_login=pat_login,
+            )
         return reason
     return ""
+
+
+def note_non_pat_resolve(
+    gh: GitHub,
+    cfg: Config,
+    *,
+    number: int,
+    thread: dict[str, Any],
+    thread_id: str,
+    sha: str,
+    pat_login: str,
+) -> None:
+    """Hide a PAT cite from the cap when the live thread was resolved by someone else."""
+    resolver = resolved_by_login(thread)
+    if not thread.get("isResolved") or not resolver or not pat_login:
+        return
+    if login_matches(resolver, pat_login):
+        return
+    publish_skip_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
 
 
 def reply_and_resolve(
@@ -2005,6 +2034,16 @@ def scan_pr(
                 pat_login=pat_login,
             )
             if live_reason != "retry-mark":
+                if live_reason == "already-resolved":
+                    note_non_pat_resolve(
+                        gh,
+                        cfg,
+                        number=number,
+                        thread=live_thread,
+                        thread_id=live_id,
+                        sha=head_sha,
+                        pat_login=pat_login,
+                    )
                 logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={live_reason}")
                 continue
             mark_sha = (live_verdict.sha if live_verdict else "") or head_sha
