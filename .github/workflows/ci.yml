@@ -64,15 +64,16 @@ on:
 permissions:
   contents: read
 
-# A newer run for the same PR head supersedes the run it interrupted; an old
-# label dispatch cannot cancel a newer head before its filter validates context.
-# Plain branch runs still supersede by ref. Nightly has its
-# own group so it cannot cancel a main-push Linux/Windows run (or vice versa).
-# Draft synchronize uses a separate group so its fail-closed aggregator cannot
-# cancel a ready_for_review matrix (or vice versa).
+# Ordinary PR heads share one group, but arrival order cannot cancel a newer
+# head: queue up to 100 pending runs and let the default-branch companion cancel
+# only verified strict ancestors of the live head. Until that policy lands on
+# main, old work may finish before the current run; no status is fabricated.
+# Label dispatches retain expected-head/scope identity; manual scopes, nightly,
+# drafts and queue runs stay isolated and keep their existing non-PR policy.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'schedule' && 'nightly' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'schedule' && 'nightly' || github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'max' || 'single' }}
 
 jobs:
   filter:
@@ -220,7 +221,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: CI dispatch scope regressions
-        run: python -X utf8 -B tools/test_ci_dispatch_scope.py
+        run: |
+          python -X utf8 -B tools/test_ci_dispatch_scope.py
+          python -X utf8 -B tools/test_ci_cancel_controller.py
       # CSL-166: the required linux gate runs pytest before any wheel exists, so
       # test_book_batch.py's skipif dropped the whole file. Build the extension
       # here and run that file. This is the existing linux job, not a new
