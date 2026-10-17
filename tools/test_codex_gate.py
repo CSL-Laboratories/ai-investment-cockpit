@@ -1463,6 +1463,7 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_review_job_if_is_codex_only(self) -> None:
         self.assertIn("chatgpt-codex-connector[bot]", self.text)
+        self.assertIn("github.event.pull_request.draft == false", self.text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
         self.assertIn("group: codex-gate", self.text)
         self.assertNotIn("github.run_id", self.text)
