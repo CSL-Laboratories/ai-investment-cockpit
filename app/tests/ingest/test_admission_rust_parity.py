@@ -616,6 +616,42 @@ def test_allow_many_matches_including_a_backwards_clock():
     assert rust._last == python._last
 
 
+def test_allow_many_keeps_progress_when_a_later_timestamp_raises():
+    """A bad timestamp does not roll back the admissions before it."""
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    with pytest.raises(TypeError):
+        bucket.allow_many([1.0, None])
+    assert twin.allow(1.0) is True
+    with pytest.raises(TypeError):
+        twin.allow(None)
+    assert bucket.tokens == twin.tokens
+    assert bucket._last == twin._last
+    assert bucket.allow(1.0) is twin.allow(1.0) is False
+
+
+@_needs_rust
+def test_a_one_shot_float_clock_is_one_extension_call(monkeypatch):
+    """Copying a generator does not keep an all-float clock on Python."""
+    import cockpit_quant
+
+    calls = {"n": 0}
+    real = cockpit_quant.token_bucket_replay
+
+    def wrap(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
+    times = [i * 0.5 for i in range(4)]
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    assert bucket.allow_many(t for t in times) == _drive_bucket(twin, times, python=True)
+    assert calls["n"] == 1
+    assert bucket.tokens == twin.tokens
+    assert bucket._last == twin._last
+
+
 @_needs_rust
 def test_token_bucket_replay_matches_and_starts_empty():
     import cockpit_quant

@@ -49,8 +49,8 @@ def _load_native() -> None:
     and the error propagates. A non-float observation, a non-float lambda, or
     an order-flow quantity that is not a signed 64-bit int leaves the extension
     and finishes on the Python path. A present module missing an estimator
-    core, ``ewma_feed``, or ``EwmaCore.feed`` is a partial wheel. The extension
-    is arithmetic only.
+    core, or ``EwmaCore.feed``, is a partial wheel. The extension is
+    arithmetic only.
     """
     global _NATIVE, SIGNALS_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
@@ -58,7 +58,7 @@ def _load_native() -> None:
         return
     import cockpit_quant as native
 
-    required = ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore", "ewma_feed")
+    required = ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")
     missing = [name for name in required if not hasattr(native, name)]
     if not missing and not hasattr(native.EwmaCore, "feed"):
         missing.append("EwmaCore.feed")
@@ -167,7 +167,8 @@ class EwmaVolatility:
         Exact floats are one ``EwmaCore.feed`` call. An int or any other
         observation uses ``update``, which leaves the extension. A one-shot
         iterable is copied before that scan. NaN stays on the extension, where
-        it matches ``math.log``. A non-finite ratio still raises.
+        it matches ``math.log``. A non-finite ratio still raises, and the
+        prices before it stay on the core.
         """
         prices = list(prices)
         core = self._core

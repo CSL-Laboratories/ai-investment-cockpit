@@ -102,29 +102,6 @@ impl EwmaVolatility {
     pub fn is_warm(&self) -> bool {
         self.count >= 2
     }
-
-    pub fn from_parts(
-        lam: f64,
-        variance: f64,
-        last: Option<f64>,
-        count: u64,
-    ) -> Result<Self, &'static str> {
-        // Same open interval as `new`, so a resumed estimator cannot keep a
-        // NaN or infinite decay that construction would have refused.
-        if !(lam > 0.0 && lam < 1.0) {
-            return Err("lam must be in (0, 1)");
-        }
-        Ok(Self {
-            lam,
-            variance,
-            last,
-            count,
-        })
-    }
-
-    pub fn parts(&self) -> (f64, Option<f64>, u64) {
-        (self.variance, self.last, self.count)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -572,20 +549,6 @@ mod tests {
         }
         assert!(EwmaVolatility::new(f64::MIN_POSITIVE).is_ok());
         assert!(EwmaVolatility::new(1.0 - f64::EPSILON).is_ok());
-        for lam in [0.0, 1.0, f64::NAN, f64::INFINITY] {
-            assert_eq!(
-                EwmaVolatility::from_parts(lam, 0.0, None, 0).unwrap_err(),
-                "lam must be in (0, 1)"
-            );
-        }
-        let mut fresh = EwmaVolatility::new(0.94).unwrap();
-        assert!(fresh.update(100.0).unwrap().is_none());
-        assert!(fresh.update(101.0).unwrap().is_none());
-        let (variance, last, count) = fresh.parts();
-        let mut resumed = EwmaVolatility::from_parts(0.94, variance, last, count).unwrap();
-        let expected = fresh.update(100.5).unwrap();
-        assert_eq!(resumed.update(100.5).unwrap(), expected);
-        assert!(expected.unwrap() > 0.0);
     }
 
     #[test]

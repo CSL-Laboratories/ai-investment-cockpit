@@ -225,36 +225,6 @@ fn ewma_replay(lam: f64, prices: Vec<f64>) -> PyResult<Vec<Option<f64>>> {
     Ok(out)
 }
 
-type EwmaFeedOut = (Vec<Option<f64>>, f64, Option<f64>, u64);
-
-/// Continue an estimator and return the series plus the fields Python keeps.
-///
-/// `last` is a float or None. It is not an optional argument: a missing previous
-/// price is a real estimator state. `count` is the same `u64` the core stores.
-/// A lambda outside `(0, 1)`, including NaN, is rejected. A later price that
-/// `update` refuses leaves the prices before it applied and returns that error.
-#[pyfunction]
-fn ewma_feed(
-    lam: f64,
-    variance: f64,
-    last: &Bound<'_, PyAny>,
-    count: u64,
-    prices: Vec<f64>,
-) -> PyResult<EwmaFeedOut> {
-    let previous = if last.is_none() {
-        None
-    } else {
-        Some(last.extract::<f64>()?)
-    };
-    let mut vol = EwmaVolatility::from_parts(lam, variance, previous, count).map_err(invalid)?;
-    let mut series = Vec::with_capacity(prices.len());
-    for price in prices {
-        series.push(vol.update(price).map_err(invalid)?);
-    }
-    let (variance, previous, count) = vol.parts();
-    Ok((series, variance, previous, count))
-}
-
 #[pyfunction]
 #[pyo3(signature = (window, values, compensated=true))]
 fn zscore_replay(window: usize, values: Vec<f64>, compensated: bool) -> PyResult<Vec<Option<f64>>> {
@@ -308,7 +278,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<OfiCore>()?;
     m.add_class::<BetaCore>()?;
     m.add_function(wrap_pyfunction!(ewma_replay, m)?)?;
-    m.add_function(wrap_pyfunction!(ewma_feed, m)?)?;
     m.add_function(wrap_pyfunction!(zscore_replay, m)?)?;
     m.add_function(wrap_pyfunction!(ofi_replay, m)?)?;
     m.add_function(wrap_pyfunction!(beta_replay, m)?)?;

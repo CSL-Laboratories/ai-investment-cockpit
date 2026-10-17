@@ -136,12 +136,20 @@ def test_ewma_update_many_matches_the_python_loop_and_resumes():
     assert rust._core is None
 
     # A finite price then +inf is a non-finite ratio. The batch raises and
-    # does not publish an infinite volatility.
+    # does not publish an infinite volatility. Prices before the failure stay
+    # on the core, so the next finite price matches the Python loop.
     finite = EwmaVolatility(lam=0.94)
+    plain = EwmaVolatility(lam=0.94)
+    plain._core = None
     with pytest.raises(ValueError, match="math domain error"):
-        finite.update_many([100.0, float("inf")])
+        finite.update_many([100.0, 101.0, float("inf")])
+    plain.update(100.0)
+    plain.update(101.0)
     assert finite.value is None
     assert finite._core is not None
+    assert finite._core.last == 101.0
+    _same(finite.update(100.5), plain.update(100.5))
+    _same(finite.value, plain.value)
 
     with pytest.raises(TypeError):
         rust.update_many(["nope"])
@@ -608,7 +616,6 @@ def test_a_core_without_feed_is_a_partial_wheel():
                 module.ZScoreCore = type("ZScoreCore", (), {})
                 module.OfiCore = type("OfiCore", (), {})
                 module.BetaCore = type("BetaCore", (), {})
-                module.ewma_feed = lambda *_args, **_kwargs: None
                 return module
             return real_import(name, *args, **kwargs)
 

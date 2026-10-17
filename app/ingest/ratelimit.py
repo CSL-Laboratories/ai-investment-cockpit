@@ -70,14 +70,23 @@ class TokenBucket:
     def allow_many(self, times: Sequence[float]) -> list[bool]:
         """Admit a finished clock and leave ``tokens`` and ``_last`` at the end.
 
-        An all-float script is one extension call. An ``int``, a value past
-        the float range, or a one-shot iterable follows ``token_bucket_replay``,
-        including the Python ``max`` / ``min`` order for NaN and inf.
+        The clock is copied first, so a one-shot iterable can be scanned. An
+        all-float copy is one extension call, including NaN and inf, which
+        follow Python ``max`` / ``min``. An ``int`` or a value past the float
+        range is applied with ``allow``. A later timestamp that raises leaves
+        the earlier admissions in place, the same as calling ``allow`` in a loop.
         """
-        allowed, self.tokens, self._last = token_bucket_replay(
-            self.rate, self.capacity, self.tokens, self._last, times
-        )
-        return list(allowed)
+        times = list(times)
+        if (
+            _NATIVE is not None
+            and _all_float((self.rate, self.capacity, self.tokens, self._last))
+            and _all_float(times)
+        ):
+            allowed, self.tokens, self._last = token_bucket_replay(
+                self.rate, self.capacity, self.tokens, self._last, times
+            )
+            return list(allowed)
+        return [self.allow(now) for now in times]
 
 
 def python_allow(bucket: TokenBucket, now: float) -> bool:
