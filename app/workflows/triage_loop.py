@@ -426,11 +426,19 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if cand["holdings_match"] or cand["symbol"] in watchlist:
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist)
+                         watchlist=watchlist, decision_weight=cand["score"])
             if outcome.status == "context_limited":
-                # No model call: the subject item did not fit. Do not count a
-                # job or mark escalated — retry on the next loop (Inv 7).
-                _defer(state, dispositions, ev, "context_limit")
+                # No model call: the reservation is unused. Release it before
+                # deferring so a retry or another escalation is not blocked.
+                try:
+                    released = budget.release(
+                        day=day, event_id=ev.id, reason="context_limit")
+                except BudgetIntegrityError:
+                    released = False
+                if released:
+                    _defer(state, dispositions, ev, "context_limit")
+                else:
+                    _defer(state, dispositions, ev, "deep_budget_integrity")
                 continue
             jobs_total += 1
             if outcome.status == "degraded":
@@ -442,7 +450,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             dispositions[ev.id] = "escalated"
             escalated.append(ev.id)
             if deliver is not None and outcome.embed is not None \
-                    and outcome.status in ("drafted", "flagged"):
+                    and outcome.status in ("drafted", "flagged", "needs_human"):
                 if not _safe_deliver(deliver, "#proposals", outcome.embed):
                     undelivered.append(ev.id)
         else:
