@@ -7,6 +7,7 @@ control is reported inactive rather than crashing the app (dev).
 """
 from __future__ import annotations
 
+import functools
 import json
 from types import SimpleNamespace
 
@@ -17,7 +18,9 @@ from agent_runner.account_guard import (
     assert_credential_starved,
     default_store_paths,
 )
-from agent_runner.result import OK
+from agent_runner.result import (
+    OK, agent_dispatched, restore_agent_dispatch_watch, watch_agent_dispatch,
+)
 from agent_runner.runner import run_agent
 from agent_runner.spec import AgentSpec
 from agent_runner.transport import LowPrivSubprocessTransport, ProcResult, SubprocessTransport
@@ -89,6 +92,148 @@ def test_account_capable_transport_runs_the_decision_job_under_the_account():
     r = run_agent(_dspec(), transport=transport, usage=UsageTracker(),
                   decision_agent_account="cockpit-agent")
     assert launched["account"] == "cockpit-agent" and r.status == OK
+
+
+def test_low_priv_on_spawn_marks_only_after_the_child_exists():
+    """A launcher that starts the child and then raises has used the unit.
+
+    The same callback must stay unset when the launcher rejects before spawn,
+    including the unprovisioned CreateProcessWithLogonW stub.
+    """
+    def started_then_failed(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        assert account == "cockpit-agent"
+        on_spawn()
+        raise TimeoutError("child started then the pipe failed")
+
+    def rejected_before_spawn(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        raise NotImplementedError("rejected before spawn")
+
+    started = LowPrivSubprocessTransport("cockpit-agent", launch=started_then_failed)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(TimeoutError, match="pipe failed"):
+            started.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+    rejected = LowPrivSubprocessTransport("cockpit-agent", launch=rejected_before_spawn)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(NotImplementedError, match="rejected before spawn"):
+            rejected.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+    unprovisioned = LowPrivSubprocessTransport("cockpit-agent")
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(NotImplementedError, match="not provisioned"):
+            unprovisioned.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_wrapped_five_arg_launcher_is_not_passed_on_spawn():
+    """functools.wraps must not make a five-argument launcher look on_spawn-capable."""
+    def inner(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        raise AssertionError("signature must not follow __wrapped__")
+
+    @functools.wraps(inner)
+    def wrapped(account, argv, input_text, timeout_s, cwd):
+        assert account == "cockpit-agent"
+        return ProcResult(0, "", "", False)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        result = transport.run(["claude"], "prompt", 1.0, None)
+        assert result.returncode == 0
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_wrapped_launcher_that_declares_on_spawn_still_marks():
+    """The outer signature is what counts, even when the wrapped function differs."""
+    def inner(account, argv, input_text, timeout_s, cwd):
+        raise AssertionError("unused inner")
+
+    @functools.wraps(inner)
+    def wrapped(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        on_spawn()
+        raise TimeoutError("child started")
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(TimeoutError, match="child started"):
+            transport.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_forwarding_wrapper_marks_when_the_child_starts_then_raises():
+    """A wraps+**kwargs launcher must still receive on_spawn after the child exists."""
+    def inner(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        assert on_spawn is not None
+        on_spawn()
+        raise TimeoutError("child started")
+
+    @functools.wraps(inner)
+    def wrapped(*args, **kwargs):
+        return inner(*args, **kwargs)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(TimeoutError, match="child started"):
+            transport.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_forwarding_wrapper_around_five_arg_launcher_is_not_passed_on_spawn():
+    """**kwargs that only forward to a five-argument target must not pass the keyword."""
+    def inner(account, argv, input_text, timeout_s, cwd):
+        assert account == "cockpit-agent"
+        return ProcResult(0, "", "", False)
+
+    @functools.wraps(inner)
+    def wrapped(*args, **kwargs):
+        return inner(*args, **kwargs)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        result = transport.run(["claude"], "prompt", 1.0, None)
+        assert result.returncode == 0
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_unwrapped_kwargs_forwarder_is_not_passed_on_spawn():
+    """A bare **kwargs wrapper is not proof that the target accepts on_spawn."""
+    def five_arg(account, argv, input_text, timeout_s, cwd):
+        assert account == "cockpit-agent"
+        return ProcResult(0, "", "", False)
+
+    def wrapped(*args, **kwargs):
+        return five_arg(*args, **kwargs)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        result = transport.run(["claude"], "prompt", 1.0, None)
+        assert result.returncode == 0
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
 
 
 def test_no_account_configured_spawns_normally_dev_posture():

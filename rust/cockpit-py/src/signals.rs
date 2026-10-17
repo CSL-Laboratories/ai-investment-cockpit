@@ -30,6 +30,14 @@ impl EwmaCore {
         self.inner.update(price).map_err(invalid)
     }
 
+    fn feed(&mut self, prices: Vec<f64>) -> PyResult<Vec<Option<f64>>> {
+        let mut out = Vec::with_capacity(prices.len());
+        for price in prices {
+            out.push(self.inner.update(price).map_err(invalid)?);
+        }
+        Ok(out)
+    }
+
     #[getter]
     fn value(&self) -> PyResult<Option<f64>> {
         self.inner.value().map_err(invalid)

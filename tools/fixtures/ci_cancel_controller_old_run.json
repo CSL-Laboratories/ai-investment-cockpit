@@ -1,0 +1,44 @@
+{
+  "id": 38974752708,
+  "workflow_id": 308361820,
+  "path": ".github/workflows/ci.yml",
+  "event": "pull_request",
+  "head_sha": "e075ce2256b97f517beddb98f9461c2898740032",
+  "head_branch": "codex/csl-255-157-reviewed",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "success",
+  "pull_requests": [
+    {
+      "url": "https://api.github.com/repos/CSL-Laboratories/ai-investment-cockpit/pulls/162",
+      "id": 4893762625,
+      "number": 162,
+      "head": {
+        "ref": "codex/csl-255-157-reviewed",
+        "sha": "bb6ff496cbebf2e1061c9348db1f0bfd5915ffe3",
+        "repo": {
+          "id": 1291594274,
+          "url": "https://api.github.com/repos/CSL-Laboratories/ai-investment-cockpit",
+          "name": "ai-investment-cockpit"
+        }
+      },
+      "base": {
+        "ref": "main",
+        "sha": "3502bc3254f40e220e5eee63490fab624c286140",
+        "repo": {
+          "id": 1291594274,
+          "url": "https://api.github.com/repos/CSL-Laboratories/ai-investment-cockpit",
+          "name": "ai-investment-cockpit"
+        }
+      }
+    }
+  ],
+  "repository": {
+    "id": 1291594274,
+    "full_name": "CSL-Laboratories/ai-investment-cockpit"
+  },
+  "head_repository": {
+    "id": 1291594274,
+    "full_name": "CSL-Laboratories/ai-investment-cockpit"
+  }
+}

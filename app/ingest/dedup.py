@@ -1,18 +1,116 @@
 """WP3 — bounded dedup by (source, article id). LRU-evicts past capacity."""
 from __future__ import annotations
 
+import copy
+import importlib.util
+import logging
 from collections import OrderedDict
 
+log = logging.getLogger(__name__)
+
 _MISSING = object()      # distinct from None, which is the stored VALUE of every seen key
+_I64_MIN = -2**63
+_I64_MAX = 2**63 - 1
+DEDUP_BACKEND = "python"
+_NATIVE = None
+
+
+def _load_native() -> None:
+    """Use the Rust dedup when the extension is installed.
+
+    A missing module keeps the pure-Python path. A present extension that
+    fails to import is broken and the error propagates. A present module
+    missing ``DedupCore`` is a partial wheel, not a silent Python fallback.
+    The map is memory only. Per-call ``Dedup.add`` stays on the OrderedDict;
+    ``dedup_replay`` is the batch path that uses the extension.
+    """
+    global _NATIVE, DEDUP_BACKEND
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("DEDUP_BACKEND=%s", DEDUP_BACKEND)
+        return
+    import cockpit_quant as native
+
+    if not hasattr(native, "DedupCore"):
+        raise ImportError("cockpit_quant is installed but does not provide DedupCore")
+    _NATIVE = native
+    DEDUP_BACKEND = "rust"
+    log.info("DEDUP_BACKEND=%s", DEDUP_BACKEND)
+
+
+def _rust_cap(capacity: int) -> bool:
+    """True when ``capacity`` is an exact ``int`` the extension can store.
+
+    An ``int`` subclass can override comparison, which ``Dedup.add`` uses for
+    ``len(self._seen) > capacity``. PyO3 would keep only the numeric value.
+    ``bool`` is not an exact ``int``.
+    """
+    return type(capacity) is int and _I64_MIN <= capacity <= _I64_MAX
+
+
+def _core_key(key: str) -> str:
+    """One UTF-8 identity for the Rust LRU.
+
+    A lone surrogate is a ``str`` PyO3 cannot take as ``&str``. Escaping only
+    those keys, and keys that already start with the escape mark, keeps one
+    map: a later UTF-8 ``add`` still evicts the surrogate when it is oldest.
+    Ascii ids that do not start with NUL are passed through.
+    """
+    if not key.startswith("\x00"):
+        if key.isascii():
+            return key
+        try:
+            key.encode("utf-8")
+        except UnicodeEncodeError:
+            pass
+        else:
+            return key
+    # UTF-32 keeps a non-BMP character distinct from the surrogate pair that
+    # UTF-16 would fold into the same bytes.
+    return "\x00" + key.encode("utf-32", "surrogatepass").hex()
+
+
+def _decode_core_key(stored: str) -> str:
+    """Inverse of ``_core_key``. A pass-through key is stored unchanged."""
+    if not stored.startswith("\x00"):
+        return stored
+    return bytes.fromhex(stored[1:]).decode("utf-32", "surrogatepass")
+
+
+def _rebuild_core(capacity, keys):
+    """A fresh extension map for ``keys``, or None when it cannot hold them.
+
+    Non-str keys are legal on the OrderedDict and cannot be stored in the
+    extension, so a mixed map has no core. The rebuilt core is a new object.
+    """
+    native = _NATIVE
+    if native is None or not _rust_cap(capacity):
+        return None
+    # Exact ``str`` only. A subclass can override equality, and PyO3 would
+    # reduce it to the text.
+    if any(type(key) is not str for key in keys):
+        return None
+    core = native.DedupCore(capacity)
+    for key in keys:
+        core.add(_core_key(key))
+    return core
 
 
 class Dedup:
     def __init__(self, capacity: int = 50_000):
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._cap = capacity
+        # Pollers call add/discard once per item. A per-call hop into
+        # DedupCore is slower than this map, so the hot path does not attach
+        # one. dedup_replay is the batch path. A core set by a caller is
+        # rebuilt on copy so it is not shared.
+        self._core = None
 
     def add(self, key: str) -> bool:
-        """Return True if newly added (not a duplicate)."""
+        """Return True if newly added (not a duplicate).
+
+        Any hashable is accepted, with or without the extension installed.
+        An unhashable key raises ``TypeError``, as an OrderedDict does.
+        """
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
@@ -38,3 +136,135 @@ class Dedup:
         refuse; a stale duplicate is not.
         """
         return self._seen.pop(key, _MISSING) is not _MISSING
+
+    def __copy__(self) -> Dedup:
+        """Independent map. A Rust core is rebuilt rather than shared."""
+        cloned = _new_dedup(type(self), self._cap)
+        cloned.__setstate__(self.__getstate__())
+        return cloned
+
+    def __deepcopy__(self, memo: dict) -> Dedup:
+        cloned = _new_dedup(type(self), copy.deepcopy(self._cap, memo))
+        # Register before the keys are copied so a window that holds itself
+        # round-trips as the clone, not as a second copy.
+        memo[id(self)] = cloned
+        cloned.__setstate__(copy.deepcopy(self.__getstate__(), memo))
+        return cloned
+
+    def __reduce__(self):
+        """Rebuild for pickle. ``copy.copy`` and ``copy.deepcopy`` use the same state."""
+        return (_new_dedup, (type(self), self._cap), self.__getstate__())
+
+    def __getstate__(self):
+        extra = {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in ("_seen", "_cap", "_core")
+        }
+        return (extra, _slot_values(self), tuple(self._seen), self._core is not None)
+
+    def __setstate__(self, state) -> None:
+        extra, slots, keys, rust_core = state
+        self.__dict__.update(extra)
+        for name, value in slots.items():
+            setattr(self, name, value)
+        self._seen = OrderedDict.fromkeys(keys)
+        self._core = _rebuild_core(self._cap, keys) if rust_core else None
+
+
+def _declared_slots(cls) -> tuple:
+    """Slot names on ``cls``. A single slot may be declared as a string."""
+    slots = getattr(cls, "__slots__", ())
+    if isinstance(slots, str):
+        return (slots,)
+    return tuple(slots)
+
+
+def _stored_slot(cls, name: str) -> str | None:
+    """The attribute name Python actually stores for a declared slot.
+
+    ``__feed`` on class ``Feed`` is stored as ``_Feed__feed``. Looking up the
+    declared text raises ``AttributeError`` and the copy drops the value.
+    """
+    if name in ("__dict__", "__weakref__"):
+        return None
+    if name.startswith("__") and not name.endswith("__"):
+        stripped = cls.__name__.lstrip("_")
+        if stripped:
+            return f"_{stripped}{name}"
+    return name
+
+
+def _slot_values(obj) -> dict:
+    """Slot attributes on ``obj``, including those declared by a subclass."""
+    values = {}
+    for cls in type(obj).__mro__:
+        for name in _declared_slots(cls):
+            stored = _stored_slot(cls, name)
+            if stored is None or stored in values:
+                continue
+            try:
+                values[stored] = getattr(obj, stored)
+            except AttributeError:
+                continue
+    return values
+
+
+def _new_dedup(cls, capacity) -> Dedup:
+    """Allocate ``cls`` without calling a subclass ``__new__``.
+
+    A subclass ``__new__`` may require ``capacity``. ``Dedup`` does not define
+    ``__new__``, so this is ``object.__new__`` and only needs the class.
+    """
+    seen = Dedup.__new__(cls)
+    Dedup.__init__(seen, capacity)
+    return seen
+
+
+def _str_script(ops) -> bool:
+    """True when every op and key is an exact ``str`` the extension can store.
+
+    A ``str`` subclass may override equality. ``isinstance`` or ``==`` would
+    send it across PyO3, which keeps only the text, so that script stays on
+    the OrderedDict with ``Dedup.add``. An op subclass that compares equal to
+    ``"a"`` but whose text is something else would raise in Rust.
+    """
+    for op, key in ops:
+        if type(op) is not str or op not in ("a", "d") or type(key) is not str:
+            return False
+    return True
+
+
+def dedup_replay(capacity: int, ops: list[tuple[str, object]]) -> list[bool]:
+    """Run an add/discard script.
+
+    A script of exact ``str`` keys uses the extension in one call. A ``str``
+    subclass stays on the OrderedDict so its equality is preserved. A lone surrogate
+    cannot cross as UTF-8, so that script is escaped and retried once. Any
+    other hashable stays on the OrderedDict and matches ``Dedup.add`` instead
+    of raising only on the extension. ``op`` is ``"a"`` or ``"d"``.
+
+    ``ops`` is read twice when the extension is installed (a scan, then the
+    replay), so a one-shot iterable is copied first.
+    """
+    ops = list(ops)
+    native = _NATIVE
+    if native is not None and _rust_cap(capacity) and _str_script(ops):
+        try:
+            return list(native.dedup_replay(capacity, ops))
+        except UnicodeEncodeError:
+            encoded = [(op, _core_key(key)) for op, key in ops]
+            return list(native.dedup_replay(capacity, encoded))
+    seen = Dedup(capacity)
+    out = []
+    for op, key in ops:
+        if op == "a":
+            out.append(seen.add(key))
+        elif op == "d":
+            out.append(seen.discard(key))
+        else:
+            raise ValueError(f"unknown dedup op {op}")
+    return out
+
+
+_load_native()
