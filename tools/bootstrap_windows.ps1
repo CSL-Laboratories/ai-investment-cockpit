@@ -42,7 +42,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 & $venvPython -m pip install --upgrade pip
 & $venvPython -m pip install `
     pydantic pydantic-settings keyring pyyaml jsonschema `
-    fastapi "uvicorn[standard]" discord.py apscheduler sqlalchemy duckdb pyarrow httpx websockets `
+    fastapi "starlette>=0.48.0" "uvicorn[standard]" discord.py apscheduler sqlalchemy duckdb pyarrow httpx websockets `
     pytest ruff
 
 Write-Host ""
