@@ -131,7 +131,7 @@ def test_nonfinite_mids_stay_on_the_python_path(mid, expected_mid):
     ``(mid - price) * signed_qty``, and the fill still lands on the cash,
     notional and position ledgers at the fill price.
     """
-    accelerated, _reference = _trackers(ZERO_FEES)
+    accelerated = _trackers(ZERO_FEES)[0]
     accelerated.mark(mid, ts=0)
     assert accelerated._core is None
     assert accelerated._last_mid is not None
