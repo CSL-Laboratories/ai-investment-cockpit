@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
@@ -9,6 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = "tools/check_o8_phase_a.py"
+
+_SPEC = importlib.util.spec_from_file_location("check_o8_phase_a", ROOT / VALIDATOR)
+assert _SPEC and _SPEC.loader
+CHECK_O8 = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(CHECK_O8)
 EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: omit-io: omits I/O",
     "O8 negative control failed as designed: omit-helpers: omits helper processes",
@@ -141,3 +147,54 @@ def test_o8_rejects_numeric_latency_on_provider_free_workload(tmp_path: Path) ->
     result = _packet_with(tmp_path, mutate)
     assert result.returncode == 1
     assert "omits provider latency" in result.stderr
+
+
+def test_resolve_local_path_rejects_nul_byte_without_raising() -> None:
+    assert CHECK_O8._resolve_local_path("docs/replacement\x00/outcomes") is None
+    assert CHECK_O8._resolve_local_path("\x00") is None
+
+
+def test_resolve_local_path_rejects_nul_byte_via_local_path_exists() -> None:
+    assert CHECK_O8._local_path_exists("docs/replacement\x00/outcomes/O8/PHASE-A.md") is False
+
+
+def test_resolve_local_path_survives_resolve_raising_oserror(monkeypatch) -> None:
+    def _boom(self):
+        raise OSError("simulated resolve failure")
+
+    monkeypatch.setattr(CHECK_O8.Path, "resolve", _boom)
+    assert CHECK_O8._resolve_local_path("docs/replacement/outcomes/O8/PHASE-A.md") is None
+
+
+def test_resolve_local_path_survives_resolve_raising_valueerror(monkeypatch) -> None:
+    def _boom(self):
+        raise ValueError("embedded null byte")
+
+    monkeypatch.setattr(CHECK_O8.Path, "resolve", _boom)
+    assert CHECK_O8._resolve_local_path("docs/replacement/outcomes/O8/PHASE-A.md") is None
+
+
+def test_safe_exists_survives_exists_raising_oserror(monkeypatch) -> None:
+    def _boom(self):
+        raise OSError("simulated exists failure")
+
+    monkeypatch.setattr(CHECK_O8.Path, "exists", _boom)
+    assert CHECK_O8._safe_exists(ROOT / "docs/replacement/outcomes/O8/PHASE-A.md") is False
+
+
+def test_safe_is_file_survives_is_file_raising_valueerror(monkeypatch) -> None:
+    def _boom(self):
+        raise ValueError("embedded null byte")
+
+    monkeypatch.setattr(CHECK_O8.Path, "is_file", _boom)
+    assert CHECK_O8._safe_is_file(ROOT / "docs/replacement/outcomes/O8/PHASE-A.md") is False
+
+
+def test_o8_rejects_disposition_path_with_nul_byte_without_crashing(tmp_path: Path) -> None:
+    def mutate(packet: dict) -> None:
+        packet["disposition"][0]["paths"] = ["app/risk/\x00evil"]
+
+    result = _packet_with(tmp_path, mutate)
+    assert result.returncode == 1
+    assert "missing disposition path" in result.stderr
+    assert "Traceback" not in result.stderr

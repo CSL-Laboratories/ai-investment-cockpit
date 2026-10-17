@@ -238,20 +238,37 @@ def _is_rooted(value: str) -> bool:
 
 
 def _resolve_local_path(value: str) -> Path | None:
-    """Resolve a packet-supplied local path under ROOT; None when absolute or escaping."""
-    if not value or _is_rooted(value):
+    """Resolve a packet-supplied local path under ROOT; None when absolute, escaping, or unresolvable."""
+    if not value or "\x00" in value or _is_rooted(value):
         return None
-    resolved = (ROOT / value).resolve()
+    try:
+        resolved = (ROOT / value).resolve()
+    except (OSError, ValueError):
+        return None
     if not resolved.is_relative_to(ROOT):
         return None
     return resolved
+
+
+def _safe_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except (OSError, ValueError):
+        return False
 
 
 def _local_path_exists(locator: str) -> bool:
     if locator.startswith(("https://", "http://")):
         return True
     resolved = _resolve_local_path(locator)
-    return resolved is not None and resolved.exists()
+    return resolved is not None and _safe_exists(resolved)
 
 
 def _is_finite_nonneg(value: Any) -> bool:
@@ -334,9 +351,12 @@ def benchmark_reasons(document: Any) -> list[str]:
                     if retained is None:
                         reasons.append("baseline outputs path escapes the repository")
                         outputs_rejected = True
-                    elif isinstance(outputs_digest, str) and retained.is_file():
-                        raw = retained.read_bytes()
-                        if hashlib.sha256(raw).hexdigest() == outputs_digest:
+                    elif isinstance(outputs_digest, str) and _safe_is_file(retained):
+                        try:
+                            raw = retained.read_bytes()
+                        except (OSError, ValueError):
+                            raw = None
+                        if raw is not None and hashlib.sha256(raw).hexdigest() == outputs_digest:
                             outputs_ok = _baseline_outputs_bound(raw, baseline)
         if not outputs_ok and not outputs_rejected:
             reasons.append("tier-3 baseline lacks retained outputs")
