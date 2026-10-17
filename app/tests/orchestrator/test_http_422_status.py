@@ -47,6 +47,14 @@ def test_deprecated_http_422_guard_detects_a_hit(tmp_path: Path):
     assert _deprecated_http_422_offenders(tmp_path) == ["rogue.py"]
 
 
+# Quoted so a comment that merely mentions the floor does not satisfy the check.
+_STARLETTE_FLOOR = '"starlette>=0.48.0"'
+
+
+def _declares_starlette_floor(text: str) -> bool:
+    return _STARLETTE_FLOOR in text
+
+
 def test_project_requires_starlette_with_rfc9110_status_names():
     root = APP.parent
     paths = (
@@ -57,9 +65,14 @@ def test_project_requires_starlette_with_rfc9110_status_names():
     missing = [
         str(path.relative_to(root))
         for path in paths
-        if "starlette>=0.48.0" not in path.read_text(encoding="utf-8")
+        if not _declares_starlette_floor(path.read_text(encoding="utf-8"))
     ]
     assert not missing, missing
+
+
+def test_starlette_floor_check_ignores_a_comment():
+    assert not _declares_starlette_floor("# starlette>=0.48.0 is explicit\n")
+    assert _declares_starlette_floor('pip install "starlette>=0.48.0"\n')
 
 
 def test_ceiling_breach_returns_422_and_disarms_to_review_live(tmp_path: Path):
