@@ -183,7 +183,7 @@ EVENT_VISIBILITY = {
     "export_recorded": "visible",
 }
 EVENT_STATUSES = {
-    "evidence_viewed": frozenset({"ok"}),
+    "evidence_viewed": frozenset({"ok", "stale_or_unreconciled", "unavailable"}),
     "refusal_visible": frozenset({"refused", "stale_or_unreconciled", "unavailable"}),
     "uncertainty_visible": frozenset({"ok", "refused", "stale_or_unreconciled", "unavailable"}),
     "stale_visible": frozenset({"stale_or_unreconciled", "unavailable"}),

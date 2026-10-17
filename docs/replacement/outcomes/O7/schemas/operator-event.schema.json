@@ -50,7 +50,7 @@
     "status_code": {"enum": ["ok", "usage", "refused", "stale_or_unreconciled", "unavailable"]}
   },
   "allOf": [
-    {"if": {"properties": {"event_type": {"const": "evidence_viewed"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.evidence.inspect"}, "visibility": {"const": "visible"}, "status_code": {"const": "ok"}}}},
+    {"if": {"properties": {"event_type": {"const": "evidence_viewed"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.evidence.inspect"}, "visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "stale_or_unreconciled", "unavailable"]}}}},
     {"if": {"properties": {"event_type": {"const": "refusal_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["refused", "stale_or_unreconciled", "unavailable"]}}}},
     {"if": {"properties": {"event_type": {"const": "uncertainty_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["ok", "refused", "stale_or_unreconciled", "unavailable"]}}}},
     {"if": {"properties": {"event_type": {"const": "stale_visible"}}, "required": ["event_type"]}, "then": {"properties": {"visibility": {"const": "visible"}, "status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}}}},
