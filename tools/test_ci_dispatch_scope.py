@@ -269,5 +269,40 @@ class DispatchScopeTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
+    def test_qualification_evidence_jobs_stay_on_blacksmith_and_the_pr_head(self):
+        matrix = json.loads((ROOT / 'docs/evidence/csl221/qualification-matrix.json').read_text())
+        qualification = self.ci['jobs']['qualification']
+        negative = self.ci['jobs']['qualification-negative-controls']
+        validate = self.ci['jobs']['qualification-validate']
+        self.assertEqual(qualification['needs'], 'filter')
+        self.assertEqual(qualification['if'], self.ci['jobs']['linux']['if'])
+        self.assertEqual(qualification['strategy']['fail-fast'], 'false')
+        self.assertEqual(qualification['strategy']['matrix']['platform'], ['linux', 'windows', 'macos'])
+        self.assertEqual(qualification['strategy']['matrix']['python-version'], ['3.11', '3.12'])
+        runners = {cell['runner_image'] for cell in matrix['cells'] if cell['requirement'] == 'required'}
+        for runner in runners:
+            self.assertIn(runner, qualification['runs-on'])
+        self.assertEqual(negative['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
+        self.assertEqual(validate['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
+        self.assertEqual(validate['needs'], 'qualification')
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'linux'])
+        self.assertEqual(self.ci['jobs']['macos']['runs-on'], 'macos-latest')
+        head_ref = '${{ github.event.pull_request.head.sha || inputs.pr_head_sha || github.sha }}'
+        for job in (qualification, negative, validate):
+            checkout = next(step for step in job['steps'] if step.get('uses') == 'actions/checkout@v4')
+            self.assertEqual(checkout['with']['ref'], head_ref)
+            self.assertNotIn('merge_sha', checkout['with']['ref'])
+        joined = '\n'.join(step.get('run', '') for step in qualification['steps'])
+        self.assertIn('tools/qualification_evidence.py negative-controls', joined)
+        self.assertIn('tools/qualification_evidence.py emit-cell', joined)
+        self.assertIn('--junitxml=qualification-output/junit.xml', joined)
+        upload = next(step for step in qualification['steps'] if step.get('uses') == 'actions/upload-artifact@v4')
+        self.assertIn('qualification-provider-free-', upload['with']['name'])
+        validate_script = '\n'.join(step.get('run', '') for step in validate['steps'])
+        self.assertIn('tools/qualification_evidence.py validate', validate_script)
+        self.assertIn('tools/qualification_evidence.py negative-controls', validate_script)
+        self.assertNotIn('qualification', self.ci['jobs']['linux-gates']['needs'])
+
+
 if __name__ == '__main__':
     unittest.main()
