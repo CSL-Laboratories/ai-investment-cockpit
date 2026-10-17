@@ -47,6 +47,10 @@ SKIP_PREFIX = "codex-thread-skipped"
 VERDICT_ACTIONS = ("RESOLVE", "DECIDE", "MISSING", "AMBIGUOUS")
 SELF_CHECK_NAMES = frozenset({"codex auto-resolve", "resolve"})
 LINUX_GATES_NAMES = frozenset({"linux-gates"})
+# On retry-resolve GraphQL exceptions, refresh the PAT cite only when it is
+# missing or older than 20h. That still lands before the 24h cap window
+# closes, without posting a comment every 20-minute cron.
+CITE_REFRESH_AGE = timedelta(hours=20)
 # Over-protect order/risk/audit surfaces. Prefixes cover trees; names
 # match any basename (``app/schemas/models/order.py``, ``audit_entry.py``).
 PROTECTED_PATH_PREFIXES = (
@@ -1488,6 +1492,7 @@ def reply_and_resolve(
     now: datetime | None = None,
     pat_login: str = "",
     after: datetime | None = None,
+    cite_when: datetime | None = None,
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1530,11 +1535,14 @@ def reply_and_resolve(
         )
     except Exception:
         # GitHub may have applied the mutation even though the client
-        # saw an error. On retry-resolve the existing cite may be near
-        # the 24h cutoff, so always refresh it. First-time resolve
-        # already posted a cite this scan. Determinate failures
-        # (mismatched id / still-open thread) do not refresh.
-        if retry:
+        # saw an error. Refresh a retry-resolve cite when it is missing
+        # or older than 20h so it still counts after the next scan.
+        # A younger cite is left alone — posting every cron would spam
+        # an open thread. First-time resolve already cited this scan.
+        # Determinate failures (mismatched id / still-open) do not refresh.
+        stamp = now or utcnow()
+        still_counts = cite_when is not None and cite_when >= stamp - CITE_REFRESH_AGE
+        if retry and not still_counts:
             publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
@@ -1777,6 +1785,11 @@ def scan_pr(
                 now=now,
                 pat_login=pat_login,
                 after=stamped.when if stamped is not None else None,
+                cite_when=cite_time_for_thread(
+                    thread_comments(thread) + issue_comments,
+                    str(thread.get("id") or ""),
+                    actor_login=pat_login,
+                ),
             )
         except Exception:
             result = "error"
