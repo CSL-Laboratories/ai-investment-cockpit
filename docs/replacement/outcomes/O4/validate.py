@@ -128,7 +128,27 @@ CONTROL_ORDER = (
     "unbound_population",
     "metric_registry",
     "measured_costs_on_unrun_experiment",
+    "promotion_stage_authorized",
+    "promotion_gates",
 )
+REQUIRED_STAGE_GATES = {
+    "replay": {
+        "entry_criteria": (
+            "packet_and_manifest_digests_pinned_to_separately_accepted_preresult_receipt",
+            "independent_verifier_rerun_authorized",
+        ),
+        "entry_evidence": ("preresult_receipt", "verifier_rerun_record"),
+        "exit_criteria": ("replay_output_recorded_and_matched_to_receipt_digests",),
+    },
+    "demo": {
+        "entry_criteria": ("replay_exit_gates_met",),
+        "entry_evidence": ("replay_output_record",),
+        "exit_criteria": (
+            "demo_output_recorded",
+            "outcome_routed_to_release_owner_for_decision",
+        ),
+    },
+}
 
 
 class QualificationError(Exception):
@@ -216,6 +236,7 @@ def _semantic_failures(packet: dict[str, Any], repo: Path) -> list[Failure]:
     _metrics(packet, failures)
     _queue(packet, repo, failures)
     _decisions(packet, failures)
+    _promotion(packet, failures)
     _contracts(packet, repo, failures)
     return failures
 
@@ -475,6 +496,36 @@ def _decisions(packet: dict[str, Any], failures: list[Failure]) -> None:
         bool(misrouted),
         "decision_owner_role",
         "an unresolved decision routes to a person instead of its role: " + ", ".join(misrouted),
+    )
+
+
+def _promotion(packet: dict[str, Any], failures: list[Failure]) -> None:
+    protocol = packet["promotion_protocol"]
+    authorized = [stage["id"] for stage in protocol["stages"] if stage.get("authorized") is not False]
+    _fail_if(
+        failures,
+        bool(authorized),
+        "promotion_stage_authorized",
+        "a promotion stage is marked authorized: " + ", ".join(authorized),
+    )
+    missing = []
+    for stage in protocol["stages"]:
+        required = REQUIRED_STAGE_GATES.get(stage["id"])
+        if required is None:
+            continue
+        entry = stage.get("entry_gates", {})
+        exit_ = stage.get("exit_gates", {})
+        if (
+            not set(required["entry_criteria"]) <= set(entry.get("criteria", ()))
+            or not set(required["entry_evidence"]) <= set(entry.get("required_evidence", ()))
+            or not set(required["exit_criteria"]) <= set(exit_.get("criteria", ()))
+        ):
+            missing.append(stage["id"])
+    _fail_if(
+        failures,
+        bool(missing),
+        "promotion_gates",
+        "a promotion stage is missing a required gate criterion or evidence: " + ", ".join(missing),
     )
 
 

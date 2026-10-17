@@ -23,23 +23,45 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "order", "authorized", "requires_prior_stage"],
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
           "properties": {
             "id": {"const": "replay"},
             "order": {"const": 1},
-            "authorized": {"const": false},
-            "requires_prior_stage": {"type": "null"}
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"type": "null"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "order", "authorized", "requires_prior_stage"],
+          "required": [
+            "id",
+            "order",
+            "authorized",
+            "requires_prior_stage",
+            "entry_gates",
+            "exit_gates",
+            "failure_policy"
+          ],
           "properties": {
             "id": {"const": "demo"},
             "order": {"const": 2},
-            "authorized": {"const": false},
-            "requires_prior_stage": {"const": "replay"}
+            "authorized": {"type": "boolean"},
+            "requires_prior_stage": {"const": "replay"},
+            "entry_gates": {"$ref": "#/$defs/entry_gates"},
+            "exit_gates": {"$ref": "#/$defs/exit_gates"},
+            "failure_policy": {"const": "blocked_and_recorded_no_promotion"}
           }
         }
       ]
@@ -62,6 +84,37 @@
         {"const": "qualify_count_zero"},
         {"const": "independent_verification_not_run"}
       ]
+    }
+  },
+  "$defs": {
+    "entry_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criteria", "required_evidence"],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "required_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "exit_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criteria"],
+      "properties": {
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
     }
   }
 }

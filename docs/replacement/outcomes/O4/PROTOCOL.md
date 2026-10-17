@@ -50,7 +50,7 @@ Candidate command, not a completion gate:
 python -X utf8 -B docs/replacement/outcomes/O4/validate.py
 ```
 
-A clean command prints ten negative-control failures and one researched-maturity
+A clean command prints twelve negative-control failures and one researched-maturity
 line. Exit 0 means those controls failed as designed and the candidate packet
 stayed internally consistent. It does not promote the outcome.
 
@@ -66,6 +66,16 @@ checker-verified SHA-256 of that configuration's canonical JSON (sorted keys,
 compact separators). A variant id cannot silently denote different logic
 during tuning and evaluation: a configuration that drifts from its recorded
 digest fails the packet.
+
+These digests are internal-consistency checks, not a freeze. The checker
+recomputes `configuration_sha256`, `members_sha256`, and the `manifest.json`
+pins from the same artifact set an editor can update wholesale, so a digest
+that matches its recorded object proves the packet is self-consistent — it
+cannot prove the experiment still uses preregistered inputs. Any result-bearing
+version of this packet must instead pin the packet and manifest digests to a
+separately accepted, versioned pre-result receipt kept outside this artifact
+set; that receipt requirement is declared as a replay-stage entry gate in the
+promotion protocol below.
 
 The contract states a hypothesis, three alternatives, and falsifiers. The
 research quota on this family is one bounded reconciliation pass, zero Deep
@@ -162,6 +172,19 @@ unauthorized. Promotion stays unauthorized while thresholds are unset, the
 recorded qualify count is 0, and an independent verifier has not rerun the
 candidate.
 
+Each stage records its exact entry and exit gates (`entry_gates`,
+`exit_gates`, `failure_policy`) so later consumers do not invent or amend
+policy after observing results. Replay entry requires the packet and manifest
+digests to be pinned to a separately accepted, versioned pre-result receipt
+(`preresult_receipt`) kept outside this artifact set — self-recorded digests
+are consistency checks only — plus an authorized independent verifier rerun
+(`verifier_rerun_record`); its exit records the replay output matched to those
+receipt digests. Demo entry requires the replay exit gates met
+(`replay_output_record`); its exit records the demo output and routes the
+outcome to the release owner for decision. A stage's `failure_policy` is
+`blocked_and_recorded_no_promotion`. A stage marked `authorized`, or one whose
+declared gates drop a required criterion or evidence, fails the packet.
+
 The queue retains the six RW-28 verdicts, in file order, all unqualified:
 
 | Strategy | Verdict | Blocking rule |
@@ -193,6 +216,8 @@ must be rejected for exactly one designed reason:
 | `population-members-rebound.json` | A member id is reassigned while the selection-manifest digest is left stale. |
 | `metric-registry-incomplete.json` | The net-yield measure does not retain its matched-baseline input. |
 | `measured-costs.json` | A cost reads `retained_measured` on an experiment that has not run. |
+| `promotion-stage-authorized.json` | The replay stage is marked authorized. |
+| `preresult-receipt-dropped.json` | The replay entry gates drop the pre-result receipt criterion and evidence. |
 
 The checker prints each rejection. A control that passes, or that fails for a
 different reason, rejects the run.
