@@ -334,6 +334,40 @@ class WatcherTests(unittest.TestCase):
         self.evidence.fresh = lambda: not (self.github.comments if RECURSION else self.github.posts)
         self.assertEqual(len(self.scan()), 1)
 
+    def test_late_stale_failure_rechecks_linear_actionable_items(self):
+        from dataclasses import replace
+        from unittest.mock import patch
+        for existing_issue in (False, True):
+            for already_mediated, cap in ((False, 3), (True, 3), (False, 1)):
+                with self.subTest(existing_issue=existing_issue, already_mediated=already_mediated, cap=cap):
+                    comments = [f.comment("pat-user", m.marker("PRRT_ordinary"))] if already_mediated else []
+                    self.setup_scan(comments=comments)
+                    live = [True]
+                    self.evidence.fresh = lambda live=live: live[0]
+                    self.pull["reviewThreads"]["nodes"].append(f.thread(
+                        thread_id="PRRT_ordinary", comments=[f.comment(f.DEVIN, "Changed ordinary finding"),
+                                                             f.comment("claude[bot]", "needs a human")]))
+                    cfg = replace(self.cfg, file_linear=True, linear_api_key="fixture", max_per_pr_per_day=cap)
+                    existing = {"id": "issue", "description": "Earlier ordinary finding. Human notes."} if existing_issue else None
+                    def lookup(*_, live=live, existing=existing):
+                        live[0] = False
+                        return existing
+                    mutations = []
+                    def write(_query, args, mutations=mutations, existing_issue=existing_issue):
+                        mutations.append(args)
+                        return {"issueUpdate" if existing_issue else "issueCreate": {
+                            "success": True, "issue": {"url": "https://linear.app/fixture"}}}
+                    with patch.object(m, "linear_find_existing", side_effect=lookup), patch.object(
+                            m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": [], "projectId": "project"}):
+                        m.mediate_pr(self.pull, cfg, self.github, SimpleNamespace(graphql=write), f.NOW,
+                                     failure_collector=lambda *_: (self.evidence, self.proofs))
+                    no_actionable = (existing_issue and already_mediated) or cap == 1
+                    self.assertEqual(len(mutations), 0 if no_actionable else 1)
+                    if mutations:
+                        self.assertIn("Changed ordinary finding", mutations[0]["input"]["description"])
+                        self.assertNotIn("fixer-failure-handoff:PRRT_0", mutations[0]["input"]["description"])
+                    self.assertEqual(len(self.github.posts), 0 if already_mediated else 1)
+
     def test_missing_adapter_import_does_not_crash_the_watcher(self):
         from unittest.mock import patch
         with patch("importlib.util.spec_from_file_location", side_effect=FileNotFoundError):

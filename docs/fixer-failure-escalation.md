@@ -136,6 +136,10 @@ ordinary delivery and previously recorded handoffs. Recursion applies the same
 check to the existing-rollup sweep and refreshes retained entries alongside
 ordinary items on approved/green PRs.
 
+Cockpit rechecks the original cap/PAT-admitted thread IDs after that late filter.
+Already-mediated ordinary items alone cannot update an existing issue; they can
+still recreate a missing roll-up after an earlier Linear outage.
+
 The 60-read ceiling is unchanged. A real-reader dispatch/Linear fixture posts
 two of three comments before budget exhaustion, then posts the remaining one on
 a later scan within the same daily cap. Only actual posts consume slots; bounded

@@ -1000,7 +1000,7 @@ def linear_resolve_ids(linear: Linear, cfg: Config) -> dict[str, Any]:
     }
 
 
-def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=(), failure_evidence=None) -> str:
+def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=(), failure_evidence=None, actionable_thread_ids=None) -> str:
     if not items:
         raise ValueError("no stuck threads")
     number = items[0].pr_number
@@ -1018,6 +1018,12 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
             items = [item for item in items if not item.failure_evidence]
             if not items:
                 return "deferred-stale-failure"
+    # Admission follows the final failure filter as well as the original cap/PAT
+    # checks. Previously mediated items alone can only recover a missing roll-up.
+    if (actionable_thread_ids is not None
+            and not any(item.thread_id in actionable_thread_ids for item in items)
+            and ((existing and existing.get("id")) or any(not item.already_mediated for item in items))):
+        return "skipped-no-actionable"
     generated = build_linear_description(items, cfg)
     if existing and existing.get("id"):
         existing_desc = str(existing.get("description") or "")
@@ -1180,7 +1186,8 @@ def mediate_pr(
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
                 else:
                     url = upsert_linear_issue(linear, stuck, cfg, resolved_thread_ids=resolved_ids,
-                                              failure_evidence=evidence)
+                                              failure_evidence=evidence,
+                                              actionable_thread_ids={item.thread_id for item in actionable})
                     logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} linear=error")
