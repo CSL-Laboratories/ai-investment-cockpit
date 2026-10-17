@@ -1,0 +1,116 @@
+"""Provider-free CSL-217 O5 contract validator.
+
+Positives must be admitted at maturity researched. Negative controls must be
+refused with their designed codes. The test prints those refusals so CI logs
+show them failing as designed. It does not call a provider or the network.
+"""
+
+from __future__ import annotations
+
+import ast
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+TOOL = ROOT / "tools" / "o5_decision_contract.py"
+SCHEMA = ROOT / "docs/replacement/outcomes/O5/schemas/o5-wire.schema.json"
+SUITE = ROOT / "docs/replacement/outcomes/O5/fixtures/task-suite.json"
+
+REQUIRED_NEGATIVES = {
+    "mock_reported_as_installed": "mock_is_not_installed_route",
+    "fallback_widens_authority": "fallback_widens_authority",
+    "fallback_widens_budget": "fallback_widens_budget",
+    "fallback_widens_disclosure": "fallback_widens_disclosure",
+    "cheaper_despite_worse_correctness": "worse_correctness_accepted",
+    "faster_despite_worse_grounding": "worse_grounding_accepted",
+    "cheaper_despite_worse_calibration": "worse_calibration_accepted",
+    "provider_rewrites_protocol": "provider_result_rewrites_protocol",
+}
+
+FORBIDDEN_IMPORTS = frozenset({
+    "httpx",
+    "urllib",
+    "socket",
+    "requests",
+    "openai",
+    "anthropic",
+    "subprocess",
+    "boto3",
+    "websockets",
+    "discord",
+})
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("o5_decision_contract", TOOL)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_candidate_command_fails_negative_controls_as_designed(capfd) -> None:
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8", "-B", "tools/o5_decision_contract.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    with capfd.disabled():
+        print(result.stdout, end="")
+    assert result.returncode == 0, result.stderr
+    assert "maturity_claimed: researched" in result.stdout
+    assert "qualification_claimed: false" in result.stdout
+    assert "empirical_pass_claimed: false" in result.stdout
+    assert "contract_frozen_claimed: false" in result.stdout
+    assert "O5 candidate: FAIL" not in result.stdout
+    assert "UNEXPECTEDLY admitted" not in result.stdout
+    for negative_id, code in REQUIRED_NEGATIVES.items():
+        line = f"O5 negative control failed as designed: {negative_id} — {code}:"
+        assert line in result.stdout
+    module = _load()
+    report = module.evaluate(ROOT)
+    assert report.ok
+    assert report.maturity == "researched"
+    assert report.qualification_claimed is False
+    assert report.empirical_pass_claimed is False
+    assert report.contract_frozen_claimed is False
+    seen = {item.id: item for item in report.negatives}
+    for negative_id, code in REQUIRED_NEGATIVES.items():
+        item = seen[negative_id]
+        assert item.admitted is False
+        assert item.code == code
+        assert item.expected_code == code
+
+
+def test_relabeling_a_frozen_task_fails_closed() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    suite["cases"][0]["expected"]["value_correctness"] = True
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["task_suite"]
+    context = module.Context(
+        root=ROOT,
+        suite_digest="relabel",
+        suite=suite,
+        cases={},
+        route_ids=set(),
+        negative_ids=set(suite["required_negative_ids"]),
+    )
+    admission = module._admit_document(suite, schema, context)
+    assert admission.admitted is False
+    assert admission.code == "suite_oracle_mismatch"
+
+
+def test_validator_imports_no_provider_or_network() -> None:
+    tree = ast.parse(TOOL.read_text(encoding="utf-8"))
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".", 1)[0])
+    assert imported.isdisjoint(FORBIDDEN_IMPORTS)

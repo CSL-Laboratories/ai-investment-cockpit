@@ -1,0 +1,64 @@
+{
+  "kind": "budget_ledger",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "spend_authorized": false,
+  "paid_calls_executed": false,
+  "entries": [
+    {
+      "id": "context_token_cap",
+      "route_id": "current.decision",
+      "metric": "context_token_cap",
+      "ceiling": "90000",
+      "unit": "tokens",
+      "source": "app/config/models.py DEFAULT_CONTEXT_TOKEN_CAP",
+      "widening_allowed": false,
+      "owner_decision": "undecided"
+    },
+    {
+      "id": "haiku_55_long_context_line",
+      "route_id": "current.decision",
+      "metric": "long_context_rate_line",
+      "ceiling": "100000",
+      "unit": "input_tokens",
+      "source": "app/config/models.py HAIKU_55_LONG_CONTEXT_TOKENS",
+      "widening_allowed": false,
+      "owner_decision": "undecided"
+    },
+    {
+      "id": "daily_deep_escalation",
+      "route_id": "current.deep",
+      "metric": "daily_deep_escalations",
+      "ceiling": null,
+      "unit": "audited_runtime_limit",
+      "source": "app/workflows/budget.py DeepBudget",
+      "widening_allowed": false,
+      "owner_decision": "undecided"
+    },
+    {
+      "id": "successor_comparison_spend",
+      "route_id": "candidate.openai_decisions",
+      "metric": "paid_provider_calls",
+      "ceiling": null,
+      "unit": "usd",
+      "source": "undecided owner ceiling",
+      "widening_allowed": false,
+      "owner_decision": "undecided"
+    }
+  ]
+}

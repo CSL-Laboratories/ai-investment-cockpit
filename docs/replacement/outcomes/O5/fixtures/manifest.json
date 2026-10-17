@@ -1,0 +1,191 @@
+{
+  "kind": "fixture_manifest",
+  "schema_version": "o5.candidate.v1",
+  "issue": "CSL-217",
+  "claimed_maturity": "researched",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified"
+  ],
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "contract_frozen_claimed": false,
+  "inspected_commit": "ebbaa34489f171e079834d02098135711e1d4755",
+  "registry_baseline_commit": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "schemas": [
+    {
+      "path": "docs/replacement/outcomes/O5/schemas/o5-wire.schema.json",
+      "sha256": "f7b8146789002537c868493c401503d205ba07f93e7d989e43f861f62f3c92c2"
+    }
+  ],
+  "pins": [
+    {
+      "class": "prose",
+      "path": "docs/replacement/outcomes/O5/CONTRACT.md",
+      "sha256": "e914d74f54980349f6cf0484b9f2a8429c3c21ed7d42027f45bb22441e206079"
+    },
+    {
+      "class": "governing",
+      "path": "docs/replacement/MONTH-PROGRAM.md",
+      "sha256": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001"
+    },
+    {
+      "class": "research",
+      "path": "docs/replacement/AUTHORITY-COMPLIANCE-RESEARCH.md",
+      "sha256": "b023b4d7f12e6b764dd466ac61fb0de61e7ec2962670201ab98bd33fd45008d6"
+    }
+  ],
+  "wire": [
+    {
+      "kind": "task_suite",
+      "path": "docs/replacement/outcomes/O5/fixtures/task-suite.json",
+      "sha256": "5e1b3931505f877878d672e1fa367fb38fd679d73ff256022a2564db8f597468"
+    },
+    {
+      "kind": "capability_manifest",
+      "path": "docs/replacement/outcomes/O5/fixtures/capability-manifest.json",
+      "sha256": "cc0fa8526d066183b2a0f207948ade29af6baa5e1135f1a88a69e5294d864526"
+    },
+    {
+      "kind": "route_manifest",
+      "path": "docs/replacement/outcomes/O5/fixtures/route-manifest.json",
+      "sha256": "df5f51bf3b23b9eb7b32463065df088ec28f4059b1ac6f73fc8ed33bfabafc5f"
+    },
+    {
+      "kind": "budget_ledger",
+      "path": "docs/replacement/outcomes/O5/fixtures/budget-ledger.json",
+      "sha256": "b461e450865b9a471659ea8b1a89616f470ad01c768a927fde4b051dcec33ed3"
+    },
+    {
+      "kind": "privacy_disclosure",
+      "path": "docs/replacement/outcomes/O5/fixtures/privacy-disclosure.json",
+      "sha256": "2000ce0fa04a055c45333188c1c3f0ba140fac402e3d967c33b0216ca6410ecb"
+    },
+    {
+      "kind": "measure_report",
+      "path": "docs/replacement/outcomes/O5/fixtures/measures.json",
+      "sha256": "77c94a9970ff3494f2a33cf609ba6e5537581ae46bd64b3f2c8ace06d01be859"
+    },
+    {
+      "kind": "experiment_list",
+      "path": "docs/replacement/outcomes/O5/fixtures/experiments.json",
+      "sha256": "33e8e994be3580e72dabdc7e80c8aa512e0fc5109334c072ce9a7b9ae93f7983"
+    },
+    {
+      "kind": "qualification_record",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/qualification-current-decision.json",
+      "sha256": "bd2e67d2c2add24a003d1c05a18594bd045c698583996118b9e490342f5f3a81"
+    },
+    {
+      "kind": "fallback_policy",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/fallback-withhold.json",
+      "sha256": "04c596c27c8c04daea9f041f1ed26c0bab6ce3014fd87bbc27f7f7518fbebaec"
+    },
+    {
+      "kind": "route_comparison",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/comparison-withhold.json",
+      "sha256": "62497a61b7f0549f04d95dfbf479065190f99e59ecc8f6c53613188f9f1b14e9"
+    },
+    {
+      "kind": "decision_request",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-request.json",
+      "sha256": "a84ebd02644390a5c0414940319f6c58264741218c7ff07df12ddec9273aca4c"
+    },
+    {
+      "kind": "decision_result",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json",
+      "sha256": "c6bb1f9a64ebaaa1d986c5453577f3718df43535e4a39d902a846e82307260f5"
+    },
+    {
+      "kind": "decision_refusal",
+      "path": "docs/replacement/outcomes/O5/fixtures/positive/decision-refusal.json",
+      "sha256": "bff5e3ea5d8d8267753edb2773a1c5d9f80aebcde622680929a2b68162eed99d"
+    }
+  ],
+  "negatives": [
+    {
+      "id": "mock_reported_as_installed",
+      "kind": "qualification_record",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/mock-as-installed.json",
+      "sha256": "282ad0f69fc7ed6b88048d67b91c8d9c2a6bda67e5d69170b7d84a6296024be8",
+      "expected_code": "mock_is_not_installed_route"
+    },
+    {
+      "id": "fallback_widens_authority",
+      "kind": "fallback_policy",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/fallback-widens-authority.json",
+      "sha256": "becee112fdb49ad20bfa6f0c487c39045ec30e0bb48393fe77bed07ef85b0860",
+      "expected_code": "fallback_widens_authority"
+    },
+    {
+      "id": "fallback_widens_budget",
+      "kind": "fallback_policy",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/fallback-widens-budget.json",
+      "sha256": "1836d71d0c9fe36765b7a5832c343512b6a4d320d559eb6f9e85371a2db014a9",
+      "expected_code": "fallback_widens_budget"
+    },
+    {
+      "id": "fallback_widens_disclosure",
+      "kind": "fallback_policy",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/fallback-widens-disclosure.json",
+      "sha256": "78f23f31e85faa48e6d80e6d1f63789ed22e2b2d2e0bdbb2ef771adb5c165f5c",
+      "expected_code": "fallback_widens_disclosure"
+    },
+    {
+      "id": "cheaper_despite_worse_correctness",
+      "kind": "route_comparison",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/cheaper-worse-correctness.json",
+      "sha256": "e72cdd38d88edb387a1e77eacb8f24025c828c3d30006b5ac1f6e6eca4aac81d",
+      "expected_code": "worse_correctness_accepted"
+    },
+    {
+      "id": "faster_despite_worse_grounding",
+      "kind": "route_comparison",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/faster-worse-grounding.json",
+      "sha256": "c6603bdb9fd506aed79ff2b2e7079b45e2fceb01864c7683dc11bcc104aa73af",
+      "expected_code": "worse_grounding_accepted"
+    },
+    {
+      "id": "cheaper_despite_worse_calibration",
+      "kind": "route_comparison",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/cheaper-worse-calibration.json",
+      "sha256": "7d65cbc0588ee45002000e294933223d00c5dd668df7d0c2fa668119713160a2",
+      "expected_code": "worse_calibration_accepted"
+    },
+    {
+      "id": "provider_rewrites_protocol",
+      "kind": "protocol_amendment",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/provider-rewrites-suite.json",
+      "sha256": "c761fc67b3b78cd1906d91b9d52c257310050c9e214537ef21a90c91a30e8c56",
+      "expected_code": "provider_result_rewrites_protocol"
+    },
+    {
+      "id": "result_contradicts_suite",
+      "kind": "decision_result",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/result-contradicts-suite.json",
+      "sha256": "724f0f416d78c8afdd31f127b488469999dade2ebd7b1ab313e655df31758029",
+      "expected_code": "result_contradicts_suite"
+    },
+    {
+      "id": "experiment_marked_executed",
+      "kind": "experiment_list",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/experiment-marked-executed.json",
+      "sha256": "f0ab2eb91694afc6653643e61152979ca5bee8e1920d483aebf595d46f43d052",
+      "expected_code": "experiment_executed"
+    },
+    {
+      "id": "measures_reported_observed",
+      "kind": "measure_report",
+      "path": "docs/replacement/outcomes/O5/fixtures/negative/measures-reported-observed.json",
+      "sha256": "9b3dec13474d96faec05477f67c869af55e9b2228d9480c78c71289534d0bf01",
+      "expected_code": "measures_not_observed"
+    }
+  ]
+}
