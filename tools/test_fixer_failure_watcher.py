@@ -411,6 +411,22 @@ class WatcherTests(unittest.TestCase):
         self.assertNotRegex(quoted, r"(?m)^### ")
         self.assertNotIn("*Auto-filed by the in-repo stuck-thread watch", quoted)
 
+    def test_mediation_preserves_backticks_in_exact_filename(self):
+        from dataclasses import replace
+        for path in ("src/`legacy`.py", "src/``legacy``.py", "`leading.py", "trailing.py`"):
+            self.setup_scan()
+            if RECURSION:
+                thread = replace(self.pull.threads[0], path=path)
+                body = m.mediation_body(self.pull, thread, self.cfg, reason="stuck-human")
+            else:
+                item = replace(self.failure_rollup_fixture(), path=path)
+                body = m.build_mediation_comment(item, self.cfg)
+                self.assertIn(path, m.build_linear_description([item], self.cfg))
+            self.assertIn(path, body)
+            longest = max(len(run) for run in __import__("re").findall(r"`+", path))
+            delimiter = "`" * (longest + 1)
+            self.assertIn(delimiter + " " + path, body)
+
     def test_existing_marker_deduplicates_failure_delivery(self):
         marker = m.mediation_marker("PRRT_0") if RECURSION else m.marker("PRRT_0")
         self.setup_scan(comments=[f.comment("pat-user", marker)])

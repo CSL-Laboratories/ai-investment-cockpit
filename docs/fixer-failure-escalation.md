@@ -114,3 +114,8 @@ legacy bodies. Quoted headings, markers, footer and managed-section sentinels
 are neutralized in new output. A current ordinary item supersedes its historical
 failure entry by thread identity; quoted marker text cannot suppress other
 entries. Resolved real threads do not leave forged quoted entries behind.
+
+Filename backticks are preserved using a longer Markdown code-span delimiter;
+control characters are represented as a JSON string on one line. This avoids
+silently pointing mediation at a different filename while keeping quoted
+structure and writer-trigger sanitization intact.
