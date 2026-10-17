@@ -463,7 +463,7 @@ def test_rendered_status_is_a_delimited_field() -> None:
     competing["presentation"]["rendered"] = "status=refused status=ok"
     assert CHECKER.classify_response(competing, commands) == "contradictory_status_text"
     assert CHECKER._schema_error(validator, competing) is not None
-    for extra in ("status=refused", "status=bogus"):
+    for extra in ("status=refused", "status=bogus", "status=not-refused"):
         repeated = copy.deepcopy(by_request["req_decisions"])
         repeated["presentation"]["rendered"] = f"status=refused {extra}"
         assert CHECKER.classify_response(repeated, commands) == "contradictory_status_text"
