@@ -11,7 +11,7 @@ issue: CSL-221
 This note reconciles the historical DEC-09 corpus into the replacement
 qualification matrix for CSL-221. It is evidence. It does not amend DEC-09,
 does not accept a package, and does not record a release decision. Release
-scope stays with Lucas. A green hosted cell is not `provider_free_verified`
+scope stays with the release owner. A green hosted cell is not `provider_free_verified`
 in the replacement registry and is not outcome completion.
 
 The machine-readable matrix is

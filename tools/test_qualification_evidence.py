@@ -73,10 +73,13 @@ class QualificationEvidenceTests(unittest.TestCase):
         )
         self.assertTrue(all(cell["owner"] == self.matrix["owners"]["required"] for cell in required))
         self.assertTrue(all(cell["owner"] == self.matrix["owners"]["excluded"] for cell in excluded))
-        self.assertNotIn(
-            "Lucas",
-            (ROOT / "tools" / "qualification_evidence.py").read_text(encoding="utf-8"),
-        )
+        for relative in (
+            "tools/qualification_evidence.py",
+            "docs/evidence/csl221/qualification-matrix.json",
+            "docs/evidence/csl221-unresolved-blockers.md",
+            "docs/evidence/csl221-dec09-qualification-matrix-2026-10-17.md",
+        ):
+            self.assertNotIn("Lucas", (ROOT / relative).read_text(encoding="utf-8"), relative)
         self.assertTrue(all(record["pass_allowed"] is False for record in self.matrix["historical_records"]))
         self.assertEqual(self.matrix["does_not_replace"], "DEC-09")
         self.assertEqual(self.matrix["release_decision"], "not_made")
