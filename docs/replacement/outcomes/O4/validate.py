@@ -158,8 +158,14 @@ REQUIRED_STAGE_GATES = {
         "entry_criteria": (
             "simulation_exit_gates_met",
             "official_demo_venue_profile_and_nonlive_scope_accepted_before_results",
+            "demo_thresholds_and_coverage_pinned_before_results",
         ),
-        "entry_evidence": ("simulation_output_record", "nonlive_scope_receipt", "venue_conformance_record"),
+        "entry_evidence": (
+            "simulation_output_record",
+            "nonlive_scope_receipt",
+            "venue_conformance_record",
+            "preresult_receipt",
+        ),
         "exit_criteria": (
             "demo_output_recorded",
             "demo_reconciliation_and_recovery_meet_preresult_thresholds_and_coverage",

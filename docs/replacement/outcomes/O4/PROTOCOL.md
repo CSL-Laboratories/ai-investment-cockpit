@@ -191,7 +191,7 @@ economic qualification.
 | Stage | Entry gates and retained evidence | Exit gates |
 | --- | --- | --- |
 | Simulation | Replay exit met (`replay_output_record`); simulation model, costs, thresholds and coverage pinned before results (`preresult_receipt`). | Simulation output recorded with all costs; meets the pre-result thresholds and coverage. |
-| Official demo/test venue | Simulation exit met (`simulation_output_record`); official demo venue profile and non-live scope accepted before results (`venue_conformance_record`, `nonlive_scope_receipt`). | Demo output recorded; reconciliation and recovery meet the pre-result thresholds and coverage. |
+| Official demo/test venue | Simulation exit met (`simulation_output_record`); official demo venue profile and non-live scope accepted before results (`venue_conformance_record`, `nonlive_scope_receipt`); demo thresholds and coverage pinned before results (`preresult_receipt`). | Demo output recorded; reconciliation and recovery meet the pre-result thresholds and coverage. |
 | Shadow/live-data observation | Demo exit met (`demo_output_record`); acquisition scope accepted before observation (`data_scope_receipt`); observation only, no order authority; pre-result protocol retained (`preresult_receipt`). | Shadow output records data gaps, latency and costs; meets the pre-result thresholds and coverage. |
 | Paper or venue-equivalent execution | Shadow exit met (`shadow_output_record`); non-live execution scope accepted before results (`nonlive_scope_receipt`, `preresult_receipt`); current risk, mode, approval and gateway path preserved. | Execution output recorded; reconciliation, recovery and economics meet the pre-result thresholds and coverage; outcome routed to the release owner for decision. |
 

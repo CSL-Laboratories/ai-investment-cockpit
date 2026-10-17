@@ -5,67 +5,67 @@
   "files": [
     {
       "path": "PROTOCOL.md",
-      "sha256": "a6ad042f034c368bcf749fc00d59ee26008355f1614e5dba9999837aa9e5cc89"
+      "sha256": "6d874c25972741de5f0742e8a7ce248c0aee64bf7ac38867a0f8c5461e6707b8"
     },
     {
       "path": "fixtures/candidate-packet.json",
-      "sha256": "6120ec28261a44b3712a4117b68962da41c2d2f40be8bba95984c1bca871ed0e"
+      "sha256": "eafdf19442db39c4734e75ee56aa3f5b1a4fb729140b1d6f8b26d9293e26094a"
     },
     {
       "path": "fixtures/negative/dropped-costs.json",
-      "sha256": "e9baebf2408571329d2aa52badb8ca3ebe4e0dded5bc188014a0c09262f00903"
+      "sha256": "dc23793f94f89f953abe78a34711224c213f1ea06bd666bd0bef8d07a322a453"
     },
     {
       "path": "fixtures/negative/dropped-empty-outcome.json",
-      "sha256": "b6f4e15dcbb2a4f6dcfd44b36b94c7679a4d5385220bd6476b0a0dca94586ef7"
+      "sha256": "0d102cbeb3692d21d04e01628ecfc149aec7023b8429e82844dbba5cc369c741"
     },
     {
       "path": "fixtures/negative/leakage-control-satisfied.json",
-      "sha256": "c8e2413bdfcee311eaa96dd24d264012bc8f17a8460c8370369638f4d22b7204"
+      "sha256": "000b74482c1fbdb85f4344db1248751de1073da9dc84ca298841c5eca810e957"
     },
     {
       "path": "fixtures/negative/measured-costs.json",
-      "sha256": "901c919022f0e4bd1a17d8b5c35d97935ec75d1ca2378d8539cc3ba92e46f44c"
+      "sha256": "56bd8f1b31e49541723bc671209614a2555087a1f86d7a9da0ce3f3b9856a530"
     },
     {
       "path": "fixtures/negative/metric-registry-incomplete.json",
-      "sha256": "224dc04c6652fcbcc942757dc759aee9355db7082254bb4954294bbd58d2d881"
+      "sha256": "e5663aad914852819588c30a5edf382ea17def6a9315fcd80123021d2503a2fa"
     },
     {
       "path": "fixtures/negative/overlapping-populations.json",
-      "sha256": "7460ece0b44add70f83c7d87fb1a92773b1402f4be407ee299b035db01583b08"
+      "sha256": "0a2fc9dbe311ff3c5e106b57a83e14dceb220f5a26b39d70420a09fe007526f4"
     },
     {
       "path": "fixtures/negative/parameter-variants.json",
-      "sha256": "26b24c100d9526276cc5ee5d43ae9ef29deece0aa209c1d1a13c3985d6d7efeb"
+      "sha256": "3754bba1b81d23a073093543cc9d85b1f025bba90f55b1bb3ebd336325676a09"
     },
     {
       "path": "fixtures/negative/population-members-rebound.json",
-      "sha256": "971f2c65dfb00906f59bdf2620c1be928dbea7049d1e33de1f99816dca54055e"
+      "sha256": "653dace95ffdc0c55ffdbcc5411d8b8ac47fbd834291b19aad82fa4b7a1a6142"
     },
     {
       "path": "fixtures/negative/preresult-receipt-dropped.json",
-      "sha256": "5782e630ec88c2eab4e0578193d6879a07ec186eb555c2bacdf4a6fb27d9caa0"
+      "sha256": "f7f424428c971e530785a7cb88695abd0e9e7de9cf18d2310492ba73f4d2905f"
     },
     {
       "path": "fixtures/negative/promotion-stage-authorized.json",
-      "sha256": "19c16931327e4e0ab75bdd1a08d66fe2b93fc236c8af3f255ba3b3f1bc942d36"
+      "sha256": "40e44724f026cfde19c70fef0a43d7050a0ce4ad7919ef1665c0d731408314f8"
     },
     {
       "path": "fixtures/negative/release-owner-person.json",
-      "sha256": "9bf597f2b42c181690ba59db31345f0edde6524a8afba93089e470195a7830dc"
+      "sha256": "58abc3c36c77b8ddea0bfb5868cacc5636e089a78f7077e4d3744dfb3dfa813d"
     },
     {
       "path": "fixtures/negative/shadow-data-scope-dropped.json",
-      "sha256": "b90381ee99b07ffeffa5ea4ef440d6f21fd2f45084838cc6d6dfc14b7c644eaf"
+      "sha256": "5a832fb91ff84b5af0edf4e98975a386b74db2fae5a43f09b3e7d649714d1cfc"
     },
     {
       "path": "fixtures/negative/stages-missing-rung.json",
-      "sha256": "b5f965b56cfd4a05b5201ddd30282d50f903d4ae1fd5bcdc8ed0e0233c5e12a5"
+      "sha256": "675cc0e997c4b6748a49b64915f5da5e998353e57d0cd7c29446afe7324bd1be"
     },
     {
       "path": "fixtures/negative/variant-configuration.json",
-      "sha256": "deca9f322d2970f5e6fe3f2d68f6258aaa612f92a4022f88b37b49e59703aea3"
+      "sha256": "975e520cb408996819a8d87b630aa99b47eb79809b29088586189d0fcf0f7df6"
     },
     {
       "path": "schemas/candidate-queue.schema.json",
@@ -101,7 +101,7 @@
     },
     {
       "path": "validate.py",
-      "sha256": "148c8f5a9897b6baeaccf2579a94a2234587af8436f4f4554972663e5649200f"
+      "sha256": "b63da09606c87ed762e26deecae01964479c589cda52b2d1967a1f9b8e4dac3e"
     }
   ],
   "linear_issue": "CSL-216",
