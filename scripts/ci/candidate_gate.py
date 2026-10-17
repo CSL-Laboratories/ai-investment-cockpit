@@ -343,12 +343,85 @@ class Coordinator:
         # Existing trigger PAT already performs dispatches; no new token grant.
         return json.loads(self.gh._run(["api", path], token=self.gh.write_token))
 
-    def runs(self, workflow_id):
+    def runs(self, workflow_id, policy=None):
         # Candidate runs execute on the default branch at the policy commit, so
         # the history query names the policy SHA. A run on the candidate head
-        # is never listed here and could never qualify.
+        # is never listed here and could never qualify. A superseded
+        # reservation is looked up by its own pinned SHA through this same
+        # read-only endpoint; nothing on another commit is ever adopted.
+        policy = policy or self.policy
         return pages(self.action_get, f"{self.prefix}/actions/workflows/{workflow_id}/runs"
-                     f"?event=workflow_dispatch&head_sha={self.policy.sha}", "workflow_runs")
+                     f"?event=workflow_dispatch&head_sha={policy.sha}", "workflow_runs")
+
+    def observe(self, candidate, intent, kind, workflow_id, actor_id, policy):
+        """Exact run binding and stable run/jobs verification for one reservation.
+
+        Shared by the current policy and superseded-policy reconciliation so
+        both apply identical binding. Returns (state, run); only "success"
+        means exactly one nonce-bound run completed successfully with every
+        required job and was unchanged across both run and jobs reads.
+        """
+        if intent.get("workflow") != workflow_id or intent.get("actor") != actor_id:
+            raise ValueError("dispatch identity changed")
+        nonce = intent.get("nonce")
+        # A missing, wrong-type or malformed nonce can never bind a run title;
+        # refuse it as evidence rather than failing on title construction.
+        if not isinstance(nonce, str) or not candidate_api.NONCE.fullmatch(nonce):
+            raise ValueError("malformed dispatch nonce")
+        runs = self.runs(workflow_id, policy)
+        title = f"candidate:{candidate.key}:{kind}:{nonce}"
+        matches = [x for x in runs if x.get("display_title") == title]
+        if not matches:
+            return "reserved-delivery-uncertain", None  # No age-based resend.
+        if len(matches) != 1:
+            raise ValueError("duplicate candidate delivery")
+        run = matches[0]
+        if (type(intent.get("before")) is not int or run["id"] <= intent["before"]
+                or run.get("head_sha") != policy.sha
+                or run.get("head_branch") != policy.branch
+                or (run.get("actor") or {}).get("id") != intent["actor"]
+                or run.get("workflow_id") != workflow_id
+                or not candidate_api.workflow_path_matches(run.get("path"), kind)
+                or run.get("event") != "workflow_dispatch"
+                or (run.get("repository") or {}).get("full_name") != self.repo):
+            raise ValueError("unbound candidate run")
+        attempt = run.get("run_attempt")
+        if type(attempt) is not int or attempt < 1:
+            raise ValueError("invalid run attempt")
+        jobs = pages(self.action_get, f"{self.prefix}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
+        complete = candidate_api.full_run_success(run, jobs, candidate, kind, workflow_id, nonce, policy)
+        latest = self.action_get(f"{self.prefix}/actions/runs/{run['id']}")
+        identity_fields = ("id", "head_sha", "head_branch", "workflow_id", "event", "path", "display_title",
+                           "run_attempt", "status", "conclusion", "actor", "repository", "head_repository", "updated_at")
+        if any(latest.get(key) != run.get(key) for key in identity_fields):
+            return "run-changed-reconcile", run
+        if pages(self.action_get, f"{self.prefix}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs") != jobs:
+            return "jobs-changed-reconcile", run
+        return ("success" if complete else "pending-or-failed"), run
+
+    def superseded_resolved(self, candidate, intent, kind, workflow_id, actor_id):
+        """Positive evidence that a superseded-policy reservation was delivered once and completed.
+
+        The reservation's pinned policy must be a valid, distinct commit of
+        the same default branch that binds to this candidate, and
+        exactly one nonce-bound run on that commit must be a stable successful
+        first attempt. That evidence only releases the reservation from the
+        unresolved set; it never counts as current success or qualification,
+        is never recorded, and stays in the retry budget. Missing, legacy,
+        malformed, uncertain, failed, canceled, pending, rerun or duplicate
+        evidence keeps the reservation held for an operator.
+        """
+        try:
+            old = candidate_api.Policy(intent.get("policy"), intent.get("policy_branch"))
+            if old.branch != self.policy.branch or old.sha == self.policy.sha:
+                return False
+            candidate_api.policy_binding(old, candidate)
+            state, run = self.observe(candidate, intent, kind, workflow_id, actor_id, old)
+        except ValueError:
+            # Binding or evidence refusal, including malformed listings, is not
+            # positive delivery evidence. Non-ValueError API failures propagate.
+            return False
+        return state == "success" and run.get("run_attempt") == 1
 
     def deliver(self, candidate, request, kind):
         workflow = self.action_get(f"{self.prefix}/actions/workflows/{kind}.yml")
@@ -365,14 +438,35 @@ class Coordinator:
         intents = [x for x in self.journal(comments, "dispatch") if x.get("candidate") == candidate.key and x.get("kind") == kind]
         rejected = {x.get("nonce") for x in self.journal(comments, "rejected") if x.get("status") in {400, 401, 403, 404, 409, 422, 429}}
         aborted = {x.get("nonce") for x in self.journal(comments, "aborted") if x.get("reason") == "pre-dispatch-refused"}
-        active = [x for x in intents if x.get("nonce") not in rejected | aborted]
-        if len(active) > 1:
+        # A reservation whose nonce is not a well-formed string can never be
+        # matched to a rejection or abort receipt, so it always stays active
+        # (and is held by the observe guard); it is never discarded or treated
+        # as rejected/aborted, and its nonce is never used as a lookup key.
+        active = [x for x in intents
+                  if not isinstance(x.get("nonce"), str) or not candidate_api.NONCE.fullmatch(x.get("nonce"))
+                  or x.get("nonce") not in rejected | aborted]
+
+        def current(intent):
+            return intent.get("policy") == self.policy.sha and intent.get("policy_branch") == self.policy.branch
+
+        def unresolved_intents():
+            # A superseded-policy reservation leaves the unresolved set only on
+            # positive, freshly re-read delivery evidence under its own pinned
+            # SHA. Nothing is stored: if that evidence later disappears, the
+            # reservation is unresolved again and reconciliation fails closed.
+            return [x for x in active if current(x)
+                    or not self.superseded_resolved(candidate, x, kind, workflow_id, actor["id"])]
+
+        unresolved = unresolved_intents()
+        if len(unresolved) > 1:
             raise ValueError("multiple unresolved dispatch reservations")
-        runs = self.runs(workflow_id)
-        if not active:
+        if not unresolved:
+            # Every reservation ever made for this candidate/workflow, including
+            # resolved superseded ones, consumes the same three-intent budget.
             if len(intents) >= 3:
                 return "rejection-budget-exhausted"
             self.fresh(candidate, request)
+            runs = self.runs(workflow_id)
             # The reservation pins the trusted policy commit and default branch
             # alongside the numeric workflow/actor identity, so a later policy
             # cannot adopt this delivery and an older one cannot be re-sent.
@@ -381,6 +475,8 @@ class Coordinator:
                 "policy": self.policy.sha, "policy_branch": self.policy.branch})
             try:
                 self.fresh(candidate, request)
+                if unresolved_intents():
+                    raise ValueError("superseded delivery evidence changed before dispatch")
             except Exception:
                 # This call has not entered dispatch POST. Unlike an unknown
                 # network outcome, this is positive evidence nothing was sent.
@@ -397,43 +493,19 @@ class Coordinator:
                     self.record("rejected", {"nonce": intent["nonce"], "status": status})
                 raise
             return "dispatched-awaiting-observation"
-        intent = active[0]
-        if intent.get("policy") != self.policy.sha or intent.get("policy_branch") != self.policy.branch:
-            # Legacy (no policy fields) or superseded-policy reservations: the
-            # outcome is unknown under this policy. Never qualify, never resend;
-            # the reservation stays active until an operator reconciles it.
+        intent = unresolved[0]
+        if not current(intent):
+            # Legacy (no policy fields) or superseded-policy reservations without
+            # positive delivery evidence: the outcome is unknown under this
+            # policy. Never qualify, never resend; the reservation stays active
+            # until an operator reconciles it.
             return "policy-mismatch-reconcile"
-        if intent.get("workflow") != workflow_id or intent.get("actor") != actor["id"]:
-            raise ValueError("dispatch identity changed")
-        title = f"candidate:{candidate.key}:{kind}:{intent['nonce']}"
-        matches = [x for x in runs if x.get("display_title") == title]
-        if not matches:
-            return "reserved-delivery-uncertain"  # No age-based resend.
-        if len(matches) != 1:
-            raise ValueError("duplicate candidate delivery")
-        run = matches[0]
-        if (run["id"] <= intent["before"] or run.get("head_sha") != self.policy.sha
-                or run.get("head_branch") != self.policy.branch
-                or (run.get("actor") or {}).get("id") != intent["actor"]
-                or run.get("workflow_id") != workflow_id
-                or not candidate_api.workflow_path_matches(run.get("path"), kind)
-                or run.get("event") != "workflow_dispatch"
-                or (run.get("repository") or {}).get("full_name") != self.repo):
-            raise ValueError("unbound candidate run")
-        attempt = run.get("run_attempt")
-        if type(attempt) is not int or attempt < 1:
-            raise ValueError("invalid run attempt")
-        jobs = pages(self.action_get, f"{self.prefix}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
-        complete = candidate_api.full_run_success(run, jobs, candidate, kind, workflow_id, intent["nonce"], self.policy)
-        latest = self.action_get(f"{self.prefix}/actions/runs/{run['id']}")
-        identity_fields = ("id", "head_sha", "head_branch", "workflow_id", "event", "path", "display_title",
-                           "run_attempt", "status", "conclusion", "actor", "repository", "head_repository", "updated_at")
-        if any(latest.get(key) != run.get(key) for key in identity_fields):
-            return "run-changed-reconcile"
-        if pages(self.action_get, f"{self.prefix}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs") != jobs:
-            return "jobs-changed-reconcile"
-        self.fresh(candidate, request)
-        return "success" if complete else "pending-or-failed"
+        # Only the current-policy reservation's own run can report success;
+        # a resolved superseded run released its reservation and nothing else.
+        state, _run = self.observe(candidate, intent, kind, workflow_id, actor["id"], self.policy)
+        if state in {"success", "pending-or-failed"}:
+            self.fresh(candidate, request)
+        return state
 
     def reconcile(self):
         mediation = self.mediate()

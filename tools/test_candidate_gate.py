@@ -40,6 +40,9 @@ ACTION_USER = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
 # it checked out. With the fixture PR based on main, that commit is BASE.
 POLICY = gate.candidate_api.Policy(BASE, "main")
 MOVED = "e" * 40
+# Later default-branch commits: the policy that supersedes POLICY, and the next.
+NEW_POLICY = gate.candidate_api.Policy(MOVED, "main")
+THIRD_POLICY = gate.candidate_api.Policy("9" * 40, "main")
 
 
 class ApiError(RuntimeError):
@@ -295,26 +298,60 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual([kind for kind, _ in self.gh.dispatches], ["ci", "rust"])
         return result
 
-    def observe_success(self):
+    def observe_success(self, policy=POLICY, run_base=9000):
+        """Publish one complete successful run for every reservation pinned to policy."""
         candidate = self.candidate()
         for intent in self.journal("dispatch"):
+            if (intent.get("policy"), intent.get("policy_branch")) != (policy.sha, policy.branch):
+                continue
             kind = intent["kind"]
-            identifier = 9000 + self.gh.workflow_ids[kind]
+            identifier = run_base + self.gh.workflow_ids[kind]
             # Candidate runs execute on the default branch at the policy commit.
-            run = {"id": identifier, "head_sha": POLICY.sha, "head_branch": POLICY.branch,
+            run = {"id": identifier, "head_sha": policy.sha, "head_branch": policy.branch,
                 "workflow_id": intent["workflow"], "path": gate.KINDS[kind], "event": "workflow_dispatch",
                 "repository": {"id": candidate.repository_id, "full_name": REPO}, "actor": ACTOR,
                 "head_repository": {"id": candidate.repository_id, "full_name": REPO},
                 "display_title": f"candidate:{candidate.key}:{kind}:{intent['nonce']}",
                 "run_attempt": 1, "status": "completed", "conclusion": "success"}
-            self.gh.run_lists[intent["workflow"]] = [run]
+            others = [x for x in self.gh.run_lists[intent["workflow"]] if x["id"] != identifier]
+            self.gh.run_lists[intent["workflow"]] = others + [run]
             self.gh.latest_runs[identifier] = copy.deepcopy(run)
             self.gh.jobs[(identifier, 1)] = [{"id": identifier * 100 + i, "run_id": identifier,
-                "run_attempt": 1, "head_sha": POLICY.sha, "name": name,
+                "run_attempt": 1, "head_sha": policy.sha, "name": name,
                 "status": "completed", "conclusion": "success"}
                 for i, name in enumerate(sorted(gate.candidate_api.REQUIRED_JOBS[kind]), 1)]
             self.assertTrue(gate.candidate_api.full_run_success(
-                run, self.gh.jobs[(identifier, 1)], candidate, kind, intent["workflow"], intent["nonce"], POLICY))
+                run, self.gh.jobs[(identifier, 1)], candidate, kind, intent["workflow"], intent["nonce"], policy))
+
+    def supersede(self):
+        """Deliver and observe a qualified matrix under POLICY, then advance the default branch.
+
+        The PR targets a non-default branch so the candidate is unchanged while
+        the trusted policy commit moves from BASE to MOVED.
+        """
+        self.retarget_base()
+        self.dispatch()
+        self.observe_success()
+        self.assertTrue(json.loads(self.reconcile())["qualified"])
+        self.gh.default_tip = NEW_POLICY.sha
+        self.gh.run_queries = []
+        return {x["kind"]: x for x in self.journal("dispatch")}
+
+    def repin(self, kind, **fields):
+        """Rewrite the authenticated dispatch record for kind in place (journal provenance is caller-controlled)."""
+        intent = next(x for x in self.journal("dispatch") if x["kind"] == kind)
+        comment = next(c for c in self.gh.comments if c["id"] == intent["id"])
+        data = {k: v for k, v in intent.items() if k not in ("id", "created_at")}
+        data.update(fields)
+        data = {k: v for k, v in data.items() if v is not None}
+        comment["body"] = self.receipts.marker("candidate-dispatch", data)
+        return data
+
+    def dispatched(self, kind):
+        return [k for k, _ in self.gh.dispatches].count(kind)
+
+    def queried_shas(self):
+        return {query["head_sha"][0] for query in self.gh.run_queries}
 
     def test_ready_exact_candidate_dispatches_two_full_workflows_once(self):
         self.dispatch()
@@ -435,6 +472,375 @@ class CandidateCoordinatorTests(unittest.TestCase):
                     self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
                 self.assertEqual([kind for kind, _ in self.gh.dispatches], ["rust"])
                 self.assertEqual(len(self.journal("dispatch")), 2)
+
+    def test_resolved_superseded_delivery_permits_exactly_one_fresh_current_reservation(self):
+        old = self.supersede()
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        # The old success released its reservation only; it is not current success.
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["policy"], NEW_POLICY.sha)
+        self.assertEqual(result["full_matrix"], {"ci": "dispatched-awaiting-observation",
+                                                 "rust": "dispatched-awaiting-observation"})
+        self.assertEqual([kind for kind, _ in self.gh.dispatches], ["ci", "rust", "ci", "rust"])
+        # The superseded reservation was actually looked up by its own pinned SHA.
+        self.assertEqual(self.queried_shas(), {POLICY.sha, NEW_POLICY.sha})
+        fresh = [x for x in self.journal("dispatch") if x["id"] > max(v["id"] for v in old.values())]
+        self.assertEqual(len(fresh), 2)
+        for intent in fresh:
+            self.assertEqual((intent["policy"], intent["policy_branch"]), (NEW_POLICY.sha, NEW_POLICY.branch))
+            self.assertNotEqual(intent["nonce"], old[intent["kind"]]["nonce"])
+        for _, payload in self.gh.dispatches[2:]:
+            self.assertEqual(payload["ref"], NEW_POLICY.branch)
+            self.assertIn(payload["inputs"]["dispatch_nonce"], {x["nonce"] for x in fresh})
+        # Exactly one fresh reservation: later reconciliations wait, never resend.
+        for _ in range(3):
+            result = json.loads(self.reconcile(policy=NEW_POLICY))
+            self.assertFalse(result["qualified"])
+            self.assertEqual(result["full_matrix"], {"ci": "reserved-delivery-uncertain",
+                                                     "rust": "reserved-delivery-uncertain"})
+        self.assertEqual(len(self.gh.dispatches), 4)
+        self.assertEqual(len(self.journal("dispatch")), 4)
+        self.assertEqual(self.journal("aborted"), [])
+        # Only the current policy's own nonce-bound run qualifies.
+        self.observe_success(NEW_POLICY, run_base=9500)
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        self.assertTrue(result["qualified"])
+        self.assertEqual(result["policy"], NEW_POLICY.sha)
+        self.assertEqual(len(self.gh.dispatches), 4)
+        # The superseded policy itself still fails closed against the live branch.
+        with self.assertRaises(ValueError):
+            self.reconcile(policy=POLICY)
+
+    def test_superseded_success_never_qualifies_without_a_current_policy_run(self):
+        self.supersede()
+        # Exhaust the shared budget with pre-dispatch aborts so no current
+        # delivery can happen; the resolved old success must not fill the gap.
+        for _ in range(2):
+            self.receipts.fixer_pending = False
+            self.gh.on_record = lambda body: setattr(self.receipts, "fixer_pending", True) if "candidate-dispatch:" in body else None
+            with self.assertRaises(ValueError):
+                self.reconcile(policy=NEW_POLICY)
+        self.receipts.fixer_pending = False
+        self.gh.on_record = None
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["full_matrix"]["ci"], "rejection-budget-exhausted")
+        self.assertNotIn("success", result["full_matrix"].values())
+        self.assertEqual(self.dispatched("ci"), 1)
+
+    def test_superseded_evidence_defects_keep_the_reservation_held(self):
+        def rerun():
+            for store in (self.gh.run_lists[301][0], self.gh.latest_runs[9301]):
+                store["run_attempt"] = 2
+            self.gh.jobs[(9301, 2)] = [{**job, "run_attempt": 2} for job in self.gh.jobs[(9301, 1)]]
+
+        def duplicate():
+            twin = copy.deepcopy(self.gh.run_lists[301][0])
+            twin["id"] += 100
+            self.gh.run_lists[301].append(twin)
+
+        def both(**fields):
+            def apply():
+                self.gh.run_lists[301][0].update(copy.deepcopy(fields))
+                self.gh.latest_runs[9301].update(copy.deepcopy(fields))
+            return apply
+
+        def changing_jobs():
+            original_run = self.gh._run
+            reads = 0
+
+            def wrapped(args, token):
+                nonlocal reads
+                if "/actions/runs/9301/attempts/1/jobs" in args[1]:
+                    reads += 1
+                    if reads == 2:
+                        self.gh.jobs[(9301, 1)][0]["conclusion"] = "failure"
+                return original_run(args, token)
+            self.gh._run = wrapped
+
+        defects = {
+            "failure": both(conclusion="failure"),
+            "cancelled": both(conclusion="cancelled"),
+            "pending": both(status="in_progress", conclusion=None),
+            "missing-job": lambda: self.gh.jobs[(9301, 1)].pop(),
+            "failed-job": lambda: self.gh.jobs[(9301, 1)][0].update(conclusion="failure"),
+            "missing-run": lambda: self.gh.run_lists.__setitem__(301, []),
+            "run-not-after-before": lambda: self.repin("ci", before=9301),
+            "duplicate-title": duplicate,
+            "wrong-actor": both(actor={"id": 999}),
+            "wrong-workflow": both(workflow_id=302),
+            "wrong-path": both(path=gate.KINDS["rust"]),
+            "wrong-branch": both(head_branch="release"),
+            "wrong-repo": both(repository={"id": 10, "full_name": "fork/repo"}),
+            "wrong-event": both(event="pull_request"),
+            "rerun-attempt": rerun,
+            "run-changed-between-reads": lambda: self.gh.latest_runs[9301].update(updated_at="later"),
+            "attempt-bumped-between-reads": lambda: self.gh.latest_runs[9301].update(run_attempt=2),
+            "jobs-changed-between-reads": changing_jobs,
+        }
+        for name, defect in defects.items():
+            with self.subTest(defect=name):
+                self.setUp()
+                self.supersede()
+                defect()
+                # The rust reservation, whose old evidence is intact, is released
+                # exactly once; the defective ci reservation stays held throughout.
+                for expected_rust in ("dispatched-awaiting-observation", "reserved-delivery-uncertain"):
+                    result = json.loads(self.reconcile(policy=NEW_POLICY))
+                    self.assertFalse(result["qualified"])
+                    self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+                    self.assertEqual(result["full_matrix"]["rust"], expected_rust)
+                self.assertIn(POLICY.sha, self.queried_shas())
+                self.assertEqual(self.dispatched("ci"), 1)
+                self.assertEqual(self.dispatched("rust"), 2)
+                self.assertEqual(len([x for x in self.journal("dispatch") if x["kind"] == "ci"]), 1)
+
+    def test_superseded_policy_binding_defects_keep_the_reservation_held(self):
+        pins = {"missing-branch": {"policy_branch": None}, "missing-sha": {"policy": None},
+                "invalid-sha": {"policy": "short"}, "invalid-branch": {"policy_branch": "-x"},
+                "foreign-branch": {"policy_branch": "trunk"}, "candidate-head": {"policy": HEAD},
+                "candidate-merge": {"policy": MERGE}, "legacy": {"policy": None, "policy_branch": None}}
+        for name, pin in pins.items():
+            with self.subTest(pin=name):
+                self.setUp()
+                self.supersede()
+                self.repin("ci", **pin)
+                for _ in range(2):
+                    result = json.loads(self.reconcile(policy=NEW_POLICY))
+                    self.assertFalse(result["qualified"])
+                    self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+                self.assertEqual(self.dispatched("ci"), 1)
+                self.assertEqual(self.dispatched("rust"), 2)
+
+    def test_superseded_lookup_is_isolated_to_its_pinned_sha(self):
+        self.supersede()
+        # The same nonce-bearing successful run relocated to the current policy
+        # commit is not that reservation's evidence, and the old SHA is empty.
+        run = self.gh.run_lists[301][0]
+        run["head_sha"] = NEW_POLICY.sha
+        self.gh.latest_runs[run["id"]]["head_sha"] = NEW_POLICY.sha
+        for job in self.gh.jobs[(run["id"], 1)]:
+            job["head_sha"] = NEW_POLICY.sha
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+        self.assertEqual(self.dispatched("ci"), 1)
+        self.assertEqual(self.queried_shas(), {POLICY.sha, NEW_POLICY.sha})
+        ci_queries = [q for q in self.gh.run_queries if q["head_sha"] == [POLICY.sha]]
+        self.assertTrue(ci_queries)
+        for query in self.gh.run_queries:
+            self.assertEqual(query["event"], ["workflow_dispatch"])
+        # Conversely, a run on the old SHA bearing the new nonce never serves the
+        # current reservation, which only ever queries its own policy commit.
+        new_intent = next(x for x in self.journal("dispatch") if x["kind"] == "rust" and x["policy"] == NEW_POLICY.sha)
+        stray = copy.deepcopy(self.gh.run_lists[302][0])
+        stray.update(id=9777, display_title=f"candidate:{self.candidate().key}:rust:{new_intent['nonce']}")
+        self.gh.run_lists[302].append(stray)
+        self.gh.latest_runs[9777] = copy.deepcopy(stray)
+        self.gh.jobs[(9777, 1)] = copy.deepcopy(self.gh.jobs[(9302, 1)])
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        self.assertEqual(result["full_matrix"]["rust"], "reserved-delivery-uncertain")
+        self.assertFalse(result["qualified"])
+        self.assertEqual(len(self.gh.dispatches), 3)
+
+    def test_bounded_or_malformed_superseded_listing_never_releases_the_reservation(self):
+        for shape in ("unbounded", "non-list", "non-dict-items", "duplicate-ids", "not-json"):
+            with self.subTest(shape=shape):
+                self.setUp()
+                self.supersede()
+                original_run = self.gh._run
+                if shape == "unbounded":
+                    self.gh.run_lists[301] = [{"id": index + 1, "head_sha": POLICY.sha} for index in range(1100)]
+                elif shape == "duplicate-ids":
+                    twin = copy.deepcopy(self.gh.run_lists[301][0])
+                    twin["display_title"] = "other"
+                    self.gh.run_lists[301].append(twin)
+                else:
+                    def malformed(args, token, shape=shape):
+                        if "/actions/workflows/301/runs" in args[1] and f"head_sha={POLICY.sha}" in args[1]:
+                            if shape == "not-json":
+                                return "<html>"
+                            return json.dumps({"workflow_runs": "bad" if shape == "non-list" else [1, 2]})
+                        return original_run(args, token)
+                    self.gh._run = malformed
+                result = json.loads(self.reconcile(policy=NEW_POLICY))
+                self.assertFalse(result["qualified"])
+                self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+                self.assertEqual(self.dispatched("ci"), 1)
+                self.assertEqual(self.dispatched("rust"), 2)
+
+    def test_hold_review_or_pause_change_around_superseded_release_stops_before_dispatch(self):
+        for mutation in ("hold", "pause", "review", "fixer", "policy"):
+            with self.subTest(mutation=mutation, when="before"):
+                self.setUp()
+                self.supersede()
+                if mutation == "hold":
+                    self.gh.pr["labels"] = [{"name": "hold"}]
+                    self.assertEqual(self.reconcile(policy=NEW_POLICY), "held-or-fixer-pending")
+                elif mutation == "pause":
+                    self.receipts.pause += 1
+                    self.assertEqual(self.reconcile(policy=NEW_POLICY), "awaiting-independent-candidate-review")
+                elif mutation == "review":
+                    self.gh.reviews[-1]["body"] = self.gh.reviews[-1]["body"].replace("CODEX-GATE: READY", "CODEX-GATE: MEDIATE")
+                    self.assertEqual(self.reconcile(policy=NEW_POLICY), "mediation-enqueued")
+                elif mutation == "fixer":
+                    self.receipts.fixer_pending = True
+                    self.assertEqual(self.reconcile(policy=NEW_POLICY), "held-or-fixer-pending")
+                else:
+                    self.gh.default_tip = THIRD_POLICY.sha
+                    with self.assertRaises(ValueError):
+                        self.reconcile(policy=NEW_POLICY)
+                self.assertEqual(len(self.gh.dispatches), 2)
+                self.assertEqual(len(self.journal("dispatch")), 2)
+            if mutation == "review":
+                continue
+            with self.subTest(mutation=mutation, when="after-reservation"):
+                self.setUp()
+                self.supersede()
+
+                def mutate(body, mutation=mutation):
+                    if "candidate-dispatch:" not in body:
+                        return
+                    if mutation == "hold":
+                        self.gh.pr["labels"] = [{"name": "hold"}]
+                    elif mutation == "pause":
+                        self.receipts.pause += 1
+                    elif mutation == "fixer":
+                        self.receipts.fixer_pending = True
+                    else:
+                        self.gh.default_tip = THIRD_POLICY.sha
+                self.gh.on_record = mutate
+                with self.assertRaises(ValueError):
+                    self.reconcile(policy=NEW_POLICY)
+                self.assertEqual(len(self.gh.dispatches), 2)
+                self.assertEqual(len(self.journal("dispatch")), 3)
+                self.assertEqual(self.journal("aborted")[0]["reason"], "pre-dispatch-refused")
+
+    def test_superseded_evidence_vanishing_between_reservation_and_post_aborts(self):
+        self.supersede()
+        self.gh.on_record = lambda body: self.gh.run_lists.__setitem__(301, []) if "candidate-dispatch:" in body else None
+        with self.assertRaises(ValueError):
+            self.reconcile(policy=NEW_POLICY)
+        self.assertEqual(len(self.gh.dispatches), 2)
+        self.assertEqual(len(self.journal("dispatch")), 3)
+        self.assertEqual(len(self.journal("aborted")), 1)
+
+    def test_superseded_evidence_deletion_after_newer_reservation_fails_closed(self):
+        for loss in ("deleted", "failed", "rerun"):
+            with self.subTest(loss=loss):
+                self.setUp()
+                self.supersede()
+                self.assertFalse(json.loads(self.reconcile(policy=NEW_POLICY))["qualified"])
+                self.assertEqual(len(self.gh.dispatches), 4)
+                self.observe_success(NEW_POLICY, run_base=9500)
+                self.assertTrue(json.loads(self.reconcile(policy=NEW_POLICY))["qualified"])
+                old = next(x for x in self.gh.run_lists[301] if x["head_sha"] == POLICY.sha)
+                if loss == "deleted":
+                    self.gh.run_lists[301].remove(old)
+                elif loss == "failed":
+                    old["conclusion"] = "failure"
+                    self.gh.latest_runs[old["id"]]["conclusion"] = "failure"
+                else:
+                    old["run_attempt"] = 2
+                    self.gh.latest_runs[old["id"]]["run_attempt"] = 2
+                    self.gh.jobs[(old["id"], 2)] = [{**job, "run_attempt": 2} for job in self.gh.jobs[(old["id"], 1)]]
+                for _ in range(2):
+                    with self.assertRaises(ValueError):
+                        self.reconcile(policy=NEW_POLICY)
+                self.assertEqual(len(self.gh.dispatches), 4)
+                self.assertEqual(len(self.journal("dispatch")), 4)
+
+    def test_unresolved_superseded_duplicates_always_block(self):
+        self.supersede()
+        old = next(x for x in self.journal("dispatch") if x["kind"] == "ci")
+        # A second authenticated old-policy reservation with no run of its own.
+        self.gh.add_comment(self.receipts.marker("candidate-dispatch", {
+            "candidate": old["candidate"], "kind": "ci", "nonce": "3" * 32, "workflow": 301,
+            "actor": ACTOR["id"], "before": 0, "policy": POLICY.sha, "policy_branch": POLICY.branch}))
+        # One resolved plus one unresolved old: held, not released.
+        result = json.loads(self.reconcile(policy=NEW_POLICY))
+        self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+        self.assertEqual(self.dispatched("ci"), 1)
+        # Two unresolved olds: refuse outright.
+        self.gh.run_lists[301] = []
+        with self.assertRaises(ValueError):
+            self.reconcile(policy=NEW_POLICY)
+        self.assertEqual(self.dispatched("ci"), 1)
+
+    def test_malformed_superseded_nonce_is_held_not_released(self):
+        # A superseded reservation whose nonce is missing, wrong-typed or not a
+        # 32-hex string cannot name a run title; it is refused as evidence and
+        # stays held rather than crashing or being released.
+        for name, fields in (("missing", {}), ("wrong-type", {"nonce": 3}), ("list", {"nonce": ["3" * 32]}),
+                             ("short", {"nonce": "3" * 31}), ("uppercase", {"nonce": "A" * 32}),
+                             ("newline", {"nonce": "3" * 32 + "\n"})):
+            with self.subTest(nonce=name):
+                self.setUp()
+                self.supersede()
+                old = next(x for x in self.journal("dispatch") if x["kind"] == "ci")
+                self.gh.add_comment(self.receipts.marker("candidate-dispatch", {
+                    "candidate": old["candidate"], "kind": "ci", "workflow": 301, "actor": ACTOR["id"],
+                    "before": 0, "policy": POLICY.sha, "policy_branch": POLICY.branch, **fields}))
+                ci_intents = [x for x in self.journal("dispatch") if x["kind"] == "ci"]
+                before = {kind: len(self.journal(kind)) for kind in ("rejected", "aborted")}
+                for _ in range(2):
+                    result = json.loads(self.reconcile(policy=NEW_POLICY))
+                    self.assertFalse(result["qualified"])
+                    self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+                # Only the target workflow is held: no new CI reservation across
+                # two reconciliations, and the malformed intent is neither
+                # discarded nor treated as rejected/aborted. Rust's independent
+                # new-policy dispatch is legitimate and not inspected here.
+                self.assertEqual(self.dispatched("ci"), 1)
+                self.assertEqual([x for x in self.journal("dispatch") if x["kind"] == "ci"], ci_intents)
+                malformed = {**fields, "candidate": old["candidate"], "kind": "ci", "workflow": 301,
+                             "actor": ACTOR["id"], "before": 0, "policy": POLICY.sha, "policy_branch": POLICY.branch}
+                self.assertIn(malformed, [{k: v for k, v in x.items() if k not in ("id", "created_at")}
+                                          for x in ci_intents])
+                for kind, count in before.items():
+                    self.assertEqual(len(self.journal(kind)), count)
+
+    def test_resolved_superseded_reservations_stay_in_the_three_intent_budget(self):
+        self.supersede()
+        self.assertFalse(json.loads(self.reconcile(policy=NEW_POLICY))["qualified"])
+        self.observe_success(NEW_POLICY, run_base=9500)
+        self.assertTrue(json.loads(self.reconcile(policy=NEW_POLICY))["qualified"])
+        # Second advancement: two resolved historical reservations plus one current.
+        self.gh.default_tip = THIRD_POLICY.sha
+        self.gh.run_queries = []
+        result = json.loads(self.reconcile(policy=THIRD_POLICY))
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["full_matrix"], {"ci": "dispatched-awaiting-observation",
+                                                 "rust": "dispatched-awaiting-observation"})
+        self.assertEqual(self.queried_shas(), {POLICY.sha, NEW_POLICY.sha, THIRD_POLICY.sha})
+        self.assertEqual(len(self.gh.dispatches), 6)
+        self.assertEqual(len([x for x in self.journal("dispatch") if x["kind"] == "ci"]), 3)
+        self.observe_success(THIRD_POLICY, run_base=9600)
+        result = json.loads(self.reconcile(policy=THIRD_POLICY))
+        self.assertTrue(result["qualified"])
+        self.assertEqual(result["policy"], THIRD_POLICY.sha)
+        # Third advancement: three resolved reservations exhaust the budget. No
+        # fourth dispatch, and no resolved old success stands in for current.
+        fourth = gate.candidate_api.Policy("7" * 40, "main")
+        self.gh.default_tip = fourth.sha
+        for _ in range(2):
+            result = json.loads(self.reconcile(policy=fourth))
+            self.assertFalse(result["qualified"])
+            self.assertEqual(result["full_matrix"], {"ci": "rejection-budget-exhausted",
+                                                     "rust": "rejection-budget-exhausted"})
+        self.assertEqual(len(self.gh.dispatches), 6)
+        self.assertEqual(len(self.journal("dispatch")), 6)
+
+    def test_superseded_release_leaves_no_persistent_record(self):
+        before = {kind: len(self.journal(kind)) for kind in ("dispatch", "rejected", "aborted", "request")}
+        self.supersede()
+        comments = len(self.gh.comments)
+        self.assertFalse(json.loads(self.reconcile(policy=NEW_POLICY))["qualified"])
+        # Exactly the two fresh dispatch reservations were written; nothing else.
+        self.assertEqual(len(self.gh.comments), comments + 2)
+        self.assertEqual(len(self.journal("dispatch")), before["dispatch"] + 4)
+        for kind in ("rejected", "aborted"):
+            self.assertEqual(len(self.journal(kind)), before[kind])
+        self.assertEqual(len(self.journal("request")), 1)
 
     def test_candidate_head_run_is_never_listed_or_qualified(self):
         self.dispatch()
