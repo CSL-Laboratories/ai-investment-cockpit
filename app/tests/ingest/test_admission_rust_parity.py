@@ -141,6 +141,17 @@ def test_token_bucket_replay_matches_and_starts_empty():
 
 
 @_needs_rust
+@_needs_rust
+def test_a_lone_surrogate_key_stays_on_python():
+    key = "\ud800"
+    rust, python = _dedup(4)
+    assert rust.add(key) is python.add(key) is True
+    assert rust.add(key) is python.add(key) is False
+    assert rust.discard(key) is python.discard(key) is True
+    assert rust.add("alpaca-1") is python.add("alpaca-1") is True
+    assert rust.discard("alpaca-1") is python.discard("alpaca-1") is True
+
+
 def test_a_capacity_past_the_float_range_stays_on_python():
     huge = 10**400
     rust = TokenBucket(rate_per_sec=1, capacity=huge, now=0)

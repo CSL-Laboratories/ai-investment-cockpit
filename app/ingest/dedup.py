@@ -39,6 +39,23 @@ def _rust_cap(capacity: int) -> bool:
     return isinstance(capacity, int) and not isinstance(capacity, bool) and _I64_MIN <= capacity <= _I64_MAX
 
 
+def _utf8_key(key: str) -> bool:
+    """True when ``key`` can cross into PyO3 as ``&str``.
+
+    ``json.loads('"\\\\ud800"')`` is a ``str`` with a lone surrogate. Encoding
+    it to UTF-8 raises ``UnicodeEncodeError``, and the extension would raise
+    out of ``Dedup.add``. Alpaca calls ``add`` outside the per-frame handler,
+    so that raise is a disconnect. Those keys stay on the Python map.
+    """
+    if key.isascii():
+        return True
+    try:
+        key.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 class Dedup:
     def __init__(self, capacity: int = 50_000):
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -53,7 +70,8 @@ class Dedup:
         if self._core is not None:
             if not isinstance(key, str):
                 raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            return self._core.add(key)
+            if _utf8_key(key):
+                return self._core.add(key)
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
@@ -81,7 +99,8 @@ class Dedup:
         if self._core is not None:
             if not isinstance(key, str):
                 raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            return self._core.discard(key)
+            if _utf8_key(key):
+                return self._core.discard(key)
         return self._seen.pop(key, _MISSING) is not _MISSING
 
 
