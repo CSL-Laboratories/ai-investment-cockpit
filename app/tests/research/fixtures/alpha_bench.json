@@ -1,0 +1,38 @@
+{
+  "status": "ok",
+  "zoo": "alpha101",
+  "universe": "sp500",
+  "period": "2018-2025",
+  "n_alphas_tested": 101,
+  "n_skipped": 0,
+  "top": [
+    {
+      "id": "alpha101_006",
+      "ic_mean": 0.041,
+      "ic_std": 0.01,
+      "ir": 0.82,
+      "ic_positive_ratio": 0.7,
+      "ic_count": 100,
+      "category": "dead"
+    },
+    {
+      "id": "alpha101_054",
+      "ic_mean": -0.033,
+      "ic_std": 0.01,
+      "ir": -0.4,
+      "ic_positive_ratio": 0.3,
+      "ic_count": 100,
+      "category": "alive"
+    },
+    {
+      "id": "alpha101_101",
+      "ic_mean": 0.001,
+      "ic_std": 0.02,
+      "ir": 0.01,
+      "ic_positive_ratio": 0.51,
+      "ic_count": 80,
+      "category": "alive"
+    }
+  ],
+  "submit_order": "BUY AAPL market"
+}

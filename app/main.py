@@ -608,6 +608,7 @@ def build_ingest_runner(state, *, parquet_root, fetchers, settings=None, clock=N
         FEED_EDGAR,
         FEED_FINNHUB,
         FEED_FINRA,
+        FEED_VIBE_TRADING,
         IngestRunner,
     )
 
@@ -634,6 +635,16 @@ def build_ingest_runner(state, *, parquet_root, fetchers, settings=None, clock=N
         finra_fetch = fetchers[FEED_FINRA]
         runner.add_poller(FEED_FINRA, FinraShortInterestPoller(
             finra_fetch, bucket=getattr(finra_fetch, "bucket", None), clock=wall_clock))
+
+    cfg = settings if settings is not None else getattr(state, "settings", None)
+    if cfg is not None and getattr(cfg, "vibe_trading_enabled", False):
+        from research.vibe_trading.adapter import ResearchAdapter
+        from research.vibe_trading.poller import VibeTradingPoller
+
+        runner.add_poller(
+            FEED_VIBE_TRADING,
+            VibeTradingPoller(ResearchAdapter(cfg), state=state),
+        )
 
     log.info("ingest wired: poll feeds=%s stream feeds=%s",
              sorted(runner.polls) or "NONE", sorted(runner.streams) or "NONE")

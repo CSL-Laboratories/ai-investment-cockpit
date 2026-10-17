@@ -19,8 +19,17 @@ import unicodedata
 # widened HERE and never by a module registering itself at import (that would make the allowlist's
 # contents import-order-dependent and un-greppable). "sec:edgar" = the edgar-morning-brew Delta
 # feed (ingest/edgar_brew.py); "finra" = short-interest/Reg SHO enrichment (W20,
-# ingest/finra_short_interest.py).
-ALLOWED_SOURCES = {"alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra"}
+# ingest/finra_short_interest.py); "vibe-trading" = the optional research sidecar
+# (research/vibe_trading), untrusted like every other feed.
+ALLOWED_SOURCES = {
+    "alpaca:benzinga", "finnhub", "calendar", "sec:edgar", "finra", "vibe-trading",
+}
+# The Rust copy of this allowlist (cockpit-ingest source_allowlisted) does not
+# include the sidecar yet. Routing vibe-trading through market_event raises
+# "source not allowlisted" whenever cockpit_quant is installed. Keep that
+# source on the Python normalizer until a separately reviewed crate change
+# adds it. Do not widen the Rust list from this package.
+_PYTHON_ONLY_SOURCES = frozenset({"vibe-trading"})
 MAX_LEN = 4000
 MAX_SYMBOLS = 64
 _TICKER = re.compile(r"^[A-Z0-9.\-]{1,12}$")
@@ -241,6 +250,7 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         native is not None
         and _utf8_text(source)
         and source in ALLOWED_SOURCES
+        and source not in _PYTHON_ONLY_SOURCES
         and (type(article_id) is int or _utf8_text(article_id))
         and type(article_id) is not bool
         and _plain_symbols(symbols)

@@ -72,6 +72,7 @@ INGEST_CRON = {
     "sec:edgar": {"minute": "*/5"},
     "calendar": {"hour": "6,17", "minute": 0, "day_of_week": "mon-fri"},
     "finra": {"hour": 7, "minute": 15, "day_of_week": "mon-fri"},
+    "vibe-trading": {"hour": 8, "minute": 0, "day_of_week": "mon-fri"},
 }
 # The cadence for a feed nobody listed above. Registering it on a conservative default beats
 # silently NOT scheduling it (a feed that exists but never runs is the wedge this package is
