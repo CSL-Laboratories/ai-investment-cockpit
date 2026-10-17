@@ -36,9 +36,11 @@ from typing import Iterator, Mapping
 SCHEMA_VERSION = 1
 # Profile documents stay at schema 1. The sqlite user_version is separate so a
 # column migration does not require a document bump. Version 1 is the order_ref
-# store. Version 2 adds the durable handoff state.
-STORE_USER_VERSION = 2
-ADMITTED_STORE_VERSIONS = frozenset({0, 1, STORE_USER_VERSION})
+# store. Version 2 adds the durable handoff state. Version 3 adds exclusive
+# handoff claim ownership (claim_generation) and the failed-handoff reconcile
+# flag.
+STORE_USER_VERSION = 3
+ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, STORE_USER_VERSION})
 ADMITTED_ENVIRONMENTS = frozenset({"paper", "dry_run"})
 _MODEL_OUTPUT_KEYS = frozenset({"provider", "model_version", "summary", "confidence"})
 _HANDOFF_STATES = frozenset({"pending", "in_progress", "failed", "completed"})
@@ -182,6 +184,21 @@ class StopCapability:
 
     profile_id: str
     token: str
+
+
+@dataclass(frozen=True)
+class ClaimTicket:
+    """Exclusive, durable ownership of one handoff claim (a fencing token).
+
+    ``generation`` is stored on the reservation row and strictly increases per
+    claim. ``complete_handoff`` and ``fail_handoff`` write only when the row's
+    stored generation still equals the ticket's, so a paused or stale owner
+    cannot overwrite a newer claim.
+    """
+
+    client_order_id: str
+    generation: int
+    state: str
 
 
 def model_output_grants_authority(model_output: object) -> bool:
@@ -389,7 +406,9 @@ _SCHEMA = (
         created_at TEXT NOT NULL,
         handoff_done INTEGER NOT NULL DEFAULT 0,
         handoff_state TEXT NOT NULL DEFAULT 'pending',
-        order_ref TEXT
+        order_ref TEXT,
+        claim_generation INTEGER NOT NULL DEFAULT 0,
+        reconciled INTEGER NOT NULL DEFAULT 0
     )
     """,
 )
@@ -556,7 +575,14 @@ class AuthorityProfileStore:
         reconciled: bool,
         capability: object = None,
     ) -> None:
-        """Clear a profile kill and hold. Recovery ownership cannot do this."""
+        """Clear a profile kill and hold. Recovery ownership cannot do this.
+
+        The caller's ``reconciled`` flag is only an assertion of intent: the
+        durable check below derives the real reconcile state from the store.
+        A perimeter with an unresolved reservation (pending, in-progress, or a
+        failed handoff that has not been reconciled against the gateway's
+        durable order identity) is refused.
+        """
         _require_now(now)
         if reconciled is not True:
             raise ProfileRefused("not_reconciled", "stop release requires reconciliation")
@@ -580,6 +606,21 @@ class AuthorityProfileStore:
             if occupant is None or occupant["profile_id"] != profile.profile_id:
                 raise ProfileRefused(
                     "revoked", "only the current unrevoked profile can clear the perimeter stop"
+                )
+            unresolved = conn.execute(
+                """
+                SELECT COUNT(*) FROM reservations
+                WHERE account_id = ? AND venue = ? AND environment = ?
+                  AND handoff_done = 0
+                  AND (handoff_state IN ('pending', 'in_progress')
+                       OR (handoff_state = 'failed' AND reconciled = 0))
+                """,
+                profile.binding(),
+            ).fetchone()[0]
+            if unresolved:
+                raise ProfileRefused(
+                    "not_reconciled",
+                    "perimeter has a reservation that is not durably reconciled",
                 )
             updated = conn.execute(
                 """
@@ -740,13 +781,16 @@ class AuthorityProfileStore:
 
     def claim_handoff(
         self, client_order_id: str, *, now: datetime, awaiting_submit: bool = False
-    ) -> str:
-        """Advance a reservation. Only ``completed`` skips a later gateway submit.
+    ) -> str | ClaimTicket:
+        """Advance a reservation under exclusive, durable claim ownership.
 
-        ``in_progress`` means a previous claim did not finish ``OrderGateway.submit``,
-        so the caller must enter the gateway again. Revocation, expiry, kill, hold,
-        and a missing controls row leave the row pending or in progress. They do
-        not mark it complete.
+        Every claim that enters the gateway is fenced by ``claim_generation``,
+        a monotonically increasing token stored on the row. A row already owned
+        (``in_progress``) refuses a second claim: two retries can never both
+        enter ``OrderGateway.submit``. An abandoned claim is re-owned only
+        through ``reconcile_handoff``, after checking the gateway's durable
+        order identity. ``completed`` is still the only state that skips a
+        later submit; the replay path is unchanged.
         """
         _require_now(now)
         client_id = _ident(client_order_id, code="client_order_id")
@@ -782,40 +826,61 @@ class AuthorityProfileStore:
                 # A blocked reservation stays pending so a retry after release can run.
                 return blocked
             if state == "in_progress":
-                return "in_progress"
+                raise ProfileRefused(
+                    "handoff_in_progress",
+                    "handoff claim is already owned; reconcile before re-claiming",
+                )
+            generation = int(row["claim_generation"]) + 1
             if state == "failed":
                 if not awaiting_submit:
                     return "failed"
                 updated = conn.execute(
                     """
                     UPDATE reservations
-                    SET handoff_state = 'in_progress', handoff_done = 0
-                    WHERE client_order_id = ? AND handoff_state = 'failed' AND handoff_done = 0
+                    SET handoff_state = 'in_progress', handoff_done = 0,
+                        claim_generation = ?, reconciled = 0
+                    WHERE client_order_id = ? AND handoff_state = 'failed'
+                      AND handoff_done = 0 AND claim_generation = ?
                     """,
-                    (client_id,),
+                    (generation, client_id, int(row["claim_generation"])),
                 )
                 if updated.rowcount != 1:
                     raise ProfileRefused("store", "handoff claim was not admitted")
-                return "retry"
-            target = "in_progress" if awaiting_submit else "completed"
-            done = 0 if awaiting_submit else 1
+                return ClaimTicket(client_id, generation, "retry")
+            if not awaiting_submit:
+                updated = conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'completed', handoff_done = 1,
+                        claim_generation = ?
+                    WHERE client_order_id = ? AND handoff_state = 'pending'
+                      AND handoff_done = 0 AND claim_generation = ?
+                    """,
+                    (generation, client_id, int(row["claim_generation"])),
+                )
+                if updated.rowcount != 1:
+                    raise ProfileRefused("store", "handoff claim was not admitted")
+                return "completed"
             updated = conn.execute(
                 """
                 UPDATE reservations
-                SET handoff_state = ?, handoff_done = ?
-                WHERE client_order_id = ? AND handoff_state = 'pending' AND handoff_done = 0
+                SET handoff_state = 'in_progress', handoff_done = 0,
+                    claim_generation = ?
+                WHERE client_order_id = ? AND handoff_state = 'pending'
+                  AND handoff_done = 0 AND claim_generation = ?
                 """,
-                (target, done, client_id),
+                (generation, client_id, int(row["claim_generation"])),
             )
             if updated.rowcount != 1:
                 raise ProfileRefused("store", "handoff claim was not admitted")
-            return "claimed" if awaiting_submit else "completed"
+            return ClaimTicket(client_id, generation, "claimed")
 
-    def complete_handoff(self, client_order_id: str) -> None:
+    def complete_handoff(self, client_order_id: str, *, generation: int) -> None:
         """Record that ``OrderGateway.submit`` returned.
 
-        A crash between claim and this update leaves ``in_progress``. The next
-        claim enters the gateway again. ``completed`` is the only skip.
+        The write is fenced by the claim generation: a stale owner whose claim
+        was re-issued cannot overwrite a newer claim, and a completed row can
+        never be downgraded.
         """
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
@@ -824,13 +889,16 @@ class AuthorityProfileStore:
                 UPDATE reservations
                 SET handoff_state = 'completed', handoff_done = 1
                 WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                  AND claim_generation = ?
                 """,
-                (client_id,),
+                (client_id, generation),
             )
             if updated.rowcount != 1:
-                raise ProfileRefused("store", "handoff was not in progress")
+                raise ProfileRefused(
+                    "stale_claim", "handoff claim generation is stale or the row is not in progress"
+                )
 
-    def fail_handoff(self, client_order_id: str) -> None:
+    def fail_handoff(self, client_order_id: str, *, generation: int) -> None:
         """Record a returned refusal. The client id stays reusable and is not an order."""
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
@@ -839,17 +907,21 @@ class AuthorityProfileStore:
                 UPDATE reservations
                 SET handoff_state = 'failed', handoff_done = 0
                 WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                  AND claim_generation = ?
                 """,
-                (client_id,),
+                (client_id, generation),
             )
             if updated.rowcount != 1:
-                raise ProfileRefused("store", "handoff was not in progress")
+                raise ProfileRefused(
+                    "stale_claim", "handoff claim generation is stale or the row is not in progress"
+                )
 
     def reconcile_failed_handoff(self, client_order_id: str) -> str:
-        """Confirm a failed submit is not a completed order.
+        """Read-only probe: confirm a reservation row is a failed handoff.
 
-        Reconciliation leaves the row ``failed`` and the client id reusable.
-        It does not write ``completed``.
+        It sets no flags and does not write ``completed``. The identity-checked
+        reconcile that clears the durable ``reconciled`` flag is
+        ``reconcile_handoff``.
         """
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
@@ -860,6 +932,127 @@ class AuthorityProfileStore:
             if row is None or row["handoff_state"] != "failed" or int(row["handoff_done"]):
                 raise ProfileRefused("store", "failed handoff is not reconcilable")
         return "failed"
+
+    def reconcile_handoff(
+        self,
+        client_order_id: str,
+        *,
+        order_ref: str | None,
+        order_submitted: bool,
+        now: datetime,
+    ) -> str | ClaimTicket:
+        """Reconcile one reservation against the gateway's durable order identity.
+
+        ``order_submitted`` is the caller's durable verdict: whether the bound
+        order (``order_ref`` = the order id, submitted as
+        ``cockpit-<order.id>``) is recorded 'submitted' on the gateway's signed
+        transition chain. A durably-submitted handoff is recorded ``completed``
+        so no second submit is possible. An abandoned ``in_progress`` claim is
+        re-owned under a new generation only when the gateway shows no
+        submission and the profile and controls still admit the claim. A
+        ``pending`` or ``failed`` row is marked ``failed`` and ``reconciled``
+        when nothing reached the gateway.
+        """
+        _require_now(now)
+        if type(order_submitted) is not bool:
+            raise ProfileRefused("store", "reconcile requires the durable submit verdict")
+        client_id = _ident(client_order_id, code="client_order_id")
+        with self._txn() as conn:
+            row = conn.execute(
+                "SELECT * FROM reservations WHERE client_order_id = ?",
+                (client_id,),
+            ).fetchone()
+            if row is None:
+                raise ProfileRefused("unknown_reservation", "reservation is missing")
+            if row["order_ref"] is not None and row["order_ref"] != order_ref:
+                raise ProfileRefused(
+                    "client_order_conflict", "reservation is bound to a different order"
+                )
+            state = row["handoff_state"]
+            if state not in {"pending", "in_progress", "failed"} or int(row["handoff_done"]):
+                raise ProfileRefused("store", "handoff is not reconcilable")
+            generation = int(row["claim_generation"])
+            if order_submitted:
+                # The order is on the gateway's signed chain. Recording
+                # completed is the truth and removes any double-submit path.
+                updated = conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'completed', handoff_done = 1,
+                        reconciled = 1, claim_generation = ?
+                    WHERE client_order_id = ? AND handoff_state = ?
+                      AND handoff_done = 0 AND claim_generation = ?
+                    """,
+                    (generation + 1, client_id, state, generation),
+                )
+                if updated.rowcount != 1:
+                    raise ProfileRefused("store", "handoff reconcile was not admitted")
+                return "completed"
+            if state in {"pending", "failed"}:
+                updated = conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'failed', reconciled = 1,
+                        claim_generation = ?
+                    WHERE client_order_id = ? AND handoff_state = ?
+                      AND handoff_done = 0 AND claim_generation = ?
+                    """,
+                    (generation + 1, client_id, state, generation),
+                )
+                if updated.rowcount != 1:
+                    raise ProfileRefused("store", "handoff reconcile was not admitted")
+                return "failed"
+            # Abandoned in_progress and nothing reached the gateway: the claim
+            # is dead. Re-own it under a new generation only when a fresh claim
+            # would be admitted; otherwise resolve it failed+reconciled so the
+            # reservation consumes only its own slice and never bricks the
+            # perimeter.
+            admittable = True
+            try:
+                self._load_installed(conn, row["profile_id"], now=now)
+            except ProfileRefused as exc:
+                if exc.code in {"revoked", "expired"}:
+                    admittable = False
+                else:
+                    raise
+            if admittable:
+                control = conn.execute(
+                    """
+                    SELECT kill, hold FROM controls
+                    WHERE account_id = ? AND venue = ? AND environment = ?
+                    """,
+                    (row["account_id"], row["venue"], row["environment"]),
+                ).fetchone()
+                blocked = _control_code(control)
+                if blocked == "store":
+                    raise ProfileRefused("store", "stop ledger is missing")
+                admittable = blocked is None
+            if not admittable:
+                updated = conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'failed', reconciled = 1,
+                        claim_generation = ?
+                    WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                      AND handoff_done = 0 AND claim_generation = ?
+                    """,
+                    (generation + 1, client_id, generation),
+                )
+                if updated.rowcount != 1:
+                    raise ProfileRefused("store", "handoff reconcile was not admitted")
+                return "failed"
+            updated = conn.execute(
+                """
+                UPDATE reservations
+                SET claim_generation = ?, reconciled = 0
+                WHERE client_order_id = ? AND handoff_state = 'in_progress'
+                  AND handoff_done = 0 AND claim_generation = ?
+                """,
+                (generation + 1, client_id, generation),
+            )
+            if updated.rowcount != 1:
+                raise ProfileRefused("store", "handoff reconcile was not admitted")
+            return ClaimTicket(client_id, generation + 1, "retry")
 
     def _set_stop(
         self,
@@ -907,35 +1100,79 @@ class AuthorityProfileStore:
             version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             if version not in ADMITTED_STORE_VERSIONS:
                 raise ProfileRefused("store", "profile store version is not admitted")
+            if version != STORE_USER_VERSION:
+                # A pre-current store holding data cannot be upgraded: its
+                # profile rows predate the install-minted stop capability (and
+                # durable claim ownership), so there is no authenticated token
+                # to carry forward and no unauthenticated one may be minted or
+                # accepted. Refuse; the store must be recreated or its
+                # profiles re-installed through the normal install path.
+                # A store that is empty in EVERY table may be upgraded in
+                # place. (This module is new in this PR — no deployed store
+                # predates these versions.)
+                for table in ("profiles", "controls", "consumption", "reservations"):
+                    try:
+                        rows = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    except sqlite3.Error:
+                        rows = 0
+                    if rows:
+                        raise ProfileRefused(
+                            "legacy_store",
+                            "pre-current profile store holds rows; recreate the store "
+                            "or re-install profiles through the authenticated install path",
+                        )
             for statement in _SCHEMA:
                 conn.execute(statement)
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(reservations)").fetchall()
             }
-            if "order_ref" not in columns:
-                # Legacy v1 store: legacy rows keep NULL and bind once at handoff.
-                # ADD COLUMN appends. A nullable TEXT column needs no default.
-                conn.execute("ALTER TABLE reservations ADD COLUMN order_ref TEXT")
-            if "handoff_state" not in columns:
-                # NOT NULL on an added column requires a non-null default so
-                # existing rows satisfy the constraint.
-                conn.execute(
-                    "ALTER TABLE reservations ADD COLUMN handoff_state "
-                    "TEXT NOT NULL DEFAULT 'pending'"
-                )
-            conn.execute(
-                """
-                UPDATE reservations
-                SET handoff_state = 'completed'
-                WHERE handoff_done = 1
-                  AND (handoff_state IS NULL OR handoff_state = 'pending')
-                """
-            )
             profile_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
             }
-            if "stop_capability_hash" not in profile_columns:
-                conn.execute("ALTER TABLE profiles ADD COLUMN stop_capability_hash TEXT")
+            required_reservation_columns = {
+                "order_ref", "handoff_state", "claim_generation", "reconciled"
+            }
+            if version == STORE_USER_VERSION:
+                # A current-version store missing a column is corruption, not
+                # a migration. Fail closed.
+                if not required_reservation_columns <= columns:
+                    raise ProfileRefused("store", "reservations ledger is missing a column")
+                if "stop_capability_hash" not in profile_columns:
+                    raise ProfileRefused("store", "profile ledger is missing a column")
+            else:
+                # Empty pre-current store: add every missing column in place.
+                if "order_ref" not in columns:
+                    # ADD COLUMN appends. A nullable TEXT column needs no default.
+                    conn.execute("ALTER TABLE reservations ADD COLUMN order_ref TEXT")
+                if "handoff_state" not in columns:
+                    # NOT NULL on an added column requires a non-null default so
+                    # existing rows satisfy the constraint.
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN handoff_state "
+                        "TEXT NOT NULL DEFAULT 'pending'"
+                    )
+                if "claim_generation" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN claim_generation "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "reconciled" not in columns:
+                    conn.execute(
+                        "ALTER TABLE reservations ADD COLUMN reconciled "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "stop_capability_hash" not in profile_columns:
+                    conn.execute(
+                        "ALTER TABLE profiles ADD COLUMN stop_capability_hash TEXT"
+                    )
+                conn.execute(
+                    """
+                    UPDATE reservations
+                    SET handoff_state = 'completed'
+                    WHERE handoff_done = 1
+                      AND (handoff_state IS NULL OR handoff_state = 'pending')
+                    """
+                )
             conn.execute(f"PRAGMA user_version = {STORE_USER_VERSION}")
 
     def _load_installed(self, conn: sqlite3.Connection, profile_id: str, *, now: datetime):
@@ -1157,24 +1394,81 @@ def handoff_to_gateway(
         )
     if claim in {"kill_active", "hold_active", "revoked", "expired"}:
         raise ProfileRefused(claim, "handoff claim was refused")
-    if claim not in {"claimed", "in_progress", "retry"}:
+    if not isinstance(claim, ClaimTicket):
         raise ProfileRefused("store", "handoff claim was not admitted")
     outcome = gateway.submit(*submit_args, **kwargs)
     if getattr(outcome, "ok", None) is not True:
-        store.fail_handoff(reservation.client_order_id)
+        store.fail_handoff(reservation.client_order_id, generation=claim.generation)
         return ProfiledHandoff(
             reservation.client_order_id,
             True,
-            claim != "claimed" or reservation.replayed,
+            claim.state != "claimed" or reservation.replayed,
             outcome,
         )
-    store.complete_handoff(reservation.client_order_id)
+    store.complete_handoff(reservation.client_order_id, generation=claim.generation)
     return ProfiledHandoff(
         reservation.client_order_id,
         True,
-        claim == "in_progress" or claim == "retry" or reservation.replayed,
+        claim.state != "claimed" or reservation.replayed,
         outcome,
     )
+
+
+def reconcile_handoff_to_gateway(
+    store: AuthorityProfileStore,
+    gateway,
+    *,
+    client_order_id: str,
+    submit_args: tuple = (),
+    submit_kwargs: Mapping | None = None,
+    now: datetime,
+) -> ProfiledHandoff:
+    """Reconcile an abandoned claim against the gateway's durable order identity.
+
+    The gateway's durable identity for a paper submit is the order id bound at
+    reservation time (``order_ref``), transported as ``cockpit-<order.id>`` and
+    recorded on the HMAC-signed ``EVENT_ORDER_TRANSITION`` chain. If the chain
+    already shows 'submitted', the crashed submit landed and the reservation is
+    completed without a second submit. Otherwise the claim is re-owned under a
+    new generation and submitted exactly once. This is the only re-ownership
+    path: ``claim_handoff`` refuses an owned ``in_progress`` row.
+    """
+    kwargs = dict(submit_kwargs or {})
+    _require_paper_gateway(gateway)
+    order = submit_args[0] if submit_args else kwargs.get("order")
+    if order is None:
+        raise ProfileRefused("order_required", "reconcile requires the gateway order")
+    order_ref = getattr(order, "id", None)
+    if order_ref is None:
+        raise ProfileRefused("order_required", "reconcile requires an order id")
+    order_ref = str(order_ref)
+    try:
+        st = gateway._resolve_state(kwargs.get("ladder"))
+        submitted = gateway._order_submitted_on_chain(st, order_ref)
+    except ProfileRefused:
+        raise
+    except Exception as exc:
+        raise ProfileRefused(
+            "gateway_identity", "gateway durable order identity could not be resolved"
+        ) from exc
+    verdict = store.reconcile_handoff(
+        client_order_id,
+        order_ref=order_ref,
+        order_submitted=submitted,
+        now=now,
+    )
+    if verdict == "completed":
+        return ProfiledHandoff(client_order_id, False, True, None)
+    if verdict in {"failed", "revoked", "expired", "kill_active", "hold_active"}:
+        raise ProfileRefused(verdict, "handoff reconcile was refused")
+    if not isinstance(verdict, ClaimTicket):
+        raise ProfileRefused("store", "handoff reconcile was not admitted")
+    outcome = gateway.submit(*submit_args, **kwargs)
+    if getattr(outcome, "ok", None) is not True:
+        store.fail_handoff(client_order_id, generation=verdict.generation)
+        return ProfiledHandoff(client_order_id, True, True, outcome)
+    store.complete_handoff(client_order_id, generation=verdict.generation)
+    return ProfiledHandoff(client_order_id, True, True, outcome)
 
 
 def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:

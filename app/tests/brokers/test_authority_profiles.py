@@ -20,11 +20,13 @@ from brokers.authority_profiles import (
     NAMED_REFUSED_ENVIRONMENTS,
     RUNTIME_PROFILE_CLASSES,
     AuthorityProfileStore,
+    ClaimTicket,
     ProfileRefused,
     handoff_to_gateway,
     load_profile,
     load_profile_file,
     model_output_grants_authority,
+    reconcile_handoff_to_gateway,
 )
 from brokers.gateway import OrderGateway, PaperOrderGateway
 from config.settings import Mode
@@ -412,37 +414,135 @@ def test_client_order_ids_are_idempotent_across_restart(tmp_path):
     ) == "client_order_conflict"
 
 
-def test_legacy_store_without_order_ref_migrates_and_binds_once(tmp_path):
-    import sqlite3
-
-    path = tmp_path / "legacy.sqlite"
-    store = AuthorityProfileStore(path)
+def test_null_order_ref_binds_once_on_replay(tmp_path):
+    store = _store(tmp_path)
     _install(store)
     store.authorize(
-        "profile-b", action="submit_paper", client_order_id="client-1",
+        "profile-b", action="propose", client_order_id="client-1",
         notional=Decimal("25.00"), actor="stop-owner", now=NOW,
     )
-    raw = sqlite3.connect(path)
-    raw.execute("ALTER TABLE reservations DROP COLUMN order_ref")
-    raw.commit()
-    raw.close()
-    reopened = AuthorityProfileStore(path)
-    second = reopened.authorize(
-        "profile-b", action="submit_paper", client_order_id="client-2",
-        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
-    )
-    assert second.replayed is False
-    bound = reopened.authorize(
-        "profile-b", action="submit_paper", client_order_id="client-1",
+    bound = store.authorize(
+        "profile-b", action="propose", client_order_id="client-1",
         notional=Decimal("25.00"), actor="stop-owner", now=NOW, order_ref="ord-1",
     )
     assert bound.replayed is True
     assert _refuse(
-        lambda: reopened.authorize(
-            "profile-b", action="submit_paper", client_order_id="client-1",
+        lambda: store.authorize(
+            "profile-b", action="propose", client_order_id="client-1",
             notional=Decimal("25.00"), actor="stop-owner", now=NOW, order_ref="ord-2",
         )
     ) == "client_order_conflict"
+
+
+def test_legacy_store_with_any_rows_refuses(tmp_path):
+    """A pre-current store holding rows in ANY table refuses to open: its rows
+    predate the install-minted stop capability and durable claim ownership, and
+    no unauthenticated capability may be minted or accepted. The store must be
+    recreated or its profiles re-installed via the authenticated install path.
+    """
+    import sqlite3
+
+    inserts = {
+        "controls": (
+            "INSERT INTO controls (account_id, venue, environment) "
+            "VALUES ('a', 'v', 'e')"
+        ),
+        "consumption": (
+            "INSERT INTO consumption (account_id, venue, environment, reserved_notional,"
+            " reserved_count, ceiling_notional, ceiling_count, ceiling_order)"
+            " VALUES ('a', 'v', 'e', '0', 0, '0', 0, '0')"
+        ),
+        "reservations": (
+            "INSERT INTO reservations (client_order_id, profile_id, account_id, venue,"
+            " environment, action, notional, created_at)"
+            " VALUES ('c', 'p', 'a', 'v', 'e', 'propose', '0', 't')"
+        ),
+    }
+    for name, sql in inserts.items():
+        path = tmp_path / f"legacy-{name}.sqlite"
+        AuthorityProfileStore(path)
+        raw = sqlite3.connect(path)
+        raw.execute(sql)
+        raw.execute("PRAGMA user_version = 2")
+        raw.commit()
+        raw.close()
+        assert _refuse(lambda p=path: AuthorityProfileStore(p)) == "legacy_store", name
+
+    # Profiles are covered by a real install: any profile row refuses the open.
+    path = tmp_path / "legacy-profiles.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    raw = sqlite3.connect(path)
+    raw.execute("PRAGMA user_version = 2")
+    raw.commit()
+    raw.close()
+    assert _refuse(lambda: AuthorityProfileStore(path)) == "legacy_store"
+
+
+def test_empty_legacy_store_upgrades_in_place(tmp_path):
+    """An empty pre-current store may be upgraded in place; the opened store
+    then behaves exactly like a fresh one (install and authorize work)."""
+    import sqlite3
+
+    path = tmp_path / "empty-legacy.sqlite"
+    AuthorityProfileStore(path)
+    raw = sqlite3.connect(path)
+    for statement in (
+        "ALTER TABLE reservations DROP COLUMN order_ref",
+        "ALTER TABLE reservations DROP COLUMN claim_generation",
+        "ALTER TABLE reservations DROP COLUMN reconciled",
+        "ALTER TABLE profiles DROP COLUMN stop_capability_hash",
+        "PRAGMA user_version = 1",
+    ):
+        raw.execute(statement)
+    raw.commit()
+    raw.close()
+    upgraded = AuthorityProfileStore(path)
+    _install(upgraded)
+    assert upgraded.authorize(
+        "profile-b", action="propose", client_order_id="c-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    ).replayed is False
+
+
+def test_current_store_missing_a_column_fails_closed(tmp_path):
+    """A store at the current version that is missing a schema column is
+    corruption, not a migration: open refuses rather than patching it."""
+    import sqlite3
+
+    path = tmp_path / "corrupt.sqlite"
+    AuthorityProfileStore(path)
+    raw = sqlite3.connect(path)
+    raw.execute("ALTER TABLE reservations DROP COLUMN claim_generation")
+    raw.commit()
+    raw.close()
+    assert _refuse(lambda: AuthorityProfileStore(path)) == "store"
+
+
+def test_null_capability_hash_is_never_authenticated(tmp_path):
+    """A NULL or empty stored stop_capability_hash refuses every presented
+    capability: there is no silent migration that mints or accepts one."""
+    import sqlite3
+
+    path = tmp_path / "nullcap.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    for value in (None, ""):
+        raw = sqlite3.connect(path)
+        if value is None:
+            raw.execute("UPDATE profiles SET stop_capability_hash = NULL")
+        else:
+            raw.execute("UPDATE profiles SET stop_capability_hash = ''")
+        raw.commit()
+        raw.close()
+        assert _refuse(
+            lambda: store.kill("profile-b", actor="stop-owner", now=NOW, reason="k")
+        ) == "unauthenticated", value
+        assert _refuse(
+            lambda: store.release_stop(
+                "profile-b", actor="stop-owner", now=NOW, reconciled=True
+            )
+        ) == "unauthenticated", value
 
 
 def test_profile_file_refuses_non_json(tmp_path):
@@ -831,7 +931,14 @@ def test_failed_submit_keeps_the_client_order_reusable(st, tmp_path):
     assert store.consumption("profile-b") == (Decimal(str(scenario.order.notional)), 1)
 
 
-def test_in_progress_handoff_retries_submit_until_it_returns(st, tmp_path):
+def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
+    """A second claim on an owned in_progress handoff is refused: two retries can
+    never both enter ``gateway.submit``. The abandoned claim is re-owned only
+    through ``reconcile_handoff_to_gateway``, which first checks the gateway's
+    durable order identity (``order_ref`` = order id, submitted as
+    ``cockpit-<order.id>`` on the signed transition chain) so a double submit
+    is impossible.
+    """
     broker = _CountingPaper()
     gateway = PaperOrderGateway(broker, st=st)
     calls = {"n": 0}
@@ -844,7 +951,7 @@ def test_in_progress_handoff_retries_submit_until_it_returns(st, tmp_path):
         return real_submit(order, **kwargs)
 
     gateway.submit = _flaky
-    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=False)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
     path = tmp_path / "crash.sqlite"
     store = AuthorityProfileStore(path)
     now = scenario.clock.now()
@@ -869,14 +976,233 @@ def test_in_progress_handoff_retries_submit_until_it_returns(st, tmp_path):
     assert calls["n"] == 1
     row = _handoff_row(path, "crash-1")
     assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
-    retried = handoff_to_gateway(store, gateway, **call)
-    assert calls["n"] == 2
-    assert retried.reached_gateway is True
-    assert retried.outcome.ok is False
+    # A concurrent or repeated claim is refused and never reaches the gateway.
+    assert _refuse(lambda: handoff_to_gateway(store, gateway, **call)) == "handoff_in_progress"
+    assert calls["n"] == 1
     assert broker.calls == 0
+    # The reconcile path sees no 'submitted' transition on the signed chain,
+    # re-owns the claim under a new generation, and submits exactly once.
+    reconciled = reconcile_handoff_to_gateway(
+        store, gateway, client_order_id="crash-1",
+        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        now=now,
+    )
+    assert calls["n"] == 2
+    assert broker.calls == 1
+    assert reconciled.reached_gateway is True
+    assert reconciled.outcome.ok is True
     row = _handoff_row(path, "crash-1")
-    assert (row["handoff_state"], row["handoff_done"]) == ("failed", 0)
+    assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
     assert store.consumption("profile-b") == (Decimal(str(scenario.order.notional)), 1)
+
+
+def test_reconcile_completes_a_landed_submit_without_a_second_one(st, tmp_path):
+    """Crash after the broker ack: the signed chain already shows the order
+    'submitted', so reconcile records the handoff completed instead of
+    resubmitting — the durable identity is the only re-ownership check."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
+    path = tmp_path / "landed.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper",
+            notional_cap="5000.00",
+            max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="landed-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("landed-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    outcome = gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is True
+    assert broker.calls == 1
+    # Crash between submit returning and complete_handoff: still in_progress.
+    result = reconcile_handoff_to_gateway(
+        store, gateway, client_order_id="landed-1",
+        submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+        now=now,
+    )
+    assert result.reached_gateway is False
+    assert broker.calls == 1
+    row = _handoff_row(path, "landed-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
+
+
+def test_stale_claim_generation_is_a_noop_refusal(st, tmp_path):
+    """Fencing: every claim gets a strictly increasing generation and the
+    row-side write rejects any other token in the same atomic UPDATE. A stale
+    caller's write is a refusal, never a downgrade of a completed row."""
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
+    path = tmp_path / "stale.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper",
+            notional_cap="5000.00",
+            max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="stale-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("stale-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    assert ticket.generation == 1
+    # A wrong generation is refused even while the row is still in progress.
+    assert _refuse(
+        lambda: store.complete_handoff("stale-1", generation=ticket.generation + 1)
+    ) == "stale_claim"
+    assert _refuse(
+        lambda: store.fail_handoff("stale-1", generation=ticket.generation + 1)
+    ) == "stale_claim"
+    outcome = gateway.submit(scenario.order, **scenario.submit_kwargs())
+    assert outcome.ok is True
+    store.complete_handoff("stale-1", generation=ticket.generation)
+    # A stale owner's write after completion is refused; the row is kept.
+    assert _refuse(
+        lambda: store.fail_handoff("stale-1", generation=ticket.generation)
+    ) == "stale_claim"
+    row = _handoff_row(path, "stale-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
+
+
+def test_release_stop_derives_reconcile_from_store_state(st, tmp_path):
+    """``reconciled=True`` is only an assertion of intent. The store derives the
+    real reconcile state: a reservation pending, in progress, or failed without
+    a gateway-identity reconcile refuses the release (fail closed), even for
+    the stop owner presenting a valid capability.
+    """
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
+    path = tmp_path / "release.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper",
+            notional_cap="5000.00",
+            max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    call = dict(
+        profile_id="profile-b", action="submit_paper",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id),
+    )
+
+    def reconcile(client_order_id):
+        return reconcile_handoff_to_gateway(
+            store, gateway, client_order_id=client_order_id,
+            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            now=now,
+        )
+
+    # pending reservation blocks the release
+    store.authorize(client_order_id="rel-pending", **call)
+    store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
+    assert _refuse(
+        lambda: store.release_stop(
+            "profile-b", actor="stop-owner", now=now, reconciled=True
+        )
+    ) == "not_reconciled"
+    assert _refuse(lambda: reconcile("rel-pending")) == "failed"
+    store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+
+    # abandoned in_progress claim blocks the release until reconciled
+    store.authorize(client_order_id="rel-inprog", **call)
+    ticket = store.claim_handoff("rel-inprog", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
+    assert _refuse(
+        lambda: store.release_stop(
+            "profile-b", actor="stop-owner", now=now, reconciled=True
+        )
+    ) == "not_reconciled"
+    # kill is active so the dead claim cannot be re-owned: it resolves as
+    # failed+reconciled, which consumes only its own slice and unblocks release.
+    assert _refuse(lambda: reconcile("rel-inprog")) == "failed"
+    store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+
+    # failed-and-unreconciled blocks the release the same way
+    store.authorize(client_order_id="rel-failed", **call)
+    ticket = store.claim_handoff("rel-failed", now=now, awaiting_submit=True)
+    store.fail_handoff("rel-failed", generation=ticket.generation)
+    store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
+    assert _refuse(
+        lambda: store.release_stop(
+            "profile-b", actor="stop-owner", now=now, reconciled=True
+        )
+    ) == "not_reconciled"
+    assert _refuse(lambda: reconcile("rel-failed")) == "failed"
+    store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+
+
+def test_expired_or_revoked_stop_owner_stays_blocked_pending_csl_280(tmp_path):
+    """Documents the current fail-closed behavior pending founder decision CSL-280.
+
+    A profile that kills its perimeter and is then revoked or expired cannot
+    clear the stop, and install refuses the stopped perimeter: the perimeter
+    stays blocked until founders decide the un-bricking rule. This test must
+    keep passing unless that decision changes it (see
+    docs/replacement/O6-PAPER-DRY-RUN-PROFILES.md, live-blocker ledger).
+    """
+    live = _store(tmp_path, "live.sqlite")
+    _install(live)
+    live.kill("profile-b", actor="stop-owner", now=NOW, reason="operator kill")
+    live.release_stop("profile-b", actor="stop-owner", now=NOW, reconciled=True)
+
+    revoked = _store(tmp_path, "revoked.sqlite")
+    _install(revoked)
+    revoked.kill("profile-b", actor="stop-owner", now=NOW, reason="operator kill")
+    revoked.revoke("profile-b", actor="stop-owner", now=NOW, reason="operator revoke")
+    assert _refuse(
+        lambda: revoked.release_stop(
+            "profile-b", actor="stop-owner", now=NOW, reconciled=True
+        )
+    ) == "revoked"
+    assert _refuse(
+        lambda: revoked.install(
+            _document(profile_id="profile-b-2"), actor="stop-owner", now=NOW
+        )
+    ) == "kill_active"
+
+    expired = _store(tmp_path, "expired.sqlite")
+    _install(expired)
+    expired.kill("profile-b", actor="stop-owner", now=NOW, reason="operator kill")
+    after_expiry = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    assert _refuse(
+        lambda: expired.release_stop(
+            "profile-b", actor="stop-owner", now=after_expiry, reconciled=True
+        )
+    ) == "expired"
+    assert _refuse(
+        lambda: expired.install(
+            _document(profile_id="profile-b-2", expires_at="2026-10-20T12:00:00+00:00"),
+            actor="stop-owner", now=after_expiry,
+        )
+    ) == "kill_active"
 
 
 def test_profile_module_has_no_live_flag_or_credential_path():
