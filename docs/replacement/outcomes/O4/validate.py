@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,23 @@ METRIC_IDS = (
     "drawdown",
     "uncertainty",
 )
+METRIC_INPUTS = {
+    "deflated_sharpe_ratio": (
+        "selected_sharpe",
+        "trial_count",
+        "trial_sharpe_variance",
+        "skewness",
+        "excess_kurtosis",
+        "observation_count",
+    ),
+    "probability_of_backtest_overfitting": (
+        "variant_return_matrix",
+        "cscv_splits",
+        "in_sample_winner_out_of_sample_rank",
+    ),
+    "drawdown": ("peak_to_trough_net_loss", "drawdown_duration"),
+    "uncertainty": ("estimator_owner_unset", "net_result_series"),
+}
 METRIC_CITATIONS = {
     "deflated_sharpe_ratio": CITATION_URLS[0],
     "probability_of_backtest_overfitting": CITATION_URLS[1],
@@ -212,13 +230,22 @@ def _populations(packet: dict[str, Any], failures: list[Failure]) -> None:
     )
 
 
+def _cost_ok(cost: dict[str, Any]) -> bool:
+    status = cost.get("status")
+    amount = cost.get("amount")
+    if status == "retained_unmeasured":
+        return amount is None
+    if status == "retained_measured":
+        try:
+            return isinstance(amount, str) and Decimal(amount).is_finite()
+        except InvalidOperation:
+            return False
+    return False
+
+
 def _costs(packet: dict[str, Any], failures: list[Failure]) -> None:
     costs = packet["experiment"]["costs"]
-    bad = [
-        key
-        for key in COST_KEYS
-        if key not in costs or costs[key].get("status") not in ("retained_unmeasured", "retained_measured")
-    ]
+    bad = [key for key in COST_KEYS if key not in costs or not _cost_ok(costs[key])]
     if bad:
         failures.append(Failure("dropped_costs", "required cost is dropped or missing: " + ", ".join(bad)))
 
@@ -298,6 +325,10 @@ def _metrics(packet: dict[str, Any], failures: list[Failure]) -> None:
         measure = by_id.get(metric_id)
         if measure is None or measure.get("citation") != url or measure.get("computed") is not False:
             failures.append(Failure("metric_registry", f"{metric_id} is missing its citation or is marked computed"))
+    for metric_id, required in METRIC_INPUTS.items():
+        measure = by_id.get(metric_id)
+        if measure is not None and set(measure.get("inputs_retained", ())) != set(required):
+            failures.append(Failure("metric_registry", f"{metric_id} does not retain its required inputs"))
     citations = {item["url"] for item in packet["research"]["citations"]}
     searches = tuple(packet["research"]["parallel_search_ids"])
     references = tuple(packet["metric_registry"]["methodology_references"])
@@ -413,12 +444,30 @@ def _manifest_paths(manifest: dict[str, Any]) -> list[dict[str, str]]:
 def _check_manifest(manifest: dict[str, Any]) -> None:
     if manifest.get("maturity_claimed") != "researched":
         raise QualificationError("maturity_overclaim", "manifest maturity is not researched")
-    if manifest.get("qualification_claimed") is not False or manifest.get("empirical_pass_claimed") is not False:
-        raise QualificationError("maturity_overclaim", "manifest claims qualification or an empirical pass")
+    if (
+        manifest.get("qualification_claimed") is not False
+        or manifest.get("empirical_pass_claimed") is not False
+        or manifest.get("contract_frozen_claimed") is not False
+    ):
+        raise QualificationError(
+            "maturity_overclaim", "manifest claims qualification, an empirical pass, or a frozen contract"
+        )
     expected = [item["expect"] for item in manifest["negative_controls"]]
     if tuple(expected) != CONTROL_ORDER:
         raise QualificationError("negative_control", "negative-control manifest order changed")
-    for row in _manifest_paths(manifest):
+    rows = _manifest_paths(manifest)
+    paths = [row["path"] for row in rows]
+    required = {
+        "PROTOCOL.md",
+        "validate.py",
+        manifest["candidate_packet"],
+        *(f"schemas/{name}" for name in SECTION_SCHEMAS.values()),
+        "schemas/envelope.schema.json",
+        *(item["path"] for item in manifest["negative_controls"]),
+    }
+    if len(set(paths)) != len(paths) or set(paths) != required:
+        raise QualificationError("manifest", "manifest files must list each pinned artifact exactly once")
+    for row in rows:
         path = _inside(O4, O4 / row["path"])
         if _sha256(path) != row["sha256"]:
             raise QualificationError("manifest", f"frozen digest mismatch for {row['path']}")
