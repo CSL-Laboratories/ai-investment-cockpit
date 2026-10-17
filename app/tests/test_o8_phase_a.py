@@ -36,6 +36,7 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: baseline-outputs-absolute: baseline outputs path must be relative",
     "O8 negative control failed as designed: baseline-outputs-traversal: baseline outputs path escapes the repository",
     "O8 negative control failed as designed: baseline-metadata-only: tier-3 baseline lacks retained outputs",
+    "O8 negative control failed as designed: baseline-observation-untyped: tier-3 baseline observation is not measured",
     "O8 negative control failed as designed: helper-set-mismatch: helper set does not match the workload",
     "O8 negative control failed as designed: replay-from-duplicate: replay sources must be distinct",
     "O8 negative control failed as designed: shared-stores-duplicate: shared stores must be distinct",
@@ -61,7 +62,7 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: floor-results-missing: tier-3 floor results are not bound to the candidate",
     "O8 negative control failed as designed: floor-results-wrong-commit: tier-3 floor results are not bound to the candidate",
     "O8 negative control failed as designed: floor-results-failed: tier-3 floor results are not bound to the candidate",
-    "O8 negative controls: 43 failed as designed",
+    "O8 negative controls: 44 failed as designed",
 )
 
 
@@ -279,6 +280,7 @@ def test_o8_candidate_cannot_be_reused_for_a_different_workload_seam() -> None:
     ("units-missing", "observation units missing or invalid"),
     ("units-mismatched", "observation units missing or invalid"),
     ("baseline-units-mismatched", "tier-3 baseline lacks retained outputs"),
+    ("baseline-observation-untyped", "tier-3 baseline observation is not measured"),
     ("io-kind-memory-only", "I/O kinds omit required disk I/O for this workload"),
     ("candidate-id-unbound", "candidate does not match retained candidate manifest"),
     ("candidate-commit-mismatch", "candidate does not match retained candidate manifest"),
@@ -350,11 +352,11 @@ def test_o8_evidence_rejects_missing_reference_or_wrong_digest(field: str) -> No
 
 
 def test_o8_evidence_rejects_unreadable_files(monkeypatch) -> None:
-    def unreadable(self):
+    def unreadable(*_args, **_kwargs):
         raise OSError("simulated read failure")
 
     document = _synthetic_comparison()
-    monkeypatch.setattr(CHECK_O8.Path, "read_bytes", unreadable)
+    monkeypatch.setattr(CHECK_O8.os, "open", unreadable)
     assert CHECK_O8._retained_bytes(document["fixture"]) is None
     assert CHECK_O8._retained_candidate_bound(document) is False
 
@@ -371,3 +373,32 @@ def test_o8_evidence_rejects_symlink_escape(tmp_path: Path, monkeypatch) -> None
         pytest.skip("symlink creation is unavailable on this host")
     monkeypatch.setattr(CHECK_O8, "ROOT", repository)
     assert CHECK_O8._resolve_local_path("input.json") is None
+    assert CHECK_O8._read_regular_file(link) is None
+    assert outside.read_bytes() not in (CHECK_O8._read_regular_file(link) or b"")
+
+
+def test_o8_retained_read_rejects_a_symlink_swap(tmp_path: Path, monkeypatch) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    inside = repository / "inside.json"
+    inside.write_bytes(b'{"measured": true}\n')
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b'{"secret": true}\n')
+    monkeypatch.setattr(CHECK_O8, "ROOT", repository)
+    probe = repository / "probe"
+    try:
+        probe.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    probe.unlink()
+    real_lstat = CHECK_O8.os.lstat
+
+    def swap_after_lstat(path):
+        observed = real_lstat(path)
+        if Path(path) == inside:
+            inside.unlink()
+            inside.symlink_to(outside)
+        return observed
+
+    monkeypatch.setattr(CHECK_O8.os, "lstat", swap_after_lstat)
+    assert CHECK_O8._read_regular_file(inside) is None

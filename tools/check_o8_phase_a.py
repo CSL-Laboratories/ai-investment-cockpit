@@ -11,6 +11,8 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -174,6 +176,7 @@ NEGATIVES = (
         "baseline outputs path escapes the repository",
     ),
     ("baseline-metadata-only.json", "benchmark", "tier-3 baseline lacks retained outputs"),
+    ("baseline-observation-untyped.json", "benchmark", "tier-3 baseline observation is not measured"),
     ("helper-set-mismatch.json", "benchmark", "helper set does not match the workload"),
     ("replay-from-duplicate.json", "packet", "replay sources must be distinct"),
     ("shared-stores-duplicate.json", "packet", "shared stores must be distinct"),
@@ -308,6 +311,43 @@ def _is_finite_nonneg(value: Any) -> bool:
     return isinstance(value, float) and math.isfinite(value) and value >= 0
 
 
+def _read_regular_file(path: Path) -> bytes | None:
+    """Open one regular file and read that handle.
+
+    ``O_NOFOLLOW`` is set where the platform defines it, so a symlink that
+    replaces the path between the check and the read is not followed. The
+    opened inode is also compared with the inode observed before open.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        observed = os.lstat(path)
+    except (OSError, ValueError):
+        return None
+    if not stat.S_ISREG(observed.st_mode):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except (OSError, ValueError):
+        return None
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            return None
+        if (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino):
+            return None
+        chunks: list[bytes] = []
+        while True:
+            block = os.read(fd, 1024 * 1024)
+            if not block:
+                break
+            chunks.append(block)
+        return b"".join(chunks)
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
+
+
 def _retained_bytes(reference: Any) -> bytes | None:
     """Read only digest-matched, repository-contained regular files."""
     if not isinstance(reference, dict):
@@ -318,11 +358,10 @@ def _retained_bytes(reference: Any) -> bytes | None:
     if path.startswith(("http://", "https://")):
         return None
     retained = _resolve_local_path(path)
-    if retained is None or not _safe_is_file(retained):
+    if retained is None:
         return None
-    try:
-        raw = retained.read_bytes()
-    except (OSError, ValueError):
+    raw = _read_regular_file(retained)
+    if raw is None:
         return None
     return raw if hashlib.sha256(raw).hexdigest() == digest else None
 
@@ -440,14 +479,15 @@ def benchmark_reasons(document: Any) -> list[str]:
                     if retained is None:
                         reasons.append("baseline outputs path escapes the repository")
                         outputs_rejected = True
-                    elif isinstance(outputs_digest, str) and _safe_is_file(retained):
-                        try:
-                            raw = retained.read_bytes()
-                        except (OSError, ValueError):
-                            raw = None
+                    elif isinstance(outputs_digest, str):
+                        raw = _read_regular_file(retained)
                         if raw is not None and hashlib.sha256(raw).hexdigest() == outputs_digest:
-                            outputs_ok = _baseline_outputs_bound(raw, baseline)
-                            if outputs_ok and not _baseline_host_matches(raw, document):
+                            identity_units = _baseline_identity_units(raw, baseline)
+                            outputs_ok = identity_units and _baseline_observation_measured(raw)
+                            if identity_units and not outputs_ok:
+                                reasons.append("tier-3 baseline observation is not measured")
+                                outputs_ok = True
+                            elif outputs_ok and not _baseline_host_matches(raw, document):
                                 reasons.append("tier-3 baseline host does not match the candidate")
         if not outputs_ok and not outputs_rejected:
             reasons.append("tier-3 baseline lacks retained outputs")
@@ -553,8 +593,7 @@ def _floor_results_bound(document: dict[str, Any]) -> bool:
     return set(found) == set(FLOOR_IDS)
 
 
-def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:
-    keys = ("commit", "workload_id", "fixture_sha256")
+def _baseline_record(raw: bytes) -> dict[str, Any] | None:
     try:
         retained = json.loads(
             raw.decode("utf-8"),
@@ -562,17 +601,66 @@ def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:
             parse_float=_parse_finite_float,
         )
     except (UnicodeError, ValueError, RecursionError):
+        return None
+    return retained if isinstance(retained, dict) else None
+
+
+def _baseline_identity_units(raw: bytes, baseline: dict[str, Any]) -> bool:
+    """True when the digest-bound file names this baseline and declares the fixed units."""
+    retained = _baseline_record(raw)
+    if retained is None or retained.get("units") != OBSERVATION_UNITS:
         return False
-    return (
-        isinstance(retained, dict)
-        and all(
-            isinstance(retained.get(key), str) and retained.get(key) and retained.get(key) == baseline.get(key)
-            for key in keys
-        )
-        and isinstance(retained.get("observation"), dict)
-        and len(retained["observation"]) > 0
-        and retained.get("units") == OBSERVATION_UNITS
+    keys = ("commit", "workload_id", "fixture_sha256")
+    return all(
+        isinstance(retained.get(key), str) and retained.get(key) and retained.get(key) == baseline.get(key)
+        for key in keys
     )
+
+
+def _baseline_observation_measured(raw: bytes) -> bool:
+    """True when each retained metric is a finite number paired with its protocol unit.
+
+    The bytes are the digest-matched baseline file. A nonempty object is not a measurement.
+    """
+    retained = _baseline_record(raw)
+    if retained is None:
+        return False
+    units = retained.get("units")
+    observation = retained.get("observation")
+    if units != OBSERVATION_UNITS or not isinstance(observation, dict):
+        return False
+    if observation.get("status") != "measured":
+        return False
+    unit_for = {
+        "p50": "latency",
+        "p95": "latency",
+        "p99": "latency",
+        "throughput": "throughput",
+        "cpu": "cpu",
+        "io": "io",
+    }
+    for metric, unit_key in unit_for.items():
+        if units.get(unit_key) != OBSERVATION_UNITS[unit_key] or not _is_finite_nonneg(observation.get(metric)):
+            return False
+    rss = observation.get("rss_bytes")
+    if (
+        units.get("rss_bytes") != OBSERVATION_UNITS["rss_bytes"]
+        or isinstance(rss, bool)
+        or not isinstance(rss, int)
+        or not _is_finite_nonneg(rss)
+    ):
+        return False
+    for metric in ("tokens", "cost"):
+        value = observation.get(metric)
+        if units.get(metric) != OBSERVATION_UNITS[metric] or (value is not None and not _is_finite_nonneg(value)):
+            return False
+    if not (observation["p50"] <= observation["p95"] <= observation["p99"]):
+        return False
+    for key in ("correctness", "failure", "recovery", "growth"):
+        if not isinstance(observation.get(key), str) or not observation[key].strip():
+            return False
+    allowed = set(unit_for) | {"rss_bytes", "tokens", "cost", "correctness", "failure", "recovery", "growth", "status"}
+    return set(observation) == allowed and set(units) == set(OBSERVATION_UNITS)
 
 
 def _floor_ids(floors: Any) -> list[str]:
