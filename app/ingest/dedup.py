@@ -39,21 +39,24 @@ def _rust_cap(capacity: int) -> bool:
     return isinstance(capacity, int) and not isinstance(capacity, bool) and _I64_MIN <= capacity <= _I64_MAX
 
 
-def _utf8_key(key: str) -> bool:
-    """True when ``key`` can cross into PyO3 as ``&str``.
+def _core_key(key: str) -> str:
+    """One UTF-8 identity for the Rust LRU.
 
-    ``json.loads('"\\\\ud800"')`` is a ``str`` with a lone surrogate. Encoding
-    it to UTF-8 raises ``UnicodeEncodeError``, and the extension would raise
-    out of ``Dedup.add``. Alpaca calls ``add`` outside the per-frame handler,
-    so that raise is a disconnect. Those keys stay on the Python map.
+    A lone surrogate is a ``str`` PyO3 cannot take as ``&str``. Escaping only
+    those keys, and keys that already start with the escape mark, keeps one
+    map: a later UTF-8 ``add`` still evicts the surrogate when it is oldest.
+    Ascii ids that do not start with NUL are passed through.
     """
-    if key.isascii():
-        return True
-    try:
-        key.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return True
+    if not key.startswith("\x00"):
+        if key.isascii():
+            return key
+        try:
+            key.encode("utf-8")
+        except UnicodeEncodeError:
+            pass
+        else:
+            return key
+    return "\x00" + key.encode("utf-16", "surrogatepass").hex()
 
 
 class Dedup:
@@ -70,8 +73,7 @@ class Dedup:
         if self._core is not None:
             if not isinstance(key, str):
                 raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            if _utf8_key(key):
-                return self._core.add(key)
+            return self._core.add(_core_key(key))
         if key in self._seen:
             self._seen.move_to_end(key)
             return False
@@ -99,8 +101,7 @@ class Dedup:
         if self._core is not None:
             if not isinstance(key, str):
                 raise TypeError(f"dedup key must be a str, got {type(key).__name__}")
-            if _utf8_key(key):
-                return self._core.discard(key)
+            return self._core.discard(_core_key(key))
         return self._seen.pop(key, _MISSING) is not _MISSING
 
 

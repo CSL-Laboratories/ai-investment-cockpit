@@ -142,14 +142,31 @@ def test_token_bucket_replay_matches_and_starts_empty():
 
 @_needs_rust
 @_needs_rust
-def test_a_lone_surrogate_key_stays_on_python():
+def test_a_lone_surrogate_shares_one_lru_with_utf8_keys():
     key = "\ud800"
-    rust, python = _dedup(4)
+    rust, python = _dedup(2)
+    assert rust.add("a") is python.add("a") is True
     assert rust.add(key) is python.add(key) is True
-    assert rust.add(key) is python.add(key) is False
+    assert rust.add("b") is python.add("b") is True
+    # "a" was the oldest. One window of 2 has already dropped it.
+    assert rust.add("a") is python.add("a") is True
+    assert rust.discard(key) is python.discard(key) is False
+
+    rust, python = _dedup(2)
+    assert rust.add("a") is python.add("a") is True
+    assert rust.add("b") is python.add("b") is True
+    assert rust.add("a") is python.add("a") is False
+    assert rust.add(key) is python.add(key) is True
+    assert rust.add("a") is python.add("a") is False
     assert rust.discard(key) is python.discard(key) is True
-    assert rust.add("alpaca-1") is python.add("alpaca-1") is True
-    assert rust.discard("alpaca-1") is python.discard("alpaca-1") is True
+    assert rust.add("b") is python.add("b") is True
+
+    marked = "\x00a"
+    rust, python = _dedup(2)
+    assert rust.add(marked) is python.add(marked) is True
+    assert rust.add("b") is python.add("b") is True
+    assert rust.add("c") is python.add("c") is True
+    assert rust.add(marked) is python.add(marked) is True
 
 
 def test_a_capacity_past_the_float_range_stays_on_python():
