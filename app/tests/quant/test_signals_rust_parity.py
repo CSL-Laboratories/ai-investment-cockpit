@@ -242,7 +242,9 @@ def test_constant_window_and_compensated_sum_match_python():
         assert z_r.update(100.37) == z_p.update(100.37)
     assert z_r.mean == z_p.mean
     assert z_r.stdev == z_p.stdev
-    assert z_r.value is z_p.value
+    # 3.11's left-to-right sum leaves a nonzero stdev, so both sides return the
+    # same float. Identity would fail for two equal float objects.
+    _same(z_r.value, z_p.value)
     if sys.version_info >= (3, 12):
         assert z_p.mean == 100.37
         assert z_p.stdev == 0.0
@@ -251,7 +253,7 @@ def test_constant_window_and_compensated_sum_match_python():
     beta_r, beta_p = _pair(RollingBeta, window=200)
     for i in range(200):
         assert beta_r.update(100.37, float(i)) == beta_p.update(100.37, float(i))
-    assert beta_r.beta is beta_p.beta
+    _same(beta_r.beta, beta_p.beta)
     if sys.version_info >= (3, 12):
         assert beta_p.beta is None
 
