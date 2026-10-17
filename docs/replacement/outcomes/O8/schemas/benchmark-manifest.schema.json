@@ -1,0 +1,286 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cockpit.replacement.o8.benchmark-manifest.v1",
+  "title": "O8 phase A benchmark manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "tier",
+    "workload_id",
+    "provider_free",
+    "network_calls",
+    "credentials_used",
+    "live_orders",
+    "csl42_evidence",
+    "commit",
+    "host",
+    "io",
+    "helper_processes",
+    "variance",
+    "provider_latency",
+    "observation"
+  ],
+  "properties": {
+    "schema_id": {"const": "cockpit.replacement.o8.benchmark-manifest.v1"},
+    "tier": {"enum": [2, 3]},
+    "workload_id": {
+      "enum": [
+        "ingest_to_raw_store",
+        "point_in_time_replay",
+        "frozen_evaluation_run",
+        "paper_order_lifecycle",
+        "reconciliation",
+        "gui_cli_render"
+      ]
+    },
+    "provider_free": {"const": true},
+    "network_calls": {"const": 0},
+    "credentials_used": {"const": false},
+    "live_orders": {"const": false},
+    "csl42_evidence": {"type": "boolean"},
+    "floors_attached": {"type": "boolean"},
+    "floors": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enforced_by", "benchmark_eligible", "test_locator"],
+        "properties": {
+          "id": {
+            "enum": [
+              "invariant_1_single_order_path",
+              "invariant_2_decision_pinned_in_auto_modes",
+              "invariant_3_schema_validate_model_output",
+              "invariant_4_secrets_os_credential_store",
+              "invariant_5_risk_pure",
+              "invariant_6_human_gate_hash_chain_audit",
+              "invariant_7_fail_closed",
+              "invariant_8_raw_inputs_separate_from_summaries",
+              "invariant_9_post_pdt",
+              "fail_closed",
+              "hash_chain_audit"
+            ]
+          },
+          "enforced_by": {"const": "tests"},
+          "benchmark_eligible": {"const": false},
+          "test_locator": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "candidate_id": {"type": "string", "minLength": 1},
+    "candidate": {"$ref": "#/$defs/retainedFile"},
+    "configuration": {"type": "object", "minProperties": 1},
+    "fixture": {"$ref": "#/$defs/retainedFile"},
+    "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "units": {
+      "description": "Fixed units for candidate and retained baseline observations; latency covers p50, p95 and p99. Throughput counts complete workload invocations per second. CPU is aggregate process CPU seconds; I/O is aggregate bytes read and written including helpers.",
+      "const": {
+        "latency": "ms",
+        "throughput": "workload_completions_per_second",
+        "rss_bytes": "bytes",
+        "cpu": "cpu_seconds",
+        "io": "bytes",
+        "tokens": "tokens",
+        "cost": "USD"
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "workload_id", "fixture_sha256", "outputs"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "workload_id": {"type": "string", "minLength": 1},
+        "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runner", "python", "status"],
+      "properties": {
+        "runner": {"type": "string", "minLength": 1},
+        "python": {"type": "string", "minLength": 1},
+        "status": {"enum": ["required_on_run", "measured"]}
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "kinds", "status"],
+      "properties": {
+        "included": {"const": true},
+        "kinds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"enum": ["disk", "memory_copy"]}
+        },
+        "status": {"enum": ["required_on_run", "measured"]}
+      }
+    },
+    "helper_processes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role", "included", "status"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "role": {"type": "string", "minLength": 1},
+          "included": {"const": true},
+          "status": {"enum": ["required_on_run", "measured"]}
+        }
+      }
+    },
+    "provider_latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {"const": "excluded_with_reason"},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "variance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statistic", "repetitions", "relative_iqr", "status"],
+      "properties": {
+        "statistic": {"const": "relative_iqr"},
+        "repetitions": {
+          "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]
+        },
+        "relative_iqr": {
+          "oneOf": [{"type": "number", "minimum": 0}, {"type": "null"}]
+        },
+        "status": {"enum": ["required_on_run", "measured"]}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "p50",
+        "p95",
+        "p99",
+        "throughput",
+        "rss_bytes",
+        "cpu",
+        "io",
+        "tokens",
+        "cost",
+        "correctness",
+        "failure",
+        "recovery",
+        "growth",
+        "status"
+      ],
+      "properties": {
+        "p50": {"type": ["number", "null"]},
+        "p95": {"type": ["number", "null"]},
+        "p99": {"type": ["number", "null"]},
+        "throughput": {"type": ["number", "null"]},
+        "rss_bytes": {"type": ["integer", "null"]},
+        "cpu": {"type": ["number", "null"]},
+        "io": {"type": ["number", "null"]},
+        "tokens": {"type": ["number", "null"]},
+        "cost": {"type": ["number", "null"]},
+        "correctness": {"type": "string", "minLength": 1},
+        "failure": {"type": "string", "minLength": 1},
+        "recovery": {"type": "string", "minLength": 1},
+        "growth": {"type": "string", "minLength": 1},
+        "status": {"enum": ["required_on_run", "measured"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"csl42_evidence": {"const": true}},
+        "required": ["csl42_evidence"]
+      },
+      "then": {
+        "properties": {
+          "tier": {"const": 3},
+          "floors_attached": {"const": true},
+          "variance": {
+            "properties": {"status": {"const": "measured"}},
+            "required": ["status"]
+          }
+        },
+        "required": ["tier", "floors_attached", "variance", "candidate_id", "candidate", "configuration", "baseline", "fixture", "fixture_sha256"]
+      }
+    },
+    {
+      "if": {
+        "properties": {"variance": {"properties": {"status": {"const": "measured"}}, "required": ["status"]}},
+        "required": ["variance"]
+      },
+      "then": {
+        "required": ["units"],
+        "properties": {
+          "variance": {
+            "properties": {
+              "repetitions": {"type": "integer", "minimum": 2},
+              "relative_iqr": {"type": "number", "maximum": 1.7976931348623157e308}
+            }
+          },
+          "host": {"properties": {"status": {"const": "measured"}}, "required": ["status"]},
+          "io": {"properties": {"status": {"const": "measured"}}, "required": ["status"]},
+          "helper_processes": {
+            "items": {"properties": {"status": {"const": "measured"}}, "required": ["status"]}
+          },
+          "observation": {
+            "properties": {
+              "status": {"const": "measured"},
+              "p50": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "p95": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "p99": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "throughput": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "rss_bytes": {"type": "integer", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "cpu": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "io": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "tokens": {"type": ["number", "null"], "minimum": 0, "maximum": 1.7976931348623157e308},
+              "cost": {"type": ["number", "null"], "minimum": 0, "maximum": 1.7976931348623157e308}
+            },
+            "required": ["status"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"floors_attached": {"const": true}},
+        "required": ["floors_attached"]
+      },
+      "then": {"required": ["floors"]}
+    }
+  ],
+  "$defs": {
+    "retainedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

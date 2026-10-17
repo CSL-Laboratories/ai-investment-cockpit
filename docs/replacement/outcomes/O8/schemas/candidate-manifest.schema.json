@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cockpit.replacement.o8.candidate-manifest.v1",
+  "title": "O8 phase A candidate manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id",
+    "candidate_id",
+    "maturity",
+    "language_selected",
+    "storage_selected",
+    "topology_selected",
+    "csl42_evidence",
+    "changes_financial_semantics",
+    "changes_authority_semantics",
+    "changes_failure_semantics",
+    "changes_recovery_semantics",
+    "floors",
+    "smallest_experiment",
+    "seam",
+    "rollback"
+  ],
+  "properties": {
+    "schema_id": {"const": "cockpit.replacement.o8.candidate-manifest.v1"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "configuration": {"type": "object", "minProperties": 1},
+    "maturity": {"const": "researched"},
+    "language_selected": {"const": false},
+    "storage_selected": {"const": false},
+    "topology_selected": {"const": false},
+    "csl42_evidence": {"const": false},
+    "changes_financial_semantics": {"const": false},
+    "changes_authority_semantics": {"const": false},
+    "changes_failure_semantics": {"const": false},
+    "changes_recovery_semantics": {"const": false},
+    "smallest_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload_id", "statement"],
+      "properties": {
+        "workload_id": {
+          "enum": [
+            "ingest_to_raw_store",
+            "point_in_time_replay",
+            "frozen_evaluation_run",
+            "paper_order_lifecycle",
+            "reconciliation",
+            "gui_cli_render"
+          ]
+        },
+        "statement": {"type": "string", "minLength": 1}
+      }
+    },
+    "seam": {
+      "enum": [
+        "ingest_to_raw_store",
+        "point_in_time_replay",
+        "frozen_evaluation_run",
+        "paper_order_lifecycle",
+        "reconciliation",
+        "gui_cli_render"
+      ]
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_back_to_legacy", "system_of_record"],
+      "properties": {
+        "route_back_to_legacy": {"const": true},
+        "system_of_record": {"const": "legacy_raw_store_and_hash_chain"}
+      }
+    },
+    "floors": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 11,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "enforced_by", "benchmark_eligible", "test_locator"],
+        "properties": {
+          "id": {
+            "enum": [
+              "invariant_1_single_order_path",
+              "invariant_2_decision_pinned_in_auto_modes",
+              "invariant_3_schema_validate_model_output",
+              "invariant_4_secrets_os_credential_store",
+              "invariant_5_risk_pure",
+              "invariant_6_human_gate_hash_chain_audit",
+              "invariant_7_fail_closed",
+              "invariant_8_raw_inputs_separate_from_summaries",
+              "invariant_9_post_pdt",
+              "fail_closed",
+              "hash_chain_audit"
+            ]
+          },
+          "enforced_by": {"const": "tests"},
+          "benchmark_eligible": {"const": false},
+          "test_locator": {"type": "string", "minLength": 1}
+        }
+      },
+      "allOf": [
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_1_single_order_path"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_2_decision_pinned_in_auto_modes"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_3_schema_validate_model_output"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_4_secrets_os_credential_store"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_5_risk_pure"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_6_human_gate_hash_chain_audit"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_7_fail_closed"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_8_raw_inputs_separate_from_summaries"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "invariant_9_post_pdt"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "fail_closed"}}}},
+        {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "hash_chain_audit"}}}}
+      ]
+    }
+  },
+  "dependentRequired": {
+    "commit": ["configuration"],
+    "configuration": ["commit"]
+  }
+}
