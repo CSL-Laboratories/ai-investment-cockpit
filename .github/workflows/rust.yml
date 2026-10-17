@@ -30,6 +30,9 @@ run-name: ${{ inputs.candidate_id && format('candidate:{0}:rust:{1}', inputs.can
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # No `paths:` trigger filter: every PR and queue group must report rust-gates,
+  # so Rust path relevance is decided inside `filter` (RUST_PATHS below) and the
+  # aggregate records an explicit irrelevant-path noop instead of a missing check.
   merge_group:
     types: [checks_requested]
   push:
@@ -233,6 +236,9 @@ jobs:
           python3 - <<'PY'
           import json, os
 
+          # Keep in step with the Rust regex in ci-label-retrigger.yml and the
+          # pytest list in rust-book below; tools/test_ci_dispatch_scope.py
+          # executes both selectors against the same paths.
           RUST_PATHS = (
               "rust/",
               "app/quant/book/",
@@ -240,14 +246,14 @@ jobs:
               "app/quant/pnl.py",
               "app/quant/signals.py",
               "app/ingest/normalize.py",
-              "app/tests/quant/test_signals.py",
-              "app/tests/quant/test_signals_rust_parity.py",
-              "app/tests/ingest/test_normalize.py",
-              "app/tests/ingest/test_normalize_rust_parity.py",
               "app/tests/quant/book/",
               "app/tests/quant/test_pnl.py",
               "app/tests/quant/test_costs_rust_parity.py",
+              "app/tests/quant/test_signals.py",
+              "app/tests/quant/test_signals_rust_parity.py",
               "app/tests/quant/test_w21_cost_model.py",
+              "app/tests/ingest/test_normalize.py",
+              "app/tests/ingest/test_normalize_rust_parity.py",
               ".github/",
               "tools/required_ci_gate.py",
               "tools/test_queue_gates.py",

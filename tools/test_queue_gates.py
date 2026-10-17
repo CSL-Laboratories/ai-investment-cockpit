@@ -114,13 +114,22 @@ class QueueGateTests(unittest.TestCase):
         for path, windows, expected in [('docs/readme.md', 'true', []),
                                        ('rust/src/lib.rs', 'true', ['linux', 'linux', 'windows', 'windows']),
                                        ('.github/workflows/review-gate.yml', 'true', ['linux', 'linux', 'windows', 'windows']),
+                                       ('app/quant/pnl.py', 'false', ['linux', 'linux']),
+                                       # Native signals/normalization paths added on main select cells;
+                                       # sibling ingest/quant files that have no Rust twin stay a noop.
                                        ('app/quant/signals.py', 'false', ['linux', 'linux']),
+                                       ('app/quant/signals.py', 'true', ['linux', 'linux', 'windows', 'windows']),
                                        ('app/ingest/normalize.py', 'false', ['linux', 'linux']),
                                        ('app/tests/quant/test_signals.py', 'false', ['linux', 'linux']),
                                        ('app/tests/quant/test_signals_rust_parity.py', 'false', ['linux', 'linux']),
                                        ('app/tests/ingest/test_normalize.py', 'false', ['linux', 'linux']),
                                        ('app/tests/ingest/test_normalize_rust_parity.py', 'false', ['linux', 'linux']),
-                                       ('app/quant/pnl.py', 'false', ['linux', 'linux'])]:
+                                       ('app/tests/ingest/test_normalize_rust_parity.py', 'true',
+                                        ['linux', 'linux', 'windows', 'windows']),
+                                       ('docs/notes.md\napp/ingest/normalize.py', 'false', ['linux', 'linux']),
+                                       ('app/ingest/edgar.py', 'true', []),
+                                       ('app/quant/signals.py.bak', 'true', []),
+                                       ('app/tests/ingest/test_edgar_brew.py', 'true', [])]:
             with tempfile.TemporaryDirectory() as tmp:
                 output = Path(tmp) / 'output'
                 result = execute(step['run'], {'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
