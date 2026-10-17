@@ -537,6 +537,10 @@ impl DedupCore {
     fn discard(&mut self, key: &str) -> bool {
         self.inner.discard(key)
     }
+
+    fn keys(&self) -> Vec<String> {
+        self.inner.keys()
+    }
 }
 
 #[pyfunction]

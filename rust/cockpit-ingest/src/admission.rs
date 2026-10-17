@@ -66,6 +66,18 @@ impl Dedup {
         true
     }
 
+    /// Live keys, oldest first. Free slots are not included.
+    pub fn keys(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor = self.head;
+        while let Some(id) = cursor {
+            let slot = &self.slots[id as usize];
+            out.push(slot.key.clone());
+            cursor = slot.next;
+        }
+        out
+    }
+
     fn alloc(&mut self, key: String) -> u64 {
         if let Some(id) = self.free.pop() {
             self.slots[id as usize] = Slot {
@@ -182,6 +194,7 @@ mod tests {
         assert!(seen.add("b"));
         assert!(!seen.discard("c"));
         assert!(seen.discard("a"));
+        assert_eq!(seen.keys(), vec!["b".to_string()]);
     }
 
     #[test]
@@ -190,8 +203,20 @@ mod tests {
             let mut seen = Dedup::new(cap);
             assert!(seen.add("k"));
             assert!(seen.add("k"));
+            assert!(seen.keys().is_empty());
             assert!(!seen.discard("k"));
         }
+    }
+
+    #[test]
+    fn keys_follow_oldest_to_newest_after_a_refresh() {
+        let mut seen = Dedup::new(2);
+        assert!(seen.add("a"));
+        assert!(seen.add("b"));
+        assert!(!seen.add("a"));
+        assert_eq!(seen.keys(), vec!["b".to_string(), "a".to_string()]);
+        assert!(seen.add("c"));
+        assert_eq!(seen.keys(), vec!["a".to_string(), "c".to_string()]);
     }
 
     #[test]

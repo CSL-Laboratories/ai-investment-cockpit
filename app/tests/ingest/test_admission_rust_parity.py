@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from ingest.dedup import DEDUP_BACKEND, Dedup, _core_key
+from ingest.dedup import DEDUP_BACKEND, Dedup, _core_key, _decode_core_key
 from ingest.ratelimit import RATELIMIT_BACKEND, TokenBucket, python_allow
 
 # The rust.yml job sets this so a wheel that installs but does not activate
@@ -96,15 +96,126 @@ def test_dedup_replay_matches_a_random_script():
             assert replayed is python.discard(key)
 
 
+def test_core_key_round_trips_including_a_lone_surrogate():
+    keys = (
+        "",
+        "a",
+        "café",
+        "\ud800",
+        "\x00a",
+        "alpaca:benzinga:\ud800\U0001f600",
+        "alpaca:benzinga:\ud800\ud83d\ude00",
+    )
+    for key in keys:
+        assert _decode_core_key(_core_key(key)) == key
+
+
+class _EqStr:
+    def __hash__(self):
+        return hash("a")
+
+    def __eq__(self, other):
+        return other == "a"
+
+
+def test_python_dedup_accepts_a_hashable_and_copies_independently():
+    import copy
+    import pickle
+
+    seen = Dedup(2)
+    seen._core = None
+    assert seen.add("a") is True
+    assert seen.add(1) is True
+    assert seen.add(True) is False
+    with pytest.raises(TypeError, match="unhashable"):
+        seen.add([])
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert clone._core is None
+        assert clone.add(1) is False
+        assert clone.add("b") is True
+        assert seen.add("a") is False
+        assert seen.add(1) is False
+
+
 @_needs_rust
-def test_a_non_str_key_is_refused_on_the_rust_path():
+def test_a_non_str_hashable_stays_in_one_window():
+    folded = "alpaca:benzinga:\ud800\U0001f600"
+    pair = "alpaca:benzinga:\ud800\ud83d\ude00"
+    scripts = (
+        ["a", 1, "b", "a", 1],
+        ["a", "b", 1, 1, True, "a"],
+        ["a", "b", _EqStr(), "b", "a"],
+        [folded, pair, 1, folded, pair],
+        ["\ud800", "a", (1, "x"), "\ud800", b"x"],
+        ["\x00a", 1, "b", "\x00a"],
+    )
+    for cap in (2, 4, 0, -1):
+        for script in scripts:
+            rust, python = _dedup(cap)
+            assert rust._core is not None
+            for key in script:
+                assert rust.add(key) is python.add(key)
+            assert rust._core is None
+            assert rust.discard(1) is python.discard(1)
+            assert rust.add("a") is python.add("a")
+            assert rust.add(_EqStr()) is python.add(_EqStr())
+
     rust, python = _dedup(4)
-    with pytest.raises(TypeError, match="dedup key must be a str"):
-        rust.add(1)
-    assert python.add(1) is True
+    with pytest.raises(TypeError, match="unhashable"):
+        rust.add([])
+    assert rust._core is not None
+    rust.add("kept")
+    with pytest.raises(TypeError, match="unhashable"):
+        rust.discard([])
+    assert rust._core is not None
+    assert rust.add("kept") is False
+    with pytest.raises(TypeError, match="unhashable"):
+        python.add([])
+
     odd = Dedup(capacity=True)
     assert odd._core is None
     assert odd.add("a") is True
+    assert odd.add(1) is True
+
+
+@_needs_rust
+def test_rust_dedup_copy_and_pickle_do_not_share_the_core():
+    import copy
+    import pickle
+
+    def clones_of(original):
+        return (
+            copy.copy(original),
+            copy.deepcopy(original),
+            pickle.loads(pickle.dumps(original)),
+        )
+
+    for clone_at in range(3):
+        original = Dedup(2)
+        assert original.add("a") is True
+        assert original.add("\ud800") is True
+        clone = clones_of(original)[clone_at]
+        assert clone._core is not None
+        assert clone._core is not original._core
+        # "a" is oldest, so "b" evicts it and the surrogate stays.
+        assert clone.add("b") is True
+        assert clone.add("\ud800") is False
+        assert clone.add("a") is True
+        assert original.add("a") is False
+        assert original.add("\ud800") is False
+
+    migrated = Dedup(2)
+    assert migrated.add("a") is True
+    assert migrated.add(1) is True
+    assert migrated._core is None
+    restored = pickle.loads(pickle.dumps(migrated))
+    assert restored._core is None
+    assert restored.add(1) is False
+    assert migrated.add("a") is False
 
 
 @_needs_rust
