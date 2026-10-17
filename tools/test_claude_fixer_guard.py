@@ -125,7 +125,7 @@ class GuardTests(unittest.TestCase):
 
     def test_pr_api_facade_constructs_only_current_pr_reads_and_posts(self):
         from unittest.mock import Mock
-        run = Mock(return_value="{}")
+        run = Mock(return_value=json.dumps({"id": 123, "pull_request_url": "https://api.github.com/repos/acme/example/pulls/7"}))
         for operation, endpoint in (("read", "pulls/7"), ("comments", "issues/7/comments"),
                                     ("review-comments", "pulls/7/comments"), ("reviews", "pulls/7/reviews")):
             m.model_api(CONFIG, [operation], run=run)
@@ -145,6 +145,25 @@ class GuardTests(unittest.TestCase):
                 m.model_api(CONFIG, args, run=run)
             self.assertEqual(run.call_args.args[0], ["gh", "api", "--method", "POST", "repos/acme/example/" + endpoint, "--input", "-"])
             self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"body": body.read_text()})
+
+    def test_reply_refuses_foreign_missing_malformed_or_non_root_targets(self):
+        from unittest.mock import Mock
+        (self.path / ".claude-fixer-replies").mkdir()
+        (self.path / ".claude-fixer-replies/body.txt").write_text("Fix explanation", encoding="utf-8")
+        valid = {"id": 123, "pull_request_url": "https://api.github.com/repos/acme/example/pulls/7"}
+        for target in ([], {}, valid | {"id": 124}, valid | {"id": True},
+                       valid | {"in_reply_to_id": 1}, valid | {"pull_request_url": valid["pull_request_url"] + "0"},
+                       valid | {"pull_request_url": "https://api.github.com/repos/other/repo/pulls/7"}):
+            with self.subTest(target=target), patch.object(m.Path, "cwd", return_value=self.path):
+                run = Mock(return_value=json.dumps(target))
+                with self.assertRaises(ValueError):
+                    m.model_api(CONFIG, ["reply", "123", ".claude-fixer-replies/body.txt"], run=run)
+                run.assert_called_once_with(["gh", "api", "--method", "GET", "repos/acme/example/pulls/comments/123"])
+        for error in (subprocess.CalledProcessError(1, "gh"), ValueError("invalid JSON")):
+            run = Mock(side_effect=error)
+            with patch.object(m.Path, "cwd", return_value=self.path), self.assertRaises(type(error)):
+                m.model_api(CONFIG, ["reply", "123", ".claude-fixer-replies/body.txt"], run=run)
+            self.assertEqual(run.call_count, 1)
 
     def test_action_tokenized_and_case_normalized_urls_pass_without_logging_credentials(self):
         from contextlib import redirect_stdout
