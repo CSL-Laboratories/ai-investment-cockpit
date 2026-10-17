@@ -24,10 +24,13 @@ stays import-clean enough for ``risk/`` to consume under Invariant 5.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import math
 import sys
 from collections import deque
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 
 _I64_MIN = -2**63
 _I64_MAX = 2**63 - 1
@@ -48,13 +51,21 @@ def _load_native() -> None:
     """
     global _NATIVE, SIGNALS_BACKEND
     if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("SIGNALS_BACKEND=%s", SIGNALS_BACKEND)
         return
     import cockpit_quant as native
 
-    if not all(hasattr(native, name) for name in ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")):
-        return
+    required = ("EwmaCore", "ZScoreCore", "OfiCore", "BetaCore")
+    missing = [name for name in required if not hasattr(native, name)]
+    if missing:
+        # The module was found. A partial wheel is a broken install, not a
+        # reason to keep trading on the Python path without saying so.
+        raise ImportError(
+            "cockpit_quant is installed but does not provide " + ", ".join(missing)
+        )
     _NATIVE = native
     SIGNALS_BACKEND = "rust"
+    log.info("SIGNALS_BACKEND=%s", SIGNALS_BACKEND)
 
 
 def _rust_window(window: int) -> bool:
@@ -82,6 +93,9 @@ class EwmaVolatility:
     _core: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.lam, bool) and isinstance(self.lam, (int, float)):
+            if not (0.0 < self.lam < 1.0):
+                raise ValueError(f"lam must be in (0, 1), got {self.lam}")
         native = _NATIVE
         if (
             native is not None

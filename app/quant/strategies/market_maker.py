@@ -192,7 +192,9 @@ class MarketMaker(Strategy):
         """Log-return volatility -> price volatility in TICKS. The unit conversion that,
         omitted, rescales the entire model by the price level without raising anything."""
         sigma_return = self._vol.value
-        if sigma_return is None:
+        if sigma_return is None or not math.isfinite(sigma_return):
+            # A NaN volatility is not a number the skew can clamp. ``nan``
+            # comparisons are false, so the quote would pin at +max skew.
             return None
         return sigma_return * mid_ticks
 

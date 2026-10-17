@@ -15,6 +15,7 @@ SAY SO, rather than returning a number that reads as confidence.
 """
 from __future__ import annotations
 
+import logging
 import math
 
 import pytest
@@ -23,6 +24,20 @@ from quant.signals import EwmaVolatility, OrderFlowImbalance, RollingBeta, Rolli
 
 
 # ---- volatility ------------------------------------------------------------------------
+
+
+def test_lambda_outside_the_open_unit_interval_is_refused():
+    for lam in (0.0, 1.0, 1.5, -0.5, float("nan"), float("inf"), 1):
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            EwmaVolatility(lam=lam)
+
+
+def test_signals_backend_is_logged(caplog):
+    from quant import signals
+
+    with caplog.at_level(logging.INFO, logger="quant.signals"):
+        signals._load_native()
+    assert f"SIGNALS_BACKEND={signals.SIGNALS_BACKEND}" in caplog.text
 
 
 def test_volatility_is_none_until_warm_rather_than_zero():

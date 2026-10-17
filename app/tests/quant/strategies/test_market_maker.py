@@ -17,6 +17,8 @@ The properties pinned, in order of how badly getting them wrong hurts:
 """
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from quant.events import Side
@@ -50,6 +52,17 @@ def test_a_warm_model_does_quote():
     mm = _maker()
     _warm(mm)
     assert mm.quotes(context(snapshot())) is not None
+
+
+def test_a_non_finite_volatility_refuses_to_quote():
+    """A NaN sigma fails every comparison, so the skew clamp would pin at +max."""
+    mm = _maker()
+    _warm(mm)
+    ctx = context(snapshot(), positions={"TEST": 0})
+    assert mm.quotes(ctx) is not None
+    mm._vol.update(float("nan"))
+    assert mm._vol.value is not None and math.isnan(mm._vol.value)
+    assert mm.quotes(ctx) is None
 
 
 def test_a_one_sided_book_produces_no_quotes():

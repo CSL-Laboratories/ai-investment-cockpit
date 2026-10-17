@@ -28,8 +28,14 @@ from quant.signals import (
     RollingZScore,
 )
 
+# The rust.yml job sets this so a wheel that installs but does not activate
+# fails the job. Hosted Python gates leave it unset and skip.
+_REQUIRE_RUST = os.environ.get("COCKPIT_REQUIRE_RUST") == "1"
+if _REQUIRE_RUST and SIGNALS_BACKEND != "rust":
+    raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but the signals backend is python")
+
 pytestmark = pytest.mark.skipif(
-    SIGNALS_BACKEND != "rust",
+    not _REQUIRE_RUST and SIGNALS_BACKEND != "rust",
     reason="cockpit_quant signals extension is not installed",
 )
 
@@ -99,13 +105,11 @@ def test_ewma_replay_matches_the_python_loop():
 
 
 def test_ewma_non_float_inputs_match_python():
-    integer = EwmaVolatility(lam=1)
-    assert integer._core is None
-    twin = EwmaVolatility(lam=1)
-    twin._core = None
+    rust, python = _pair(EwmaVolatility, lam=0.94)
     for price in (100, 110, 90, True, Decimal("100")):
-        assert integer.update(price) == twin.update(price)
-        assert integer.value == twin.value
+        assert rust.update(price) == python.update(price)
+        assert rust.value == python.value
+    assert rust._core is None
 
     rust, python = _pair(EwmaVolatility, lam=0.94)
     for price in (100.0, 1e308):
@@ -274,16 +278,10 @@ def test_constant_window_and_compensated_sum_match_python():
         assert partial_p.mean == 1.2
 
 
-def test_invalid_lambda_raises_the_python_domain_error():
-    rust, python = _pair(EwmaVolatility, lam=1.5)
-    rust.update(100.0)
-    python.update(100.0)
-    rust.update(101.0)
-    python.update(101.0)
-    with pytest.raises(ValueError, match="math domain error"):
-        rust.update(100.0)
-    with pytest.raises(ValueError, match="math domain error"):
-        python.update(100.0)
+def test_invalid_lambda_is_refused_at_construction():
+    for lam in (1.5, 1.0, 0.0, -0.5):
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            EwmaVolatility(lam=lam)
 
 
 def test_mutating_lambda_returns_to_python():
@@ -488,6 +486,37 @@ def test_broken_extension_import_is_not_swallowed():
     ran = _python(script)
     assert ran.returncode != 0
     assert "broken extension" in ran.stderr
+
+
+def test_partial_extension_is_not_a_silent_python_fallback():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                return types.ModuleType("cockpit_quant")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.signals
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "EwmaCore" in ran.stderr
 
 
 def test_missing_extension_stays_on_python():
