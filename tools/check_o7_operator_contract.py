@@ -379,6 +379,18 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
         status_code = status.get("const") if isinstance(status, dict) else None
         if status_code not in RESULT_STATUSES:
             raise ContractError(f"schema result fields are not per status for {command}")
+        condition = clause.get("if")
+        command_schema = properties.get("command")
+        if (
+            not isinstance(condition, dict)
+            or set(condition) != {"properties", "required"}
+            or set(condition.get("required") or []) != {"command", "status_code"}
+            or not isinstance(command_schema, dict)
+            or set(command_schema) != {"const"}
+            or not isinstance(status, dict)
+            or set(status) != {"const"}
+        ):
+            raise ContractError(f"schema result clause cannot apply for {command}")
         by_status = found.setdefault(command, {})
         if status_code in by_status:
             raise ContractError(f"schema result fields repeated for {command}")

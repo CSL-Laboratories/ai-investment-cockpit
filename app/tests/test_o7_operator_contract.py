@@ -592,6 +592,25 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result fields drifted for operator.evidence.inspect" in stderr
+    unreachable = tmp_path / "unreachable"
+    shutil.copytree(root, unreachable)
+    schema_path = unreachable / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    patched = False
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        status = properties.get("status_code", {}).get("const") if isinstance(properties, dict) else None
+        if command == "operator.evidence.inspect" and status == "refused":
+            clause["if"]["required"] = ["command", "status_code", "missing_field"]
+            patched = True
+    assert patched
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(unreachable, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(unreachable)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result clause cannot apply for operator.evidence.inspect" in stderr
 
 
 def test_reconciled_result_cannot_carry_unknown_orders() -> None:
