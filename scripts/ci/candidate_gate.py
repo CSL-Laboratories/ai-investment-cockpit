@@ -5,6 +5,7 @@ Unknown POST outcomes remain reserved until independently observed. No timed res
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from types import SimpleNamespace
@@ -121,6 +122,87 @@ class Coordinator:
             lambda repo, number: self.gh.delete_read_token(f"repos/{repo}/issues/{number}/labels/ci:full"),
             lambda repo, number, body: self.gh.post_read_token(f"repos/{repo}/issues/{number}/comments", {"body": body}),
         )
+
+    def head_snapshot(self):
+        """Human handoff needs a live head, not a mergeable READY candidate."""
+        def identity(pr):
+            head = pr.get("head") or {}
+            repo = head.get("repo") or {}
+            if (pr.get("number") != int(self.number) or not candidate_api.positive(pr.get("id"))
+                    or repo.get("full_name") != self.repo or not candidate_api.positive(repo.get("id"))
+                    or not candidate_api.sha(head.get("sha")) or not candidate_api.safe_ref(head.get("ref"))):
+                raise ValueError("invalid mediation head identity")
+            return (pr["id"], repo["id"], head["sha"], head["ref"], pr.get("state"), pr.get("draft"))
+
+        path = f"{self.prefix}/pulls/{self.number}"
+        pr = self.gh.get(path)
+        key = identity(pr)
+        def live_ref():
+            ref = self.gh.get(f"{self.prefix}/git/ref/heads/{key[3]}")
+            if (ref.get("ref") != f"refs/heads/{key[3]}"
+                    or (ref.get("object") or {}).get("type") != "commit"
+                    or (ref.get("object") or {}).get("sha") != key[2]):
+                raise ValueError("mediation head ref changed")
+        live_ref()
+        comments = self.comments()
+        reviews = self.listing(f"{path}/reviews")
+        events = self.listing(f"{self.issue}/events")
+        held = human_hold(pr, reviews)
+        held |= bool(self.receipts.pending_ci_intent(events, comments))
+        held |= self.receipts.ci_label_decision(events, comments) == "preserve-human-removal"
+        # Pending findings may be exactly why a human handoff is needed. They
+        # block READY, but do not grant or deny this separate no-CI action.
+        live_ref()
+        if identity(self.gh.get(path)) != key:
+            raise ValueError("mediation head changed during snapshot")
+        return key, comments, reviews, held
+
+    def fresh_mediate(self, identity, review, pause):
+        current, comments, reviews, held = self.head_snapshot()
+        if (current != identity or held or candidate_api.head_mediate_review(reviews, current[2]) != review
+                or self.receipts.latest_pause_id(comments, current[2]) != pause):
+            raise ValueError("MEDIATE no longer current")
+        self.unedited_review(review)
+        current, comments, reviews, held = self.head_snapshot()
+        if (current != identity or held or candidate_api.head_mediate_review(reviews, current[2]) != review
+                or self.receipts.latest_pause_id(comments, current[2]) != pause):
+            raise ValueError("MEDIATE changed during review metadata validation")
+        return comments, reviews
+
+    def mediate(self):
+        pr = self.gh.get(f"{self.prefix}/pulls/{self.number}")
+        if pr.get("state") != "open" or pr.get("draft") is not False:
+            return None
+        identity, comments, reviews, held = self.head_snapshot()
+        if held:
+            return None
+        review = candidate_api.head_mediate_review(reviews, identity[2])
+        if not review:
+            return None
+        head = identity[2]
+        pause = self.receipts.latest_pause_id(comments, head)
+        nonce = hashlib.sha256(f"{head}:{review['id']}:{pause}".encode()).hexdigest()[:32]
+        self.revoke(SimpleNamespace(head=head))
+        comments, reviews = self.fresh_mediate(identity, review, pause)
+        completed = {x.get("nonce") for x in self.journal(comments, "mediate")}
+        if nonce in completed:
+            return "mediate-already-recorded"
+        aborted = {x.get("intent") for x in self.journal(comments, "mediate-aborted")}
+        if any(x.get("nonce") not in completed and x["id"] not in aborted
+               for x in self.journal(comments, "mediate-intent")):
+            return "mediate-delivery-uncertain"
+        intent = self.record("mediate-intent", {"head": head, "review": review["id"], "pause": pause, "nonce": nonce})
+        try:
+            comments, reviews = self.fresh_mediate(identity, review, pause)
+        except Exception:
+            self.record("mediate-aborted", {"intent": intent["id"]})
+            raise
+        logs = self.legacy._act("MEDIATE", self.repo, self.number, head,
+            self.legacy.trusted_comments(comments, self.legacy.marker_authors(self.gh)),
+            self.legacy.utc_day(), self.gh, reviews)
+        if not any("mediate=retry" in line for line in logs):
+            self.record("mediate", {"head": head, "review": review["id"], "pause": pause, "nonce": nonce})
+        return "\n".join(logs)
 
     def ineligible(self):
         """Invalidate owned legacy READY even when no merge candidate exists."""
@@ -272,6 +354,9 @@ class Coordinator:
         return "success" if complete else "pending-or-failed"
 
     def reconcile(self):
+        mediation = self.mediate()
+        if mediation is not None:
+            return mediation
         ineligible = self.ineligible()
         if ineligible:
             return ineligible
@@ -286,28 +371,6 @@ class Coordinator:
         verdict = candidate_api.candidate_verdict(reviews, candidate, request) if request else ""
         if verdict:
             self.unedited_review(candidate_api.candidate_review(reviews, candidate, request))
-        if not blocked and verdict == "MEDIATE":
-            self.revoke(candidate)
-            if any(x.get("candidate") == candidate.key and x.get("nonce") == request["nonce"]
-                   for x in self.journal(comments, "mediate")):
-                return "mediate-already-recorded"
-            completed = {x.get("nonce") for x in self.journal(comments, "mediate")}
-            aborted = {x.get("intent") for x in self.journal(comments, "mediate-aborted")}
-            if any(x.get("nonce") not in completed and x["id"] not in aborted for x in self.journal(comments, "mediate-intent")):
-                return "mediate-delivery-uncertain"
-            self.fresh(candidate, request, "MEDIATE")
-            intent = self.record("mediate-intent", {"candidate": candidate.key, "nonce": request["nonce"]})
-            try:
-                refreshed, _events = self.fresh(candidate, request, "MEDIATE")
-            except Exception:
-                self.record("mediate-aborted", {"intent": intent["id"]})
-                raise
-            logs = self.legacy._act("MEDIATE", self.repo, self.number, candidate.head,
-                self.legacy.trusted_comments(refreshed, self.legacy.marker_authors(self.gh)),
-                self.legacy.utc_day(), self.gh, reviews)
-            if not any("mediate=retry" in line for line in logs):
-                self.record("mediate", {"candidate": candidate.key, "nonce": request["nonce"]})
-            return "\n".join(logs)
         review = candidate_api.ready_review(reviews, candidate, request) if request else None
         if blocked or not review:
             self.revoke(candidate)

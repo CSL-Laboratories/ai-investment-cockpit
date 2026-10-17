@@ -216,9 +216,9 @@ The watcher never resolves threads, pushes, or merges.
 
 ## Code Review Rules
 
-These rules apply to the **CI/fixer gate** `@codex review` with explicit
-`CODEX-CANDIDATE` and `CODEX-REQUEST` lines. Echo both exactly outside quotes or
-code fences. Review the named head, base, merge commit and tree. When that candidate is ready for full CI or needs a
+These rules apply to the **CI/fixer gate** `@codex review`. For READY, echo
+`CODEX-CANDIDATE` and `CODEX-REQUEST` exactly outside quotes or code fences and
+review the named head, base, merge commit and tree. When that candidate is ready for full CI or the current head needs a
 human decision, **end the review body with exactly one applicable verdict
 line**. When fixes are still pending, leave advisory findings without a verdict:
 
@@ -233,6 +233,8 @@ line**. When fixes are still pending, leave advisory findings without a verdict:
 - `MEDIATE` — Devin and Claude disagree or a thread needs a human. File or
   update the shared Linear `needs-decision` Triage issue per PR, titled
   `Stuck PR threads: <repo>#<PR>` (key `<!-- stuck-pr-threads:owner/repo#N -->`).
+  A genuine current-head, unquoted terminal MEDIATE does not require a mergeable
+  synthetic candidate or candidate nonce; it grants human handoff only, never CI.
   Skip if the PR is already approved. Do not wait for stuck-thread-watch (it
   only flags a needs-human phrase or a 6-hour-old Claude reply).
 

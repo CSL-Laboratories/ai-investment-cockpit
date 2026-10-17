@@ -25,6 +25,16 @@ machine journal comments fail closed. A fixer pause
 creates a new request generation. READY authorizes the full matrix before human
 approval; human approval remains a separate merge condition.
 
+MEDIATE is a separate human-handoff decision. The latest genuine, unedited Codex
+review on the current live head may end with a plain terminal `CODEX-GATE: MEDIATE`
+even when that head has no mergeable synthetic candidate. This path does not need
+candidate/nonce echoes and never authorizes READY or CI. It preserves explicit
+human holds, manual label removal and the writer lock, and binds deduplication to
+review ID, head and fixer generation. Pending fixer findings may be the reason a
+human is needed, so they do not themselves prevent this handoff. Head, review,
+hold or generation changes during verification refuse the action; a base-only
+change does not invalidate a current-head request for human help.
+
 Drafts, human changes requested, `hold`, `ci:hold`, `do-not-merge` and
 `needs-decision` labels, pending genuine fixer findings and manual `ci:full`
 removal block delivery. Manual removal persists across heads until an explicit
@@ -76,6 +86,14 @@ automatic retries until an operator reconciles it. Candidate workflow queues kee
 pending deliveries rather than allowing a delayed duplicate to evict an earlier
 nonce-bearing run. Workflow history is filtered to the exact head before the
 bounded pagination check.
+
+Base-only movement is discovered automatically by the existing best-effort
+ten-minute scheduled scan; GitHub need not emit a PR synchronize event for it.
+An owner can also dispatch the gate with the PR number for earlier reconciliation.
+A new candidate needs a new nonce-bound READY before its full matrices start.
+The scan does not silently reuse old success, re-add a manually removed label,
+or redispatch failed/uncertain runs. Retargeting a PR also triggers reconciliation
+through its edited event. Schedule latency is not a guaranteed reaction time.
 
 ## Deployment boundary
 

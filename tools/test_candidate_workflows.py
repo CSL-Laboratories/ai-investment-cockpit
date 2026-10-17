@@ -96,6 +96,51 @@ class CandidateWorkflowTests(unittest.TestCase):
             self.assertEqual(running, 'active')
             self.assertEqual(pending, ['approved-pending', 'delayed-duplicate'])
 
+    def test_ordinary_candidate_manual_and_label_deliveries_cannot_cancel_each_other(self):
+        candidate_fields = ('candidate_id', 'pr_base_sha', 'merge_tree_sha', 'dispatch_nonce')
+        common = {'github.event.pull_request.number': 166,
+                  'github.ref': 'refs/heads/feature', 'inputs.scope': 'full'}
+        ordinary = {**common, 'github.event_name': 'pull_request'}
+        manual = {**common, 'github.event_name': 'workflow_dispatch'}
+        label = {**manual, 'inputs.pr_number': '166', 'inputs.pr_head_sha': FIELDS['pr_head_sha'],
+                 'inputs.merge_sha': FIELDS['merge_sha']}
+        for doc in (self.ci, self.rust):
+            # Every nonempty subset of candidate-specific fields must isolate
+            # even a malformed delivery before its validation step can execute.
+            for present in itertools.product((False, True), repeat=len(candidate_fields)):
+                if not any(present):
+                    continue
+                for legacy in (manual, label):
+                    candidate = {**legacy, **{f'inputs.{field}': FIELDS[field]
+                                             for field, supplied in zip(candidate_fields, present)
+                                             if supplied}}
+                    policy = doc['concurrency']
+                    self.assertFalse(evaluate(policy['cancel-in-progress'], **candidate))
+                    self.assertEqual(evaluate(policy['queue'], **candidate), 'max')
+                    deliveries = [(name, concurrency_group(doc, **context),
+                                   evaluate(policy['cancel-in-progress'], **context))
+                                  for name, context in [('ordinary', ordinary), ('candidate', candidate),
+                                                        ('manual', manual), ('label', label)]]
+                    for arrivals in itertools.permutations(deliveries):
+                        running, pending, canceled = {}, {}, []
+                        for name, group, cancel in arrivals:
+                            if group not in running:
+                                running[group] = name
+                            elif cancel:
+                                canceled.append(running[group])
+                                running[group] = name
+                            else:
+                                pending.setdefault(group, []).append(name)
+                        self.assertEqual(canceled, [], arrivals)
+                        self.assertEqual(set(running.values()), {'ordinary', 'candidate', 'manual', 'label'})
+                        self.assertEqual(pending, {})
+
+    def test_existing_required_check_names_remain_exact(self):
+        self.assertEqual(self.ci['jobs']['linux-gates']['name'], 'linux-gates')
+        self.assertEqual(self.ci['jobs']['queue-gates']['name'], 'queue-gates')
+        self.assertEqual(self.rust['jobs']['rust-gates']['name'], 'rust-gates')
+        self.assertEqual(self.ci['jobs']['candidate-ci-gates']['name'], 'candidate-ci-gates')
+
     def test_live_validation_runs_after_each_exact_checkout_before_test_installation(self):
         for doc, jobs in [(self.ci, ('filter', 'linux', 'windows', 'macos')),
                           (self.rust, ('filter', 'rust-book'))]:

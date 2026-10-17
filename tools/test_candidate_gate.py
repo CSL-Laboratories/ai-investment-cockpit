@@ -114,6 +114,7 @@ class FakeGitHub:
         self.graphql_node_overrides = {}
         self.graphql_error = None
         self.on_graphql = None
+        self.on_merge_get = None
         self.run_queries = []
 
     def add_comment(self, body, user=None):
@@ -137,10 +138,12 @@ class FakeGitHub:
                 self.on_pr_get(self.pr_reads)
             return copy.deepcopy(self.pr)
         if path.startswith(f"{PREFIX}/git/commits/"):
+            if self.on_merge_get:
+                self.on_merge_get()
             return copy.deepcopy(self.commit)
         if path.startswith(f"{PREFIX}/git/ref/heads/"):
             ref = path.removeprefix(f"{PREFIX}/git/ref/heads/")
-            side = next(side for side in ("base", "head") if self.pr[side]["ref"] == ref)
+            side = next(side for side in ("base", "head") if (self.pr.get(side) or {}).get("ref") == ref)
             return {"ref": f"refs/heads/{ref}", "object": {"type": "commit",
                     "sha": self.live_refs.get(ref, self.pr[side]["sha"])}}
         listing = {f"{PREFIX}/issues/{PR}/comments": self.comments,
@@ -254,6 +257,14 @@ class CandidateCoordinatorTests(unittest.TestCase):
             "body": f"CODEX-CANDIDATE: {request['candidate']}\nCODEX-REQUEST: {request['nonce']}\nCODEX-GATE: READY"})
         return request
 
+    def prime_head_mediate(self):
+        review = {"id": 5000, "node_id": "PRR_test_5000", "state": "COMMENTED",
+            "user": {"id": gate.candidate_api.CODEX_ID, "login": gate.candidate_api.CODEX_LOGIN, "type": "Bot"},
+            "commit_id": self.gh.pr["head"]["sha"], "submitted_at": "2026-10-16T00:01:00Z",
+            "body": "A human decision is needed.\nCODEX-GATE: MEDIATE"}
+        self.gh.reviews.append(review)
+        return review
+
     def dispatch(self):
         self.prime_ready()
         result = json.loads(self.reconcile())
@@ -311,7 +322,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.gh.mentions), 1)
 
     def test_successful_mediate_is_recorded_once_across_reconciliations(self):
-        request = self.prime_ready()
+        self.prime_ready()
         self.gh.reviews[-1]["body"] = self.gh.reviews[-1]["body"].replace(
             "CODEX-GATE: READY", "CODEX-GATE: MEDIATE")
         self.assertEqual(self.reconcile(), "mediation-enqueued")
@@ -320,8 +331,10 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.legacy._act.assert_called_once()
         records = self.journal("mediate")
         self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["candidate"], request["candidate"])
-        self.assertEqual(records[0]["nonce"], request["nonce"])
+        self.assertEqual(records[0]["head"], HEAD)
+        self.assertEqual(records[0]["review"], self.gh.reviews[-1]["id"])
+        self.assertEqual(records[0]["pause"], 0)
+        self.assertEqual(records[0]["nonce"], self.journal("mediate-intent")[0]["nonce"])
         self.assertEqual(self.gh.dispatches, [])
 
     def test_mediate_retry_outcome_is_uncertain_and_never_automatically_repeated(self):
@@ -339,8 +352,8 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.journal("mediate-intent")), 1)
         self.assertEqual(self.gh.dispatches, [])
 
-    def test_mediate_cannot_bypass_owner_hold_or_fixer_pending(self):
-        for blocker in ("hold", "fixer"):
+    def test_mediate_cannot_bypass_owner_hold_manual_removal_or_pending_label_intent(self):
+        for blocker in ("hold", "manual_removal", "label_pending"):
             with self.subTest(blocker=blocker):
                 self.setUp()
                 self.prime_ready()
@@ -349,7 +362,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
                 if blocker == "hold":
                     self.gh.pr["labels"] = [{"name": "hold"}]
                 else:
-                    self.receipts.fixer_pending = True
+                    setattr(self.receipts, blocker, True)
                 self.assertEqual(self.reconcile(), "held-or-fixer-pending")
                 self.legacy._act.assert_not_called()
                 self.assertEqual(self.gh.dispatches, [])
@@ -518,9 +531,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
 
     def test_candidate_drift_during_snapshot_fails_closed(self):
         self.prime_ready()
-        # Eligibility read, then the resolver's opening and closing PR reads.
-        changed_at = self.gh.pr_reads + 3
-        self.gh.on_pr_get = lambda count: self.gh.drift("base") if count == changed_at else None
+        self.gh.on_merge_get = lambda: self.gh.drift("base")
         with self.assertRaises(ValueError):
             self.reconcile()
         self.assertEqual(self.gh.dispatches, [])
@@ -867,8 +878,8 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.journal("mediate-intent")), 1)
 
     def mutate_state(self, mutation):
-        if mutation == "base":
-            self.gh.drift("base")
+        if mutation in ("head", "base"):
+            self.gh.drift(mutation)
         elif mutation == "hold":
             self.gh.pr["labels"] = [{"name": "hold"}]
         elif mutation == "pause":
@@ -878,7 +889,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
 
     def test_graphql_time_state_changes_cannot_reach_ready_or_mediate_side_effect(self):
         for verdict in ("READY", "MEDIATE"):
-            for mutation in ("base", "hold", "pause"):
+            for mutation in (("base", "hold", "pause") if verdict == "READY" else ("head", "hold", "pause")):
                 with self.subTest(verdict=verdict, mutation=mutation):
                     self.setUp()
                     self.prime_ready()
@@ -909,7 +920,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
     def test_final_graphql_after_reservation_is_followed_by_closing_state_check(self):
         for verdict, intent_kind, aborted_kind in (("READY", "dispatch", "aborted"),
                                                    ("MEDIATE", "mediate-intent", "mediate-aborted")):
-            for mutation in ("base", "hold", "pause"):
+            for mutation in (("base", "hold", "pause") if verdict == "READY" else ("head", "hold", "pause")):
                 with self.subTest(verdict=verdict, mutation=mutation):
                     self.setUp()
                     self.prime_ready()
@@ -929,7 +940,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
                     self.assertEqual(len(self.journal(aborted_kind)), 1)
 
     def test_mediate_intent_record_time_mutation_stops_before_action(self):
-        for mutation in ("base", "hold", "pause"):
+        for mutation in ("head", "hold", "pause"):
             with self.subTest(mutation=mutation):
                 self.setUp()
                 self.prime_ready()
@@ -985,6 +996,123 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(result["full_matrix"]["ci"], "rejection-budget-exhausted")
         self.assertFalse(result["qualified"])
         self.assertEqual([kind for kind, _ in self.gh.dispatches], ["rust"])
+
+    def test_genuine_head_mediate_needs_no_request_or_mergeable_candidate(self):
+        for mergeable in (False, None):
+            with self.subTest(mergeable=mergeable):
+                self.setUp()
+                self.gh.pr.update(mergeable=mergeable, merge_commit_sha=None)
+                self.prime_head_mediate()
+                self.assertEqual(self.reconcile(), "mediation-enqueued")
+                self.legacy._act.assert_called_once_with("MEDIATE", REPO, str(PR), HEAD, [],
+                    "2026-10-16", self.gh, self.gh.reviews)
+                self.assertEqual(self.journal("request"), [])
+                self.assertEqual(self.gh.mentions, [])
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_head_mediate_allows_pending_fixer_findings_and_pre_pause_review(self):
+        self.prime_head_mediate()
+        self.receipts.fixer_pending = True
+        self.receipts.pause = 7
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.assertEqual(self.reconcile(), "mediation-enqueued")
+        self.legacy._act.assert_called_once()
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertEqual(self.gh.mentions, [])
+
+    def test_head_mediate_does_not_read_candidate_base_or_merge_evidence(self):
+        self.prime_head_mediate()
+        self.gh.pr.update(base=None, mergeable=None, merge_commit_sha=None)
+        self.gh.on_merge_get = Mock(side_effect=AssertionError("MEDIATE must not resolve merge tree"))
+        self.assertEqual(self.reconcile(), "mediation-enqueued")
+        self.gh.on_merge_get.assert_not_called()
+        self.legacy._act.assert_called_once()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_base_only_drift_does_not_suppress_head_mediate(self):
+        for boundary in ("before", "graphql", "intent"):
+            with self.subTest(boundary=boundary):
+                self.setUp()
+                self.prime_head_mediate()
+                if boundary == "before":
+                    self.gh.drift("base")
+                elif boundary == "graphql":
+                    self.gh.on_graphql = lambda: self.gh.drift("base")
+                else:
+                    self.gh.on_record = lambda body: self.gh.drift("base") if "candidate-mediate-intent:" in body else None
+                self.assertEqual(self.reconcile(), "mediation-enqueued")
+                self.legacy._act.assert_called_once()
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_base_drift_after_completed_head_mediate_does_not_repeat_action(self):
+        self.prime_head_mediate()
+        self.assertEqual(self.reconcile(), "mediation-enqueued")
+        self.gh.drift("base")
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.assertEqual(self.reconcile(), "mediate-already-recorded")
+        self.legacy._act.assert_called_once()
+
+    def test_base_drift_cannot_release_uncertain_head_mediate_delivery(self):
+        self.prime_head_mediate()
+        self.legacy._act.side_effect = TimeoutError("unknown handoff delivery")
+        with self.assertRaises(TimeoutError):
+            self.reconcile()
+        self.gh.drift("base")
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.assertEqual(self.reconcile(), "mediate-delivery-uncertain")
+        self.legacy._act.assert_called_once()
+
+    def test_stale_cached_head_mediate_refuses_live_branch_head_mismatch(self):
+        self.prime_head_mediate()
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.gh.live_refs[self.gh.pr["head"]["ref"]] = "e" * 40
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_held_malformed_review_still_revokes_owned_ready(self):
+        self.prime_head_mediate()
+        self.gh.reviews[-1].update(submitted_at=None, node_id=None)
+        self.gh.pr["labels"] = [{"name": "hold"}]
+        self.gh.graphql_error = OSError("unavailable provenance")
+        self.assertEqual(self.reconcile(), "held-or-fixer-pending")
+        self.receipts.revoke_owned_ci.assert_called_once()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_closed_pr_with_deleted_head_cleans_up_without_ref_lookup(self):
+        self.prime_head_mediate()
+        self.gh.pr.update(state="closed", mergeable=False, merge_commit_sha=None)
+        original_get = self.gh.get
+
+        def deleted_head(path):
+            if "/git/ref/heads/" in path:
+                raise AssertionError("Closed PR cleanup must not resolve deleted head")
+            return original_get(path)
+
+        self.gh.get = deleted_head
+        self.assertEqual(self.reconcile(), "ineligible-candidate")
+        self.receipts.revoke_owned_ci.assert_called_once()
+        self.legacy._act.assert_not_called()
+
+    def test_nonmergeable_ready_never_inherits_head_only_mediate_authority(self):
+        for mergeable in (False, None):
+            with self.subTest(mergeable=mergeable):
+                self.setUp()
+                self.prime_ready()
+                self.gh.pr.update(mergeable=mergeable, merge_commit_sha=None)
+                expected = "ineligible-candidate" if mergeable is False else "awaiting-mergeability"
+                self.assertEqual(self.reconcile(), expected)
+                self.legacy._act.assert_not_called()
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_genuine_codex_changes_requested_can_handoff_current_head(self):
+        self.prime_head_mediate()["state"] = "CHANGES_REQUESTED"
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.assertEqual(self.reconcile(), "mediation-enqueued")
+        self.legacy._act.assert_called_once()
+        self.assertEqual(self.gh.dispatches, [])
 
 
 if __name__ == "__main__":

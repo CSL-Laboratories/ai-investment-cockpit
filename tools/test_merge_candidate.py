@@ -279,6 +279,19 @@ class ReviewTests(unittest.TestCase):
                         '```\n' + '\n'.join(body.splitlines()[:2]) + '\n```\nCODEX-GATE: READY']:
             self.assertIsNone(m.ready_review([{**review(), 'body': invalid}], candidate(), request()))
 
+    def test_quoted_ready_examples_and_negative_tail_cannot_authorize_ci(self):
+        body = review()['body']
+        for invalid in ['\n'.join('> ' + line for line in body.splitlines()),
+                        body.replace('CODEX-GATE: READY', '`CODEX-GATE: READY`'),
+                        body.replace('CODEX-GATE: READY', '"CODEX-GATE: READY"'),
+                        '```example\n' + body + '\n```',
+                        body + '\nDo not approve.', body + '\n> Do not approve.',
+                        body + '\n```\nDo not approve.\n```',
+                        body + '\n    Do not approve.',
+                        body.replace('CODEX-GATE: READY', 'CODEX-GATE: READY — do not approve')]:
+            with self.subTest(body=invalid):
+                self.assertIsNone(m.ready_review([{**review(), 'body': invalid}], candidate(), request()))
+
     def test_inline_backtick_span_does_not_open_a_fence(self):
         for prefix in ['```foo```', '````foo````', '   ```foo```']:
             with self.subTest(prefix=prefix):
@@ -328,6 +341,62 @@ class ReviewTests(unittest.TestCase):
                 m.ready_review([review()], candidate(), {**request(), **change})
         with self.assertRaises(m.CandidateError):
             m.ready_review([{**review(), 'submitted_at': None}], candidate(), request())
+
+
+class HeadMediateTests(unittest.TestCase):
+    @staticmethod
+    def mediate():
+        return {**review(), 'body': 'A human decision is needed.\nCODEX-GATE: MEDIATE'}
+
+    def test_handoff_needs_only_current_head_not_mergeability_or_request(self):
+        r = self.mediate()
+        self.assertEqual(m.head_mediate_review([r], H), r)
+        self.assertIsNone(m.head_mediate_review([review()], H))
+
+    def test_completed_change_request_can_mediate_but_never_authorize_ready(self):
+        r = {**self.mediate(), 'state': 'CHANGES_REQUESTED'}
+        self.assertEqual(m.head_mediate_review([r], H), r)
+        self.assertIsNone(m.ready_review([{**review(), 'state': 'CHANGES_REQUESTED'}], candidate(), request()))
+
+    def test_old_candidate_markers_do_not_block_human_handoff_or_grant_ready(self):
+        r = {**self.mediate(), 'body': 'CODEX-CANDIDATE: old\nCODEX-REQUEST: old\nCODEX-GATE: MEDIATE'}
+        self.assertEqual(m.head_mediate_review([r], H), r)
+        self.assertIsNone(m.ready_review([r], candidate(), request()))
+        r['body'] = r['body'].replace('MEDIATE', 'READY')
+        self.assertIsNone(m.head_mediate_review([r], H))
+        self.assertIsNone(m.ready_review([r], candidate(), request()))
+
+    def test_wrong_head_or_bot_cannot_request_handoff(self):
+        r = self.mediate()
+        self.assertIsNone(m.head_mediate_review([r], X))
+        for field, value in [('id', 1), ('login', 'lookalike[bot]'), ('type', 'User')]:
+            forged = copy.deepcopy(r)
+            forged['user'][field] = value
+            self.assertIsNone(m.head_mediate_review([forged], H))
+
+    def test_later_negative_pending_or_ready_review_supersedes_mediate(self):
+        for change in [{'body': 'Findings remain.'}, {'state': 'PENDING'},
+                       {'state': 'DISMISSED'}, {'body': 'CODEX-GATE: READY'}]:
+            newer = {**review(4), 'submitted_at': '2026-10-16T23:00:02Z', **change}
+            self.assertIsNone(m.head_mediate_review([self.mediate(), newer], H))
+
+    def test_quoted_fenced_indented_and_trailing_mediate_are_not_handoffs(self):
+        marker = 'CODEX-GATE: MEDIATE'
+        for body in ['> ' + marker, '"' + marker + '"', '`' + marker + '`',
+                     '```\n' + marker + '\n```', '````\n```\n' + marker,
+                     '    ' + marker, '\t' + marker,
+                     marker + '\nDo not approve.', marker + '\n> Do not approve.',
+                     marker + '\n' + marker]:
+            with self.subTest(body=body):
+                self.assertIsNone(m.head_mediate_review([{**self.mediate(), 'body': body}], H))
+
+    def test_ambiguous_latest_reviews_and_conflicting_records_refuse(self):
+        r = self.mediate()
+        self.assertIsNone(m.head_mediate_review([r, {**r, 'id': 7}], H))
+        with self.assertRaises(m.CandidateError):
+            m.head_mediate_review([r, {**r, 'body': 'Conflicting record'}], H)
+        with self.assertRaises(m.CandidateError):
+            m.head_mediate_review([r], 'invalid')
 
 
 class RunTests(unittest.TestCase):

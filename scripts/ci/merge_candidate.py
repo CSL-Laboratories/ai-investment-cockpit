@@ -149,18 +149,10 @@ def timestamp(value):
     return stamp
 
 
-def _candidate_review(reviews, candidate, request):
-    """Return latest genuine candidate verdict; request provenance is caller-owned.
-
-    Request is an authenticated coordinator record with id, candidate, nonce and
-    created_at. A new nonce is required after invalidation/retry. Same-second
-    request/review timestamps are ambiguous and cannot establish causality.
-    """
-    if (not isinstance(request, dict) or not positive(request.get('id'))
-            or request.get('candidate') != candidate.key
-            or not isinstance(request.get('nonce'), str) or not NONCE.fullmatch(request['nonce'])):
-        raise CandidateError('Invalid candidate review request')
-    requested_at = timestamp(request.get('created_at'))
+def _latest_head_review(reviews, head):
+    """Select latest genuine review first, without falling back to an older verdict."""
+    if not sha(head):
+        raise CandidateError('Invalid review head')
     if not isinstance(reviews, list):
         raise CandidateError('Incomplete review listing')
     trusted = {}
@@ -171,7 +163,7 @@ def _candidate_review(reviews, candidate, request):
         if not isinstance(user, dict) or (user.get('id'), user.get('login'), user.get('type')) != (
                 CODEX_ID, CODEX_LOGIN, 'Bot'):
             continue
-        if review.get('commit_id') != candidate.head:
+        if review.get('commit_id') != head:
             continue
         identifier = review.get('id')
         if not positive(identifier):
@@ -187,12 +179,13 @@ def _candidate_review(reviews, candidate, request):
     if sum(timestamp(r['submitted_at']) == timestamp(latest['submitted_at'])
            for r in trusted.values()) != 1:
         return None  # Same-second independent submissions have no proven causal order.
-    if (timestamp(latest['submitted_at']) <= requested_at
-            or latest.get('state') not in ('COMMENTED', 'APPROVED')):
-        return None
-    body = latest.get('body')
+    return latest
+
+
+def _terminal_verdict(body):
+    """Return plain marker lines and an exact, unquoted terminal verdict."""
     if not isinstance(body, str):
-        return None
+        return [], ''
     lines = [line for line in body.splitlines() if line.strip()]
     machine, fence = [], None
     for raw in lines:
@@ -213,13 +206,47 @@ def _candidate_review(reviews, candidate, request):
         elif not line.startswith('>'):
             line = line.strip()
             machine.append(line)
-    expected = [f'CODEX-CANDIDATE: {candidate.key}', f'CODEX-REQUEST: {request["nonce"]}']
-    if any([line for line in machine if line.startswith(prefix)] != [wanted]
-           for prefix, wanted in zip(('CODEX-CANDIDATE:', 'CODEX-REQUEST:'), expected, strict=True)):
-        return None
     verdicts = [line for line in machine if line.startswith('CODEX-GATE:')]
     if (len(verdicts) != 1 or verdicts[0] not in ('CODEX-GATE: READY', 'CODEX-GATE: MEDIATE')
             or not lines or lines[-1].strip() != verdicts[0]):
+        return machine, ''
+    return machine, verdicts[0].split(': ', 1)[1]
+
+
+def _candidate_review(reviews, candidate, request):
+    """Return latest genuine candidate verdict; request provenance is caller-owned.
+
+    Request is an authenticated coordinator record with id, candidate, nonce and
+    created_at. A new nonce is required after invalidation/retry. Same-second
+    request/review timestamps are ambiguous and cannot establish causality.
+    """
+    if (not isinstance(request, dict) or not positive(request.get('id'))
+            or request.get('candidate') != candidate.key
+            or not isinstance(request.get('nonce'), str) or not NONCE.fullmatch(request['nonce'])):
+        raise CandidateError('Invalid candidate review request')
+    requested_at = timestamp(request.get('created_at'))
+    latest = _latest_head_review(reviews, candidate.head)
+    if (latest is None or latest.get('state') not in ('COMMENTED', 'APPROVED')
+            or timestamp(latest['submitted_at']) <= requested_at):
+        return None
+    machine, verdict = _terminal_verdict(latest.get('body'))
+    expected = [f'CODEX-CANDIDATE: {candidate.key}', f'CODEX-REQUEST: {request["nonce"]}']
+    if not verdict or any([line for line in machine if line.startswith(prefix)] != [wanted]
+           for prefix, wanted in zip(('CODEX-CANDIDATE:', 'CODEX-REQUEST:'), expected, strict=True)):
+        return None
+    return latest
+
+
+def head_mediate_review(reviews, head):
+    """Validate a current-head human handoff, never READY or CI authorization.
+
+    MEDIATE does not require a mergeable synthetic candidate or a request nonce.
+    The caller verifies live PR identity, owner holds, pause generation, review
+    edit provenance and side-effect reservations before acting.
+    """
+    latest = _latest_head_review(reviews, head)
+    if (latest is None or latest.get('state') not in ('COMMENTED', 'APPROVED', 'CHANGES_REQUESTED')
+            or _terminal_verdict(latest.get('body'))[1] != 'MEDIATE'):
         return None
     return latest
 
