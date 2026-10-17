@@ -83,6 +83,14 @@ ERROR_PROPERTIES = (
     "recovery",
     "status_code",
 )
+PRESENTATION_PROPERTIES = (
+    "ansi_in_machine_output",
+    "color_only_signal",
+    "exit_code",
+    "machine_readable",
+    "rendered",
+    "text_status",
+)
 RESPONSE_REQUIRED = (
     "api_version",
     "authority_effect",
@@ -721,6 +729,14 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         or set(item_properties or {}) != set(ERROR_PROPERTIES)
     ):
         raise ContractError("response error schema accepts an authority field")
+    presentation = properties.get("presentation")
+    presentation_properties = presentation.get("properties") if isinstance(presentation, dict) else None
+    if (
+        not _object_is_closed(presentation)
+        or not _required_is(presentation, PRESENTATION_PROPERTIES)
+        or set(presentation_properties or {}) != set(PRESENTATION_PROPERTIES)
+    ):
+        raise ContractError("presentation schema accepts an authority field")
 
 
 def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -745,6 +761,12 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     claimed_profile = {**positions, "profile": {**profile, "live_authorized": True}}
     if _schema_error(validator, claimed_profile) is None:
         raise ContractError("profile schema accepts live_authorized")
+    presentation = positions.get("presentation")
+    if not isinstance(presentation, dict):
+        raise ContractError("presentation schema rejects the positions oracle")
+    claimed_presentation = {**positions, "presentation": {**presentation, "live_authorized": True}}
+    if _schema_error(validator, claimed_presentation) is None:
+        raise ContractError("presentation schema accepts live_authorized")
 
 
 def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -988,6 +1010,8 @@ def _require_closed_command_schema(schema: dict[str, Any]) -> None:
         or not _required_is(schema, COMMAND_PROPERTIES)
     ):
         raise ContractError("command schema accepts an authority field")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("command api_version is not o7.operator.v0")
 
 
 def _require_command_authority_rejected(validator: Draft202012Validator) -> None:
@@ -1018,6 +1042,8 @@ def _require_command_authority_rejected(validator: Draft202012Validator) -> None
     }
     if _schema_error(validator, omitted) is None:
         raise ContractError("command schema accepts an omitted confirmation")
+    if _schema_error(validator, {**read, "api_version": "o7.operator.v1"}) is None:
+        raise ContractError("command schema accepts o7.operator.v1")
 
 
 def _require_session_scope_schema(schema: dict[str, Any]) -> None:
@@ -1072,6 +1098,8 @@ def _require_closed_event_schema(schema: dict[str, Any]) -> None:
         or not _required_is(schema, EVENT_PROPERTIES)
     ):
         raise ContractError("event schema accepts an authority field")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("event api_version is not o7.operator.v0")
 
 
 def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
@@ -1086,6 +1114,8 @@ def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
         raise ContractError("event schema rejects a recorded stop")
     if _schema_error(validator, {**probe, "order_submitted": True}) is None:
         raise ContractError("event schema accepts order_submitted")
+    if _schema_error(validator, {**probe, "api_version": "o7.operator.v1"}) is None:
+        raise ContractError("event schema accepts o7.operator.v1")
 
 
 def _require_closed_error_schema(schema: dict[str, Any]) -> None:

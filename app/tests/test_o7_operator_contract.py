@@ -888,6 +888,75 @@ def test_embedded_error_and_api_version_stay_pinned(tmp_path: Path) -> None:
         assert message in stderr, name
 
 
+def test_presentation_and_wire_versions_stay_pinned(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    positions = copy.deepcopy(by_request["req_positions"])
+    assert CHECKER.validate_response(validator, positions, commands) is None
+    positions["presentation"] = {**positions["presentation"], "live_authorized": True}
+    assert CHECKER._schema_error(validator, positions) is not None
+    assert CHECKER.validate_response(validator, positions, commands) is not None
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    command_schema = json.loads((root / "schemas" / "operator-command.schema.json").read_text(encoding="utf-8"))
+    command_validator = CHECKER._validator(command_schema)
+    read = CHECKER._intervention_probe(
+        "operator.positions.inspect", confirmation="not_required", arguments={}
+    )
+    assert CHECKER._schema_error(command_validator, read) is None
+    assert CHECKER._schema_error(command_validator, {**read, "api_version": "o7.operator.v1"}) is not None
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    event = CHECKER._event_probe(
+        "intervention_recorded", "operator.interventions.request_stop", "ok", "visible"
+    )
+    assert CHECKER._schema_error(event_validator, event) is None
+    assert CHECKER._schema_error(event_validator, {**event, "api_version": "o7.operator.v1"}) is not None
+    cases = (
+        (
+            "open-presentation",
+            "schemas/operator-response.schema.json",
+            ("properties", "presentation", "additionalProperties"),
+            True,
+            "presentation schema accepts an authority field",
+        ),
+        (
+            "named-presentation",
+            "schemas/operator-response.schema.json",
+            ("properties", "presentation", "properties", "live_authorized"),
+            {"const": True},
+            "presentation schema accepts an authority field",
+        ),
+        (
+            "command-version",
+            "schemas/operator-command.schema.json",
+            ("properties", "api_version"),
+            {"type": "string"},
+            "command api_version is not o7.operator.v0",
+        ),
+        (
+            "event-version",
+            "schemas/operator-event.schema.json",
+            ("properties", "api_version"),
+            {"type": "string"},
+            "event api_version is not o7.operator.v0",
+        ),
+    )
+    for name, relative, path, value, message in cases:
+        widened = tmp_path / name
+        shutil.copytree(root, widened)
+        schema_path = widened / relative
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        cursor = schema
+        for key in path[:-1]:
+            cursor = cursor[key]
+        cursor[path[-1]] = value
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, relative)
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1, name
+        assert stdout == ""
+        assert message in stderr, name
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
