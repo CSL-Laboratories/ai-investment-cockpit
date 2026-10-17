@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.promotion-protocol.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "stages",
+    "promotion_authorized",
+    "strategy_activation_authorized",
+    "live",
+    "blocked_because"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.promotion-protocol.v1"},
+    "promotion_authorized": {"const": false},
+    "strategy_activation_authorized": {"const": false},
+    "stages": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "order", "authorized", "requires_prior_stage"],
+          "properties": {
+            "id": {"const": "replay"},
+            "order": {"const": 1},
+            "authorized": {"const": false},
+            "requires_prior_stage": {"type": "null"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "order", "authorized", "requires_prior_stage"],
+          "properties": {
+            "id": {"const": "demo"},
+            "order": {"const": 2},
+            "authorized": {"const": false},
+            "requires_prior_stage": {"const": "replay"}
+          }
+        }
+      ]
+    },
+    "live": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authorized", "in_this_contract"],
+      "properties": {
+        "authorized": {"const": false},
+        "in_this_contract": {"const": false}
+      }
+    },
+    "blocked_because": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {"const": "thresholds_owner_unset"},
+        {"const": "qualify_count_zero"},
+        {"const": "independent_verification_not_run"}
+      ]
+    }
+  }
+}

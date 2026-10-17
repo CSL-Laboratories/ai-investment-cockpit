@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.recorded-empty-outcome.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "retained",
+    "qualify_count",
+    "empirical_pass_claimed",
+    "screens_path",
+    "screens_sha256",
+    "latest_screen_id",
+    "latest_gate_result",
+    "latest_counts",
+    "evaluation_path",
+    "evaluation_sha256"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.recorded-empty-outcome.v1"},
+    "retained": {"type": "boolean"},
+    "qualify_count": {"type": "integer"},
+    "empirical_pass_claimed": {"type": "boolean"},
+    "screens_path": {"const": "app/feasibility/screens.v1.json"},
+    "screens_sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+    "latest_screen_id": {"const": "w24_2026_09_15_tue"},
+    "latest_gate_result": {"const": "no_pass_empty_date_not_ready"},
+    "latest_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pool", "supported_heads", "cash_parse_hits", "selection_ready", "date_ready", "cohort"],
+      "properties": {
+        "pool": {"type": "integer"},
+        "supported_heads": {"type": "integer"},
+        "cash_parse_hits": {"type": "integer"},
+        "selection_ready": {"type": "integer"},
+        "date_ready": {"type": "integer"},
+        "cohort": {"type": "integer"}
+      }
+    },
+    "evaluation_path": {"const": "app/feasibility/evaluation.v1.json"},
+    "evaluation_sha256": {"type": "string", "minLength": 64, "maxLength": 64}
+  }
+}

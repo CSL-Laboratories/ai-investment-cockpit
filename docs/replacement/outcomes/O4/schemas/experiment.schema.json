@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.experiment.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "design_only",
+    "data_acquisition_authorized",
+    "status",
+    "markets",
+    "hypothesis",
+    "alternatives",
+    "falsifiers",
+    "population",
+    "leakage_controls",
+    "matched_baseline",
+    "cash_flows",
+    "costs"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.experiment.v1"},
+    "experiment_id": {"const": "xm-us-equity-kalshi-demo-001"},
+    "design_only": {"const": true},
+    "data_acquisition_authorized": {"const": false},
+    "status": {"const": "not_run"},
+    "markets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"const": "us_cash_equity"},
+        {"const": "kalshi_demo_event"}
+      ]
+    },
+    "hypothesis": {"type": "string", "minLength": 1},
+    "alternatives": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "falsifiers": {
+      "type": "array",
+      "minItems": 5,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "population": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "member_ids_are_acquired_observations",
+        "tuning_member_ids",
+        "evaluation_member_ids"
+      ],
+      "properties": {
+        "status": {"const": "illustrative_design_not_acquired"},
+        "member_ids_are_acquired_observations": {"const": false},
+        "tuning_member_ids": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "evaluation_member_ids": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "leakage_controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purge", "embargo"],
+      "properties": {
+        "purge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applied", "rule"],
+          "properties": {
+            "applied": {"const": true},
+            "rule": {
+              "const": "remove_training_labels_whose_outcome_window_overlaps_the_evaluation_window"
+            }
+          }
+        },
+        "embargo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applied", "rule", "length"],
+          "properties": {
+            "applied": {"const": true},
+            "rule": {"const": "remove_post_evaluation_training_rows_for_serial_correlation"},
+            "length": {"const": "owner_unset"}
+          }
+        }
+      }
+    },
+    "matched_baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "same_population", "same_clock", "value"],
+      "properties": {
+        "kind": {"const": "cash"},
+        "same_population": {"const": true},
+        "same_clock": {"const": true},
+        "value": {"type": "null"}
+      }
+    },
+    "cash_flows": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["retained", "matched_to_baseline", "value"],
+      "properties": {
+        "retained": {"const": true},
+        "matched_to_baseline": {"const": true},
+        "value": {"type": "null"}
+      }
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction", "latency", "data", "model"],
+      "properties": {
+        "transaction": {"$ref": "#/$defs/cost"},
+        "latency": {"$ref": "#/$defs/cost"},
+        "data": {"$ref": "#/$defs/cost"},
+        "model": {"$ref": "#/$defs/cost"}
+      }
+    }
+  },
+  "$defs": {
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "amount", "unit"],
+      "properties": {
+        "status": {
+          "enum": ["retained_unmeasured", "retained_measured", "dropped"]
+        },
+        "amount": {"type": ["string", "null"]},
+        "unit": {"const": "owner_unset"}
+      }
+    }
+  }
+}

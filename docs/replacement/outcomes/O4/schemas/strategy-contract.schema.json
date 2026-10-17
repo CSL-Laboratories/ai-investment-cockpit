@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o4.strategy-contract.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "strategy_id",
+    "family_id",
+    "maturity",
+    "hypothesis",
+    "alternatives",
+    "falsifiers",
+    "parameter_variants",
+    "distinct_strategy_count",
+    "counted_as_distinct_strategies",
+    "multiple_testing_trial_count",
+    "research_quota"
+  ],
+  "properties": {
+    "schema_version": {"const": "o4.strategy-contract.v1"},
+    "strategy_id": {"const": "xm_us_equity_kalshi_demo"},
+    "family_id": {"const": "xm_us_equity_kalshi_demo"},
+    "maturity": {"const": "researched"},
+    "hypothesis": {"type": "string", "minLength": 1},
+    "alternatives": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "falsifiers": {
+      "type": "array",
+      "minItems": 5,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "parameter_variants": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["variant_id", "family_id", "counts_as_distinct_strategy"],
+        "properties": {
+          "variant_id": {"type": "string", "minLength": 1},
+          "family_id": {"const": "xm_us_equity_kalshi_demo"},
+          "counts_as_distinct_strategy": {"type": "boolean"}
+        }
+      }
+    },
+    "distinct_strategy_count": {"type": "integer", "minimum": 1},
+    "counted_as_distinct_strategies": {"type": "boolean"},
+    "multiple_testing_trial_count": {"type": "integer", "minimum": 1},
+    "research_quota": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quota_class",
+        "deep_research_runs",
+        "data_acquisition",
+        "continuation_requires_human_linear_receipt"
+      ],
+      "properties": {
+        "quota_class": {"const": "one_bounded_reconciliation_pass"},
+        "deep_research_runs": {"const": 0},
+        "data_acquisition": {"const": false},
+        "continuation_requires_human_linear_receipt": {"const": true}
+      }
+    }
+  }
+}
