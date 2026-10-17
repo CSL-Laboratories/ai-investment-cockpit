@@ -158,6 +158,171 @@ def test_multi_symbol_generation_keeps_per_symbol_sequences():
         assert seqs == list(range(1, len(seqs) + 1))
 
 
+def _require_cursor():
+    """The Rust job must compare tapes. A missing cursor is a skip only off that job."""
+    import os
+
+    require = os.environ.get("COCKPIT_REQUIRE_RUST") == "1"
+    try:
+        import cockpit_quant
+    except ImportError:
+        cockpit_quant = None
+    if cockpit_quant is not None and hasattr(cockpit_quant, "synthetic_cursor"):
+        return cockpit_quant
+    if require:
+        raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but synthetic_cursor is missing")
+    pytest.skip("synthetic_cursor is not installed")
+
+
+def test_rust_synthetic_matches_the_python_generator():
+    """The extension owns the shadow book. The events are still this generator's."""
+    _require_cursor()
+    cases = [
+        SyntheticFeed(symbols=("S",), n_events=400, seed=3),
+        SyntheticFeed(symbols=("AAA", "BBB"), n_events=300, seed=9),
+        SyntheticFeed(
+            symbols=("S",), n_events=200, seed=4,
+            params=SyntheticParams(
+                cancel_probability=0.8, trade_probability=0.2,
+                tick_volatility=1.2, depth_levels=3, target_resting_orders=12,
+            ),
+        ),
+        SyntheticFeed(symbols=("S",), n_events=1025, seed=1),
+        SyntheticFeed(symbols=("S", "S"), n_events=300, seed=5),
+    ]
+    for seed in (0, -1, 2**32, -2**63, 2**63 - 1):
+        cases.append(SyntheticFeed(symbols=("S",), n_events=30, seed=seed))
+    for feed in cases:
+        assert list(feed) == list(feed._python_events())
+
+
+def test_a_non_integer_seed_stays_on_python_and_other_overflows_raise():
+    _require_cursor()
+    for seed in (1.5, "generator"):
+        feed = SyntheticFeed(symbols=("S",), n_events=5, seed=seed)
+        assert list(feed) == list(feed._python_events())
+    huge = SyntheticFeed(symbols=("S",), n_events=2**63, seed=1)
+    with pytest.raises(OverflowError):
+        list(huge)
+    priced = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=1,
+        params=SyntheticParams(initial_ticks=2**63),
+    )
+    with pytest.raises(OverflowError):
+        list(priced)
+
+
+def test_a_price_past_i64_raises_on_both_generators():
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=20, seed=1,
+        params=SyntheticParams(initial_ticks=2**63 - 1, tick_volatility=0),
+    )
+
+    def prefix(events):
+        seen = []
+        try:
+            for event in events:
+                seen.append(event)
+        except ValueError as exc:
+            return seen, str(exc)
+        return seen, None
+
+    rust = prefix(feed)
+    python = prefix(feed._python_events())
+    assert rust == python
+    assert rust[1] is not None and "does not fit" in rust[1]
+
+
+def test_a_far_fair_matches_python_after_the_uncrossing_clamp():
+    """A fair value past 2**63 still clamps onto a resting ask, on both tapes."""
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=40, seed=4,
+        params=SyntheticParams(initial_ticks=2**63 - 1, tick_volatility=50_000),
+    )
+
+    def prefix(events):
+        seen = []
+        try:
+            for event in events:
+                seen.append(event)
+        except ValueError as exc:
+            return seen, str(exc)
+        return seen, None
+
+    assert prefix(feed) == prefix(feed._python_events())
+
+
+def test_rust_synthetic_matches_python_on_repeated_names_and_edges():
+    _require_cursor()
+    shared = SyntheticFeed(symbols=("S", "S"), n_events=40, seed=3)
+    assert list(shared) == list(shared._python_events())
+    empty = SyntheticFeed(symbols=(), n_events=0, seed=1)
+    assert list(empty) == [] == list(empty._python_events())
+    wide = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=5,
+        params=SyntheticParams(max_size=2**63 - 1),
+    )
+    assert list(wide) == list(wide._python_events())
+    nonfinite = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=5,
+        params=SyntheticParams(tick_volatility=float("nan")),
+    )
+    with pytest.raises(ValueError):
+        list(nonfinite._python_events())
+    with pytest.raises(ValueError):
+        list(nonfinite)
+
+
+def test_a_batch_keeps_events_that_preceded_an_error():
+    """A later overflow must not swallow events already drawn in that batch.
+
+    ``next_batch(0)`` also has to leave the cursor where it is. A zero limit
+    used to draw one event and shift every later read.
+    """
+    cockpit = _require_cursor()
+
+    def open_cursor(seed: int):
+        return cockpit.synthetic_cursor(
+            ["S"], 40, seed, 10_000, 0.35, 5, 0.55, 100, 1_000, 0.35, 40, 0.08,
+            10**18, 0, 0, 0, 0,
+        )
+
+    for seed in (0, 3):
+        one = open_cursor(seed)
+        singles = []
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            while True:
+                rows = one.next_batch(1)
+                if not rows:
+                    break
+                singles.extend(rows)
+        assert singles
+
+        batched = open_cursor(seed)
+        assert batched.next_batch(0) == []
+        prefix = batched.next_batch(1024)
+        assert prefix == singles
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            batched.next_batch(1)
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            next(batched)
+
+        feed = SyntheticFeed(
+            symbols=("S",), n_events=40, seed=seed,
+            params=SyntheticParams(
+                exchange_gap_ns=10**18, feed_latency_ns=0, feed_jitter_ns=0,
+                decode_latency_ns=0, decode_jitter_ns=0,
+            ),
+        )
+        seen = []
+        with pytest.raises(ValueError, match="exchange timestamp overflow"):
+            for event in feed:
+                seen.append(event.seq)
+        assert seen == list(range(1, len(singles) + 1))
+
+
 def test_a_quiet_generator_still_stabilises_depth():
     feed = SyntheticFeed(symbols=("S",), n_events=4_000, seed=8,
                          params=SyntheticParams(target_resting_orders=15))

@@ -100,6 +100,12 @@ class SyntheticFeed:
     params: SyntheticParams = field(default_factory=SyntheticParams)
 
     def __iter__(self) -> Iterator[Event]:
+        cursor = _rust_cursor(self)
+        if cursor is not None:
+            return _events_from_cursor(cursor)
+        return self._python_events()
+
+    def _python_events(self) -> Iterator[Event]:
         rng = random.Random(self.seed)
         p = self.params
         state = {
@@ -190,6 +196,8 @@ class SyntheticFeed:
             price = min(price, best_ask - 1)
         elif side is Side.SELL and best_bid is not None:
             price = max(price, best_bid + 1)
+        if price < -2**63 or price > 2**63 - 1:
+            raise ValueError(f"price {price} does not fit in a signed 64-bit integer")
 
         qty = rng.randrange(p.min_size, p.max_size + 1, 100)
         ref = s["next_ref"]
@@ -225,6 +233,8 @@ class SyntheticFeed:
         if touch is None:
             base = int(round(s["fair"]))
             touch = base + 1 if aggressor is Side.BUY else base - 1
+            if touch < -2**63 or touch > 2**63 - 1:
+                raise ValueError(f"price {touch} does not fit in a signed 64-bit integer")
         result = match(
             book,
             AggressiveOrder(order_id=f"agg{stamps['seq']}", side=aggressor, qty=qty,
@@ -244,3 +254,69 @@ class SyntheticFeed:
     @staticmethod
     def _any_resting(s: dict) -> bool:
         return len(s["book"]) > 0
+
+
+def _rust_cursor(feed: SyntheticFeed):
+    """One native event at a time, or None when the extension is not installed.
+
+    A seed ``random.Random`` accepts and the i64 binding does not — a float, a
+    str, or an int outside i64 — stays on the Python generator. Any other
+    failure from a present extension is raised: a broken build must not
+    silently change the stream. The cursor keeps the book and
+    the RNG in Rust, so the first event does not wait on the rest of the tape.
+    """
+    try:
+        import cockpit_quant
+    except ImportError:
+        return None
+    open_cursor = getattr(cockpit_quant, "synthetic_cursor", None)
+    if open_cursor is None:
+        return None
+    # random.Random accepts a float or a str, and an int outside i64.
+    # PyO3's i64 binding rejects those. Anything else, including a count or
+    # a price that does not fit, is passed through and raised.
+    seed = feed.seed
+    if type(seed) is not int or seed < -2**63 or seed > 2**63 - 1:
+        return None
+    params = feed.params
+    return open_cursor(
+        list(feed.symbols),
+        feed.n_events,
+        seed,
+        params.initial_ticks,
+        params.tick_volatility,
+        params.depth_levels,
+        params.arrival_decay,
+        params.min_size,
+        params.max_size,
+        params.cancel_probability,
+        params.target_resting_orders,
+        params.trade_probability,
+        params.exchange_gap_ns,
+        params.feed_latency_ns,
+        params.feed_jitter_ns,
+        params.decode_latency_ns,
+        params.decode_jitter_ns,
+    )
+
+
+def _events_from_cursor(cursor) -> Iterator[Event]:
+    while True:
+        rows = cursor.next_batch(1024)
+        if not rows:
+            return
+        for action, symbol, seq, exchange_ts, recv_ts, ingest_ts, side, price, qty, order_ref in rows:
+            stamps = {
+                "symbol": symbol,
+                "seq": seq,
+                "exchange_ts": exchange_ts,
+                "recv_ts": recv_ts,
+                "ingest_ts": ingest_ts,
+            }
+            if action == "trade":
+                yield Trade(price_ticks=price, qty=qty, aggressor=Side(side), **stamps)
+            else:
+                yield BookUpdate(
+                    action=BookAction(action), side=Side(side), price_ticks=price,
+                    qty=qty, order_ref=order_ref, **stamps,
+                )

@@ -214,6 +214,18 @@ def _rate_deque(guards, repeats: int) -> None:
         rate_ok(1_000 + ts)
 
 
+def _python_tape(n: int) -> None:
+    from quant.feed.synthetic import SyntheticFeed
+
+    list(SyntheticFeed(symbols=("S",), n_events=n, seed=3)._python_events())
+
+
+def _native_tape(n: int) -> None:
+    from quant.feed.synthetic import SyntheticFeed
+
+    list(SyntheticFeed(symbols=("S",), n_events=n, seed=3))
+
+
 def _repeat_snapshot(book, repeats: int) -> None:
     for _ in range(repeats):
         book.snapshot()
@@ -238,6 +250,10 @@ def _time(fn, repeats: int = 5) -> float:
 def main() -> None:
     if getattr(LimitOrderBook, "backend", "python") != "rust":
         print("cockpit_quant is not installed; build the release extension first")
+        sys.exit(1)
+    import cockpit_quant
+    if not hasattr(cockpit_quant, "synthetic_cursor"):
+        print("synthetic_cursor is not installed; build the release extension first")
         sys.exit(1)
 
     def _median_match(book_cls) -> float:
@@ -304,6 +320,14 @@ def main() -> None:
     print(row(f"order-rate window, {rate_n} checks", deque_time, copy_time))
     if copy_time / deque_time < 1.0:
         sys.exit("order-rate window regressed below copying the stamp list")
+    tape_n = 4_000
+    _python_tape(200)
+    _native_tape(200)
+    python_tape = _time(lambda: _python_tape(tape_n))
+    native_tape = _time(lambda: _native_tape(tape_n))
+    print(row(f"synthetic tape, {tape_n} events", native_tape, python_tape))
+    if python_tape / native_tape < 1.0:
+        sys.exit("synthetic tape regressed below the Python generator")
 
 
 if __name__ == "__main__":
