@@ -656,12 +656,14 @@ impl Book {
     pub fn order_at(&self, index: usize) -> Option<Order> {
         let mut seen = 0usize;
         for entry in self.index.iter() {
-            if let Some(order) = self.get(entry) {
-                if seen == index {
-                    return Some(order);
-                }
-                seen += 1;
+            // `get` clones the order. Skipped ids only need the level check.
+            if !self.on_level(entry) {
+                continue;
             }
+            if seen == index {
+                return self.get(entry);
+            }
+            seen += 1;
         }
         None
     }
