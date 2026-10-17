@@ -56,6 +56,14 @@ REQUIRED_CONTROLS = (
     "stale_not_watch_only",
 )
 COMMAND_SCHEMA_CONTROLS = frozenset({"unconfirmed_intervention", "unscoped_intervention"})
+REQUIRED_PRIVILEGED = {
+    "order_path": "privileged_order_bypass",
+    "enforcement_route": "privileged_order_bypass",
+    "command": "privileged_order_bypass",
+    "authority_effect": "authority_effect_mismatch",
+    "order_submitted": "privileged_order_bypass",
+    "forbidden_key": "privileged_order_bypass",
+}
 SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "stale_not_watch_only"} - COMMAND_SCHEMA_CONTROLS
 CONTROL_REASONS = {
     "gui_cli_semantic_divergence": "semantic_projection_mismatch",
@@ -694,8 +702,24 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             event_validator,
             error_validator,
         )
+        responses = oracle_kinds["responses"].get("responses")
+        baseline = next(
+            (
+                item
+                for item in responses
+                if isinstance(item, dict) and item.get("request_id") == "req_positions"
+            ),
+            None,
+        ) if isinstance(responses, list) else None
         lines = [
-            _check_negative(control, negatives[control], response_validator, command_validator, set(commands))
+            _check_negative(
+                control,
+                negatives[control],
+                response_validator,
+                command_validator,
+                set(commands),
+                baseline,
+            )
             for control in REQUIRED_CONTROLS
         ]
     except (OSError, ContractError, SchemaError, KeyError, TypeError, AttributeError) as exc:
@@ -802,6 +826,63 @@ def _repaired_command_body(control: str, body: dict[str, Any]) -> dict[str, Any]
     return repaired
 
 
+def _assign(doc: dict[str, Any], path: str, value: Any) -> bool:
+    """Set or remove a dotted field. None removes the leaf."""
+    cursor: Any = doc
+    parts = path.split(".")
+    for part in parts[:-1]:
+        if not isinstance(cursor, dict):
+            return False
+        cursor = cursor.get(part)
+    if not isinstance(cursor, dict) or not parts[-1]:
+        return False
+    if value is None:
+        cursor.pop(parts[-1], None)
+    else:
+        cursor[parts[-1]] = value
+    return True
+
+
+def _check_privileged(
+    document: dict[str, Any],
+    validator: Draft202012Validator,
+    allowed: set[str],
+    baseline: dict[str, Any] | None,
+) -> str:
+    """Each privileged safeguard must fail alone, and its repair must pass."""
+    control = "privileged_order_bypass"
+    safeguards = document.get("safeguards")
+    if not isinstance(safeguards, list) or not isinstance(baseline, dict):
+        return _control_line(control, "WRONG_FAILURE")
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in safeguards:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            return _control_line(control, "WRONG_FAILURE")
+        by_name[item["name"]] = item
+    if set(by_name) != set(REQUIRED_PRIVILEGED):
+        return _control_line(control, "WRONG_FAILURE")
+    for name, expected in REQUIRED_PRIVILEGED.items():
+        item = by_name[name]
+        field = item.get("field")
+        if not isinstance(field, str) or not field:
+            return _control_line(control, "WRONG_FAILURE")
+        broken = json.loads(json.dumps(baseline))
+        repaired = json.loads(json.dumps(baseline))
+        if not _assign(broken, field, item.get("value")) or not _assign(repaired, field, item.get("repair")):
+            return _control_line(control, "WRONG_FAILURE")
+        schema_error = _schema_error(validator, broken)
+        classified = classify_response(broken, allowed)
+        if schema_error is None or classified != expected:
+            detail = schema_error or f"{name} classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, repaired)
+        repaired_class = classify_response(repaired, allowed)
+        if repaired_error is not None or repaired_class is not None:
+            detail = repaired_error or f"{name} repaired classified={repaired_class}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+    return _control_line(control, "FAIL as designed")
+
+
 def _require_schema(validator: Draft202012Validator, instance: Any, label: str) -> None:
     error = _schema_error(validator, instance)
     if error is not None:
@@ -814,9 +895,12 @@ def _check_negative(
     validator: Draft202012Validator,
     command_validator: Draft202012Validator,
     allowed: set[str],
+    baseline: dict[str, Any] | None = None,
 ) -> str:
     if not isinstance(document, dict) or document.get("control") != control:
         return _control_line(control, "WRONG_FAILURE")
+    if control == "privileged_order_bypass":
+        return _check_privileged(document, validator, allowed, baseline)
     if control in COMMAND_SCHEMA_CONTROLS:
         body = document.get("body")
         schema_error = None if not isinstance(body, dict) else _schema_error(command_validator, body)

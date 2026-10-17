@@ -408,6 +408,21 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_privileged_path_fails_on_order_path_alone(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    schema_path = copied / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["order_path"] = {"enum": ["none", "surface_private"]}
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert "NEGATIVE CONTROL privileged_order_bypass: WRONG_FAILURE" in stdout
+    assert stderr.startswith("o7-operator-contract: FAIL:")
+
+
 def test_parity_rows_keep_their_journey_and_display_fields(tmp_path: Path) -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     copied = tmp_path / "O7"

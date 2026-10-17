@@ -52,7 +52,7 @@
     },
     {
       "path": "fixtures/negative/privileged-order-bypass.json",
-      "sha256": "8477011d4f622d9051b7ceec4ebf2bfcf0bd64fdbf1e2efef22e21dc7716e1e8",
+      "sha256": "f5b115a6dbdc45a47ffdf815e89cf564e3e41517a1d06fe1dd79d617d8d55f23",
       "role": "negative",
       "control": "privileged_order_bypass"
     },

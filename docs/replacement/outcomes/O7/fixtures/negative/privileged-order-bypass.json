@@ -1,40 +1,43 @@
 {
   "kind": "negative_response",
   "control": "privileged_order_bypass",
-  "body": {
-    "api_version": "o7.operator.v0",
-    "candidate_maturity": "researched",
-    "surface": "cli",
-    "command": "operator.orders.submit",
-    "request_id": "req_positions",
-    "profile": {
-      "profile_id": "illustrative_profile_a",
-      "profile_class": "A",
-      "digest": "sha256:abababababababababababababababababababababababababababababababab",
-      "signature_state": "illustrative_unsigned_fixture"
+  "baseline_request_id": "req_positions",
+  "safeguards": [
+    {
+      "name": "order_path",
+      "field": "order_path",
+      "value": "surface_private",
+      "repair": "none"
     },
-    "enforcement_route": "broker_direct",
-    "authority_effect": "direct_order",
-    "order_path": "surface_private",
-    "status_code": "ok",
-    "visibility": {
-      "uncertainty": "absent_not_hidden",
-      "refusal": "absent_not_hidden",
-      "stale_data": "absent_not_hidden",
-      "reconciliation": "reconciled"
+    {
+      "name": "enforcement_route",
+      "field": "enforcement_route",
+      "value": "broker_direct",
+      "repair": "risk_pass_mode_approval_order_gateway"
     },
-    "result": {
-      "order_submitted": true
+    {
+      "name": "command",
+      "field": "command",
+      "value": "operator.orders.submit",
+      "repair": "operator.positions.inspect"
     },
-    "errors": [],
-    "presentation": {
-      "exit_code": 0,
-      "machine_readable": true,
-      "ansi_in_machine_output": false,
-      "color_only_signal": false,
-      "text_status": "ok",
-      "rendered": "status=ok canonical positions"
+    {
+      "name": "authority_effect",
+      "field": "authority_effect",
+      "value": "direct_order",
+      "repair": "none"
     },
-    "bypass_gateway": true
-  }
+    {
+      "name": "order_submitted",
+      "field": "result.order_submitted",
+      "value": true,
+      "repair": null
+    },
+    {
+      "name": "forbidden_key",
+      "field": "bypass_gateway",
+      "value": true,
+      "repair": null
+    }
+  ]
 }

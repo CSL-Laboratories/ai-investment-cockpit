@@ -148,7 +148,7 @@ The CHI '21 ACM page linked below was returned by the Parallel search. This sess
 
 ## Negative controls
 
-Each fixture is schema-valid except the privileged bypass and the stale read with `watch_only=false`, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. The stale read breaks only `watch_only=false`. Setting that field to true must make the response schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
+Each fixture is schema-valid except the stale read with `watch_only=false`, which the response schema must reject, and the two intervention commands, which the command schema must reject. Each intervention fixture breaks only one safeguard. Repairing only that safeguard must make the command schema-valid. The stale read breaks only `watch_only=false`. Setting that field to true must make the response schema-valid. The privileged control applies one safeguard at a time to the positions oracle: order path, enforcement route, command, authority effect, order submission, and a forbidden key. Repairing only that safeguard must make the response schema-valid. Any other schema error is a wrong failure. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command. A profile read reports `result.active_profile_class` equal to `profile.profile_class`.
 
 | Control | Fixture | What it catches |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ Each fixture is schema-valid except the privileged bypass and the stale read wit
 | `hidden_uncertainty` | `fixtures/negative/hidden-uncertainty.json` | Unknown uncertainty marked not visible |
 | `hidden_stale_data` | `fixtures/negative/hidden-stale-data.json` | `stale=true` reported as fresh and `ok` |
 | `hidden_unreconciled` | `fixtures/negative/hidden-unreconciled.json` | Unreconciled recovery reported as reconciled, with restart allowed |
-| `privileged_order_bypass` | `fixtures/negative/privileged-order-bypass.json` | `operator.orders.submit`, `broker_direct`, `surface_private` |
+| `privileged_order_bypass` | `fixtures/negative/privileged-order-bypass.json` | One positions defect at a time: `surface_private`, `broker_direct`, `operator.orders.submit`, `direct_order`, `order_submitted`, or `bypass_gateway` |
 | `color_only_signal` | `fixtures/negative/color-only-signal.json` | `color_only_signal=true` |
 | `success_exit_on_refusal` | `fixtures/negative/success-exit-on-refusal.json` | Refused status with exit code 0 |
 | `contradictory_status_text` | `fixtures/negative/contradictory-status-text.json` | Refused status whose visible text says `ok` |
