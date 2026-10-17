@@ -49,6 +49,7 @@ def evaluate(expression, **overrides):
         'inputs.merge_sha': '',
         'needs.filter.outputs.run-tests': 'true',
         'needs.filter.outputs.run-macos': 'true',
+        'needs.qualification-admission.outputs.eligible': 'true',
     }
     values.update(overrides)
     expression = expression.strip().removeprefix('${{').removesuffix('}}').strip()
@@ -380,9 +381,18 @@ class DispatchScopeTests(unittest.TestCase):
     def test_qualification_evidence_jobs_stay_on_blacksmith_and_the_pr_head(self):
         matrix = json.loads((ROOT / 'docs/evidence/csl221/qualification-matrix.json').read_text())
         qualification = self.ci['jobs']['qualification']
+        admission = self.ci['jobs']['qualification-admission']
         negative = self.ci['jobs']['qualification-negative-controls']
         validate = self.ci['jobs']['qualification-validate']
-        self.assertEqual(qualification['needs'], 'filter')
+        self.assertEqual(admission['needs'], 'filter')
+        self.assertEqual(admission['runs-on'], 'ubuntu-latest')
+        self.assertEqual(admission['permissions'], {'contents': 'read', 'pull-requests': 'read'})
+        self.assertFalse(any('checkout' in step.get('uses', '') for step in admission['steps']))
+        self.assertEqual(qualification['needs'], 'qualification-admission')
+        for eligible in ('false', '', 'true'):
+            self.assertEqual(bool(evaluate(qualification['if'], **{
+                'needs.qualification-admission.outputs.eligible': eligible,
+            })), eligible == 'true')
         self.assertNotIn("github.ref == 'refs/heads/main'", qualification['if'])
         # linux/windows now wait on settle; negative-controls is still the
         # cheap Linux-only control and follows the filter's run-tests bit.
@@ -410,8 +420,8 @@ class DispatchScopeTests(unittest.TestCase):
                 context = {'github.event_name': event, 'inputs.scope': scope,
                            'github.ref': 'refs/heads/main',
                            'github.event.pull_request.labels.*.name': labels}
-                self.assertEqual(bool(evaluate(qualification['if'], **context)), expected)
-        self.assertFalse(evaluate(qualification['if'], **{
+                self.assertEqual(bool(evaluate(admission['if'], **context)), expected)
+        self.assertFalse(evaluate(admission['if'], **{
             'github.event_name': 'pull_request',
             'github.event.pull_request.labels.*.name': ['ci:full'],
             'needs.filter.outputs.run-tests': 'false',
@@ -474,6 +484,96 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertEqual(attest['uses'], 'actions/attest-build-provenance@v3')
         self.assertIn('qualification-evidence-bundle/*.json', attest['with']['subject-path'])
         self.assertNotIn('qualification', self.ci['jobs']['linux-gates']['needs'])
+
+    def test_qualification_admission_rejects_unsupported_sources_before_paid_matrix(self):
+        # Execute the actual inline policy with a fake API; no network or paid jobs.
+        step = self.ci['jobs']['qualification-admission']['steps'][0]
+        self.assertEqual(step['uses'], 'actions/github-script@v7')
+        self.assertEqual(step['env'], {
+            'PR_NUMBER': '${{ inputs.pr_number }}',
+            'PR_HEAD_SHA': '${{ inputs.pr_head_sha }}',
+            'MERGE_SHA': '${{ inputs.merge_sha }}',
+        })
+        runner = r'''
+const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const outputs = {}, failures = [], calls = [];
+const core = {setOutput: (k,v) => outputs[k] = v, setFailed: m => failures.push(m)};
+const github = {rest: {pulls: {get: async args => {
+  calls.push(args);
+  if (input.apiError) throw new Error('lookup failed');
+  return {data: input.pr};
+}}}};
+Object.assign(process.env, input.env);
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+(async () => {
+  try { await new AsyncFunction('context','github','core',input.script)(input.context,github,core); }
+  catch (error) { failures.push(error.message); }
+  process.stdout.write(JSON.stringify({outputs, failures, calls}));
+})();
+'''
+        pr = {'number': 149, 'state': 'open', 'draft': False,
+              'head': {'sha': 'a' * 40, 'repo': {'full_name': 'owner/repo'}},
+              'base': {'repo': {'full_name': 'owner/repo'}},
+              'user': {'login': 'contributor'}}
+        for event in ('pull_request', 'workflow_dispatch'):
+            for case in ('valid', 'fork', 'dependabot-author', 'dependabot-actor',
+                         'missing-repo', 'missing-author', 'wrong-base', 'api-failure',
+                         'stale-head', 'closed', 'draft', 'invalid-input'):
+                if event == 'pull_request' and case in (
+                        'api-failure', 'stale-head', 'closed', 'draft', 'invalid-input'):
+                    continue
+                candidate = json.loads(json.dumps(pr))
+                context = {'eventName': event, 'actor': 'maintainer', 'sha': 'a' * 40,
+                           'repo': {'owner': 'owner', 'repo': 'repo'}, 'payload': {}}
+                env = {'PR_NUMBER': '', 'PR_HEAD_SHA': '', 'MERGE_SHA': ''}
+                if case == 'fork':
+                    candidate['head']['repo']['full_name'] = 'fork/repo'
+                elif case == 'dependabot-author':
+                    candidate['user']['login'] = 'dependabot[bot]'
+                elif case == 'dependabot-actor':
+                    context['actor'] = 'dependabot[bot]'
+                elif case == 'missing-repo':
+                    candidate['head']['repo'] = None
+                elif case == 'missing-author':
+                    candidate['user'] = None
+                elif case == 'wrong-base':
+                    candidate['base']['repo']['full_name'] = 'other/repo'
+                elif case == 'stale-head':
+                    candidate['head']['sha'] = 'b' * 40
+                elif case == 'closed':
+                    candidate['state'] = 'closed'
+                elif case == 'draft':
+                    candidate['draft'] = True
+                if event == 'pull_request':
+                    context['payload']['pull_request'] = candidate
+                else:
+                    env.update(PR_NUMBER='149', PR_HEAD_SHA='a' * 40, MERGE_SHA='b' * 40)
+                    if case == 'invalid-input':
+                        env['PR_HEAD_SHA'] = ''
+                with self.subTest(event=event, case=case):
+                    result = subprocess.run(['node', '-e', runner], input=json.dumps({
+                        'script': step['with']['script'], 'context': context,
+                        'env': env, 'pr': candidate, 'apiError': case == 'api-failure',
+                    }), text=True, capture_output=True, check=True)
+                    actual = json.loads(result.stdout)
+                    self.assertEqual(actual['outputs']['eligible'],
+                                     'true' if case == 'valid' else 'false')
+                    self.assertEqual(bool(actual['failures']), case != 'valid')
+        # Explicit maintainer branch dispatch remains the same-repo path;
+        # it must not issue a PR lookup or rely on a fabricated PR payload.
+        result = subprocess.run(['node', '-e', runner], input=json.dumps({
+            'script': step['with']['script'],
+            'context': {'eventName': 'workflow_dispatch', 'actor': 'maintainer',
+                        'repo': {'owner': 'owner', 'repo': 'repo'}, 'payload': {}},
+            'env': {'PR_NUMBER': '', 'PR_HEAD_SHA': '', 'MERGE_SHA': ''},
+            'apiError': True,
+        }), text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(result.stdout), {
+            'outputs': {'eligible': 'true'}, 'failures': [], 'calls': [],
+        })
+        # The ordinary fork CI and cheap negative controls never depend on admission.
+        for name in ('linux', 'windows', 'macos', 'linux-gates', 'qualification-negative-controls'):
+            self.assertNotIn('qualification-admission', self.ci['jobs'][name]['needs'])
 
 
 if __name__ == '__main__':
