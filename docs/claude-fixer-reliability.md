@@ -138,3 +138,11 @@ URLs, fixed API operations and forbidden ref mutations. The terminal step runs
 after model success/failure but honors explicit workflow cancellation; runner
 loss and cancellation remain delivery limitations. Existing same-user shell
 execution is still outside the hook's isolation guarantee.
+
+The URL check accepts the action's existing `x-access-token` HTTPS userinfo
+after parsing and binding the actual GitHub host and repository, without logging
+credentials. Other hosts/users, queries/fragments and ports remain rejected.
+Malformed helper invocations fail without reading stdin or consuming a push.
+Reply input opens nonblocking, verifies a regular descriptor and bounds its read;
+named pipes and symlinks cannot stall the helper. These cases have offline tests,
+including simulated action URL metadata through the real local Git hook fixture.
