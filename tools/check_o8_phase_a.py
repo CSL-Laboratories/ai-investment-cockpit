@@ -204,9 +204,14 @@ def _schema_errors(instance: Any, schema_path: Path) -> list[str]:
     return found
 
 
+def _is_rooted(value: str) -> bool:
+    """True for absolute or rooted paths on any platform (e.g. '/etc/passwd' on Windows)."""
+    return Path(value).is_absolute() or value.startswith(("/", "\\"))
+
+
 def _resolve_local_path(value: str) -> Path | None:
     """Resolve a packet-supplied local path under ROOT; None when absolute or escaping."""
-    if not value or Path(value).is_absolute():
+    if not value or _is_rooted(value):
         return None
     resolved = (ROOT / value).resolve()
     if not resolved.is_relative_to(ROOT):
@@ -237,9 +242,10 @@ def benchmark_reasons(document: Any) -> list[str]:
         reasons.append("omits helper processes")
     else:
         expected_helpers = WORKLOAD_HELPERS.get(document.get("workload_id"))
-        if expected_helpers is not None and {
-            item.get("name"): item.get("role") for item in helpers
-        } != expected_helpers:
+        pairs = [(str(item.get("name")), str(item.get("role"))) for item in helpers]
+        if expected_helpers is not None and (
+            len(pairs) != len(expected_helpers) or dict(pairs) != expected_helpers
+        ):
             reasons.append("helper set does not match the workload")
     variance = document.get("variance")
     variance_ok = (
@@ -281,7 +287,7 @@ def benchmark_reasons(document: Any) -> list[str]:
             outputs_path = outputs.get("path")
             outputs_digest = outputs.get("sha256")
             if isinstance(outputs_path, str):
-                if Path(outputs_path).is_absolute():
+                if _is_rooted(outputs_path):
                     reasons.append("baseline outputs path must be relative")
                     outputs_rejected = True
                 elif outputs_path.startswith(("http://", "https://")):
