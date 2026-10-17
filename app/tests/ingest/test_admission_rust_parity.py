@@ -689,7 +689,7 @@ def test_a_bool_clock_stays_on_per_call_allow(monkeypatch):
     times = [True, False]
     bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
     twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
-    assert bucket.allow_many(times) == _drive_bucket(twin, times, python=True)
+    assert bucket.allow_many(times) == _drive_bucket(twin, times, python=True) == [True, False]
     _assert_same_bucket(bucket, twin)
     assert bucket._last is False
     assert type(bucket.tokens) is float
@@ -700,12 +700,36 @@ def test_a_numpy_float64_clock_stays_on_per_call_allow(monkeypatch):
     numpy = pytest.importorskip("numpy")
     _block_token_bucket_extension(monkeypatch, "numpy.float64 clock entered the extension")
     times = [numpy.float64(0.0), numpy.float64(0.5), numpy.float64(1.5)]
-    assert all(type(now) is numpy.float64 for now in times)
+    assert all(isinstance(now, float) and type(now) is numpy.float64 for now in times)
     bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
     twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
-    assert bucket.allow_many(times) == _drive_bucket(twin, times, python=True)
+    assert (
+        bucket.allow_many(times)
+        == _drive_bucket(twin, times, python=True)
+        == [False, False, True]
+    )
     _assert_same_bucket(bucket, twin)
     assert type(bucket._last) is numpy.float64
+
+
+class _ClockFloat(float):
+    """A float subclass. ``isinstance`` is true and ``type(x) is float`` is not."""
+
+
+def test_a_float_subclass_clock_stays_on_per_call_allow(monkeypatch):
+    """An inexact ``float`` stays on ``allow`` without a numpy install."""
+    _block_token_bucket_extension(monkeypatch, "float subclass clock entered the extension")
+    times = [_ClockFloat(0.0), _ClockFloat(0.5), _ClockFloat(1.5)]
+    assert all(isinstance(now, float) and type(now) is _ClockFloat for now in times)
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    assert (
+        bucket.allow_many(times)
+        == _drive_bucket(twin, times, python=True)
+        == [False, False, True]
+    )
+    _assert_same_bucket(bucket, twin)
+    assert type(bucket._last) is _ClockFloat
 
 
 @_needs_rust
