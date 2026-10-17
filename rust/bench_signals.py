@@ -139,14 +139,14 @@ def main() -> None:
     print("|---|---:|---:|---:|")
     print(row("per-call EWMA", py_ewma, shipped_ewma))
     print(row("batched EWMA", py_ewma, batch_ewma))
-    if py_ewma / shipped_ewma < 1.0 or py_ewma / batch_ewma < 1.0:
-        sys.exit("EWMA shipped path regressed below 1x")
     print(row("per-call z-score", py_z, rust_z))
     print(row("batched z-score", py_z, batch_z))
     print(row("per-call OFI", py_ofi, rust_ofi))
     print(row("batched OFI", py_ofi, batch_ofi))
     print(row("per-call beta", py_beta, rust_beta))
     print(row("batched beta", py_beta, batch_beta))
+    if py_ewma / shipped_ewma < 1.0 or py_ewma / batch_ewma < 1.0:
+        sys.exit("EWMA shipped path regressed below 1x")
 
 
 if __name__ == "__main__":

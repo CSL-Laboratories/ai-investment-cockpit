@@ -170,6 +170,33 @@ class AuditLog:
             return -1   # signature invalid => watermark tampered
         return int(rows["head_seq"])
 
+    def _read_head(self, s) -> AuditEntry | None:
+        return s.execute(
+            select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)
+        ).scalar_one_or_none()
+
+    def _allocation_authority(self, s) -> tuple[int | None, AuditEntry | None]:
+        """HWM-then-head pair used to allocate the next seq (BUG-114).
+
+        sqlite3 legacy SELECT does not BEGIN, and this method must not pin a snapshot
+        either: BUG-124's signing-boundary reread has to observe a concurrent metadata
+        fault that commits after these reads and before ``_bump_hwm``. The complementary
+        tear is a concurrent first-append that commits rows+watermark between the two
+        SELECTs, so this session sees ``hwm is None`` and a non-empty head — the same
+        shape as SEC-11 truncation. Re-read hwm-then-head until the pair is consistent
+        or the missing watermark is stable; only then is the truncation signature real.
+        """
+        hwm = self._read_hwm(s)
+        head = self._read_head(s)
+        if not (hwm is None and head is not None):
+            return hwm, head
+        for _ in range(7):
+            hwm = self._read_hwm(s)
+            head = self._read_head(s)
+            if not (hwm is None and head is not None):
+                return hwm, head
+        return hwm, head
+
     # ---- core insert (shared by append / append_in) ------------------------
     def _insert(self, s, event_type, actor, refs, payload) -> AuditEntry:
         # BUG-114: read the monotonic authority before the row head. ``append_in`` must
@@ -179,8 +206,7 @@ class AuditLog:
         # linking to the OLD head, creating a non-colliding valid-HMAC fork. In this order a
         # concurrent commit is either visible to the later head read, or a later insert wins
         # the same seq and this writer fails/retries rather than corrupting the chain.
-        hwm = self._read_hwm(s)
-        head = s.execute(select(AuditEntry).order_by(AuditEntry.seq.desc()).limit(1)).scalar_one_or_none()
+        hwm, head = self._allocation_authority(s)
         max_existing = head.seq if head else 0
         # SEC-11 (W10) fail-closed guards on the signed high-water BEFORE allocating a seq:
         if hwm == -1:

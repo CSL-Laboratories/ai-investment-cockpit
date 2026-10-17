@@ -395,9 +395,6 @@ def test_resting_at_follows_insertion_order_and_rejects_a_bad_index(book):
     book.cancel("b")
     assert book.resting_at(0).order_id == "a"
     assert book.resting_at(1).order_id == "c"
-    with pytest.raises(IndexError):
-        book.resting_at(2)
-    with pytest.raises(IndexError):
-        book.resting_at(-1)
-    with pytest.raises(IndexError):
-        book.resting_at(True)
+    for bad in (2, -1, True, 2**64):
+        with pytest.raises(IndexError):
+            book.resting_at(bad)
