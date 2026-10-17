@@ -314,8 +314,9 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     )
     higher_status = stale or unreconciled or unavailable
     has_uncertainty = bool(unknown_items) or collateral.get("state") == "unknown"
-    if visibility.get("refusal") == "hidden" or has_refusal:
-        disclosed = visibility.get("refusal") == "visible" and _refusal_disclosed(refusals, refused_decisions)
+    claims_refusal = visibility.get("refusal") == "visible"
+    if visibility.get("refusal") == "hidden" or has_refusal or claims_refusal:
+        disclosed = claims_refusal and has_refusal and _refusal_disclosed(refusals, refused_decisions)
         if not disclosed or (not higher_status and doc.get("status_code") != "refused"):
             return "hidden_refusal"
     if visibility.get("uncertainty") == "hidden" or has_uncertainty:
@@ -730,8 +731,11 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         event_problem = _event_error(event)
         if event_problem is not None:
             raise ContractError(f"oracle event: {event_problem}")
-    if len(kinds["events"].get("events", [])) < 4:
-        raise ContractError("oracle events are incomplete")
+    seen_types = {
+        event.get("event_type") for event in kinds["events"].get("events", []) if isinstance(event, dict)
+    }
+    if seen_types != set(EVENT_COMMANDS):
+        raise ContractError("oracle events do not cover the event types")
     for error in kinds["errors"].get("errors", []):
         _require_schema(error_validator, error, "oracle error catalog")
         if error.get("code") != error.get("status_code"):
