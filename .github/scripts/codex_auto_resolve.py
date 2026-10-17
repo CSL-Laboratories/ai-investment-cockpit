@@ -1242,9 +1242,11 @@ def resolved_count_today(
     PAT cite both fall in the window. Marker retries copy the original cite
     time into ``RESOLVED_AT`` so they do not consume a later day's cap.
     Failed cites on still-open threads do not count. Unmarked cites count
-    per ``(thread id, sha)`` when that pair has no receipt, including
-    after a human reopen, when GitHub still attributes ``resolvedBy`` to
-    the PAT or the cite itself carries ``RESOLVED_AT``. A PAT skip
+    per ``(thread id, sha)`` when that pair has no receipt and the thread
+    is closed, or when the cite itself carries ``RESOLVED_AT`` (a
+    receipt-failed PAT success, including after a human reopen). A later
+    failed cite on a new SHA of a reopened thread does not inherit the
+    earlier ``resolvedBy``. A PAT skip
     marker hides that pair unless a later PAT cite is strictly newer, so
     a retry-resolve success cannot be erased by an earlier human race.
     Skip markers are posted only for a confirmed non-PAT ``resolvedBy``.
@@ -1255,11 +1257,6 @@ def resolved_count_today(
         return 0
     start = now - timedelta(hours=24)
     pending = unresolved_thread_ids(threads)
-    pat_resolved: set[str] = set()
-    for thread in threads:
-        tid = safe_thread_id(str(thread.get("id") or ""))
-        if tid and login_matches(resolved_by_login(thread), actor_login):
-            pat_resolved.add(tid)
     all_comments = issue_comments + [c for thread in threads for c in thread_comments(thread)]
     cite_times: dict[tuple[str, str], datetime | None] = {}
     skip_times: dict[tuple[str, str], datetime | None] = {}
@@ -1302,7 +1299,7 @@ def resolved_count_today(
         tid, _digest = pair
         if pair in counted or pair in all_marker_pairs:
             continue
-        if tid in pending and tid not in pat_resolved:
+        if tid in pending:
             continue
         if pair in skip_times:
             skip_when = skip_times[pair]
