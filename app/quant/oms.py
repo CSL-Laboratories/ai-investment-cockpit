@@ -220,6 +220,9 @@ class OMS:
             self._live[client_id] = order
             return
         rank = self._rank[client_id]
+        if not self._live or self._rank[next(reversed(self._live))] < rank:
+            self._live[client_id] = order
+            return
         placed: dict[str, ManagedOrder] = {}
         inserted = False
         for key, current in self._live.items():
