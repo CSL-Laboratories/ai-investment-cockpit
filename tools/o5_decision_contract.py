@@ -419,7 +419,7 @@ def _admit_qualification(document: dict[str, Any], ctx: Context) -> Admission:
     qualified = document.get("installed_route_qualified")
     mockish = document.get("evidence_class") == "simulation" or document.get("transport") in MOCK_TRANSPORTS
     if claim == "installed_route" or qualified is True:
-        if mockish or document.get("transport") in MOCK_TRANSPORTS:
+        if mockish:
             return _refuse(
                 "mock_is_not_installed_route",
                 "a mock, fixture, or simulation cannot be installed-route evidence",
