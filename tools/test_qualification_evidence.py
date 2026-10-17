@@ -178,7 +178,14 @@ class QualificationEvidenceTests(unittest.TestCase):
     def test_negative_controls_command_rejects_each_case(self) -> None:
         lines = MOD.run_negative_controls(self.matrix)
         text = "\n".join(lines)
-        for name in ("wrong-sha", "wrong-tree", "skipped-cell", "missing-junit", "missing-cell"):
+        for name in (
+            "wrong-sha",
+            "wrong-tree",
+            "skipped-cell",
+            "missing-junit",
+            "missing-cell",
+            "suite-counts",
+        ):
             self.assertIn(f"negative-control {name}: rejected", text)
 
     def test_real_bundle_negative_controls_use_that_bundle(self) -> None:

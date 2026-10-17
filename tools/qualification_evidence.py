@@ -821,6 +821,25 @@ def run_negative_controls(
                 artifact_root=artifact_root,
             ),
         )
+        suite_root = work / "suite-counts"
+        shutil.copytree(artifact_root, suite_root)
+        suite_target = suite_root / bundle["cells"][0]["artifact_dir"] / "junit.xml"
+        suite_target.write_bytes(
+            b'<testsuite tests="2" errors="1">'
+            b'<testcase classname="qualification.fixture" name="ok"></testcase>'
+            b"</testsuite>"
+        )
+        expect(
+            "suite-counts",
+            NOT_PASS,
+            validate_bundle(
+                bundle,
+                matrix=matrix,
+                expected_commit=commit,
+                expected_tree=tree,
+                artifact_root=suite_root,
+            ),
+        )
         return lines
     finally:
         if cleanup:
