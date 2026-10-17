@@ -213,8 +213,8 @@
         "properties": {
           "code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
           "status_code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
-          "message": {"type": "string", "minLength": 1},
-          "recovery": {"type": "string", "minLength": 1},
+          "message": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
+          "recovery": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
           "color_only": {"const": false}
         },
         "allOf": [
@@ -241,8 +241,8 @@
         "machine_readable": {"type": "boolean"},
         "ansi_in_machine_output": {"type": "boolean"},
         "color_only_signal": {"type": "boolean"},
-        "text_status": {"type": "string", "minLength": 1},
-        "rendered": {"type": "string", "minLength": 1}
+        "text_status": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
+        "rendered": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}
       }
     }
   },
@@ -255,7 +255,7 @@
     {"if": {"properties": {"command": {"const": "operator.health.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
     {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
     {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
     {"if": {"properties": {"command": {"const": "operator.positions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
     {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
     {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},

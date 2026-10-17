@@ -7,8 +7,8 @@
   "properties": {
     "code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
     "status_code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
-    "message": {"type": "string", "minLength": 1},
-    "recovery": {"type": "string", "minLength": 1},
+    "message": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
+    "recovery": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
     "color_only": {"const": false}
   },
   "allOf": [

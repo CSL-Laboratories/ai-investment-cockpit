@@ -79,7 +79,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`.
 
-Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation.
+Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation. A recorded stop (`recorded=true` on `operator.interventions.request_stop`) sets `survives_restart` true.
 
 ### Status and exit codes
 
@@ -93,7 +93,7 @@ Both surfaces carry the same `status_code`. The CLI maps it to a process exit co
 | `stale_or_unreconciled` | 3 | Stale data or unreconciled state is visible, and no dependency is unavailable |
 | `unavailable` | 4 | A dependency status is `unavailable`. Coexisting conditions stay visible |
 
-Machine-readable JSON goes to stdout with no ANSI. Diagnostics go to stderr. `NO_COLOR` and `--no-color` are required of a future CLI. Color, a spinner, or an icon cannot be the only status signal. Cancellation does not imply that a recorded stop or fill was undone.
+Machine-readable JSON goes to stdout with no ANSI escape in any string, including error messages, recovery text, and `rendered`. `ansi_in_machine_output=false` does not excuse an escape elsewhere in the payload. Diagnostics go to stderr. `NO_COLOR` and `--no-color` are required of a future CLI. Color, a spinner, or an icon cannot be the only status signal. Cancellation does not imply that a recorded stop or fill was undone.
 
 One response has one `status_code`. When more than one condition is present, precedence picks that code and every condition stays visible:
 

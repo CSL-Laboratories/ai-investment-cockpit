@@ -250,6 +250,17 @@ def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[d
     return all((item.get("decision_id"), item.get("reason_code")) in covered for item in refused_decisions)
 
 
+def _contains_ansi(value: Any) -> bool:
+    """True when any serialized string contains an ANSI escape."""
+    if isinstance(value, str):
+        return "\x1b" in value
+    if isinstance(value, dict):
+        return any(_contains_ansi(key) or _contains_ansi(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(_contains_ansi(item) for item in value)
+    return False
+
+
 def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | None:
     """Return the negative-control code for an unsafe response, or None."""
     if not isinstance(doc, dict):
@@ -269,6 +280,12 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     expected_intervention = INTERVENTION_NAMES.get(doc.get("command"))
     if expected_intervention is not None and result.get("intervention") != expected_intervention:
         return "intervention_mismatch"
+    if (
+        doc.get("command") == "operator.interventions.request_stop"
+        and result.get("recorded") is True
+        and result.get("survives_restart") is not True
+    ):
+        return "recorded_stop_not_persistent"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
@@ -323,7 +340,7 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         or presentation.get("ansi_in_machine_output") is True
         or presentation.get("machine_readable") is not True
         or not presentation.get("text_status")
-        or (isinstance(presentation.get("rendered"), str) and "\x1b" in presentation["rendered"])
+        or _contains_ansi(doc)
     ):
         return "color_only_signal"
     expected_exit = EXIT_CODES.get(doc.get("status_code"))

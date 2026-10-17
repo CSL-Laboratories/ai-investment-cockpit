@@ -285,6 +285,33 @@ def test_error_codes_and_intervention_names_match() -> None:
     assert CHECKER._schema_error(error_validator, mismatched) is not None
 
 
+def test_recorded_stop_persists_and_ansi_is_absent_from_every_string() -> None:
+    by_request, commands, response_validator = _candidate_documents()
+    stop = copy.deepcopy(by_request["req_stop"])
+    stop["result"]["survives_restart"] = False
+    assert CHECKER.classify_response(stop, commands) == "recorded_stop_not_persistent"
+    assert CHECKER._schema_error(response_validator, stop) is not None
+    unrecorded = copy.deepcopy(by_request["req_stop"])
+    unrecorded["result"]["recorded"] = False
+    unrecorded["result"]["survives_restart"] = False
+    assert CHECKER.classify_response(unrecorded, commands) is None
+    assert CHECKER._schema_error(response_validator, unrecorded) is None
+    tainted = copy.deepcopy(by_request["req_positions"])
+    tainted["errors"] = [
+        {
+            "code": "usage",
+            "status_code": "usage",
+            "message": "status\x1b[31mred",
+            "recovery": "Read the text status.",
+            "color_only": False,
+        }
+    ]
+    tainted["presentation"]["ansi_in_machine_output"] = False
+    assert "\x1b" not in tainted["presentation"]["rendered"]
+    assert CHECKER.classify_response(tainted, commands) == "color_only_signal"
+    assert CHECKER._schema_error(response_validator, tainted) is not None
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)
