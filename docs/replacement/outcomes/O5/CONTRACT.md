@@ -138,13 +138,15 @@ Positive examples live in `fixtures/positive/` and the manifests beside them.
 - **Capability manifest.** Schema validation and explicit refusal are capabilities.
   Broker tools, order submission, and credential custody are forbidden. No
   capability grants authority.
-- **Route manifest.** The inventory above. No row is qualified.
+- **Route manifest.** The inventory above. No row is qualified. A route cannot
+  report `demo_or_paper`, `shadow`, `limited_live`, or `independently_verified`.
 - **Budget ledger.** Records the context cap, the Haiku 5.5 long-context line, and
   the audited deep-escalation limit as observed code. Successor spend has a null
   ceiling. `spend_authorized` is false. `owner_decision` is `undecided` on every
   row. Nothing here is a spend approval.
 - **Privacy disclosure.** Proposal only. `decided` is false. Owner: Lucas.
-  Credentials and order instructions are forbidden. No class is admitted.
+  `credentials` and `order_instructions` each appear once and stay forbidden.
+  No class is admitted.
 - **Measure report.** Defines schema compliance, value correctness, grounding,
   calibration ECE, cost, latency, reliability, and preference. `measured` is
   false. Cost, latency, schema compliance alone, model agreement, and preference
@@ -191,7 +193,8 @@ Until then the only admissible qualification claim is `none`.
 ## Experiments
 
 `fixtures/experiments.json` lists six experiments. Every row is
-`listed_not_run`. None uses the network, a credential, or a paid call. The list
+`listed_not_run`, and every `route_id` is in the route manifest. None uses the
+network, a credential, or a paid call. The list
 is the stop condition for this research pass: the contract, the suite, and the
 smallest experiments are recorded, and running any of them needs a human receipt.
 

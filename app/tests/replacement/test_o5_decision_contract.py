@@ -210,6 +210,69 @@ def test_result_rejects_unsupported_evidence() -> None:
         assert refused.code == "installed_route_not_qualified"
 
 
+def test_route_manifest_rejects_unsupported_evidence() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["route_manifest"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = set()
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for evidence_class in ("demo_or_paper", "shadow", "limited_live", "independently_verified"):
+        higher = json.loads(json.dumps(document))
+        higher["routes"][0]["evidence_class"] = evidence_class
+        context.route_ids = set()
+        refused = module._admit_document(higher, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "installed_route_not_qualified"
+
+
+def test_experiment_route_must_be_known() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["experiment_list"]
+    routes = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/route-manifest.json").read_text(encoding="utf-8")
+    )
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/experiments.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.route_ids = {route["id"] for route in routes["routes"]}
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    unknown = json.loads(json.dumps(document))
+    unknown["experiments"][0]["route_id"] = "missing.route"
+    refused = module._admit_document(unknown, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "unknown_route"
+
+
+def test_privacy_matrix_requires_forbidden_classes() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["privacy_disclosure"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/privacy-disclosure.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    dropped = json.loads(json.dumps(document))
+    dropped["classes"] = [item for item in dropped["classes"] if item["id"] != "credentials"]
+    missing = module._admit_document(dropped, schema, context)
+    assert missing.admitted is False
+    assert missing.code == "disclosure_forbidden"
+    duplicated = json.loads(json.dumps(document))
+    duplicated["classes"].append(duplicated["classes"][-1])
+    repeat = module._admit_document(duplicated, schema, context)
+    assert repeat.admitted is False
+    assert repeat.code == "disclosure_forbidden"
+
+
 def test_calibration_status_stays_unmeasured() -> None:
     module = _load()
     suite = json.loads(SUITE.read_text(encoding="utf-8"))

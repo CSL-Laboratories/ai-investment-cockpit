@@ -375,6 +375,11 @@ def _admit_routes(document: dict[str, Any], ctx: Context) -> Admission:
             return _refuse("order_authority_claimed", f"{route_id} carries order authority or broker tools")
         if route.get("credentials_required_for_this_packet") is not False:
             return _refuse("credential_claimed", f"{route_id} requires credentials in this packet")
+        if route.get("evidence_class") in UNSUPPORTED_EVIDENCE:
+            return _refuse(
+                "installed_route_not_qualified",
+                f"{route_id} reports higher-tier evidence that was not retained",
+            )
     return _admit()
 
 
@@ -400,11 +405,19 @@ def _admit_privacy(document: dict[str, Any], _ctx: Context) -> Admission:
         return _refuse("privacy_decided_without_receipt", "the disclosure matrix is a proposal, not a decision")
     if document.get("owner") != "Lucas":
         return _refuse("privacy_decided_without_receipt", "disclosure ownership stays with Lucas")
+    seen: list[str] = []
     for item in document["classes"]:
+        class_id = item["id"]
+        if class_id in seen:
+            return _refuse("disclosure_forbidden", f"{class_id} is listed more than once")
+        seen.append(class_id)
         if item.get("admitted") is not False:
-            return _refuse("disclosure_forbidden", f"{item['id']} is admitted without a human receipt")
-        if item["id"] in FORBIDDEN_DISCLOSURE and item.get("proposed_default") != "forbidden":
-            return _refuse("disclosure_forbidden", f"{item['id']} must stay forbidden")
+            return _refuse("disclosure_forbidden", f"{class_id} is admitted without a human receipt")
+        if class_id in FORBIDDEN_DISCLOSURE and item.get("proposed_default") != "forbidden":
+            return _refuse("disclosure_forbidden", f"{class_id} must stay forbidden")
+    missing = FORBIDDEN_DISCLOSURE - set(seen)
+    if missing:
+        return _refuse("disclosure_forbidden", "a forbidden disclosure class is missing from the matrix")
     return _admit()
 
 
@@ -429,12 +442,15 @@ def _admit_measures(document: dict[str, Any], _ctx: Context) -> Admission:
     return _admit()
 
 
-def _admit_experiments(document: dict[str, Any], _ctx: Context) -> Admission:
+def _admit_experiments(document: dict[str, Any], ctx: Context) -> Admission:
     if document.get("any_executed") is not False:
         return _refuse("experiment_executed", "experiments are listed and were not run")
     if not document["experiments"]:
         return _refuse("schema_invalid", "experiment list is empty")
     for item in document["experiments"]:
+        unknown = _known_route(item["route_id"], ctx)
+        if unknown:
+            return unknown
         if item.get("status") != "listed_not_run" or item.get("executed") is not False:
             return _refuse("experiment_executed", f"{item['id']} is marked executed")
         if item.get("uses_credentials") is not False or item.get("paid_call") is not False:
