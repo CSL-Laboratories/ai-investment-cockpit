@@ -492,6 +492,20 @@ def test_a_failed_cancel_cleanup_refreshes_the_snapshot():
     assert fresh.bids == ()
 
 
+def test_a_corrupt_total_does_not_partially_cancel():
+    if LimitOrderBook.backend != "rust":
+        pytest.skip("python ints do not overflow a cached total")
+    book = LimitOrderBook("S")
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    book.level(Side.BUY, 100).total_qty = -2**63
+    cached = book.snapshot()
+    with pytest.raises(ValueError):
+        book.cancel("a")
+    assert book.get("a") is not None
+    assert book.snapshot() is cached
+    assert book.depth(Side.BUY, 1)[0].order_count == 1
+
+
 def test_a_direct_level_total_edit_refreshes_the_snapshot():
     from quant.book.lob import PythonLimitOrderBook
 

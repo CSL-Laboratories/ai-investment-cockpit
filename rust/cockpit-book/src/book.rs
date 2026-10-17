@@ -114,12 +114,16 @@ impl Level {
     }
 
     fn remove(&mut self, order_id: &str) -> Result<Order, BookError> {
-        let idx = self
+        let idx = *self
             .by_id
-            .remove(order_id)
+            .get(order_id)
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
+        // A corrupt cached total must fail before the order leaves the level.
+        // Otherwise a caught error leaves the depth changed and the snapshot stale.
+        let new_total = fit_sub(self.total_qty, self.orders.get(idx).qty)?;
+        self.by_id.remove(order_id);
         let order = self.orders.remove(idx);
-        self.total_qty = fit_sub(self.total_qty, order.qty)?;
+        self.total_qty = new_total;
         Ok(order)
     }
 
@@ -140,12 +144,11 @@ impl Level {
                 py_str_repr(order_id)
             )));
         }
-        {
-            let order = self.orders.get_mut(idx);
-            order.qty = fit_sub(order.qty, qty)?;
-        }
-        self.total_qty = fit_sub(self.total_qty, qty)?;
-        let remaining = self.orders.get(idx).qty;
+        let new_qty = fit_sub(current, qty)?;
+        let new_total = fit_sub(self.total_qty, qty)?;
+        self.orders.get_mut(idx).qty = new_qty;
+        self.total_qty = new_total;
+        let remaining = new_qty;
         if remaining == 0 {
             self.by_id.remove(order_id);
             self.orders.remove(idx);
@@ -374,7 +377,12 @@ impl Book {
     pub fn cancel(&mut self, order_id: &str) -> Result<Order, BookError> {
         let loc = self
             .by_id
-            .remove(order_id)
+            .get(order_id)
+            .map(|loc| Loc {
+                node: loc.node,
+                side: loc.side,
+                price: loc.price,
+            })
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
         let order = {
             let level = self
@@ -390,6 +398,7 @@ impl Book {
                 })?;
             level.remove(order_id)?
         };
+        self.by_id.remove(order_id);
         self.index.remove(loc.node);
         // The order is already gone. Bump before cleanup: a missing ladder
         // entry removes the level and then returns Integrity.
@@ -860,6 +869,20 @@ mod tests {
         assert!(matches!(err, BookError::Integrity(_)));
         assert_eq!(book.generation(), before_reduce + 1);
         assert!(book.depth(Side::Buy, 1).is_empty());
+    }
+
+    #[test]
+    fn a_corrupt_total_does_not_partially_cancel() {
+        let mut book = fresh();
+        book.add("a", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        book.set_cached_total(Side::Buy, 100, i64::MIN).unwrap();
+        let generation = book.generation();
+        let err = book.cancel("a").unwrap_err();
+        assert!(matches!(err, BookError::Value(_)));
+        assert_eq!(book.generation(), generation);
+        assert!(book.get("a").is_some());
+        assert_eq!(book.depth(Side::Buy, 1)[0].order_count, 1);
+        assert_eq!(book.depth(Side::Buy, 1)[0].qty, i64::MIN);
     }
 
     #[test]
