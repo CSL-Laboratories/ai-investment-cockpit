@@ -23,6 +23,9 @@ EVENT_TRIAGE_BATCH = "triage_batch"
 EVENT_DEEP_ESCALATION = "deep_escalation"
 # payload: {date, event_id, releases_entry_id, reason}  <- unused reservation refund
 EVENT_DEEP_ESCALATION_RELEASE = "deep_escalation_release"
+# EVENT_ESCALATION_DEFERRED reason when release() returns False. That is an empty
+# id, another event, another day, or an already-released row — not an HMAC failure.
+DEEP_BUDGET_RELEASE_NOOP = "deep_budget_release_noop"
 # payload: {event_id, symbol, reason}
 EVENT_ESCALATION_DEFERRED = "escalation_deferred"
 # via record_state_change on BriefRecord

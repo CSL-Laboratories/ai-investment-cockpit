@@ -51,6 +51,12 @@ def consume(budget, i=1, **kw):
     return budget.try_consume(**base)
 
 
+def _entry_id(value) -> str:
+    """try_consume returns the ledger id on success and False on refusal."""
+    assert isinstance(value, str) and value
+    return value
+
+
 def make_event(symbol="AAPL", event_type="news", ts=NOW, headline="URGENT!!! act now"):
     return MarketEvent(id="evt-x", symbol=symbol, source="finnhub", event_type=event_type,
                        headline=headline, summary=None, raw_ref="finnhub:1",
@@ -68,8 +74,8 @@ def cal_event(symbol="AAPL", ts=NOW + timedelta(hours=10)):
 def test_budget_consumes_to_limit_then_refuses(st):
     b = DeepBudget(st, limit=2)
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 2
-    assert consume(b, 1) is True
-    assert consume(b, 2) is True
+    assert _entry_id(consume(b, 1))
+    assert _entry_id(consume(b, 2))
     assert consume(b, 3) is False           # over budget -> caller defers, never drops
     assert b.spent(DAY) == 2 and b.remaining(DAY) == 0
 
@@ -145,7 +151,7 @@ def test_try_consume_refuses_uncorroborated(st):
     assert rows == [], "an uncorroborated try_consume must not append a budget ledger entry"
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 5   # budget untouched
     # a corroborated consumption still succeeds afterwards
-    assert consume(b, 2, corroborated=True) is True and b.spent(DAY) == 1
+    assert _entry_id(consume(b, 2, corroborated=True)) and b.spent(DAY) == 1
 
 
 def test_budget_per_day_isolation(st):
@@ -184,7 +190,7 @@ def test_release_restores_one_unused_unit_and_does_not_mint(st):
     """An unused reservation nets back to zero. A second release of that row, or a
     duplicate signed release, must not push remaining above the audited limit."""
     b = DeepBudget(st, limit=1)
-    assert consume(b, 1) is True
+    assert _entry_id(consume(b, 1))
     assert b.spent(DAY) == 1 and b.remaining(DAY) == 0
     assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is True
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 1
@@ -199,14 +205,63 @@ def test_release_restores_one_unused_unit_and_does_not_mint(st):
         payload, refs = dict(row.payload), dict(row.refs or {})
     st.audit.append(EVENT_DEEP_ESCALATION_RELEASE, actor="budget", refs=refs, payload=payload)
     assert b.spent(DAY) == 0 and b.remaining(DAY) == 1
-    assert consume(b, 2) is True
+    assert _entry_id(consume(b, 2))
     assert consume(b, 3) is False
     assert b.spent(DAY) == 1
 
 
+def test_release_binds_to_the_try_consume_entry_id(st):
+    """A later same-event consumption must not steal the release.
+
+    ``state.lock`` is process-local, so binding to the latest unreleased row
+    can attribute a release to a row this caller did not reserve. The id
+    ``try_consume`` returns is the only row ``release`` may cancel. Omitting
+    the id still releases the latest unreleased row.
+    """
+    b = DeepBudget(st, limit=2)
+    first = _entry_id(consume(b, 1))
+    second = _entry_id(b.try_consume(
+        day=DAY, event_id="evt-1", symbol="AAPL", reason="quote_move:4.0",
+        corroborated=True))
+    assert first != second
+    with st.session_factory() as s:
+        rows = s.execute(select(AuditEntry).where(
+            AuditEntry.event_type == EVENT_DEEP_ESCALATION).order_by(AuditEntry.seq)
+        ).scalars().all()
+    assert [row.id for row in rows] == [first, second]
+
+    other_day = (NOW + timedelta(days=1)).date()
+    assert b.release(day=DAY, event_id="evt-other", reason="context_limit",
+                     entry_id=first) is False
+    assert b.release(day=other_day, event_id="evt-1", reason="context_limit",
+                     entry_id=first) is False
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id="") is False
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id="missing") is False
+    assert b.spent(DAY) == 2 and b.remaining(DAY) == 0
+
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=first) is True
+    assert b.spent(DAY) == 1 and b.remaining(DAY) == 1
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit",
+                     entry_id=first) is False
+    assert b.spent(DAY) == 1
+    with st.session_factory() as s:
+        release = s.execute(select(AuditEntry).where(
+            AuditEntry.event_type == EVENT_DEEP_ESCALATION_RELEASE)).scalars().one()
+    assert release.payload["releases_entry_id"] == first
+    assert st.audit.verify_entry(release)
+
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is True
+    assert b.spent(DAY) == 0 and b.remaining(DAY) == 2
+    assert b.release(day=DAY, event_id="evt-1", reason="context_limit") is False
+    assert b.remaining(DAY) == 2
+
+
 def test_release_does_not_refund_a_different_event_or_day(st):
     b = DeepBudget(st, limit=2)
-    assert consume(b, 1) is True
+    assert _entry_id(consume(b, 1))
     other_day = (NOW + timedelta(days=1)).date()
     assert b.release(day=DAY, event_id="evt-other", reason="context_limit") is False
     assert b.release(day=other_day, event_id="evt-1", reason="context_limit") is False
@@ -235,12 +290,14 @@ def test_tampered_release_fails_closed(st):
         b.remaining(DAY)
     with pytest.raises(BudgetIntegrityError):
         b.release(day=DAY, event_id="evt-1", reason="context_limit")
+    with pytest.raises(BudgetIntegrityError):
+        consume(b, 2)
 
 
 def test_normal_consume_without_release_is_unchanged(st):
     b = DeepBudget(st, limit=2)
-    assert consume(b, 1) is True
-    assert consume(b, 2) is True
+    assert _entry_id(consume(b, 1))
+    assert _entry_id(consume(b, 2))
     assert consume(b, 3) is False
     assert b.spent(DAY) == 2 and b.remaining(DAY) == 0
     with st.session_factory() as s:

@@ -15,6 +15,7 @@ to here so tests inject a FakeTransport (never a real subprocess).
 """
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from dataclasses import replace
 from decimal import Decimal
 
@@ -110,6 +111,26 @@ def _jev_window_moved(state, admitted_generation: int) -> bool:
     return state.usage.window("jev").generation != admitted_generation
 
 
+# Saga pivot for an unused deep-escalation reservation. triage_loop may release
+# that unit only when the proposal handler raises before call_agent is entered.
+# Entering call_agent keeps the unit, including when a later line raises.
+_CALL_AGENT_ENTERED: ContextVar[bool] = ContextVar(
+    "cockpit_call_agent_entered", default=False)
+
+
+def watch_call_agent() -> Token[bool]:
+    """Mark the following span as not yet inside ``call_agent``."""
+    return _CALL_AGENT_ENTERED.set(False)
+
+
+def call_agent_entered() -> bool:
+    return _CALL_AGENT_ENTERED.get()
+
+
+def restore_call_agent_watch(token: Token[bool]) -> None:
+    _CALL_AGENT_ENTERED.reset(token)
+
+
 def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: str,
                schema_name: str, input_refs: dict, transport=None, timeout_s: float = 120.0,
                max_turns: int = 6, decision_weight=None, jev_packet=None,
@@ -121,6 +142,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     guarded by the PRE-CALL watch-only state, because the runner itself already trips the
     usage window before we observe the result. Callers must inspect ``result.status`` and
     degrade (defer events, never drop them — Inv 7)."""
+    _CALL_AGENT_ENTERED.set(True)
     selected_runtime = configured_decision_runtime(state.settings)
     resolved_runtime = runtime_for(alias, selected_runtime)
     mode = ModeLadder(state).current()

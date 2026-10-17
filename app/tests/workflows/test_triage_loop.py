@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import select, update
 
 from agent_runner.transport import ProcResult
 from config.settings import Mode
@@ -26,8 +27,10 @@ from orchestrator.mode_ladder import ModeLadder
 from orchestrator.state import EVENT_BREAKER_TRIP, EVENT_WATCH_ONLY
 from schemas.models.audit_entry import AuditEntry
 from tests.workflows.conftest import NOW, FakeTransport, envelope
-from workflows.budget import DeepBudget
+from workflows.agent_calls import call_agent
+from workflows.budget import BudgetIntegrityError, DeepBudget
 from workflows.constants import (
+    DEEP_BUDGET_RELEASE_NOOP,
     EVENT_DEEP_ESCALATION,
     EVENT_DEEP_ESCALATION_RELEASE,
     EVENT_ESCALATION_DEFERRED,
@@ -571,6 +574,12 @@ def test_context_limited_deferral_leaves_no_consumed_budget_and_retry_escalates(
     assert releases[0]["event_id"] == ev.id
     assert releases[0]["reason"] == "context_limit"
     assert releases[0]["releases_entry_id"]
+    with st.session_factory() as s:
+        spend_row = s.execute(select(AuditEntry).where(
+            AuditEntry.event_type == EVENT_DEEP_ESCALATION)).scalars().one()
+        release_row = s.execute(select(AuditEntry).where(
+            AuditEntry.event_type == EVENT_DEEP_ESCALATION_RELEASE)).scalars().one()
+    assert release_row.payload["releases_entry_id"] == spend_row.id
 
     drafted: list[str] = []
 
@@ -655,3 +664,149 @@ def test_drafted_escalation_still_consumes_one_deep_budget_unit(st, clock, tmp_p
     spends = _payloads(st, EVENT_DEEP_ESCALATION)
     assert len(spends) == 1 and spends[0]["event_id"] == ev.id
     assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+
+def _one_filing(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    return rows[0]
+
+
+def _escalation(st, clock, tmp_path, ev, propose_fn):
+    return triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=propose_fn,
+    )
+
+
+def _deferred_reasons(st, event_id):
+    return [p["reason"] for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+            if p["event_id"] == event_id]
+
+
+def test_pre_dispatch_exception_releases_the_unit(st, clock, tmp_path):
+    """A raise before call_agent frees the reservation. The tick still aborts.
+
+    The next loop can escalate on the restored unit. A bare finally would also
+    free a unit after call_agent; that side is the following test.
+    """
+    from core.clock import FrozenClock
+
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+
+    def propose(state, clock_, **kw):
+        raise RuntimeError("template failed before dispatch")
+
+    with pytest.raises(RuntimeError, match="before dispatch"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    budget = DeepBudget(st)
+    assert budget.spent(day) == 0
+    assert budget.remaining(day) == 1
+    releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+    assert len(releases) == 1
+    assert releases[0]["event_id"] == ev.id
+    assert releases[0]["reason"] == "pre_dispatch_exception"
+    with st.session_factory() as s:
+        spend_row = s.execute(select(AuditEntry).where(
+            AuditEntry.event_type == EVENT_DEEP_ESCALATION)).scalars().one()
+    assert releases[0]["releases_entry_id"] == spend_row.id
+
+    drafted: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        drafted.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = _escalation(st, FrozenClock(NOW + timedelta(minutes=2)), tmp_path, ev,
+                         ok_propose)
+    assert second["status"] == "ok"
+    assert drafted == [ev.id]
+    assert ev.id in second["escalated"]
+    assert budget.spent(day) == 1
+    assert budget.remaining(day) == 0
+
+
+def test_exception_after_call_agent_keeps_the_unit(st, clock, tmp_path):
+    """Once call_agent has run, a later raise keeps the unit and blocks the retry."""
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+    answer = {"question": "q?", "answer": "grounded answer", "pattern": "fresh",
+              "session_id": None, "generated_at": NOW.isoformat()}
+
+    def propose(state, clock_, **kw):
+        call_agent(
+            state, alias="triage", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=FakeTransport([envelope(answer)]),
+        )
+        raise RuntimeError("after call_agent")
+
+    with pytest.raises(RuntimeError, match="after call_agent"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert DeepBudget(st).spent(day) == 1
+    assert DeepBudget(st).remaining(day) == 0
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+    calls: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome()
+
+    second = _escalation(st, clock, tmp_path, ev, ok_propose)
+    assert calls == []
+    assert ev.id in second["deferred"]
+    assert ev.id not in second["escalated"]
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_exhausted"]
+    assert DeepBudget(st).spent(day) == 1
+
+
+def test_false_release_is_noop_not_integrity(st, clock, tmp_path, monkeypatch):
+    """release() returning False is not an HMAC failure, and the unit stays spent."""
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    real = DeepBudget.release
+
+    def mismatch(self, **kwargs):
+        return real(self, **{**kwargs, "entry_id": "missing-entry"})
+
+    monkeypatch.setattr(DeepBudget, "release", mismatch)
+    result = _escalation(
+        st, clock, tmp_path, ev, lambda *a, **k: _stub_outcome(status="context_limited"))
+    assert result["status"] == "ok"
+    assert ev.id in result["deferred"]
+    assert _deferred_reasons(st, ev.id) == [DEEP_BUDGET_RELEASE_NOOP]
+    assert "deep_budget_integrity" not in _deferred_reasons(st, ev.id)
+    assert DeepBudget(st).spent(NOW.date()) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+
+def test_release_integrity_error_stays_deep_budget_integrity(st, clock, tmp_path):
+    """Only BudgetIntegrityError is recorded as deep_budget_integrity."""
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+
+    def limited(state, clock_, **kw):
+        with st.session_factory() as s, s.begin():
+            row = s.execute(select(AuditEntry).where(
+                AuditEntry.event_type == EVENT_DEEP_ESCALATION)).scalars().one()
+            s.execute(update(AuditEntry).where(AuditEntry.id == row.id).values(
+                payload={**row.payload, "symbol": "TAMPER"}))
+        return _stub_outcome(status="context_limited")
+
+    result = _escalation(st, clock, tmp_path, ev, limited)
+    assert result["status"] == "ok"
+    assert ev.id in result["deferred"]
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_integrity"]
+    assert DEEP_BUDGET_RELEASE_NOOP not in _deferred_reasons(st, ev.id)
+    with pytest.raises(BudgetIntegrityError):
+        DeepBudget(st).spent(NOW.date())
