@@ -18,6 +18,7 @@ spec = importlib.util.spec_from_file_location("guard", SOURCE)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 A, B, C = "a" * 40, "b" * 40, "c" * 40
+URL = "https://github.com/acme/example.git"
 CONFIG = {"repo": "acme/example", "number": "7", "base": A, "ref": "fix"}
 
 
@@ -35,7 +36,7 @@ class GuardTests(unittest.TestCase):
         self.execution.write_text(json.dumps([{"type": "result", "subtype": "success", "num_turns": 12}]))
 
     def push(self, read=lambda _: pr(), updates=None, config=CONFIG, remote="origin"):
-        return m.guard(config, updates or f"HEAD {B} refs/heads/fix {A}\n", remote, self.state,
+        return m.guard(config, f"HEAD {B} refs/heads/fix {A}\n" if updates is None else updates, remote, self.state, remote_url=URL,
                        read=read, git=lambda args: B if args[1] == "rev-parse" else A)
 
     def test_live_head_movement_stops_and_consumes_attempt(self):
@@ -74,7 +75,10 @@ class GuardTests(unittest.TestCase):
                 m.validate(CONFIG | {"ref": ref})
 
     def test_delete_multiple_refs_no_change_and_non_origin_rejected(self):
-        for rows, remote in [(f"HEAD {'0'*40} refs/heads/fix {A}", "origin"),
+        for rows, remote in [("", "origin"),
+                             (f"(delete) {'0'*40} refs/heads/fix {A}", "origin"),
+                             (f"HEAD {B} refs/tags/fix {A}", "origin"),
+                             (f"HEAD {'0'*40} refs/heads/fix {A}", "origin"),
                              (f"HEAD {A} refs/heads/fix {A}", "origin"),
                              (f"HEAD {B} refs/heads/fix {A}\nHEAD {B} refs/heads/other {A}", "origin"),
                              (f"HEAD {B} refs/heads/fix {A}", "other")]:
@@ -83,9 +87,56 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.push(updates=rows, remote=remote)
 
+    def test_remote_url_must_bind_exact_repository(self):
+        for url in ("https://github.com/acme/other.git", "https://evil.invalid/acme/example.git",
+                    "https://github.com@evil.invalid/acme/example.git", "https://github.com/acme/example.git/evil",
+                    "file:///tmp/remote.git", "", "git@evil.invalid:acme/example.git"):
+            with self.subTest(url=url):
+                self.state.unlink(missing_ok=True)
+                with self.assertRaisesRegex(ValueError, "remote URL"):
+                    m.guard(CONFIG, f"HEAD {B} refs/heads/fix {A}", "origin", self.state, remote_url=url)
+                self.assertEqual(json.loads(self.state.read_text()), {})
+
+    def test_pr_api_facade_rejects_ref_mutations_methods_and_extra_flags(self):
+        from unittest.mock import Mock
+        run = Mock()
+        for args in (["PATCH", "repos/acme/example/git/refs/heads/fix"],
+                     ["DELETE", "repos/acme/example/git/refs/heads/fix"],
+                     ["POST", "repos/acme/example/git/refs"], ["graphql"], ["threads", "mutation"],
+                     ["read", "--method", "PATCH"], ["comment", "body", "--method", "DELETE"],
+                     ["reply", "../git/refs", "body"], ["reply", "1?force=true", "body"],
+                     ["reply", "1", "body", "extra"], ["comment", ".env"],
+                     ["comment", "../secret"], ["comment", "/tmp/secret"], []):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                m.model_api(CONFIG, args, run=run)
+        run.assert_not_called()
+
+    def test_pr_api_facade_constructs_only_current_pr_reads_and_posts(self):
+        from unittest.mock import Mock
+        run = Mock(return_value="{}")
+        for operation, endpoint in (("read", "pulls/7"), ("comments", "issues/7/comments"),
+                                    ("review-comments", "pulls/7/comments"), ("reviews", "pulls/7/reviews")):
+            m.model_api(CONFIG, [operation], run=run)
+            self.assertEqual(run.call_args.args[0][:5], ["gh", "api", "--method", "GET", "repos/acme/example/" + endpoint])
+        m.model_api(CONFIG, ["threads"], run=run)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[:4], ["gh", "api", "graphql", "--paginate"])
+        self.assertIn("isResolved isOutdated", argv[5])
+        self.assertNotIn("mutation", argv[5])
+        self.assertEqual(argv[-6:], ["-f", "owner=acme", "-f", "name=example", "-F", "number=7"])
+        (self.path / ".claude-fixer-replies").mkdir()
+        body = self.path / ".claude-fixer-replies/body.txt"
+        body.write_text('Literal --method PATCH and $(secret) are comment data.', encoding="utf-8")
+        for args, endpoint in ((["comment", ".claude-fixer-replies/body.txt"], "issues/7/comments"),
+                               (["reply", "123", ".claude-fixer-replies/body.txt"], "pulls/7/comments/123/replies")):
+            with patch.object(m.Path, "cwd", return_value=self.path):
+                m.model_api(CONFIG, args, run=run)
+            self.assertEqual(run.call_args.args[0], ["gh", "api", "--method", "POST", "repos/acme/example/" + endpoint, "--input", "-"])
+            self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"body": body.read_text()})
+
     def test_local_rewrite_rejected(self):
         with self.assertRaises(ValueError):
-            m.guard(CONFIG, f"HEAD {B} refs/heads/fix {A}", "origin", self.state,
+            m.guard(CONFIG, f"HEAD {B} refs/heads/fix {A}", "origin", self.state, remote_url=URL,
                     read=lambda _: pr(), git=lambda args: B if args[1] == "rev-parse" else C)
 
     def test_no_false_handled_receipt_for_unpushed_or_unknown_candidate(self):
@@ -181,10 +232,13 @@ class RealGitRaceTests(unittest.TestCase):
                                 ", check=True)\nprint(" + repr(json.dumps(pr(base))) + ")\n")
             fake_api.chmod(0o700)
             hook = hooks / "pre-push"
-            hook.write_text(SOURCE.read_text(encoding="utf-8"))
+            trusted = hooks / "guard.py"
+            trusted.write_text(SOURCE.read_text(encoding="utf-8"))
+            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL + "\n")
+            hook.chmod(0o700)
             env = os.environ | {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": base,
                                 "HEAD_REF": "fix", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
-            subprocess.run([sys.executable, str(hook), "install"], cwd=local, env=env, check=True)
+            subprocess.run([sys.executable, str(trusted), "install"], cwd=local, env=env, check=True)
             (local / "file").write_text("fix")
             git("commit", "-am", "fix")
             candidate = git("rev-parse", "HEAD").stdout.strip()
@@ -220,7 +274,7 @@ class RealGitRaceTests(unittest.TestCase):
             config = CONFIG | {"base": base}
             state = root / "attempt.json"
             # Actual candidate, real ancestry, API fixture for the first check.
-            m.guard(config, f"HEAD {candidate} refs/heads/fix {base}", "origin", state,
+            m.guard(config, f"HEAD {candidate} refs/heads/fix {base}", "origin", state, remote_url=URL,
                     read=lambda _: pr(base), git=lambda args: git(*args[1:], cwd=local).stdout.strip())
             # External writer advances after the check. Copying candidate objects
             # into the fixture remote allows creating a divergent commit without fetch.
@@ -235,7 +289,7 @@ class RealGitRaceTests(unittest.TestCase):
             self.assertIn("rejected", result.stderr)
             self.assertEqual(git("rev-parse", "refs/heads/fix", cwd=remote).stdout.strip(), other)
             with self.assertRaises(FileExistsError):
-                m.guard(config, f"HEAD {candidate} refs/heads/fix {other}", "origin", state)
+                m.guard(config, f"HEAD {candidate} refs/heads/fix {other}", "origin", state, remote_url=URL)
 
     @unittest.skipIf(os.name == "nt", "POSIX runner hook launcher")
     def test_installed_hook_is_invoked_by_git_and_rejects_second_push(self):
@@ -258,13 +312,16 @@ class RealGitRaceTests(unittest.TestCase):
             git("remote", "add", "origin", str(remote), cwd=local)
             git("push", "origin", "HEAD:refs/heads/fix", cwd=local)
             hook = hooks / "pre-push"
-            hook.write_text(SOURCE.read_text(encoding="utf-8"))
+            trusted = hooks / "guard.py"
+            trusted.write_text(SOURCE.read_text(encoding="utf-8"))
+            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL + "\n")
+            hook.chmod(0o700)
             fake_api = binaries / "gh"
             fake_api.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(pr(base))) + ")\n")
             fake_api.chmod(0o700)
             env = os.environ | {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": base,
                                 "HEAD_REF": "fix", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
-            subprocess.run([sys.executable, str(hook), "install"], cwd=local, env=env, check=True)
+            subprocess.run([sys.executable, str(trusted), "install"], cwd=local, env=env, check=True)
             (local / "file").write_text("fix")
             git("commit", "-am", "fix", cwd=local)
             candidate = git("rev-parse", "HEAD", cwd=local).stdout.strip()
@@ -279,18 +336,21 @@ class RealGitRaceTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_workflow_embeds_trusted_guard_and_always_terminal_after_model(self):
+    def test_workflow_embeds_trusted_guard_and_terminal_after_model_failure(self):
         text = (ROOT / ".github/workflows/claude.yml").read_text(encoding="utf-8")
         chunks = text.split("<<'CLAUDE_FIXER_GUARD'\n")[1:]
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             embedded = textwrap.dedent(chunk.split("          CLAUDE_FIXER_GUARD", 1)[0]).rstrip()
             self.assertEqual(embedded, SOURCE.read_text(encoding="utf-8").rstrip())
-        self.assertEqual(text.count("if: always() && steps.push_guard.outcome == 'success'"), 2)
+        self.assertEqual(text.count("if: ${{ !cancelled() && steps.push_guard.outcome == 'success'"), 2)
         self.assertEqual(text.count("timeout-minutes: 20"), 2)
         self.assertEqual(text.count("--max-turns 30"), 2)
         for body in text.split("      - id: claude\n")[1:]:
             allow = body.split("--allowedTools", 1)[1].split("--disallowedTools", 1)[0]
+            self.assertNotIn("Bash(gh api", allow)
+            self.assertIn("Bash(python3 ${{ runner.temp }}/claude-fixer-guard/pre-push model-api --:*)", allow)
+            self.assertIn("Bash(gh api:*)", body.split("--disallowedTools", 1)[1])
             for command in ("fetch", "pull", "rebase", "merge", "config"):
                 self.assertNotIn(f"Bash(git {command}", allow)
             pushes = re.findall(r"Bash\(git push[^)]*\)", allow)
