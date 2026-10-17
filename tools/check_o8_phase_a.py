@@ -77,6 +77,24 @@ WORKLOAD_IDS = (
     "reconciliation",
     "gui_cli_render",
 )
+WORKLOAD_HELPERS = {
+    "ingest_to_raw_store": {"ingest-worker": "primary", "raw-store": "storage-helper"},
+    "point_in_time_replay": {"replay-worker": "primary", "raw-store": "storage-helper"},
+    "frozen_evaluation_run": {"evaluation-worker": "primary", "fixture-reader": "storage-helper"},
+    "paper_order_lifecycle": {
+        "paper-lifecycle": "primary",
+        "sim-venue": "execution-helper",
+        "audit-appender": "audit-helper",
+    },
+    "reconciliation": {
+        "reconciliation-worker": "primary",
+        "ledger-reader": "storage-helper",
+        "audit-verifier": "audit-helper",
+    },
+    "gui_cli_render": {"render-process": "primary", "ledger-reader": "storage-helper"},
+}
+REPLAY_SOURCES = {"raw_inputs", "hash_chain_audit"}
+SHARED_STORES = {"raw_bytes", "hash_chain_audit"}
 TIER1_CASES = (
     "risk_evaluate",
     "order_tuple_hash",
@@ -125,6 +143,17 @@ NEGATIVES = (
     ("attached-floors-invalid.json", "benchmark", "attached floors invalid"),
     ("experiment-seam-mismatch.json", "candidate", "candidate experiment does not exercise its seam"),
     ("non-finite-literal.json", "benchmark", "unreadable JSON"),
+    ("overflow-literal.json", "benchmark", "unreadable JSON"),
+    ("baseline-outputs-absolute.json", "benchmark", "baseline outputs path must be relative"),
+    (
+        "baseline-outputs-traversal.json",
+        "benchmark",
+        "baseline outputs path escapes the repository",
+    ),
+    ("baseline-metadata-only.json", "benchmark", "tier-3 baseline lacks retained outputs"),
+    ("helper-set-mismatch.json", "benchmark", "helper set does not match the workload"),
+    ("replay-from-duplicate.json", "packet", "replay sources must be distinct"),
+    ("shared-stores-duplicate.json", "packet", "shared stores must be distinct"),
 )
 
 
@@ -152,7 +181,7 @@ def _load_json(path: Path) -> Any:
             parse_constant=_reject_json_constant,
             parse_float=_parse_finite_float,
         )
-    except (OSError, UnicodeError, ValueError) as exc:
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
         raise O8Error([f"unreadable JSON {path}: {exc}"]) from exc
 
 
@@ -175,10 +204,21 @@ def _schema_errors(instance: Any, schema_path: Path) -> list[str]:
     return found
 
 
+def _resolve_local_path(value: str) -> Path | None:
+    """Resolve a packet-supplied local path under ROOT; None when absolute or escaping."""
+    if not value or Path(value).is_absolute():
+        return None
+    resolved = (ROOT / value).resolve()
+    if not resolved.is_relative_to(ROOT):
+        return None
+    return resolved
+
+
 def _local_path_exists(locator: str) -> bool:
     if locator.startswith("https://") or locator.startswith("http://"):
         return True
-    return (ROOT / locator).exists()
+    resolved = _resolve_local_path(locator)
+    return resolved is not None and resolved.exists()
 
 
 def benchmark_reasons(document: Any) -> list[str]:
@@ -195,6 +235,12 @@ def benchmark_reasons(document: Any) -> list[str]:
     )
     if not helpers_ok:
         reasons.append("omits helper processes")
+    else:
+        expected_helpers = WORKLOAD_HELPERS.get(document.get("workload_id"))
+        if expected_helpers is not None and {
+            item.get("name"): item.get("role") for item in helpers
+        } != expected_helpers:
+            reasons.append("helper set does not match the workload")
     variance = document.get("variance")
     variance_ok = (
         isinstance(variance, dict)
@@ -230,20 +276,26 @@ def benchmark_reasons(document: Any) -> list[str]:
             reasons.append("tier-3 evidence lacks a matched baseline")
         outputs = baseline.get("outputs") if isinstance(baseline, dict) else None
         outputs_ok = False
+        outputs_rejected = False
         if isinstance(outputs, dict):
             outputs_path = outputs.get("path")
             outputs_digest = outputs.get("sha256")
-            if (
-                isinstance(outputs_path, str)
-                and isinstance(outputs_digest, str)
-                and not outputs_path.startswith(("http://", "https://"))
-            ):
-                retained = ROOT / outputs_path
-                if retained.is_file():
-                    raw = retained.read_bytes()
-                    if hashlib.sha256(raw).hexdigest() == outputs_digest:
-                        outputs_ok = _baseline_outputs_bound(raw, baseline)
-        if not outputs_ok:
+            if isinstance(outputs_path, str):
+                if Path(outputs_path).is_absolute():
+                    reasons.append("baseline outputs path must be relative")
+                    outputs_rejected = True
+                elif outputs_path.startswith(("http://", "https://")):
+                    pass
+                else:
+                    retained = _resolve_local_path(outputs_path)
+                    if retained is None:
+                        reasons.append("baseline outputs path escapes the repository")
+                        outputs_rejected = True
+                    elif isinstance(outputs_digest, str) and retained.is_file():
+                        raw = retained.read_bytes()
+                        if hashlib.sha256(raw).hexdigest() == outputs_digest:
+                            outputs_ok = _baseline_outputs_bound(raw, baseline)
+        if not outputs_ok and not outputs_rejected:
             reasons.append("tier-3 baseline lacks retained outputs")
     if document.get("floors_attached") is True:
         _check_floors(document.get("floors"), reasons, "attached floors invalid")
@@ -262,7 +314,14 @@ def benchmark_reasons(document: Any) -> list[str]:
         helpers_measured = isinstance(helpers, list) and all(
             isinstance(item, dict) and item.get("status") == "measured" for item in helpers
         )
-        if observation.get("status") != "measured" or not metrics_ok or not helpers_measured:
+        relative_iqr = variance.get("relative_iqr")
+        iqr_finite = (
+            isinstance(relative_iqr, (int, float))
+            and not isinstance(relative_iqr, bool)
+            and math.isfinite(relative_iqr)
+            and relative_iqr >= 0
+        )
+        if observation.get("status") != "measured" or not metrics_ok or not helpers_measured or not iqr_finite:
             reasons.append("tier-3 evidence lacks measured observation")
         elif not (observation["p50"] <= observation["p95"] <= observation["p99"]):
             reasons.append("impossible measured observation")
@@ -278,11 +337,16 @@ def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:
             parse_constant=_reject_json_constant,
             parse_float=_parse_finite_float,
         )
-    except (UnicodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         return False
-    return isinstance(retained, dict) and all(
-        isinstance(retained.get(key), str) and retained.get(key) and retained.get(key) == baseline.get(key)
-        for key in keys
+    return (
+        isinstance(retained, dict)
+        and all(
+            isinstance(retained.get(key), str) and retained.get(key) and retained.get(key) == baseline.get(key)
+            for key in keys
+        )
+        and isinstance(retained.get("observation"), dict)
+        and len(retained["observation"]) > 0
     )
 
 
@@ -416,6 +480,21 @@ def validate_packet(document: Any) -> None:
     migration = document.get("migration") if isinstance(document.get("migration"), dict) else {}
     if tuple(migration.get("seams", ())) != WORKLOAD_IDS:
         reasons.append("migration seams drifted")
+    recovery = migration.get("mixed_version_recovery") if isinstance(migration.get("mixed_version_recovery"), dict) else {}
+    replay_from = recovery.get("replay_from")
+    if not (
+        isinstance(replay_from, list)
+        and len(replay_from) == 2
+        and sorted(str(item) for item in replay_from) == sorted(REPLAY_SOURCES)
+    ):
+        reasons.append("replay sources must be distinct")
+    shared_stores = migration.get("shared_stores")
+    if not (
+        isinstance(shared_stores, list)
+        and len(shared_stores) == 2
+        and sorted(str(item) for item in shared_stores) == sorted(SHARED_STORES)
+    ):
+        reasons.append("shared stores must be distinct")
     for workload in workloads:
         workload_problems = benchmark_reasons(workload)
         if workload_problems:
@@ -450,7 +529,11 @@ def run_negative_controls() -> list[str]:
         path = NEGATIVE_DIR / name
         try:
             document = _load_json(path)
-            reasons = benchmark_reasons(document) if kind == "benchmark" else candidate_reasons(document)
+            if kind == "packet":
+                validate_packet(document)
+                reasons = []
+            else:
+                reasons = benchmark_reasons(document) if kind == "benchmark" else candidate_reasons(document)
         except O8Error as exc:
             reasons = exc.reasons
         if not any(expected in reason for reason in reasons):

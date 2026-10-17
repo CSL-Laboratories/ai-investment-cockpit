@@ -1,0 +1,1130 @@
+{
+  "schema_id": "cockpit.replacement.o8.phase-a-packet.v1",
+  "outcome": "O8",
+  "phase": "A",
+  "linear_issue": "CSL-220",
+  "maturity": "researched",
+  "completion_gate_status": "pending_outcome_artifact",
+  "not_claimed": [
+    "human_decided",
+    "contract_frozen",
+    "prototyped",
+    "implemented",
+    "provider_free_verified",
+    "demo_or_paper_qualified",
+    "shadow_qualified",
+    "limited_live_qualified",
+    "release_qualified",
+    "PASS",
+    "qualification"
+  ],
+  "source_commit": "ebbaa34489f171e079834d02098135711e1d4755",
+  "registry_baseline": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "per_pr_benchmark_gating": false,
+  "new_ci_cadence": false,
+  "research": {
+    "parallel_search_ids": [
+      "search_8afa65003c515c3b57197de5f5cd25c4",
+      "search_902e146c8a56d6e091750abdb2b9d763"
+    ],
+    "cited_urls": [
+      "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig",
+      "https://pyperf.readthedocs.io/en/stable/run_benchmark.html",
+      "https://pyperf.readthedocs.io/en/latest/analyze.html",
+      "https://github.com/psf/pyperf",
+      "https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026"
+    ],
+    "retrieved_on": "2026-10-17",
+    "retrieved_by": "embedded Parallel results run on Dan's box"
+  },
+  "disposition": [
+    {
+      "component_id": "risk-engine",
+      "disposition": "retain",
+      "paths": [
+        "app/risk/"
+      ],
+      "compatibility": "Pure deterministic checks stay the order-path floor. A faster candidate may not change financial semantics or add I/O or a model call.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/risk/__init__.py",
+          "statement": "The risk package states that it is pure functions, with no LLM, and is the order-path gate."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/tests/test_invariants.py",
+          "statement": "test_invariant_5_risk_engine_has_no_llm guards the no-LLM-in-risk rule."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "CLAUDE.md",
+          "statement": "Invariant 5 requires risk/ to stay free of LLM calls, I/O, and subprocesses."
+        }
+      ]
+    },
+    {
+      "component_id": "order-gateway",
+      "disposition": "retain",
+      "paths": [
+        "app/brokers/gateway.py"
+      ],
+      "compatibility": "An order still reaches a broker only through risk, mode, approval, and OrderGateway. The migration facade is not a second order path.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/brokers/gateway.py",
+          "statement": "class OrderGateway is the broker submission boundary."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "CLAUDE.md",
+          "statement": "Invariant 1 requires the single risk, mode, approval, OrderGateway path, including human-initiated trades."
+        }
+      ]
+    },
+    {
+      "component_id": "audit-ledger",
+      "disposition": "retain",
+      "paths": [
+        "app/storage/audit.py"
+      ],
+      "compatibility": "The hash-chained append-only audit stays in tests. A benchmark result does not replace chain verification.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/storage/audit.py",
+          "statement": "The ledger is a hash-chained, HMAC-keyed, append-only log with a monotonic sequence."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/tests/storage/test_audit.py",
+          "statement": "Audit chain tests cover the ledger independently of the hot-path timer."
+        }
+      ]
+    },
+    {
+      "component_id": "fail-closed-breakers",
+      "disposition": "retain",
+      "paths": [
+        "app/orchestrator/breakers.py"
+      ],
+      "compatibility": "Vendor-limit, stale-data, and hung-orchestrator paths stay watch_only. A faster candidate may not trade without fresh analysis.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/orchestrator/breakers.py",
+          "statement": "Watch-only degradation disables the order path and queues events."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "CLAUDE.md",
+          "statement": "Invariant 7 fails closed to watch_only on vendor limit, stale data, or a hung orchestrator."
+        }
+      ]
+    },
+    {
+      "component_id": "secrets-store",
+      "disposition": "retain",
+      "paths": [
+        "app/core/secrets.py"
+      ],
+      "compatibility": "Secrets stay in the OS credential store. This packet does not add a credential.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/core/secrets.py",
+          "statement": "The wrapper reads the OS credential store and redacts values until reveal()."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/tests/test_invariants.py",
+          "statement": "test_invariant_4_no_plaintext_secrets_in_app_or_operator_tools greps the tree."
+        }
+      ]
+    },
+    {
+      "component_id": "raw-versus-summary-split",
+      "disposition": "retain",
+      "paths": [
+        "app/filings/raw_store.py"
+      ],
+      "compatibility": "Raw bytes stay separate from summaries and remain the replay anchor. The module docstring's retired invariant number is not the floor id.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/filings/raw_store.py",
+          "statement": "RawStore writes raw filing bytes once, reads them back byte-identical, and does not place them in a derived table."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "CLAUDE.md",
+          "statement": "Invariant 8 stores raw inputs separately from summaries."
+        }
+      ]
+    },
+    {
+      "component_id": "tier1-hot-path-tripwire",
+      "disposition": "retain",
+      "paths": [
+        "app/benchmarks/cases.py",
+        "app/benchmarks/compare.py",
+        ".github/workflows/ci.yml"
+      ],
+      "compatibility": "Keep the existing five-case tripwire, including its relative-IQR rule and exit 0. It is not a pull-request gate and it is not CSL-42 evidence.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/benchmarks/cases.py",
+          "statement": "CASE_NAMES lists risk_evaluate, order_tuple_hash, schema_validate_proposal, outbound_scrub, and audit_append_verify."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/benchmarks/compare.py",
+          "statement": "A case regresses only when median slowdown minus sample spread stays above the threshold, and the process still exits 0."
+        },
+        {
+          "class": "locally_observed",
+          "locator": ".github/workflows/ci.yml",
+          "statement": "The benchmarks job uses threshold 0.10, five rounds, and two orderings, and does not fail linux-gates."
+        }
+      ]
+    },
+    {
+      "component_id": "raw-store-implementation",
+      "disposition": "measure",
+      "paths": [
+        "app/filings/raw_store.py"
+      ],
+      "compatibility": "Store throughput is unmeasured. A later replacement has to keep write-once raw bytes and the hash bind.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/filings/raw_store.py",
+          "statement": "The store hashes, persists, and re-hashes raw bytes. No tier-2 ingest measurement is recorded in this packet."
+        },
+        {
+          "class": "inference",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The scope audit treats raw storage as reusable evidence machinery, not as a measured replacement boundary."
+        }
+      ]
+    },
+    {
+      "component_id": "equity-ingest",
+      "disposition": "measure",
+      "paths": [
+        "app/ingest/"
+      ],
+      "compatibility": "Current feeds are stock-centric untrusted input. No multi-market envelope is selected here.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/ingest/__init__.py",
+          "statement": "The package wires Alpaca news, Finnhub, calendars, EDGAR brew, and FINRA short interest."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The audit calls ingestion partial and stock-centric, with no accepted multi-market evidence envelope."
+        }
+      ]
+    },
+    {
+      "component_id": "point-in-time-replay",
+      "disposition": "measure",
+      "paths": [
+        "app/quant/feed/synthetic.py",
+        "app/tests/system/test_paper_replay.py"
+      ],
+      "compatibility": "Replay stays point-in-time. A faster replay may not rebuild the past from later data.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/quant/feed/synthetic.py",
+          "statement": "The synthetic feed carries a point-in-time ordering rule."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/tests/system/test_paper_replay.py",
+          "statement": "A paper replay test exists. This packet does not record a matched replay measurement."
+        }
+      ]
+    },
+    {
+      "component_id": "paper-order-lifecycle",
+      "disposition": "measure",
+      "paths": [
+        "app/brokers/paper_execution.py",
+        "app/brokers/order_state_machine.py",
+        "app/quant/execution/sim_venue.py"
+      ],
+      "compatibility": "The paper lifecycle remains risk, human gate, SimVenue, and the hash-chain audit. It is not a live qualification.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/quant/execution/sim_venue.py",
+          "statement": "class SimVenue is the in-process paper venue."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/brokers/paper_execution.py",
+          "statement": "Paper execution sits behind the gateway and is stock/paper specific."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The audit calls the execution stack a safety oracle that is not qualified for live or prediction-market use."
+        }
+      ]
+    },
+    {
+      "component_id": "reconciliation",
+      "disposition": "measure",
+      "paths": [
+        "app/brokers/paper_reconciliation.py",
+        "app/orchestrator/reconcile.py"
+      ],
+      "compatibility": "A seam may not cut over until reconciliation succeeds. Disagreement fails closed to watch_only.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/orchestrator/reconcile.py",
+          "statement": "Startup reconciliation treats an intent without a result as fail-closed until broker history resolves it."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/brokers/paper_reconciliation.py",
+          "statement": "Paper reconciliation exists beside the gateway and is not a measured end-to-end workload in this packet."
+        }
+      ]
+    },
+    {
+      "component_id": "frozen-evaluation",
+      "disposition": "measure",
+      "paths": [
+        "app/feasibility/evaluate.py"
+      ],
+      "compatibility": "Evaluation populations and thresholds stay frozen before results are read. A provider result may not rewrite them.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/feasibility/evaluate.py",
+          "statement": "classify() is an ordered fail-closed protocol with no LLM and no broker."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/MONTH-PROGRAM.md",
+          "statement": "The month program freezes O4 evaluation metrics before O5 provider results."
+        }
+      ]
+    },
+    {
+      "component_id": "quant-book-and-optional-rust",
+      "disposition": "measure",
+      "paths": [
+        "app/quant/book/",
+        "rust/cockpit-book/",
+        "rust/cockpit-py/"
+      ],
+      "compatibility": "The optional PyO3 book binding is not a language decision. One batch parity check is not a matched whole-system comparison.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "rust/cockpit-py/src/lib.rs",
+          "statement": "PyO3 bindings wrap the FIFO book, fees, and attribution for the existing Python dataclasses."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "rust/Cargo.toml",
+          "statement": "The workspace contains cockpit-book, cockpit-costs, cockpit-ingest, cockpit-signals, and cockpit-py."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/quant/book/_activate.py",
+          "statement": "maybe_install uses the Rust extension when it is present and otherwise keeps the Python book."
+        }
+      ]
+    },
+    {
+      "component_id": "operator-discord-and-loopback",
+      "disposition": "rework",
+      "paths": [
+        "app/bridge/",
+        "app/orchestrator/app.py"
+      ],
+      "compatibility": "Discord and the loopback API remain the current operator surfaces. GUI toolkit, CLI shape, and TUI stay unresolved, and neither surface may grow an order path.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/bridge/bot.py",
+          "statement": "The Discord bridge is an operator surface, not a GUI product."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/orchestrator/app.py",
+          "statement": "The loopback API is the other current operator surface."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The audit records no actual GUI or unified CLI/TUI product."
+        }
+      ]
+    },
+    {
+      "component_id": "llm-workflows",
+      "disposition": "undecided",
+      "paths": [
+        "app/workflows/"
+      ],
+      "compatibility": "Model workflows stay off the order and risk paths. Which decision provider to use is not selected here.",
+      "evidence": [
+        {
+          "class": "locally_observed",
+          "locator": "app/workflows/schema_loader.py",
+          "statement": "Workflow outputs are schema-validated. That does not grant order authority."
+        },
+        {
+          "class": "source_documented_fact",
+          "locator": "CLAUDE.md",
+          "statement": "Execution stays model-free. Models serve awareness and reasoning only."
+        }
+      ]
+    },
+    {
+      "component_id": "merger-strategy-experiment",
+      "disposition": "undecided",
+      "paths": [
+        "app/strategies/",
+        "app/feasibility/"
+      ],
+      "compatibility": "The cash-merger research discipline stays evidence. It is not a product PASS and it is not a deletion target.",
+      "evidence": [
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The audit says the selected strategy produced zero qualified candidates in recorded screens and no product PASS."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/strategies/",
+          "statement": "Strategy experiment code remains in the tree for evidence, not as an accepted successor strategy."
+        }
+      ]
+    },
+    {
+      "component_id": "tax-and-prediction-markets",
+      "disposition": "undecided",
+      "paths": [
+        "docs/product-tax-contract.md",
+        "docs/replacement/SCOPE-AUDIT.md"
+      ],
+      "compatibility": "There is no tax calculation package and no accepted event-contract implementation to migrate. Eligibility stays with the owner.",
+      "evidence": [
+        {
+          "class": "source_documented_fact",
+          "locator": "docs/replacement/SCOPE-AUDIT.md",
+          "statement": "The audit says the September tax matrix was not implemented and prediction markets have no accepted instrument or settlement contract."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "docs/product-tax-contract.md",
+          "statement": "Tax scope exists as a contract document. No app tax package was present in the inspected tree."
+        }
+      ]
+    },
+    {
+      "component_id": "wholesale-rewrite-csl-42",
+      "disposition": "undecided",
+      "paths": [
+        "app/benchmarks/compare.py"
+      ],
+      "compatibility": "No language, storage layout, or topology is selected. Only a measured tier-3 comparison could inform CSL-42, and this packet contains none.",
+      "evidence": [
+        {
+          "class": "source_documented_fact",
+          "locator": "https://linear.app/csl-laboratories/issue/CSL-220/define-the-migration-and-measured-performance-frontier",
+          "statement": "CSL-220 records that CSL-42 proposes a faster-language rewrite and that no matched whole-system evidence proves a language or deletion choice."
+        },
+        {
+          "class": "locally_observed",
+          "locator": "app/benchmarks/compare.py",
+          "statement": "The current comparison is five in-process hot paths, not ingest, replay, evaluation, paper lifecycle, reconciliation, or a GUI render."
+        },
+        {
+          "class": "inference",
+          "locator": "https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig",
+          "statement": "The strangler-fig pattern replaces functionality incrementally and keeps a rollback path while legacy objects still exist."
+        }
+      ]
+    }
+  ],
+  "hard_floors": [
+    {
+      "id": "invariant_1_single_order_path",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/tests/test_invariants.py"
+    },
+    {
+      "id": "invariant_2_decision_pinned_in_auto_modes",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/mode_ladder.py"
+    },
+    {
+      "id": "invariant_3_schema_validate_model_output",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/workflows/schema_loader.py"
+    },
+    {
+      "id": "invariant_4_secrets_os_credential_store",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/core/secrets.py"
+    },
+    {
+      "id": "invariant_5_risk_pure",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "invariant_6_human_gate_hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    },
+    {
+      "id": "invariant_7_fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "invariant_8_raw_inputs_separate_from_summaries",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/filings/raw_store.py"
+    },
+    {
+      "id": "invariant_9_post_pdt",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    }
+  ],
+  "protocol": {
+    "tier1": {
+      "status": "unchanged",
+      "locator": "app/benchmarks/",
+      "cases": [
+        "risk_evaluate",
+        "order_tuple_hash",
+        "schema_validate_proposal",
+        "outbound_scrub",
+        "audit_append_verify"
+      ],
+      "rounds": 5,
+      "orderings": 2,
+      "noise": "relative_iqr",
+      "regression_rule": "median slowdown minus relative IQR above 0.10",
+      "fails_linux_gates": false,
+      "process_exit_on_regression": 0,
+      "csl42_evidence": false,
+      "per_pr_gating_added": false
+    },
+    "tier2": {
+      "provider_free": true,
+      "cadence": "unresolved_release_owner",
+      "per_pr": false,
+      "workloads": [
+        "ingest_to_raw_store",
+        "point_in_time_replay",
+        "frozen_evaluation_run",
+        "paper_order_lifecycle",
+        "reconciliation",
+        "gui_cli_render"
+      ]
+    },
+    "tier3": {
+      "role": "only_csl42_evidence",
+      "results_in_this_packet": 0,
+      "requires_matched_workloads": true,
+      "requires_floors_in_tests": true
+    }
+  },
+  "workloads": [
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "ingest_to_raw_store",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "ingest-worker",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "raw-store",
+          "role": "storage-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    },
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "point_in_time_replay",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "replay-worker",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "raw-store",
+          "role": "storage-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    },
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "frozen_evaluation_run",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "evaluation-worker",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "fixture-reader",
+          "role": "storage-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    },
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "paper_order_lifecycle",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "paper-lifecycle",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "sim-venue",
+          "role": "execution-helper",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "audit-appender",
+          "role": "audit-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    },
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "reconciliation",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "reconciliation-worker",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "ledger-reader",
+          "role": "storage-helper",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "audit-verifier",
+          "role": "audit-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    },
+    {
+      "schema_id": "cockpit.replacement.o8.benchmark-manifest.v1",
+      "tier": 2,
+      "workload_id": "gui_cli_render",
+      "provider_free": true,
+      "network_calls": 0,
+      "credentials_used": false,
+      "live_orders": false,
+      "csl42_evidence": false,
+      "commit": "ebbaa34489f171e079834d02098135711e1d4755",
+      "host": {
+        "runner": "required_on_run",
+        "python": "required_on_run",
+        "status": "required_on_run"
+      },
+      "io": {
+        "included": true,
+        "kinds": [
+          "disk"
+        ],
+        "status": "required_on_run"
+      },
+      "helper_processes": [
+        {
+          "name": "render-process",
+          "role": "primary",
+          "included": true,
+          "status": "required_on_run"
+        },
+        {
+          "name": "ledger-reader",
+          "role": "storage-helper",
+          "included": true,
+          "status": "required_on_run"
+        }
+      ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
+      "variance": {
+        "statistic": "relative_iqr",
+        "repetitions": null,
+        "relative_iqr": null,
+        "status": "required_on_run"
+      },
+      "observation": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "throughput": null,
+        "rss_bytes": null,
+        "cpu": null,
+        "io": null,
+        "tokens": null,
+        "cost": null,
+        "correctness": "required_on_run",
+        "failure": "required_on_run",
+        "recovery": "required_on_run",
+        "growth": "required_on_run",
+        "status": "required_on_run"
+      }
+    }
+  ],
+  "candidate": {
+    "schema_id": "cockpit.replacement.o8.candidate-manifest.v1",
+    "candidate_id": "phase-a-protocol-only",
+    "maturity": "researched",
+    "language_selected": false,
+    "storage_selected": false,
+    "topology_selected": false,
+    "csl42_evidence": false,
+    "changes_financial_semantics": false,
+    "changes_authority_semantics": false,
+    "changes_failure_semantics": false,
+    "changes_recovery_semantics": false,
+    "smallest_experiment": {
+      "workload_id": "ingest_to_raw_store",
+      "statement": "Run the tier-2 provider-free ingest workload on a frozen fixture until relative IQR is recorded with host and commit. This packet does not start the run."
+    },
+    "seam": "ingest_to_raw_store",
+    "rollback": {
+      "route_back_to_legacy": true,
+      "system_of_record": "legacy_raw_store_and_hash_chain"
+    },
+    "floors": [
+      {
+        "id": "invariant_1_single_order_path",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/tests/test_invariants.py"
+      },
+      {
+        "id": "invariant_2_decision_pinned_in_auto_modes",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/orchestrator/mode_ladder.py"
+      },
+      {
+        "id": "invariant_3_schema_validate_model_output",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/workflows/schema_loader.py"
+      },
+      {
+        "id": "invariant_4_secrets_os_credential_store",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/core/secrets.py"
+      },
+      {
+        "id": "invariant_5_risk_pure",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/risk/engine.py"
+      },
+      {
+        "id": "invariant_6_human_gate_hash_chain_audit",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/storage/audit.py"
+      },
+      {
+        "id": "invariant_7_fail_closed",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/orchestrator/breakers.py"
+      },
+      {
+        "id": "invariant_8_raw_inputs_separate_from_summaries",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/filings/raw_store.py"
+      },
+      {
+        "id": "invariant_9_post_pdt",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/risk/engine.py"
+      },
+      {
+        "id": "fail_closed",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/orchestrator/breakers.py"
+      },
+      {
+        "id": "hash_chain_audit",
+        "enforced_by": "tests",
+        "benchmark_eligible": false,
+        "test_locator": "app/storage/audit.py"
+      }
+    ]
+  },
+  "migration": {
+    "pattern": "strangler_fig",
+    "big_bang_deletion": false,
+    "decommission_in_phase_a": false,
+    "facade_is_order_authority": false,
+    "seams": [
+      "ingest_to_raw_store",
+      "point_in_time_replay",
+      "frozen_evaluation_run",
+      "paper_order_lifecycle",
+      "reconciliation",
+      "gui_cli_render"
+    ],
+    "rollback": {
+      "system_of_record": "legacy_raw_store_and_hash_chain",
+      "route_back_to_legacy": true,
+      "requires_human_receipt_before_decommission": true
+    },
+    "mixed_version_recovery": {
+      "generation_tag_required": true,
+      "replay_from": [
+        "raw_inputs",
+        "raw_inputs"
+      ],
+      "on_disagreement": "watch_only",
+      "trade_on_disagreement": false
+    },
+    "shared_stores": [
+      "raw_bytes",
+      "hash_chain_audit"
+    ],
+    "anti_corruption_layer": true
+  },
+  "unresolved_decisions": [
+    {
+      "id": "tier2-cadence-and-host",
+      "class": "spend",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "Whether tier-2 tracked workloads run on dispatch, ci:full, or nightly Blacksmith, and whether any host is purchased. This packet adds no cadence and no spend."
+    },
+    {
+      "id": "credentials",
+      "class": "credentials",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "No credential is requested or stored. Venue and provider credentials remain an owner decision outside this packet."
+    },
+    {
+      "id": "tax-legal",
+      "class": "tax_legal",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "Tax and legal eligibility for a US individual across securities and event contracts remain unresolved. This packet does not decide them."
+    },
+    {
+      "id": "language-storage-topology",
+      "class": "architecture",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "Language, storage, topology, and any CSL-42 rewrite stay a phase B human decision after matched tier-3 evidence. This packet selects none."
+    },
+    {
+      "id": "release-scope",
+      "class": "release",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "Release scope and qualification remain with O9 and a human decision. This packet claims no release."
+    },
+    {
+      "id": "live-authority",
+      "class": "live",
+      "owner": "release owner",
+      "status": "unresolved",
+      "question": "Live trading and bounded-direct authority stay closed. This packet grants no live effect."
+    }
+  ]
+}

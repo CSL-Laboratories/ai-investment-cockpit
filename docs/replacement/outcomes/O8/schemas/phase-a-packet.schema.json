@@ -242,6 +242,7 @@
               "type": "array",
               "minItems": 2,
               "maxItems": 2,
+              "uniqueItems": true,
               "items": {"enum": ["raw_inputs", "hash_chain_audit"]}
             },
             "on_disagreement": {"const": "watch_only"},
@@ -252,6 +253,7 @@
           "type": "array",
           "minItems": 2,
           "maxItems": 2,
+          "uniqueItems": true,
           "items": {"enum": ["raw_bytes", "hash_chain_audit"]}
         },
         "anti_corruption_layer": {"const": true}

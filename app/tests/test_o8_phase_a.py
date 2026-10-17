@@ -24,7 +24,14 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: attached-floors-invalid: attached floors invalid",
     "O8 negative control failed as designed: experiment-seam-mismatch: candidate experiment does not exercise its seam",
     "O8 negative control failed as designed: non-finite-literal: unreadable JSON",
-    "O8 negative controls: 14 failed as designed",
+    "O8 negative control failed as designed: overflow-literal: unreadable JSON",
+    "O8 negative control failed as designed: baseline-outputs-absolute: baseline outputs path must be relative",
+    "O8 negative control failed as designed: baseline-outputs-traversal: baseline outputs path escapes the repository",
+    "O8 negative control failed as designed: baseline-metadata-only: tier-3 baseline lacks retained outputs",
+    "O8 negative control failed as designed: helper-set-mismatch: helper set does not match the workload",
+    "O8 negative control failed as designed: replay-from-duplicate: replay sources must be distinct",
+    "O8 negative control failed as designed: shared-stores-duplicate: shared stores must be distinct",
+    "O8 negative controls: 21 failed as designed",
 )
 
 

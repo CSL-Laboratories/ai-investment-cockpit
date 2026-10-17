@@ -103,7 +103,13 @@
   "helper_processes": [
     {
       "name": "ingest-worker",
-      "role": "feeds frozen bytes into RawStore",
+      "role": "primary",
+      "included": true,
+      "status": "measured"
+    },
+    {
+      "name": "raw-store",
+      "role": "storage-helper",
       "included": true,
       "status": "measured"
     }
