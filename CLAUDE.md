@@ -11,6 +11,18 @@ order and the reviewed migration from the current implementation described below
 The nine invariants and runtime rules here remain in force until their separately
 scoped, reviewed implementation amendments; ratification alone grants no new authority.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
+gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+for operational authority; they do not amend accepted contracts, activate R2a or
+unlock live capital. Founders merge after the required current-head reviews and checks;
+agents never merge. A founder's own PR requires another founder's approval before merge,
+regardless of ruleset enforcement. Non-author approval checks alone do not establish
+founder identity. All three founders participate in the final
+release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
@@ -56,7 +68,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
+  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
@@ -68,11 +81,15 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
    The adopted product contracts supply required behavior; subsystem/reference
    documents do not independently change delivery order or current runtime authority.
 2. Pick **ONE** work package (RW-xx refactor, or W-xx production). Confirm its
-   scope and its deterministic gate before writing code.
+   scope and its deterministic gate before writing code. Decision or direction
+   work: see `AGENTS.md` Linear-first (assignee Parallel Task API brief; Grok Bots
+   do not research or resolve those issues).
 3. Implement. Preserve the invariants. Add tests alongside.
 4. Run the gates (below). Green before you stop.
 5. **Do not re-litigate settled decisions** — the corpus is a one-way pipeline
-   (research → architecture → build → security → enhancements).
+   (research → architecture → build → security → enhancements). Recorded
+   architecture and direction live in `docs/adr/` and the linked Linear
+   `decision` issues.
 6. Commit only when the operator asks. Message convention:
    `feat(RW-xx): …` / `fix(RW-xx): …` / `docs(RW-xx): …`.
 
@@ -115,3 +132,17 @@ forces its import to fail and covers the fallback without skipping either path.
   A general `app/surfaces/` abstraction is not merged.
 - **Design corpus:** `docs/` — index at `docs/README.md`. Current Cloud process:
   `docs/research/agent-swarm-rebase-2026-09-14.md`.
+
+## Review loop
+
+Devin reviews → Claude fixes (`claude.yml`) → stuck threads are picked up by
+[`.github/workflows/stuck-thread-watch.yml`](.github/workflows/stuck-thread-watch.yml),
+which asks Codex to mediate (`@codex review`) and records one Linear Triage
+`needs-decision` roll-up per unapproved PR (`Stuck PR threads: <repo>#<PR>`),
+updated in place. Shared keys with the Codex CI/fixer gate:
+`<!-- stuck-pr-threads:owner/repo#N -->` and
+`<!-- codex-gate-mediate:owner/repo:N -->`. Adopt an existing roll-up only by
+the `stuck-pr-threads` HTML marker, never by title. Write Linear only when at
+least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT`
+checks, or to create a missing roll-up after an earlier Linear outage. Humans
+decide. The watcher never resolves threads, pushes, or merges.

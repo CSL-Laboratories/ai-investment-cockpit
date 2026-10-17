@@ -1,0 +1,37 @@
+# Cockpit replacement program
+
+**Status:** accepted contract under [CSL-212](https://linear.app/csl-laboratories/issue/CSL-212);
+outcome artifacts and all implementation, empirical and release gates remain pending.
+The immutable accepted governing files preserve their pre-receipt candidate labels;
+the external human receipt and [program.json](program.json) record the transition.
+
+This directory is the review surface for the owner-directed Cockpit replacement.
+It records the accepted successor product contract and dependency-ordered month program.
+It does not change runtime authority, qualify a provider or venue, authorize
+credentials or capital, or establish empirical product acceptance.
+
+Read in this order:
+
+1. [SUCCESSOR-PRODUCT.md](SUCCESSOR-PRODUCT.md) for product intent and non-goals.
+2. [SCOPE-AUDIT.md](SCOPE-AUDIT.md) for source archaeology and reusable contracts.
+3. [ISSUE-CONTRACT.md](ISSUE-CONTRACT.md) for research, discretion and evidence rules.
+4. [AUTHORITY-COMPLIANCE-RESEARCH.md](AUTHORITY-COMPLIANCE-RESEARCH.md) for
+   the reconciled A/B/C authority research, owner direction and unresolved gaps.
+5. [MONTH-PROGRAM.md](MONTH-PROGRAM.md) for outcome order and checkpoints.
+6. [program.json](program.json) for the accepted-document receipts and pending outcome registry.
+
+The human receipt accepts the exact governing/research documents, not additional
+approval of every registry annotation. Outcome titles and dependencies are checked
+against the accepted month program. The validator also pins the full existing
+outcome records at `29da947464f687f3a2a65d26fca4927bc2b59849` as an integrity
+baseline: issue mappings, intent summaries, budgets, evidence and other planning
+annotations cannot silently drift while the registry reports `accepted_contract`.
+These pins do not constitute a new human receipt or settle the discretion-label
+reconciliation and other deferred questions in CSL-223. An annotation correction
+needs scoped review; a change to governing direction needs a fresh human receipt.
+
+The current rules in `AGENTS.md`, `CLAUDE.md`, the nine implementation
+invariants, the order path, and all pre-live controls remain authoritative until
+separately scoped, reviewed implementation amendments qualify replacements.
+Historical research and implementation are evidence inputs, not accepted successor
+architecture.
