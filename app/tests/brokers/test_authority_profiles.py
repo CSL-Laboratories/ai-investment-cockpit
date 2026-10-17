@@ -23,6 +23,7 @@ from brokers.authority_profiles import (
     AuthorityProfileStore,
     ClaimTicket,
     ProfileRefused,
+    _record_landed,
     handoff_to_gateway,
     load_profile,
     load_profile_file,
@@ -1190,30 +1191,117 @@ def test_stopped_proposal_completes_after_reconcile_and_release(tmp_path):
     assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "replay"
 
 
-def test_direct_caller_cannot_forge_a_submitted_verdict(tmp_path):
-    """CSL reviewer finding (Codex 4302176370): the reconcile entry point must
-    not accept a caller-supplied ``order_submitted`` verdict. Before the fix,
-    ``store.reconcile_handoff`` was public and a direct caller could present
-    ``order_submitted=True`` (or ``False``) for a ``submit_paper`` reservation
-    it never checked against the gateway's signed chain, completing or
-    failing it on nothing but its own say-so -- and so clearing a stop out
-    from under a submit that may still be in flight. The trusted-boundary
-    method is now private, and the only non-gateway public entry point
-    (``reconcile_non_gateway_handoff``) refuses outright on a gateway-bound
-    reservation; it can never be used to forge a verdict for one.
+@pytest.mark.parametrize("state", ["pending", "in_progress", "failed"])
+@pytest.mark.parametrize("path", ["public", "private", "record_landed"])
+def test_direct_caller_cannot_forge_a_submitted_verdict(st, tmp_path, monkeypatch, state, path):
+    """Codex 4302176370: every reconcile path must consult the signed chain.
+
+    A real submitted order cannot become failed/reconciled using a forged
+    verdict, missing gateway evidence, or a failing chain lookup. The stop
+    remains until the chain-derived completion has actually been recorded.
     """
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
     store = _store(tmp_path)
-    _install(store)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    order_ref = str(scenario.order.id)
     store.authorize(
         "profile-b", action="submit_paper", client_order_id="forge-1",
-        notional=Decimal("10.00"), actor="stop-owner", now=NOW, order_ref="forged-order",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=order_ref,
     )
-    assert not hasattr(store, "reconcile_handoff")
+    if state != "pending":
+        ticket = store.claim_handoff("forge-1", now=now, awaiting_submit=True)
+        assert isinstance(ticket, ClaimTicket)
+        if state == "failed":
+            store.fail_handoff("forge-1", generation=ticket.generation)
+    assert gateway.submit(scenario.order, **scenario.submit_kwargs()).ok is True
+    assert gateway._order_submitted_on_chain(st, order_ref) is True
+    store.kill("profile-b", actor="stop-owner", now=now, reason="operator kill")
+
+    def assert_unresolved():
+        with store._txn() as conn:
+            row = conn.execute(
+                "SELECT handoff_state, handoff_done, reconciled FROM reservations "
+                "WHERE client_order_id = 'forge-1'"
+            ).fetchone()
+        assert tuple(row) == (state, 0, 0)
+        assert _refuse(
+            lambda: store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+        ) == "not_reconciled"
+        assert _handoff_row(store.path, "forge-1")["kill"] == 1
+        assert broker.calls == 1
+
+    kwargs = scenario.submit_kwargs()
+    reconcile_paths = {
+        "public": lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="forge-1", submit_args=(scenario.order,),
+            submit_kwargs=kwargs, now=now,
+        ),
+        # Omitting the caller's order_ref must still check the stored identity.
+        "private": lambda: store._reconcile_handoff(
+            "forge-1", order_ref=None, gateway=gateway, ladder=kwargs["ladder"], now=now,
+        ),
+        "record_landed": lambda: _record_landed(
+            store, gateway, "forge-1", order_ref, kwargs, now,
+        ),
+    }
+    for forged_verdict in (False, True):
+        with pytest.raises(TypeError):
+            store._reconcile_handoff(
+                "forge-1", order_ref=order_ref, order_submitted=forged_verdict, now=now,
+            )
+        assert_unresolved()
     assert _refuse(
-        lambda: store.reconcile_non_gateway_handoff("forge-1", now=NOW)
+        lambda: store.reconcile_non_gateway_handoff("forge-1", now=now)
     ) == "store"
-    row = _handoff_row(store.path, "forge-1")
-    assert (row["handoff_state"], row["handoff_done"]) == ("pending", 0)
+    assert_unresolved()
+    for supplied_ref in (None, order_ref):
+        assert _refuse(
+            lambda: store._reconcile_handoff("forge-1", order_ref=supplied_ref, now=now)
+        ) == "gateway_identity"
+        assert_unresolved()
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "forge-1", order_ref=order_ref, gateway=gateway, now=now,
+        )
+    ) == "gateway_identity"
+    assert_unresolved()
+    if state == "failed":
+        assert store.reconcile_failed_handoff("forge-1") == "failed"
+        assert_unresolved()
+
+    def unavailable_chain(*_args):
+        raise RuntimeError("signed chain unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(gateway, "_order_submitted_on_chain", unavailable_chain)
+        for reconcile in reconcile_paths.values():
+            assert _refuse(reconcile) == "gateway_identity"
+            assert_unresolved()
+
+    # With genuine chain evidence every entry point records completed, never
+    # failed, and never submits again. Reconcile itself leaves the stop set.
+    reconcile_paths[path]()
+    with store._txn() as conn:
+        row = conn.execute(
+            "SELECT handoff_state, handoff_done, reconciled FROM reservations "
+            "WHERE client_order_id = 'forge-1'"
+        ).fetchone()
+    assert tuple(row) == ("completed", 1, 1)
+    assert _handoff_row(store.path, "forge-1")["kill"] == 1
+    assert broker.calls == 1
+    store.release_stop("profile-b", actor="stop-owner", now=now, reconciled=True)
+    assert _handoff_row(store.path, "forge-1")["kill"] == 0
 
 
 def test_unbound_reservation_refuses_any_order_identity_at_reconcile(tmp_path):
@@ -1233,7 +1321,7 @@ def test_unbound_reservation_refuses_any_order_identity_at_reconcile(tmp_path):
     assert isinstance(ticket, ClaimTicket)
     assert _refuse(
         lambda: store._reconcile_handoff(
-            "unbound-1", order_ref="someone-elses-order", order_submitted=True, now=NOW
+            "unbound-1", order_ref="someone-elses-order", now=NOW
         )
     ) == "client_order_conflict"
     row = _handoff_row(store.path, "unbound-1")

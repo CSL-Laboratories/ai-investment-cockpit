@@ -983,19 +983,19 @@ class AuthorityProfileStore:
         client_order_id: str,
         *,
         order_ref: str | None,
-        order_submitted: bool,
         now: datetime,
+        gateway=None,
+        ladder=None,
         require_no_gateway: bool = False,
     ) -> str | ClaimTicket:
         """Trusted-boundary reconcile against the gateway's durable order identity.
 
-        Private: ``order_submitted`` must be derived from the gateway's signed
-        transition chain by ``reconcile_handoff_to_gateway`` (or fixed ``False``
-        for ``reconcile_non_gateway_handoff``, whose actions never reach a
-        gateway) — never a caller-supplied verdict. The lookup and the state
-        transition happen in the same atomic call so a direct caller cannot
-        present a forged verdict to mark a submitted reservation
-        failed/reconciled and so clear a stop out from under it.
+        Derive submission from the gateway's signed transition chain inside
+        the reservation transaction. Gateway-bound rows require that evidence
+        even for a direct private call; only non-gateway rows may reconcile
+        without it. The lookup and the state transition share this call so a
+        direct caller cannot present a forged verdict to mark a submitted
+        reservation failed/reconciled and so clear a stop out from under it.
 
         A durably-submitted handoff is recorded ``completed`` so no second
         submit is possible. An abandoned ``in_progress`` claim is re-owned
@@ -1007,8 +1007,6 @@ class AuthorityProfileStore:
         ``reconciled`` when nothing reached the gateway.
         """
         _require_now(now)
-        if type(order_submitted) is not bool:
-            raise ProfileRefused("store", "reconcile requires the durable submit verdict")
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
             row = conn.execute(
@@ -1034,6 +1032,24 @@ class AuthorityProfileStore:
             state = row["handoff_state"]
             if state not in {"pending", "in_progress", "failed"} or int(row["handoff_done"]):
                 raise ProfileRefused("store", "handoff is not reconcilable")
+            order_submitted = False
+            if row["action"] == "submit_paper" or row["order_ref"] is not None:
+                if gateway is None or row["order_ref"] is None:
+                    raise ProfileRefused(
+                        "gateway_identity", "gateway-bound reservation requires signed-chain evidence"
+                    )
+                _require_paper_gateway(gateway)
+                try:
+                    st = gateway._resolve_state(ladder)
+                    order_submitted = gateway._order_submitted_on_chain(st, row["order_ref"])
+                except ProfileRefused:
+                    raise
+                except Exception as exc:
+                    raise ProfileRefused(
+                        "gateway_identity", "gateway durable order identity could not be resolved"
+                    ) from exc
+                if type(order_submitted) is not bool:
+                    raise ProfileRefused("gateway_identity", "gateway submit verdict is malformed")
             generation = int(row["claim_generation"])
             if order_submitted:
                 # The order is on the gateway's signed chain. Recording
@@ -1142,7 +1158,7 @@ class AuthorityProfileStore:
         verdict from the gateway's own signed chain.
         """
         return self._reconcile_handoff(
-            client_order_id, order_ref=None, order_submitted=False, now=now,
+            client_order_id, order_ref=None, now=now,
             require_no_gateway=True,
         )
 
@@ -1634,20 +1650,12 @@ def reconcile_handoff_to_gateway(
         store, row["profile_id"], action=row["action"], order=order,
         notional=Decimal(row["notional"]), producing_runtime=kwargs.get("producing_runtime"),
     )
-    try:
-        st = gateway._resolve_state(kwargs.get("ladder"))
-        submitted = gateway._order_submitted_on_chain(st, order_ref)
-    except ProfileRefused:
-        raise
-    except Exception as exc:
-        raise ProfileRefused(
-            "gateway_identity", "gateway durable order identity could not be resolved"
-        ) from exc
     verdict = store._reconcile_handoff(
         client_id,
         order_ref=order_ref,
-        order_submitted=submitted,
         now=now,
+        gateway=gateway,
+        ladder=kwargs.get("ladder"),
     )
     if verdict == "completed":
         return ProfiledHandoff(client_order_id, False, True, None)
@@ -1693,7 +1701,7 @@ def _settle_completed(store, gateway, client_order_id, order_ref, generation, kw
     except ProfileRefused as exc:
         if exc.code != "stale_claim" or not _chain_submitted(gateway, order_ref, kwargs):
             raise
-        _record_landed(store, client_order_id, order_ref, now)
+        _record_landed(store, gateway, client_order_id, order_ref, kwargs, now)
 
 
 def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwargs, now) -> bool:
@@ -1703,16 +1711,17 @@ def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwarg
     reservation is then completed), so callers do not report a refusal.
     """
     if _chain_submitted(gateway, order_ref, kwargs):
-        _record_landed(store, client_order_id, order_ref, now)
+        _record_landed(store, gateway, client_order_id, order_ref, kwargs, now)
         return True
     store.fail_handoff(client_order_id, generation=generation)
     return False
 
 
-def _record_landed(store, client_order_id, order_ref, now) -> None:
+def _record_landed(store, gateway, client_order_id, order_ref, kwargs, now) -> None:
     try:
         store._reconcile_handoff(
-            client_order_id, order_ref=order_ref, order_submitted=True, now=now
+            client_order_id, order_ref=order_ref, now=now,
+            gateway=gateway, ladder=kwargs.get("ladder"),
         )
     except ProfileRefused:
         # Suppress only when the other owner already completed the reservation.
