@@ -127,6 +127,20 @@ def test_json_equality_keeps_containers_and_bools() -> None:
     assert module._json_equal([], {}) is False
 
 
+def test_grounding_rejects_bool_and_number_aliases() -> None:
+    module = _load()
+    case = {
+        "dispatched_refs": ["ref-1"],
+        "sources": {"ref-1": {"fields": {"n": 1, "box": {}}}},
+        "output": {"source_refs": ["ref-1"], "claims": {"n": True}},
+    }
+    assert module._score_grounding(case) is False
+    case["output"]["claims"] = {"box": {"x": {}}}
+    assert module._score_grounding(case) is False
+    case["output"]["claims"] = {"n": 1}
+    assert module._score_grounding(case) is True
+
+
 def test_grounding_and_refusal_results_fail_closed() -> None:
     module = _load()
     suite = json.loads(SUITE.read_text(encoding="utf-8"))

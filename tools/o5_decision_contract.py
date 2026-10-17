@@ -250,7 +250,7 @@ def _score_grounding(case: dict[str, Any]) -> bool:
     claims = output.get("claims")
     if not isinstance(claims, dict) or not claims:
         return False
-    return all(key in cited and claims[key] == cited[key] for key in claims)
+    return all(key in cited and _json_equal(claims[key], cited[key]) for key in claims)
 
 
 def _admit_task_suite(document: dict[str, Any], ctx: Context) -> Admission:
