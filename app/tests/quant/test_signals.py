@@ -27,7 +27,7 @@ from quant.signals import EwmaVolatility, OrderFlowImbalance, RollingBeta, Rolli
 
 
 def test_lambda_outside_the_open_unit_interval_is_refused():
-    for lam in (0.0, 1.0, 1.5, -0.5, float("nan"), float("inf"), 1):
+    for lam in (0.0, 1.0, 1.5, -0.5, float("nan"), float("inf"), 1, True, False, "0.94"):
         with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
             EwmaVolatility(lam=lam)
 

@@ -21,13 +21,18 @@ pub struct EwmaVolatility {
 }
 
 impl EwmaVolatility {
-    pub fn new(lam: f64) -> Self {
-        Self {
+    pub fn new(lam: f64) -> Result<Self, &'static str> {
+        // NaN fails both comparisons, so it is rejected with the other
+        // values outside the open unit interval.
+        if !(lam > 0.0 && lam < 1.0) {
+            return Err("lam must be in (0, 1)");
+        }
+        Ok(Self {
             lam,
             variance: 0.0,
             last: None,
             count: 0,
-        }
+        })
     }
 
     pub fn update(&mut self, price: f64) -> Result<Option<f64>, &'static str> {
@@ -517,13 +522,33 @@ mod tests {
 
     #[test]
     fn ewma_stays_cold_for_the_first_two_prices() {
-        let mut vol = EwmaVolatility::new(0.94);
+        let mut vol = EwmaVolatility::new(0.94).unwrap();
         assert!(vol.update(100.0).unwrap().is_none());
         assert!(vol.update(101.0).unwrap().is_none());
         assert!(vol.update(100.5).unwrap().unwrap() > 0.0);
         assert!(vol.is_warm());
         assert!(vol.update(f64::INFINITY).is_err());
         assert!(vol.value().unwrap().is_some());
+    }
+
+    #[test]
+    fn ewma_rejects_a_lambda_outside_the_open_unit_interval() {
+        for lam in [
+            0.0,
+            1.0,
+            1.5,
+            -0.1,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert_eq!(
+                EwmaVolatility::new(lam).unwrap_err(),
+                "lam must be in (0, 1)"
+            );
+        }
+        assert!(EwmaVolatility::new(f64::MIN_POSITIVE).is_ok());
+        assert!(EwmaVolatility::new(1.0 - f64::EPSILON).is_ok());
     }
 
     #[test]

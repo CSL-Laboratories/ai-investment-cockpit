@@ -83,7 +83,8 @@ class EwmaVolatility:
 
     ``lam`` is the decay. 0.94 is the RiskMetrics daily default and is retained here as a
     familiar starting point, but at event frequency the right value depends entirely on the
-    event rate — it is a parameter to sweep, not a constant to trust.
+    event rate — it is a parameter to sweep, not a constant to trust. The constructor
+    requires ``0 < lam < 1``, on this class and on the Rust core.
     """
 
     lam: float = 0.94
@@ -93,9 +94,13 @@ class EwmaVolatility:
     _core: object | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.lam, bool) and isinstance(self.lam, (int, float)):
-            if not (0.0 < self.lam < 1.0):
-                raise ValueError(f"lam must be in (0, 1), got {self.lam}")
+        # Bool is an int, so it has to fail the range check too: ``True`` is 1.
+        try:
+            in_range = 0.0 < self.lam < 1.0
+        except TypeError:
+            in_range = False
+        if not in_range:
+            raise ValueError(f"lam must be in (0, 1), got {self.lam!r}")
         native = _NATIVE
         if (
             native is not None

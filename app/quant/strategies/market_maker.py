@@ -196,7 +196,10 @@ class MarketMaker(Strategy):
             # A NaN volatility is not a number the skew can clamp. ``nan``
             # comparisons are false, so the quote would pin at +max skew.
             return None
-        return sigma_return * mid_ticks
+        sigma_ticks = sigma_return * mid_ticks
+        if not math.isfinite(sigma_ticks):
+            return None
+        return sigma_ticks
 
     def quotes(self, ctx: StrategyContext) -> tuple[int, int] | None:
         """Compute the target (bid, ask) in ticks, or None if the model cannot speak yet.

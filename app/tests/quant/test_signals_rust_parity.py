@@ -279,9 +279,15 @@ def test_constant_window_and_compensated_sum_match_python():
 
 
 def test_invalid_lambda_is_refused_at_construction():
-    for lam in (1.5, 1.0, 0.0, -0.5):
+    import cockpit_quant
+
+    for lam in (1.5, 1.0, 0.0, -0.5, float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
             EwmaVolatility(lam=lam)
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            cockpit_quant.EwmaCore(lam)
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            cockpit_quant.ewma_replay(lam, [100.0, 101.0, 100.5])
 
 
 def test_mutating_lambda_returns_to_python():

@@ -20,10 +20,10 @@ struct EwmaCore {
 #[pymethods]
 impl EwmaCore {
     #[new]
-    fn new(lam: f64) -> Self {
-        Self {
-            inner: EwmaVolatility::new(lam),
-        }
+    fn new(lam: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: EwmaVolatility::new(lam).map_err(invalid)?,
+        })
     }
 
     fn update(&mut self, price: f64) -> PyResult<Option<f64>> {
@@ -209,7 +209,7 @@ impl BetaCore {
 
 #[pyfunction]
 fn ewma_replay(lam: f64, prices: Vec<f64>) -> PyResult<Vec<Option<f64>>> {
-    let mut vol = EwmaVolatility::new(lam);
+    let mut vol = EwmaVolatility::new(lam).map_err(invalid)?;
     let mut out = Vec::with_capacity(prices.len());
     for price in prices {
         out.push(vol.update(price).map_err(invalid)?);
