@@ -162,8 +162,14 @@ class ResearchAdapter:
             return PublishResult(batch.status, (), batch.calls, batch.dropped)
         if parquet_root is None:
             return PublishResult(batch.status, (), batch.calls, batch.dropped)
+        from research.vibe_trading.poller import stamp_source_refs
+
+        envelopes = [event for event in batch.events if event.get("event_type") == "signal:envelope"]
+        if envelopes:
+            persist_events(state, envelopes, parquet_root=parquet_root, clock=state.clock)
+        rows = stamp_source_refs(state, batch.events)
         stored = persist_events(
-            state, list(batch.events), parquet_root=parquet_root, clock=state.clock,
+            state, rows, parquet_root=parquet_root, clock=state.clock,
         ).stored
         return PublishResult(batch.status, tuple(stored), batch.calls, batch.dropped)
 

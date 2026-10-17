@@ -190,7 +190,12 @@ def test_raw_payload_is_kept_out_of_the_headline():
     )
     summary = next(event for event in batch.events if event["headline"].startswith("alpha_bench"))
     assert "submit_order" not in summary["headline"]
-    assert "BUY AAPL" in json.dumps(summary["raw_input"])
+    assert "source_payload" not in summary["raw_input"]
+    envelope = next(
+        event for event in batch.events
+        if event["event_type"] == "signal:envelope" and "BUY AAPL" in json.dumps(event["raw_input"])
+    )
+    assert summary["raw_input"]["source_payload_sha256"] == envelope["raw_input"]["sha256"]
 
 
 def test_token_budget_trims_instead_of_overflowing(tmp_path):
@@ -267,12 +272,96 @@ def test_a_later_day_is_a_fresh_observation():
     lines = project_alpha_bench(
         _load("alpha_bench.json"), zoo="alpha101", universe="sp500", period="2018-2025",
     )
+    def feature(events):
+        return next(event for event in events if event["event_type"] != "signal:envelope")
+
     first = to_events(lines, ts=NOW)
     later = to_events(lines, ts=NOW + timedelta(days=1))
-    assert first[0]["article_id"] != later[0]["article_id"]
-    assert first[0]["raw_input"]["observed_on"] == "2026-07-07"
-    assert later[0]["raw_input"]["observed_on"] == "2026-07-08"
-    assert to_events(lines, ts=NOW)[0]["article_id"] == first[0]["article_id"]
+    assert feature(first)["article_id"] != feature(later)["article_id"]
+    assert feature(first)["raw_input"]["observed_on"] == "2026-07-07"
+    assert feature(later)["raw_input"]["observed_on"] == "2026-07-08"
+    assert feature(to_events(lines, ts=NOW))["article_id"] == feature(first)["article_id"]
+    first_env = next(event for event in first if event["event_type"] == "signal:envelope")
+    later_env = next(event for event in later if event["event_type"] == "signal:envelope")
+    assert first_env["article_id"] == later_env["article_id"]
+
+
+def test_missing_collection_is_quarantined_and_an_empty_list_is_ok():
+    payload = _load("holdings.json")
+    assert project_holdings(payload, ticker="AAPL")
+    empty = json.loads(json.dumps(payload))
+    empty["data"]["holders"] = []
+    assert project_holdings(empty, ticker="AAPL") == []
+    missing = json.loads(json.dumps(payload))
+    del missing["data"]["holders"]
+    assert project_holdings(missing, ticker="AAPL") is None
+    missing["data"]["holders"] = {"manager": "nope"}
+    assert project_holdings(missing, ticker="AAPL") is None
+    etf = _load("etf.json")
+    assert project_etf(etf, etf="SPY", universe=frozenset({"AAPL"}))
+    del etf["data"]["holdings"]
+    assert project_etf(etf, etf="SPY", universe=frozenset({"AAPL"})) is None
+    contracts = _load("prediction.json")
+    contracts["data"]["events"] = "nope"
+    assert project_contracts(contracts, query="Fed cut") is None
+
+
+def test_etf_scan_includes_a_watchlist_name_past_the_old_cap():
+    holdings = [{"ticker": f"Z{index:03d}", "pct_of_net_assets": 0.1} for index in range(70)]
+    holdings.append({"ticker": "AAPL", "pct_of_net_assets": 1.5})
+    payload = {
+        "ok": True, "as_of": "2026-06-30", "data": {"symbol": "SPY", "holdings": holdings},
+    }
+    lines = project_etf(payload, etf="SPY", universe=frozenset({"AAPL"}))
+    assert lines[0].symbols[0] == "AAPL"
+    assert "outside_universe=70" in lines[0].text
+    payload["as_of"] = "2026-99-99"
+    assert project_etf(payload, etf="SPY", universe=frozenset({"AAPL"})) is None
+    payload["as_of"] = "----------"
+    assert project_etf(payload, etf="SPY", universe=frozenset({"AAPL"})) is None
+
+
+def test_later_day_row_resolves_the_deduped_envelope(tmp_path):
+    from workflows.events import persist_events, resolve_raw
+
+    from research.vibe_trading.poller import stamp_source_refs
+
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="",
+    )
+    state = _state(tmp_path, settings, name="envelope.db")
+    root = tmp_path / "raw"
+    adapter = ResearchAdapter(
+        settings, transport=FakeSidecar({"alpha_bench": _load("alpha_bench.json")}),
+    )
+    first = adapter.collect(clock=FrozenClock(NOW))
+    envelopes = [event for event in first.events if event["event_type"] == "signal:envelope"]
+    persist_events(state, envelopes, parquet_root=root, clock=FrozenClock(NOW))
+    persisted = persist_events(
+        state, stamp_source_refs(state, first.events), parquet_root=root, clock=FrozenClock(NOW),
+    )
+    assert persisted.stored
+    later = adapter.collect(clock=FrozenClock(NOW + timedelta(days=1)))
+    later_envelopes = [event for event in later.events if event["event_type"] == "signal:envelope"]
+    duplicate = persist_events(
+        state, later_envelopes, parquet_root=root, clock=FrozenClock(NOW + timedelta(days=1)),
+    )
+    assert duplicate.stored == []
+    assert duplicate.duplicates >= 1
+    stamped = stamp_source_refs(state, later.events)
+    second = persist_events(
+        state, stamped, parquet_root=root, clock=FrozenClock(NOW + timedelta(days=1)),
+    )
+    assert second.stored
+    window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(days=2))
+    envelopes_stored = [row for row in window if row.event_type == "signal:envelope"]
+    assert len(envelopes_stored) == 1
+    factor = next(row for row in second.stored if row.headline.startswith("alpha_factor"))
+    image = resolve_raw(root, factor.raw_ref, state=state, row=factor)
+    source = resolve_raw(root, image["raw_input"]["source_ref"], state=state, row=envelopes_stored[0])
+    assert "BUY AAPL" in json.dumps(source["raw_input"]["source_payload"])
+    assert image["raw_input"]["source_ref"] == envelopes_stored[0].raw_ref
 
 
 def test_republish_dedupes_the_same_feature(state, tmp_path):
@@ -520,9 +609,13 @@ def test_categorise_subnormal_std_is_not_dead():
 
 
 def test_categorise_large_finite_stats_do_not_overflow():
-    row = {"ic_mean": 1e307, "ic_std": 1e308, "ic_positive_ratio": 0.7, "ic_count": 1000}
-    assert categorise(row) == ("alive", "recomputed")
-    row = {"ic_mean": 1e307, "ic_std": 1e308, "ic_positive_ratio": 0.7, "ic_count": 1}
+    assert categorise({
+        "ic_mean": 2, "ic_std": 0.01, "ic_positive_ratio": 0.7, "ic_count": 100,
+    }) is None
+    assert categorise({
+        "ic_mean": 0.05, "ic_std": 0.01, "ic_positive_ratio": 2, "ic_count": 100,
+    }) is None
+    row = {"ic_mean": 0.05, "ic_std": 1e308, "ic_positive_ratio": 0.7, "ic_count": 1000}
     assert categorise(row) == ("dead", "recomputed")
 
 
@@ -713,19 +806,22 @@ def test_projected_events_keep_the_sidecar_source_image():
 
     holdings = project_holdings(_load("holdings.json"), ticker="AAPL")
     assert holdings[0].raw["source_row"]["cik"] == "0001067983"
-    assert holdings[0].raw["source_payload"]["paging"]["count"] == 1
-    assert holdings[0].raw["source_payload"]["source"] == "sec_edgar_13f"
+    assert "source_payload" not in holdings[0].raw
     etf = project_etf(_load("etf.json"), etf="SPY", universe=frozenset({"AAPL"}))
-    assert etf[0].raw["source_payload"]["data"]["holdings"][0]["name"] == "APPLE INC"
-    assert etf[0].raw["source_payload"]["paging"]["count"] == 2
     contracts = project_contracts(_load("prediction.json"), query="Fed cut")
     assert "SYSTEM:" in contracts[0].raw["source_row"]["title"]
     events = to_events([*holdings, *etf, *contracts], ts=NOW)
     for event in events:
         assert event["content_hash"] == content_hash(event["raw_input"])
     holding = next(event for event in events if event["event_type"] == "signal:13f")
-    assert "0001067983" in json.dumps(holding["raw_input"])
-    assert "sec_edgar_13f" in json.dumps(holding["raw_input"])
+    envelope = next(
+        event for event in events
+        if event["event_type"] == "signal:envelope"
+        and event["raw_input"]["sha256"] == holding["raw_input"]["source_payload_sha256"]
+    )
+    assert envelope["raw_input"]["source_payload"]["paging"]["count"] == 1
+    assert envelope["raw_input"]["source_payload"]["source"] == "sec_edgar_13f"
+    assert "source_payload" not in holding["raw_input"]
 
 
 def test_prediction_mismatching_or_missing_query_is_quarantined():
@@ -885,12 +981,12 @@ def test_poller_propagates_a_persist_failure(tmp_path):
     out = runner.poll(FEED_VIBE_TRADING)
     assert out["status"] == "error"
     assert "disk full" in out["error"]
-    assert out["emitted"] == 1
-    assert runner.polls[FEED_VIBE_TRADING].emitted == 1
+    assert out["emitted"] >= 1
+    assert runner.polls[FEED_VIBE_TRADING].emitted == out["emitted"]
     assert poller.counters["emit_error"] == 1
     window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
-    assert len(window) == 1
-    assert window[0].headline.startswith("alpha_bench")
+    assert any(row.headline.startswith("alpha_bench") for row in window)
+    assert not any(row.headline.startswith("alpha_factor") for row in window)
     retry = runner.poll(FEED_VIBE_TRADING)
     assert retry["status"] == "ok"
     assert retry["emitted"] > 1

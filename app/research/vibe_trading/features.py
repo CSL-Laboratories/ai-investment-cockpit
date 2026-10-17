@@ -20,7 +20,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from ingest.dedup import Dedup
-from ingest.normalize import escape_untrusted, to_market_event
+from ingest.normalize import content_hash, escape_untrusted, to_market_event
 from workflows.context_limit import estimate_tokens
 from workflows.packets import wrap_untrusted
 
@@ -95,10 +95,12 @@ def categorise(row: dict) -> tuple[str, str] | None:
     category is ``unverified``. Bad numeric rows return ``None`` and are skipped.
     """
     ic_mean = _finite(row.get("ic_mean"))
-    if ic_mean is None:
+    if ic_mean is None or not -1 <= ic_mean <= 1:
         return None
     ic_std = _finite(row.get("ic_std"))
     pos = _finite(row.get("ic_positive_ratio"))
+    if pos is not None and not 0 <= pos <= 1:
+        return None
     count = row.get("ic_count")
     if count is None:
         count_ok = False
@@ -194,15 +196,28 @@ def _identity_echo(payload: dict, key: str, requested: str) -> str:
 
 
 def _with_source(raw: dict, payload: dict, row: dict | None = None) -> dict:
-    """Keep the exact sidecar object beside the normalized projection (Invariant 8).
+    """Point the row at one content-addressed envelope instead of copying it.
 
-    Every row is persisted and deduplicated independently, so each carries the full
-    envelope: a digest or a sibling's copy could not be resolved from its own raw_ref.
+    ``_payload`` is removed by ``to_events`` and stored once as ``signal:envelope``.
+    A row keeps ``source_row`` plus the envelope sha256. The poller fills
+    ``source_ref`` after that envelope is persisted, including when an earlier row
+    from the same response was deduped.
     """
-    image = {**raw, "source_payload": payload}
+    canonical = json.loads(json.dumps(payload, sort_keys=True, default=str))
+    image = {**raw, "source_payload_sha256": content_hash(canonical), "_payload": canonical}
     if row is not None:
         image["source_row"] = row
     return image
+
+
+def _named_list(payload: dict, keys: tuple[str, ...]) -> list | None:
+    """A present list, including an empty one. Missing or non-list is ``None``."""
+    data = _data(payload)
+    for key in keys:
+        if key in data or key in payload:
+            value = data[key] if key in data else payload[key]
+            return value if type(value) is list else None
+    return None
 
 
 def _aware_dt(value: str) -> datetime | None:
@@ -215,12 +230,11 @@ def _aware_dt(value: str) -> datetime | None:
     return parsed
 
 
-def _factor_rows(payload: dict) -> list[dict]:
-    for key in ("rows", "top", "top5_by_ir"):
-        rows = payload.get(key)
-        if type(rows) is list:
-            return [row for row in rows if type(row) is dict]
-    return []
+def _factor_rows(payload: dict) -> list[dict] | None:
+    rows = _named_list(payload, ("rows", "top", "top5_by_ir"))
+    if rows is None:
+        return None
+    return [row for row in rows if type(row) is dict]
 
 
 def _counts(accepted: list[dict], payload: dict) -> tuple[int, int, int, int, str]:
@@ -257,6 +271,8 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
     if "mismatch" in echoes.values():
         return None
     raw_rows = _factor_rows(payload)
+    if raw_rows is None:
+        return None
     accepted: list[dict] = []
     zoo_conflict = False
     row_zoo_confirmed = False
@@ -308,8 +324,8 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
         text=summary,
         event_type=EVENT_ALPHA,
         symbols=(),
-        raw={"kind": "alpha_bench_summary", "payload": payload,
-             "counts_scope": counts_source, "survivorship_bias": bias},
+        raw=_with_source({"kind": "alpha_bench_summary",
+                          "counts_scope": counts_source, "survivorship_bias": bias}, payload),
         tool="alpha_bench",
     )]
     rank = {"alive": 2, "reversed": 3, "dead": 4, "unverified": 5}
@@ -343,9 +359,9 @@ def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine] | None:
     quarter = data.get("quarter") if type(data.get("quarter")) is str else payload.get("quarter")
     if type(quarter) is not str or _QUARTER.fullmatch(quarter) is None:
         quarter = ""
-    holders = data.get("holders")
-    if type(holders) is not list:
-        holders = payload.get("holders") if type(payload.get("holders")) is list else []
+    holders = _named_list(payload, ("holders",))
+    if holders is None:
+        return None
     lines: list[FeatureLine] = []
     for index, row in enumerate(holders[:20]):
         if type(row) is not dict:
@@ -408,20 +424,20 @@ def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[Fe
     if not _identity_matches(payload, "symbol", etf, fold=True):
         return None
     data = _data(payload)
-    rows = data.get("holdings")
-    if type(rows) is not list:
-        rows = payload.get("constituents") if type(payload.get("constituents")) is list else []
+    rows = _named_list(payload, ("holdings", "constituents"))
+    if rows is None:
+        return None
     as_of = payload.get("as_of")
     if type(as_of) is dict:
         as_of = as_of.get("index_year") or as_of.get("as_of")
     if type(as_of) is not str:
         as_of = data.get("as_of")
-    if type(as_of) is not str or _AS_OF.fullmatch(as_of) is None:
+    if type(as_of) is not str or _aware_dt(as_of) is None:
         return None
     kept: list[str] = []
     symbols: list[str] = []
     outside = 0
-    for row in rows[:64]:
+    for row in rows:
         if type(row) is not dict:
             continue
         ticker = _holding_ticker(row)
@@ -481,10 +497,9 @@ def project_contracts(payload: dict, *, query: str) -> list[FeatureLine] | None:
         return None
     if not _identity_matches(payload, "query", query):
         return None
-    data = _data(payload)
-    rows = data.get("events")
-    if type(rows) is not list:
-        rows = payload.get("contracts") if type(payload.get("contracts")) is list else []
+    rows = _named_list(payload, ("events", "contracts"))
+    if rows is None:
+        return None
     lines: list[FeatureLine] = []
     for index, row in enumerate(rows[:8]):
         if type(row) is not dict:
@@ -787,9 +802,15 @@ def trim_lines(lines: list[FeatureLine], *, budget_tokens: int) -> tuple[list[Fe
 
 
 def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> list[dict]:
-    """Normalized ingest dicts. Enrichment types only — never halt or filing."""
+    """Normalized ingest dicts. Enrichment types only — never halt or filing.
+
+    One ``signal:envelope`` event carries each distinct sidecar payload. Row events
+    keep the payload sha256 and their own source row. The envelope article id is the
+    payload hash, so a later poll dedupes the envelope without dropping a new row.
+    """
     seen = dedup if dedup is not None else Dedup()
     events: list[dict] = []
+    envelopes: dict[str, dict] = {}
     day = ts.date().isoformat() if hasattr(ts, "date") else str(ts)[:10]
     for line in lines:
         if line.event_type in _HARD_EVENT_TYPES or line.event_type.startswith("calendar:"):
@@ -802,6 +823,20 @@ def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> li
         article_id = f"{line.event_type}:{digest}"
         if not seen.add(f"{SOURCE}:{article_id}"):
             continue
+        raw = {**line.raw, "observed_on": day}
+        payload = raw.pop("_payload", None)
+        sha = raw.get("source_payload_sha256")
+        if type(sha) is str and payload is not None and sha not in envelopes:
+            envelopes[sha] = to_market_event(
+                source=SOURCE,
+                article_id=f"signal:envelope:{sha}",
+                symbols=[],
+                headline=f"research_source sha256={sha}",
+                summary="",
+                ts=ts,
+                event_type="signal:envelope",
+                raw={"kind": "sidecar_envelope", "sha256": sha, "source_payload": payload},
+            )
         events.append(to_market_event(
             source=SOURCE,
             article_id=article_id,
@@ -810,6 +845,6 @@ def to_events(lines: list[FeatureLine], *, ts, dedup: Dedup | None = None) -> li
             summary="",
             ts=ts,
             event_type=line.event_type,
-            raw={**line.raw, "observed_on": day},
+            raw=raw,
         ))
-    return events
+    return [*envelopes.values(), *events]
