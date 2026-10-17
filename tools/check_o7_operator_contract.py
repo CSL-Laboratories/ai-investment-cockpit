@@ -700,6 +700,8 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         raise ContractError("response schema accepts an authority field")
     if not isinstance(required, list) or len(required) != len(set(required)) or set(required) != set(RESPONSE_REQUIRED):
         raise ContractError("response schema required fields drifted")
+    if _const_value(properties.get("api_version")) != API_VERSION:
+        raise ContractError("response api_version is not o7.operator.v0")
     if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
         raise ContractError("result schema accepts an authority field")
     profile = properties.get("profile")
@@ -710,6 +712,15 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         or set(profile_properties or {}) != set(PROFILE_PROPERTIES)
     ):
         raise ContractError("profile schema accepts an authority field")
+    errors = properties.get("errors")
+    items = errors.get("items") if isinstance(errors, dict) else None
+    item_properties = items.get("properties") if isinstance(items, dict) else None
+    if (
+        not _object_is_closed(items)
+        or not _required_is(items, ERROR_PROPERTIES)
+        or set(item_properties or {}) != set(ERROR_PROPERTIES)
+    ):
+        raise ContractError("response error schema accepts an authority field")
 
 
 def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -734,6 +745,29 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     claimed_profile = {**positions, "profile": {**profile, "live_authorized": True}}
     if _schema_error(validator, claimed_profile) is None:
         raise ContractError("profile schema accepts live_authorized")
+
+
+def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """A closed error object inside a response rejects an unmodeled authority claim."""
+    decisions = next(
+        (
+            doc
+            for doc in responses
+            if isinstance(doc, dict) and doc.get("request_id") == "req_decisions"
+        ),
+        None,
+    )
+    errors = decisions.get("errors") if isinstance(decisions, dict) else None
+    if (
+        not isinstance(errors, list)
+        or not errors
+        or not isinstance(errors[0], dict)
+        or _schema_error(validator, decisions) is not None
+    ):
+        raise ContractError("response error schema rejects the decisions oracle")
+    claimed = {**decisions, "errors": [{**errors[0], "live_authorized": True}, *errors[1:]]}
+    if _schema_error(validator, claimed) is None:
+        raise ContractError("response error schema accepts live_authorized")
 
 
 def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
@@ -1855,6 +1889,7 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle responses do not cover the catalog")
     _require_recorded_refusal_rejected(response_validator, responses)
     _require_result_authority_rejected(response_validator, responses)
+    _require_embedded_error_authority_rejected(response_validator, responses)
     by_request: dict[str, dict[str, Any]] = {}
     for doc in responses:
         if not isinstance(doc, dict):

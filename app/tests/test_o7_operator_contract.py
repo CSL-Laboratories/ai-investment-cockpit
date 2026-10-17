@@ -840,6 +840,54 @@ def test_profile_event_and_confirmation_stay_closed(tmp_path: Path) -> None:
         assert message in stderr, name
 
 
+def test_embedded_error_and_api_version_stay_pinned(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    decisions = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.validate_response(validator, decisions, commands) is None
+    decisions["api_version"] = "o7.operator.v1"
+    assert CHECKER.validate_response(validator, decisions, commands) is not None
+    decisions["api_version"] = CHECKER.API_VERSION
+    decisions["errors"][0] = {**decisions["errors"][0], "live_authorized": True}
+    assert CHECKER._schema_error(validator, decisions) is not None
+    assert CHECKER.validate_response(validator, decisions, commands) is not None
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    cases = (
+        (
+            "open-error",
+            ("properties", "errors", "items", "additionalProperties"),
+            True,
+            "response error schema accepts an authority field",
+        ),
+        (
+            "named-error-authority",
+            ("properties", "errors", "items", "properties", "live_authorized"),
+            {"const": True},
+            "response error schema accepts an authority field",
+        ),
+        (
+            "free-version",
+            ("properties", "api_version"),
+            {"type": "string"},
+            "response api_version is not o7.operator.v0",
+        ),
+    )
+    for name, path, value, message in cases:
+        widened = tmp_path / name
+        shutil.copytree(root, widened)
+        schema_path = widened / "schemas" / "operator-response.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        cursor = schema
+        for key in path[:-1]:
+            cursor = cursor[key]
+        cursor[path[-1]] = value
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, "schemas/operator-response.schema.json")
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1, name
+        assert stdout == ""
+        assert message in stderr, name
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
