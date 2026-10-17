@@ -99,6 +99,53 @@ it a delivery is dropped and recovery treats the missing run as uncertain.
 Workflow history is filtered to the trusted policy SHA before the bounded pagination
 check.
 
+### Superseded-policy reservations
+
+Each dispatch reservation pins the trusted policy commit and default branch. When
+the default branch advances while a PR targets another branch, the candidate is
+unchanged but the earlier reservation now belongs to a superseded policy. The
+coordinator never qualifies, resends or adopts such a reservation under the new
+policy. Previously it also stayed active forever, so the candidate could never
+receive a current-policy delivery (Cockpit #168). It is now released from the
+unresolved set only on positive delivery evidence, re-read on every reconciliation:
+
+- The pinned policy fields must form a valid policy whose branch is the current
+  default branch and whose commit differs from the current one and binds to the
+  candidate (never the candidate head or merge). Missing, legacy, malformed or
+  foreign-branch pins stay held.
+- The same read-only run-history endpoint, filtered to the reservation's own
+  pinned SHA with the existing bounded pagination, must list exactly one run with
+  that reservation's nonce title, after the recorded run-ID boundary, with the
+  reserved numeric workflow and actor, the exact workflow path, the
+  `workflow_dispatch` event, this repository, and run attempt exactly 1.
+- That run must satisfy the same full-run verification as a current run (all
+  required jobs completed successfully, jobs bound to the run/attempt and policy
+  commit) and must be unchanged across the second run read and second jobs read.
+  Missing, duplicate, pending, failed, canceled, rerun, attempt-bumped or changed
+  evidence keeps the reservation held with `policy-mismatch-reconcile`.
+
+Current and superseded reservations share one verification helper, so their
+binding cannot drift apart. Release has no side effect and writes no record: the
+old success never reports `success`, never qualifies the candidate, and never
+substitutes for a missing current run. Every reservation ever made, including
+released ones, still counts toward the three-reservation budget per
+candidate/workflow, so two released historical reservations leave room for exactly
+one current reservation and three leave none. Fresh READY/hold/pause/policy
+checks run before the new reservation and again before its POST, and the
+superseded evidence is re-read after that second fresh check and before the
+POST; if it has vanished, the reservation is aborted before dispatch. If the evidence vanishes after a newer
+reservation exists, both reservations are unresolved and reconciliation fails
+closed with no further dispatch. Two unresolved reservations always refuse, and a
+released reservation next to an unresolved one stays held. There is still no
+age-based retry, no operator shortcut and no activation change.
+
+Release trusts the pinned SHA in the journal record as the lookup key; it does not
+verify that commit's ancestry on the default branch. Because the journal is
+written by the shared Actions identity and can be deleted by writers, this
+release path inherits the provenance and retention limits described under
+Deployment boundary and remains part of the staged diagnostic, not protected
+authority.
+
 ## Execution policy closure
 
 Candidate dispatches run the default-branch YAML, but that YAML then checks out
@@ -157,6 +204,12 @@ repository writers can also delete journal history. Thus comment provenance and
 retention remain assumptions of this staged diagnostic. A protected coordinator
 and durable run-bound state source must be designed and approved before consuming
 its result as merge admission. The patch does not claim to solve that boundary.
+Superseded-policy release reads the pinned policy SHA from that same
+caller-controlled journal, so it extends the diagnostic's recovery, not its
+authority; a durable run-bound journal remains a separate, unwired proposal.
+The bootstrap limit is unchanged: until the default branch contains this
+coordinator, no policy commit can be pinned or compared, and the first live
+default-branch advancement is the first point at which release can be exercised.
 
 Budget/cadence (P2) remains an owner decision. Timestamp-derived runtime times
 published rates is an estimate, not reconciled billed usage or remaining credit.
