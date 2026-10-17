@@ -20,8 +20,8 @@ escape_untrusted()-neutralized exactly as production data would be.
 
 ``FakeTransport`` and ``envelope`` are copied from app/tests/agent_runner/test_runner.py per
 the WP8 contract; ``RoutedTransport`` adds per-CLI-model queues ("haiku" = triage/grounding/
-interrogation alias, "opus" = deep) so acceptance tests do not depend on the exact
-interleaving of cheap-tier vs deep-tier calls. Envelope builders cover TriageResult /
+interrogation/summary, "opus" = the Haiku decision id) so acceptance tests do not depend
+on the exact interleaving of cheap-tier vs decision calls. Envelope builders cover TriageResult /
 MorningBrief / TradeProposal / GroundingCheck / InterrogationAnswer in valid, poisoned, and
 limit-hit variants.
 """
@@ -186,10 +186,12 @@ def envelope(body, session_id="s1"):
 class RoutedTransport:
     """Per-CLI-model queues so tests don't depend on triage-vs-deep interleaving.
 
-    build_argv resolves --model from config/models.yaml: alias 'triage' -> 'haiku'
-    (batch triage, grounding check, fresh interrogation) and 'deep' -> 'opus'
-    (morning brief, trade proposal). Each queue pops in order; an unexpected call
-    (empty queue / unknown model) raises so a contract violation fails loudly.
+    build_argv resolves --model from config/models.yaml: alias 'triage' / 'summary'
+    -> 'haiku' (batch triage, grounding check, fresh interrogation, morning brief).
+    Trade proposals use the allowlisted Haiku decision id (Haiku 4.5 by default,
+    Haiku 5.5 when configured). Those ids, and the legacy 'opus' deep alias, pop
+    the ``opus`` queue so existing proposal scripts stay independent of triage.
+    Each queue pops in order; an unexpected call raises.
     """
 
     def __init__(self, haiku=(), opus=()):
@@ -201,6 +203,15 @@ class RoutedTransport:
         if "--model" not in argv:
             raise AssertionError(f"RoutedTransport: no --model in argv {argv!r}")
         model = argv[argv.index("--model") + 1]
+        # Decision drafts moved off Opus onto an explicit Haiku id. Keep their
+        # scripted envelopes on the historical proposal queue.
+        if model in {
+            "opus",
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "claude-haiku-5-5",
+        }:
+            model = "opus"
         queue = self._queues.get(model)
         if queue is None:
             raise AssertionError(f"RoutedTransport: unexpected model {model!r}")
