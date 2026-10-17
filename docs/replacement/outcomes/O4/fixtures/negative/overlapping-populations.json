@@ -131,7 +131,7 @@
       "Tuning and evaluation populations overlap.",
       "A required cost or the recorded empty outcome is dropped.",
       "Parameter variants are counted as distinct strategies.",
-      "The net result fails the matched cash baseline after retained costs.",
+      "The net result does not beat the matched cash baseline after retained costs, which retains the null and rejects the strategy hypothesis.",
       "Held-out observations are used to choose parameters.",
       "The result collapses under an owner-declared uncertainty or liquidity limit."
     ],
@@ -352,7 +352,7 @@
       "Tuning and evaluation populations overlap.",
       "A required cost or the recorded empty outcome is dropped.",
       "Parameter variants are counted as distinct strategies.",
-      "The net result fails the matched cash baseline after retained costs.",
+      "The net result does not beat the matched cash baseline after retained costs, which retains the null and rejects the strategy hypothesis.",
       "Held-out observations are used to choose parameters.",
       "The result collapses under an owner-declared uncertainty or liquidity limit."
     ],
@@ -389,14 +389,14 @@
   "unresolved_decisions": [
     {
       "id": "spend",
-      "owner": "owner",
+      "owner": "reserved authority",
       "selected_option": null,
       "status": "undecided",
       "topic": "New data acquisition, paid provider calls, or another Deep Research run."
     },
     {
       "id": "credentials",
-      "owner": "owner",
+      "owner": "reserved authority",
       "selected_option": null,
       "status": "undecided",
       "topic": "Broker, venue, or model credentials."

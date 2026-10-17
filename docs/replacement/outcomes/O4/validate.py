@@ -54,8 +54,8 @@ DECISION_IDS = (
     "thresholds",
 )
 DECISION_OWNER_ROLES = {
-    "spend": "owner",
-    "credentials": "owner",
+    "spend": "reserved authority",
+    "credentials": "reserved authority",
     "tax_legal": "owner",
     "architecture": "owner",
     "release": "release owner",

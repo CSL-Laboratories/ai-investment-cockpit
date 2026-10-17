@@ -93,7 +93,8 @@ def test_o4_protocol_keeps_research_and_owner_decisions() -> None:
     assert [item["status"] for item in packet["unresolved_decisions"]] == ["undecided"] * 7
     owners = {item["id"]: item["owner"] for item in packet["unresolved_decisions"]}
     assert owners["release"] == "release owner"
-    assert set(owners.values()) == {"owner", "release owner"}
+    assert owners["spend"] == owners["credentials"] == "reserved authority"
+    assert set(owners.values()) == {"owner", "release owner", "reserved authority"}
 
 
 def test_o4_leaves_accepted_csl212_digests_unchanged() -> None:
