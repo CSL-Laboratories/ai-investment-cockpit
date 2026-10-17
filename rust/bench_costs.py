@@ -3,7 +3,12 @@
 
 The live paper loop marks and fills one event at a time. Those calls stay on
 Decimal: formatting strings and parsing them back measured slower, including
-``fee_for_many`` and ``pnl_replay``. The extension rows are informational.
+``fee_for_many`` and ``pnl_replay``. Every row is informational: the shipped
+rows time one function, so no ratio there can regress. The run fails only if
+the shipped Decimal path attaches a ``PnlCore`` or calls into ``cockpit_quant``
+while it is being timed, which is the regression the parity tests
+``test_live_tracker_does_not_attach_a_core`` and
+``test_live_methods_do_not_call_the_extension`` lock.
 
     python -m maturin build --release --manifest-path rust/cockpit-py/Cargo.toml
     python -m pip install --force-reinstall rust/target/wheels/cockpit_quant-*.whl
@@ -20,7 +25,7 @@ APP = Path(__file__).resolve().parents[1] / "app"
 sys.path.insert(0, str(APP))
 
 import cockpit_quant  # noqa: E402
-from quant.costs import COSTS_BACKEND, FeeSchedule, python_fee_for  # noqa: E402
+from quant.costs import COSTS_BACKEND, FeeSchedule  # noqa: E402
 from quant.events import Fill, Liquidity, PriceScale, Side  # noqa: E402
 from quant.pnl import PNL_BACKEND, PnLTracker  # noqa: E402
 
@@ -40,11 +45,6 @@ def _fee_rows(n: int):
             Liquidity.MAKER if i % 2 == 0 else Liquidity.TAKER,
         ))
     return rows
-
-
-def _python_fees(rows) -> None:
-    for side, qty, price, liquidity in rows:
-        python_fee_for(SCHEDULE, side=side, qty=qty, price=price, liquidity=liquidity)
 
 
 def _shipped_fees(rows) -> None:
@@ -164,6 +164,33 @@ def _median(fn, repeats: int = 5) -> float:
     return samples[len(samples) // 2]
 
 
+_EXTENSION_SYMBOLS = ("fee_for", "borrow_cost", "cost_bps", "fee_for_many", "PnlCore", "pnl_replay")
+
+
+class _ExtensionGuard:
+    """Record every call into ``cockpit_quant`` while the shipped path is timed."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._saved: dict[str, object] = {}
+
+    def __enter__(self):
+        for name in _EXTENSION_SYMBOLS:
+            real = getattr(cockpit_quant, name)
+            self._saved[name] = real
+
+            def shim(*args, _name=name, _real=real, **kwargs):
+                self.calls.append(_name)
+                return _real(*args, **kwargs)
+
+            setattr(cockpit_quant, name, shim)
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        for name, real in self._saved.items():
+            setattr(cockpit_quant, name, real)
+
+
 def main() -> None:
     if COSTS_BACKEND != "rust" or PNL_BACKEND != "rust":
         print("cockpit_quant costs are not installed; build the release extension first")
@@ -171,7 +198,6 @@ def main() -> None:
     fee_rows = _fee_rows(FEE_N)
     script = _pnl_script(PNL_N)
     # One untimed pass so construction and imports are not in the samples.
-    _python_fees(fee_rows[:8])
     _shipped_fees(fee_rows[:8])
     _rust_fee_batch(fee_rows[:8])
     _python_pnl(script[:8])
@@ -180,29 +206,37 @@ def main() -> None:
     if PnLTracker(scale=PENNY, schedule=SCHEDULE)._core is not None:
         sys.exit("per-call PnL attached a native core")
 
-    py_fee = _median(lambda: _python_fees(fee_rows))
-    shipped_fee = _median(lambda: _shipped_fees(fee_rows))
+    with _ExtensionGuard() as guard:
+        shipped_fee = _median(lambda: _shipped_fees(fee_rows))
+        shipped_pnl = _median(lambda: _python_pnl(script))
+        if PnLTracker(scale=PENNY, schedule=SCHEDULE)._core is not None:
+            sys.exit("per-call PnL attached a native core")
+    if guard.calls:
+        sys.exit(
+            "shipped Decimal path called the extension: " + ", ".join(sorted(set(guard.calls)))
+        )
     batch_fee = _median(lambda: _rust_fee_batch(fee_rows))
-    py_pnl = _median(lambda: _python_pnl(script))
     ext_pnl = _median(lambda: _extension_pnl(script))
     batch_pnl = _median(lambda: _rust_pnl_batch(script))
 
-    def row(name: str, python: float, rust: float) -> str:
-        ratio = python / rust if rust else float("inf")
-        return f"| {name} | {python * 1e3:.1f} ms | {rust * 1e3:.1f} ms | {ratio:.2f}x |"
+    def row(name: str, shipped: float, extension: float | None = None) -> str:
+        if extension is None:
+            return f"| {name} | {shipped * 1e3:.1f} ms | shipped | informational |"
+        ratio = shipped / extension if extension else float("inf")
+        return (
+            f"| {name} | {shipped * 1e3:.1f} ms | {extension * 1e3:.1f} ms |"
+            f" {ratio:.2f}x informational |"
+        )
 
-    print(f"fees={FEE_N}  pnl steps={PNL_N}  (median of 5)")
-    print("| workload | python | rust | python/rust |")
+    print(f"fees={FEE_N}  pnl steps={PNL_N}  (median of 5; no row is a gate)")
+    print("| workload | Decimal (shipped) | extension | Decimal/extension |")
     print("|---|---:|---:|---:|")
-    print(row(f"per-call fee_for ({FEE_N})", py_fee, shipped_fee))
-    print(row(f"fee_for_many, not shipped ({FEE_N})", py_fee, batch_fee))
-    print(row(f"per-call PnL, Decimal ({PNL_N})", py_pnl, py_pnl))
-    print(row(f"per-call PnL extension, not shipped ({PNL_N})", py_pnl, ext_pnl))
-    print(row(f"pnl_replay, not shipped ({PNL_N})", py_pnl, batch_pnl))
-    # Same function measured twice can sit just under 1x. The extension path is
-    # several times slower, so a real regression still fails this check.
-    if py_fee / shipped_fee < 0.5:
-        sys.exit("per-call fee_for regressed below the Decimal path")
+    print(row(f"per-call fee_for ({FEE_N})", shipped_fee))
+    print(row(f"fee_for_many, not shipped ({FEE_N})", shipped_fee, batch_fee))
+    print(row(f"per-call PnL ({PNL_N})", shipped_pnl))
+    print(row(f"per-call PnL extension, not shipped ({PNL_N})", shipped_pnl, ext_pnl))
+    print(row(f"pnl_replay, not shipped ({PNL_N})", shipped_pnl, batch_pnl))
+    print("exit 0: the shipped path attached no core and made no extension call while timed")
 
 
 if __name__ == "__main__":
