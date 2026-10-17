@@ -354,20 +354,36 @@ def required_corporate_actions(bundle: Bundle, identity_id: str, decision: datet
     return found
 
 
+def _action_identity(action: dict) -> tuple:
+    return (
+        action["action_type"],
+        action["ratio_numerator"],
+        action["ratio_denominator"],
+        action["ex_date"],
+        action["raw_record_id"],
+    )
+
+
+def _require_unique_actions(observation: dict) -> None:
+    """An observation lists each corporate action once. A set must not hide a repeat."""
+    actions = observation.get("corporate_actions")
+    if not actions:
+        return
+    seen: set[tuple] = set()
+    for action in actions:
+        identity = _action_identity(action)
+        if identity in seen:
+            raise ContractError(
+                f"{observation['observation_id']} repeats corporate action {action['raw_record_id']}"
+            )
+        seen.add(identity)
+
+
 def _observed_actions(observation: dict) -> set[tuple]:
     actions = observation.get("corporate_actions")
     if actions is None:
         return set()
-    return {
-        (
-            action["action_type"],
-            action["ratio_numerator"],
-            action["ratio_denominator"],
-            action["ex_date"],
-            action["raw_record_id"],
-        )
-        for action in actions
-    }
+    return {_action_identity(action) for action in actions}
 
 
 def _unique(codes: list[str]) -> list[str]:
@@ -573,19 +589,28 @@ def _require_equity_natural_key(record: dict, identity: dict) -> None:
         return
     listing_prefix = f"us-equity:listing:{cik}:{share}:"
     if key.startswith(listing_prefix):
-        rest = key[len(listing_prefix) :]
-        fact = rest.split(":", 1)[0]
-        if fact != kind:
-            raise ContractError(f"{raw_id} natural key does not name its equity fact")
-        # The key is fixed by the original ex-date; a correction may move the ex-date.
-        if (
-            not record["supersedes"]
-            and rest.startswith("corporate_action:ex-")
-            and rest[len("corporate_action:ex-") :] != payload.get("ex_date")
-        ):
-            raise ContractError(f"{raw_id} natural key does not name its ex-date")
+        _require_listing_tail(record, key[len(listing_prefix) :], kind, payload)
         return
     raise ContractError(f"{raw_id} natural key does not name its equity identity")
+
+
+def _require_listing_tail(record: dict, rest: str, kind: object, payload: dict) -> None:
+    """A listing key ends in its payload kind, or in corporate_action:ex-<date>."""
+    raw_id = record["raw_record_id"]
+    if kind == "corporate_action":
+        if rest == "corporate_action":
+            return
+        prefix = "corporate_action:ex-"
+        if rest.startswith(prefix) and rest.count(":") == 1:
+            ex_date = rest[len(prefix) :]
+            parse_date(ex_date)
+            # The suffix names the chain's original ex-date. A correction may move it.
+            if not record["supersedes"] and ex_date != payload.get("ex_date"):
+                raise ContractError(f"{raw_id} natural key does not name its ex-date")
+            return
+        raise ContractError(f"{raw_id} natural key suffix is not a corporate action")
+    if rest != kind:
+        raise ContractError(f"{raw_id} natural key does not name its equity fact")
 
 
 def _chain_accessions(bundle: Bundle, record: dict) -> set[str]:
@@ -923,6 +948,7 @@ def validate_observations(bundle: Bundle) -> None:
     if set(observed) != set(edges):
         raise ContractError("lineage does not cover each observation once")
     for observation in bundle.observations:
+        _require_unique_actions(observation)
         decision = parse_time(observation["decision_time"])
         codes = reconstruction_codes(bundle, observation["raw_record_ids"], decision)
         codes.extend(semantic_codes(bundle, observation, decision))

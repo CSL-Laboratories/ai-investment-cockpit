@@ -4,8 +4,8 @@
   "contract_frozen": false,
   "synthetic": true,
   "files": {
-    "CONTRACT.md": "6296230f0bed2ea6c07110251018dfb5baa0fe3db9e448497c92ba5beb62b660",
-    "validate_o2.py": "b8e6c5f8fce5322e7bfca097d53d6b399a5c5115eec40497379d2bc599c500a2",
+    "CONTRACT.md": "5983acf5b1d1d6c04dc026bafa1a29016ce860563d32719245d52bd2b8a5349b",
+    "validate_o2.py": "bd3f484a2e58a37c0976d0e5d4267c8fed7a5281eae0965c3ce1cf41722b953d",
     "fixtures/identities.json": "a7fc283a14744417a509be3d35634aec6a4be1c3f18c33aa032e70e29796d9ab",
     "fixtures/raw_records.json": "04354f947f3ef32f50d9ddc92a8cd98a04604225704a8efd9ae7a801bda9fdb4",
     "fixtures/observations.json": "3773b09dd3d1ad9f9358dc887860bc22bff2a77fca6bc7ef903c4501e3c93dd2",

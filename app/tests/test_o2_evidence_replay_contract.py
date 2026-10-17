@@ -1256,6 +1256,58 @@ def test_duplicate_replay_check_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def _rename_natural_key(documents: dict, old: str, new: str) -> None:
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        if record["natural_key"] == old:
+            record["natural_key"] = new
+    for observation in documents["fixtures/observations.json"]["observations"]:
+        if observation["natural_key"] == old:
+            observation["natural_key"] = new
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["natural_key"] == old:
+            check["natural_key"] = new
+
+
+def test_duplicate_corporate_action_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observation = next(
+        item
+        for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] == "obs-splits-sep"
+    )
+    observation["corporate_actions"].append(dict(observation["corporate_actions"][0]))
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="repeats corporate action"):
+        module.validate_candidate(copy)
+
+
+def test_unknown_corporate_action_suffix_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _rename_natural_key(
+        documents,
+        "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+        "us-equity:listing:0000000001:common:corporate_action:anything",
+    )
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="natural key suffix is not a corporate action"):
+        module.validate_candidate(copy)
+
+
+def test_listing_key_tail_must_be_the_payload_kind(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _rename_natural_key(
+        documents,
+        "us-equity:listing:0000000001:common:quote",
+        "us-equity:listing:0000000001:common:quote:extra",
+    )
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="natural key does not name its equity fact"):
+        module.validate_candidate(copy)
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):
