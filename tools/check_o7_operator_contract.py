@@ -41,6 +41,12 @@ EXIT_CODES = {
     "stale_or_unreconciled": 3,
     "unavailable": 4,
 }
+DENIED_FALSE_RESULTS = (
+    "bounded_direct_authorized",
+    "local_control_is_account_wide",
+    "order_submitted",
+    "secrets_included",
+)
 REQUIRED_CONTROLS = (
     "gui_cli_semantic_divergence",
     "hidden_refusal",
@@ -548,6 +554,18 @@ def _const_value(schema: Any) -> Any:
     return None
 
 
+def _require_denied_result_consts(schema: dict[str, Any]) -> None:
+    """Safety results that cannot be true stay a false const on the base schema."""
+    properties = schema.get("properties")
+    result = properties.get("result") if isinstance(properties, dict) else None
+    fields = result.get("properties") if isinstance(result, dict) else None
+    if not isinstance(fields, dict):
+        raise ContractError("denied result const missing")
+    for name in DENIED_FALSE_RESULTS:
+        if _const_value(fields.get(name)) is not False:
+            raise ContractError(f"{name} is not limited to false")
+
+
 def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
     """A refused intervention cannot claim that the request was recorded."""
     commands = set(INTERVENTION_NAMES)
@@ -993,6 +1011,12 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
             return "profile_class_mismatch"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
+    if result.get("bounded_direct_authorized") is True:
+        return "direct_authorization"
+    if result.get("local_control_is_account_wide") is True:
+        return "account_wide_local_control"
+    if result.get("secrets_included") is True:
+        return "secrets_included"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
         return "privileged_order_bypass"
     refusals = _dicts(result.get("refusals"))
@@ -1448,6 +1472,7 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         _require_session_scope_schema(command_schema)
         _require_event_clauses(event_schema)
         _require_refused_intervention_unrecorded(response_schema)
+        _require_denied_result_consts(response_schema)
         _require_error_clauses(error_schema)
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)

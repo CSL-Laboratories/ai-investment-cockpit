@@ -673,6 +673,33 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert "schema result consequent cannot apply for operator.interventions.request_stop" in stderr
 
 
+def test_direct_authorization_stays_false(tmp_path: Path) -> None:
+    by_request, commands, _validator = _candidate_documents()
+    profiles = copy.deepcopy(by_request["req_profiles"])
+    assert profiles["result"]["bounded_direct_authorized"] is False
+    assert CHECKER.classify_response(profiles, commands) is None
+    profiles["result"]["bounded_direct_authorized"] = True
+    assert CHECKER.classify_response(profiles, commands) == "direct_authorization"
+    profiles["result"]["bounded_direct_authorized"] = False
+    profiles["result"]["local_control_is_account_wide"] = True
+    assert CHECKER.classify_response(profiles, commands) == "account_wide_local_control"
+    exported = copy.deepcopy(by_request["req_audit"])
+    exported["result"]["secrets_included"] = True
+    assert CHECKER.classify_response(exported, commands) == "secrets_included"
+    widened = tmp_path / "direct-authorization"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["result"]["properties"]["bounded_direct_authorized"] = {"type": "boolean"}
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "bounded_direct_authorized is not limited to false" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
