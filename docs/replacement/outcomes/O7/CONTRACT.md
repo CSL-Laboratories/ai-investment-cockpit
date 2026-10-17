@@ -109,7 +109,7 @@ An empty `positions` array is a known empty portfolio. Position `quantity` is a 
 
 ## Parity
 
-`parity-matrix.json` gives every catalog command one row. GUI and CLI are both `same_api`. `order_path` is `none`. Presentation text may differ. The semantic projection may not: profile, route, authority effect, order path, status, visibility, result, errors, and the exit code derived from status.
+`parity-matrix.json` gives every catalog command one row. GUI and CLI are both `same_api`. `order_path` is `none`. Each row's journey equals that command's catalog journey. `must_show` is the pinned display set for that command. Presentation text may differ. The semantic projection may not: profile, route, authority effect, order path, status, visibility, result, errors, and the exit code derived from status.
 
 The frozen oracle pairs `positions.inspect.parity` and `decisions.inspect.parity` use different `presentation.rendered` strings and the same projection. That is the allowed difference. Both sides pass the same oracle response checks as the catalog responses, including profile class A and no qualification claim.
 

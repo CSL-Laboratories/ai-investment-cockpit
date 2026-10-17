@@ -408,6 +408,38 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_parity_rows_keep_their_journey_and_display_fields(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "parity-matrix.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    for row in document["rows"]:
+        if row["command"] == "operator.interventions.request_stop":
+            row["must_show"] = ["intervention"]
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "parity-matrix.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "parity must_show drifted for operator.interventions.request_stop" in stderr
+    swapped = tmp_path / "swapped"
+    shutil.copytree(root, swapped)
+    matrix = swapped / "parity-matrix.json"
+    document = json.loads(matrix.read_text(encoding="utf-8"))
+    for row in document["rows"]:
+        if row["command"] == "operator.positions.inspect":
+            row["journey"] = "audit"
+        elif row["command"] == "operator.audit.export":
+            row["journey"] = "positions_collateral"
+    matrix.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(swapped, "parity-matrix.json")
+    code, stdout, stderr = CHECKER.evaluate(swapped)
+    assert code == 1
+    assert stdout == ""
+    assert "parity journey drifted for operator.positions.inspect" in stderr
+
+
 def test_visible_uncertainty_requires_uncertainty_evidence() -> None:
     by_request, commands, response_validator = _candidate_documents()
     invented = copy.deepcopy(by_request["req_health"])

@@ -87,6 +87,22 @@ REQUIRED_JOURNEYS = (
     "recovery",
     "export",
 )
+REQUIRED_MUST_SHOW = {
+    "operator.audit.export": ("includes_refusals", "secrets_included"),
+    "operator.budgets.inspect": ("budgets",),
+    "operator.decisions.inspect": ("refusals",),
+    "operator.evidence.inspect": ("provenance", "raw_separated_from_summary"),
+    "operator.export.bundle": ("contents", "secrets_included"),
+    "operator.health.inspect": ("stale", "watch_only"),
+    "operator.interventions.request_reconciliation": ("intervention", "order_submitted"),
+    "operator.interventions.request_revocation": ("intervention", "order_submitted"),
+    "operator.interventions.request_stop": ("intervention", "order_submitted"),
+    "operator.positions.inspect": ("positions", "collateral"),
+    "operator.profiles.inspect": ("active_profile_class", "local_control_is_account_wide"),
+    "operator.recovery.inspect": ("reconciliation", "unknown_orders"),
+    "operator.strategies.inspect": ("qualification",),
+    "operator.uncertainty.inspect": ("items",),
+}
 REQUIRED_DECISION_CLASSES = (
     "architecture",
     "release",
@@ -550,8 +566,16 @@ def _check_supporting_documents(root: Path, commands: dict[str, dict[str, Any]])
         if row.get("order_path") != "none":
             raise ContractError("parity row has an order path")
         must_show = row.get("must_show")
-        if not isinstance(must_show, list) or not set(must_show) <= set(commands[name]["required_result_fields"]):
+        expected_show = REQUIRED_MUST_SHOW.get(name)
+        if (
+            not isinstance(must_show, list)
+            or expected_show is None
+            or set(must_show) != set(expected_show)
+            or not set(must_show) <= set(commands[name]["required_result_fields"])
+        ):
             raise ContractError(f"parity must_show drifted for {name}")
+        if row.get("journey") != commands[name]["journey"]:
+            raise ContractError(f"parity journey drifted for {name}")
         seen.append(name)
         journeys.add(row.get("journey"))
     if len(seen) != len(set(seen)) or set(seen) != set(commands) or set(journeys) != set(REQUIRED_JOURNEYS):
