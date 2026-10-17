@@ -465,7 +465,11 @@ def validate_records(bundle: Bundle) -> None:
                 if payload["resolution"] is not None or payload["result"] is not None:
                     raise ContractError(f"{record['raw_record_id']} unresolved lifecycle state carries a result")
             elif not voided:
-                if payload["resolution"] not in resolutions or payload["result"] != payload["resolution"]:
+                # Socket result exists only when determined; a settled message may omit it.
+                result_optional = payload["event_type"] == "settled" and payload["channel"] != "rest_get_markets"
+                if payload["resolution"] not in resolutions or (
+                    payload["result"] != payload["resolution"] and not (result_optional and payload["result"] is None)
+                ):
                     raise ContractError(f"{record['raw_record_id']} resolved lifecycle state has no matching result")
             if payload["event_type"] == "close_date_updated":
                 if payload.get("close_time") is None:

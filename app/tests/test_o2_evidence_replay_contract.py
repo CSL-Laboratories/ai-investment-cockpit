@@ -601,6 +601,14 @@ def test_unresolved_lifecycle_states_without_results_are_accepted(
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
 
 
+def test_settled_socket_message_without_result_is_accepted(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _add_lifecycle_state_probe(documents, "settled", "finalized", "yes", None)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):
