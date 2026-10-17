@@ -212,9 +212,11 @@ class LowPrivSubprocessTransport:
         # callback before launch would keep a unit when the launcher rejects
         # the spawn. Launchers that do not accept ``on_spawn`` keep the
         # five-argument call; ``run_agent`` still marks after a successful return.
+        # follow_wrapped=False: a five-argument wrapper around an on_spawn-capable
+        # function must not be offered a keyword it cannot accept.
         launch = self._launch
         try:
-            params = inspect.signature(launch).parameters
+            params = inspect.signature(launch, follow_wrapped=False).parameters
         except (TypeError, ValueError):
             params = {}
         on_spawn = params.get("on_spawn")

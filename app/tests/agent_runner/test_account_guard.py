@@ -7,6 +7,7 @@ control is reported inactive rather than crashing the app (dev).
 """
 from __future__ import annotations
 
+import functools
 import json
 from types import SimpleNamespace
 
@@ -131,6 +132,46 @@ def test_low_priv_on_spawn_marks_only_after_the_child_exists():
         with pytest.raises(NotImplementedError, match="not provisioned"):
             unprovisioned.run(["claude"], "prompt", 1.0, None)
         assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_wrapped_five_arg_launcher_is_not_passed_on_spawn():
+    """functools.wraps must not make a five-argument launcher look on_spawn-capable."""
+    def inner(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        raise AssertionError("signature must not follow __wrapped__")
+
+    @functools.wraps(inner)
+    def wrapped(account, argv, input_text, timeout_s, cwd):
+        assert account == "cockpit-agent"
+        return ProcResult(0, "", "", False)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        result = transport.run(["claude"], "prompt", 1.0, None)
+        assert result.returncode == 0
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_wrapped_launcher_that_declares_on_spawn_still_marks():
+    """The outer signature is what counts, even when the wrapped function differs."""
+    def inner(account, argv, input_text, timeout_s, cwd):
+        raise AssertionError("unused inner")
+
+    @functools.wraps(inner)
+    def wrapped(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        on_spawn()
+        raise TimeoutError("child started")
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+    token = watch_agent_dispatch()
+    try:
+        with pytest.raises(TimeoutError, match="child started"):
+            transport.run(["claude"], "prompt", 1.0, None)
+        assert agent_dispatched() is True
     finally:
         restore_agent_dispatch_watch(token)
 
