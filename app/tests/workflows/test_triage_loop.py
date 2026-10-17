@@ -31,8 +31,11 @@ from workflows.constants import (
     EVENT_ESCALATION_DEFERRED,
     EVENT_TRIAGE_BATCH,
 )
+from workflows.context_limit import estimate_tokens, repair_reserve_tokens
 from workflows.events import persist_events
-from workflows.proposals import ProposalOutcome
+from workflows.packets import build_packet
+from workflows.prompts import load_prompt
+from workflows.proposals import ProposalOutcome, draft_proposal
 from workflows.triage_loop import triage_loop
 
 HOLDINGS = frozenset({"AAPL"})
@@ -238,6 +241,24 @@ def test_budget_gate_ranks_holdings_first_and_defers_over_budget(st, clock, tmp_
                for p in deferred), "the over-budget candidate must be deferred, never dropped"
 
 
+def test_size_pending_proposal_is_delivered(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path, [
+        _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),
+    ])
+    transport = FakeTransport([envelope(_triage_body([
+        _scored(rows[0].raw_ref, "AAPL", "urgent", 90),
+    ]))])
+    deliver = Recorder()
+
+    def propose_stub(state, clock_, **kw):
+        return _stub_outcome(status="needs_human", embed={"proposal_id": "p", "size_pending": True})
+
+    triage_loop(st, clock, transport=transport, deliver=deliver,
+                parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+                watchlist=frozenset(), propose_fn=propose_stub)
+    assert ("#proposals", {"proposal_id": "p", "size_pending": True}) in deliver.posts
+
+
 def test_mid_loop_degradation_defers_everything_and_window_is_recovered(st, clock, tmp_path):
     rows = _persist(st, clock, tmp_path, [
         _mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing"),
@@ -421,3 +442,81 @@ def test_degraded_batch_does_not_re_escalate_already_escalated_events(st, clock,
     assert first not in drafted2, "an already-escalated event was re-drafted (duplicate order)"
     assert set(drafted2) == {by["AAPL"].id, by["MSFT"].id} - {first}, \
         "the genuinely deferred event must still be picked up"
+
+
+def test_context_limited_proposal_is_deferred_not_escalated(st, clock, tmp_path):
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    calls = []
+
+    def limited_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome(status="context_limited")
+
+    result = triage_loop(
+        st, clock,
+        transport=FakeTransport([envelope(_triage_body([
+            _scored(ev.raw_ref, "AAPL", "urgent", 90),
+        ]))]),
+        parquet_root=tmp_path / "raw", holdings_symbols=HOLDINGS,
+        propose_fn=limited_propose,
+    )
+    assert result["status"] == "ok"
+    assert calls == [ev.id]
+    assert ev.id in result["deferred"]
+    assert ev.id not in result["escalated"]
+    batch = _payloads(st, EVENT_TRIAGE_BATCH)[-1]
+    assert batch["dispositions"][ev.id] == "deferred"
+    assert any(
+        p["event_id"] == ev.id and p["reason"] == "context_limit"
+        for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+    )
+
+
+def test_unfit_proposal_defers_without_spending_deep_budget(st, clock, tmp_path):
+    """Triage can fit an article the proposal template cannot; do not spend budget.
+
+    Production ``build_services`` injects a wrapper around ``draft_proposal``,
+    so preflight must not key off callable identity.
+    """
+    rows = _persist(st, clock, tmp_path,
+                    [_mk("f-a", "AAPL", "8-K filing: AAPL agreement", event_type="filing")])
+    ev = rows[0]
+    packet = build_packet(rows)
+    article = estimate_tokens(packet.items[0].text)
+    reserve = repair_reserve_tokens()
+    triage_oh = estimate_tokens(load_prompt("triage_batch").render(
+        batch_id="tb-x",
+        window_start=(NOW - timedelta(minutes=30)).isoformat(),
+        window_end=NOW.isoformat(),
+        packet_block="",
+    ))
+    proposal_oh = estimate_tokens(load_prompt("trade_proposal").render(
+        symbol="AAPL", packet_block="",
+    ))
+    cap = triage_oh + reserve + article + 80
+    assert cap < proposal_oh + reserve + article
+    st.settings.context_token_cap = cap
+
+    def _propose(st_, clock_, **kw):
+        return draft_proposal(st_, clock_, **kw)
+
+    _propose.uses_draft_proposal_template = True  # as build_services' wrapper does
+
+    transport = FakeTransport([envelope(_triage_body([
+        _scored(ev.raw_ref, "AAPL", "urgent", 90),
+    ]))])
+    result = triage_loop(
+        st, clock, transport=transport, parquet_root=tmp_path / "raw",
+        holdings_symbols=HOLDINGS, propose_fn=_propose,
+    )
+    assert result["status"] == "ok"
+    assert ev.id in result["deferred"]
+    assert ev.id not in result["escalated"]
+    assert _payloads(st, EVENT_DEEP_ESCALATION) == []
+    assert len(transport.calls) == 1
+    assert any(
+        p["event_id"] == ev.id and p["reason"] == "context_limit"
+        for p in _payloads(st, EVENT_ESCALATION_DEFERRED)
+    )

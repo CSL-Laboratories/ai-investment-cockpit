@@ -132,12 +132,17 @@ def _log_failure(argv: list[str], result: ProcResult) -> None:
 class SubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
         argv = resolve_executable(argv)
+        # The child must not inherit a Jev bearer left in the parent environment.
+        # The credential itself lives in keyring (Inv 4), not in this env.
+        child_env = os.environ.copy()
+        child_env.pop("JEV_API_KEY", None)
         popen_kwargs = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "text": True,
             "cwd": cwd,
+            "env": child_env,
         }
         if os.name != "nt":
             popen_kwargs["start_new_session"] = True

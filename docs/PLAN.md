@@ -12,6 +12,27 @@ last-verified: 2026-10-15
 
 # The plan
 
+## Accepted replacement program - CSL-212
+
+Lucas accepted the exact successor contract digest set under CSL-212 on 2026-10-16.
+The accepted dependency-ordered program is
+[docs/replacement/MONTH-PROGRAM.md](replacement/MONTH-PROGRAM.md).
+It supersedes this September delivery order for new replacement planning.
+The historical packages below remain evidence and implementation record;
+they are not automatically admitted successor architecture.
+
+The immutable governing files retain their pre-receipt candidate labels;
+[the replacement index](replacement/README.md) and the receipt in
+[program.json](replacement/program.json) record acceptance. O1–O9 outcome artifacts
+and all implementation, empirical and release gates remain pending.
+
+Current runtime authority, the nine invariants, existing safety gates and non-live
+operation remain unchanged until separately scoped and reviewed amendments. The
+replacement schedule does not establish safety, profitability, venue eligibility,
+release qualification or live authority.
+
+---
+
 Reconciled 2026-10-15 against `origin/main` `4a4308d`. Headings and status sentences that still described a merged package as claimed or unmerged are updated. Merge dates and `last-verified` added here are UTC calendar dates from GitHub `mergedAt` (PR #81 is 2026-09-08 UTC, which is still 2026-09-07 in US Eastern). Screen and evidence dates already in these sections keep the calendar dates they recorded. Historical intake text that a later sentence already marks as pre-merge stays as the implementation record. This pass does not close an empirical, paper-day, witness, selection, or pre-live gate.
 
 ### RW-37 slice A 2026-09-15 Tuesday GET-only screen intake — merged 2026-09-16

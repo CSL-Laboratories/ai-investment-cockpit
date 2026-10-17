@@ -36,11 +36,13 @@ from workflows.budget import (
     rank_candidates,
 )
 from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import draft_proposal
+from workflows.proposals import draft_proposal, subject_fits_context
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
@@ -249,12 +251,33 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
 
     # ---- ONE batched triage call over the survivors --------------------------------------
     tmpl = load_prompt("triage_batch")
+    overhead = estimate_tokens(tmpl.render(
+        batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
+    fit = fit_packet(
+        packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
+    if fit.dropped:
+        dropped_ids = {item.event_id for item in fit.dropped}
+        for ev in list(survivors):
+            if ev.id in dropped_ids:
+                _defer(state, dispositions, ev, "context_limit")
+        survivors = [ev for ev in survivors if ev.id not in dropped_ids]
+        packet = fit.packet
+    if not survivors:
+        _audit_batch(state, batch_id=batch_id, window_start=window_start,
+                     window_end=window_end, scored=[], dispositions=dispositions,
+                     degraded=False, consumed=False)
+        return {"status": "context_limited", "window_start": window_start,
+                "window_end": window_end,
+                "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
+                "system_events": system_events}
     prompt = tmpl.render(batch_id=batch_id, window_start=window_start,
                          window_end=window_end, packet_block=packet.prompt_block())
     t_result, _t_job = call_agent(
         state, alias="triage", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TriageResult",
-        input_refs={"raw_refs": sorted(packet.dispatched_refs)}, transport=transport,
+        input_refs={"raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(fit.dropped)},
+        transport=transport,
     )
     jobs_total += 1
     if t_result.status in (LIMIT_HIT, TIMEOUT):
@@ -373,10 +396,21 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     degraded = False
     escalated: list[str] = []
     fn = propose_fn if propose_fn is not None else draft_proposal
+    # Preflight uses the default draft_proposal template, so it only applies to that
+    # handler or a wrapper that declares it (build_services' ``_propose`` does); other
+    # injected handlers may use a different template and must still be called.
+    preflight = propose_fn is None or getattr(
+        propose_fn, "uses_draft_proposal_template", False)
     for cand in rank_candidates(cands):
         ev = cand["_event"]
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
+            continue
+        if preflight and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+                and not subject_fits_context(state, ev, packet):
+            # Production build_services wraps draft_proposal, so the wrapper
+            # declares the marker rather than relying on `fn is draft_proposal`.
+            _defer(state, dispositions, ev, "context_limit")
             continue
         try:
             consumed = budget.try_consume(
@@ -392,7 +426,12 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
         if cand["holdings_match"] or cand["symbol"] in watchlist:
             outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                          parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist)
+                         watchlist=watchlist, decision_weight=cand["score"])
+            if outcome.status == "context_limited":
+                # No model call: the subject item did not fit. Do not count a
+                # job or mark escalated — retry on the next loop (Inv 7).
+                _defer(state, dispositions, ev, "context_limit")
+                continue
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True
@@ -403,7 +442,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             dispositions[ev.id] = "escalated"
             escalated.append(ev.id)
             if deliver is not None and outcome.embed is not None \
-                    and outcome.status in ("drafted", "flagged"):
+                    and outcome.status in ("drafted", "flagged", "needs_human"):
                 if not _safe_deliver(deliver, "#proposals", outcome.embed):
                     undelivered.append(ev.id)
         else:

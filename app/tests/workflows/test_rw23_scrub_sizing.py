@@ -3,7 +3,9 @@ import pytest
 
 from schemas.models.proposal_record import ProposalRecord
 from tests.workflows.conftest import FakeTransport, envelope
-from tests.workflows.test_proposals import _persist_event, _proposal_body
+from tests.workflows.test_proposals import (
+    HOLDINGS, WATCHLIST, _grounding_body, _persist_event, _proposal_body,
+)
 from workflows.packets import build_packet
 from workflows.proposals import draft_proposal
 
@@ -31,9 +33,15 @@ def test_sizeless_proposal_scrubs_before_any_persistence(st, clock, tmp_path, fi
 
 def test_clean_sizeless_proposal_still_requests_sizing(st, clock, tmp_path):
     event = _persist_event(st, clock, tmp_path)
+    body = _proposal_body(quantity=None, notional=None, refs=[event.raw_ref])
     outcome = draft_proposal(
         st, event=event, packet=build_packet([event]),
-        transport=FakeTransport([envelope(_proposal_body(quantity=None, notional=None))]),
+        transport=FakeTransport([
+            envelope(body),
+            envelope(_grounding_body("prop-1", [event.raw_ref])),
+        ]),
+        parquet_root=tmp_path / "raw",
+        holdings_symbols=HOLDINGS, watchlist=WATCHLIST,
     )
     assert outcome.status == "needs_human"
     assert not outcome.record.flagged

@@ -150,6 +150,20 @@ def _load_native() -> None:
     NORMALIZE_BACKEND = "rust"
 
 
+def _runtime_unicode(text: str) -> bool:
+    """False when ``text`` holds a code point this interpreter has not assigned.
+
+    ``unicode-normalization`` 0.1.24 uses Unicode 16 tables. Python 3.11 and
+    3.12 use Unicode 14 and 15. U+1CCD6 is unassigned here, so NFKC leaves it
+    in place and the following ``SYSTEM:`` is still a role marker. The newer
+    Rust tables fold that scalar to ``A`` and the marker survives. Those
+    strings stay on the Python path.
+    """
+    if text.isascii():
+        return True
+    return all(unicodedata.category(ch) != "Cn" for ch in text)
+
+
 def _utf8_text(value) -> bool:
     """True for a real ``str`` PyO3 can take as ``&str``.
 
@@ -167,16 +181,29 @@ def _utf8_text(value) -> bool:
     return True
 
 
-def _plain_json(value) -> bool:
+def _plain_json(value, _seen=None) -> bool:
     if value is None or type(value) in (int, float, bool):
         return True
     if type(value) is str:
         return _utf8_text(value)
-    if type(value) in (list, tuple):
-        return all(_plain_json(item) for item in value)
-    if type(value) is dict:
-        return all(_utf8_text(key) and _plain_json(item) for key, item in value.items())
-    return False
+    if type(value) not in (list, tuple, dict):
+        return False
+    # A cycle is not plain JSON. Returning here lets `json.dumps` raise
+    # ValueError instead of this walk hitting RecursionError first.
+    if _seen is None:
+        _seen = set()
+    marker = id(value)
+    if marker in _seen:
+        return False
+    _seen.add(marker)
+    try:
+        if type(value) is dict:
+            return all(
+                _utf8_text(key) and _plain_json(item, _seen) for key, item in value.items()
+            )
+        return all(_plain_json(item, _seen) for item in value)
+    finally:
+        _seen.discard(marker)
 
 
 def _plain_symbols(symbols) -> bool:
@@ -184,12 +211,16 @@ def _plain_symbols(symbols) -> bool:
         return _utf8_text(symbols)
     if type(symbols) not in (list, tuple):
         return False
-    return all(_utf8_text(item) for item in symbols)
+    # Match ``_clean_symbols``: only the first 64 entries are work. A hostile
+    # tail must not be scanned or copied before the native call.
+    return all(_utf8_text(item) for item in symbols[:MAX_SYMBOLS])
 
 
 def escape_untrusted(text) -> str:
     native = _NATIVE
-    if native is not None and (text is None or text == "" or _utf8_text(text)):
+    if native is not None and (
+        text is None or text == "" or (_utf8_text(text) and _runtime_unicode(text))
+    ):
         if text is None or text == "":
             return ""
         return native.escape_untrusted(text)
@@ -214,8 +245,11 @@ def to_market_event(*, source, article_id, symbols, headline, summary, ts,
         and type(article_id) is not bool
         and _plain_symbols(symbols)
         and _utf8_text(headline)
+        and _runtime_unicode(headline)
         and _utf8_text(summary)
+        and _runtime_unicode(summary)
         and _utf8_text(event_type)
+        and _runtime_unicode(event_type)
         and (ts is None or type(ts) in (int, float) or _utf8_text(ts))
         and type(ts) is not bool
         and (raw is None or _plain_json(raw))

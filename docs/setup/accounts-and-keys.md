@@ -114,6 +114,7 @@ Run each command; it prompts for the value with the input hidden. The service na
 keyring set ai-investment-cockpit alpaca_key
 keyring set ai-investment-cockpit alpaca_secret
 keyring set ai-investment-cockpit finnhub_key
+keyring set ai-investment-cockpit jev_api_key
 keyring set ai-investment-cockpit discord_bot_token
 keyring set ai-investment-cockpit cockpit_api_key
 keyring set ai-investment-cockpit witness_s3_access_key_id
@@ -124,6 +125,7 @@ keyring set ai-investment-cockpit witness_s3_secret_access_key
 |---|---|---|
 | `alpaca_key` / `alpaca_secret` | Alpaca API key id + secret (data/news + paper) | online testing through beta |
 | `finnhub_key` | Finnhub free-tier key — serves BOTH the news poller and the earnings calendar | online testing through beta |
+| `jev_api_key` | TypeSafe Jev bearer token for paper/read-only decisions. Absent means those decisions stay on Claude | paper testing onward |
 | `discord_bot_token` | Discord bot token | online testing onward |
 | `cockpit_api_key` | The `X-API-Key` guarding the loopback orchestrator API — **you invent it** (`python -c "import secrets;print(secrets.token_urlsafe(32))"`), it is not a vendor credential. Unset ⇒ **every** route 401s, including `/status` (fails closed, never open) | local composed testing onward |
 | `witness_s3_access_key_id` / `witness_s3_secret_access_key` | Dedicated least-privilege S3 Object Lock witness principal; never the general AWS/admin credential | SEC-11 activation onward |
