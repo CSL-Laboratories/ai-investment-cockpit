@@ -116,7 +116,7 @@ A close-date update is a lifecycle raw record with a null resolution and a `clos
 
 ## Corporate actions
 
-The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping the action is `lost_corporate_action_semantics`.
+The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. An independent later split uses a different natural key, `corporate_action:ex-2024-10-01`, and both effective actions are required together. Two actions on one natural key, with neither superseding the other, are rejected. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping either effective action is `lost_corporate_action_semantics`.
 
 ## Replay manifest
 
@@ -126,6 +126,7 @@ The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-0
 - duplicate that must not supersede
 - out-of-order acceptance, hidden then visible
 - corporate action retained, then corrected to 3-for-1
+- a second independent corporate action, hidden until accepted, then kept beside the correction
 - close time preserved after a late close-date acceptance
 - unadjusted quote not rewritten
 - event determination before a late close message

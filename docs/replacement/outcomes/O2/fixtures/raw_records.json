@@ -164,6 +164,33 @@
       }
     },
     {
+      "raw_record_id": "raw-eq-split-oct",
+      "market_family": "equity",
+      "identity_id": "idn-eq-v2",
+      "source": "synthetic_corporate_action",
+      "source_record_key": "split-2024-10-01",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+      "event_time": "2024-09-16T15:00:00Z",
+      "accepted_at": "2024-09-16T15:00:00Z",
+      "duplicate_of": null,
+      "supersedes": null,
+      "raw_sha256": "2997babc04d968400ed50da26b5227c25139427dc1b4b40a50123d6883bcce6d",
+      "acquisition_route": "synthetic_fixture",
+      "calendar": {
+        "calendar_id": "XNYS",
+        "session_date": "2024-09-16"
+      },
+      "payload": {
+        "kind": "corporate_action",
+        "action_type": "split",
+        "ratio_numerator": 4,
+        "ratio_denominator": 1,
+        "ex_date": "2024-10-01",
+        "listing_identity_before": "idn-eq-v2",
+        "listing_identity_after": "idn-eq-v2"
+      }
+    },
+    {
       "raw_record_id": "raw-eq-quote",
       "market_family": "equity",
       "identity_id": "idn-eq-v1",

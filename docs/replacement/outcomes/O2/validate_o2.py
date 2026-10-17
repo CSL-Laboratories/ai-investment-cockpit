@@ -196,20 +196,30 @@ def _input_identity_ok(bundle: Bundle, observation: dict, record: dict) -> bool:
     return listing is not None and _action_applies(bundle, record, listing)
 
 
+def _chain_leaves(records: list[dict]) -> list[dict]:
+    """Latest record of each supersedes chain. Independent roots both remain."""
+    ids = {record["raw_record_id"] for record in records}
+    superseded = {
+        record["supersedes"]
+        for record in records
+        if record["supersedes"] in ids
+    }
+    return [record for record in records if record["raw_record_id"] not in superseded]
+
+
 def required_corporate_actions(bundle: Bundle, identity_id: str, decision: datetime) -> set[tuple]:
-    """Effective corporate-action version per natural key. A superseded ratio is not required."""
+    """Effective action of every visible chain. A superseded ratio is not required."""
     listing = _listing_key(bundle.identities, identity_id)
     if listing is None:
         return set()
-    keys = set()
+    grouped: dict[str, list[dict]] = {}
     for record in bundle.records.values():
         if parse_time(record["accepted_at"]) > decision or not _action_applies(bundle, record, listing):
             continue
-        keys.add(record["natural_key"])
+        grouped.setdefault(record["natural_key"], []).append(record)
     found = set()
-    for key in keys:
-        record = effective_record(bundle.records, key, decision)
-        if record is not None and _action_applies(bundle, record, listing):
+    for group in grouped.values():
+        for record in _chain_leaves(group):
             found.add(_action_tuple(record))
     return found
 
@@ -341,6 +351,11 @@ def validate_records(bundle: Bundle) -> None:
                 parse_time(payload["close_time"])
             elif payload.get("close_time") is not None:
                 raise ContractError(f"{record['raw_record_id']} carries a close_time without a close-date update")
+    by_key: dict[str, list[dict]] = {}
+    for record in bundle.records.values():
+        by_key.setdefault(record["natural_key"], []).append(record)
+    for group in by_key.values():
+        _require_version_chain(group)
     for identity in bundle.identities.values():
         prior_id = identity["prior_identity_id"]
         if prior_id is None:
@@ -350,6 +365,41 @@ def validate_records(bundle: Bundle) -> None:
             raise ContractError(f"{identity['identity_id']} prior identity crosses families")
         if identity["identity_version"] <= prior["identity_version"]:
             raise ContractError(f"{identity['identity_id']} version does not advance")
+
+
+def _require_version_chain(records: list[dict]) -> None:
+    """One natural key is one correction chain. Independent actions need their own keys."""
+    versions = [record for record in records if record["duplicate_of"] is None]
+    if not versions:
+        return
+    by_id = {record["raw_record_id"]: record for record in versions}
+    children: dict[str, list[str]] = {record["raw_record_id"]: [] for record in versions}
+    roots = []
+    key = versions[0]["natural_key"]
+    for record in versions:
+        parent = record["supersedes"]
+        if parent is None:
+            roots.append(record["raw_record_id"])
+            continue
+        if parent not in by_id:
+            raise ContractError(
+                f"{record['raw_record_id']} correction does not continue the natural-key chain"
+            )
+        children[parent].append(record["raw_record_id"])
+    if len(roots) != 1:
+        raise ContractError(
+            f"natural key {key} has independent actions; each action needs its own natural key"
+        )
+    seen = []
+    current: str | None = roots[0]
+    while current is not None:
+        seen.append(current)
+        nxt = children[current]
+        if len(nxt) > 1:
+            raise ContractError(f"natural key {key} branches; a correction replaces one predecessor")
+        current = nxt[0] if nxt else None
+    if len(seen) != len(versions):
+        raise ContractError(f"natural key {key} is not a single correction chain")
 
 
 def validate_replay(bundle: Bundle) -> None:

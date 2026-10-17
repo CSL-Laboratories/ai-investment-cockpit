@@ -63,6 +63,30 @@
       "effective_raw_record_id": "raw-eq-split-corr"
     },
     {
+      "check_id": "independent_corporate_action_hidden",
+      "decision_time": "2024-09-02T00:00:00Z",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+      "visible_raw_record_ids": [],
+      "hidden_raw_record_ids": ["raw-eq-split-oct"],
+      "effective_raw_record_id": null
+    },
+    {
+      "check_id": "independent_corporate_action_retained",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action:ex-2024-10-01",
+      "visible_raw_record_ids": ["raw-eq-split-oct"],
+      "hidden_raw_record_ids": [],
+      "effective_raw_record_id": "raw-eq-split-oct"
+    },
+    {
+      "check_id": "independent_action_does_not_replace_correction",
+      "decision_time": "2024-09-17T00:00:00Z",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "visible_raw_record_ids": ["raw-eq-split", "raw-eq-split-corr"],
+      "hidden_raw_record_ids": [],
+      "effective_raw_record_id": "raw-eq-split-corr"
+    },
+    {
       "check_id": "unadjusted_quote_not_rewritten",
       "decision_time": "2024-08-02T00:00:00Z",
       "natural_key": "us-equity:listing:0000000001:common:quote",

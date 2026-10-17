@@ -54,6 +54,13 @@
       "transform_version": "o2.candidate.v1"
     },
     {
+      "lineage_id": "lin-splits-sep",
+      "observation_id": "obs-splits-sep",
+      "input_raw_record_ids": ["raw-eq-split", "raw-eq-split-corr", "raw-eq-split-oct"],
+      "transform_id": "o2.candidate.effective_version",
+      "transform_version": "o2.candidate.v1"
+    },
+    {
       "lineage_id": "lin-ev-aug21",
       "observation_id": "obs-ev-aug21",
       "input_raw_record_ids": ["raw-ev-determined"],
