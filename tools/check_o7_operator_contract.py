@@ -252,6 +252,7 @@ REQUIRED_JOURNEYS = (
     "recovery",
     "export",
 )
+CATALOG_ROOT_FIELDS = ("api_version", "commands", "framework_selected", "maturity", "order_commands")
 CATALOG_COMMAND_FIELDS = ("effect", "journey", "name", "required_result_fields")
 REQUIRED_COMMANDS = {
     "operator.audit.export": {
@@ -1096,6 +1097,10 @@ def _require_error_schema_rejections(validator: Draft202012Validator) -> None:
             raise ContractError(f"error schema accepts a mismatched status for {code}")
     if _schema_error(validator, _error_probe("order_submitted", "order_submitted")) is None:
         raise ContractError("error schema accepts order_submitted")
+    colored = _error_probe("refused", "refused")
+    colored["color_only"] = True
+    if _schema_error(validator, colored) is None:
+        raise ContractError("error schema accepts color_only")
 
 
 def _unknown_order_count(result: dict[str, Any]) -> int | None:
@@ -1334,6 +1339,20 @@ def _require_event_authority_rejected(validator: Draft202012Validator) -> None:
         raise ContractError("event schema accepts a promoted maturity")
 
 
+def _plain_text_rejects_ansi(schema: Any) -> bool:
+    """True when a string schema is non-empty and rejects one ANSI escape."""
+    if not isinstance(schema, dict) or _assertion_keys(schema) != {"minLength", "not", "type"}:
+        return False
+    banned = schema.get("not")
+    return (
+        schema.get("type") == "string"
+        and schema.get("minLength") == 1
+        and isinstance(banned, dict)
+        and _assertion_keys(banned) == {"pattern"}
+        and banned.get("pattern") == r"[\x1b]"
+    )
+
+
 def _require_closed_error_schema(schema: dict[str, Any]) -> None:
     """An error cannot carry a field it does not name."""
     properties = schema.get("properties")
@@ -1350,6 +1369,10 @@ def _require_closed_error_schema(schema: dict[str, Any]) -> None:
         or _admitted_strings(properties.get("status_code")) != failure_codes
     ):
         raise ContractError("error code allowlist drifted")
+    if _const_value(properties.get("color_only")) is not False:
+        raise ContractError("error color_only is not limited to false")
+    if not _plain_text_rejects_ansi(properties.get("message")) or not _plain_text_rejects_ansi(properties.get("recovery")):
+        raise ContractError("error text does not reject an ANSI escape")
 
 
 def _require_event_clauses(schema: dict[str, Any]) -> None:
@@ -2021,6 +2044,8 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         _check_registry_still_researched()
         _check_contract_text(candidate)
         catalog = _load_json(candidate / "catalog.json")
+        if not isinstance(catalog, dict) or set(catalog) != set(CATALOG_ROOT_FIELDS):
+            raise ContractError("catalog root accepts an extra field")
         command_rows = catalog.get("commands")
         if not isinstance(command_rows, list) or not command_rows:
             raise ContractError("catalog commands missing")

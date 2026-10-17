@@ -1407,6 +1407,40 @@ def test_catalog_command_row_stays_closed(tmp_path: Path) -> None:
     assert "catalog command accepts an extra field for operator.audit.export" in stderr
 
 
+def test_catalog_root_stays_closed(tmp_path: Path) -> None:
+    copied = tmp_path / "O7"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
+    catalog_path = copied / "catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["order_path"] = "broker_direct"
+    catalog_path.write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "catalog.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "catalog root accepts an extra field" in stderr
+
+
+def test_error_color_only_stays_false(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    error_schema = json.loads((root / "schemas" / "operator-error.schema.json").read_text(encoding="utf-8"))
+    error_validator = CHECKER._validator(error_schema)
+    colored = CHECKER._error_probe("refused", "refused")
+    colored["color_only"] = True
+    assert CHECKER._schema_error(error_validator, colored) is not None
+    widened = tmp_path / "color-only"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-error.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["color_only"] = {"type": "boolean"}
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-error.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "error color_only is not limited to false" in stderr
+
+
 def test_event_schema_rejects_an_unconstrained_intervention(tmp_path: Path) -> None:
     copied = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", copied)
