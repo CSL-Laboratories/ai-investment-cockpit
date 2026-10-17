@@ -408,6 +408,36 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_contradictory_status_fails_only_on_the_rendered_status(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    response_schema = json.loads((root / "schemas" / "operator-response.schema.json").read_text(encoding="utf-8"))
+    response_validator = CHECKER._validator(response_schema)
+    document = json.loads((root / "fixtures" / "negative" / "contradictory-status-text.json").read_text(encoding="utf-8"))
+    body = document["body"]
+    assert CHECKER._schema_error(response_validator, body) is not None
+    assert CHECKER._schema_error(response_validator, CHECKER._repaired_status_text_body(body)) is None
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "fixtures" / "negative" / "contradictory-status-text.json"
+    tampered = json.loads(fixture.read_text(encoding="utf-8"))
+    tampered["body"]["api_version"] = "o7.operator.v1"
+    fixture.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/negative/contradictory-status-text.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert "NEGATIVE CONTROL contradictory_status_text: WRONG_FAILURE" in stdout
+    assert stderr.startswith("o7-operator-contract: FAIL:")
+
+
+def test_decision_ids_are_unique() -> None:
+    by_request, commands, _validator = _candidate_documents()
+    conflict = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.classify_response(conflict, commands) is None
+    for item in conflict["result"]["decisions"]:
+        item["decision_id"] = "dec_refused"
+    assert CHECKER.classify_response(conflict, commands) == "duplicate_decision_id"
+
+
 def test_uncertainty_visible_event_keeps_compound_status() -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))

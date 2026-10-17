@@ -374,7 +374,11 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
         return "privileged_order_bypass"
     refusals = _dicts(result.get("refusals"))
-    refused_decisions = [item for item in _dicts(result.get("decisions")) if item.get("outcome") == "refused"]
+    decision_rows = _dicts(result.get("decisions"))
+    decision_ids = [item.get("decision_id") for item in decision_rows]
+    if len(decision_ids) != len(set(decision_ids)):
+        return "duplicate_decision_id"
+    refused_decisions = [item for item in decision_rows if item.get("outcome") == "refused"]
     dependencies = _dicts(result.get("dependencies"))
     unknown_items = [
         item for item in _dicts(result.get("items")) if item.get("state") in {"unknown", "uncertain"}
@@ -872,6 +876,17 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         raise ContractError("oracle errors do not cover the failure statuses")
 
 
+def _repaired_status_text_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Restore only the rendered status on the contradictory-status control."""
+    repaired = dict(body)
+    presentation = body.get("presentation")
+    status = body.get("status_code")
+    if not isinstance(presentation, dict) or not isinstance(status, str):
+        return repaired
+    repaired["presentation"] = {**presentation, "text_status": status, "rendered": f"status={status}"}
+    return repaired
+
+
 def _repaired_stale_body(body: dict[str, Any]) -> dict[str, Any]:
     """Restore only watch_only on the stale negative control."""
     repaired = dict(body)
@@ -1012,6 +1027,19 @@ def _check_negative(
         detail = gui_error or cli_error or f"classified={classified}"
         outcome = "UNEXPECTED_ACCEPT" if classified is None and schema_ok else "WRONG_FAILURE"
         return _control_line(control, outcome, detail)
+    if control == "contradictory_status_text":
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
+        classified = classify_response(body, allowed) if isinstance(body, dict) else None
+        if schema_error is None or classified != control or not isinstance(body, dict):
+            if classified is None and schema_error is None:
+                return _control_line(control, "UNEXPECTED_ACCEPT")
+            detail = schema_error or f"classified={classified}"
+            return _control_line(control, "WRONG_FAILURE", detail)
+        repaired_error = _schema_error(validator, _repaired_status_text_body(body))
+        if repaired_error is not None:
+            return _control_line(control, "WRONG_FAILURE", repaired_error)
+        return _control_line(control, "FAIL as designed")
     if control == "stale_not_watch_only":
         body = document.get("body")
         schema_error = None if not isinstance(body, dict) else _schema_error(validator, body)
