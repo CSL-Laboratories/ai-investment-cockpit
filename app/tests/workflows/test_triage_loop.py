@@ -928,6 +928,71 @@ def test_forwarding_wrapper_raise_after_spawn_keeps_the_unit(st, clock, tmp_path
     assert DeepBudget(st).spent(day) == 1
 
 
+def test_closed_jev_client_then_pre_spawn_refusal_releases_the_unit(
+        st, clock, tmp_path, monkeypatch):
+    """A closed Jev client is not a send. A later Claude refusal still releases."""
+    import httpx
+    import keyring
+
+    from agent_runner.transport import ExecutableNotFound
+    from config.settings import DecisionRuntime
+    from core.secrets import SERVICE, set_secret
+    from workflows.jev import JEV_SECRET_NAME
+    from workflows.packets import Packet, PacketItem
+
+    monkeypatch.delenv("JEV_API_KEY", raising=False)
+    set_secret(JEV_SECRET_NAME, "jev-test-secret")
+    try:
+        _budget_of_one(st)
+        ev = _one_filing(st, clock, tmp_path)
+        day = NOW.date()
+        packet = Packet(items=(PacketItem(
+            event_id=ev.id, raw_ref=ev.raw_ref, symbol="AAPL", text="AAPL filed an 8-K",
+        ),))
+
+        class ClosedClient(httpx.Client):
+            def __init__(self):
+                super().__init__()
+                self.saw_post = False
+                self.close()
+
+            def post(self, *args, **kwargs):
+                self.saw_post = True
+                return super().post(*args, **kwargs)
+
+        jev = ClosedClient()
+
+        class MissingCli:
+            def run(self, argv, input_text, timeout_s, cwd):
+                raise ExecutableNotFound("claude is not on PATH")
+
+        def propose(state, clock_, **kw):
+            state.settings.decision_runtime = DecisionRuntime.jev
+            call_agent(
+                state, alias="decision", prompt_ref="trade_proposal.v1",
+                prompt_hash="h" * 16, prompt="decide for AAPL",
+                schema_name="TradeProposal",
+                input_refs={"event_id": kw["event"].id},
+                transport=MissingCli(),
+                jev_packet=packet, jev_symbol="AAPL", jev_client=jev,
+                decision_weight=60,
+            )
+
+        with pytest.raises(ExecutableNotFound):
+            _escalation(st, clock, tmp_path, ev, propose)
+        assert jev.saw_post is True
+        assert DeepBudget(st).spent(day) == 0
+        releases = _payloads(st, EVENT_DEEP_ESCALATION_RELEASE)
+        assert len(releases) == 1
+        assert releases[0]["reason"] == "pre_dispatch_exception"
+        assert releases[0]["event_id"] == ev.id
+    finally:
+        try:
+            keyring.delete_password(SERVICE, JEV_SECRET_NAME)
+        except keyring.errors.PasswordDeleteError:
+            pass
+
+
 def test_low_priv_rejection_before_spawn_releases_the_unit(st, clock, tmp_path):
     """A low-priv launcher that rejects before any child exists frees the unit."""
     from agent_runner.transport import LowPrivSubprocessTransport

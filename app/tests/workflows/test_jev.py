@@ -203,6 +203,43 @@ def test_owned_client_close_after_http_keeps_the_dispatch_mark(st, monkeypatch):
         restore_agent_dispatch_watch(token)
 
 
+def test_closed_jev_client_does_not_mark_dispatch(st, monkeypatch):
+    """client.post on a closed client fails before any bytes are sent."""
+    _provision(monkeypatch)
+    http = httpx.Client()
+    http.close()
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=http,
+        )
+        assert attempt.dispatched is False
+        assert attempt.reason == "jev_error"
+        assert agent_dispatched() is False
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
+def test_transport_error_after_the_request_hook_keeps_the_mark(st, monkeypatch):
+    """Once httpx has passed the request hook, a transport failure has sent."""
+    _provision(monkeypatch)
+
+    def handler(_request):
+        raise RuntimeError("connection failed after send")
+
+    token = watch_agent_dispatch()
+    try:
+        attempt = evaluate_decision(
+            st.settings, _packet(), symbol="AAPL",
+            schema=load_schema("TradeProposal"), client=_client(handler),
+        )
+        assert attempt.dispatched is True
+        assert agent_dispatched() is True
+    finally:
+        restore_agent_dispatch_watch(token)
+
+
 def test_runtime_map_keeps_non_decisions_on_claude():
     assert runtime_for("decision", "jev") == "jev"
     assert runtime_for("triage", "jev") == "claude"

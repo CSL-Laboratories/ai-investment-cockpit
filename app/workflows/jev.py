@@ -25,7 +25,7 @@ from decimal import Decimal
 import httpx
 import jsonschema
 
-from agent_runner.result import mark_agent_dispatched
+from agent_runner.result import agent_dispatched, mark_agent_dispatched
 from config.models import (
     DEFAULT_JEV_MODEL,
     JEV_MODEL_PINS,
@@ -417,16 +417,35 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
     http = client
     if owns_client:
         http = httpx.Client(timeout=30.0)
+
+    def _mark_on_send(_request) -> None:
+        # httpx runs request hooks after the closed-client check and before the
+        # transport. A closed client raises first and must not keep the unit.
+        mark_agent_dispatched()
+
+    hooks = None
+    try:
+        candidate = http.event_hooks["request"]
+    except (AttributeError, KeyError, TypeError):
+        candidate = None
+    if isinstance(candidate, list):
+        candidate.append(_mark_on_send)
+        hooks = candidate
     try:
         try:
-            # Mark before close(). A cleanup error can escape after HTTP was sent
-            # and before this function returns a JevAttempt.
-            mark_agent_dispatched()
             response = _post(body, api_key=key, client=http)
         except Exception:
-            # Any failure after the client is invoked was a dispatch, including
-            # an unexpected raise. Preflight returns never reach this call.
+            # A closed client raises before the request hook. A failure after
+            # that hook has started the send and keeps the unit.
+            if not agent_dispatched():
+                return _fallback(
+                    "jev_error", model, estimated=estimated, dropped=dropped,
+                )
             return _sent("jev_error")
+        if hooks is None:
+            # A hook-less double has no send boundary. post() returned, so the
+            # call completed before close() can discard this attempt.
+            mark_agent_dispatched()
         if _opens_jev_cooldown(response):
             return _sent("jev_vendor_limit", vendor_limited=True)
         if response.status_code != 200:
@@ -436,6 +455,11 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         except ValueError:
             return _sent("jev_error")
     finally:
+        if hooks is not None:
+            try:
+                hooks.remove(_mark_on_send)
+            except ValueError:
+                pass
         if owns_client and http is not None:
             http.close()
     if not isinstance(payload, dict):
