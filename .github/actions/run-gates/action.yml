@@ -19,6 +19,7 @@ runs:
     - name: Install runtime and validation dependencies
       # Match app/pyproject.toml, including real Discord command-tree coverage. Its
       # absent-dependency fallback runs in an isolated subprocess in the same suite.
+      # starlette>=0.48.0 is explicit: FastAPI allows 0.46+, which lacks the RFC 9110 name.
       working-directory: app
       shell: bash
       run: python -m pip install -U pip pydantic pydantic-settings keyring pyyaml jsonschema sqlalchemy pyarrow duckdb fastapi "starlette>=0.48.0" "uvicorn[standard]" httpx websockets apscheduler boto3 discord.py pytest ruff
