@@ -138,9 +138,20 @@ def _reject_json_constant(value: str) -> None:
     raise ValueError(f"non-finite JSON constant: {value}")
 
 
+def _parse_finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"non-finite JSON number: {value}")
+    return number
+
+
 def _load_json(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_json_constant)
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
+        )
     except (OSError, UnicodeError, ValueError) as exc:
         raise O8Error([f"unreadable JSON {path}: {exc}"]) from exc
 
@@ -228,8 +239,10 @@ def benchmark_reasons(document: Any) -> list[str]:
                 and not outputs_path.startswith(("http://", "https://"))
             ):
                 retained = ROOT / outputs_path
-                if retained.is_file() and hashlib.sha256(retained.read_bytes()).hexdigest() == outputs_digest:
-                    outputs_ok = True
+                if retained.is_file():
+                    raw = retained.read_bytes()
+                    if hashlib.sha256(raw).hexdigest() == outputs_digest:
+                        outputs_ok = _baseline_outputs_bound(raw, baseline)
         if not outputs_ok:
             reasons.append("tier-3 baseline lacks retained outputs")
     if document.get("floors_attached") is True:
@@ -255,6 +268,22 @@ def benchmark_reasons(document: Any) -> list[str]:
             reasons.append("impossible measured observation")
     reasons.extend(_schema_errors(document, BENCHMARK_SCHEMA))
     return reasons
+
+
+def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:
+    keys = ("commit", "workload_id", "fixture_sha256")
+    try:
+        retained = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
+        )
+    except (UnicodeError, ValueError):
+        return False
+    return isinstance(retained, dict) and all(
+        isinstance(retained.get(key), str) and retained.get(key) and retained.get(key) == baseline.get(key)
+        for key in keys
+    )
 
 
 def _floor_ids(floors: Any) -> list[str]:
@@ -318,7 +347,8 @@ def _require_local(reasons: list[str], locator: str, label: str) -> None:
 
 
 def _check_floors(floors: Any, reasons: list[str], label: str = "candidate missing floors") -> None:
-    if _floor_ids(floors) != list(FLOOR_IDS):
+    ids = _floor_ids(floors)
+    if len(ids) != len(FLOOR_IDS) or set(ids) != set(FLOOR_IDS) or len(floors) != len(ids):
         reasons.append(label)
         return
     for floor in floors:
