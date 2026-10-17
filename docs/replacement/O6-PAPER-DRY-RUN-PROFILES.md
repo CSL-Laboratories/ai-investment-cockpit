@@ -71,17 +71,38 @@ consumed.
   order id, transported as `cockpit-<order.id>` and recorded on the HMAC-signed
   `EVENT_ORDER_TRANSITION` chain. If the chain shows `submitted` the handoff is
   recorded `completed` with no second submit; otherwise the claim is re-owned
-  under a new generation when a fresh claim would be admitted, or resolved
-  `failed` when it would not, so a stuck claim consumes only its own
-  reservation slice and never bricks the perimeter. `completed` is the only
+  under a new generation only once its lease (`claimed_at` + a fixed window)
+  has expired and a fresh claim would be admitted, or resolved `failed` when it
+  would not, so a stuck claim consumes only its own reservation slice and
+  never bricks the perimeter. The lease is what stops two reconcilers racing
+  the same crashed claim from both minting a generation and both reaching the
+  gateway; the generation is also re-checked by one more conditional update
+  immediately before the broker call, so a stale ticket cannot slip through
+  even if it somehow got this far. `completed` is the only
   state that skips submit. The gateway's own client order id remains the
   broker reconciliation.
 - `propose` and `submit_dry_run` do not call the gateway and do not open a transport.
 - Client order ids are idempotent. A replay returns the original reservation and
   does not add consumption or call the gateway again. A different notional or
   action for the same id is refused. A reservation with no order reference can
-  be bound once, before the handoff completes.
-- A pre-current store (`user_version` below 3) holding rows in any table —
+  be bound once, before the handoff completes. At reconcile time an unbound
+  reservation (no order reference yet) accepts no order identity at all — only
+  an exact match against an already-bound row passes; a caller cannot bind a
+  forged identity through the reconcile path.
+- The identity-checked reconcile (`order_submitted`) is a private, trusted-
+  boundary call: it is never exposed to take a caller-supplied verdict. The
+  only reconcile entry points are `reconcile_handoff_to_gateway`, which derives
+  the verdict itself from the gateway's signed chain, and
+  `reconcile_non_gateway_handoff`, which is fixed `False` and refuses outright
+  on any reservation bound to a gateway order. A direct caller cannot present
+  a forged verdict to mark a submitted reservation failed/reconciled and so
+  clear a stop out from under it.
+- Recovery runs the same account, notional, provider/producing-runtime, and
+  action checks against the stored reservation and profile that a fresh
+  handoff runs, before the chain lookup or a second broker call. A recovery
+  attempt that substitutes a different order, account, notional, runtime, or
+  action is refused, not resubmitted blind.
+- A pre-current store (`user_version` below 4) holding rows in any table —
   profiles, controls, consumption, or reservations — refuses to open with
   `legacy_store`. Those rows predate the install-minted stop capability and
   durable claim ownership, and no unauthenticated capability is minted or

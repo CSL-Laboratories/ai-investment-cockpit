@@ -38,15 +38,23 @@ SCHEMA_VERSION = 1
 # column migration does not require a document bump. Version 1 is the order_ref
 # store. Version 2 adds the durable handoff state. Version 3 adds exclusive
 # handoff claim ownership (claim_generation) and the failed-handoff reconcile
-# flag.
-STORE_USER_VERSION = 3
-ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, STORE_USER_VERSION})
+# flag. Version 4 adds the claim lease (claimed_at): an abandoned in_progress
+# claim can be re-owned only after its lease expires, so two reconcilers
+# racing the same crashed claim cannot both bump the generation and both reach
+# the gateway.
+STORE_USER_VERSION = 4
+ADMITTED_STORE_VERSIONS = frozenset({0, 1, 2, 3, STORE_USER_VERSION})
 ADMITTED_ENVIRONMENTS = frozenset({"paper", "dry_run"})
 _MODEL_OUTPUT_KEYS = frozenset({"provider", "model_version", "summary", "confidence"})
 _HANDOFF_STATES = frozenset({"pending", "in_progress", "failed", "completed"})
 RUNTIME_PROFILE_CLASSES = frozenset({"A", "B"})
 FUTURE_PROFILE_CLASS = "C"
 MAX_PROFILE_LIFETIME = timedelta(days=7)
+# How long an in_progress claim is presumed to still be a live attempt. A
+# reconcile against an abandoned claim younger than this is refused outright:
+# the original owner may still be mid-flight. Only once the lease has expired
+# AND the chain shows no submission may a new generation be minted.
+CLAIM_LEASE = timedelta(seconds=90)
 _MONEY = Decimal("0.01")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 _MONEY_TEXT = re.compile(r"^[0-9]{1,15}(?:\.[0-9]{1,2})?$")
@@ -408,7 +416,8 @@ _SCHEMA = (
         handoff_state TEXT NOT NULL DEFAULT 'pending',
         order_ref TEXT,
         claim_generation INTEGER NOT NULL DEFAULT 0,
-        reconciled INTEGER NOT NULL DEFAULT 0
+        reconciled INTEGER NOT NULL DEFAULT 0,
+        claimed_at TEXT
     )
     """,
 )
@@ -788,9 +797,10 @@ class AuthorityProfileStore:
         a monotonically increasing token stored on the row. A row already owned
         (``in_progress``) refuses a second claim: two retries can never both
         enter ``OrderGateway.submit``. An abandoned claim is re-owned only
-        through ``reconcile_handoff``, after checking the gateway's durable
-        order identity. ``completed`` is still the only state that skips a
-        later submit; the replay path is unchanged.
+        through ``reconcile_handoff_to_gateway``, after its lease expires and
+        after checking the gateway's durable order identity. ``completed`` is
+        still the only state that skips a later submit; the replay path is
+        unchanged.
         """
         _require_now(now)
         client_id = _ident(client_order_id, code="client_order_id")
@@ -862,11 +872,16 @@ class AuthorityProfileStore:
                     """
                     UPDATE reservations
                     SET handoff_state = 'in_progress', handoff_done = 0,
-                        claim_generation = ?, reconciled = 0
+                        claim_generation = ?, reconciled = 0, claimed_at = ?
                     WHERE client_order_id = ? AND handoff_state = 'failed'
                       AND handoff_done = 0 AND claim_generation = ?
                     """,
-                    (generation, client_id, int(row["claim_generation"])),
+                    (
+                        generation,
+                        now.astimezone(timezone.utc).isoformat(),
+                        client_id,
+                        int(row["claim_generation"]),
+                    ),
                 )
                 if updated.rowcount != 1:
                     raise ProfileRefused("store", "handoff claim was not admitted")
@@ -889,11 +904,16 @@ class AuthorityProfileStore:
                 """
                 UPDATE reservations
                 SET handoff_state = 'in_progress', handoff_done = 0,
-                    claim_generation = ?
+                    claim_generation = ?, claimed_at = ?
                 WHERE client_order_id = ? AND handoff_state = 'pending'
                   AND handoff_done = 0 AND claim_generation = ?
                 """,
-                (generation, client_id, int(row["claim_generation"])),
+                (
+                    generation,
+                    now.astimezone(timezone.utc).isoformat(),
+                    client_id,
+                    int(row["claim_generation"]),
+                ),
             )
             if updated.rowcount != 1:
                 raise ProfileRefused("store", "handoff claim was not admitted")
@@ -945,7 +965,8 @@ class AuthorityProfileStore:
 
         It sets no flags and does not write ``completed``. The identity-checked
         reconcile that clears the durable ``reconciled`` flag is
-        ``reconcile_handoff``.
+        ``reconcile_handoff_to_gateway`` (or ``reconcile_non_gateway_handoff``
+        for an action that never reaches a gateway).
         """
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
@@ -957,25 +978,33 @@ class AuthorityProfileStore:
                 raise ProfileRefused("store", "failed handoff is not reconcilable")
         return "failed"
 
-    def reconcile_handoff(
+    def _reconcile_handoff(
         self,
         client_order_id: str,
         *,
         order_ref: str | None,
         order_submitted: bool,
         now: datetime,
+        require_no_gateway: bool = False,
     ) -> str | ClaimTicket:
-        """Reconcile one reservation against the gateway's durable order identity.
+        """Trusted-boundary reconcile against the gateway's durable order identity.
 
-        ``order_submitted`` is the caller's durable verdict: whether the bound
-        order (``order_ref`` = the order id, submitted as
-        ``cockpit-<order.id>``) is recorded 'submitted' on the gateway's signed
-        transition chain. A durably-submitted handoff is recorded ``completed``
-        so no second submit is possible. An abandoned ``in_progress`` claim is
-        re-owned under a new generation only when the gateway shows no
-        submission and the profile and controls still admit the claim. A
-        ``pending`` or ``failed`` row is marked ``failed`` and ``reconciled``
-        when nothing reached the gateway.
+        Private: ``order_submitted`` must be derived from the gateway's signed
+        transition chain by ``reconcile_handoff_to_gateway`` (or fixed ``False``
+        for ``reconcile_non_gateway_handoff``, whose actions never reach a
+        gateway) — never a caller-supplied verdict. The lookup and the state
+        transition happen in the same atomic call so a direct caller cannot
+        present a forged verdict to mark a submitted reservation
+        failed/reconciled and so clear a stop out from under it.
+
+        A durably-submitted handoff is recorded ``completed`` so no second
+        submit is possible. An abandoned ``in_progress`` claim is re-owned
+        under a new generation only once its lease has expired, the gateway
+        shows no submission, and the profile and controls still admit the
+        claim — the lease is what stops two reconcilers racing the same
+        crashed claim from both minting a generation and both reaching the
+        gateway. A ``pending`` or ``failed`` row is marked ``failed`` and
+        ``reconciled`` when nothing reached the gateway.
         """
         _require_now(now)
         if type(order_submitted) is not bool:
@@ -988,7 +1017,17 @@ class AuthorityProfileStore:
             ).fetchone()
             if row is None:
                 raise ProfileRefused("unknown_reservation", "reservation is missing")
-            if row["order_ref"] is not None and row["order_ref"] != order_ref:
+            if require_no_gateway and (
+                row["action"] == "submit_paper" or row["order_ref"] is not None
+            ):
+                raise ProfileRefused(
+                    "store", "reservation requires gateway-identity reconcile"
+                )
+            # An unbound reservation (no ``order_ref`` on the row) must never
+            # accept an order identity at reconcile time: that would let a
+            # caller bind an arbitrary order to someone else's reservation
+            # slice. Only an exact match against an already-bound row passes.
+            if order_ref is not None and row["order_ref"] != order_ref:
                 raise ProfileRefused(
                     "client_order_conflict", "reservation is bound to a different order"
                 )
@@ -1065,18 +1104,78 @@ class AuthorityProfileStore:
                 if updated.rowcount != 1:
                     raise ProfileRefused("store", "handoff reconcile was not admitted")
                 return "failed"
+            # The lease is the only thing stopping two reconcilers from both
+            # treating the same claim as abandoned: a claim younger than
+            # ``CLAIM_LEASE`` is refused outright, because its owner (this
+            # attempt or a concurrent one) may still be mid-flight to the
+            # gateway. Only once the lease has actually expired, with the
+            # chain still showing no submission (checked above), may a new
+            # generation be minted.
+            claimed_at = row["claimed_at"]
+            if claimed_at is None:
+                raise ProfileRefused("store", "in-progress claim is missing its lease timestamp")
+            if now < _parse_claimed_at(claimed_at) + CLAIM_LEASE:
+                raise ProfileRefused(
+                    "claim_leased", "handoff claim lease has not expired"
+                )
             updated = conn.execute(
                 """
                 UPDATE reservations
-                SET claim_generation = ?, reconciled = 0
+                SET claim_generation = ?, reconciled = 0, claimed_at = ?
                 WHERE client_order_id = ? AND handoff_state = 'in_progress'
                   AND handoff_done = 0 AND claim_generation = ?
                 """,
-                (generation + 1, client_id, generation),
+                (generation + 1, now.astimezone(timezone.utc).isoformat(), client_id, generation),
             )
             if updated.rowcount != 1:
                 raise ProfileRefused("store", "handoff reconcile was not admitted")
             return ClaimTicket(client_id, generation + 1, "retry")
+
+    def reconcile_non_gateway_handoff(self, client_order_id: str, *, now: datetime) -> str | ClaimTicket:
+        """Reconcile a ``propose`` or ``submit_dry_run`` reservation after a stop.
+
+        Neither action ever reaches a gateway, so nothing can have been
+        submitted — the verdict is fixed ``False``, not caller-supplied. A
+        reservation bound to a gateway order (``submit_paper``, or any row
+        carrying an ``order_ref``) is refused here; it must be reconciled
+        through ``reconcile_handoff_to_gateway`` instead, which derives the
+        verdict from the gateway's own signed chain.
+        """
+        return self._reconcile_handoff(
+            client_order_id, order_ref=None, order_submitted=False, now=now,
+            require_no_gateway=True,
+        )
+
+    def _confirm_claim_before_broker_call(
+        self, client_order_id: str, generation: int, *, now: datetime
+    ) -> None:
+        """The final compare-and-set before a broker call: refuses a stale generation.
+
+        Called as the ``claim_fence`` passed into ``OrderGateway.submit``,
+        immediately before the private broker transport. Refreshes the lease
+        (``claimed_at``) so a legitimately slow broker call is never mistaken
+        for an abandoned claim, and refuses — before any broker I/O — if this
+        ticket's generation is no longer the row's current ``in_progress`` one,
+        i.e. a concurrent reconciler already took over. This is defense in
+        depth behind the lease: even if a stale ticket somehow reached this
+        far, the actual transport is still gated by one more atomic check.
+        """
+        _require_now(now)
+        client_id = _ident(client_order_id, code="client_order_id")
+        with self._txn() as conn:
+            updated = conn.execute(
+                """
+                UPDATE reservations
+                SET claimed_at = ?
+                WHERE client_order_id = ? AND claim_generation = ? AND handoff_state = 'in_progress'
+                  AND handoff_done = 0
+                """,
+                (now.astimezone(timezone.utc).isoformat(), client_id, generation),
+            )
+        if updated.rowcount != 1:
+            raise ProfileRefused(
+                "stale_claim", "handoff claim generation is stale before broker submit"
+            )
 
     def _set_stop(
         self,
@@ -1154,7 +1253,7 @@ class AuthorityProfileStore:
                 row[1] for row in conn.execute("PRAGMA table_info(profiles)").fetchall()
             }
             required_reservation_columns = {
-                "order_ref", "handoff_state", "claim_generation", "reconciled"
+                "order_ref", "handoff_state", "claim_generation", "reconciled", "claimed_at"
             }
             if version == STORE_USER_VERSION:
                 # A current-version store missing a column is corruption, not
@@ -1185,6 +1284,8 @@ class AuthorityProfileStore:
                         "ALTER TABLE reservations ADD COLUMN reconciled "
                         "INTEGER NOT NULL DEFAULT 0"
                     )
+                if "claimed_at" not in columns:
+                    conn.execute("ALTER TABLE reservations ADD COLUMN claimed_at TEXT")
                 if "stop_capability_hash" not in profile_columns:
                     conn.execute(
                         "ALTER TABLE profiles ADD COLUMN stop_capability_hash TEXT"
@@ -1333,6 +1434,57 @@ class _Stored:
         return getattr(self.profile, name)
 
 
+def _check_paper_submit_binding(
+    store: AuthorityProfileStore,
+    profile_id: str,
+    *,
+    action: str,
+    order: object,
+    notional: Decimal | str,
+    producing_runtime: object,
+) -> str:
+    """The account/notional/provider/action checks a paper submit must pass.
+
+    Shared by ``handoff_to_gateway`` and ``reconcile_handoff_to_gateway`` so a
+    crash-recovery resubmit cannot skip what a fresh handoff enforces: a
+    recovery call that substitutes a different order, account, notional,
+    producing runtime, or action is refused here, before the chain lookup or a
+    second broker call. Returns the order's ``str`` id.
+
+    This reads the installed profile's bound account/provider only — it does
+    NOT re-check revoked/expired. Current authority is a separate question,
+    already enforced by ``authorize`` (fresh handoff) or the reconcile
+    admittable check (recovery); a profile revoked after an order already
+    landed must not block recording that landed fact.
+    """
+    if action != "submit_paper":
+        raise ProfileRefused("action_refused", "action is outside the paper submit handoff")
+    if order is None:
+        raise ProfileRefused("order_required", "paper submit requires the gateway order")
+    if type(producing_runtime) is not str:
+        raise ProfileRefused(
+            "binding_provider", "producing runtime does not match the profile provider"
+        )
+    with store._txn() as conn:
+        profile = store._profile_row(conn, profile_id).profile
+    if producing_runtime != profile.provider:
+        raise ProfileRefused(
+            "binding_provider", "producing runtime does not match the profile provider"
+        )
+    order_account = getattr(order, "account", None)
+    if order_account != profile.account_id:
+        raise ProfileRefused("account_mismatch", "order account is outside the profile")
+    order_notional = getattr(order, "notional", None)
+    if order_notional is None or _parse_money(order_notional, code="notional") != _parse_money(
+        notional, code="notional"
+    ):
+        raise ProfileRefused("notional_mismatch", "order notional does not match the reservation")
+    order_ref = getattr(order, "id", None)
+    if order_ref is None:
+        raise ProfileRefused("order_required", "paper submit requires an order id")
+    return str(order_ref)
+
+
 def handoff_to_gateway(
     store: AuthorityProfileStore,
     gateway,
@@ -1367,27 +1519,11 @@ def handoff_to_gateway(
     order_ref = None
     if action == "submit_paper":
         _require_paper_gateway(gateway)
-        runtime = kwargs.get("producing_runtime")
-        if type(provider) is not str or type(runtime) is not str or runtime != provider:
-            raise ProfileRefused(
-                "binding_provider", "producing runtime does not match the profile provider"
-            )
         order = submit_args[0] if submit_args else kwargs.get("order")
-        if order is None:
-            raise ProfileRefused("order_required", "paper submit requires the gateway order")
-        order_account = getattr(order, "account", None)
-        profile_account = _profile_account(store, profile_id)
-        if order_account != profile_account:
-            raise ProfileRefused("account_mismatch", "order account is outside the profile")
-        order_notional = getattr(order, "notional", None)
-        if order_notional is None or _parse_money(order_notional, code="notional") != _parse_money(
-            notional, code="notional"
-        ):
-            raise ProfileRefused("notional_mismatch", "order notional does not match the reservation")
-        order_ref = getattr(order, "id", None)
-        if order_ref is None:
-            raise ProfileRefused("order_required", "paper submit requires an order id")
-        order_ref = str(order_ref)
+        order_ref = _check_paper_submit_binding(
+            store, profile_id, action=action, order=order, notional=notional,
+            producing_runtime=kwargs.get("producing_runtime"),
+        )
     elif action not in {"propose", "submit_dry_run"}:
         raise ProfileRefused("action_refused", "action is outside the profile handoff")
 
@@ -1420,7 +1556,13 @@ def handoff_to_gateway(
         raise ProfileRefused(claim, "handoff claim was refused")
     if not isinstance(claim, ClaimTicket):
         raise ProfileRefused("store", "handoff claim was not admitted")
-    outcome = gateway.submit(*submit_args, **kwargs)
+    outcome = gateway.submit(
+        *submit_args,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            reservation.client_order_id, claim.generation, now=now
+        ),
+        **kwargs,
+    )
     chain_kwargs = dict(kwargs)
     if getattr(outcome, "ok", None) is not True:
         if order_ref is not None:
@@ -1463,23 +1605,35 @@ def reconcile_handoff_to_gateway(
 ) -> ProfiledHandoff:
     """Reconcile an abandoned claim against the gateway's durable order identity.
 
-    The gateway's durable identity for a paper submit is the order id bound at
-    reservation time (``order_ref``), transported as ``cockpit-<order.id>`` and
-    recorded on the HMAC-signed ``EVENT_ORDER_TRANSITION`` chain. If the chain
-    already shows 'submitted', the crashed submit landed and the reservation is
-    completed without a second submit. Otherwise the claim is re-owned under a
-    new generation and submitted exactly once. This is the only re-ownership
-    path: ``claim_handoff`` refuses an owned ``in_progress`` row.
+    The recovery order and execution metadata (account, notional, producing
+    runtime, action) are checked against the stored reservation and profile
+    with the exact same ``_check_paper_submit_binding`` a fresh handoff runs
+    (CSL-218 recovery hardening) — a recovery call cannot substitute a
+    different order, account, notional, runtime, or action and have it
+    silently accepted. The gateway's durable identity for a paper submit is
+    the order id bound at reservation time (``order_ref``), transported as
+    ``cockpit-<order.id>`` and recorded on the HMAC-signed
+    ``EVENT_ORDER_TRANSITION`` chain. If the chain already shows 'submitted',
+    the crashed submit landed and the reservation is completed without a
+    second submit. Otherwise the claim is re-owned under a new generation —
+    gated by the claim lease, so a concurrent reconciler cannot also take
+    over — and submitted exactly once.
     """
     kwargs = dict(submit_kwargs or {})
     _require_paper_gateway(gateway)
     order = submit_args[0] if submit_args else kwargs.get("order")
-    if order is None:
-        raise ProfileRefused("order_required", "reconcile requires the gateway order")
-    order_ref = getattr(order, "id", None)
-    if order_ref is None:
-        raise ProfileRefused("order_required", "reconcile requires an order id")
-    order_ref = str(order_ref)
+    client_id = _ident(client_order_id, code="client_order_id")
+    with store._txn() as conn:
+        row = conn.execute(
+            "SELECT action, profile_id, notional FROM reservations WHERE client_order_id = ?",
+            (client_id,),
+        ).fetchone()
+    if row is None:
+        raise ProfileRefused("unknown_reservation", "reservation is missing")
+    order_ref = _check_paper_submit_binding(
+        store, row["profile_id"], action=row["action"], order=order,
+        notional=Decimal(row["notional"]), producing_runtime=kwargs.get("producing_runtime"),
+    )
     try:
         st = gateway._resolve_state(kwargs.get("ladder"))
         submitted = gateway._order_submitted_on_chain(st, order_ref)
@@ -1489,8 +1643,8 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused(
             "gateway_identity", "gateway durable order identity could not be resolved"
         ) from exc
-    verdict = store.reconcile_handoff(
-        client_order_id,
+    verdict = store._reconcile_handoff(
+        client_id,
         order_ref=order_ref,
         order_submitted=submitted,
         now=now,
@@ -1501,7 +1655,13 @@ def reconcile_handoff_to_gateway(
         raise ProfileRefused(verdict, "handoff reconcile was refused")
     if not isinstance(verdict, ClaimTicket):
         raise ProfileRefused("store", "handoff reconcile was not admitted")
-    outcome = gateway.submit(*submit_args, **kwargs)
+    outcome = gateway.submit(
+        *submit_args,
+        claim_fence=lambda: store._confirm_claim_before_broker_call(
+            client_id, verdict.generation, now=now
+        ),
+        **kwargs,
+    )
     if getattr(outcome, "ok", None) is not True:
         if _settle_failed(
             store, gateway, client_order_id, order_ref, verdict.generation, kwargs, now
@@ -1551,7 +1711,7 @@ def _settle_failed(store, gateway, client_order_id, order_ref, generation, kwarg
 
 def _record_landed(store, client_order_id, order_ref, now) -> None:
     try:
-        store.reconcile_handoff(
+        store._reconcile_handoff(
             client_order_id, order_ref=order_ref, order_submitted=True, now=now
         )
     except ProfileRefused:
@@ -1571,16 +1731,6 @@ def _reservation_completed(store, client_order_id: str) -> bool:
         and row["handoff_state"] == "completed"
         and bool(int(row["handoff_done"]))
     )
-
-
-def _profile_account(store: AuthorityProfileStore, profile_id: str) -> str:
-    with store._txn() as conn:
-        row = conn.execute(
-            "SELECT account_id FROM profiles WHERE profile_id = ?", (profile_id,)
-        ).fetchone()
-    if row is None:
-        raise ProfileRefused("unknown_profile", "profile is not installed")
-    return str(row["account_id"])
 
 
 def _require_paper_gateway(gateway) -> None:
@@ -1668,6 +1818,20 @@ def _parse_expiry(value: object) -> datetime:
         raise ProfileRefused("expires_at", "expiry must be an ISO-8601 timestamp") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ProfileRefused("expires_at", "expiry must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_claimed_at(value: str) -> datetime:
+    """Parse a stored lease timestamp. Written only by this module as
+    ``now.astimezone(timezone.utc).isoformat()``, so a parse failure is store
+    corruption, not untrusted input.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ProfileRefused("store", "stored claim lease timestamp is malformed") from exc
+    if parsed.tzinfo is None:
+        raise ProfileRefused("store", "stored claim lease timestamp is malformed")
     return parsed.astimezone(timezone.utc)
 
 

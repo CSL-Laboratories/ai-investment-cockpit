@@ -16,6 +16,7 @@ import pytest
 from brokers.alpaca_paper import AlpacaPaperBroker
 from brokers.authority_profiles import (
     ADMITTED_ENVIRONMENTS,
+    CLAIM_LEASE,
     FUTURE_PROFILE_CLASS,
     NAMED_REFUSED_ENVIRONMENTS,
     RUNTIME_PROFILE_CLASSES,
@@ -491,6 +492,7 @@ def test_empty_legacy_store_upgrades_in_place(tmp_path):
         "ALTER TABLE reservations DROP COLUMN order_ref",
         "ALTER TABLE reservations DROP COLUMN claim_generation",
         "ALTER TABLE reservations DROP COLUMN reconciled",
+        "ALTER TABLE reservations DROP COLUMN claimed_at",
         "ALTER TABLE profiles DROP COLUMN stop_capability_hash",
         "PRAGMA user_version = 1",
     ):
@@ -980,12 +982,27 @@ def test_owned_in_progress_claim_is_refused_until_reconciled(st, tmp_path):
     assert _refuse(lambda: handoff_to_gateway(store, gateway, **call)) == "handoff_in_progress"
     assert calls["n"] == 1
     assert broker.calls == 0
-    # The reconcile path sees no 'submitted' transition on the signed chain,
-    # re-owns the claim under a new generation, and submits exactly once.
+    # The claim lease has not expired yet: a reconcile this soon after the
+    # crash is refused outright, even though the chain shows nothing landed.
+    assert _refuse(
+        lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="crash-1",
+            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            now=now,
+        )
+    ) == "claim_leased"
+    assert calls["n"] == 1
+    assert broker.calls == 0
+    row = _handoff_row(path, "crash-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+    # Once the lease expires, the reconcile path sees no 'submitted' transition
+    # on the signed chain, re-owns the claim under a new generation, and
+    # submits exactly once.
+    later = now + CLAIM_LEASE + timedelta(seconds=1)
     reconciled = reconcile_handoff_to_gateway(
         store, gateway, client_order_id="crash-1",
         submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
-        now=now,
+        now=later,
     )
     assert calls["n"] == 2
     assert broker.calls == 1
@@ -1167,12 +1184,199 @@ def test_stopped_proposal_completes_after_reconcile_and_release(tmp_path):
         notional=Decimal("10.00"), actor="stop-owner", now=NOW,
     )
     store.hold("profile-b", actor="stop-owner", now=NOW, reason="operator hold")
-    assert store.reconcile_handoff(
-        "prop-1", order_ref=None, order_submitted=False, now=NOW
-    ) == "failed"
+    assert store.reconcile_non_gateway_handoff("prop-1", now=NOW) == "failed"
     store.release_stop("profile-b", actor="stop-owner", now=NOW, reconciled=True)
     assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "completed"
     assert store.claim_handoff("prop-1", now=NOW, awaiting_submit=False) == "replay"
+
+
+def test_direct_caller_cannot_forge_a_submitted_verdict(tmp_path):
+    """CSL reviewer finding (Codex 4302176370): the reconcile entry point must
+    not accept a caller-supplied ``order_submitted`` verdict. Before the fix,
+    ``store.reconcile_handoff`` was public and a direct caller could present
+    ``order_submitted=True`` (or ``False``) for a ``submit_paper`` reservation
+    it never checked against the gateway's signed chain, completing or
+    failing it on nothing but its own say-so -- and so clearing a stop out
+    from under a submit that may still be in flight. The trusted-boundary
+    method is now private, and the only non-gateway public entry point
+    (``reconcile_non_gateway_handoff``) refuses outright on a gateway-bound
+    reservation; it can never be used to forge a verdict for one.
+    """
+    store = _store(tmp_path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="forge-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW, order_ref="forged-order",
+    )
+    assert not hasattr(store, "reconcile_handoff")
+    assert _refuse(
+        lambda: store.reconcile_non_gateway_handoff("forge-1", now=NOW)
+    ) == "store"
+    row = _handoff_row(store.path, "forge-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("pending", 0)
+
+
+def test_unbound_reservation_refuses_any_order_identity_at_reconcile(tmp_path):
+    """Devin finding (4302172801): a reservation with no bound ``order_ref``
+    must not accept an arbitrary order identity at reconcile time. Before the
+    fix, an unbound row silently accepted whatever ``order_ref`` the caller
+    presented and completed against it -- letting a caller bind (and
+    complete, or fail) a reservation to an order it was never reserved for.
+    """
+    store = _store(tmp_path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="unbound-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW,
+    )
+    ticket = store.claim_handoff("unbound-1", now=NOW, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    assert _refuse(
+        lambda: store._reconcile_handoff(
+            "unbound-1", order_ref="someone-elses-order", order_submitted=True, now=NOW
+        )
+    ) == "client_order_conflict"
+    row = _handoff_row(store.path, "unbound-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+
+
+def test_reconcile_rechecks_account_and_notional_against_the_reservation(st, tmp_path):
+    """Codex finding (4302176367) / Devin (4302172827): recovery must run the
+    SAME account/notional/provider/action checks a fresh handoff runs. Before
+    the fix, ``reconcile_handoff_to_gateway`` never validated the recovery
+    order at all -- a recovery call presenting a forged order (same id, wrong
+    account or notional) would sail through to the gateway unexamined.
+    """
+    import types
+
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
+    path = tmp_path / "forged.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="forged-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("forged-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    forged_account = types.SimpleNamespace(
+        id=scenario.order.id, account="attacker-account", notional=scenario.order.notional,
+    )
+    assert _refuse(
+        lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="forged-1",
+            submit_args=(forged_account,), submit_kwargs=scenario.submit_kwargs(),
+            now=now,
+        )
+    ) == "account_mismatch"
+    assert broker.calls == 0
+    row = _handoff_row(path, "forged-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="forged-2",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id) + "-2",
+    )
+    store.claim_handoff("forged-2", now=now, awaiting_submit=True)
+    forged_notional = types.SimpleNamespace(
+        id=str(scenario.order.id) + "-2", account=scenario.order.account, notional=Decimal("1.00"),
+    )
+    assert _refuse(
+        lambda: reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="forged-2",
+            submit_args=(forged_notional,), submit_kwargs=scenario.submit_kwargs(),
+            now=now,
+        )
+    ) == "notional_mismatch"
+    assert broker.calls == 0
+
+
+def test_concurrent_reconcile_lease_prevents_a_double_send(st, tmp_path):
+    """Add a lease on in-flight claims (CSL reviewer item 4): an in_progress
+    submit cannot be taken over and sent twice. Before the fix, a reconciler
+    could re-own an abandoned claim immediately, with no regard for whether
+    the original owner (or another concurrent reconciler) might still be
+    mid-flight -- two reconcilers racing the same crashed claim could both
+    mint a generation and both reach the gateway. Two reconcilers here must
+    produce exactly one gateway send.
+    """
+    broker = _CountingPaper()
+    gateway = PaperOrderGateway(broker, st=st)
+    calls = {"n": 0}
+    real_submit = gateway.submit
+
+    def _flaky(order, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("crash before submit returned")
+        return real_submit(order, **kwargs)
+
+    gateway.submit = _flaky
+    scenario = build_scenario(st, mode=Mode.paper, broker=broker, gateway=gateway, mint=True)
+    path = tmp_path / "lease-race.sqlite"
+    store = AuthorityProfileStore(path)
+    now = scenario.clock.now()
+    _install(
+        store,
+        _document(
+            account_id="paper", notional_cap="5000.00", max_order_notional="5000.00",
+            expires_at="2026-07-08T14:00:00+00:00",
+        ),
+        now=now,
+    )
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="lease-1",
+        notional=Decimal(str(scenario.order.notional)), actor="stop-owner",
+        now=now, order_ref=str(scenario.order.id),
+    )
+    ticket = store.claim_handoff("lease-1", now=now, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+
+    def reconcile(now_):
+        return reconcile_handoff_to_gateway(
+            store, gateway, client_order_id="lease-1",
+            submit_args=(scenario.order,), submit_kwargs=scenario.submit_kwargs(),
+            now=now_,
+        )
+
+    # The lease has expired: reconciler A re-owns the claim (generation 2) and
+    # crashes again before its own submit returns.
+    later = now + CLAIM_LEASE + timedelta(seconds=1)
+    with pytest.raises(RuntimeError):
+        reconcile(later)
+    assert calls["n"] == 1
+    assert broker.calls == 0
+    row = _handoff_row(path, "lease-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("in_progress", 0)
+
+    # Reconciler B races in immediately after, at the same instant: the claim
+    # it would be taking over is fresh (claimed moments ago by A), so the
+    # lease refuses it before it can ever reach the gateway.
+    assert _refuse(lambda: reconcile(later)) == "claim_leased"
+    assert calls["n"] == 1
+    assert broker.calls == 0
+
+    # Only once A's own re-own lease has also expired does a third attempt
+    # succeed -- and it sends to the gateway exactly once.
+    even_later = later + CLAIM_LEASE + timedelta(seconds=1)
+    result = reconcile(even_later)
+    assert calls["n"] == 2
+    assert broker.calls == 1
+    assert result.outcome.ok is True
+    row = _handoff_row(path, "lease-1")
+    assert (row["handoff_state"], row["handoff_done"]) == ("completed", 1)
 
 
 def test_expired_or_revoked_stop_owner_stays_blocked_pending_csl_280(tmp_path):

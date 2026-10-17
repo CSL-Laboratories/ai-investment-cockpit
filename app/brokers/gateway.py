@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -807,11 +808,19 @@ class OrderGateway:
     # ---- public: the single LOCKED submit transaction (a)-(h) + two-phase submit --------
     def submit(self, order, *, approval, risk_decision, ladder, breaker_engine, risk_recheck,
                positions, token_nonce, producing_runtime, analysis_vendor=None,
-               analysis_generation=None, clock=None) -> GateOutcome:
+               analysis_generation=None, clock=None,
+               claim_fence: Callable[[], None] | None = None) -> GateOutcome:
         """Re-run EVERY gate immediately before the broker call, failing CLOSED on the first
         failure (audited; bypass events recorded so the gate sees them). Only if all pass:
         two-phase submit (intent -> broker.submit_order -> result), consume the single-use
-        approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13)."""
+        approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13).
+
+        ``claim_fence``, when given, is called immediately before the broker transport
+        (CSL-218): an external claim/lease owner (the paper-profile store) gets one last
+        conditional-update check that its fencing token is still current, so a caller
+        whose claim was already re-owned elsewhere is refused here instead of reaching
+        the broker a second time. A raised exception aborts the same way as any other
+        pre-broker safety refusal; the intent is already open and gets a covering result."""
         st = self._resolve_state(ladder)
         clock = clock or st.clock
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
@@ -962,6 +971,25 @@ class OrderGateway:
                     actor=producing_runtime,
                     resolved_hash=resolved_hash,
                 )
+
+            # CSL-218: the final fencing check, as close to the broker call as possible.
+            # ``claim_fence`` is a conditional update against the claim owner's own
+            # store, not a local predicate — a caller whose claim generation was
+            # already re-owned by a concurrent reconciler is refused HERE, before any
+            # transport, never after.
+            if claim_fence is not None:
+                try:
+                    claim_fence()
+                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason=f"claim fence refused the broker call: {exc}",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
 
             # The private broker call (SEC-03: never a module global / string dispatch).
             # ``client_order_id`` is stable transport metadata and cannot change the approved
