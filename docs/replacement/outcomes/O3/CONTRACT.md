@@ -263,6 +263,11 @@ not change quantity.
 - **Partial.** Accepted fill quantity cannot exceed order quantity. Reported
   quantity that includes the unfilled remainder fails
   `partial_fill_divergence`.
+- **Complete.** A `filled` order accounts for its full quantity: retained
+  fill rows plus the quantity the checkpoint already applied
+  (`checkpoint_filled_qty`) must equal `qty`. An order that declares
+  `filled` with no retained fills and no checkpoint evidence fails
+  `partial_fill_divergence`.
 - **Duplicate.** A `fill_id` applies once. A second copy fails
   `duplicate_fill_divergence` and does not increase quantity again.
 - **Late.** A fill sequenced after a cancel-like terminal
@@ -275,7 +280,10 @@ not change quantity.
 ## Corporate actions
 
 Equity only. A cash dividend debits `cash_available` and credits
-`realized_pnl` and does not change share quantity. The candidate vocabulary
+`realized_pnl` and does not change share quantity. Every line on a
+corporate-action entry must name an instrument that has a declared
+corporate action in the fixture — booking a dividend on one security to
+another's accounts fails `corporate_action_mismatch`. The candidate vocabulary
 also names `split`, `stock_dividend`, `symbol_change`, and `merger_cash`.
 The validator fail-closes those kinds (`corporate_action_unsupported`) until
 a human receipt admits fixtures for them. An event-contract book rejects
@@ -293,7 +301,19 @@ with a payout that does not match the journal, fails
 per instrument: the credit on `collateral_reserved` must equal the
 reservation that instrument held before settlement, so an open
 reservation on a different instrument is not a reason to under- or
-over-release this one.
+over-release this one. The pre-settlement reservation is the state at the
+settlement entry's sequence: a collateral posting sequenced after the
+settlement cannot count toward it, so a reserve raised after the payout
+fails `settlement_unreconciled`.
+
+The P&L side of a binary settlement reconciles too: when the reserved
+premium exceeds the payout the journal debits `realized_pnl` for the
+loss, and when the payout exceeds the reservation it credits
+`realized_pnl` for the gain — each equal to that difference per
+instrument. A losing contract is not a fee: `fees_expense` on the
+settlement entry must equal the evidence's `misc_fee_minor` when the fee
+is not already deducted from the payout, and must not exist at all when
+it is (`fee_double_count`).
 
 A voided market reconciles only when all of the following hold: a retained
 `market_void` record exists, reported quantity is zero, collateral is zero,
@@ -319,7 +339,9 @@ disagrees with itself fails `collateral_double_count` before replay
 starts. Checkpoint instruments must also be declared. A correction may
 reverse a checkpointed entry: `reverses_entry_id` matches either a
 replayed journal entry or an id in the checkpoint's applied history,
-and either match admits the fill it names. Replay applies only entries
+and either match admits the fill it names. An applied entry id protects
+against replay too: a journal entry whose `entry_id` appears in
+`applied_entry_ids` is not posted again. Replay applies only entries
 with a higher sequence and a new idempotency key. Reapplying a key, or an
 entry at or below the checkpoint sequence, is a restart replay. On the
 event book that failure is `collateral_double_count`. On the equity book it
@@ -345,6 +367,7 @@ checkpoint.
 | `neg_late_fill_divergence` | negative | A fill is sequenced after cancel; reported position includes it. |
 | `event_resting_order_reservation` | positive | A filled position plus an order's `order_id`-linked reservation posted while it was resting; the order then partially fills without re-posting premium. |
 | `neg_offsetting_fill_prices` | negative | Two fills whose prices disagree with their postings but net out in aggregate. Per-fill linkage fails it. |
+| `event_no_settlement` | positive | A losing NO-side binary: zero payout, reserved premium released, realized loss debited, position flat. |
 
 The retained oracle is [oracle/designed-failures.json](oracle/designed-failures.json).
 Its hash is pinned in the manifest. The negative controls are required to

@@ -2,13 +2,38 @@
   "title": "O3 candidate order lifecycle record",
   "type": "object",
   "additionalProperties": false,
-  "required": ["order_id", "instrument_id", "family", "side", "qty", "state"],
+  "required": [
+    "order_id",
+    "instrument_id",
+    "family",
+    "side",
+    "qty",
+    "state"
+  ],
   "properties": {
-    "order_id": {"type": "string", "minLength": 1},
-    "instrument_id": {"type": "string", "minLength": 1},
-    "family": {"enum": ["equity", "event"]},
-    "side": {"enum": ["buy"]},
-    "qty": {"type": "integer", "minimum": 1},
+    "order_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "instrument_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "family": {
+      "enum": [
+        "equity",
+        "event"
+      ]
+    },
+    "side": {
+      "enum": [
+        "buy"
+      ]
+    },
+    "qty": {
+      "type": "integer",
+      "minimum": 1
+    },
     "state": {
       "enum": [
         "proposed",
@@ -28,7 +53,17 @@
         "void_ab_initio"
       ]
     },
-    "terminal_state": {"type": "string", "minLength": 1},
-    "terminal_sequence": {"type": "integer", "minimum": 0}
+    "terminal_state": {
+      "type": "string",
+      "minLength": 1
+    },
+    "terminal_sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "checkpoint_filled_qty": {
+      "type": "integer",
+      "minimum": 0
+    }
   }
 }

@@ -365,3 +365,73 @@ def test_accepted_csl212_contract_digests_unchanged() -> None:
     for record in program["contracts"]:
         digest = hashlib.sha256((ROOT / record["path"]).read_bytes()).hexdigest()
         assert digest == record["sha256"]
+
+
+def test_o3_losing_settlement_posts_realized_loss() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_no_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["journal"][2]["lines"][0]["amount_minor"] -= 1
+    assert "unbalanced_entry" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][2]["lines"].append({
+        "account": "realized_pnl", "side": "dr", "amount_minor": 1, "instrument_id": "ev-no"
+    })
+    fixture["journal"][2]["lines"].append({
+        "account": "cash_available", "side": "cr", "amount_minor": 1, "instrument_id": "ev-no"
+    })
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_settlement_fee_must_be_posted_when_not_deducted() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["evidence"][0]["misc_fee_minor"] = 123
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_reservation_after_settlement_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][0]["sequence"] = 4
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_dividend_lines_bound_to_action_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["instruments"].append({
+        "instrument_id": "eq-ibm",
+        "family": "equity_share",
+        "venue_id": "venue-equity-candidate",
+        "venue_symbol": "IBM",
+        "currency": "USD",
+        "unit": "share",
+    })
+    for line in fixture["journal"][2]["lines"]:
+        line["instrument_id"] = "eq-ibm"
+    assert "corporate_action_mismatch" in _evaluate(fixture)
+
+
+def test_o3_filled_order_needs_checkpoint_evidence() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    del fixture["orders"][0]["checkpoint_filled_qty"]
+    assert "partial_fill_divergence" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"][0]["checkpoint_filled_qty"] = 9
+    assert "partial_fill_divergence" in _evaluate(fixture)
+
+
+def test_o3_checkpointed_entry_id_replay_detected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["checkpoint"]["applied_entry_ids"].append("j-settle")
+    assert "collateral_double_count" in _evaluate(fixture)
+
+
+def test_o3_every_evidence_instrument_must_be_declared() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["evidence"].append({"kind": "market_void", "instrument_id": "ghost", "source_id": "void-1"})
+    assert "unknown_instrument" in _evaluate(fixture)

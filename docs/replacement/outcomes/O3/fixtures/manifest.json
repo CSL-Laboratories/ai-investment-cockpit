@@ -40,21 +40,21 @@
       "id": "event_restart_idempotent",
       "path": "fixtures/event_restart_idempotent.json",
       "role": "positive",
-      "sha256": "c818478888965b9d487d5857a66ebb6bb5f1056b74324de556042f742bb956e2",
+      "sha256": "fca9e8a04fb5c04c0aa4bfc8b8053cea1d4804ea0765bb86427c058cca6956e1",
       "expected_failure_codes": []
     },
     {
       "id": "event_void_reconciled",
       "path": "fixtures/event_void_reconciled.json",
       "role": "positive",
-      "sha256": "30791c26922eaa95f3bbe9faaa957de46dd7858a82ef85f9bd99573e7a155ad8",
+      "sha256": "df4c4bf5af4afa1108371067dd8cf81a9786e2cc69785e0006a0e6467fc65818",
       "expected_failure_codes": []
     },
     {
       "id": "neg_double_counted_collateral_after_restart",
       "path": "fixtures/neg_double_counted_collateral_after_restart.json",
       "role": "negative",
-      "sha256": "fa1f0218c391bce8a30a78ad2ed88e22600ab38a4a5c2e5cf626c582c1d5dee2",
+      "sha256": "632becd2d5a2c275eb950c74c1385c5b573465eec4cf170b40400bcb4c1b1fe5",
       "expected_failure_codes": [
         "collateral_double_count"
       ]
@@ -63,7 +63,7 @@
       "id": "neg_voided_market_unreconciled",
       "path": "fixtures/neg_voided_market_unreconciled.json",
       "role": "negative",
-      "sha256": "4495bc955a51b7241337c18b8b437e1854704bd2e18d335947170a861b648935",
+      "sha256": "73ff3de6e0a17c726214d0d36357af21d5b02beb51dacaf636c03c7f77a3ebf8",
       "expected_failure_codes": [
         "void_unreconciled"
       ]
@@ -110,6 +110,13 @@
       "expected_failure_codes": [
         "balance_mismatch"
       ]
+    },
+    {
+      "id": "event_no_settlement",
+      "path": "fixtures/event_no_settlement.json",
+      "sha256": "6b915839b039efdac38ff6f2a078f90f64b16abdac03306fb373ccb6634f9017",
+      "role": "positive",
+      "expected_failure_codes": []
     }
   ]
 }
