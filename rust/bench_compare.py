@@ -326,11 +326,12 @@ def main() -> None:
     python_tape = _time(lambda: _python_tape(tape_n))
     native_tape = _time(lambda: _native_tape(tape_n))
     print(row(f"synthetic tape, {tape_n} events", native_tape, python_tape))
-    # Reported speedups on this 4,000-event tape are 2.88x, 2.72x, and 2.40x.
-    # Those runs span 0.48x. The floor is 2.0x, 0.40x under the slowest, so a
-    # noisy run near that low still passes and a ratio near 1x does not.
-    if python_tape / native_tape < 2.0:
-        sys.exit("synthetic tape regressed below 2x the Python generator")
+    # Linux runs were 2.88x, 2.72x, and 2.40x. macOS rust-book measured 1.98x
+    # (31.8 ms versus 16.1 ms), which misses a 2x floor. Linux's own spread
+    # is about 17%, and 1.98 x 0.83 is about 1.64, so the floor is 1.5x.
+    # That stays under a noisy macOS sample and still rejects a ratio near 1x.
+    if python_tape / native_tape < 1.5:
+        sys.exit("synthetic tape regressed below 1.5x the Python generator")
 
 
 if __name__ == "__main__":
