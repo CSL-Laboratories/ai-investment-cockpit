@@ -98,6 +98,8 @@ def categorise(row: dict) -> tuple[str, str] | None:
     if ic_mean is None or not -1 <= ic_mean <= 1:
         return None
     ic_std = _finite(row.get("ic_std"))
+    if ic_std is not None and ic_std < 0:
+        return None
     pos = _finite(row.get("ic_positive_ratio"))
     if pos is not None and not 0 <= pos <= 1:
         return None

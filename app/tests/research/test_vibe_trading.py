@@ -726,6 +726,12 @@ def test_categorise_subnormal_std_is_not_dead():
     assert categorise({**row, "ic_mean": -0.05}) == ("reversed", "recomputed")
 
 
+def test_categorise_rejects_a_negative_std():
+    assert categorise({
+        "ic_mean": 0.05, "ic_std": -0.01, "ic_positive_ratio": 0.6, "ic_count": 100,
+    }) is None
+
+
 def test_categorise_large_finite_stats_do_not_overflow():
     assert categorise({
         "ic_mean": 2, "ic_std": 0.01, "ic_positive_ratio": 0.7, "ic_count": 100,
