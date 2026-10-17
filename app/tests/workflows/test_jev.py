@@ -966,6 +966,7 @@ def test_framed_state_plus_question_stays_inside_the_cap():
 
 def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     import subprocess
+    import sys
 
     from agent_runner.transport import SubprocessTransport
 
@@ -983,5 +984,8 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
         return _Proc()
 
     monkeypatch.setattr(subprocess, "Popen", _popen)
-    SubprocessTransport().run(["/bin/true"], "", 1.0, None)
+    # `/bin/true` is missing on the Windows and macOS runners, so the spawn
+    # check fails before this assertion. The running interpreter exists on
+    # every cell, and Popen is mocked, so it is never executed.
+    SubprocessTransport().run([sys.executable], "", 1.0, None)
     assert "JEV_API_KEY" not in seen["env"]
