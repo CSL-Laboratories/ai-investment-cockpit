@@ -1,7 +1,9 @@
 """Execute candidate workflow decisions without dispatching hosted jobs."""
+import importlib.util
 import itertools
 import json
 import os
+import py_compile
 import shutil
 import subprocess
 import sys
@@ -13,6 +15,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.test_ci_dispatch_scope import concurrency_group, evaluate, workflow  # noqa: E402 - direct-script entry
+import importlib  # noqa: E402
+
+m = importlib.import_module('scripts.ci.merge_candidate')
 
 FIELDS = {'pr_number': '166', 'pr_head_sha': 'a' * 40, 'pr_base_sha': 'b' * 40,
           'merge_sha': 'c' * 40, 'merge_tree_sha': 'd' * 40,
@@ -21,6 +26,8 @@ CONTEXT = {'github.event_name': 'workflow_dispatch', 'inputs.scope': 'full',
            'github.event.pull_request.base.sha': 'b' * 40,
            **{f'inputs.{key}': value for key, value in FIELDS.items()}}
 VALIDATION = 'Validate exact full candidate'
+STAGING = 'Stage trusted candidate validator'
+POLICY_SHA = 'b' * 40
 CANDIDATE_JOBS = {'ci.yml': ('filter', 'linux', 'windows', 'macos'), 'rust.yml': ('filter', 'rust-book')}
 # Resolve bash once: the executable tests below restrict PATH to an interpreter
 # directory, and POSIX subprocess resolves the program from the passed PATH.
@@ -176,53 +183,92 @@ class CandidateWorkflowTests(unittest.TestCase):
     def test_live_validation_runs_after_each_exact_checkout_before_test_installation(self):
         for name, doc, job, steps, index in self.validation_steps():
             with self.subTest(workflow=name, job=job):
-                # Exactly the exact-merge checkout and a trusted interpreter install
-                # precede validation; no candidate dependency install or test does.
-                self.assertEqual(index, 2)
-                checkout, setup, validation = steps[:3]
-                self.assertEqual(checkout['uses'], 'actions/checkout@v4')
-                self.assertEqual(evaluate(checkout['with']['ref'], **CONTEXT), FIELDS['merge_sha'])
-                self.assertEqual(checkout['with']['fetch-depth'], '2')
+                # Trusted policy checkout, trusted interpreter install, policy
+                # staging and the exact-merge checkout precede validation; no
+                # candidate dependency install, local action or test does.
+                self.assertEqual(index, 4)
+                policy, setup, stage, checkout, validation = steps[:5]
+                self.assertEqual(policy['uses'], 'actions/checkout@v4')
+                self.assertEqual(policy['with']['ref'], '${{ github.sha }}')
+                self.assertEqual(policy['with']['fetch-depth'], '1')
+                self.assertEqual(policy['with']['persist-credentials'], 'false')
+                self.assertEqual(policy['if'], validation['if'])
                 self.assertEqual(setup['uses'], 'actions/setup-python@v5')
                 # The install runs whenever validation runs: unconditional, or the same gate.
                 self.assertEqual(setup.get('if', validation['if']), validation['if'])
+                self.assertEqual(stage['name'], STAGING)
+                self.assertEqual(stage['if'], validation['if'])
+                self.assertEqual(stage['shell'], 'bash')
+                self.assertIn('stage-policy', stage['run'])
+                self.assertEqual(checkout['uses'], 'actions/checkout@v4')
+                self.assertNotIn('if', checkout)
+                self.assertEqual(evaluate(checkout['with']['ref'], **CONTEXT), FIELDS['merge_sha'])
+                self.assertEqual(checkout['with']['fetch-depth'], '2')
                 self.assertTrue(evaluate(validation['if'], **CONTEXT))
+                self.assertFalse(evaluate(validation['if']))
                 # No pip cache: no cache key is derived from candidate files before validation.
                 self.assertEqual(set(setup['with']), {'python-version'})
                 cell = '${{ matrix.python-version }}' if 'strategy' in doc['jobs'][job] else '3.12'
                 self.assertEqual(setup['with']['python-version'], cell)
                 self.assertEqual(sum(step.get('uses') == 'actions/setup-python@v5' for step in steps), 1)
+                # Nothing before validation runs a local action or candidate script.
+                for step in steps[:index]:
+                    self.assertFalse(step.get('uses', '').startswith('./'), step)
+                    self.assertNotIn('pip install', step.get('run', ''), step)
                 self.assertEqual(validation['shell'], 'bash')
+                self.assertIn('manifest.json', validation['run'])
                 self.assertEqual(step_env(validation)['DISPATCH_NONCE'], FIELDS['dispatch_nonce'])
                 self.assertEqual(step_env(validation)['PR_BASE_SHA'], FIELDS['pr_base_sha'])
                 self.assertEqual(step_env(validation)['MERGE_TREE_SHA'], FIELDS['merge_tree_sha'])
                 if name == 'ci.yml' and job != 'filter':
                     # The pre-validation interpreter is the same cell run-gates installs.
-                    self.assertEqual(steps[3]['uses'], './.github/actions/run-gates')
-                    self.assertEqual(steps[3]['with']['python-version'], cell)
+                    self.assertEqual(steps[5]['uses'], './.github/actions/run-gates')
+                    self.assertEqual(steps[5]['with']['python-version'], cell)
 
     def test_actual_validation_step_forwards_tuple_and_stops_on_refusal_or_wrong_scope(self):
         # A subprocess fixture isolates workflow wiring from the helper's separate
         # real-Git/API tests. A refusal must propagate before any following work.
         # PATH exposes only `python`, as native Windows cells do, so a step that
         # still needed a `python3` launcher fails here on every host platform.
+        stub = ("import json, os, sys\n"
+                "assert sys.argv[1:] == ['validate-dispatch']\n"
+                "print(json.dumps({k: os.environ[k] for k in "
+                "['PR_NUMBER','PR_HEAD_SHA','PR_BASE_SHA','MERGE_SHA',"
+                "'MERGE_TREE_SHA','CANDIDATE_ID','DISPATCH_NONCE']}))\n"
+                "raise SystemExit(int(os.environ['REFUSAL']))\n")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            helper = root / 'scripts/ci/merge_candidate.py'
-            helper.parent.mkdir(parents=True)
-            helper.write_text("import json, os, sys\n"
-                              "assert sys.argv[1:] == ['validate-dispatch']\n"
-                              "print(json.dumps({k: os.environ[k] for k in "
-                              "['PR_NUMBER','PR_HEAD_SHA','PR_BASE_SHA','MERGE_SHA',"
-                              "'MERGE_TREE_SHA','CANDIDATE_ID','DISPATCH_NONCE']}))\n"
-                              "raise SystemExit(int(os.environ['REFUSAL']))\n")
+            workspace = root / 'workspace'
+            # The candidate workspace copy must never be the one executed.
+            candidate_copy = workspace / 'scripts/ci/merge_candidate.py'
+            candidate_copy.parent.mkdir(parents=True)
+            candidate_copy.write_text("raise SystemExit('candidate validator copy executed')\n")
+            stage = root / 'runner-temp' / 'codex-policy'
+            stage.mkdir(parents=True)
+            staged = stage / 'merge_candidate.py'
+            staged.write_text(stub)
+            (stage / 'manifest.json').write_text('{}')
+            no_manifest = root / 'runner-temp' / 'no-manifest'
+            no_manifest.mkdir()
+            (no_manifest / 'merge_candidate.py').write_text(stub)
+            try:
+                link = root / 'runner-temp' / 'link.py'
+                os.symlink(staged, link)
+            except (OSError, NotImplementedError):
+                link = None
             bindir = python_only_path(root)
+            policy_env = {'GITHUB_SHA': POLICY_SHA, 'GITHUB_WORKFLOW_SHA': POLICY_SHA,
+                          'CODEX_POLICY_SHA': POLICY_SHA, 'CODEX_POLICY_BRANCH': 'main',
+                          # Match the slash-delimited path emitted by the actual
+                          # Bash staging step, including on Windows.
+                          'CODEX_POLICY_VALIDATOR': staged.as_posix(), 'GITHUB_WORKSPACE': str(workspace)}
             for name, _doc, job, steps, index in self.validation_steps():
                 step = steps[index]
                 for scope, refusal in [('full', 0), ('linux', 0), ('', 0), ('full', 1)]:
                     with self.subTest(workflow=name, job=job, scope=scope, refusal=refusal):
-                        result = subprocess.run([BASH, '-c', step['run']], cwd=root,
-                                                env={**os.environ, **step_env(step), 'PATH': str(bindir),
+                        result = subprocess.run([BASH, '-c', step['run']], cwd=workspace,
+                                                env={**os.environ, **step_env(step), **policy_env,
+                                                     'PATH': str(bindir),
                                                      'CANDIDATE_SCOPE': scope, 'REFUSAL': str(refusal)},
                                                 capture_output=True, text=True, check=False)
                         self.assertEqual(result.returncode == 0, scope == 'full' and refusal == 0,
@@ -232,6 +278,227 @@ class CandidateWorkflowTests(unittest.TestCase):
                                              {key.upper(): value for key, value in FIELDS.items()})
                         else:
                             self.assertEqual(result.stdout, '')
+                # Without a staged policy, with a disagreeing witness, a missing
+                # manifest or a symlinked validator the step stops before any
+                # validator (staged or candidate) can print.
+                broken = [{'CODEX_POLICY_VALIDATOR': ''}, {'CODEX_POLICY_SHA': ''},
+                          {'CODEX_POLICY_VALIDATOR': str(root / 'runner-temp' / 'absent.py')},
+                          {'CODEX_POLICY_VALIDATOR': str(no_manifest / 'merge_candidate.py')},
+                          {'GITHUB_SHA': 'a' * 40}, {'GITHUB_WORKFLOW_SHA': 'a' * 40},
+                          {'CODEX_POLICY_SHA': 'a' * 40}]
+                if link is not None:
+                    broken.append({'CODEX_POLICY_VALIDATOR': str(link)})
+                for change in broken:
+                    with self.subTest(workflow=name, job=job, change=change):
+                        result = subprocess.run([BASH, '-c', step['run']], cwd=workspace,
+                                                env={**os.environ, **step_env(step), **policy_env, **change,
+                                                     'PATH': str(bindir), 'CANDIDATE_SCOPE': 'full',
+                                                     'REFUSAL': '0'},
+                                                capture_output=True, text=True, check=False)
+                        self.assertNotEqual(result.returncode, 0, change)
+                        self.assertEqual(result.stdout, '')
+                        self.assertNotIn('candidate validator copy executed', result.stderr)
+
+    def policy_repo(self, root):
+        """A temporary Git repository holding the real validator and fixture control files."""
+        repo = root / 'policy'
+        repo.mkdir()
+
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI Test',
+                                            '-c', 'user.email=ci@example.invalid',
+                                            '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null',
+                                            '-c', 'core.autocrlf=false', *args], cwd=repo,
+                                           text=True, stderr=subprocess.DEVNULL).strip()
+        git('init', '-b', 'main')
+        for path in m.CONTROL_FILES:
+            target = repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if path == 'scripts/ci/merge_candidate.py':
+                target.write_bytes(Path(m.__file__).read_bytes())
+            else:
+                target.write_text(f'# policy fixture {path}\n')
+        (repo / 'app').mkdir()
+        (repo / 'app' / 'main.py').write_text('print("candidate application code")\n')
+        git('add', '-A')
+        git('commit', '-m', 'policy')
+        return repo, git
+
+    def run_staging(self, repo, runner_temp, env_file, sha, default_branch='main'):
+        stage_step = next(s for s in self.ci['jobs']['filter']['steps'] if s.get('name') == STAGING)
+        for doc, jobs in ((self.ci, CANDIDATE_JOBS['ci.yml']), (self.rust, CANDIDATE_JOBS['rust.yml'])):
+            for job in jobs:
+                other = next(s for s in doc['jobs'][job]['steps'] if s.get('name') == STAGING)
+                self.assertEqual(other['run'], stage_step['run'])
+        env = {**os.environ, 'PATH': str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'],
+               'GITHUB_SHA': sha, 'GITHUB_WORKFLOW_SHA': sha, 'DEFAULT_BRANCH': default_branch,
+               'GITHUB_REF': 'refs/heads/main', 'GITHUB_REF_NAME': 'main',
+               'RUNNER_TEMP': Path(runner_temp).as_posix(), 'GITHUB_ENV': Path(env_file).as_posix()}
+        return subprocess.run([BASH, '-c', stage_step['run']], cwd=repo, env=env,
+                              capture_output=True, text=True, check=False)
+
+    def test_actual_staging_binds_policy_controls_and_refuses_candidate_alterations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, git = self.policy_repo(root)
+            sha = git('rev-parse', 'HEAD')
+            runner_temp, env_file = root / 'runner-temp', root / 'github.env'
+            runner_temp.mkdir()
+            env_file.touch()
+            # Witness disagreement or a wrong branch refuses before any staging.
+            for bad in [{'sha': 'a' * 40}, {'default_branch': ''}]:
+                result = self.run_staging(repo, runner_temp, env_file, **{**{'sha': sha}, **bad})
+                self.assertNotEqual(result.returncode, 0, bad)
+                self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            result = self.run_staging(repo, runner_temp, env_file, sha)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            recorded = dict(line.split('=', 1) for line in env_file.read_text().splitlines() if line)
+            self.assertEqual(recorded['CODEX_POLICY_SHA'], sha)
+            self.assertEqual(recorded['CODEX_POLICY_BRANCH'], 'main')
+            staged = Path(recorded['CODEX_POLICY_VALIDATOR'])
+            stage = staged.parent
+            self.assertEqual(staged.read_bytes(), Path(m.__file__).read_bytes())
+            self.assertFalse(stage.is_relative_to(repo))
+            manifest = json.loads((stage / 'manifest.json').read_text())
+            self.assertEqual(manifest['policy_sha'], sha)
+            self.assertEqual(set(manifest['files']), set(m.CONTROL_FILES))
+            for path in m.CONTROL_FILES:
+                self.assertEqual(manifest['files'][path]['oid'], git('rev-parse', f'{sha}:{path}'))
+                self.assertEqual((stage / 'controls' / path).read_bytes(), (repo / path).read_bytes())
+
+            def candidate(mutate):
+                """A candidate working tree: the policy tree plus one alteration."""
+                workspace = root / 'candidate'
+                if workspace.exists():
+                    shutil.rmtree(workspace)
+                shutil.copytree(repo, workspace, ignore=shutil.ignore_patterns('.git'), symlinks=True)
+                mutate(workspace)
+                return workspace
+
+            def symlink(target, link):
+                try:
+                    os.symlink(target, link)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest(f'symlinks unavailable: {error}')
+
+            # Pristine candidate: identical controls pass; the application may differ.
+            m.verify_controls(candidate(lambda ws: (ws / 'app' / 'main.py').write_text('changed\n')),
+                              stage, sha)
+            alterations = {
+                'installer': lambda ws: (ws / '.github/actions/run-gates/install.py').write_text(
+                    '# policy fixture .github/actions/run-gates/install.py\nimport os\n'),
+                'action': lambda ws: (ws / '.github/actions/run-gates/action.yml').write_text('runs: {}\n'),
+                'pins': lambda ws: (ws / '.github/actions/run-gates/requirements.txt').write_text('evil==1\n'),
+                'aggregate helper': lambda ws: (ws / 'tools/required_ci_gate.py').write_text('gate=lambda *a: True\n'),
+                'validator': lambda ws: (ws / 'scripts/ci/merge_candidate.py').write_text('pass\n'),
+                'workflow': lambda ws: (ws / '.github/workflows/ci.yml').write_text('jobs: {}\n'),
+                'whitespace': lambda ws: (ws / '.github/actions/run-gates/install.py').write_bytes(
+                    (ws / '.github/actions/run-gates/install.py').read_bytes().replace(b'\n', b'\r\n')),
+                'missing installer': lambda ws: (ws / '.github/actions/run-gates/install.py').unlink(),
+                'missing helper': lambda ws: (ws / 'tools/required_ci_gate.py').unlink(),
+                'extra action module': lambda ws: (ws / '.github/actions/run-gates/subprocess.py').write_text('x\n'),
+                'extra action dir': lambda ws: (ws / '.github/actions/run-gates/lib').mkdir(),
+                'shadow tools package': lambda ws: (ws / 'tools/__init__.py').write_text('x\n'),
+                'shadow tools module': lambda ws: (ws / 'tools.py').write_text('x\n'),
+                'shadow stdlib': lambda ws: (ws / 'json.py').write_text('x\n'),
+                'shadow stdlib package': lambda ws: (ws / 'os').mkdir(),
+                'shadow helper package': lambda ws: (ws / 'tools/required_ci_gate').mkdir(),
+                'sourceless stdlib': lambda ws: (ws / 'json.pyc').write_bytes(b'forged'),
+                'interpreter startup': lambda ws: (ws / 'sitecustomize.py').write_text('raise SystemExit(0)\n'),
+                'symlinked installer': lambda ws: (
+                    (ws / '.github/actions/run-gates/install.py').unlink(),
+                    symlink(ws / 'app' / 'main.py', ws / '.github/actions/run-gates/install.py')),
+                'symlinked action tree': lambda ws: (
+                    shutil.move(ws / '.github/actions/run-gates', ws / 'elsewhere'),
+                    symlink(ws / 'elsewhere', ws / '.github/actions/run-gates')),
+                'symlinked tools dir': lambda ws: (
+                    shutil.move(ws / 'tools', ws / 'tools-real'),
+                    symlink(ws / 'tools-real', ws / 'tools')),
+            }
+            for label, mutate in alterations.items():
+                with self.subTest(alteration=label), self.assertRaises(m.CandidateError):
+                    m.verify_controls(candidate(mutate), stage, sha)
+            # Unavailable or foreign policy objects, and a stage inside the
+            # workspace, refuse even a pristine candidate.
+            pristine = candidate(lambda ws: None)
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, stage, 'a' * 40)
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, root / 'runner-temp' / 'absent', sha)
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, '', sha)
+            inner = pristine / '.stage'
+            shutil.copytree(stage, inner)
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, inner, sha)
+            corrupt = root / 'corrupt'
+            shutil.copytree(stage, corrupt)
+            (corrupt / 'controls' / 'tools' / 'required_ci_gate.py').write_text('tampered\n')
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, corrupt, sha)
+            (corrupt / 'manifest.json').unlink()
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(pristine, corrupt, sha)
+
+    def test_unchecked_bytecode_cannot_replace_an_identical_aggregate_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, git = self.policy_repo(root)
+            stage = root / 'stage'
+            stage.mkdir()
+            policy = git('rev-parse', 'HEAD')
+            m.stage_policy(stage, policy, repo, git)
+            original = (repo / 'tools/required_ci_gate.py').read_bytes()
+            forged = root / 'forged.py'
+            forged.write_text('print("FORGED_AGGREGATE_IMPORT")\n')
+            cache = Path(importlib.util.cache_from_source(str(repo / 'tools/required_ci_gate.py')))
+            cache.parent.mkdir(parents=True)
+            py_compile.compile(str(forged), cfile=str(cache),
+                               invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+            # The real interpreter uses the unchecked cache even though the
+            # allowlisted source is unchanged. Refuse it before any aggregate runs.
+            result = subprocess.run([sys.executable, '-c', 'import tools.required_ci_gate'],
+                                    cwd=repo, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), 'FORGED_AGGREGATE_IMPORT')
+            self.assertEqual((repo / 'tools/required_ci_gate.py').read_bytes(), original)
+            with self.assertRaises(m.CandidateError):
+                m.verify_controls(repo, stage, policy)
+
+    def test_actual_staging_refuses_policy_commits_without_regular_control_blobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, git = self.policy_repo(root)
+            runner_temp, env_file = root / 'runner-temp', root / 'github.env'
+            runner_temp.mkdir()
+            env_file.touch()
+            # Missing control file in the policy commit.
+            git('rm', '-q', '.github/actions/run-gates/requirements.txt')
+            git('commit', '-m', 'drop pins')
+            missing = git('rev-parse', 'HEAD')
+            result = self.run_staging(repo, runner_temp, env_file, missing)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            self.assertEqual(env_file.read_text(), '')
+            # A symlink tree entry for the installer, recorded in the index
+            # without needing filesystem symlink support.
+            git('reset', '-q', '--hard', 'HEAD~1')
+            blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], cwd=repo, input='app/main.py\n',
+                                  capture_output=True, text=True, check=True).stdout.strip()
+            git('update-index', '--cacheinfo', f'120000,{blob},.github/actions/run-gates/install.py')
+            git('commit', '-m', 'symlinked installer')
+            linked = git('rev-parse', 'HEAD')
+            result = self.run_staging(repo, runner_temp, env_file, linked)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
+            self.assertEqual(env_file.read_text(), '')
+            # An unlisted entry inside the closed action tree is refused as policy too.
+            git('reset', '-q', '--hard', 'HEAD~1')
+            (repo / '.github/actions/run-gates/extra.py').write_text('x\n')
+            git('add', '-A')
+            git('commit', '-m', 'extra action file')
+            result = self.run_staging(repo, runner_temp, env_file, git('rev-parse', 'HEAD'))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((runner_temp / 'codex-policy' / 'manifest.json').exists())
 
     def test_docs_candidate_executes_all_five_python_and_rust_cells(self):
         for files in ('docs/example.md', '', 'app/main.py'):

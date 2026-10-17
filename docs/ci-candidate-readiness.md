@@ -8,8 +8,11 @@ activation and a live canary need separate owner approval.
 ## Candidate and independent review
 
 The coordinator runs trusted default-branch code under the existing
-`claude-<PR>` job lock (`queue: max`, no cancellation). It never executes PR code
-with the trigger PAT. Its identity includes numeric repository and PR identity,
+`claude-<PR>` job lock (`queue: max`, no cancellation by this workflow). GitHub
+bounds each concurrency group to 100 pending runs and discards arrivals beyond
+that bound, so queued events are not guaranteed delivery and fanout can be
+delayed; the scheduled scan, not the queue, is the recovery path. It never
+executes PR code with the trigger PAT. Its identity includes numeric repository and PR identity,
 head/base refs, exact head/base commits, GitHub's two-parent merge commit and its
 tree. Both live branch refs are checked before and after merge-object resolution,
 so lagged PR metadata cannot qualify an old base. The merge parents must be exactly base then head. A changed base, head or
@@ -52,7 +55,8 @@ their successful runs constitute candidate qualification.
 
 ## Delivery and evidence
 
-Each workflow gets a durable authenticated reservation before dispatch, binding
+Each workflow gets a comment reservation before dispatch, subject to the journal
+provenance and retention limits below, binding
 the candidate, nonce, numeric workflow/actor identity and prior run-ID boundary.
 CI and Rust receive the exact head/base/merge/tree and nonce, and validate the
 live candidate before allocating paid work and again after each checkout. Each
@@ -90,8 +94,40 @@ permits recovery; this exception never covers an unknown network outcome. MEDIAT
 also reserves before its existing handoff action: an uncertain delivery stops
 automatic retries until an operator reconciles it. Candidate workflow queues keep
 pending deliveries rather than allowing a delayed duplicate to evict an earlier
-nonce-bearing run. Workflow history is filtered to the exact head before the
-bounded pagination check.
+nonce-bearing run, within GitHub's bound of 100 pending runs per group; beyond
+it a delivery is dropped and recovery treats the missing run as uncertain.
+Workflow history is filtered to the trusted policy SHA before the bounded pagination
+check.
+
+## Execution policy closure
+
+Candidate dispatches run the default-branch YAML, but that YAML then checks out
+the candidate merge and executes candidate-side files: the `run-gates` composite
+action with its installer and pin set, `tools/required_ci_gate.py` in the
+aggregates, and the validator itself. Staging only the validator would leave
+those files candidate-controlled. Each of the six validating jobs (ci `filter`,
+`linux`, `windows`, `macos`; rust `filter`, `rust-book`) therefore checks out the
+trusted policy commit first, copies the validator and a closed allowlist of
+control files into an isolated stage outside the workspace, and records their
+blob IDs against the policy SHA. After the candidate checkout, before any local
+action, dependency install or test, the staged validator requires every listed
+candidate file to be byte-identical to the staged copy, the `run-gates` tree to
+contain nothing else, no symlink on any control path, and no known module,
+bytecode-cache, package or interpreter-startup path that could shadow the
+aggregates' imports. The bytecode regression demonstrates an unchecked cache
+replacing identical source and verifies refusal before execution. Missing manifest, policy objects, control
+files or a stage inside the workspace fail closed. A candidate that changes
+orchestration is refused until that change lands through a separately approved
+policy commit; this PR itself is such a change.
+
+The aggregates (`queue-gates`, `rust-gates`) still import the candidate copy of
+`tools/required_ci_gate.py`; they are covered because the coordinator requires
+`filter` to succeed, and `filter` has already proven that copy identical. The
+closure authenticates control-file identity only. `pytest`, Ruff, Cargo, the
+Rust benchmarks and `tools/test_*.py` execute candidate code by design, and
+nothing here claims to authenticate their semantics. Line-ending or attribute
+changes that alter a control file's checked-out bytes are refused rather than
+normalised.
 
 Base-only movement is discovered automatically by the existing best-effort
 ten-minute scheduled scan; GitHub need not emit a PR synchronize event for it.
@@ -108,8 +144,8 @@ the runtime path can operate. Draft PR bootstrap skips are not runtime proof.
 Existing `CODEX_TRIGGER_PAT` grants are reused; if dispatch/read access is absent,
 the gate fails closed and does not add permissions or credentials.
 
-PR-controlled YAML can still weaken its own tests. Candidate correlation and
-authenticated receipts do not make that YAML a protected policy source. Keep
+Ordinary PR checks still execute PR-controlled YAML. Candidate correlation and
+comment receipts do not make those checks a protected policy source. Keep
 direct Devin and existing protection until the owner approves a protected policy
 and exact required names. The cancellation controller continues to cover only
 ordinary PR runs; it does not cancel candidate dispatches. Candidate concurrency

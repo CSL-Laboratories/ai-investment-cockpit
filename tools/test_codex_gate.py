@@ -1466,11 +1466,24 @@ class WorkflowStructureTests(unittest.TestCase):
     def test_candidate_coordinator_uses_shared_writer_lock_and_trusted_policy(self) -> None:
         doc = yaml.load(self.text, Loader=yaml.BaseLoader)
         self.assertEqual(doc['on']['pull_request_review']['types'], ['submitted'])
-        self.assertEqual(doc['concurrency'], {'group': 'codex-gate', 'cancel-in-progress': 'false'})
+        # No repo-wide lock: the read-only scan of PR B must not wait behind a
+        # gate of PR A that is queued on a busy Claude writer lock. The per-PR
+        # gate lock below is the only serialization of candidate side effects.
+        self.assertNotIn('concurrency', doc)
         scan, gate, tests = (doc['jobs'][name] for name in ('scan', 'gate', 'event-paths'))
+        self.assertNotIn('concurrency', scan)
+        self.assertNotIn('concurrency', tests)
         self.assertEqual(gate['needs'], 'scan')
         self.assertEqual(gate['concurrency'], {'group': 'claude-${{ matrix.pr }}',
                                                'queue': 'max', 'cancel-in-progress': 'false'})
+        # Trusted policy identity flows from the gate job's own checkout.
+        policy = next(s for s in gate['steps'] if s.get('id') == 'policy')
+        self.assertEqual(policy['if'], "steps.pat.outputs.skip != 'true'")
+        self.assertEqual(policy['env'], {'DEFAULT_BRANCH': '${{ github.event.repository.default_branch }}'})
+        self.assertIn('git rev-parse HEAD', policy['run'])
+        names = [s.get('id') or s.get('name') or s.get('uses') for s in gate['steps']]
+        self.assertLess(names.index('actions/checkout@v4'), names.index('policy'))
+        self.assertLess(names.index('policy'), names.index('Run Codex gate'))
         self.assertEqual(gate['strategy']['matrix']['pr'],
                          "${{ fromJSON(needs.scan.outputs.prs || '[]') }}")
         # Human review changes must wake reconciliation, including hold release.
@@ -1492,6 +1505,8 @@ class WorkflowStructureTests(unittest.TestCase):
         execute = next(s for s in gate['steps'] if s.get('name') == 'Run Codex gate')
         self.assertEqual(execute['if'], "steps.pat.outputs.skip != 'true'")
         self.assertEqual(execute['env']['CODEX_CANDIDATE_PR'], '${{ matrix.pr }}')
+        self.assertEqual(execute['env']['CODEX_POLICY_SHA'], '${{ steps.policy.outputs.sha }}')
+        self.assertEqual(execute['env']['CODEX_POLICY_BRANCH'], '${{ steps.policy.outputs.branch }}')
         self.assertEqual(execute['env']['CODEX_TRIGGER_PAT'], '${{ secrets.CODEX_TRIGGER_PAT }}')
         self.assertEqual(execute['env']['GH_TOKEN'], '${{ github.token }}')
         # Same-repository tests may load PR code, but have no privileged secrets.

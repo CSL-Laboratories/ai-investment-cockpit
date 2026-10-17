@@ -36,6 +36,10 @@ PR = 42
 HEAD, BASE, MERGE, TREE = (x * 40 for x in "abcd")
 ACTOR = {"id": 17, "login": "dispatch-owner"}
 ACTION_USER = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
+# Trusted policy identity recorded by the gate job: the default-branch commit
+# it checked out. With the fixture PR based on main, that commit is BASE.
+POLICY = gate.candidate_api.Policy(BASE, "main")
+MOVED = "e" * 40
 
 
 class ApiError(RuntimeError):
@@ -117,6 +121,10 @@ class FakeGitHub:
         self.on_graphql = None
         self.on_merge_get = None
         self.run_queries = []
+        # Live repository metadata and default-branch tip, independent of the PR.
+        self.repo_id = 10
+        self.default_branch = "main"
+        self.default_tip = BASE
 
     def add_comment(self, body, user=None):
         self.next_id += 1
@@ -133,6 +141,8 @@ class FakeGitHub:
     def get(self, url):
         parsed = urlsplit(url)
         path = parsed.path
+        if path == PREFIX:
+            return {"id": self.repo_id, "full_name": REPO, "default_branch": self.default_branch}
         if path == f"{PREFIX}/pulls/{PR}":
             self.pr_reads += 1
             if self.on_pr_get:
@@ -144,9 +154,16 @@ class FakeGitHub:
             return copy.deepcopy(self.commit)
         if path.startswith(f"{PREFIX}/git/ref/heads/"):
             ref = path.removeprefix(f"{PREFIX}/git/ref/heads/")
-            side = next(side for side in ("base", "head") if (self.pr.get(side) or {}).get("ref") == ref)
-            return {"ref": f"refs/heads/{ref}", "object": {"type": "commit",
-                    "sha": self.live_refs.get(ref, self.pr[side]["sha"])}}
+            side = next((side for side in ("base", "head") if (self.pr.get(side) or {}).get("ref") == ref), None)
+            if ref in self.live_refs:
+                sha = self.live_refs[ref]
+            elif side:
+                sha = self.pr[side]["sha"]
+            elif ref == self.default_branch:
+                sha = self.default_tip
+            else:
+                raise ApiError(404)
+            return {"ref": f"refs/heads/{ref}", "object": {"type": "commit", "sha": sha}}
         listing = {f"{PREFIX}/issues/{PR}/comments": self.comments,
                    f"{PREFIX}/issues/{PR}/events": self.events,
                    f"{PREFIX}/pulls/{PR}/reviews": self.reviews}
@@ -238,10 +255,14 @@ class CandidateCoordinatorTests(unittest.TestCase):
             trusted_comments=Mock(return_value=[]), marker_authors=Mock(return_value={"trusted"}),
             action_for_sha=Mock(return_value=""), ready_comments=lambda comments, head: comments,
             utc_day=Mock(return_value="2026-10-16"))
-        self.coordinator = gate.Coordinator(self.legacy, self.gh, REPO, PR)
+        self.coordinator = gate.Coordinator(self.legacy, self.gh, REPO, PR, POLICY)
 
-    def reconcile(self):
-        return gate.run(self.legacy, self.gh, REPO, PR)
+    def reconcile(self, policy=POLICY):
+        return gate.run(self.legacy, self.gh, REPO, PR, policy=policy)
+
+    def retarget_base(self, ref="release"):
+        """PR based on a non-default branch: policy movement is then independent of the candidate."""
+        self.gh.pr["base"]["ref"] = ref
 
     def journal(self, kind):
         return self.coordinator.journal(self.gh.comments, kind)
@@ -279,7 +300,8 @@ class CandidateCoordinatorTests(unittest.TestCase):
         for intent in self.journal("dispatch"):
             kind = intent["kind"]
             identifier = 9000 + self.gh.workflow_ids[kind]
-            run = {"id": identifier, "head_sha": candidate.head, "head_branch": candidate.head_ref,
+            # Candidate runs execute on the default branch at the policy commit.
+            run = {"id": identifier, "head_sha": POLICY.sha, "head_branch": POLICY.branch,
                 "workflow_id": intent["workflow"], "path": gate.KINDS[kind], "event": "workflow_dispatch",
                 "repository": {"id": candidate.repository_id, "full_name": REPO}, "actor": ACTOR,
                 "head_repository": {"id": candidate.repository_id, "full_name": REPO},
@@ -288,24 +310,170 @@ class CandidateCoordinatorTests(unittest.TestCase):
             self.gh.run_lists[intent["workflow"]] = [run]
             self.gh.latest_runs[identifier] = copy.deepcopy(run)
             self.gh.jobs[(identifier, 1)] = [{"id": identifier * 100 + i, "run_id": identifier,
-                "run_attempt": 1, "head_sha": candidate.head, "name": name,
+                "run_attempt": 1, "head_sha": POLICY.sha, "name": name,
                 "status": "completed", "conclusion": "success"}
                 for i, name in enumerate(sorted(gate.candidate_api.REQUIRED_JOBS[kind]), 1)]
             self.assertTrue(gate.candidate_api.full_run_success(
-                run, self.gh.jobs[(identifier, 1)], candidate, kind, intent["workflow"], intent["nonce"]))
+                run, self.gh.jobs[(identifier, 1)], candidate, kind, intent["workflow"], intent["nonce"], POLICY))
 
     def test_ready_exact_candidate_dispatches_two_full_workflows_once(self):
         self.dispatch()
         for _, payload in self.gh.dispatches:
-            self.assertEqual(payload["ref"], self.candidate().head_ref)
+            # Dispatch on the default branch, never on the candidate head ref.
+            self.assertEqual(payload["ref"], POLICY.branch)
+            self.assertNotEqual(payload["ref"], self.candidate().head_ref)
             self.assertEqual(payload["inputs"], {**self.candidate().fields(), "scope": "full",
                 "dispatch_nonce": payload["inputs"]["dispatch_nonce"]})
+        for intent in self.journal("dispatch"):
+            self.assertEqual((intent["policy"], intent["policy_branch"]), (POLICY.sha, POLICY.branch))
+            self.assertEqual((intent["workflow"], intent["actor"]), (self.gh.workflow_ids[intent["kind"]], ACTOR["id"]))
         for _ in range(3):
             result = json.loads(self.reconcile())
             self.assertFalse(result["qualified"])
+            self.assertEqual(result["policy"], POLICY.sha)
         self.assertEqual(len(self.gh.dispatches), 2)
         self.assertEqual(self.gh.label_writes, [])
         self.assertEqual(self.gh.pr["labels"], [])
+
+    def test_coordinator_refuses_without_a_trusted_policy_identity(self):
+        self.prime_ready()
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
+            self.reconcile(policy=None)
+        for env in ({"CODEX_POLICY_SHA": BASE}, {"CODEX_POLICY_BRANCH": "main"},
+                    {"CODEX_POLICY_SHA": "short", "CODEX_POLICY_BRANCH": "main"},
+                    {"CODEX_POLICY_SHA": BASE, "CODEX_POLICY_BRANCH": "-x"},
+                    {"CODEX_POLICY_SHA": "", "CODEX_POLICY_BRANCH": ""}):
+            with self.subTest(env=env), self.assertRaises(ValueError):
+                gate.policy_from_env(env)
+        for bad in ("main", {"sha": BASE, "branch": "main"}, (BASE, "main")):
+            with self.subTest(policy=bad), self.assertRaises(ValueError):
+                gate.Coordinator(self.legacy, self.gh, REPO, PR, bad)
+        self.assertEqual(gate.policy_from_env({"CODEX_POLICY_SHA": BASE, "CODEX_POLICY_BRANCH": "main"}), POLICY)
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertEqual(self.journal("dispatch"), [])
+
+    def test_default_branch_movement_or_rename_before_reservation_refuses(self):
+        for change in ("tip", "rename"):
+            with self.subTest(change=change):
+                self.setUp()
+                self.retarget_base()
+                self.prime_ready()
+                if change == "tip":
+                    self.gh.default_tip = MOVED
+                else:
+                    self.gh.default_branch = "trunk"
+                with self.assertRaises(ValueError):
+                    self.reconcile()
+                self.assertEqual(self.journal("dispatch"), [])
+                self.assertEqual(self.gh.dispatches, [])
+
+    def test_default_branch_movement_after_reservation_aborts_before_dispatch(self):
+        self.retarget_base()
+        self.prime_ready()
+        self.gh.on_record = lambda body: setattr(self.gh, "default_tip", MOVED) if "candidate-dispatch:" in body else None
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.assertEqual(self.gh.dispatches, [])
+        self.assertEqual(len(self.journal("dispatch")), 1)
+        self.assertEqual(self.journal("aborted")[0]["reason"], "pre-dispatch-refused")
+        # The superseded policy never retries: every later reconciliation fails closed.
+        self.gh.on_record = None
+        for _ in range(3):
+            with self.assertRaises(ValueError):
+                self.reconcile()
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_default_branch_movement_after_dispatch_refuses_qualification(self):
+        self.retarget_base()
+        self.dispatch()
+        self.observe_success()
+        self.assertTrue(json.loads(self.reconcile())["qualified"])
+        self.gh.default_tip = MOVED
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.assertEqual(len(self.gh.dispatches), 2)
+
+    def test_policy_naming_candidate_head_or_default_head_ref_never_reserves(self):
+        self.retarget_base()
+        self.prime_ready()
+        self.gh.default_tip = HEAD
+        with self.assertRaises(ValueError):
+            self.reconcile(policy=gate.candidate_api.Policy(HEAD, "main"))
+        # A "default branch" that is the candidate head ref is refused even when
+        # the live repository metadata and ref agree with that policy.
+        self.gh.default_branch = "feature/owned"
+        with self.assertRaises(ValueError):
+            self.reconcile(policy=gate.candidate_api.Policy(HEAD, "feature/owned"))
+        self.assertEqual(self.journal("dispatch"), [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_legacy_or_foreign_policy_reservation_never_qualifies_or_redispatches(self):
+        for pinned in ({}, {"policy": MOVED, "policy_branch": "main"}, {"policy": BASE, "policy_branch": "trunk"},
+                       {"policy": BASE}, {"policy_branch": "main"}, {"policy": HEAD, "policy_branch": "main"}):
+            with self.subTest(pinned=pinned):
+                self.setUp()
+                self.prime_ready()
+                nonce = "3" * 32
+                self.gh.add_comment(self.receipts.marker("candidate-dispatch", {
+                    "candidate": self.candidate().key, "kind": "ci", "nonce": nonce,
+                    "workflow": 301, "actor": ACTOR["id"], "before": 0, **pinned}))
+                # Even a complete successful run bearing that nonce on the current
+                # policy commit cannot be adopted by a reservation that did not pin it.
+                run = {"id": 9301, "head_sha": POLICY.sha, "head_branch": POLICY.branch, "workflow_id": 301,
+                    "path": gate.KINDS["ci"], "event": "workflow_dispatch", "actor": ACTOR,
+                    "repository": {"id": 10, "full_name": REPO}, "head_repository": {"id": 10, "full_name": REPO},
+                    "display_title": f"candidate:{self.candidate().key}:ci:{nonce}",
+                    "run_attempt": 1, "status": "completed", "conclusion": "success"}
+                self.gh.run_lists[301] = [run]
+                self.gh.latest_runs[9301] = copy.deepcopy(run)
+                self.gh.jobs[(9301, 1)] = [{"id": 1000 + i, "run_id": 9301, "run_attempt": 1, "head_sha": POLICY.sha,
+                    "name": name, "status": "completed", "conclusion": "success"}
+                    for i, name in enumerate(sorted(gate.candidate_api.REQUIRED_JOBS["ci"]), 1)]
+                for _ in range(3):
+                    result = json.loads(self.reconcile())
+                    self.assertFalse(result["qualified"])
+                    self.assertEqual(result["full_matrix"]["ci"], "policy-mismatch-reconcile")
+                self.assertEqual([kind for kind, _ in self.gh.dispatches], ["rust"])
+                self.assertEqual(len(self.journal("dispatch")), 2)
+
+    def test_candidate_head_run_is_never_listed_or_qualified(self):
+        self.dispatch()
+        self.observe_success()
+        candidate = self.candidate()
+        run = self.gh.run_lists[301][0]
+        run.update(head_sha=candidate.head, head_branch=candidate.head_ref)
+        self.gh.latest_runs[run["id"]].update(head_sha=candidate.head, head_branch=candidate.head_ref)
+        for job in self.gh.jobs[(run["id"], 1)]:
+            job["head_sha"] = candidate.head
+        intent = next(x for x in self.journal("dispatch") if x["kind"] == "ci")
+        self.assertFalse(gate.candidate_api.full_run_success(
+            run, self.gh.jobs[(run["id"], 1)], candidate, "ci", 301, intent["nonce"], POLICY))
+        result = json.loads(self.reconcile())
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["full_matrix"]["ci"], "reserved-delivery-uncertain")
+        self.assertEqual(result["full_matrix"]["rust"], "success")
+        self.assertEqual(len(self.gh.dispatches), 2)
+        for query in self.gh.run_queries:
+            self.assertEqual(query["head_sha"], [POLICY.sha])
+
+    def test_policy_run_on_another_branch_or_different_default_tip_is_unbound(self):
+        self.dispatch()
+        self.observe_success()
+        run = self.gh.run_lists[301][0]
+        run["head_branch"] = self.candidate().head_ref
+        self.gh.latest_runs[run["id"]]["head_branch"] = run["head_branch"]
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        run["head_branch"] = POLICY.branch
+        self.gh.latest_runs[run["id"]]["head_branch"] = POLICY.branch
+        self.assertTrue(json.loads(self.reconcile())["qualified"])
+        # A run on a later default-branch commit is not this policy's run.
+        run["head_sha"] = MOVED
+        self.gh.latest_runs[run["id"]]["head_sha"] = MOVED
+        result = json.loads(self.reconcile())
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["full_matrix"]["ci"], "reserved-delivery-uncertain")
+        self.assertEqual(len(self.gh.dispatches), 2)
 
     def test_verified_mediate_uses_existing_mediation_boundary_without_full_dispatch(self):
         self.prime_ready()
@@ -747,6 +915,31 @@ class CandidateCoordinatorTests(unittest.TestCase):
 
     def test_cli_main_routes_candidate_environment_to_real_coordinator(self):
         self.prime_ready()
+        exited, output = self.run_cli({"CODEX_POLICY_SHA": POLICY.sha, "CODEX_POLICY_BRANCH": POLICY.branch})
+        self.assertEqual(exited, 0)
+        result = json.loads(output)
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["candidate"], self.candidate().key)
+        self.assertEqual(result["policy"], POLICY.sha)
+        self.assertEqual([kind for kind, _ in self.gh.dispatches], ["ci", "rust"])
+        self.assertEqual(self.gh.label_writes, [])
+        for _, payload in self.gh.dispatches:
+            self.assertEqual(payload["ref"], POLICY.branch)
+
+    def test_cli_main_without_policy_identity_fails_closed_before_side_effects(self):
+        self.prime_ready()
+        for policy_env in ({}, {"CODEX_POLICY_SHA": POLICY.sha}, {"CODEX_POLICY_BRANCH": POLICY.branch},
+                           {"CODEX_POLICY_SHA": "", "CODEX_POLICY_BRANCH": ""},
+                           {"CODEX_POLICY_SHA": "not-a-sha", "CODEX_POLICY_BRANCH": POLICY.branch}):
+            with self.subTest(policy_env=policy_env):
+                exited, output = self.run_cli(policy_env)
+                self.assertEqual(exited, 1)
+                self.assertIn("::notice::", output)
+                self.assertEqual(self.gh.dispatches, [])
+                self.assertEqual(self.journal("dispatch"), [])
+                self.assertEqual(len(self.gh.mentions), 1)
+
+    def run_cli(self, policy_env):
         receipts = self.receipts
         original_spec = importlib.util.spec_from_file_location
 
@@ -783,7 +976,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
         output = io.StringIO()
         environment = {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REPOSITORY": REPO,
             "CODEX_CANDIDATE_PR": str(PR), "CODEX_TRIGGER_PAT": self.gh.write_token,
-            "GH_TOKEN": "read-token", "GITHUB_EVENT_PATH": "fake-event.json"}
+            "GH_TOKEN": "read-token", "GITHUB_EVENT_PATH": "fake-event.json", **policy_env}
         with (patch.dict(os.environ, environment, clear=True),
               patch.dict(sys.modules, {"candidate_gate": gate}),
               patch("importlib.util.spec_from_file_location", side_effect=module_spec),
@@ -791,12 +984,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
               patch("subprocess.check_output", side_effect=fake_gh_process),
               redirect_stdout(output), self.assertRaises(SystemExit) as exited):
             runpy.run_path(str(ROOT / "scripts/ci/codex_gate.py"), run_name="__main__")
-        self.assertEqual(exited.exception.code, 0)
-        result = json.loads(output.getvalue())
-        self.assertFalse(result["qualified"])
-        self.assertEqual(result["candidate"], self.candidate().key)
-        self.assertEqual([kind for kind, _ in self.gh.dispatches], ["ci", "rust"])
-        self.assertEqual(self.gh.label_writes, [])
+        return exited.exception.code, output.getvalue()
 
     def test_edited_machine_receipt_fails_closed_without_redispatch(self):
         for kind in ("request", "dispatch"):
@@ -896,14 +1084,24 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.receipts.revoke_owned_ci.assert_called_once()
         self.assertEqual(self.gh.dispatches, [])
 
-    def test_run_lookup_filters_head_before_bounded_pagination(self):
+    def test_run_lookup_filters_policy_commit_before_bounded_pagination(self):
         self.prime_ready()
-        self.gh.run_lists[301] = [{"id": index + 1, "head_sha": "f" * 40} for index in range(1100)]
+        # Unrelated history on other commits, including the candidate head, is
+        # filtered server-side by the policy SHA before the bounded page walk.
+        self.gh.run_lists[301] = [{"id": index + 1, "head_sha": ("f" * 40, HEAD)[index % 2]} for index in range(1100)]
         self.assertFalse(json.loads(self.reconcile())["qualified"])
         self.assertTrue(self.gh.run_queries)
         for query in self.gh.run_queries:
-            self.assertEqual(query["head_sha"], [HEAD])
+            self.assertEqual(query["head_sha"], [POLICY.sha])
+            self.assertEqual(query["event"], ["workflow_dispatch"])
         self.assertEqual([kind for kind, _ in self.gh.dispatches], ["ci", "rust"])
+
+    def test_bounded_pagination_still_applies_to_policy_commit_history(self):
+        self.prime_ready()
+        self.gh.run_lists[301] = [{"id": index + 1, "head_sha": POLICY.sha} for index in range(1100)]
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.assertEqual(self.gh.dispatches, [])
 
     def test_known_pre_dispatch_abort_allows_later_safe_retry(self):
         self.prime_ready()

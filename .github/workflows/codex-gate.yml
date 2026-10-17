@@ -29,13 +29,21 @@ permissions:
   pull-requests: read
   issues: read
 
-# One group for the whole repo so a review and a scheduled scan cannot both
-# apply a verdict twice for the same SHA. GitHub keeps one running + one pending run
-# per group; a displaced PR-open recovers on the next scheduled scan, which
-# posts any missing @codex review request. event-paths still proceeds.
-concurrency:
-  group: codex-gate
-  cancel-in-progress: false
+# No workflow-level lock. The scan job is read-only, and every side effect
+# happens in a gate job that holds the per-PR `claude-<PR>` writer lock, so
+# a review and a scheduled scan for the same PR still serialize there. A
+# repo-wide group would let one gate waiting behind a long Claude writer on
+# PR A hold back an unrelated PR B event and its scan, and GitHub would also
+# drop displaced pending runs instead of queueing them.
+#
+# Liveness limit (unresolved, no permission expansion): each run's gate
+# matrix admits at most four PRs at once, and a waiting gate holds its slot
+# while it queues for a busy `claude-<PR>` lock. A long writer can therefore
+# delay the other PRs of the same scheduled scan, and repeated scans queue
+# further gate jobs behind that lock (`queue: max`). This workflow never
+# cancels those queued jobs, but GitHub bounds each group to 100 pending
+# runs and discards arrivals beyond that, so fanout can be delayed and a
+# queued event is not guaranteed delivery; the scheduled scan recovers it.
 
 jobs:
   scan:
@@ -73,7 +81,8 @@ jobs:
       matrix:
         pr: ${{ fromJSON(needs.scan.outputs.prs || '[]') }}
     # Same lock as every Claude writer; preserve the existing queue, never
-    # cancel or replace a queued writer to obtain a readiness decision.
+    # cancel or replace a queued writer to obtain a readiness decision. This
+    # per-PR lock is the only serialization for candidate side effects.
     concurrency:
       group: claude-${{ matrix.pr }}
       queue: max
@@ -108,6 +117,20 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           fetch-depth: 1
+      # Trusted policy identity = the exact default-branch commit this job
+      # checked out. The coordinator dispatches candidate CI on that branch,
+      # pins this SHA in every reservation and refuses to reserve, dispatch
+      # or qualify once the live default branch no longer equals it.
+      - name: Record trusted policy identity
+        id: policy
+        if: steps.pat.outputs.skip != 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [ -n "$DEFAULT_BRANCH" ]
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "branch=$DEFAULT_BRANCH" >> "$GITHUB_OUTPUT"
       - name: Run Codex gate
         if: steps.pat.outputs.skip != 'true'
         env:
@@ -118,6 +141,8 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
           CODEX_CANDIDATE_PR: ${{ matrix.pr }}
+          CODEX_POLICY_SHA: ${{ steps.policy.outputs.sha }}
+          CODEX_POLICY_BRANCH: ${{ steps.policy.outputs.branch }}
         run: |
           set -euo pipefail
           # First-merge bootstrap: this workflow ships in the PR, but the

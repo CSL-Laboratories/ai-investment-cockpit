@@ -108,10 +108,16 @@ jobs:
       run-tests: ${{ steps.decide.outputs.run-tests }}
       run-macos: ${{ steps.decide.outputs.run-macos }}
     steps:
+      # Candidate dispatches arrive on the default branch, so github.sha is the
+      # trusted policy commit, not the candidate head. Check out that exact
+      # commit first and stage its validator outside the workspace before any
+      # candidate file exists on this runner. Ordinary events skip this step.
       - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
-          ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
       # Candidate validation needs an interpreter before any candidate-controlled
       # dependency install. Windows runner images expose `python`, not a reliable
       # `python3`, so every validating cell installs its pinned CPython first via
@@ -121,6 +127,43 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
           python-version: "3.12"
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -137,9 +180,20 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
+      # Skipped only for a complete candidate tuple, whose independent validator
+      # above fails closed on partial or invalid inputs. Partial tuples run both.
       - name: Validate label dispatch context
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id == '' || inputs.pr_base_sha == '' || inputs.merge_tree_sha == '' || inputs.dispatch_nonce == '')
         env:
           PR_NUMBER: ${{ inputs.pr_number }}
           PR_HEAD_SHA: ${{ inputs.pr_head_sha }}
@@ -288,16 +342,57 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
+      # Trusted policy commit first (github.sha on the default-branch dispatch),
+      # validator staged outside the workspace, then the exact candidate merge.
       - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
-          ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
       # Same cell interpreter as run-gates, installed before candidate validation.
       - uses: actions/setup-python@v5
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -314,7 +409,16 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
@@ -471,10 +575,13 @@ jobs:
     runs-on: blacksmith-2vcpu-windows-2025
     timeout-minutes: 30
     steps:
+      # Trusted policy commit first (github.sha on the default-branch dispatch),
+      # validator staged outside the workspace, then the exact candidate merge.
       - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
-          ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
       # Windows has `python`, not a dependable `python3`; install the cell
       # interpreter before validation so the candidate check cannot be skipped
@@ -483,6 +590,44 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -499,7 +644,16 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: ${{ matrix.python-version }}
@@ -532,16 +686,57 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
+      # Trusted policy commit first (github.sha on the default-branch dispatch),
+      # validator staged outside the workspace, then the exact candidate merge.
       - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
-          ref: ${{ inputs.merge_sha || github.sha }}
-          fetch-depth: 2
+          ref: ${{ github.sha }}
+          fetch-depth: 1
           persist-credentials: false
       # Same cell interpreter as run-gates, installed before candidate validation.
       - uses: actions/setup-python@v5
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         with:
           python-version: "3.12"
+      - name: Stage trusted candidate validator
+        if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Policy witness: checked-out commit, github.sha and workflow_sha agree.
+          head="$(git rev-parse HEAD)"
+          [ "$head" = "$GITHUB_SHA" ]
+          [ "$head" = "$GITHUB_WORKFLOW_SHA" ]
+          [ -n "$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ]
+          [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]
+          helper=scripts/ci/merge_candidate.py
+          if [ -L "$helper" ] || [ ! -f "$helper" ]; then
+            echo "::error::Trusted candidate validator is absent from policy commit ${head}; the candidate copy is never substituted."
+            exit 1
+          fi
+          stage="${RUNNER_TEMP}/codex-policy"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp "$helper" "$stage/merge_candidate.py"
+          # Stage every control file this trusted YAML executes after the
+          # candidate checkout (local action, installer, pins, aggregate helper,
+          # workflows). Validation refuses candidate copies that differ.
+          python -I -X utf8 -B "$stage/merge_candidate.py" stage-policy "$stage"
+          [ -f "$stage/manifest.json" ]
+          {
+            echo "CODEX_POLICY_SHA=$head"
+            echo "CODEX_POLICY_BRANCH=$DEFAULT_BRANCH"
+            echo "CODEX_POLICY_VALIDATOR=$stage/merge_candidate.py"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
       - name: Validate exact full candidate
         if: github.event_name == 'workflow_dispatch' && (inputs.candidate_id != '' || inputs.pr_base_sha != '' || inputs.merge_tree_sha != '' || inputs.dispatch_nonce != '')
         env:
@@ -558,7 +753,16 @@ jobs:
         run: |
           set -euo pipefail
           [ "$CANDIDATE_SCOPE" = "full" ]
-          python -X utf8 -B scripts/ci/merge_candidate.py validate-dispatch
+          # The staged policy validator, never scripts/ci/merge_candidate.py from
+          # the candidate workspace; -I keeps candidate paths off sys.path.
+          [ -n "${CODEX_POLICY_SHA:-}" ]
+          [ -n "${CODEX_POLICY_VALIDATOR:-}" ]
+          [ "$GITHUB_SHA" = "$CODEX_POLICY_SHA" ]
+          [ "$GITHUB_WORKFLOW_SHA" = "$CODEX_POLICY_SHA" ]
+          [ ! -L "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "$CODEX_POLICY_VALIDATOR" ]
+          [ -f "${CODEX_POLICY_VALIDATOR%/*}/manifest.json" ]
+          python -I -X utf8 -B "$CODEX_POLICY_VALIDATOR" validate-dispatch
       - uses: ./.github/actions/run-gates
         with:
           python-version: "3.12"

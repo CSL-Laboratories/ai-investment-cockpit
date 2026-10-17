@@ -2,6 +2,12 @@
 
 Receipts are recovery journals, not required checks or a protected policy boundary.
 Unknown POST outcomes remain reserved until independently observed. No timed resend.
+
+Trusted policy identity (the exact default-branch commit the gate job checked
+out) is separate from the candidate head/base/merge/tree. Candidate CI is
+dispatched on the default branch, so run head_sha/head_branch name the policy
+commit; the candidate tuple is bound only through the nonce-bearing run title
+and the trusted validator's live checks of the dispatched inputs.
 """
 from __future__ import annotations
 
@@ -14,6 +20,15 @@ import merge_candidate as candidate_api
 
 KINDS = {"ci": ".github/workflows/ci.yml", "rust": ".github/workflows/rust.yml"}
 HOLD_LABELS = frozenset({"hold", "ci:hold", "do-not-merge", "needs-decision"})
+POLICY_ENV = ("CODEX_POLICY_SHA", "CODEX_POLICY_BRANCH")
+
+
+def policy_from_env(env):
+    """Trusted checkout identity recorded by the gate job; absent means fail closed."""
+    values = [env.get(key, "") for key in POLICY_ENV]
+    if any(not isinstance(value, str) or not value for value in values):
+        raise ValueError("trusted policy identity unavailable; refusing candidate reconciliation")
+    return candidate_api.Policy(*values)
 
 
 def pages(get, path, key=None):
@@ -63,8 +78,10 @@ def human_hold(pr, reviews):
 
 
 class Coordinator:
-    def __init__(self, legacy, gh, repository, number):
-        self.legacy, self.gh = legacy, gh
+    def __init__(self, legacy, gh, repository, number, policy):
+        if not isinstance(policy, candidate_api.Policy):
+            raise ValueError("trusted policy identity unavailable")
+        self.legacy, self.gh, self.policy = legacy, gh, policy
         self.receipts = legacy.FIXER_RECEIPTS
         self.repo, self.number = repository, str(number)
         self.prefix = f"repos/{repository}"
@@ -72,6 +89,20 @@ class Coordinator:
 
     def listing(self, path, key=None):
         return pages(self.gh.get, path, key)
+
+    def policy_current(self):
+        """The live default branch must still be exactly the checked-out policy commit.
+
+        Advancement fails closed: no reservation, dispatch or qualification
+        proceeds under a superseded policy. The next gate job runs the new one.
+        """
+        if candidate_api.repository_default_branch(self.gh.get, self.repo) != self.policy.branch:
+            raise ValueError("trusted policy branch is not the repository default branch")
+        ref = self.gh.get(f"{self.prefix}/git/ref/heads/{self.policy.branch}")
+        obj = ref.get("object") if isinstance(ref, dict) else None
+        if (not isinstance(obj, dict) or ref.get("ref") != f"refs/heads/{self.policy.branch}"
+                or obj.get("type") != "commit" or obj.get("sha") != self.policy.sha):
+            raise ValueError("trusted policy advanced; reconcile under the current default branch")
 
     def comments(self):
         return self.listing(f"{self.issue}/comments")
@@ -262,6 +293,8 @@ class Coordinator:
             raise ValueError("edited or unverified independent review")
 
     def fresh(self, candidate, request, verdict="READY"):
+        self.policy_current()
+        candidate_api.policy_binding(self.policy, candidate)
         current, comments, reviews, events, blocked = self.snapshot()
         review = candidate_api.candidate_review(reviews, current, request)
         if current != candidate or blocked or candidate_api.candidate_verdict(reviews, current, request) != verdict:
@@ -276,6 +309,7 @@ class Coordinator:
             raise ValueError("candidate changed during review metadata validation")
         if self.receipts.latest_pause_id(comments, current.head) != request["pause"]:
             raise ValueError("fixer generation changed")
+        self.policy_current()
         return comments, events
 
     def request(self, candidate, comments):
@@ -309,8 +343,12 @@ class Coordinator:
         # Existing trigger PAT already performs dispatches; no new token grant.
         return json.loads(self.gh._run(["api", path], token=self.gh.write_token))
 
-    def runs(self, workflow_id, head):
-        return pages(self.action_get, f"{self.prefix}/actions/workflows/{workflow_id}/runs?event=workflow_dispatch&head_sha={head}", "workflow_runs")
+    def runs(self, workflow_id):
+        # Candidate runs execute on the default branch at the policy commit, so
+        # the history query names the policy SHA. A run on the candidate head
+        # is never listed here and could never qualify.
+        return pages(self.action_get, f"{self.prefix}/actions/workflows/{workflow_id}/runs"
+                     f"?event=workflow_dispatch&head_sha={self.policy.sha}", "workflow_runs")
 
     def deliver(self, candidate, request, kind):
         workflow = self.action_get(f"{self.prefix}/actions/workflows/{kind}.yml")
@@ -330,13 +368,17 @@ class Coordinator:
         active = [x for x in intents if x.get("nonce") not in rejected | aborted]
         if len(active) > 1:
             raise ValueError("multiple unresolved dispatch reservations")
-        runs = self.runs(workflow_id, candidate.head)
+        runs = self.runs(workflow_id)
         if not active:
             if len(intents) >= 3:
                 return "rejection-budget-exhausted"
             self.fresh(candidate, request)
+            # The reservation pins the trusted policy commit and default branch
+            # alongside the numeric workflow/actor identity, so a later policy
+            # cannot adopt this delivery and an older one cannot be re-sent.
             intent = self.record("dispatch", {"candidate": candidate.key, "kind": kind, "nonce": uuid.uuid4().hex,
-                "workflow": workflow_id, "actor": actor["id"], "before": max((x["id"] for x in runs), default=0)})
+                "workflow": workflow_id, "actor": actor["id"], "before": max((x["id"] for x in runs), default=0),
+                "policy": self.policy.sha, "policy_branch": self.policy.branch})
             try:
                 self.fresh(candidate, request)
             except Exception:
@@ -345,8 +387,10 @@ class Coordinator:
                 self.record("aborted", {"nonce": intent["nonce"], "reason": "pre-dispatch-refused"})
                 raise
             try:
+                # Dispatch on the default branch: the run executes trusted YAML
+                # and the trusted validator, never candidate.head_ref.
                 self.gh.post(f"{self.prefix}/actions/workflows/{workflow_id}/dispatches",
-                    {"ref": candidate.head_ref, "inputs": {**candidate.fields(), "scope": "full", "dispatch_nonce": intent["nonce"]}})
+                    {"ref": self.policy.branch, "inputs": {**candidate.fields(), "scope": "full", "dispatch_nonce": intent["nonce"]}})
             except Exception as error:
                 status = self.receipts.known_label_rejection(error)
                 if status:
@@ -354,6 +398,11 @@ class Coordinator:
                 raise
             return "dispatched-awaiting-observation"
         intent = active[0]
+        if intent.get("policy") != self.policy.sha or intent.get("policy_branch") != self.policy.branch:
+            # Legacy (no policy fields) or superseded-policy reservations: the
+            # outcome is unknown under this policy. Never qualify, never resend;
+            # the reservation stays active until an operator reconciles it.
+            return "policy-mismatch-reconcile"
         if intent.get("workflow") != workflow_id or intent.get("actor") != actor["id"]:
             raise ValueError("dispatch identity changed")
         title = f"candidate:{candidate.key}:{kind}:{intent['nonce']}"
@@ -363,7 +412,8 @@ class Coordinator:
         if len(matches) != 1:
             raise ValueError("duplicate candidate delivery")
         run = matches[0]
-        if (run["id"] <= intent["before"] or run.get("head_sha") != candidate.head
+        if (run["id"] <= intent["before"] or run.get("head_sha") != self.policy.sha
+                or run.get("head_branch") != self.policy.branch
                 or (run.get("actor") or {}).get("id") != intent["actor"]
                 or run.get("workflow_id") != workflow_id
                 or not candidate_api.workflow_path_matches(run.get("path"), kind)
@@ -374,7 +424,7 @@ class Coordinator:
         if type(attempt) is not int or attempt < 1:
             raise ValueError("invalid run attempt")
         jobs = pages(self.action_get, f"{self.prefix}/actions/runs/{run['id']}/attempts/{attempt}/jobs", "jobs")
-        complete = candidate_api.full_run_success(run, jobs, candidate, kind, workflow_id, intent["nonce"])
+        complete = candidate_api.full_run_success(run, jobs, candidate, kind, workflow_id, intent["nonce"], self.policy)
         latest = self.action_get(f"{self.prefix}/actions/runs/{run['id']}")
         identity_fields = ("id", "head_sha", "head_branch", "workflow_id", "event", "path", "display_title",
                            "run_attempt", "status", "conclusion", "actor", "repository", "head_repository", "updated_at")
@@ -424,13 +474,17 @@ class Coordinator:
         # Do not publish a durable success status that could survive base drift.
         # The live coordinator result is a staged diagnostic until protected
         # policy and exact required check names are approved separately.
-        return json.dumps({"candidate": candidate.key, "full_matrix": states, "qualified": all(x == "success" for x in states.values())}, sort_keys=True)
+        return json.dumps({"candidate": candidate.key, "policy": self.policy.sha, "full_matrix": states,
+                           "qualified": all(x == "success" for x in states.values())}, sort_keys=True)
 
 
-def run(legacy, gh, repository, number):
+def run(legacy, gh, repository, number, policy=None):
     if not legacy.SAFE_REPO_RE.fullmatch(repository) or not legacy.safe_pr(number):
         raise ValueError("unsafe candidate target")
-    return Coordinator(legacy, gh, repository, number).reconcile()
+    if policy is None:
+        import os
+        policy = policy_from_env(os.environ)
+    return Coordinator(legacy, gh, repository, number, policy).reconcile()
 
 
 def scan(gh, repository, event_name, event):
