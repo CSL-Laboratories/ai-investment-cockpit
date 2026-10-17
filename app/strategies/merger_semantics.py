@@ -207,7 +207,9 @@ def _source_date(value: str, *, field: str) -> date:
         raise SemanticEvidenceUnavailable(f"{field} is not an unambiguous calendar date") from exc
 
 
-def _unique_match(pattern: re.Pattern, text: str, *, field: str, fragments=None) -> str:
+def _unique_match(
+    pattern: re.Pattern, text: str, *, field: str, fragments: list[str] | None = None
+) -> str:
     values = {
         match.group(1) for match in _assertion_matches(pattern, text, fragments=fragments)
     }
@@ -223,7 +225,9 @@ def _sentence_fragments(text: str) -> list[str]:
     return re.split(r"([!?]|\.(?!\d))", text)
 
 
-def _assertion_matches(pattern: re.Pattern, text: str, *, fragments=None):
+def _assertion_matches(
+    pattern: re.Pattern, text: str, *, fragments: list[str] | None = None
+):
     # The sentence split depends only on the text, so callers matching several
     # patterns over the same text may pass one shared fragment list. A list
     # split from anything else is refused rather than trusted: the capturing
@@ -251,7 +255,9 @@ def _assertion_matches(pattern: re.Pattern, text: str, *, fragments=None):
                 yield match
 
 
-def _asserted(pattern: re.Pattern, text: str, *, fragments=None) -> bool:
+def _asserted(
+    pattern: re.Pattern, text: str, *, fragments: list[str] | None = None
+) -> bool:
     """Accept an outcome only from an unconditional sentence-sized assertion.
 
     Merger agreements routinely describe what happens *if* a transaction terminates. Treating
@@ -262,7 +268,9 @@ def _asserted(pattern: re.Pattern, text: str, *, fragments=None) -> bool:
     return next(_assertion_matches(pattern, text, fragments=fragments), None) is not None
 
 
-def _derive_eligibility(text: str, *, amended: bool, fragments=None) -> dict:
+def _derive_eligibility(
+    text: str, *, amended: bool, fragments: list[str] | None = None
+) -> dict:
     if fragments is None:
         fragments = _sentence_fragments(text)
     offers = {
