@@ -1461,6 +1461,7 @@ def reply_and_resolve(
     now: datetime | None = None,
     pat_login: str = "",
     after: datetime | None = None,
+    cite_when: datetime | None = None,
 ) -> str:
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
@@ -1503,17 +1504,22 @@ def reply_and_resolve(
         )
     except Exception:
         # GitHub may have applied the mutation even though the client
-        # saw an error. Refresh the cite so a retry older than 24h still
-        # lands in today's unmarked / retry-mark window.
-        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
+        # saw an error. Refresh the cite only when the latest PAT cite is
+        # missing or older than 24h so a later retry-mark still counts
+        # today. A determinate failure (mismatched id / still-open thread)
+        # does not refresh — that would cite an open thread every scan.
+        stamp = now or utcnow()
+        already_fresh = (not retry) or (
+            cite_when is not None and cite_when >= stamp - timedelta(hours=24)
+        )
+        if not already_fresh:
+            publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     thread = ((resolved.get("resolveReviewThread") or {}).get("thread")) or {}
     echoed = str(thread.get("id") or "")
     if echoed != thread_id:
-        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     if thread.get("isResolved") is False:
-        publish_cite_marker(gh, cfg, number=number, thread_id=thread_id, sha=sha)
         return "resolve-error"
     # resolveReviewThread is a successful no-op on an already-resolved
     # thread. A human who won the race would otherwise get a PAT success
@@ -1725,6 +1731,11 @@ def scan_pr(
             continue
         excerpt = ruling_excerpt(items, verdict.thread_id if verdict else tid, head_sha, cfg.quote_limit)
         stamped = latest.get((str(thread.get("id") or ""), head_sha))
+        cite_when = cite_time_for_thread(
+            thread_comments(thread) + issue_comments,
+            str(thread.get("id") or ""),
+            actor_login=pat_login,
+        )
         try:
             result = reply_and_resolve(
                 gh,
@@ -1737,6 +1748,7 @@ def scan_pr(
                 now=now,
                 pat_login=pat_login,
                 after=stamped.when if stamped is not None else None,
+                cite_when=cite_when,
             )
         except Exception:
             result = "error"

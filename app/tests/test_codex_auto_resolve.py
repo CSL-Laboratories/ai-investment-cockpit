@@ -138,6 +138,8 @@ class FakeGitHub(mod.GitHub):
         self.issue_posts: list[tuple[int, str]] = []
         self.fail_resolve = False
         self.resolve_errors_left = 0
+        self.resolve_leave_open = False
+        self.resolve_echo_id = ""
         self.fail_reply = False
         self.fail_issue_post = False
         self.fail_viewer = False
@@ -191,7 +193,10 @@ class FakeGitHub(mod.GitHub):
                 if self.resolve_by_queue
                 else self.resolve_by_login
             )
-            thread_payload: dict[str, object] = {"id": tid, "isResolved": True}
+            thread_payload: dict[str, object] = {
+                "id": self.resolve_echo_id or tid,
+                "isResolved": not self.resolve_leave_open,
+            }
             if resolver:
                 thread_payload["resolvedBy"] = {"login": resolver}
             else:
@@ -1418,6 +1423,65 @@ def test_retry_resolve_error_refreshes_cite():
     assert gh.resolves == []
     assert any("skip=resolve-error" in line for line in logs)
     assert any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+
+
+def test_fresh_cite_retry_resolve_error_does_not_refresh_cite():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    gh.fail_resolve = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert any("skip=resolve-error" in line for line in logs)
+    assert not any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+
+
+def test_resolved_false_does_not_refresh_cite():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    gh.resolve_leave_open = True
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert any("skip=resolve-error" in line for line in logs)
+    assert not any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
+
+
+def test_echo_mismatch_does_not_refresh_cite():
+    old = NOW - timedelta(hours=48)
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(CODEX, verdict_body(), old),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA), old),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body(), old)],
+    )
+    gh.resolve_echo_id = THREAD2
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+    assert any("skip=resolve-error" in line for line in logs)
+    assert not any(mod.CITE_PREFIX in body for _n, body in gh.issue_posts)
 
 
 def test_retry_resolve_error_fresh_cite_keeps_next_scan_cap():
