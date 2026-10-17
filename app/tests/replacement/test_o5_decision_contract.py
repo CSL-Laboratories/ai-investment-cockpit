@@ -107,6 +107,66 @@ def test_relabeling_a_frozen_task_fails_closed() -> None:
     assert admission.code == "suite_oracle_mismatch"
 
 
+def _context(module, suite: dict) -> object:
+    return module.Context(
+        root=ROOT,
+        suite_digest="relabel",
+        suite=suite,
+        cases={case["id"]: case for case in suite["cases"]},
+        route_ids={"current.decision"},
+        negative_ids=set(suite["required_negative_ids"]),
+    )
+
+
+def test_json_equality_keeps_containers_and_bools() -> None:
+    module = _load()
+    assert module._json_equal({}, {"x": {}}) is False
+    assert module._json_equal({"x": {}}, {"x": {}}) is True
+    assert module._json_equal({"x": 1}, {"x": True}) is False
+    assert module._json_equal({"x": 1}, {"x": 1}) is True
+    assert module._json_equal([], {}) is False
+
+
+def test_grounding_and_refusal_results_fail_closed() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    base = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = base["suite_digest"]
+    matched = dict(base)
+    matched["task_id"] = "task.ungrounded_claim"
+    matched["grounding_ok"] = False
+    admitted = module._admit_document(matched, schema, context)
+    assert admitted.admitted is True
+    flipped = dict(base)
+    flipped["task_id"] = "task.ungrounded_claim"
+    flipped["grounding_ok"] = True
+    refused = module._admit_document(flipped, schema, context)
+    assert refused.admitted is False
+    assert refused.code == "result_contradicts_suite"
+    order = dict(base)
+    order["task_id"] = "task.refuse_order"
+    order_result = module._admit_document(order, schema, context)
+    assert order_result.admitted is False
+    assert order_result.code == "result_contradicts_suite"
+
+
+def test_refusal_code_must_follow_the_requested_action() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    for case in suite["cases"]:
+        if case["id"] == "task.refuse_order":
+            case["refusal_code"] = "credential_refused"
+            case["expected"]["refusal_code"] = "credential_refused"
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["task_suite"]
+    admission = module._admit_document(suite, schema, _context(module, suite))
+    assert admission.admitted is False
+    assert admission.code == "suite_oracle_mismatch"
+
+
 def test_validator_imports_no_provider_or_network() -> None:
     tree = ast.parse(TOOL.read_text(encoding="utf-8"))
     imported: set[str] = set()
