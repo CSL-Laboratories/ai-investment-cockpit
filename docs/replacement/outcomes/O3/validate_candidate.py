@@ -481,7 +481,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                     failures.add("corporate_action_mismatch")
         if entry["reason"] == "settlement_payout":
             line_instruments = {line["instrument_id"] for line in entry["lines"]}
-            if len(line_instruments) != 1 or not line_instruments <= settled_ids:
+            if len(line_instruments) != 1 or not (
+                line_instruments <= settled_ids or line_instruments <= voided
+            ):
                 failures.add("settlement_unreconciled")
             for line in entry["lines"]:
                 if (line["account"], line["side"]) not in {
@@ -609,7 +611,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 + post_checkpoint_qty.get(order_id, 0)
             )
             filled_notional = order_fills_total.get(order_id, 0)
-            if filled_qty == 0 and filled_notional == 0:
+            terminal = order.get("terminal_state") or order["state"]
+            if filled_qty == 0 and filled_notional == 0 and terminal not in LATE_TERMINALS:
                 continue
             if reserved != filled_notional:
                 failures.add("balance_mismatch")

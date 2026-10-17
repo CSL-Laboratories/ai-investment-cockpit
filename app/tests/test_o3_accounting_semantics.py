@@ -465,6 +465,8 @@ def test_o3_unfilled_resting_order_may_hold_collateral() -> None:
     fixture["reported"]["cash_available"] += 30000
     fixture["reported"]["attribution"][0]["fees_minor"] = 70000
     assert _evaluate(fixture) == set()
+    rest["state"] = "cancelled"
+    assert "balance_mismatch" in _evaluate(fixture)
 
 
 def test_o3_settlement_lines_share_one_settled_instrument() -> None:

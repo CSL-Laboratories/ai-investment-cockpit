@@ -248,7 +248,9 @@ causal reference — an entry naming both `fill_id` and `order_id` is
 ambiguous and fails. An `order_id` reservation must post before the
 order's first fill: it is valid while the order is still resting and
 unfilled, and a reservation sequenced after a fill is rejected. Before
-any fill, that hold is not compared with a fill total of zero. Once the
+any fill, that hold is not compared with a fill total of zero, unless
+the order is already in a cancel, expire, or reject terminal. A dead
+order that still carries the hold fails `balance_mismatch`. Once the
 order has an accepted fill, the order-linked reservation must equal the
 sum of those fills' `qty * price_minor` plus `fee_minor`. A reserve that
 exceeds or falls short of that executed total fails `balance_mismatch`.
@@ -324,9 +326,11 @@ settlement entry's sequence: a collateral posting sequenced after the
 settlement cannot count toward it, so a reserve raised after the payout
 fails `settlement_unreconciled`.
 
-Every line on a `settlement_payout` names the same instrument, and that
-instrument's market is `settled`. A line on another instrument, or a mix
-of instruments on one entry, fails `settlement_unreconciled`.
+Every line on a `settlement_payout` names the same instrument. That
+market is `settled`, or the whole entry sits on a `voided` market and
+the void check rejects it. A line on another instrument, a mix of
+instruments, or an instrument that is neither settled nor voided fails
+`settlement_unreconciled`.
 
 The P&L side of a binary settlement reconciles too: when the reserved
 premium exceeds the payout the journal debits `realized_pnl` for the
