@@ -13,6 +13,8 @@ Resolve when every condition holds:
   the mutation — never resolve on a stale SHA)
 * no owner/human decision is needed (``DECIDE`` / ``MISSING`` / ``AMBIGUOUS``
   / malformed / mixed markers fail closed and leave the needs-decision path)
+* the thread root comment is a bot (Codex, Devin, or another ``[bot]``
+  login). Human-opened threads stay on the needs-decision path.
 * no trusted human thread reply at or after the ``RESOLVE`` stamp (the
   thread tail is re-fetched before cite and before ``resolveReviewThread``;
   an incomplete last-40 window fails closed)
@@ -328,6 +330,23 @@ def is_codex(login: str) -> bool:
 def is_bot_login(login: str) -> bool:
     name = (login or "").strip()
     return name.lower().endswith("[bot]") or is_codex(name)
+
+
+def thread_root_is_human(thread: dict[str, Any], pat_login: str = "") -> bool:
+    """True when the thread was opened by a human, or the root cannot be read.
+
+    GraphQL ``comments(first: ...)`` is chronological, so node 0 is the root.
+    An empty thread or a root with no login fails closed (do not auto-resolve).
+    """
+    comments = thread_comments(thread)
+    if not comments:
+        return True
+    login = login_of(comments[0])
+    if not login:
+        return True
+    if is_bot_login(login) or login_matches(login, pat_login):
+        return False
+    return True
 
 
 def is_trusted_human(comment: dict[str, Any], pat_login: str = "") -> bool:
@@ -1364,6 +1383,8 @@ def classify_thread(
         return "no-verdict", None
     if stamped.verdict.verdict != "RESOLVE":
         return stamped.verdict.verdict.lower(), stamped.verdict
+    if thread_root_is_human(thread, pat_login):
+        return "human-root", stamped.verdict
     comments = thread_comments(thread)
     if later_human_veto(comments, stamped.when, pat_login):
         return "human-veto", stamped.verdict

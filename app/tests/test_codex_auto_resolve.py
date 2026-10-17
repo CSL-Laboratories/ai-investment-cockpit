@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / ".github" / "scripts" / "codex_auto_resolve.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "codex-auto-resolve.yml"
 CODEX = "chatgpt-codex-connector[bot]"
+DEVIN = "devin-ai-integration[bot]"
 PAT_LOGIN = "github-actions[bot]"
 SHA = "a" * 40
 SHA2 = "b" * 40
@@ -80,12 +81,14 @@ def thread(
     truncated: bool = False,
     resolved_by: str = "",
 ) -> dict:
+    if comments is None:
+        comments = [comment(DEVIN, "please fix", NOW - timedelta(seconds=60))]
     payload = {
         "id": thread_id,
         "isResolved": resolved,
         "path": "AGENTS.md",
         "comments": {
-            "nodes": comments or [],
+            "nodes": comments,
             "pageInfo": {"hasNextPage": truncated, "endCursor": None},
         },
     }
@@ -1875,6 +1878,52 @@ def _latest_from_thread(t: dict, extra: list[dict] | None = None):
     return mod.latest_verdicts(items)
 
 
+def test_classify_human_root_does_not_resolve():
+    t = thread(
+        comments=[
+            comment("alice", "REQUEST_CHANGES: this still needs a human decision"),
+            comment(CODEX, verdict_body()),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-root"
+
+
+def test_classify_empty_thread_is_human_root():
+    t = thread(comments=[])
+    latest = mod.latest_verdicts([comment(CODEX, verdict_body())])
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "human-root"
+
+
+def test_classify_devin_root_can_resolve():
+    t = thread(
+        comments=[
+            comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+            comment(CODEX, verdict_body()),
+        ]
+    )
+    reason, _ = mod.classify_thread(
+        t, head_sha=SHA, latest=_latest_from_thread(t), issue_comments=[], pat_login=PAT_LOGIN
+    )
+    assert reason == "resolve"
+
+
+def test_scan_skips_human_opened_thread():
+    gh = ready_gh(
+        threads=[thread(comments=[comment("alice", "REQUEST_CHANGES major")])],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=human-root" in line for line in logs)
+
+
 def test_classify_later_owner_reply_is_human_veto():
     later = NOW + timedelta(seconds=5)
     t = thread(
@@ -1903,10 +1952,11 @@ def test_classify_same_second_human_reply_is_human_veto():
     assert reason == "human-veto"
 
 
-def test_classify_earlier_human_finding_does_not_veto():
+def test_classify_earlier_human_reply_on_bot_thread_does_not_veto():
     t = thread(
         comments=[
-            comment("alice", "please fix", NOW - timedelta(seconds=30)),
+            comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+            comment("alice", "please also fix tests", NOW - timedelta(seconds=30)),
             comment(CODEX, verdict_body()),
         ]
     )
