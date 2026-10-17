@@ -268,7 +268,12 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if not matches:
             failures.add("settlement_unreconciled")
             continue
-        instrument = next(i for i in fixture["instruments"] if i["instrument_id"] == instrument_id)
+        instrument = next(
+            (i for i in fixture["instruments"] if i["instrument_id"] == instrument_id), None
+        )
+        if instrument is None:
+            failures.add("settlement_unreconciled")
+            continue
         if instrument.get("contract_style") == "binary" and scale is not None:
             winner = record["market_result"] == instrument.get("outcome_side")
             expected_gross = record["long_qty"] * 10**scale if winner else 0
@@ -364,7 +369,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     settlement_cash_by: dict[str, int] = {}
     settlement_collateral_cr = 0
     collateral_before_settlement: int | None = None
-    fee_on_net_payout = False
+    settlement_fee_by: set[str] = set()
 
     for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
         debits = 0
@@ -428,7 +433,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
                 bucket["fees_minor"] += delta
                 if entry["reason"] == "settlement_payout":
-                    fee_on_net_payout = True
+                    settlement_fee_by.add(line["instrument_id"])
             elif account == "position_cost":
                 if entry["reason"] == "fill":
                     journal_cost[line["instrument_id"]] = (
@@ -465,7 +470,7 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 continue
             if settlement_cash_by.get(instrument_id, 0) != evidence[0]["payout_minor"]:
                 failures.add("settlement_unreconciled")
-            if evidence[0]["fee_already_deducted_from_payout"] and fee_on_net_payout:
+            if evidence[0]["fee_already_deducted_from_payout"] and instrument_id in settlement_fee_by:
                 failures.add("fee_double_count")
         if (
             collateral_before_settlement is None
