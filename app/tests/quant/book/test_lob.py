@@ -404,6 +404,21 @@ def test_rejected_edits_keep_the_snapshot():
         assert book.snapshot().bids[0].qty == 10
 
 
+def test_a_rejected_add_does_not_invent_a_level():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        with pytest.raises(ValueError):
+            book.add(order_id="bad", side=Side.BUY, price_ticks=101, qty=0)
+        assert book.best_bid() == 100
+        assert book.level(Side.BUY, 101) is None
+        assert book.snapshot() is first
+        assert book.snapshot().best_bid_ticks == 100
+
+
 def test_a_direct_level_total_edit_refreshes_the_snapshot():
     from quant.book.lob import PythonLimitOrderBook
 
