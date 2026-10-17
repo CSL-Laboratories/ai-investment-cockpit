@@ -12,6 +12,36 @@ implementation and the boundaries below remain authoritative until their separat
 scoped, reviewed implementation amendments. Product ratification grants no runtime
 permission or empirical PASS.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Their accepted bytes and
+scoped gates remain controlling; these operating instructions do not amend them.
+
+## Founder decisions and integration
+
+The recorded [CSL-44 authority direction](https://linear.app/csl-laboratories/issue/CSL-44#comment-bbe42521-10fa-4ef0-b799-1c56fec9ddad)
+allows any founder to decide product and implementation questions from research,
+research-lane outcomes, feature admission within a lane and research continuation
+within its approved budget.
+Founders decide the consequential A1b core language/runtime commitment.
+Reversible implementation choices remain developer discretion within the accepted envelope,
+subject to SCOPE-AUDIT §5’s escalation triggers. This instruction selects no language or runtime.
+Lucas retains spend/new services, sensitive company credentials, company-server
+deployments and the final tie-break when founders disagree. All three founders
+participate in the final release decision; Lucas has final say in any founder disagreement,
+including a 2-1 split.
+
+Founders merge after the required current-head reviews and checks; agents never merge.
+A founder's own PR requires another founder's approval before merge, regardless of
+ruleset enforcement. Non-author approval checks alone do not establish founder identity.
+Protected-path amendments require a separately recorded founder-approved
+authoring session; this paragraph grants no blanket editing permission.
+Accepted contracts require their own versioned amendment, exact acceptance and reviewed
+promotion. No person-level decision unlocks live capital or bypasses the nine invariants,
+paper-only boundary or pre-live gates. Existing account, credential and runtime restrictions
+remain in force; this wording does not activate R2a or grant a live run.
+
 ## Codex boundary
 
 - Codex and Claude may perform schema-gated analysis jobs (briefing, triage,
@@ -53,7 +83,7 @@ Naming and installation alone do not qualify a CLI or grant production authority
   resets. ChatGPT is manual steering only. Chiron/Recursion remain future PD-029
   integrations, not a prerequisite or a current routing destination.
 - Head prepares reviewable changes and draft PR material. Existing operator
-  commit/publication instructions apply; Lucas remains the merger. Swarm tests
+  commit/publication instructions and the founder integration rules above apply. Swarm tests
   and receipts never satisfy empirical, paper-day or pre-live gates.
 
 Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
@@ -168,11 +198,11 @@ Hosted split (PR #102):
 
 - Required check: **`linux-gates`**. The aggregator is GitHub-hosted `ubuntu-latest`. The Python 3.11+3.12 matrix it wraps runs on Blacksmith. Ordinary label add/remove does not start `ci.yml`, so it cannot post a skipped or successful `linux-gates`. Drafts skip the test matrix; the aggregator still runs and fails closed until `ready_for_review`. `ci:full` / `enhancement` re-trigger via `ci-label-retrigger.yml`, which has no job named `linux-gates`.
 - Enhancement-only label reruns request Linux scope; `ci:full` or enhancement on an already-`ci:full` PR requests the full matrix. Manual/API dispatch defaults to full; explicit `scope=linux` requests Linux only.
-- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate and share the ordinary PR concurrency group for that head. Different PR heads are isolated so a stale label dispatch cannot cancel a newer head before validation. A stale dispatched head fails closed; manual branch dispatch without PR context remains available.
+- Label reruns carry the PR number, expected head, and immutable merge candidate. They validate that context before testing the merge candidate. Their concurrency suffix is `label-<expected-head>-<scope>`, separate from ordinary PR runs, because `gh workflow run --ref` resolves to the current head and a stale dispatch must not cancel that head's PR or label run. Scope isolation prevents a delayed Linux-only request from cancelling a full request on the same head. The label dispatcher also isolates heads. Filter still fail-closes stale dispatch context before billed matrix work; manual branch dispatch without PR context remains available in its own scope group.
 - Windows runs on push to `main`, the `ci:full` label, and full manual dispatch (Blacksmith).
 - macOS runs nightly at 07:17 UTC on `main` (skipped if idle 24h), on the `ci:full` label, and on full manual dispatch — not on ordinary `main` pushes (GitHub-hosted).
 - Non-test jobs (filter, `linux-gates` aggregator, pr-lint, Claude fixer/conflict-scan) use GitHub-hosted `ubuntu-latest`.
-- Superseded runs for the same PR head are cancelled. Draft synchronize uses a separate concurrency group so its fail-closed aggregator cannot cancel a `ready_for_review` matrix.
+- Ordinary PR runs share a queue with automatic cancellation disabled. The trusted default-branch companion requests cancellation only for verified strict-ancestor CI/Rust runs after checking a real current-head successor; bootstrap and uncertain evidence leave runs queued. Draft synchronize uses a separate group from `ready_for_review`. See [controller policy and limits](docs/ci-cancellation-controller.md).
 
 ## Review roles
 
@@ -181,7 +211,7 @@ Hosted split (PR #102):
 - **Codex** has two allowed GitHub review paths, neither a Devin substitute:
   1. **CI/fixer gate** (CSL-103, `.github/workflows/codex-gate.yml`) — one `@codex review` per head SHA; that reply must end with `CODEX-GATE: READY|MEDIATE`. See Code Review Rules.
   2. **Stuck-thread watch** (CSL-86 / PR #124, `.github/workflows/stuck-thread-watch.yml`) — one advisory `@codex review` on unresolved Devin threads Claude could not settle, and **one** Linear `needs-decision` Triage roll-up per PR titled `Stuck PR threads: <repo>#<PR>`. Shared keys with the Codex CI/fixer gate: `<!-- stuck-pr-threads:owner/repo#N -->` and `<!-- codex-gate-mediate:owner/repo:N -->`; each writer owns only its fenced block. It adopts an existing roll-up only by that `stuck-pr-threads` HTML marker, never by title, and writes Linear only when at least one thread is actionable after the per-PR cap and `CODEX_TRIGGER_PAT` checks (or to create a missing roll-up after an earlier Linear outage). It skips already-approved PRs and updates that roll-up instead of filing a new issue per thread. That reply must **not** include a `CODEX-GATE:` line, and must not push, merge, resolve the thread, or open a fix PR.
-- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired" still apply to research/dev swarm jobs.
+- **Blacksmith** hosts the paid test matrix. That is the GitHub test-CI path, not a revival of the retired Devin/SWE-2 swarm dispatch route: "No new Devin jobs" / `spawn_devin_leaf.py` frozen (RW-33) and CLAUDE.md's "Devin is retired from research/dev swarm dispatch" still apply to research/dev swarm jobs.
 - Cursor, Codex (as a coding agent), Grok, and interactive Claude Code develop features from Linear issues. They must not post review verdicts or run review-fix loops on other agents' PRs, except the stuck-thread watcher. A founder may have their own bot post reviews under their account when they direct it. The author agent may fix CI failures on its own PR.
 
 ## Review loop
