@@ -771,6 +771,7 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     from agent_runner.transport import SubprocessTransport
 
     monkeypatch.setenv("JEV_API_KEY", _KEY)
+    monkeypatch.setenv("JEV_TEST_KEEP", "1")
     seen = {}
 
     class _Proc:
@@ -788,3 +789,6 @@ def test_subprocess_child_does_not_inherit_jev_api_key(monkeypatch):
     # and run() resolves argv[0] via shutil.which before the mocked Popen is reached.
     SubprocessTransport().run([sys.executable], "", 1.0, None)
     assert "JEV_API_KEY" not in seen["env"]
+    # The rest of the parent env must still reach the child — an env={} bug would
+    # starve it of PATH etc. while still passing the assertion above.
+    assert seen["env"].get("JEV_TEST_KEEP") == "1"
