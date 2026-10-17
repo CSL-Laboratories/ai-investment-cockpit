@@ -1795,6 +1795,12 @@ def scan_pr(
         return logs
     checks_ok, checks_reason = required_checks_green(rollup)
     threads = [n for n in ((pr.get("reviewThreads") or {}).get("nodes") or []) if isinstance(n, dict)]
+    # Thread comments are global verdict sources. A truncated connection can
+    # hide a DECIDE/AMBIGUOUS/edited Codex item for another thread, so do not
+    # resolve later complete threads from a partial evidence set.
+    if any(thread_comments_truncated(thread) for thread in threads):
+        logs.append(f"codex-auto-resolve: pr={number} skip=truncated-comments")
+        return logs
     issue_comments = list_issue_comments(gh, cfg, number)
     reviews = list_reviews(gh, cfg, number)
     items = all_codex_items(threads, issue_comments, reviews)
@@ -1829,9 +1835,6 @@ def scan_pr(
         tid = log_thread_id(str(thread.get("id") or ""))
         if abort_scan:
             logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=abort-scan")
-            continue
-        if thread_comments_truncated(thread):
-            logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=truncated-comments")
             continue
         reason, verdict = classify_thread(
             thread,

@@ -971,6 +971,23 @@ def test_scan_skips_truncated_thread_comments():
     assert any("skip=truncated-comments" in line for line in logs)
 
 
+def test_truncated_thread_aborts_entire_pr_scan():
+    other = thread(THREAD2)
+    gh = ready_gh(
+        threads=[thread(truncated=True), other],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+    assert any("skip=truncated-comments" in line for line in logs)
+    assert not any("resolve=posted" in line for line in logs)
+
+
 def test_scan_never_resolves_on_stale_head_during_mutation():
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     gh.head_queue[12] = [SHA, SHA, SHA2]
