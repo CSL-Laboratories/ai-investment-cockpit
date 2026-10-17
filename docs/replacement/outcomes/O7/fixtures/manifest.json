@@ -109,12 +109,12 @@
     },
     {
       "path": "schemas/operator-event.schema.json",
-      "sha256": "9465aa0e896bca665f428ae0c64abf0838c8ef008ea4bd49984d40c8dc9a3b7d",
+      "sha256": "b79289d80f17e2e51e6bc01ef51f7d93d107674b368037fa5a322482058d5482",
       "role": "pinned"
     },
     {
       "path": "schemas/operator-response.schema.json",
-      "sha256": "93578b7288e16407ce29891d22017cee68fee6535eeb0ef26a490ab49053d157",
+      "sha256": "1fda5f2f743e9e3afbd652f9121a276f2237b04d3d4efcaafe3ace56c1e3d4f1",
       "role": "pinned"
     },
     {

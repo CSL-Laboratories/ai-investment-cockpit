@@ -48,5 +48,14 @@
     "request_id": {"type": "string", "pattern": "^req_[a-z0-9_.:-]{1,80}$"},
     "visibility": {"enum": ["visible", "absent_not_hidden", "unreconciled_visible"]},
     "status_code": {"enum": ["ok", "usage", "refused", "stale_or_unreconciled", "unavailable"]}
-  }
+  },
+  "allOf": [
+    {"if": {"properties": {"event_type": {"const": "evidence_viewed"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.evidence.inspect"}, "visibility": {"const": "visible"}, "status_code": {"const": "ok"}}}},
+    {"if": {"properties": {"event_type": {"const": "refusal_visible"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.decisions.inspect"}, "visibility": {"const": "visible"}, "status_code": {"enum": ["refused", "stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "uncertainty_visible"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "visibility": {"const": "visible"}, "status_code": {"const": "ok"}}}},
+    {"if": {"properties": {"event_type": {"const": "stale_visible"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.health.inspect"}, "visibility": {"const": "visible"}, "status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "unreconciled_visible"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"const": "operator.recovery.inspect"}, "visibility": {"const": "unreconciled_visible"}, "status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}}}},
+    {"if": {"properties": {"event_type": {"const": "intervention_recorded"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"enum": ["operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop"]}, "visibility": {"const": "visible"}, "status_code": {"const": "ok"}}}},
+    {"if": {"properties": {"event_type": {"const": "export_recorded"}}, "required": ["event_type"]}, "then": {"properties": {"command": {"enum": ["operator.audit.export", "operator.export.bundle"]}, "visibility": {"const": "visible"}, "status_code": {"const": "ok"}}}}
+  ]
 }

@@ -112,6 +112,39 @@ FORBIDDEN_KEYS = frozenset(
         "live_order",
     }
 )
+EVENT_COMMANDS = {
+    "evidence_viewed": frozenset({"operator.evidence.inspect"}),
+    "refusal_visible": frozenset({"operator.decisions.inspect"}),
+    "uncertainty_visible": frozenset({"operator.uncertainty.inspect"}),
+    "stale_visible": frozenset({"operator.health.inspect"}),
+    "unreconciled_visible": frozenset({"operator.recovery.inspect"}),
+    "intervention_recorded": frozenset(
+        {
+            "operator.interventions.request_stop",
+            "operator.interventions.request_reconciliation",
+            "operator.interventions.request_revocation",
+        }
+    ),
+    "export_recorded": frozenset({"operator.audit.export", "operator.export.bundle"}),
+}
+EVENT_VISIBILITY = {
+    "evidence_viewed": "visible",
+    "refusal_visible": "visible",
+    "uncertainty_visible": "visible",
+    "stale_visible": "visible",
+    "unreconciled_visible": "unreconciled_visible",
+    "intervention_recorded": "visible",
+    "export_recorded": "visible",
+}
+EVENT_STATUSES = {
+    "evidence_viewed": frozenset({"ok"}),
+    "refusal_visible": frozenset({"refused", "stale_or_unreconciled", "unavailable"}),
+    "uncertainty_visible": frozenset({"ok"}),
+    "stale_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
+    "unreconciled_visible": frozenset({"stale_or_unreconciled", "unavailable"}),
+    "intervention_recorded": frozenset({"ok"}),
+    "export_recorded": frozenset({"ok"}),
+}
 INTERVENTION_NAMES = {
     "operator.interventions.request_stop": "stop",
     "operator.interventions.request_reconciliation": "reconciliation",
@@ -223,8 +256,9 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "privileged_order_bypass"
     if doc.get("enforcement_route") != SOLE_ROUTE or doc.get("order_path") != "none":
         return "privileged_order_bypass"
-    if doc.get("authority_effect") not in {"none", "intervention_request"}:
-        return "privileged_order_bypass"
+    expected_effect = "intervention_request" if doc.get("command") in INTERVENTION_NAMES else "none"
+    if doc.get("authority_effect") != expected_effect:
+        return "authority_effect_mismatch"
     if result.get("order_submitted") is True:
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
@@ -264,6 +298,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         )
         if not visible:
             return "hidden_unreconciled"
+    if doc.get("status_code") == "unavailable" and not unavailable:
+        return "false_unavailable"
     if unavailable and doc.get("status_code") != "unavailable":
         return "hidden_unavailable"
     if (
@@ -296,7 +332,7 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     if not isinstance(errors, list):
         return "status_error_mismatch"
     active_codes: set[str] = set()
-    if unavailable or status == "unavailable":
+    if unavailable:
         active_codes.add("unavailable")
     if stale or unreconciled:
         active_codes.add("stale_or_unreconciled")
@@ -320,6 +356,17 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         or any(code not in {item.get("code") for item in errors if isinstance(item, dict)} for code in active_codes)
     ):
         return "status_error_mismatch"
+    return None
+
+
+def _event_error(event: dict[str, Any]) -> str | None:
+    allowed = EVENT_COMMANDS.get(event.get("event_type"))
+    if allowed is None or event.get("command") not in allowed:
+        return "event type does not match the command"
+    if event.get("visibility") != EVENT_VISIBILITY.get(event.get("event_type")):
+        return "event visibility does not match the event type"
+    if event.get("status_code") not in EVENT_STATUSES.get(event.get("event_type"), ()):
+        return "event status does not match the event type"
     return None
 
 
@@ -632,6 +679,9 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         _require_schema(event_validator, event, "oracle event")
         if event.get("visibility") == "hidden":
             raise ContractError("oracle event hides state")
+        event_problem = _event_error(event)
+        if event_problem is not None:
+            raise ContractError(f"oracle event: {event_problem}")
     if len(kinds["events"].get("events", [])) < 4:
         raise ContractError("oracle events are incomplete")
     for error in kinds["errors"].get("errors", []):

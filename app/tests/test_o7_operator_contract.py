@@ -225,6 +225,45 @@ def test_unavailable_and_stale_health_fail_closed() -> None:
     assert CHECKER.classify_response(stale, commands) == "stale_not_watch_only"
 
 
+def test_healthy_dependencies_cannot_claim_an_outage() -> None:
+    by_request, commands, _validator = _candidate_documents()
+    healthy = copy.deepcopy(by_request["req_health"])
+    healthy["status_code"] = "unavailable"
+    healthy["result"]["watch_only"] = True
+    healthy["errors"] = [
+        {
+            "code": "unavailable",
+            "status_code": "unavailable",
+            "message": "Unavailable claimed without an unread dependency.",
+            "recovery": "Read the dependency status again.",
+            "color_only": False,
+        }
+    ]
+    healthy["presentation"]["exit_code"] = 4
+    healthy["presentation"]["text_status"] = "unavailable"
+    healthy["presentation"]["rendered"] = "status=unavailable canonical health"
+    assert CHECKER.classify_response(healthy, commands) == "false_unavailable"
+
+
+def test_authority_effect_and_event_type_follow_the_command() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    by_request, commands, response_validator = _candidate_documents()
+    read = copy.deepcopy(by_request["req_positions"])
+    read["authority_effect"] = "intervention_request"
+    assert CHECKER._schema_error(response_validator, read) is not None
+    assert CHECKER.classify_response(read, commands) == "authority_effect_mismatch"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    for event in events["events"]:
+        assert CHECKER._schema_error(event_validator, event) is None
+        assert CHECKER._event_error(event) is None
+    mismatched = copy.deepcopy(events["events"][0])
+    mismatched["event_type"] = "intervention_recorded"
+    assert CHECKER._schema_error(event_validator, mismatched) is not None
+    assert CHECKER._event_error(mismatched) == "event type does not match the command"
+
+
 def test_missing_catalog_field_fails_closed(tmp_path: Path) -> None:
     root = tmp_path / "O7"
     shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", root)

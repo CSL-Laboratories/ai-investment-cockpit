@@ -77,7 +77,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 ### Events and errors
 
-Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value.
+Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`.
 
 Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error has a text message, a recovery step, and `color_only=false`.
 
@@ -100,7 +100,7 @@ One response has one `status_code`. When more than one condition is present, pre
 1. An unavailable dependency (`dependencies[*].status=unavailable`) selects `unavailable`.
 2. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled` when no dependency is unavailable.
 3. Stale data selects the same status when no dependency is unavailable. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
-4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`.
+4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`. `unavailable` is not a valid status when every dependency is readable.
 5. `ok` is allowed only when none of those conditions are present.
 
 A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. A health read that is stale or has an unavailable dependency sets `watch_only` true. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.

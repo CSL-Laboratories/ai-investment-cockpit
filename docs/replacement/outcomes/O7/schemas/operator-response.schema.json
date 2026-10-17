@@ -254,6 +254,22 @@
     {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
     {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
     {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["items"]}}}}
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {
+      "if": {
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "enum": [
+              "operator.interventions.request_reconciliation",
+              "operator.interventions.request_revocation",
+              "operator.interventions.request_stop"
+            ]
+          }
+        }
+      },
+      "then": {"properties": {"authority_effect": {"const": "intervention_request"}}},
+      "else": {"properties": {"authority_effect": {"const": "none"}}}
+    }
   ]
 }
