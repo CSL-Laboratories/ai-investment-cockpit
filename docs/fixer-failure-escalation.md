@@ -136,7 +136,9 @@ ordinary delivery and previously recorded handoffs. Recursion applies the same
 check to the existing-rollup sweep and refreshes retained entries alongside
 ordinary items on approved/green PRs.
 
-Cockpit rechecks the original cap/PAT-admitted thread IDs after that late filter.
+Cockpit recomputes admission after that late filter using the remaining cap
+and all PAT-eligible thread IDs. Stale failures and failed posts consume no slot,
+so a newly eligible ordinary thread receives its Linear record and mediation.
 Already-mediated ordinary items alone cannot update an existing issue; they can
 still recreate a missing roll-up after an earlier Linear outage.
 

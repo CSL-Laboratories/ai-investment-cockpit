@@ -361,7 +361,7 @@ class WatcherTests(unittest.TestCase):
                             m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": [], "projectId": "project"}):
                         m.mediate_pr(self.pull, cfg, self.github, SimpleNamespace(graphql=write), f.NOW,
                                      failure_collector=lambda *_: (self.evidence, self.proofs))
-                    no_actionable = (existing_issue and already_mediated) or cap == 1
+                    no_actionable = existing_issue and already_mediated
                     self.assertEqual(len(mutations), 0 if no_actionable else 1)
                     if mutations:
                         self.assertIn("Changed ordinary finding", mutations[0]["input"]["description"])
