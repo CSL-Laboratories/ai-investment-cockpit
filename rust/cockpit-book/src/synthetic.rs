@@ -291,18 +291,20 @@ fn add(
     while distance < depth_limit && rng.random() > params.arrival_decay {
         distance += 1;
     }
-    let base = py_round(state.fair)?;
+    let base = py_round_wide(state.fair)?;
     let mut price = if side == Side::Buy {
-        base - 1 - distance
+        narrow_price(base - 1 - i128::from(distance))?
     } else {
-        base + 1 + distance
+        narrow_price(base + 1 + i128::from(distance))?
     };
     if side == Side::Buy {
         if let Some(best_ask) = state.book.best_ask() {
-            price = price.min(best_ask - 1);
+            let cap = narrow_price(i128::from(best_ask) - 1)?;
+            price = price.min(cap);
         }
     } else if let Some(best_bid) = state.book.best_bid() {
-        price = price.max(best_bid + 1);
+        let floor = narrow_price(i128::from(best_bid) + 1)?;
+        price = price.max(floor);
     }
     let qty = draw_size(rng, params)?;
     let order_ref = state.next_ref;
@@ -370,12 +372,8 @@ fn trade(
     let touch = match touch {
         Some(price) => price,
         None => {
-            let base = py_round(state.fair)?;
-            if aggressor == Side::Buy {
-                base + 1
-            } else {
-                base - 1
-            }
+            let base = py_round_wide(state.fair)?;
+            narrow_price(if aggressor == Side::Buy { base + 1 } else { base - 1 })?
         }
     };
     let result = match_order(
@@ -448,15 +446,47 @@ fn trunc_i64(value: f64) -> i64 {
 }
 
 /// Python 3 `round` of a finite float: half goes to the even integer.
-fn py_round(value: f64) -> Result<i64, SynthError> {
+///
+/// The result is wide because `i64::MAX` is not an exact float. Python rounds
+/// that value to `2**63`, and a later `+ 1` has to fail instead of wrapping.
+fn py_round_wide(value: f64) -> Result<i128, SynthError> {
     if !value.is_finite() {
         return Err(SynthError("fair value is not finite".into()));
     }
     let floor = value.floor();
+    // `i64::MAX as f64` is 2^63. Anything past that is already outside the
+    // price the book can store, even before the one-tick offset.
+    if floor.abs() > i64::MAX as f64 {
+        return Err(SynthError(
+            "price does not fit in a signed 64-bit integer".into(),
+        ));
+    }
     let frac = value - floor;
-    let mut n = floor as i64;
+    let mut n = floor as i128;
     if frac > 0.5 || (frac == 0.5 && n % 2 != 0) {
         n += 1;
     }
     Ok(n)
+}
+
+fn narrow_price(price: i128) -> Result<i64, SynthError> {
+    i64::try_from(price).map_err(|_| {
+        SynthError(format!(
+            "price {price} does not fit in a signed 64-bit integer"
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_fair_rounds_to_two_to_the_63_and_a_sell_does_not_wrap() {
+        let fair = i64::MAX as f64;
+        let base = py_round_wide(fair).unwrap();
+        assert_eq!(base, i128::from(i64::MAX) + 1);
+        assert_eq!(narrow_price(base - 1).unwrap(), i64::MAX);
+        assert!(narrow_price(base + 1).is_err());
+    }
 }

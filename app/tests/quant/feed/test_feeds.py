@@ -162,10 +162,14 @@ def _require_cursor():
     """The Rust job must compare tapes. A missing cursor is a skip only off that job."""
     import os
 
-    cockpit = pytest.importorskip("cockpit_quant")
-    if hasattr(cockpit, "synthetic_cursor"):
-        return cockpit
-    if os.environ.get("COCKPIT_REQUIRE_RUST") == "1":
+    require = os.environ.get("COCKPIT_REQUIRE_RUST") == "1"
+    try:
+        import cockpit_quant
+    except ImportError:
+        cockpit_quant = None
+    if cockpit_quant is not None and hasattr(cockpit_quant, "synthetic_cursor"):
+        return cockpit_quant
+    if require:
         raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but synthetic_cursor is missing")
     pytest.skip("synthetic_cursor is not installed")
 
@@ -206,6 +210,28 @@ def test_a_non_integer_seed_stays_on_python_and_other_overflows_raise():
     )
     with pytest.raises(OverflowError):
         list(priced)
+
+
+def test_a_price_past_i64_raises_on_both_generators():
+    _require_cursor()
+    feed = SyntheticFeed(
+        symbols=("S",), n_events=20, seed=1,
+        params=SyntheticParams(initial_ticks=2**63 - 1, tick_volatility=0),
+    )
+
+    def prefix(events):
+        seen = []
+        try:
+            for event in events:
+                seen.append(event)
+        except ValueError as exc:
+            return seen, str(exc)
+        return seen, None
+
+    rust = prefix(feed)
+    python = prefix(feed._python_events())
+    assert rust == python
+    assert rust[1] is not None and "does not fit" in rust[1]
 
 
 def test_rust_synthetic_matches_python_on_repeated_names_and_edges():

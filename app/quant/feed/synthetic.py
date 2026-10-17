@@ -196,6 +196,8 @@ class SyntheticFeed:
             price = min(price, best_ask - 1)
         elif side is Side.SELL and best_bid is not None:
             price = max(price, best_bid + 1)
+        if price < -2**63 or price > 2**63 - 1:
+            raise ValueError(f"price {price} does not fit in a signed 64-bit integer")
 
         qty = rng.randrange(p.min_size, p.max_size + 1, 100)
         ref = s["next_ref"]
@@ -231,6 +233,8 @@ class SyntheticFeed:
         if touch is None:
             base = int(round(s["fair"]))
             touch = base + 1 if aggressor is Side.BUY else base - 1
+            if touch < -2**63 or touch > 2**63 - 1:
+                raise ValueError(f"price {touch} does not fit in a signed 64-bit integer")
         result = match(
             book,
             AggressiveOrder(order_id=f"agg{stamps['seq']}", side=aggressor, qty=qty,
