@@ -217,7 +217,7 @@ def test_incompatible_correction_payload_is_rejected(tmp_path: Path) -> None:
         json.dumps(records, indent=2) + "\n", encoding="utf-8"
     )
     _rewrite_manifest(module, copy)
-    with pytest.raises(module.ContractError, match="payload kind"):
+    with pytest.raises(module.ContractError, match="source does not emit|payload kind"):
         module.validate_candidate(copy)
 
 
@@ -347,6 +347,69 @@ def test_event_observation_on_non_resolution_key_fails() -> None:
     assert module.semantic_codes(bundle, observation, module.parse_time("2024-09-02T00:00:00Z")) == [
         "lost_resolution_semantics"
     ]
+
+
+def test_byte_identical_correction_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    by_id = {item["raw_record_id"]: item for item in records["records"]}
+    record = by_id["raw-ev-d1-amended"]
+    record["payload"] = by_id["raw-ev-d1-disputed"]["payload"]
+    record["raw_sha256"] = module.payload_sha256(record["payload"])
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="repeats its predecessor"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_before_target_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-10k-dup")
+    record["accepted_at"] = "2020-01-01T00:00:00Z"
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="precedes its target"):
+        module.validate_candidate(copy)
+
+
+def test_source_must_emit_its_payload_kind(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-quote")
+    record["source"] = "synthetic_sec_submission"
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="source does not emit"):
+        module.validate_candidate(copy)
+
+
+def test_impossible_ex_date_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
+    record = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-split")
+    record["payload"]["ex_date"] = "2024-02-31"
+    record["raw_sha256"] = module.payload_sha256(record["payload"])
+    (copy / "fixtures" / "raw_records.json").write_text(
+        json.dumps(records, indent=2) + "\n", encoding="utf-8"
+    )
+    _rewrite_manifest(module, copy)
+    with pytest.raises(module.ContractError, match="calendar date"):
+        module.validate_candidate(copy)
 
 
 def test_o2_validator_does_not_import_providers() -> None:

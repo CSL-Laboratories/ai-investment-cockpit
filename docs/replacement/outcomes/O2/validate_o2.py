@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -47,6 +47,14 @@ SCHEMA_FOR = {
 
 EQUITY_KINDS = {"filing", "filing_amendment", "corporate_action", "quote"}
 EVENT_KIND = "lifecycle"
+# A source certifies provenance: each provider feed may only carry the payload
+# kinds it actually emits (a quote cannot arrive on the SEC submissions feed).
+SOURCE_KINDS = {
+    "synthetic_sec_submission": {"filing", "filing_amendment"},
+    "synthetic_corporate_action": {"corporate_action"},
+    "synthetic_equity_quote": {"quote"},
+    "synthetic_kalshi_demo_lifecycle": {"lifecycle"},
+}
 NEGATIVE_CODES = (
     "future_data_leak",
     "raw_not_reconstructable",
@@ -82,6 +90,15 @@ def parse_time(value: object) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
         raise ContractError(f"timestamp is not UTC: {value}")
     return parsed
+
+
+def parse_date(value: object) -> date:
+    if type(value) is not str:
+        raise ContractError(f"date must be YYYY-MM-DD, got {value!r}")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ContractError(f"date is not a real calendar date: {value}") from exc
 
 
 def _load_json(path: Path) -> object:
@@ -373,6 +390,8 @@ def validate_records(bundle: Bundle) -> None:
             if not record["natural_key"].startswith(expected):
                 raise ContractError(f"{record['raw_record_id']} natural key does not name its market identity")
         _require_family_clock(record)
+        if record["payload"]["kind"] not in SOURCE_KINDS[record["source"]]:
+            raise ContractError(f"{record['raw_record_id']} source does not emit {record['payload']['kind']} payloads")
         parse_time(record["event_time"])
         parse_time(record["accepted_at"])
         if payload_sha256(record["payload"]) != record["raw_sha256"]:
@@ -390,10 +409,14 @@ def validate_records(bundle: Bundle) -> None:
                 or target["raw_sha256"] != record["raw_sha256"]
             ):
                 raise ContractError(f"{record['raw_record_id']} duplicate does not match its target")
+            if parse_time(record["accepted_at"]) < parse_time(target["accepted_at"]):
+                raise ContractError(f"{record['raw_record_id']} duplicate precedes its target")
         if record["supersedes"]:
             target = bundle.records.get(record["supersedes"])
             if target is None or target["natural_key"] != record["natural_key"]:
                 raise ContractError(f"{record['raw_record_id']} supersedes a different fact")
+            if record["raw_sha256"] == target["raw_sha256"]:
+                raise ContractError(f"{record['raw_record_id']} correction repeats its predecessor's bytes")
             if target["source"] != record["source"]:
                 raise ContractError(f"{record['raw_record_id']} correction changes its source")
             kind = record["payload"].get("kind")
@@ -438,6 +461,7 @@ def validate_records(bundle: Bundle) -> None:
             if (payload["event_type"] == "status_observed") != (payload["channel"] == "rest_get_markets"):
                 raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
         if payload.get("kind") == "corporate_action":
+            parse_date(payload["ex_date"])
             for field in ("listing_identity_before", "listing_identity_after"):
                 ref = bundle.identities.get(payload[field])
                 if ref is None or ref["market_family"] != "equity":
