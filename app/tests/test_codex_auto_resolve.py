@@ -62,8 +62,10 @@ def comment(
     if association is None:
         association = "NONE" if login.lower().endswith("[bot]") else "OWNER"
     return {
-        "author": {"login": login},
-        "user": {"login": login},
+        "author": {"login": login, "__typename": "Bot" if login.endswith("[bot]") else "User"},
+        "user": {"login": login, "type": "Bot" if login.endswith("[bot]") else "User"},
+        "lastEditedAt": None,
+        "includesCreatedEdit": False,
         "body": body,
         "createdAt": stamp,
         "created_at": stamp,
@@ -173,6 +175,12 @@ class FakeGitHub(mod.GitHub):
         return []
 
     def graphql(self, query: str, variables: dict, token: str | None = None) -> object:
+        for source, values in (("reviews", self.reviews), ("comments", self.issue_comments)):
+            if f"{source}(first: 100, after: $after)" in query:
+                return {"repository": {"pullRequest": {source: {
+                    "nodes": list(values.get(int(variables["number"]), [])),
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }}}}
         if "viewer { login }" in " ".join(query.split()):
             if token != "pat":
                 raise AssertionError("viewer login must use CODEX_TRIGGER_PAT")
@@ -734,6 +742,155 @@ def test_scan_resolves_when_safe():
     assert len(gh.issue_posts) == 1
     assert mod.resolved_marker(THREAD, SHA) in gh.issue_posts[0][1]
     assert any("resolve=posted" in line for line in logs)
+
+
+@pytest.mark.parametrize("login", ["devin-ai-integration", "cursor", "claude"])
+def test_graphql_bot_without_suffix_can_open_thread_and_reply(login):
+    root = comment(login, "please fix", NOW - timedelta(seconds=60))
+    root["author"] = {"login": login, "__typename": "Bot"}
+    reply = {**root, "createdAt": NOW.isoformat()}
+    verdict = comment(CODEX, verdict_body())
+    verdict["author"] = {"login": "chatgpt-codex-connector", "__typename": "Bot"}
+    gh = ready_gh(threads=[thread(comments=[root, reply])], reviews=[verdict])
+    mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == [THREAD]
+
+
+@pytest.mark.parametrize("actor", [
+    {"login": "chatgpt-codex-connector", "__typename": "User"},
+    {"login": CODEX, "__typename": "User"},
+    {"login": CODEX},
+    {"login": CODEX, "__typename": "Organization"},
+    None,
+])
+def test_bot_like_login_does_not_authenticate_root_or_verdict(actor):
+    item = comment(CODEX, verdict_body())
+    item["author"] = actor
+    item.pop("user")
+    assert mod.thread_root_is_human(thread(comments=[item]))
+    assert mod.stamped_verdicts_from(item) == []
+
+
+def test_bot_named_user_can_still_veto():
+    item = comment(CODEX, "keep this open", association="OWNER")
+    item["author"]["__typename"] = "User"
+    assert mod.later_human_veto([item], NOW, PAT_LOGIN)
+
+
+def test_rest_actor_typing_cannot_override_graphql_user():
+    item = comment(CODEX, verdict_body())
+    item.pop("author")
+    assert mod.stamped_verdicts_from(item)[0].verdict.verdict == "RESOLVE"
+    item["author"] = {"login": CODEX, "__typename": "User"}
+    assert mod.stamped_verdicts_from(item) == []
+
+
+@pytest.mark.parametrize("source", ["thread", "review", "issue"])
+@pytest.mark.parametrize("metadata", [
+    {"lastEditedAt": NOW.isoformat(), "includesCreatedEdit": False},
+    {"lastEditedAt": None, "includesCreatedEdit": True},
+    {"lastEditedAt": None},
+    {"includesCreatedEdit": False},
+    {"lastEditedAt": None, "includesCreatedEdit": None},
+    {"lastEditedAt": None, "includesCreatedEdit": 0},
+    {},
+])
+def test_edited_or_unknown_verdict_never_causes_writes(source, metadata):
+    item = comment(CODEX, verdict_body())
+    item.pop("lastEditedAt")
+    item.pop("includesCreatedEdit")
+    item.update(metadata)
+    t = thread()
+    gh = ready_gh(threads=[t])
+    if source == "thread":
+        t["comments"]["nodes"].append(item)
+    elif source == "review":
+        gh.reviews[12] = [item]
+    else:
+        gh.issue_comments[12] = [item]
+    mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert gh.issue_posts == []
+
+
+@pytest.mark.parametrize("kind", ["RESOLVE", "DECIDE", "MISSING", "AMBIGUOUS"])
+def test_edited_verdict_cannot_reveal_or_be_overridden_by_resolve(kind):
+    clean = comment(CODEX, verdict_body(), NOW - timedelta(seconds=60))
+    edited = comment(CODEX, verdict_body(kind))
+    edited["includesCreatedEdit"] = True
+    later = comment(CODEX, verdict_body(), NOW + timedelta(seconds=60))
+    for items in ([clean, edited, later], [later, edited, clean]):
+        assert mod.latest_verdicts(items)[(THREAD, SHA)].verdict.verdict == "AMBIGUOUS"
+
+
+@pytest.mark.parametrize("source", ["thread", "review", "issue"])
+@pytest.mark.parametrize("body", [
+    "Withdrawn", "", verdict_body("DECIDE", tid=THREAD2),
+    verdict_body("DECIDE", sha=SHA2),
+])
+def test_edit_cannot_hide_previous_veto_scope(source, body):
+    edited = comment(CODEX, body)
+    edited["includesCreatedEdit"] = True
+    t = thread()
+    gh = ready_gh(threads=[t], reviews=[
+        comment(CODEX, verdict_body(), NOW - timedelta(seconds=60)),
+        comment(CODEX, verdict_body(), NOW + timedelta(seconds=60)),
+    ])
+    if source == "thread":
+        t["comments"]["nodes"].append(edited)
+    elif source == "review":
+        gh.reviews[12].append(edited)
+    else:
+        gh.issue_comments[12] = [edited]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert any("skip=edited-or-unknown-codex-evidence" in log for log in logs)
+    assert gh.resolves == gh.replies == gh.issue_posts == []
+
+
+@pytest.mark.parametrize("source", ["comments", "reviews"])
+def test_verdict_source_reads_all_pages_with_author_and_edit_metadata(source):
+    first = comment(CODEX, verdict_body())
+    second = comment(CODEX, verdict_body("DECIDE"))
+    calls = []
+
+    class Pages(FakeGitHub):
+        def graphql(self, query, variables, token=None):
+            calls.append(variables["after"])
+            assert "author { __typename login }" in query
+            assert "lastEditedAt includesCreatedEdit" in query
+            if source == "reviews":
+                assert "createdAt: submittedAt" in query
+            return {"repository": {"pullRequest": {source: {
+                "nodes": [first if len(calls) == 1 else second],
+                "pageInfo": {"hasNextPage": len(calls) == 1, "endCursor": "next"},
+            }}}}
+
+    items = mod.list_verdict_source(Pages(), cfg(), 12, source)
+    assert calls == [None, "next"]
+    assert mod.latest_verdicts(items)[(THREAD, SHA)].verdict.verdict == "DECIDE"
+
+
+@pytest.mark.parametrize("connection", [
+    {}, {"nodes": [], "pageInfo": {}},
+    {"nodes": [], "pageInfo": {"hasNextPage": True}},
+    {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "repeat"}},
+    {"nodes": [None], "pageInfo": {"hasNextPage": False}},
+])
+def test_incomplete_verdict_pagination_fails_closed(connection):
+    class Pages(FakeGitHub):
+        def graphql(self, query, variables, token=None):
+            return {"repository": {"pullRequest": {"reviews": connection}}}
+
+    with pytest.raises(RuntimeError):
+        mod.list_reviews(Pages(), cfg(), 12)
+
+
+def test_thread_queries_fetch_bot_type_and_edit_history():
+    for query in (mod.GITHUB_GRAPHQL_PR, mod.GITHUB_GRAPHQL_THREAD_COMMENTS):
+        assert "author { __typename login }" in query
+        assert "lastEditedAt" in query and "includesCreatedEdit" in query
+    assert "author { __typename login }" in mod.GITHUB_GRAPHQL_THREAD_TAIL
 
 
 def test_scan_skips_pending_required_checks():

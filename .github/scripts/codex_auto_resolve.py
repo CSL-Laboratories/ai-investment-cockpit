@@ -8,13 +8,14 @@ and never merges.
 
 Resolve when every condition holds:
 
-* a trusted Codex login emitted ``RESOLVE`` for that GraphQL thread id
+* an API-typed Bot with a trusted Codex login emitted an unedited ``RESOLVE``
+  for that GraphQL thread id (missing edit metadata fails closed)
 * the marker SHA equals the PR's current head (re-fetched immediately before
   the mutation — never resolve on a stale SHA)
 * no owner/human decision is needed (``DECIDE`` / ``MISSING`` / ``AMBIGUOUS``
   / malformed / mixed markers fail closed and leave the needs-decision path)
-* the thread root comment is a bot (Codex, Devin, or another ``[bot]``
-  login). Human-opened threads stay on the needs-decision path.
+* the thread root comment has GitHub's Bot actor type (including app logins
+  without ``[bot]``). Human-opened threads stay on the needs-decision path.
 * no trusted human thread reply at or after the ``RESOLVE`` stamp (the
   thread tail is re-fetched before cite and before ``resolveReviewThread``;
   an incomplete last-40 window fails closed)
@@ -134,7 +135,9 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
               body
               createdAt
               authorAssociation
-              author { login }
+              lastEditedAt
+              includesCreatedEdit
+              author { __typename login }
             }
           }
         }
@@ -212,7 +215,9 @@ query($id: ID!, $cursor: String!) {
           body
           createdAt
           authorAssociation
-          author { login }
+          lastEditedAt
+          includesCreatedEdit
+          author { __typename login }
         }
       }
     }
@@ -228,7 +233,7 @@ query($id: ID!) {
         nodes {
           createdAt
           authorAssociation
-          author { login }
+          author { __typename login }
         }
       }
     }
@@ -333,9 +338,13 @@ def is_codex(login: str) -> bool:
     return bool(login_aliases(login) & wanted)
 
 
-def is_bot_login(login: str) -> bool:
-    name = (login or "").strip()
-    return name.lower().endswith("[bot]") or is_codex(name)
+def is_bot_author(item: dict[str, Any]) -> bool:
+    """Require API actor typing; a bot-like login alone is not authority."""
+    author = item.get("author")
+    if isinstance(author, dict):
+        return author.get("__typename") == "Bot" and bool(author.get("login"))
+    user = item.get("user")
+    return isinstance(user, dict) and user.get("type") == "Bot" and bool(user.get("login"))
 
 
 def thread_root_is_human(thread: dict[str, Any]) -> bool:
@@ -353,12 +362,12 @@ def thread_root_is_human(thread: dict[str, Any]) -> bool:
     login = login_of(comments[0])
     if not login:
         return True
-    return not is_bot_login(login)
+    return not is_bot_author(comments[0])
 
 
 def is_trusted_human(comment: dict[str, Any], pat_login: str = "") -> bool:
     login = login_of(comment)
-    if not login or is_bot_login(login) or login_matches(login, pat_login):
+    if not login or is_bot_author(comment) or login_matches(login, pat_login):
         return False
     assoc = str(
         comment.get("authorAssociation") or comment.get("author_association") or "OWNER"
@@ -619,12 +628,25 @@ class StampedVerdict:
     when: datetime
 
 
+def is_unedited(item: dict[str, Any]) -> bool:
+    return (
+        "lastEditedAt" in item
+        and item["lastEditedAt"] is None
+        and item.get("includesCreatedEdit") is False
+    )
+
+
 def stamped_verdicts_from(item: dict[str, Any]) -> list[StampedVerdict]:
-    if not is_codex(login_of(item)):
+    if not is_bot_author(item) or not is_codex(login_of(item)):
         return []
     when = parse_dt(item.get("createdAt") or item.get("created_at") or item.get("submittedAt") or item.get("submitted_at"))
     stamp = when or datetime.min.replace(tzinfo=timezone.utc)
-    return [StampedVerdict(verdict=v, when=stamp) for v in parse_thread_verdicts(body_of(item))]
+    verdicts = parse_thread_verdicts(body_of(item))
+    if not is_unedited(item):
+        # Do not expose an older RESOLVE by discarding an edited DECIDE.
+        # Keep identifiable pairs vetoed, without trusting edited text to act.
+        verdicts = [replace(v, verdict="AMBIGUOUS", reason="edited-or-unknown") for v in verdicts]
+    return [StampedVerdict(verdict=v, when=stamp) for v in verdicts]
 
 
 def latest_verdicts(
@@ -1072,19 +1094,55 @@ def fetch_head_state(gh: GitHub, cfg: Config, number: int) -> tuple[str, dict[st
 
 
 def list_issue_comments(gh: GitHub, cfg: Config, number: int) -> list[dict[str, Any]]:
-    items = gh.paginate_rest(
-        f"repos/{cfg.repository}/issues/{number}/comments?per_page=100",
-        token=cfg.github_token,
-    )
-    return [c for c in items if isinstance(c, dict)]
+    return list_verdict_source(gh, cfg, number, "comments")
 
 
 def list_reviews(gh: GitHub, cfg: Config, number: int) -> list[dict[str, Any]]:
-    items = gh.paginate_rest(
-        f"repos/{cfg.repository}/pulls/{number}/reviews?per_page=100",
-        token=cfg.github_token,
-    )
-    return [c for c in items if isinstance(c, dict)]
+    return list_verdict_source(gh, cfg, number, "reviews")
+
+
+def list_verdict_source(
+    gh: GitHub, cfg: Config, number: int, source: str,
+) -> list[dict[str, Any]]:
+    """Read body, author and edit history together, including every page."""
+    if source not in {"comments", "reviews"}:
+        raise ValueError("invalid verdict source")
+    timestamp = "createdAt: submittedAt" if source == "reviews" else "createdAt"
+    query = """
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      SOURCE(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id url body TIMESTAMP lastEditedAt includesCreatedEdit
+          author { __typename login }
+        }
+      }
+    }
+  }
+}
+""".replace("SOURCE", source).replace("TIMESTAMP", timestamp)
+    items: list[dict[str, Any]] = []
+    after = None
+    cursors: set[str] = set()
+    for _ in range(100):
+        data = gh.graphql(query, {
+            "owner": cfg.owner, "name": cfg.name, "number": number, "after": after,
+        }, token=cfg.github_token)
+        connection = (((data.get("repository") or {}).get("pullRequest") or {}).get(source)) or {}
+        page = connection.get("pageInfo") or {}
+        nodes = connection.get("nodes")
+        if not isinstance(nodes, list) or not all(isinstance(n, dict) for n in nodes):
+            raise RuntimeError("incomplete verdict source")
+        items.extend(nodes)
+        if page.get("hasNextPage") is False:
+            return items
+        after = page.get("endCursor")
+        if page.get("hasNextPage") is not True or not isinstance(after, str) or not after or after in cursors:
+            raise RuntimeError("incomplete verdict pagination")
+        cursors.add(after)
+    raise RuntimeError("verdict pagination limit exceeded")
 
 
 def thread_comments(thread: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1740,6 +1798,15 @@ def scan_pr(
     issue_comments = list_issue_comments(gh, cfg, number)
     reviews = list_reviews(gh, cfg, number)
     items = all_codex_items(threads, issue_comments, reviews)
+    # An edit can erase or redirect an earlier DECIDE's thread/head marker.
+    # Current text cannot prove the original veto scope, so pause the entire
+    # PR before any writes, including receipt retries. Human mediation remains.
+    if any(
+        is_bot_author(item) and is_codex(login_of(item)) and not is_unedited(item)
+        for item in items
+    ):
+        logs.append(f"codex-auto-resolve: pr={number} skip=edited-or-unknown-codex-evidence")
+        return logs
     latest = latest_verdicts(items)
     if not cfg.codex_pat:
         logs.append(f"codex-auto-resolve: pr={number} skip=no-secret")
