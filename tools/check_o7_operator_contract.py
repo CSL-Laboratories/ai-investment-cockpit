@@ -91,6 +91,12 @@ PRESENTATION_PROPERTIES = (
     "rendered",
     "text_status",
 )
+VISIBILITY_PROPERTIES = (
+    "reconciliation",
+    "refusal",
+    "stale_data",
+    "uncertainty",
+)
 RESPONSE_REQUIRED = (
     "api_version",
     "authority_effect",
@@ -737,6 +743,14 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         or set(presentation_properties or {}) != set(PRESENTATION_PROPERTIES)
     ):
         raise ContractError("presentation schema accepts an authority field")
+    visibility = properties.get("visibility")
+    visibility_properties = visibility.get("properties") if isinstance(visibility, dict) else None
+    if (
+        not _object_is_closed(visibility)
+        or not _required_is(visibility, VISIBILITY_PROPERTIES)
+        or set(visibility_properties or {}) != set(VISIBILITY_PROPERTIES)
+    ):
+        raise ContractError("visibility schema accepts an authority field")
 
 
 def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -767,6 +781,12 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     claimed_presentation = {**positions, "presentation": {**presentation, "live_authorized": True}}
     if _schema_error(validator, claimed_presentation) is None:
         raise ContractError("presentation schema accepts live_authorized")
+    visibility = positions.get("visibility")
+    if not isinstance(visibility, dict):
+        raise ContractError("visibility schema rejects the positions oracle")
+    claimed_visibility = {**positions, "visibility": {**visibility, "live_authorized": True}}
+    if _schema_error(validator, claimed_visibility) is None:
+        raise ContractError("visibility schema accepts live_authorized")
 
 
 def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:

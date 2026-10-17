@@ -957,6 +957,43 @@ def test_presentation_and_wire_versions_stay_pinned(tmp_path: Path) -> None:
         assert message in stderr, name
 
 
+def test_visibility_stays_closed(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    positions = copy.deepcopy(by_request["req_positions"])
+    assert CHECKER.validate_response(validator, positions, commands) is None
+    positions["visibility"] = {**positions["visibility"], "live_authorized": True}
+    assert CHECKER._schema_error(validator, positions) is not None
+    assert CHECKER.validate_response(validator, positions, commands) is not None
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    cases = (
+        (
+            "open-visibility",
+            ("properties", "visibility", "additionalProperties"),
+            True,
+        ),
+        (
+            "named-visibility",
+            ("properties", "visibility", "properties", "live_authorized"),
+            {"const": True},
+        ),
+    )
+    for name, path, value in cases:
+        widened = tmp_path / name
+        shutil.copytree(root, widened)
+        schema_path = widened / "schemas" / "operator-response.schema.json"
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        cursor = schema
+        for key in path[:-1]:
+            cursor = cursor[key]
+        cursor[path[-1]] = value
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, "schemas/operator-response.schema.json")
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1, name
+        assert stdout == ""
+        assert "visibility schema accepts an authority field" in stderr, name
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
