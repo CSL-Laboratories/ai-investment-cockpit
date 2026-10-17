@@ -1530,7 +1530,8 @@ class WorkflowStructureTests(unittest.TestCase):
                         "github.event.pull_request.head.repo.full_name == github.repository")):
             self.assertIn(clause, condition)
         self.assertEqual(condition.count('github.event.pull_request.head.repo.full_name == github.repository'), 2)
-        # Only main's four pull_request actions reach the legacy handlers.
+        # Only main's four pull_request actions, on non-draft PRs, reach the legacy handlers.
+        self.assertIn("github.event.pull_request.draft == false", legacy['if'])
         self.assertIn('contains(fromJSON(\'["opened","synchronize","reopened","ready_for_review"]\'), '
                       'github.event.action)', condition)
         self.assertNotIn('needs', legacy)

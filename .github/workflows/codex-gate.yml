@@ -60,7 +60,9 @@ jobs:
     # dispatch scan for recoverable requests and verdicts. Forks never get the PAT or a checkout.
     # Pull-request actions are limited to the four that main's trigger lists:
     # this workflow also wakes on closed/edited/converted_to_draft for the
-    # coordinator, which the legacy handlers never received.
+    # coordinator, which the legacy handlers never received. Draft PRs are
+    # skipped as on the stack base, so they neither revoke a gate-owned label
+    # nor take the repo-wide group's pending slot.
     if: >-
       vars.CANDIDATE_COORDINATOR != 'true' && (
         github.event_name == 'schedule' ||
@@ -68,6 +70,7 @@ jobs:
         (
           github.event_name == 'pull_request' &&
           contains(fromJSON('["opened","synchronize","reopened","ready_for_review"]'), github.event.action) &&
+          github.event.pull_request.draft == false &&
           github.event.pull_request.head.repo.full_name == github.repository
         ) ||
         (
