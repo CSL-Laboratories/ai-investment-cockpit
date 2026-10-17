@@ -408,6 +408,33 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_visible_uncertainty_requires_uncertainty_evidence() -> None:
+    by_request, commands, response_validator = _candidate_documents()
+    invented = copy.deepcopy(by_request["req_health"])
+    invented["visibility"]["uncertainty"] = "visible"
+    assert invented["status_code"] == "ok"
+    assert "items" not in invented["result"]
+    assert CHECKER.classify_response(invented, commands) == "hidden_uncertainty"
+    assert CHECKER._schema_error(response_validator, invented) is not None
+
+
+def test_parity_pairs_use_the_oracle_response_checks(tmp_path: Path) -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    copied = tmp_path / "O7"
+    shutil.copytree(root, copied)
+    fixture = copied / "fixtures" / "oracle" / "pairs.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    for pair in document["pairs"]:
+        pair["gui"]["profile"]["profile_class"] = "C"
+        pair["cli"]["profile"]["profile_class"] = "C"
+    fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _retarget(copied, "fixtures/oracle/pairs.json")
+    code, stdout, stderr = CHECKER.evaluate(copied)
+    assert code == 1
+    assert stdout == ""
+    assert "illustrative oracle must stay on profile A" in stderr
+
+
 def test_visible_refusal_requires_refusal_evidence() -> None:
     by_request, commands, response_validator = _candidate_documents()
     invented = copy.deepcopy(by_request["req_health"])

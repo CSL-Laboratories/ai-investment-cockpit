@@ -103,7 +103,7 @@ One response has one `status_code`. When more than one condition is present, pre
 4. A refusal selects `refused` only when none of the conditions above are present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`. `visibility.refusal=visible` requires that refusal evidence, an error whose code is `refused`, and a status of `refused`, `stale_or_unreconciled`, or `unavailable`. A response with no refusal cannot be labeled refused. `unavailable` is not a valid status when every dependency is readable.
 5. `ok` is allowed only when none of those conditions are present.
 
-A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. Any response that is stale or has an unavailable dependency sets `watch_only` true, including a positions or decisions read. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
+A condition that loses the status stays visible and keeps its own error. A refusal keeps `visibility.refusal=visible` and an error whose code is `refused`. Stale or unreconciled data keeps its visibility and an error whose code is `stale_or_unreconciled`. The winning status also has its own error. Any response that is stale or has an unavailable dependency sets `watch_only` true, including a positions or decisions read. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. `visibility.uncertainty=visible` requires that evidence. They do not by themselves change `status_code`.
 
 An empty `positions` array is a known empty portfolio. Position `quantity` is a signed decimal string: an unsigned value is long, a leading `-` is short, and a fractional part is allowed. An empty `result` object is invalid for every catalog command. The response schema requires that command's result fields.
 
@@ -111,7 +111,7 @@ An empty `positions` array is a known empty portfolio. Position `quantity` is a 
 
 `parity-matrix.json` gives every catalog command one row. GUI and CLI are both `same_api`. `order_path` is `none`. Presentation text may differ. The semantic projection may not: profile, route, authority effect, order path, status, visibility, result, errors, and the exit code derived from status.
 
-The frozen oracle pairs `positions.inspect.parity` and `decisions.inspect.parity` use different `presentation.rendered` strings and the same projection. That is the allowed difference.
+The frozen oracle pairs `positions.inspect.parity` and `decisions.inspect.parity` use different `presentation.rendered` strings and the same projection. That is the allowed difference. Both sides pass the same oracle response checks as the catalog responses, including profile class A and no qualification claim.
 
 ## Accessibility gates
 

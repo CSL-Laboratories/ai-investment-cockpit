@@ -319,8 +319,14 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         disclosed = claims_refusal and has_refusal and _refusal_disclosed(refusals, refused_decisions)
         if not disclosed or (not higher_status and doc.get("status_code") != "refused"):
             return "hidden_refusal"
-    if visibility.get("uncertainty") == "hidden" or has_uncertainty:
-        if visibility.get("uncertainty") != "visible" or any(item.get("visible") is not True for item in unknown_items):
+    claims_uncertainty = visibility.get("uncertainty") == "visible"
+    if visibility.get("uncertainty") == "hidden" or has_uncertainty or claims_uncertainty:
+        evidenced = (
+            claims_uncertainty
+            and has_uncertainty
+            and all(item.get("visible") is True for item in unknown_items)
+        )
+        if not evidenced:
             return "hidden_uncertainty"
     claims_stale = visibility.get("stale_data") == "visible"
     if visibility.get("stale_data") == "hidden" or stale or claims_stale:
@@ -705,6 +711,10 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
         _require_schema(response_validator, cli, "oracle cli")
         if classify_response(gui, set(commands)) or classify_response(cli, set(commands)):
             raise ContractError("oracle pair carries a hidden state")
+        for side in (gui, cli):
+            pair_problem = _oracle_response_error(side, commands)
+            if pair_problem is not None:
+                raise ContractError(f"oracle pair: {pair_problem}")
         if _project(gui) != _project(cli):
             raise ContractError("oracle pair semantic projection diverges")
         if gui.get("surface") != "gui" or cli.get("surface") != "cli":
