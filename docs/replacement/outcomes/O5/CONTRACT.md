@@ -127,6 +127,8 @@ Positive examples live in `fixtures/positive/` and the manifests beside them.
   cannot report `demo_or_paper`, `shadow`, `limited_live`, or
   `independently_verified`, because those outputs were not retained. A result
   must match an admitted request on request id, task, route, and suite digest.
+  `calibration_status` stays `unmeasured`, because the calibration experiment
+  was not run.
 - **Decision refusal.** First-class object, not a schema-invalid success. The
   frozen refusal tasks cover an order request, a credential request, and a budget
   widening. A refusal adds no disclosure and does not change the budget. A

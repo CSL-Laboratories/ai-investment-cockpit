@@ -623,6 +623,8 @@ def _admit_result(document: dict[str, Any], ctx: Context) -> Admission:
             "installed_route_not_qualified",
             "higher-tier evidence is not retained in this researched packet",
         )
+    if document.get("calibration_status") != "unmeasured":
+        return _refuse("measures_not_observed", "calibration was not measured in this researched packet")
     return _admit()
 
 

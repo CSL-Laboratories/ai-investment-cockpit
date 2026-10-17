@@ -210,6 +210,26 @@ def test_result_rejects_unsupported_evidence() -> None:
         assert refused.code == "installed_route_not_qualified"
 
 
+def test_calibration_status_stays_unmeasured() -> None:
+    module = _load()
+    suite = json.loads(SUITE.read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]["decision_result"]
+    document = json.loads(
+        (ROOT / "docs/replacement/outcomes/O5/fixtures/positive/decision-result.json").read_text(encoding="utf-8")
+    )
+    context = _context(module, suite)
+    context.suite_digest = document["suite_digest"]
+    _bind(context, document)
+    admitted = module._admit_document(document, schema, context)
+    assert admitted.admitted is True
+    for status in ("observed", "passed"):
+        claimed = dict(document)
+        claimed["calibration_status"] = status
+        refused = module._admit_document(claimed, schema, context)
+        assert refused.admitted is False
+        assert refused.code == "measures_not_observed"
+
+
 def test_request_and_refusal_reject_unsupported_evidence() -> None:
     module = _load()
     suite = json.loads(SUITE.read_text(encoding="utf-8"))
