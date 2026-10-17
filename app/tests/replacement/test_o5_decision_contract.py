@@ -60,6 +60,7 @@ def test_candidate_command_fails_negative_controls_as_designed(capfd) -> None:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     with capfd.disabled():
