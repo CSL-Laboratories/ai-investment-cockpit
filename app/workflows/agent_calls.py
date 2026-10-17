@@ -22,6 +22,7 @@ from decimal import Decimal
 from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
 from agent_runner.runner import run_agent, worst_case_repair_overhead
 from agent_runner.spec import AgentSpec
+from agent_runner.transport import SubprocessTransport
 from config.models import (
     configured_decision_runtime,
     job_class_for,
@@ -112,10 +113,25 @@ def _jev_window_moved(state, admitted_generation: int) -> bool:
 
 
 # Saga pivot for an unused deep-escalation reservation. triage_loop may release
-# that unit only when the proposal handler raises before call_agent is entered.
-# Entering call_agent keeps the unit, including when a later line raises.
+# that unit only when the proposal handler raises before a model call is dispatched
+# (Jev HTTP or a transport run). Once dispatched the unit stays spent, including
+# when a later line raises; a preflight refusal before dispatch releases it.
 _CALL_AGENT_ENTERED: ContextVar[bool] = ContextVar(
     "cockpit_call_agent_entered", default=False)
+
+
+class _DispatchMarkingTransport:
+    """Marks the reservation spent only when a transport call is actually made."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def run(self, *args, **kwargs):
+        _CALL_AGENT_ENTERED.set(True)
+        return self._inner.run(*args, **kwargs)
 
 
 def watch_call_agent() -> Token[bool]:
@@ -142,7 +158,6 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     guarded by the PRE-CALL watch-only state, because the runner itself already trips the
     usage window before we observe the result. Callers must inspect ``result.status`` and
     degrade (defer events, never drop them — Inv 7)."""
-    _CALL_AGENT_ENTERED.set(True)
     selected_runtime = configured_decision_runtime(state.settings)
     resolved_runtime = runtime_for(alias, selected_runtime)
     mode = ModeLadder(state).current()
@@ -205,6 +220,8 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             else:
                 # Preflight never reached HTTP, so this attempt bills nothing.
                 jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
+    if jev_attempt is not None and jev_attempt.dispatched:
+        _CALL_AGENT_ENTERED.set(True)
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
     if jev_accepted:
@@ -264,7 +281,9 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
             model_id=model_id,
         )
-        result = run_agent(spec, transport=transport, usage=state.usage,
+        result = run_agent(spec, transport=_DispatchMarkingTransport(
+                               transport or SubprocessTransport()),
+                           usage=state.usage,
                            secret_values=_provisioned_secret_values(),  # BUG-092: Inv 4
                            pinned_cwd=pinned_cwd,
                            decision_agent_account=getattr(
