@@ -1190,6 +1190,51 @@ def test_old_cite_retry_resolve_consumes_in_scan_cap():
     assert any("skip=over-cap" in line for line in logs)
 
 
+def test_unmarked_pat_success_still_counts_after_reopen():
+    threads = [
+        thread(
+            THREAD,
+            resolved=False,
+            resolved_by=PAT_LOGIN,
+            comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
+
+
+def test_reopened_unmarked_pat_success_consumes_cap():
+    gh = ready_gh(
+        threads=[
+            thread(
+                THREAD,
+                resolved=False,
+                resolved_by=PAT_LOGIN,
+                comments=[comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA))],
+            ),
+            thread(THREAD2, comments=[comment(CODEX, verdict_body(tid=THREAD2))]),
+        ],
+        reviews=[comment(CODEX, verdict_body(tid=THREAD2))],
+    )
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(max_per_pr_per_day=1), gh, NOW)
+    assert THREAD2 not in gh.resolves
+    assert any("skip=over-cap" in line for line in logs)
+
+
+def test_cite_with_resolved_at_counts_on_open_thread():
+    body = (
+        f"{mod.cite_marker(THREAD, SHA)}\n"
+        f"RESOLVED_AT: {mod.format_resolved_at(NOW)}\n"
+    )
+    threads = [
+        thread(
+            THREAD,
+            resolved=False,
+            comments=[comment(PAT_LOGIN, body)],
+        )
+    ]
+    assert mod.resolved_count_today(threads, [], NOW, PAT_LOGIN) == 1
+
+
 def test_unresolved_cites_do_not_burn_daily_cap():
     stuck = [
         thread(
