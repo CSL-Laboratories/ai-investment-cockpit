@@ -16,7 +16,10 @@
     "changes_authority_semantics",
     "changes_failure_semantics",
     "changes_recovery_semantics",
-    "floors"
+    "floors",
+    "smallest_experiment",
+    "seam",
+    "rollback"
   ],
   "properties": {
     "schema_id": {"const": "cockpit.replacement.o8.candidate-manifest.v1"},
@@ -30,6 +33,43 @@
     "changes_authority_semantics": {"const": false},
     "changes_failure_semantics": {"const": false},
     "changes_recovery_semantics": {"const": false},
+    "smallest_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workload_id", "statement"],
+      "properties": {
+        "workload_id": {
+          "enum": [
+            "ingest_to_raw_store",
+            "point_in_time_replay",
+            "frozen_evaluation_run",
+            "paper_order_lifecycle",
+            "reconciliation",
+            "gui_cli_render"
+          ]
+        },
+        "statement": {"type": "string", "minLength": 1}
+      }
+    },
+    "seam": {
+      "enum": [
+        "ingest_to_raw_store",
+        "point_in_time_replay",
+        "frozen_evaluation_run",
+        "paper_order_lifecycle",
+        "reconciliation",
+        "gui_cli_render"
+      ]
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_back_to_legacy", "system_of_record"],
+      "properties": {
+        "route_back_to_legacy": {"const": true},
+        "system_of_record": {"const": "legacy_raw_store_and_hash_chain"}
+      }
+    },
     "floors": {
       "type": "array",
       "minItems": 11,

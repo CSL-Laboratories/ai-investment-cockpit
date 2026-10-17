@@ -1,0 +1,86 @@
+{
+  "schema_id": "cockpit.replacement.o8.candidate-manifest.v1",
+  "candidate_id": "phase-a-protocol-only",
+  "maturity": "researched",
+  "language_selected": false,
+  "storage_selected": false,
+  "topology_selected": false,
+  "csl42_evidence": false,
+  "changes_financial_semantics": false,
+  "changes_authority_semantics": false,
+  "changes_failure_semantics": false,
+  "changes_recovery_semantics": false,
+  "smallest_experiment": {
+    "workload_id": "ingest_to_raw_store",
+    "statement": "Run the tier-2 provider-free ingest workload on a frozen fixture until relative IQR is recorded with host and commit. This packet does not start the run."
+  },
+  "seam": "ingest_to_raw_store",
+  "floors": [
+    {
+      "id": "invariant_1_single_order_path",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/tests/test_invariants.py"
+    },
+    {
+      "id": "invariant_2_decision_pinned_in_auto_modes",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/mode_ladder.py"
+    },
+    {
+      "id": "invariant_3_schema_validate_model_output",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/workflows/schema_loader.py"
+    },
+    {
+      "id": "invariant_4_secrets_os_credential_store",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/core/secrets.py"
+    },
+    {
+      "id": "invariant_5_risk_pure",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "invariant_6_human_gate_hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    },
+    {
+      "id": "invariant_7_fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "invariant_8_raw_inputs_separate_from_summaries",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/filings/raw_store.py"
+    },
+    {
+      "id": "invariant_9_post_pdt",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/risk/engine.py"
+    },
+    {
+      "id": "fail_closed",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/orchestrator/breakers.py"
+    },
+    {
+      "id": "hash_chain_audit",
+      "enforced_by": "tests",
+      "benchmark_eligible": false,
+      "test_locator": "app/storage/audit.py"
+    }
+  ]
+}

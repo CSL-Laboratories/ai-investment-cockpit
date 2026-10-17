@@ -78,6 +78,8 @@ Floors are enforced by tests. `benchmark_eligible` is false on every floor. A ca
 
 The checked-in candidate id is `phase-a-protocol-only`. Its maturity is `researched`. Language, storage, and topology are not selected. It changes no financial, authority, failure, or recovery semantics, and it is not CSL-42 evidence.
 
+The candidate manifest also carries `smallest_experiment`, `seam`, and `rollback` as required checked fields, so the smallest next experiments and the rollback path the contract names live in the manifest, not only in this prose. This candidate's smallest experiment and seam are the `ingest_to_raw_store` tier-2 workload — ingest into `RawStore` sits upstream of the other five workloads. Its rollback routes that seam back to legacy with the raw store and hash chain as the system of record.
+
 ## Matched benchmark protocol
 
 Devin's 2026-10-16 note on CSL-220 is the tier split this packet records. It is a planning note, not a measurement.
@@ -86,7 +88,9 @@ Devin's 2026-10-16 note on CSL-220 is the tier split this packet records. It is 
 
 Tier 1 does not include end-to-end I/O or helper processes. It cannot decide CSL-42.
 
-**Tier 2, defined and unmeasured.** Provider-free tracked workloads. Cadence is `unresolved_owner_lucas`. They are not per-PR. Each manifest must name the commit, host, repetitions, relative IQR, included I/O, and included helper processes. Unmeasured fields in this packet use status `required_on_run` and JSON null. That records the obligation. It is not a measured sample.
+**Tier 2, defined and unmeasured.** Provider-free tracked workloads. Cadence is `unresolved_owner_lucas`. They are not per-PR. Each manifest must name the commit, host, repetitions, relative IQR, included I/O, included helper processes, and a labeled `provider_latency`. Unmeasured fields in this packet use status `required_on_run` and JSON null. That records the obligation. It is not a measured sample.
+
+`provider_latency` is a required labeled field, never absent: it is either a measured value in milliseconds or `{"status": "excluded_with_reason", "reason": ...}` with a non-empty reason. Every workload in this packet is provider-free (`provider_free` is true, `network_calls` is 0), so all six record `excluded_with_reason`. A manifest that leaves the field out fails `omits provider latency` — the CSL-220 falsifier cannot be met by omission.
 
 | Workload | What a later run has to include |
 | --- | --- |
@@ -119,7 +123,7 @@ The [Enersys strangler-fig case study](https://enersys.co.th/en/insights/strangl
 
 ## Candidate options, none selected
 
-The smallest next experiments are the six tier-2 workloads above, provider-free, on a frozen fixture, repeated until relative IQR is recorded with host and commit. Options a later human decision could compare, after those runs:
+The smallest next experiments are the six tier-2 workloads above, provider-free, on a frozen fixture, repeated until relative IQR is recorded with host and commit. The candidate manifest records them per candidate: `smallest_experiment` names the next workload run, `seam` names the migration seam it exercises, and `rollback` records the route back to legacy — all three are required and validator-checked. Options a later human decision could compare, after those runs:
 
 - keep the Python tree and the optional PyO3 kernels;
 - replace one measured seam behind the façade;
@@ -136,21 +140,27 @@ Checked-in fixtures under `fixtures/negative/`. Each one must fail. The validato
 | `omit-io.json` | omits I/O |
 | `omit-helpers.json` | omits helper processes |
 | `omit-variance.json` | omits variance |
+| `provider-latency-unlabeled.json` | omits provider latency |
 | `candidate-missing-floors.json` | candidate missing floors |
 | `floor-enforced-by-benchmark.json` | candidate missing floors |
+| `seam-missing-rollback.json` | migration cannot roll back |
+| `candidate-missing-smallest-experiment.json` | candidate missing smallest experiment |
 
 A packet whose maturity is anything other than `researched` is rejected. Promoting this artifact to `contract_frozen` requires a human receipt, not an edit.
 
 ## Research (Parallel)
 
-Embedded Parallel searches run on Dan's box on 2026-10-17. This session's tool list did not include the keyless Parallel Search MCP, so no further search id was minted. The pages below were retrieved and the protocol follows them.
+Embedded Parallel searches run on Dan's box on 2026-10-17. The pages below were retrieved and the protocol follows them.
 
-Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e091750abdb2b9d763`.
+Search ids: `search_8afa65003c515c3b57197de5f5cd25c4`, `search_902e146c8a56d6e091750abdb2b9d763`, `search_b6290caf1f31d7a8a710db6b71f76c7e`, `search_86967d451c3ce6e3c60de7a6868def47`.
 
 - [Strangler Fig pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig) — Microsoft Azure Architecture Center. Incremental façade, shared-store coexistence, anti-corruption layer, rollback while legacy objects remain.
+- [Strangler fig migration guide](https://adaptive-enforcement-lab.com/patterns/architecture/strangler-fig/migration-guide/) — Adaptive Enforcement Lab (`search_86967d451c3ce6e3c60de7a6868def47`). Every seam needs a defined rollback path and mixed-version coexistence; the basis for the required per-candidate `seam` and `rollback` fields and the `seam-missing-rollback` negative control.
 - [Run a benchmark](https://pyperf.readthedocs.io/en/stable/run_benchmark.html) — pyperf worker processes, warmup, and instability warnings. Python 3.9 or newer.
 - [Analyze benchmark results](https://pyperf.readthedocs.io/en/latest/analyze.html) — quartiles, median, and median absolute deviation; `compare_to` uses a two-sample t-test.
 - [psf/pyperf](https://github.com/psf/pyperf) — toolkit repository for those documents.
+- [Writing benchmarks](https://asv.readthedocs.io/en/stable/writing_benchmarks.html) — airspeed velocity (`search_b6290caf1f31d7a8a710db6b71f76c7e`). Report warmup, repeats, and variance, and isolate external I/O — the reason `provider_latency` is measured or explicitly excluded with a reason, never silently folded in.
+- [hyperfine](https://github.com/sharkdp/hyperfine) — command-line benchmarking tool (`search_b6290caf1f31d7a8a710db6b71f76c7e`). Warmup runs, repetition counts, and statistical outlier handling; not installed by this packet.
 - [Strangler fig, Python to Rust](https://enersys.co.th/en/insights/strangler-fig-migration-python-to-rust-2026) — Enersys, 18 Apr 2026. Case-study argument for incremental cuts. Other companies' speed claims are not local evidence.
 
 ## Unresolved decisions (owner: Lucas)

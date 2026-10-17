@@ -109,8 +109,15 @@ NEGATIVES = (
     ("omit-io.json", "benchmark", "omits I/O"),
     ("omit-helpers.json", "benchmark", "omits helper processes"),
     ("omit-variance.json", "benchmark", "omits variance"),
+    ("provider-latency-unlabeled.json", "benchmark", "omits provider latency"),
     ("candidate-missing-floors.json", "candidate", "candidate missing floors"),
     ("floor-enforced-by-benchmark.json", "candidate", "candidate missing floors"),
+    ("seam-missing-rollback.json", "candidate", "migration cannot roll back"),
+    (
+        "candidate-missing-smallest-experiment.json",
+        "candidate",
+        "candidate missing smallest experiment",
+    ),
 )
 
 
@@ -155,7 +162,7 @@ def _local_path_exists(locator: str) -> bool:
 def benchmark_reasons(document: Any) -> list[str]:
     reasons: list[str] = []
     if not isinstance(document, dict):
-        return ["omits I/O", "omits helper processes", "omits variance"]
+        return ["omits I/O", "omits helper processes", "omits variance", "omits provider latency"]
     io = document.get("io")
     if not isinstance(io, dict) or io.get("included") is not True or not io.get("kinds"):
         reasons.append("omits I/O")
@@ -176,6 +183,19 @@ def benchmark_reasons(document: Any) -> list[str]:
     )
     if not variance_ok:
         reasons.append("omits variance")
+    provider_latency = document.get("provider_latency")
+    provider_latency_ok = (
+        isinstance(provider_latency, (int, float))
+        and not isinstance(provider_latency, bool)
+        and provider_latency >= 0
+    ) or (
+        isinstance(provider_latency, dict)
+        and provider_latency.get("status") == "excluded_with_reason"
+        and isinstance(provider_latency.get("reason"), str)
+        and provider_latency.get("reason").strip() != ""
+    )
+    if not provider_latency_ok:
+        reasons.append("omits provider latency")
     if document.get("tier") in (2, 3) and document.get("csl42_evidence") is True:
         measured = isinstance(variance, dict) and variance.get("status") == "measured"
         if document.get("tier") != 3 or document.get("floors_attached") is not True or not measured:
@@ -223,6 +243,23 @@ def candidate_reasons(document: Any) -> list[str]:
         missing = [floor_id for floor_id in FLOOR_IDS if floor_id not in _floor_ids(floors)]
         if missing:
             reasons.append("candidate missing floors")
+    experiment = document.get("smallest_experiment") if isinstance(document, dict) else None
+    if not (
+        isinstance(experiment, dict)
+        and experiment.get("workload_id") in WORKLOAD_IDS
+        and isinstance(experiment.get("statement"), str)
+        and experiment.get("statement").strip() != ""
+    ):
+        reasons.append("candidate missing smallest experiment")
+    if not isinstance(document, dict) or document.get("seam") not in WORKLOAD_IDS:
+        reasons.append("candidate missing seam")
+    rollback = document.get("rollback") if isinstance(document, dict) else None
+    if not (
+        isinstance(rollback, dict)
+        and rollback.get("route_back_to_legacy") is True
+        and rollback.get("system_of_record") == "legacy_raw_store_and_hash_chain"
+    ):
+        reasons.append("migration cannot roll back")
     if isinstance(document, dict) and document.get("maturity") not in (None, "researched"):
         reasons.append("maturity is researched only")
     reasons.extend(_schema_errors(document, CANDIDATE_SCHEMA))

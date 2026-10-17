@@ -13,9 +13,12 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: omit-io: omits I/O",
     "O8 negative control failed as designed: omit-helpers: omits helper processes",
     "O8 negative control failed as designed: omit-variance: omits variance",
+    "O8 negative control failed as designed: provider-latency-unlabeled: omits provider latency",
     "O8 negative control failed as designed: candidate-missing-floors: candidate missing floors",
     "O8 negative control failed as designed: floor-enforced-by-benchmark: candidate missing floors",
-    "O8 negative controls: 5 failed as designed",
+    "O8 negative control failed as designed: seam-missing-rollback: migration cannot roll back",
+    "O8 negative control failed as designed: candidate-missing-smallest-experiment: candidate missing smallest experiment",
+    "O8 negative controls: 8 failed as designed",
 )
 
 

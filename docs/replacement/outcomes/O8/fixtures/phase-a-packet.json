@@ -605,6 +605,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -664,6 +668,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -723,6 +731,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -788,6 +800,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -853,6 +869,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -912,6 +932,10 @@
           "status": "required_on_run"
         }
       ],
+      "provider_latency": {
+        "status": "excluded_with_reason",
+        "reason": "provider_free is true and network_calls is 0, so no provider latency exists to measure"
+      },
       "variance": {
         "statistic": "relative_iqr",
         "repetitions": null,
@@ -948,6 +972,15 @@
     "changes_authority_semantics": false,
     "changes_failure_semantics": false,
     "changes_recovery_semantics": false,
+    "smallest_experiment": {
+      "workload_id": "ingest_to_raw_store",
+      "statement": "Run the tier-2 provider-free ingest workload on a frozen fixture until relative IQR is recorded with host and commit. This packet does not start the run."
+    },
+    "seam": "ingest_to_raw_store",
+    "rollback": {
+      "route_back_to_legacy": true,
+      "system_of_record": "legacy_raw_store_and_hash_chain"
+    },
     "floors": [
       {
         "id": "invariant_1_single_order_path",
