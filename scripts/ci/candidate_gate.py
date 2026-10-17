@@ -116,11 +116,19 @@ class Coordinator:
             raise ValueError("candidate changed during readiness snapshot")
         return candidate, comments, reviews, events, blocked
 
-    def revoke(self, candidate):
+    def revoke(self, candidate, invalidations=None):
+        def post_invalidation(repo, number, body):
+            comment = self.gh.post_read_token(f"repos/{repo}/issues/{number}/comments", {"body": body})
+            if invalidations is not None:
+                if (not candidate_api.positive(comment.get("id")) or comment.get("body") != body
+                        or not self.receipts.bot(comment.get("user") or {}, "github-actions[bot]", self.receipts.ACTIONS_ID)):
+                    raise ValueError("owned invalidation receipt unavailable")
+                invalidations.append(comment["id"])
+            return comment
         return self.receipts.revoke_owned_ci(
             self.repo, self.number, candidate.head, self.listing,
             lambda repo, number: self.gh.delete_read_token(f"repos/{repo}/issues/{number}/labels/ci:full"),
-            lambda repo, number, body: self.gh.post_read_token(f"repos/{repo}/issues/{number}/comments", {"body": body}),
+            post_invalidation,
         )
 
     def head_snapshot(self):
@@ -157,15 +165,24 @@ class Coordinator:
             raise ValueError("mediation head changed during snapshot")
         return key, comments, reviews, held
 
-    def fresh_mediate(self, identity, review, pause):
+    def fresh_mediate(self, identity, review, pause, invalidation_origin=None):
+        def generation_matches(comments, head):
+            if self.receipts.latest_pause_id(comments, head) != pause:
+                return False
+            if invalidation_origin is not None:
+                original, owned_ids = invalidation_origin
+                others = [c for c in comments if c["id"] not in owned_ids]
+                if self.receipts.latest_pause_id(others, head) != original:
+                    return False
+            return True
         current, comments, reviews, held = self.head_snapshot()
         if (current != identity or held or candidate_api.head_mediate_review(reviews, current[2]) != review
-                or self.receipts.latest_pause_id(comments, current[2]) != pause):
+                or not generation_matches(comments, current[2])):
             raise ValueError("MEDIATE no longer current")
         self.unedited_review(review)
         current, comments, reviews, held = self.head_snapshot()
         if (current != identity or held or candidate_api.head_mediate_review(reviews, current[2]) != review
-                or self.receipts.latest_pause_id(comments, current[2]) != pause):
+                or not generation_matches(comments, current[2])):
             raise ValueError("MEDIATE changed during review metadata validation")
         return comments, reviews
 
@@ -181,9 +198,20 @@ class Coordinator:
             return None
         head = identity[2]
         pause = self.receipts.latest_pause_id(comments, head)
+        self.fresh_mediate(identity, review, pause)
+        invalidations = []
+        self.revoke(SimpleNamespace(head=head), invalidations)
+        # Our authenticated label invalidation advances the receipt generation.
+        # Accept only those exact POST response IDs, never arbitrary later pauses.
+        origin = (pause, frozenset(invalidations))
+        pause = max([pause, *invalidations])
+        comments, reviews = self.fresh_mediate(identity, review, pause, origin)
         nonce = hashlib.sha256(f"{head}:{review['id']}:{pause}".encode()).hexdigest()[:32]
-        self.revoke(SimpleNamespace(head=head))
-        comments, reviews = self.fresh_mediate(identity, review, pause)
+        trusted = self.legacy.trusted_comments(comments, self.legacy.marker_authors(self.gh))
+        # Keep the established head-scoped MEDIATE idempotence when upgrading
+        # from the legacy gate. This is human-handoff evidence, never READY.
+        if self.legacy.action_for_sha(self.legacy.ready_comments(trusted, head), head) == "MEDIATE":
+            return "mediate-already-recorded"
         completed = {x.get("nonce") for x in self.journal(comments, "mediate")}
         if nonce in completed:
             return "mediate-already-recorded"
@@ -193,7 +221,7 @@ class Coordinator:
             return "mediate-delivery-uncertain"
         intent = self.record("mediate-intent", {"head": head, "review": review["id"], "pause": pause, "nonce": nonce})
         try:
-            comments, reviews = self.fresh_mediate(identity, review, pause)
+            comments, reviews = self.fresh_mediate(identity, review, pause, origin)
         except Exception:
             self.record("mediate-aborted", {"intent": intent["id"]})
             raise

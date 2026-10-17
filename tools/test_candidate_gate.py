@@ -235,6 +235,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
             safe_pr=lambda value: re.fullmatch(r"[1-9][0-9]*", str(value)) is not None,
             _act=Mock(return_value=["mediation-enqueued"]),
             trusted_comments=Mock(return_value=[]), marker_authors=Mock(return_value={"trusted"}),
+            action_for_sha=Mock(return_value=""), ready_comments=lambda comments, head: comments,
             utc_day=Mock(return_value="2026-10-16"))
         self.coordinator = gate.Coordinator(self.legacy, self.gh, REPO, PR)
 
@@ -316,7 +317,7 @@ class CandidateCoordinatorTests(unittest.TestCase):
             "2026-10-16", self.gh, self.gh.reviews)
         intent_comment = next(comment for comment in self.gh.comments
             if self.receipts.records(comment["body"], "candidate-mediate-intent"))
-        self.legacy.trusted_comments.assert_called_once_with(expected_comments + [intent_comment], {"trusted"})
+        self.legacy.trusted_comments.assert_called_with(expected_comments + [intent_comment], {"trusted"})
         self.receipts.revoke_owned_ci.assert_called_once()
         self.assertEqual(self.gh.dispatches, [])
         self.assertEqual(len(self.gh.mentions), 1)
@@ -1113,6 +1114,124 @@ class CandidateCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.reconcile(), "mediation-enqueued")
         self.legacy._act.assert_called_once()
         self.assertEqual(self.gh.dispatches, [])
+
+    def test_delayed_old_mediate_preserves_latest_ready_and_qualified_candidate(self):
+        self.dispatch()
+        self.observe_success()
+        ready = copy.deepcopy(self.gh.reviews[-1])
+        old = copy.deepcopy(ready)
+        old.update(id=4999, node_id="PRR_test_4999", submitted_at="2026-10-16T00:00:30Z",
+                   body="CODEX-GATE: MEDIATE")
+        self.receipts.revoke_owned_ci.reset_mock()
+        # API order and an old review event's arrival cannot select the verdict.
+        for reviews in ([old, ready], [ready, old]):
+            self.gh.reviews = reviews
+            for _ in range(2):
+                result = json.loads(self.reconcile())
+                self.assertTrue(result["qualified"])
+        self.assertEqual(len(self.gh.dispatches), 2)
+        self.receipts.revoke_owned_ci.assert_not_called()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+
+    def test_legacy_completed_mediate_propagates_without_repeating_handoff(self):
+        from scripts.ci import codex_gate as legacy
+        self.prime_head_mediate()
+        self.gh.pr.update(mergeable=False, merge_commit_sha=None)
+        self.legacy.action_for_sha = legacy.action_for_sha
+        self.legacy.ready_comments = legacy.ready_comments
+        self.legacy.trusted_comments = legacy.trusted_comments
+        self.legacy.marker_authors.return_value = {"github-actions[bot]"}
+        self.gh.add_comment(legacy.action_marker(HEAD, "MEDIATE"))
+        for _ in range(3):
+            self.assertEqual(self.reconcile(), "mediate-already-recorded")
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_new_mediate_invalidates_real_owned_label_and_hands_off_once(self):
+        real = self.configure_owned_ready_label()
+        self.assertEqual(self.reconcile(), "mediation-enqueued")
+        self.assertEqual(self.reconcile(), "mediate-already-recorded")
+        self.gh.delete_read_token.assert_called_once()
+        self.legacy._act.assert_called_once()
+        self.assertEqual(self.journal("mediate")[0]["pause"], real.latest_pause_id(self.gh.comments, HEAD))
+        self.assertEqual(self.gh.dispatches, [])
+
+    def configure_owned_ready_label(self):
+        from scripts.ci import codex_gate as legacy
+        real = legacy.FIXER_RECEIPTS
+        self.prime_head_mediate()
+        self.gh.pr["labels"] = [{"name": "ci:full"}]
+        self.gh.events = [{"id": 700, "event": "labeled", "label": {"name": "ci:full"}}]
+        self.gh.add_comment(real.marker("ci-owned", {"head": HEAD, "event": 700}))
+        self.receipts.revoke_owned_ci = real.revoke_owned_ci
+        self.receipts.latest_pause_id = real.latest_pause_id
+        self.receipts.ci_label_decision = real.ci_label_decision
+
+        def delete(path):
+            self.assertEqual(path, f"{PREFIX}/issues/{PR}/labels/ci:full")
+            self.gh.pr["labels"] = []
+            self.gh.events.append({"id": 701, "event": "unlabeled", "label": {"name": "ci:full"},
+                                   "actor": ACTION_USER})
+        self.gh.delete_read_token = Mock(side_effect=delete)
+        return real
+
+    def test_own_invalidation_cannot_adopt_concurrent_external_pause(self):
+        self.configure_owned_ready_label()
+        def pause_after_invalidation(body):
+            if "claude-fixer-ci-invalidated:" in body:
+                self.gh.add_comment(f"<!-- claude-fixer-loop-cap:{HEAD} -->")
+        self.gh.on_record = pause_after_invalidation
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+        self.assertEqual(self.gh.dispatches, [])
+
+    def test_unverified_invalidation_response_cannot_delete_or_handoff(self):
+        self.configure_owned_ready_label()
+        self.gh.receipt_user = {"id": 1, "login": "impostor", "type": "User"}
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.gh.delete_read_token.assert_not_called()
+        self.legacy._act.assert_not_called()
+
+    def test_own_newer_invalidation_cannot_hide_an_intervening_external_pause(self):
+        self.configure_owned_ready_label()
+        original_post = self.gh.post_read_token
+        def pause_before_own_post(path, payload):
+            if "claude-fixer-ci-invalidated:" in payload.get("body", ""):
+                self.gh.add_comment(f"<!-- claude-fixer-loop-cap:{HEAD} -->")
+            return original_post(path, payload)
+        self.gh.post_read_token = pause_before_own_post
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.legacy._act.assert_not_called()
+        self.assertEqual(self.journal("mediate-intent"), [])
+
+    def test_untrusted_or_old_head_legacy_mediate_does_not_suppress_new_handoff(self):
+        from scripts.ci import codex_gate as legacy
+        for head, user in ((HEAD, {"id": 1, "login": "impostor", "type": "User"}),
+                           ("f" * 40, ACTION_USER)):
+            with self.subTest(head=head, user=user):
+                self.setUp()
+                self.prime_head_mediate()
+                self.legacy.action_for_sha = legacy.action_for_sha
+                self.legacy.ready_comments = legacy.ready_comments
+                self.legacy.trusted_comments = legacy.trusted_comments
+                self.legacy.marker_authors.return_value = {"github-actions[bot]"}
+                self.gh.add_comment(legacy.action_marker(head, "MEDIATE"), user)
+                self.assertEqual(self.reconcile(), "mediation-enqueued")
+                self.legacy._act.assert_called_once()
+
+    def test_edited_mediate_cannot_invalidate_owned_ready_before_provenance_check(self):
+        self.prime_head_mediate()
+        self.gh.graphql_node_overrides = {"includesCreatedEdit": True}
+        with self.assertRaises(ValueError):
+            self.reconcile()
+        self.receipts.revoke_owned_ci.assert_not_called()
+        self.legacy._act.assert_not_called()
 
 
 if __name__ == "__main__":
