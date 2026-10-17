@@ -94,6 +94,34 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(all(body is None or path == "graphql" for path, body, _ in self.calls))
         self.assertTrue(all("logs" not in path for path, _, _ in self.calls))
 
+    def test_repository_dispatch_binds_default_workflow_and_reserved_pr_context(self):
+        self.run.update(event="repository_dispatch", head_sha="d" * 40,
+                        head_branch="main", pull_requests=[])
+        self.assertEqual(set(self.collect()), {"thread1"})
+        self.assertTrue(any(path.endswith("ref=" + "d" * 40) for path, _, _ in self.calls))
+        original = copy.deepcopy(self.run)
+        for key, value in (("head_sha", "bad"), ("head_branch", "fix"),
+                           ("head_repository", {"full_name": "evil/repo"}),
+                           ("event", "workflow_dispatch"), ("workflow_id", 100)):
+            with self.subTest(key=key):
+                self.run = original | {key: value}
+                self.assertEqual(self.collect(), {})
+        self.run = original
+        def old_workflow(path, *args, **kwargs):
+            if path.endswith("ref=" + "d" * 40):
+                return {"sha": "old-untrusted-workflow"}
+            return self.read(path, *args, **kwargs)
+        self.assertEqual(self.collect(old_workflow), {})
+        self.job["steps"][0]["name"] = m.CONTEXT_PREFIX + HEAD + ":" + "f" * 64
+        self.assertEqual(self.collect(), {})
+        self.job["steps"][0]["name"] = m.CONTEXT_PREFIX + HEAD + ":" + self.key["fingerprint"]
+        self.history.clear()
+        self.assertEqual(self.collect(), {})
+
+    def test_review_comment_event_cannot_prove_the_review_fixer_job(self):
+        self.run["event"] = "pull_request_review_comment"
+        self.assertEqual(self.collect(), {})
+
     def test_reservations_success_skip_and_diagnostic_prose_are_not_failures(self):
         self.history.append({"id": 999, "body": "Claude fixer terminal audit: turn-limit. needs human",
                              "user": f.actor("github-actions[bot]", f.m.ACTIONS_ID)})

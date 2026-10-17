@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -119,6 +120,19 @@ def current_pr(config, read=api):
     return head["sha"]
 
 
+def expected_remote(config, remote_url):
+    """Accept only canonical GitHub transports; never interpret/log credentials."""
+    if not isinstance(remote_url, str):
+        return False
+    # Limit userinfo to URL-unreserved token characters. A second @, encoded
+    # delimiter, empty port or control byte must not reach a different parser.
+    repo = re.escape(config["repo"])
+    return bool(re.fullmatch(
+        rf"(?:https://(?:x-access-token:[A-Za-z0-9._~-]+@)?(?i:github\.com)/(?i:{repo})(?:\.git)?"
+        rf"|ssh://git@(?i:github\.com)/(?i:{repo})(?:\.git)?"
+        rf"|git@(?i:github\.com):(?i:{repo})\.git)", remote_url, flags=re.ASCII))
+
+
 def guard(config, updates, remote, state_path, read=api, git=command, remote_url=""):
     """One ordinary push at most; consume the attempt even on a rejected check."""
     validate(config)
@@ -126,9 +140,7 @@ def guard(config, updates, remote, state_path, read=api, git=command, remote_url
     # server rejection. A fresh authorized workflow run gets a fresh directory.
     with state_path.open("x", encoding="utf-8") as handle:
         handle.write("{}")
-    allowed_urls = {f"https://github.com/{config['repo']}", f"https://github.com/{config['repo']}.git",
-                    f"git@github.com:{config['repo']}.git", f"ssh://git@github.com/{config['repo']}.git"}
-    if remote_url not in allowed_urls:
+    if not expected_remote(config, remote_url):
         raise ValueError("unexpected remote URL")
     rows = [line.split() for line in updates.splitlines() if line.strip()]
     if remote != "origin" or len(rows) != 1 or len(rows[0]) != 4:
@@ -236,11 +248,23 @@ def model_api(config, args, run=command):
     file = workspace / body_path
     if directory.is_symlink() or file.is_symlink() or file.resolve().parent != directory:
         raise ValueError("comment file escapes reply directory")
-    body = file.read_text(encoding="utf-8")
+    # Nonblocking open plus descriptor type check rejects FIFOs before reading,
+    # including a file replaced between the earlier path check and open.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(file, flags), "r", encoding="utf-8") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("comment file is not regular")
+        body = handle.read(65001)
     if not body.strip() or len(body) > 65000:
         raise ValueError("invalid comment body")
-    return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"],
-               input=json.dumps({"body": body}))
+    if args[0] == "reply":
+        # Do not rely on server routing to bind a repository-wide comment ID.
+        target = json.loads(run(["gh", "api", "--method", "GET", f"{root}/pulls/comments/{args[1]}"]))
+        if (not isinstance(target, dict) or type(target.get("id")) is not int
+                or target["id"] != int(args[1]) or target.get("in_reply_to_id") is not None
+                or str(target.get("pull_request_url") or "").casefold() != ("https://api.github.com/" + pull).casefold()):
+            raise ValueError("reply target is not a root on this PR")
+    return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"], input=json.dumps({"body": body}))
 
 
 def main():
@@ -258,8 +282,10 @@ def main():
         command(["git", "config", "--local", "core.hooksPath", str(directory)])
         return 0
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    if mode == "model-api" and len(sys.argv) >= 4 and sys.argv[2] == "--":
+    if mode == "model-api":
         try:
+            if len(sys.argv) < 4 or sys.argv[2] != "--":
+                raise ValueError("invalid model-api invocation")
             print(model_api(config, sys.argv[3:]))
         except (OSError, ValueError, subprocess.SubprocessError):
             print("PR API operation failed or is not permitted.", file=sys.stderr)

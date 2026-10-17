@@ -87,10 +87,22 @@ class GuardTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.push(updates=rows, remote=remote)
 
+    def test_remote_authority_rejects_ambiguous_or_encoded_delimiters(self):
+        for authority in ("x-access-token:fixture@evil.invalid@github.com",
+                          "x-access-token:fixture%40evil.invalid@github.com",
+                          "x-access-token:fixture:other@github.com", "github.com:",
+                          "x-access-token:fixture@github.com:", "github.com%2f.evil.invalid",
+                          "github.com.evil.invalid", "github.com.", "gıthub.com", "gİthub.com", "github.com\x00.evil.invalid"):
+            with self.subTest(authority=authority):
+                self.assertFalse(m.expected_remote(CONFIG, "https://" + authority + "/acme/example.git"))
+
     def test_remote_url_must_bind_exact_repository(self):
         for url in ("https://github.com/acme/other.git", "https://evil.invalid/acme/example.git",
                     "https://github.com@evil.invalid/acme/example.git", "https://github.com/acme/example.git/evil",
-                    "file:///tmp/remote.git", "", "git@evil.invalid:acme/example.git"):
+                    "file:///tmp/remote.git", "", "git@evil.invalid:acme/example.git",
+                    "https://other:fixture@github.com/acme/example.git", "https://github.com/acme/example.git?x=1",
+                    "https://github.com/acme/example.git#fragment", "https://github.com:444/acme/example.git",
+                    "https://github.com/acme/example.git\\evil", "https://github.com/ACME/Example.git\n"):
             with self.subTest(url=url):
                 self.state.unlink(missing_ok=True)
                 with self.assertRaisesRegex(ValueError, "remote URL"):
@@ -113,7 +125,7 @@ class GuardTests(unittest.TestCase):
 
     def test_pr_api_facade_constructs_only_current_pr_reads_and_posts(self):
         from unittest.mock import Mock
-        run = Mock(return_value="{}")
+        run = Mock(return_value=json.dumps({"id": 123, "pull_request_url": "https://api.github.com/repos/acme/example/pulls/7"}))
         for operation, endpoint in (("read", "pulls/7"), ("comments", "issues/7/comments"),
                                     ("review-comments", "pulls/7/comments"), ("reviews", "pulls/7/reviews")):
             m.model_api(CONFIG, [operation], run=run)
@@ -133,6 +145,65 @@ class GuardTests(unittest.TestCase):
                 m.model_api(CONFIG, args, run=run)
             self.assertEqual(run.call_args.args[0], ["gh", "api", "--method", "POST", "repos/acme/example/" + endpoint, "--input", "-"])
             self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"body": body.read_text()})
+
+    def test_reply_refuses_foreign_missing_malformed_or_non_root_targets(self):
+        from unittest.mock import Mock
+        (self.path / ".claude-fixer-replies").mkdir()
+        (self.path / ".claude-fixer-replies/body.txt").write_text("Fix explanation", encoding="utf-8")
+        valid = {"id": 123, "pull_request_url": "https://api.github.com/repos/acme/example/pulls/7"}
+        for target in ([], {}, valid | {"id": 124}, valid | {"id": True},
+                       valid | {"in_reply_to_id": 1}, valid | {"pull_request_url": valid["pull_request_url"] + "0"},
+                       valid | {"pull_request_url": "https://api.github.com/repos/other/repo/pulls/7"}):
+            with self.subTest(target=target), patch.object(m.Path, "cwd", return_value=self.path):
+                run = Mock(return_value=json.dumps(target))
+                with self.assertRaises(ValueError):
+                    m.model_api(CONFIG, ["reply", "123", ".claude-fixer-replies/body.txt"], run=run)
+                run.assert_called_once_with(["gh", "api", "--method", "GET", "repos/acme/example/pulls/comments/123"])
+        for error in (subprocess.CalledProcessError(1, "gh"), ValueError("invalid JSON")):
+            run = Mock(side_effect=error)
+            with patch.object(m.Path, "cwd", return_value=self.path), self.assertRaises(type(error)):
+                m.model_api(CONFIG, ["reply", "123", ".claude-fixer-replies/body.txt"], run=run)
+            self.assertEqual(run.call_count, 1)
+
+    def test_action_tokenized_and_case_normalized_urls_pass_without_logging_credentials(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        urls = ("https://x-access-token:fixture_only@github.com/acme/example.git",
+                "https://GitHub.com/ACME/Example.git", "git@github.com:ACME/Example.git")
+        for url in urls:
+            with self.subTest(url=url.split("@")[-1]):
+                self.state.unlink(missing_ok=True)
+                output = StringIO()
+                with redirect_stdout(output):
+                    m.guard(CONFIG, f"HEAD {B} refs/heads/fix {A}", "origin", self.state,
+                            remote_url=url, read=lambda _: pr(), git=lambda args: B if args[1] == "rev-parse" else A)
+                self.assertEqual(json.loads(self.state.read_text()), {"candidate": B})
+                self.assertNotIn("fixture_only", output.getvalue())
+
+    def test_malformed_api_entry_does_not_read_stdin_or_burn_push_attempt(self):
+        (self.path / "context.json").write_text(json.dumps(CONFIG))
+        for args in (["model-api"], ["model-api", "--"], ["model-api", "read"]):
+            with self.subTest(args=args), patch.object(m, "__file__", str(self.path / "pre-push")), \
+                    patch.object(sys, "argv", ["pre-push", *args]), patch.object(sys, "stdin") as stdin:
+                self.assertEqual(m.main(), 1)
+                stdin.read.assert_not_called()
+                self.assertFalse(self.state.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX FIFO/symlink fixtures")
+    def test_reply_file_fifo_and_symlink_are_rejected_before_read(self):
+        from unittest.mock import Mock
+        directory = self.path / ".claude-fixer-replies"
+        directory.mkdir()
+        fifo = directory / "fifo.txt"
+        os.mkfifo(fifo)
+        secret = self.path / ".env"
+        secret.write_text("fixture-only")
+        (directory / "link.txt").symlink_to(secret)
+        for name in ("fifo", "link"):
+            with patch.object(m.Path, "cwd", return_value=self.path), \
+                    patch.object(m.Path, "read_text", side_effect=AssertionError("must reject before read")), \
+                    self.assertRaises(ValueError):
+                m.model_api(CONFIG, ["comment", f".claude-fixer-replies/{name}.txt"], run=Mock())
 
     def test_local_rewrite_rejected(self):
         with self.assertRaises(ValueError):
@@ -234,7 +305,7 @@ class RealGitRaceTests(unittest.TestCase):
             hook = hooks / "pre-push"
             trusted = hooks / "guard.py"
             trusted.write_text(SOURCE.read_text(encoding="utf-8"))
-            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL + "\n")
+            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL.replace('https://', 'https://x-access-token:fixture_only@') + "\n")
             hook.chmod(0o700)
             env = os.environ | {"REPO": CONFIG["repo"], "PR_NUMBER": "7", "HEAD_SHA": base,
                                 "HEAD_REF": "fix", "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
@@ -314,7 +385,7 @@ class RealGitRaceTests(unittest.TestCase):
             hook = hooks / "pre-push"
             trusted = hooks / "guard.py"
             trusted.write_text(SOURCE.read_text(encoding="utf-8"))
-            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL + "\n")
+            hook.write_text("#!/bin/sh\nexec " + sys.executable + " " + str(trusted) + ' "$1" ' + URL.replace('https://', 'https://x-access-token:fixture_only@') + "\n")
             hook.chmod(0o700)
             fake_api = binaries / "gh"
             fake_api.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(pr(base))) + ")\n")
