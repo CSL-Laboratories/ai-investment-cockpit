@@ -17,7 +17,12 @@ writer queue, delivery identities and mediation markers remain in use.
    failures. Changed findings or a new head keep their normal fresh budget.
 3. At least one reserved run attempt is a completed failing automatic fixer
    run of `.github/workflows/claude.yml` in this repository, for this PR, branch
-   and exact head. Its `devin-review-fix` job succeeded at the guard-install step
+   and exact head. Review events bind those fields directly. Automatic
+   `repository_dispatch` uses default-branch run metadata: its immutable
+   workflow blob must match the current trusted blob, and its authenticated
+   PR reservation plus successful context step bind the target PR/head.
+   Manual workflow dispatch and review-comment mention jobs do not qualify.
+   Its `devin-review-fix` job succeeded at the guard-install step
    named `Fixer attempt <head>:<finding-fingerprint>` before the Claude action
    failed or timed out. A cancelled action step qualifies only when both its
    parent job and run independently timed out. Human/concurrency cancellations
@@ -38,8 +43,9 @@ writer queue, delivery identities and mediation markers remain in use.
    and remember that choice for subsequent public reads in this collection.
    Existing authenticated reads handle PR/finding data;
    no new token, permission, logs, artifacts or model output are needed.
-5. Before delivery, recheck the current finding set, exhausted budget and PR
-   head. Refuse observed queued, in-progress, waiting, pending or requested
+5. Before each new failure Linear create/update, after Linear lookups, and
+   before each mediation comment, recheck the current finding set, exhausted
+   budget and PR head. A denied or stale check defers that delivery. Refuse observed queued, in-progress, waiting, pending or requested
    Claude workflow runs anywhere in the repository, because mention/manual
    runs can be attributed to the default branch. This conservative refusal
    does not claim that an unrelated PR's writer targets this PR. It is a
@@ -119,3 +125,7 @@ Filename backticks are preserved using a longer Markdown code-span delimiter;
 control characters are represented as a JSON string on one line. This avoids
 silently pointing mediation at a different filename while keeping quoted
 structure and writer-trigger sanitization intact.
+
+Dispatch event semantics follow [GitHub’s workflow event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#repository_dispatch).
+No genuine repository-dispatch failure was available during this review; its
+provenance regressions are offline fixtures, not live qualification.

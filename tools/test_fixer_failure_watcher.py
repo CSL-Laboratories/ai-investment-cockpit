@@ -171,6 +171,49 @@ class WatcherTests(unittest.TestCase):
         self.evidence.fresh = lambda: next(checks)
         self.assertEqual(self.scan(), [])
 
+    def test_linear_delivery_rechecks_failure_evidence_after_lookups(self):
+        from dataclasses import replace
+        from unittest.mock import Mock, patch
+        for existing_issue in (False, True):
+            for denied in (False, True):
+                with self.subTest(existing=existing_issue, denied=denied):
+                    self.setup_scan()
+                    live = [True]
+                    def fresh(live=live, denied=denied):
+                        if not live[0] and denied:
+                            raise RuntimeError("read denied")
+                        return live[0]
+                    self.evidence.fresh = fresh
+                    collector = lambda *_: (self.evidence, self.proofs)
+                    if RECURSION:
+                        linear = f.FakeLinear()
+                        if existing_issue:
+                            marker = m.rollup_marker(self.pull)
+                            linear.existing[marker] = "https://linear.app/fixture"
+                            linear.existing_descriptions[marker] = "Human notes."
+                        lookup = linear.find_by_marker
+                        def find(*args, live=live, lookup=lookup, **kwargs):
+                            live[0] = False
+                            return lookup(*args, **kwargs)
+                        linear.find_by_marker = find
+                        m.scan(f.cfg(), self.github, linear, failure_collector=collector)
+                        self.assertEqual(linear.created, [])
+                        self.assertEqual(linear.updated, [])
+                        self.assertEqual(linear.canceled, [])
+                        self.assertEqual(self.github.comments, [])
+                    else:
+                        cfg = replace(self.cfg, file_linear=True, linear_api_key="fixture")
+                        existing = {"id": "issue", "description": "Human notes."} if existing_issue else None
+                        def lookup(*_, live=live, existing=existing):
+                            live[0] = False
+                            return existing
+                        linear = SimpleNamespace(graphql=Mock())
+                        with patch.object(m, "linear_find_existing", side_effect=lookup), patch.object(
+                                m, "linear_resolve_ids", return_value={"teamId": "team", "labelIds": []}):
+                            m.mediate_pr(self.pull, cfg, self.github, linear, f.NOW, failure_collector=collector)
+                        linear.graphql.assert_not_called()
+                        self.assertEqual(self.github.posts, [])
+
     def test_new_run_after_first_delivery_defers_remaining_threads(self):
         self.setup_scan(3)
         self.evidence.fresh = lambda: not (self.github.comments if RECURSION else self.github.posts)

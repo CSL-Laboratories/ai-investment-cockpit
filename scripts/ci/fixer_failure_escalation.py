@@ -211,7 +211,7 @@ def snapshot(read, repo, number):
     return {"key": key, "items": items, "attempts": sorted(attempts), "pr": pr}
 
 
-def failed_run(read, repo, number, state, run_id, attempt, workflow_id):
+def failed_run(read, repo, number, state, run_id, attempt, workflow_id, default_branch, workflow_sha):
     run = read(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}", public=True)
     pr, key = state["pr"], state["key"]
     # Actions attempt metadata may qualify the path with @ref. The workflow ID,
@@ -220,12 +220,24 @@ def failed_run(read, repo, number, state, run_id, attempt, workflow_id):
     path_matches = isinstance(path, str) and re.fullmatch(re.escape(WORKFLOW) + r"(?:@[^\s]+)?", path)
     if not (run.get("id") == run_id and run.get("run_attempt") == attempt
             and run.get("workflow_id") == workflow_id and path_matches
-            and run.get("event") in {"pull_request_review", "pull_request_review_comment"}
+            and run.get("event") in {"pull_request_review", "repository_dispatch"}
             and run.get("status") == "completed" and run.get("conclusion") in FAILURES
-            and run.get("head_sha") == key["head"] and run.get("head_branch") == pr["head"]["ref"]
             and (run.get("repository") or {}).get("full_name") == repo
-            and (run.get("head_repository") or {}).get("full_name") == repo
-            and any(p.get("number") == number for p in run.get("pull_requests", []))):
+            and (run.get("head_repository") or {}).get("full_name") == repo):
+        return None
+    if run["event"] == "repository_dispatch":
+        # Dispatch metadata identifies the default branch, not the target PR.
+        # Bind its immutable workflow blob before trusting the reserved run's
+        # successful head/fingerprint context step below as the target proof.
+        dispatch_sha = run.get("head_sha")
+        if (not isinstance(dispatch_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", dispatch_sha)
+                or run.get("head_branch") != default_branch):
+            return None
+        executed = read(f"repos/{repo}/contents/{WORKFLOW}?ref={dispatch_sha}")
+        if not workflow_sha or executed.get("sha") != workflow_sha:
+            return None
+    elif (run.get("head_sha") != key["head"] or run.get("head_branch") != pr["head"]["ref"]
+          or not any(p.get("number") == number for p in run.get("pull_requests", []))):
         return None
     jobs = read(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", public=True)
     if jobs.get("total_count") != len(jobs.get("jobs", [])) or len(jobs["jobs"]) > 100:
@@ -284,7 +296,8 @@ class Evidence:
             raise Unverified("workflow identity unavailable")
         # Three is the unchanged automatic budget; never scan unbounded history.
         for run_id, attempt in self.state["attempts"][-receipts.MAX_ATTEMPTS:]:
-            self.failure = failed_run(self.read, self.repo, self.number, self.state, run_id, attempt, workflow["id"]) or ""
+            self.failure = failed_run(self.read, self.repo, self.number, self.state, run_id, attempt,
+                                      workflow["id"], metadata["default_branch"], trusted["sha"]) or ""
             if self.failure:
                 break
         if not self.failure:

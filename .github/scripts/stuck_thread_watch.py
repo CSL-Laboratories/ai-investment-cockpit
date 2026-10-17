@@ -1000,7 +1000,7 @@ def linear_resolve_ids(linear: Linear, cfg: Config) -> dict[str, Any]:
     }
 
 
-def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=()) -> str:
+def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *, resolved_thread_ids=(), delivery_check=None) -> str:
     if not items:
         raise ValueError("no stuck threads")
     number = items[0].pr_number
@@ -1018,6 +1018,8 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
             cfg.repository,
             number,
         )
+        if delivery_check is not None:
+            delivery_check()
         updated = linear.graphql(
             LINEAR_UPDATE,
             {"id": existing["id"], "input": {"title": title, "description": description}},
@@ -1040,6 +1042,8 @@ def upsert_linear_issue(linear: Linear, items: list[StuckThread], cfg: Config, *
         raise RuntimeError("linear project missing")
     if ids.get("projectId"):
         payload["projectId"] = ids["projectId"]
+    if delivery_check is not None:
+        delivery_check()
     created = linear.graphql(LINEAR_CREATE, {"input": payload})
     result = created.get("issueCreate") or {}
     issue = result.get("issue") or {}
@@ -1168,7 +1172,11 @@ def mediate_pr(
                 elif rollup_is_current(existing, generated, cfg.repository, number):
                     logs.append(f"stuck-thread-watch: pr={number} linear=unchanged")
                 else:
-                    url = upsert_linear_issue(linear, stuck, cfg, resolved_thread_ids=resolved_ids)
+                    def delivery_check():
+                        if any(item.failure_evidence for item in stuck) and not evidence.fresh():
+                            raise RuntimeError("failure evidence changed before Linear delivery")
+                    url = upsert_linear_issue(linear, stuck, cfg, resolved_thread_ids=resolved_ids,
+                                              delivery_check=delivery_check)
                     logs.append(f"stuck-thread-watch: pr={number} linear={url or 'filed'}")
             except Exception:
                 logs.append(f"stuck-thread-watch: pr={number} linear=error")
