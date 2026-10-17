@@ -377,5 +377,104 @@ class DispatchScopeTests(unittest.TestCase):
                     self.assertEqual(result.returncode == 0, expected, result.stderr)
 
 
+    def test_qualification_evidence_jobs_stay_on_blacksmith_and_the_pr_head(self):
+        matrix = json.loads((ROOT / 'docs/evidence/csl221/qualification-matrix.json').read_text())
+        qualification = self.ci['jobs']['qualification']
+        negative = self.ci['jobs']['qualification-negative-controls']
+        validate = self.ci['jobs']['qualification-validate']
+        self.assertEqual(qualification['needs'], 'filter')
+        self.assertNotIn("github.ref == 'refs/heads/main'", qualification['if'])
+        # linux/windows now wait on settle; negative-controls is still the
+        # cheap Linux-only control and follows the filter's run-tests bit.
+        self.assertEqual(
+            ' '.join(negative['if'].split()),
+            "needs.filter.outputs.run-tests == 'true'",
+        )
+        self.assertTrue(evaluate(negative['if'], **{
+            'needs.filter.outputs.run-tests': 'true',
+        }))
+        self.assertFalse(evaluate(negative['if'], **{
+            'needs.filter.outputs.run-tests': 'false',
+        }))
+        for event, scope, labels, expected in [
+            ('workflow_dispatch', '', [], True),
+            ('workflow_dispatch', 'full', [], True),
+            ('workflow_dispatch', 'linux', [], False),
+            ('pull_request', '', [], False),
+            ('pull_request', '', ['enhancement'], False),
+            ('pull_request', '', ['ci:full'], True),
+            ('push', '', [], False),
+            ('schedule', '', [], False),
+        ]:
+            with self.subTest(event=event, scope=scope, labels=labels):
+                context = {'github.event_name': event, 'inputs.scope': scope,
+                           'github.ref': 'refs/heads/main',
+                           'github.event.pull_request.labels.*.name': labels}
+                self.assertEqual(bool(evaluate(qualification['if'], **context)), expected)
+        self.assertFalse(evaluate(qualification['if'], **{
+            'github.event_name': 'pull_request',
+            'github.event.pull_request.labels.*.name': ['ci:full'],
+            'needs.filter.outputs.run-tests': 'false',
+        }))
+        self.assertEqual(qualification['strategy']['fail-fast'], 'false')
+        self.assertEqual(qualification['strategy']['matrix']['platform'], ['linux', 'windows', 'macos'])
+        self.assertEqual(qualification['strategy']['matrix']['python-version'], ['3.11', '3.12'])
+        runners = {cell['runner_image'] for cell in matrix['cells'] if cell['requirement'] == 'required'}
+        for runner in runners:
+            self.assertIn(runner, qualification['runs-on'])
+        self.assertEqual(negative['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
+        self.assertEqual(validate['runs-on'], 'blacksmith-2vcpu-ubuntu-2404')
+        self.assertEqual(validate['needs'], 'qualification')
+        self.assertIn('always()', validate['if'])
+        self.assertIn("needs.qualification.result != 'skipped'", validate['if'])
+        self.assertNotIn("needs.qualification.result == 'success'", validate['if'])
+        self.assertEqual(qualification['permissions'], {'contents': 'read', 'actions': 'read'})
+        self.assertEqual(negative['permissions'], {'contents': 'read'})
+        self.assertEqual(
+            validate['permissions'],
+            {
+                'contents': 'read',
+                'actions': 'read',
+                'id-token': 'write',
+                'attestations': 'write',
+            },
+        )
+        self.assertNotIn('write', qualification['permissions'].values())
+        joined_permissions = '\n'.join(
+            f"{job.get('permissions')}" for job in (qualification, negative, validate)
+        )
+        self.assertNotIn("actions': 'write'", joined_permissions)
+        self.assertEqual(self.ci['jobs']['linux-gates']['needs'], ['filter', 'settle', 'linux'])
+        self.assertEqual(self.ci['jobs']['macos']['runs-on'], 'macos-latest')
+        head_ref = '${{ github.event.pull_request.head.sha || inputs.pr_head_sha || github.sha }}'
+        for job in (qualification, negative, validate):
+            checkout = next(step for step in job['steps'] if step.get('uses') == 'actions/checkout@v4')
+            self.assertEqual(checkout['with']['ref'], head_ref)
+            self.assertNotIn('merge_sha', checkout['with']['ref'])
+        joined = '\n'.join(step.get('run', '') for step in qualification['steps'])
+        self.assertIn('tools/qualification_evidence.py negative-controls', joined)
+        self.assertIn('tools/qualification_evidence.py emit-cell', joined)
+        self.assertIn('--junitxml=qualification-output/junit.xml', joined)
+        upload = next(step for step in qualification['steps'] if step.get('uses') == 'actions/upload-artifact@v4')
+        self.assertIn('qualification-provider-free-', upload['with']['name'])
+        self.assertIn('attempt-${{ github.run_attempt }}', upload['with']['name'])
+        download = next(step for step in validate['steps']
+                        if step.get('uses') == 'actions/download-artifact@v4')
+        self.assertEqual(
+            download['with']['pattern'],
+            'qualification-provider-free-*-attempt-${{ github.run_attempt }}',
+        )
+        validate_script = '\n'.join(step.get('run', '') for step in validate['steps'])
+        self.assertIn('tools/qualification_evidence.py validate', validate_script)
+        self.assertIn('tools/qualification_evidence.py negative-controls', validate_script)
+        self.assertIn('tools/qualification_evidence.py require-matrix', validate_script)
+        self.assertIn('tools/qualification_evidence.py manifest', validate_script)
+        attest = next(step for step in validate['steps']
+                      if 'attest-build-provenance' in step.get('uses', ''))
+        self.assertEqual(attest['uses'], 'actions/attest-build-provenance@v3')
+        self.assertIn('qualification-evidence-bundle/*.json', attest['with']['subject-path'])
+        self.assertNotIn('qualification', self.ci['jobs']['linux-gates']['needs'])
+
+
 if __name__ == '__main__':
     unittest.main()

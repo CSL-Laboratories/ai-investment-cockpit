@@ -314,6 +314,8 @@ defects got fixed twice on two branches.
 | [[evidence/rw11-companyfacts-capture-2026-08-18]] | RW-11 prospective exact-byte Company Facts capture contract, local gates, and bounded online-test handoff |
 | [[evidence/rw11-prospective-text-population-2026-08-24]] | Witnessed outcome-independent RW-11 text-population plan, Discord receipt, offline collector contract, and future fixed-window handoff |
 | [[evidence/local-platform-matrix-2026-08-24]] | DEC-09 local Windows + Ubuntu/WSL2 Python 3.11/3.12 policy, exact matrix results, external artifact hash, and same-host limitations |
+| [[evidence/csl221-dec09-qualification-matrix-2026-10-17]] | CSL-221 replacement qualification cells. Historical DEC-09 rows stay historical. Not a release decision |
+| [[evidence/csl221-unresolved-blockers]] | CSL-221 blockers still owned by Lucas or an independent verifier |
 | [[evidence/rw14-rw19-live-evidence-2026-08-18]] | RW-14 stale-feed drill and RW-19 reconnect/backfill, news, and measured-load results |
 | [[evidence/rw19-plan-bound-news-reconnect-2026-08-24]] | Claimed offline RW-19 plan-bound news-reconnect hardening; no new capture or authority |
 | [[evidence/w24-prospective-intake-2026-08-18]] | GET-only candidate screens, merged BUG-108 repair, and fail-closed BUG-109 parser finding |

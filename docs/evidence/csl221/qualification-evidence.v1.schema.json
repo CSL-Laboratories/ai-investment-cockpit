@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "csl221.qualification-evidence.v1",
+  "title": "CSL-221 exact-candidate qualification evidence",
+  "description": "Evidence that required provider-free cells ran for one commit and tree. A cell status of pass is acceptance of this evidence check only. It is not a release qualification, not DEC-09 package acceptance, and not live authority. Skipped, unknown, and excluded are never pass.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "workflow",
+    "commit_sha",
+    "tree_sha",
+    "run_id",
+    "run_attempt",
+    "run_url",
+    "cells"
+  ],
+  "properties": {
+    "schema_version": {"const": "csl221.qualification-evidence.v1"},
+    "repository": {"const": "CSL-Laboratories/ai-investment-cockpit"},
+    "workflow": {"const": "ci"},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "run_id": {"type": "string", "pattern": "^[0-9]+$"},
+    "run_attempt": {"type": "string", "pattern": "^[0-9]+$"},
+    "run_url": {"type": "string", "format": "uri"},
+    "cells": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/cell"}
+    }
+  },
+  "$defs": {
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_id",
+        "platform",
+        "python",
+        "tier",
+        "status",
+        "commit_sha",
+        "tree_sha",
+        "run_id",
+        "run_attempt",
+        "job_id",
+        "job_key",
+        "job_url",
+        "runner_image",
+        "python_version",
+        "python_implementation",
+        "dependency_digest",
+        "junit",
+        "artifacts",
+        "artifact_dir"
+      ],
+      "properties": {
+        "cell_id": {"type": "string"},
+        "platform": {"enum": ["linux", "windows", "macos"]},
+        "python": {"enum": ["3.11", "3.12"]},
+        "tier": {"enum": ["provider-free", "replay", "simulation", "paper-demo"]},
+        "status": {
+          "enum": ["pass", "failed", "skipped", "unknown", "excluded", "not_run", "missing"]
+        },
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "run_id": {"type": "string", "pattern": "^[0-9]+$"},
+        "run_attempt": {"type": "string", "pattern": "^[0-9]+$"},
+        "job_id": {"type": "string", "pattern": "^[0-9]+$"},
+        "job_key": {"const": "qualification"},
+        "job_url": {"type": "string"},
+        "runner_image": {"type": "string"},
+        "python_version": {"type": "string"},
+        "python_implementation": {"const": "CPython"},
+        "dependency_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "artifact_dir": {"type": "string"},
+        "junit": {"$ref": "#/$defs/junit"},
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["junit.xml", "dependencies.txt", "runner.json"],
+          "properties": {
+            "junit.xml": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "dependencies.txt": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "runner.json": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+          }
+        }
+      }
+    },
+    "junit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "tests",
+        "passed",
+        "failures",
+        "errors",
+        "skipped",
+        "inventory"
+      ],
+      "properties": {
+        "path": {"const": "junit.xml"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "tests": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "failures": {"type": "integer", "minimum": 0},
+        "errors": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "inventory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["classname", "name", "status"],
+            "properties": {
+              "classname": {"type": "string"},
+              "name": {"type": "string"},
+              "status": {"enum": ["passed", "failure", "error", "skipped"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}
