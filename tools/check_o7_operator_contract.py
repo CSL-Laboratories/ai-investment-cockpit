@@ -61,6 +61,62 @@ COMMAND_PROPERTIES = (
     "request_id",
     "surface",
 )
+RESPONSE_PROPERTIES = (
+    "api_version",
+    "authority_effect",
+    "candidate_maturity",
+    "command",
+    "enforcement_route",
+    "errors",
+    "order_path",
+    "presentation",
+    "profile",
+    "request_id",
+    "result",
+    "status_code",
+    "surface",
+    "visibility",
+)
+RESULT_PROPERTIES = (
+    "active_profile_class",
+    "baseline_id",
+    "bounded_direct_authorized",
+    "budgets",
+    "bundle_id",
+    "chain_head_seq",
+    "collateral",
+    "contents",
+    "decisions",
+    "dependencies",
+    "evidence_id",
+    "export_id",
+    "includes_refusals",
+    "intervention",
+    "items",
+    "local_control_is_account_wide",
+    "order_submitted",
+    "positions",
+    "provenance",
+    "qualification",
+    "qualification_reference",
+    "raw_ref",
+    "raw_separated_from_summary",
+    "reconciliation",
+    "recorded",
+    "refusals",
+    "restart_allowed",
+    "restart_requires_reconciliation",
+    "retrieved_at",
+    "secrets_included",
+    "source_id",
+    "stale",
+    "strategy_id",
+    "summary_ref",
+    "surfaces_share_one_profile",
+    "survives_restart",
+    "unknown_orders",
+    "watch_only",
+)
 REQUIRED_CONTROLS = (
     "gui_cli_semantic_divergence",
     "hidden_refusal",
@@ -591,6 +647,39 @@ def _require_required_result_consts(schema: dict[str, Any]) -> None:
     for name in REQUIRED_TRUE_RESULTS:
         if _const_value(fields.get(name)) is not True:
             raise ContractError(f"{name} is not limited to true")
+
+
+def _require_closed_response_schema(schema: dict[str, Any]) -> None:
+    """The response and its result cannot carry an unmodeled authority field."""
+    properties = schema.get("properties")
+    result = properties.get("result") if isinstance(properties, dict) else None
+    result_properties = result.get("properties") if isinstance(result, dict) else None
+    if (
+        not isinstance(properties, dict)
+        or not _object_is_closed(schema)
+        or set(properties) != set(RESPONSE_PROPERTIES)
+    ):
+        raise ContractError("response schema accepts an authority field")
+    if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
+        raise ContractError("result schema accepts an authority field")
+
+
+def _require_result_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
+    """A closed result schema rejects an unmodeled live-authorization claim."""
+    positions = next(
+        (
+            doc
+            for doc in responses
+            if isinstance(doc, dict) and doc.get("request_id") == "req_positions"
+        ),
+        None,
+    )
+    result = positions.get("result") if isinstance(positions, dict) else None
+    if not isinstance(result, dict) or _schema_error(validator, positions) is not None:
+        raise ContractError("result schema rejects the positions oracle")
+    claimed = {**positions, "result": {**result, "live_authorized": True}}
+    if _schema_error(validator, claimed) is None:
+        raise ContractError("result schema accepts live_authorized")
 
 
 def _require_refused_intervention_unrecorded(schema: dict[str, Any]) -> None:
@@ -1548,6 +1637,7 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
         _require_refused_intervention_unrecorded(response_schema)
         _require_denied_result_consts(response_schema)
         _require_required_result_consts(response_schema)
+        _require_closed_response_schema(response_schema)
         _require_closed_command_schema(command_schema)
         _require_error_clauses(error_schema)
         response_validator = _validator(response_schema)
@@ -1632,6 +1722,7 @@ def _check_oracles(kinds: dict[str, Any], commands: dict[str, dict[str, Any]], r
     if seen != set(commands):
         raise ContractError("oracle responses do not cover the catalog")
     _require_recorded_refusal_rejected(response_validator, responses)
+    _require_result_authority_rejected(response_validator, responses)
     by_request: dict[str, dict[str, Any]] = {}
     for doc in responses:
         if not isinstance(doc, dict):

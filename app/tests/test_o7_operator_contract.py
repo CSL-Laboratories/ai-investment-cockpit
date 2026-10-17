@@ -749,6 +749,21 @@ def test_positive_safety_consts_stay_true(tmp_path: Path) -> None:
     assert "raw_separated_from_summary is not limited to true" in stderr
 
 
+def test_result_schema_rejects_unmodeled_authority(tmp_path: Path) -> None:
+    widened = tmp_path / "open-result"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["properties"]["result"]["additionalProperties"] = True
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "result schema accepts an authority field" in stderr
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {
