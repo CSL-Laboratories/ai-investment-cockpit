@@ -402,7 +402,9 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
     try:
         try:
             response = _post(body, api_key=key, client=http)
-        except (httpx.HTTPError, OSError):
+        except Exception:
+            # Any failure after the client is invoked was a dispatch, including
+            # an unexpected raise. Preflight returns never reach this call.
             return _sent("jev_error")
         if response.status_code == 429 or response.status_code >= 500:
             return _sent("jev_vendor_limit", vendor_limited=True)

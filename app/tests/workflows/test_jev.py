@@ -395,6 +395,7 @@ def test_raising_jev_client_falls_back_to_claude(st, monkeypatch):
     assert job.runtime == "claude"
     assert _events(st)[0].payload["jev_attempt"]["fallback"] == "jev_error"
     assert BreakerEngine(st).is_watch_only("jev") is False
+    assert st.usage.window("jev").used == 1
 
 
 def test_bad_weight_setting_falls_back_to_claude(st, monkeypatch):
