@@ -534,6 +534,32 @@ def test_auto_can_enter_review_live_and_resolves_to_claude(st):
     assert ladder.current() is Mode.review_live
 
 
+def test_auto_setting_cannot_arm_auto_rungs(st):
+    st.settings.decision_runtime = DecisionRuntime.auto
+    ladder = ModeLadder(st)
+    ladder.set_mode(Mode.paper, actor="op")
+    ladder.set_mode(Mode.review_live, actor="op")
+    assert ladder.current() is Mode.review_live
+    with pytest.raises(IllegalTransition, match="arm_auto_mode"):
+        ladder.set_mode(Mode.auto_veto, actor="op")
+    gate = GateResult(unlockable=True, target="auto_veto")
+    refused = ladder.arm_auto_mode(
+        Mode.auto_veto, gate_result=gate, operator="op",
+        decision_stage_runtimes=["claude", "claude", "claude"],
+    )
+    assert not refused.armed
+    assert any("COCKPIT_DECISION_RUNTIME=claude" in reason for reason in refused.reasons)
+    assert ladder.current() is Mode.review_live
+    skipped = ladder.arm_auto_mode(
+        Mode.auto_full, gate_result=GateResult(unlockable=True, target="auto_full"),
+        operator="op",
+    )
+    assert not skipped.armed
+    assert ladder.current() is Mode.review_live
+    with pytest.raises(ExecutionRuntimeError):
+        assert_execution_runtime(Mode.auto_veto, "jev")
+
+
 def test_tail_trim_keeps_the_cited_prefix(st, monkeypatch):
     _provision(monkeypatch)
     st.settings.decision_runtime = DecisionRuntime.auto
