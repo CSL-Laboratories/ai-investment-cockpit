@@ -24,7 +24,9 @@ The recorded [CSL-44 authority direction](https://linear.app/csl-laboratories/is
 allows any founder to decide product and implementation questions from research,
 research-lane outcomes, feature admission within a lane and research continuation
 within its approved budget.
-Core language/runtime choices remain founder decisions; this instruction selects none.
+Founders decide the consequential A1b core language/runtime commitment.
+Reversible implementation choices remain developer discretion within the accepted envelope,
+subject to SCOPE-AUDIT §5’s escalation triggers. This instruction selects no language or runtime.
 Lucas retains spend/new services, sensitive company credentials, company-server
 deployments and the final tie-break when founders disagree. All three founders
 participate in the final release decision; Lucas has final say in any founder disagreement,
