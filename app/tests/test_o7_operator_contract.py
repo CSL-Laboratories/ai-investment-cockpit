@@ -408,6 +408,19 @@ def test_stale_control_fails_only_when_watch_only_is_false(tmp_path: Path) -> No
     assert stderr.startswith("o7-operator-contract: FAIL:")
 
 
+def test_stale_visible_event_matches_any_catalog_command() -> None:
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    event_schema = json.loads((root / "schemas" / "operator-event.schema.json").read_text(encoding="utf-8"))
+    event_validator = CHECKER._validator(event_schema)
+    events = json.loads((root / "fixtures" / "oracle" / "events.json").read_text(encoding="utf-8"))
+    stale = next(event for event in events["events"] if event["event_type"] == "stale_visible")
+    positions = copy.deepcopy(stale)
+    positions["command"] = "operator.positions.inspect"
+    positions["request_id"] = "req_positions"
+    assert CHECKER._schema_error(event_validator, positions) is None
+    assert CHECKER._event_error(positions) is None
+
+
 def test_privileged_path_fails_on_order_path_alone(tmp_path: Path) -> None:
     root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
     copied = tmp_path / "O7"

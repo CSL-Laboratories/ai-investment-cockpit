@@ -77,7 +77,7 @@ There is no submit, approve, or broker command in the allowlist.
 
 ### Events and errors
 
-Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, and `export_recorded` is only an audit or bundle export. The oracle includes every event type. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`. A read or export does not carry `result.intervention`, `result.recorded`, or `result.survives_restart`.
+Events name a catalog command and a visibility of `visible`, `absent_not_hidden`, or `unreconciled_visible`. `hidden` is not a visibility value. The event type has to match the command: `intervention_recorded` is only a stop, reconciliation, or revocation request, `export_recorded` is only an audit or bundle export, and `stale_visible` may name any catalog command. The oracle includes every event type. A read uses `authority_effect=none`. An intervention request uses `authority_effect=intervention_request`. A read or export does not carry `result.intervention`, `result.recorded`, or `result.survives_restart`.
 
 Error codes are `usage`, `refused`, `stale_or_unreconciled`, and `unavailable`. Each error's `code` equals its `status_code`. Each error has a text message, a recovery step, and `color_only=false`. An intervention response names the same action as its command: stop, reconciliation, or revocation. A recorded stop (`recorded=true` on `operator.interventions.request_stop`) sets `survives_restart` true.
 

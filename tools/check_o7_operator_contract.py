@@ -158,7 +158,7 @@ EVENT_COMMANDS = {
     "evidence_viewed": frozenset({"operator.evidence.inspect"}),
     "refusal_visible": frozenset({"operator.decisions.inspect"}),
     "uncertainty_visible": frozenset({"operator.uncertainty.inspect"}),
-    "stale_visible": frozenset({"operator.health.inspect"}),
+    "stale_visible": frozenset(REQUIRED_MUST_SHOW),
     "unreconciled_visible": frozenset({"operator.recovery.inspect"}),
     "intervention_recorded": frozenset(
         {
