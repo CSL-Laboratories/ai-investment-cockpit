@@ -219,8 +219,11 @@ Codex gate job keeps running as it did before CSL-259. Off is not an instant kil
 switch: it stops new scans, but gate jobs already queued behind `claude-<PR>` still
 finish. Enabling it is an owner decision gated on authenticated records (CSL-272).
 
-Budget/cadence (P2) remains an owner decision. Timestamp-derived runtime times
-published rates is an estimate, not reconciled billed usage or remaining credit.
+Lucas approved the $100/month planning target with $60–75 planned core compute;
+see [budget/accounting and publication guidance](ci-cost-budget.md). This is not
+an enforced cap. Additional #174 qualification cadence remains separately priced.
+Timestamp-derived runtime times published rates is an estimate, not reconciled
+billed usage or remaining credit.
 
 ## Published head
 
