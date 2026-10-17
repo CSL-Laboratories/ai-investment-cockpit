@@ -190,6 +190,31 @@ def _logon_launch(  # pragma: no cover - Windows/logon
     )
 
 
+def _launch_accepts_on_spawn(launch) -> bool:
+    """True when ``launch(..., on_spawn=...)`` will not raise ``TypeError``.
+
+    A named ``on_spawn`` parameter accepts the keyword. ``**kwargs`` does too,
+    but only when every ``functools.wraps`` target can accept it as well. A
+    five-argument wrapper cannot, even when the function it wraps declares
+    ``on_spawn``, so that launcher keeps the five-argument call.
+    """
+    seen: set[int] = set()
+    current = launch
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        try:
+            params = inspect.signature(current, follow_wrapped=False).parameters
+        except (TypeError, ValueError):
+            return False
+        named = params.get("on_spawn")
+        if named is not None:
+            return named.kind is not inspect.Parameter.POSITIONAL_ONLY
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return False
+        current = getattr(current, "__wrapped__", None)
+    return True
+
+
 class LowPrivSubprocessTransport:
     """SEC-05 (G11 round-1 closure) — spawn the child UNDER a separate low-privilege account so a
     decision-stage subprocess NEVER inherits the orchestrator's privileged token. The child's token
@@ -210,17 +235,10 @@ class LowPrivSubprocessTransport:
     def run(self, argv: list[str], input_text: str, timeout_s: float, cwd: str | None) -> ProcResult:
         # Mark only once a launcher reports that the child exists. Passing the
         # callback before launch would keep a unit when the launcher rejects
-        # the spawn. Launchers that do not accept ``on_spawn`` keep the
+        # the spawn. Launchers that cannot accept ``on_spawn`` keep the
         # five-argument call; ``run_agent`` still marks after a successful return.
-        # follow_wrapped=False: a five-argument wrapper around an on_spawn-capable
-        # function must not be offered a keyword it cannot accept.
         launch = self._launch
-        try:
-            params = inspect.signature(launch, follow_wrapped=False).parameters
-        except (TypeError, ValueError):
-            params = {}
-        on_spawn = params.get("on_spawn")
-        if on_spawn is not None and on_spawn.kind is not inspect.Parameter.POSITIONAL_ONLY:
+        if _launch_accepts_on_spawn(launch):
             return launch(
                 self.account, argv, input_text, timeout_s, cwd,
                 on_spawn=mark_agent_dispatched,

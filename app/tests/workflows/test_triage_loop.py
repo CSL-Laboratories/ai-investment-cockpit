@@ -878,6 +878,56 @@ def test_low_priv_raise_after_spawn_keeps_the_unit(st, clock, tmp_path):
     assert DeepBudget(st).spent(day) == 1
 
 
+def test_forwarding_wrapper_raise_after_spawn_keeps_the_unit(st, clock, tmp_path):
+    """A wraps+**kwargs launcher that starts the child and then raises keeps the unit."""
+    import functools
+
+    from agent_runner.transport import LowPrivSubprocessTransport
+
+    _budget_of_one(st)
+    ev = _one_filing(st, clock, tmp_path)
+    day = NOW.date()
+
+    def inner(account, argv, input_text, timeout_s, cwd, on_spawn=None):
+        assert account == "cockpit-agent"
+        on_spawn()
+        raise TimeoutError("child started")
+
+    @functools.wraps(inner)
+    def wrapped(*args, **kwargs):
+        return inner(*args, **kwargs)
+
+    transport = LowPrivSubprocessTransport("cockpit-agent", launch=wrapped)
+
+    def propose(state, clock_, **kw):
+        state.settings.decision_agent_account = "cockpit-agent"
+        call_agent(
+            state, alias="decision", prompt_ref="interrogation_fresh.v1",
+            prompt_hash="h" * 16, prompt="answer the question",
+            schema_name="InterrogationAnswer",
+            input_refs={"event_id": kw["event"].id},
+            transport=transport,
+        )
+
+    with pytest.raises(TimeoutError, match="child started"):
+        _escalation(st, clock, tmp_path, ev, propose)
+    assert DeepBudget(st).spent(day) == 1
+    assert _payloads(st, EVENT_DEEP_ESCALATION_RELEASE) == []
+
+    calls: list[str] = []
+
+    def ok_propose(state, clock_, **kw):
+        calls.append(kw["event"].id)
+        return _stub_outcome()
+
+    st.settings.decision_agent_account = None
+    second = _escalation(st, clock, tmp_path, ev, ok_propose)
+    assert calls == []
+    assert ev.id in second["deferred"]
+    assert _deferred_reasons(st, ev.id) == ["deep_budget_exhausted"]
+    assert DeepBudget(st).spent(day) == 1
+
+
 def test_low_priv_rejection_before_spawn_releases_the_unit(st, clock, tmp_path):
     """A low-priv launcher that rejects before any child exists frees the unit."""
     from agent_runner.transport import LowPrivSubprocessTransport
