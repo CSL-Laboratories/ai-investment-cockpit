@@ -1081,6 +1081,82 @@ def test_nested_records_and_maturity_stay_pinned(tmp_path: Path) -> None:
         assert message in stderr, name
 
 
+def test_outcome_error_and_surface_allowlists_stay_pinned(tmp_path: Path) -> None:
+    by_request, commands, validator = _candidate_documents()
+    decisions = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.validate_response(validator, decisions, commands) is None
+    decisions["result"]["decisions"][0]["outcome"] = "order_submitted"
+    assert CHECKER._schema_error(validator, decisions) is not None
+    assert CHECKER.classify_response(decisions, commands) == "decision_outcome"
+    assert CHECKER.validate_response(validator, decisions, commands) is not None
+    positions = copy.deepcopy(by_request["req_positions"])
+    positions["surface"] = "broker"
+    assert CHECKER._schema_error(validator, positions) is not None
+    assert CHECKER.classify_response(positions, commands) == "unknown_surface"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    command_schema = json.loads((root / "schemas" / "operator-command.schema.json").read_text(encoding="utf-8"))
+    command_validator = CHECKER._validator(command_schema)
+    read = CHECKER._intervention_probe(
+        "operator.positions.inspect", confirmation="not_required", arguments={}
+    )
+    assert CHECKER._schema_error(command_validator, {**read, "surface": "broker"}) is not None
+    error_schema = json.loads((root / "schemas" / "operator-error.schema.json").read_text(encoding="utf-8"))
+    error_validator = CHECKER._validator(error_schema)
+    assert CHECKER._schema_error(error_validator, CHECKER._error_probe("order_submitted", "order_submitted")) is not None
+    cases = (
+        (
+            "decision-outcome",
+            "schemas/operator-response.schema.json",
+            ("properties", "result", "properties", "decisions", "items", "properties", "outcome", "enum"),
+            ["recorded", "refused", "order_submitted"],
+            "decision outcome allowlist drifted",
+        ),
+        (
+            "response-surface",
+            "schemas/operator-response.schema.json",
+            ("properties", "surface", "enum"),
+            ["gui", "cli", "broker"],
+            "response surface allowlist drifted",
+        ),
+        (
+            "command-surface",
+            "schemas/operator-command.schema.json",
+            ("properties", "surface", "enum"),
+            ["gui", "cli", "broker"],
+            "command surface allowlist drifted",
+        ),
+        (
+            "error-code",
+            "schemas/operator-error.schema.json",
+            ("properties", "code", "enum"),
+            ["usage", "refused", "stale_or_unreconciled", "unavailable", "order_submitted"],
+            "error code allowlist drifted",
+        ),
+        (
+            "error-status",
+            "schemas/operator-error.schema.json",
+            ("properties", "status_code", "enum"),
+            ["usage", "refused", "stale_or_unreconciled", "unavailable", "order_submitted"],
+            "error code allowlist drifted",
+        ),
+    )
+    for name, relative, path, value, message in cases:
+        widened = tmp_path / name
+        shutil.copytree(root, widened)
+        schema_path = widened / relative
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        cursor = schema
+        for key in path[:-1]:
+            cursor = cursor[key]
+        cursor[path[-1]] = value
+        schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+        _retarget(widened, relative)
+        code, stdout, stderr = CHECKER.evaluate(widened)
+        assert code == 1, name
+        assert stdout == ""
+        assert message in stderr, name
+
+
 def test_unanchored_result_pattern_admits_a_containing_literal() -> None:
     schema = {
         "properties": {

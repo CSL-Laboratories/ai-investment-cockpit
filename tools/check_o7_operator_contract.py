@@ -181,6 +181,8 @@ COLLATERAL_PROPERTIES = (
     "currency",
     "state",
 )
+DECISION_OUTCOMES = frozenset({"recorded", "refused"})
+SURFACES = frozenset({"cli", "gui"})
 REQUIRED_CONTROLS = (
     "gui_cli_semantic_divergence",
     "hidden_refusal",
@@ -729,6 +731,8 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
         raise ContractError("response schema required fields drifted")
     if _const_value(properties.get("api_version")) != API_VERSION:
         raise ContractError("response api_version is not o7.operator.v0")
+    if _admitted_strings(properties.get("surface")) != set(SURFACES):
+        raise ContractError("response surface allowlist drifted")
     if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
         raise ContractError("result schema accepts an authority field")
     profile = properties.get("profile")
@@ -810,6 +814,8 @@ def _require_result_authority_rejected(validator: Draft202012Validator, response
     }
     if _schema_error(validator, claimed_position) is None:
         raise ContractError("positions schema accepts live_authorized")
+    if _schema_error(validator, {**positions, "surface": "broker"}) is None:
+        raise ContractError("response schema accepts surface broker")
 
 
 def _require_embedded_error_authority_rejected(validator: Draft202012Validator, responses: list[Any]) -> None:
@@ -969,6 +975,8 @@ def _require_error_schema_rejections(validator: Draft202012Validator) -> None:
         other = codes[(index + 1) % len(codes)]
         if _schema_error(validator, _error_probe(code, other)) is None:
             raise ContractError(f"error schema accepts a mismatched status for {code}")
+    if _schema_error(validator, _error_probe("order_submitted", "order_submitted")) is None:
+        raise ContractError("error schema accepts order_submitted")
 
 
 def _unknown_order_count(result: dict[str, Any]) -> int | None:
@@ -1060,6 +1068,12 @@ def _require_closed_nested_result(result_properties: Any) -> None:
             raise ContractError("nested result schema accepts an authority field")
     if not _record_is_closed(fields.get("collateral"), COLLATERAL_PROPERTIES):
         raise ContractError("nested result schema accepts an authority field")
+    decisions = fields.get("decisions")
+    decision_items = decisions.get("items") if isinstance(decisions, dict) else None
+    decision_properties = decision_items.get("properties") if isinstance(decision_items, dict) else None
+    outcome = decision_properties.get("outcome") if isinstance(decision_properties, dict) else None
+    if _admitted_strings(outcome) != set(DECISION_OUTCOMES):
+        raise ContractError("decision outcome allowlist drifted")
 
 
 def _require_closed_command_schema(schema: dict[str, Any]) -> None:
@@ -1080,6 +1094,8 @@ def _require_closed_command_schema(schema: dict[str, Any]) -> None:
         raise ContractError("command api_version is not o7.operator.v0")
     if _const_value(properties.get("candidate_maturity")) != MATURITY:
         raise ContractError("command candidate_maturity is not researched")
+    if _admitted_strings(properties.get("surface")) != set(SURFACES):
+        raise ContractError("command surface allowlist drifted")
 
 
 def _require_command_authority_rejected(validator: Draft202012Validator) -> None:
@@ -1114,6 +1130,8 @@ def _require_command_authority_rejected(validator: Draft202012Validator) -> None
         raise ContractError("command schema accepts o7.operator.v1")
     if _schema_error(validator, {**read, "candidate_maturity": "contract_frozen"}) is None:
         raise ContractError("command schema accepts a promoted maturity")
+    if _schema_error(validator, {**read, "surface": "broker"}) is None:
+        raise ContractError("command schema accepts surface broker")
 
 
 def _require_session_scope_schema(schema: dict[str, Any]) -> None:
@@ -1207,6 +1225,12 @@ def _require_closed_error_schema(schema: dict[str, Any]) -> None:
         or not _required_is(schema, ERROR_PROPERTIES)
     ):
         raise ContractError("error schema accepts an extra field")
+    failure_codes = {code for code in EXIT_CODES if code != "ok"}
+    if (
+        _admitted_strings(properties.get("code")) != failure_codes
+        or _admitted_strings(properties.get("status_code")) != failure_codes
+    ):
+        raise ContractError("error code allowlist drifted")
 
 
 def _require_event_clauses(schema: dict[str, Any]) -> None:
@@ -1400,6 +1424,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     profile = doc.get("profile") if isinstance(doc.get("profile"), dict) else {}
     if keys & FORBIDDEN_KEYS:
         return "privileged_order_bypass"
+    if doc.get("surface") not in SURFACES:
+        return "unknown_surface"
     if doc.get("enforcement_route") != SOLE_ROUTE or doc.get("order_path") != "none":
         return "privileged_order_bypass"
     if doc.get("status_code") == "usage":
@@ -1457,6 +1483,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     decision_ids = [item.get("decision_id") for item in decision_rows]
     if len(decision_ids) != len(set(decision_ids)):
         return "duplicate_decision_id"
+    if any(item.get("outcome") not in DECISION_OUTCOMES for item in decision_rows):
+        return "decision_outcome"
     if _refusal_names_recorded_decision(refusals, decision_rows):
         return "refusal_on_recorded_decision"
     if _conflicting_refusal_reasons(refusals):
