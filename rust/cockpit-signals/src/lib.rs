@@ -108,7 +108,11 @@ impl RollingZScore {
         }
     }
 
-    pub fn update(&mut self, value: f64) -> Option<f64> {
+    pub fn window(&self) -> usize {
+        self.window
+    }
+
+    pub fn update(&mut self, value: f64) -> Result<Option<f64>, &'static str> {
         if self.values.len() == self.window {
             self.values.pop_front();
         }
@@ -127,29 +131,45 @@ impl RollingZScore {
         Some(sum_f64(&self.values, self.compensated) / self.values.len() as f64)
     }
 
-    pub fn stdev(&self) -> Option<f64> {
+    pub fn stdev(&self) -> Result<Option<f64>, &'static str> {
         let n = self.values.len();
         if n < 2 {
-            return None;
+            return Ok(None);
         }
-        let mu = self.mean()?;
+        let Some(mu) = self.mean() else {
+            return Ok(None);
+        };
+        // `(v - mean) ** 2` raises OverflowError once the square is non-finite.
+        // A sum of finite squares may still be inf, and Python keeps that.
+        if self.values.iter().any(|value| {
+            let delta = value - mu;
+            !(delta * delta).is_finite()
+        }) {
+            return Err("overflow");
+        }
         let acc = sum_mapped(self.values.iter().copied(), self.compensated, |value| {
             let delta = value - mu;
             delta * delta
         });
-        Some((acc / (n as f64 - 1.0)).sqrt())
+        Ok(Some((acc / (n as f64 - 1.0)).sqrt()))
     }
 
-    pub fn value(&self) -> Option<f64> {
+    pub fn value(&self) -> Result<Option<f64>, &'static str> {
         if !self.is_warm() {
-            return None;
+            return Ok(None);
         }
-        let sd = self.stdev()?;
+        let Some(sd) = self.stdev()? else {
+            return Ok(None);
+        };
         if sd <= 0.0 {
-            return None;
+            return Ok(None);
         }
-        let mean = self.mean()?;
-        Some((self.values.back().copied().unwrap_or(0.0) - mean) / sd)
+        let Some(mean) = self.mean() else {
+            return Ok(None);
+        };
+        Ok(Some(
+            (self.values.back().copied().unwrap_or(0.0) - mean) / sd,
+        ))
     }
 
     pub fn samples(&self) -> Vec<f64> {
@@ -174,6 +194,10 @@ impl OrderFlowImbalance {
             net: 0,
             gross: 0,
         }
+    }
+
+    pub fn window(&self) -> usize {
+        self.window
     }
 
     pub fn update(&mut self, signed_qty: i64) -> Result<f64, &'static str> {
@@ -239,7 +263,11 @@ impl RollingBeta {
         }
     }
 
-    pub fn update(&mut self, x: f64, y: f64) -> Option<f64> {
+    pub fn window(&self) -> usize {
+        self.window
+    }
+
+    pub fn update(&mut self, x: f64, y: f64) -> Result<Option<f64>, &'static str> {
         if self.xs.len() == self.window {
             self.xs.pop_front();
             self.ys.pop_front();
@@ -253,13 +281,27 @@ impl RollingBeta {
         self.xs.len() >= self.window
     }
 
-    pub fn beta(&self) -> Option<f64> {
+    pub fn beta(&self) -> Result<Option<f64>, &'static str> {
         let n = self.xs.len();
         if n < 3 {
-            return None;
+            return Ok(None);
         }
         let mx = sum_f64(&self.xs, self.compensated) / n as f64;
         let my = sum_f64(&self.ys, self.compensated) / n as f64;
+        // Variance uses ``** 2``, which raises once a square is non-finite.
+        // Covariance uses multiplication. A non-finite product is handed back
+        // to Python, which either raises on the square or returns the inf.
+        if self.xs.iter().any(|x| {
+            let dx = x - mx;
+            !(dx * dx).is_finite()
+        }) || self
+            .xs
+            .iter()
+            .zip(self.ys.iter())
+            .any(|(x, y)| !((x - mx) * (y - my)).is_finite())
+        {
+            return Err("overflow");
+        }
         let var = sum_mapped(self.xs.iter().copied(), self.compensated, |x| {
             let dx = x - mx;
             dx * dx
@@ -270,25 +312,31 @@ impl RollingBeta {
             |(x, y)| (x - mx) * (y - my),
         );
         if var <= 0.0 {
-            None
+            Ok(None)
         } else {
-            Some(cov / var)
+            Ok(Some(cov / var))
         }
     }
 
-    pub fn alpha(&self) -> Option<f64> {
-        let beta = self.beta()?;
+    pub fn alpha(&self) -> Result<Option<f64>, &'static str> {
+        let Some(beta) = self.beta()? else {
+            return Ok(None);
+        };
         let n = self.xs.len() as f64;
-        Some(
+        Ok(Some(
             sum_f64(&self.ys, self.compensated) / n
                 - beta * (sum_f64(&self.xs, self.compensated) / n),
-        )
+        ))
     }
 
-    pub fn residual(&self, x: f64, y: f64) -> Option<f64> {
-        let beta = self.beta()?;
-        let alpha = self.alpha()?;
-        Some(y - (alpha + beta * x))
+    pub fn residual(&self, x: f64, y: f64) -> Result<Option<f64>, &'static str> {
+        let Some(beta) = self.beta()? else {
+            return Ok(None);
+        };
+        let Some(alpha) = self.alpha()? else {
+            return Ok(None);
+        };
+        Ok(Some(y - (alpha + beta * x)))
     }
 
     pub fn xs(&self) -> Vec<f64> {
@@ -476,10 +524,14 @@ mod tests {
     fn zscore_of_a_constant_window_is_none() {
         let mut z = RollingZScore::new(5, true);
         for _ in 0..5 {
-            z.update(3.0);
+            z.update(3.0).unwrap();
         }
-        assert_eq!(z.stdev(), Some(0.0));
-        assert!(z.value().is_none());
+        assert_eq!(z.stdev().unwrap(), Some(0.0));
+        assert!(z.value().unwrap().is_none());
+        let mut huge = RollingZScore::new(2, true);
+        assert!(huge.update(1e308).unwrap().is_none());
+        assert!(huge.update(-1e308).is_err());
+        assert_eq!(huge.samples(), vec![1e308, -1e308]);
     }
 
     #[test]
@@ -555,9 +607,9 @@ mod tests {
         let mut beta = RollingBeta::new(20, true);
         for i in 0..20 {
             let x = i as f64;
-            beta.update(x, 3.0 + 2.5 * x);
+            beta.update(x, 3.0 + 2.5 * x).unwrap();
         }
-        assert!((beta.beta().unwrap() - 2.5).abs() < 1e-9);
-        assert!((beta.alpha().unwrap() - 3.0).abs() < 1e-9);
+        assert!((beta.beta().unwrap().unwrap() - 2.5).abs() < 1e-9);
+        assert!((beta.alpha().unwrap().unwrap() - 3.0).abs() < 1e-9);
     }
 }

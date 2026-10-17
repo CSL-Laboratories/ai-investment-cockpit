@@ -1,11 +1,15 @@
 //! PyO3 face of the online estimators. State stays in Rust across updates.
 
 use cockpit_signals::{EwmaVolatility, OrderFlowImbalance, RollingBeta, RollingZScore};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyOverflowError, PyValueError};
 use pyo3::prelude::*;
 
 fn invalid(message: &str) -> PyErr {
     PyValueError::new_err(message.to_string())
+}
+
+fn overflow(message: &str) -> PyErr {
+    PyOverflowError::new_err(message.to_string())
 }
 
 #[pyclass]
@@ -74,13 +78,13 @@ impl ZScoreCore {
         })
     }
 
-    fn update(&mut self, value: f64) -> Option<f64> {
-        self.inner.update(value)
+    fn update(&mut self, value: f64) -> PyResult<Option<f64>> {
+        self.inner.update(value).map_err(overflow)
     }
 
     #[getter]
-    fn value(&self) -> Option<f64> {
-        self.inner.value()
+    fn value(&self) -> PyResult<Option<f64>> {
+        self.inner.value().map_err(overflow)
     }
 
     #[getter]
@@ -89,8 +93,13 @@ impl ZScoreCore {
     }
 
     #[getter]
-    fn stdev(&self) -> Option<f64> {
-        self.inner.stdev()
+    fn stdev(&self) -> PyResult<Option<f64>> {
+        self.inner.stdev().map_err(overflow)
+    }
+
+    #[getter]
+    fn window(&self) -> usize {
+        self.inner.window()
     }
 
     #[getter]
@@ -130,6 +139,11 @@ impl OfiCore {
     }
 
     #[getter]
+    fn window(&self) -> usize {
+        self.inner.window()
+    }
+
+    #[getter]
     fn is_warm(&self) -> bool {
         self.inner.is_warm()
     }
@@ -156,18 +170,23 @@ impl BetaCore {
         })
     }
 
-    fn update(&mut self, x: f64, y: f64) -> Option<f64> {
-        self.inner.update(x, y)
+    fn update(&mut self, x: f64, y: f64) -> PyResult<Option<f64>> {
+        self.inner.update(x, y).map_err(overflow)
     }
 
     #[getter]
-    fn beta(&self) -> Option<f64> {
-        self.inner.beta()
+    fn beta(&self) -> PyResult<Option<f64>> {
+        self.inner.beta().map_err(overflow)
     }
 
     #[getter]
-    fn alpha(&self) -> Option<f64> {
-        self.inner.alpha()
+    fn alpha(&self) -> PyResult<Option<f64>> {
+        self.inner.alpha().map_err(overflow)
+    }
+
+    #[getter]
+    fn window(&self) -> usize {
+        self.inner.window()
     }
 
     #[getter]
@@ -175,8 +194,8 @@ impl BetaCore {
         self.inner.is_warm()
     }
 
-    fn residual(&self, x: f64, y: f64) -> Option<f64> {
-        self.inner.residual(x, y)
+    fn residual(&self, x: f64, y: f64) -> PyResult<Option<f64>> {
+        self.inner.residual(x, y).map_err(overflow)
     }
 
     fn xs(&self) -> Vec<f64> {
@@ -205,7 +224,11 @@ fn zscore_replay(window: usize, values: Vec<f64>, compensated: bool) -> PyResult
         return Err(invalid(&format!("window must be >= 2, got {window}")));
     }
     let mut z = RollingZScore::new(window, compensated);
-    Ok(values.into_iter().map(|value| z.update(value)).collect())
+    let mut out = Vec::with_capacity(values.len());
+    for value in values {
+        out.push(z.update(value).map_err(overflow)?);
+    }
+    Ok(out)
 }
 
 #[pyfunction]
@@ -236,7 +259,7 @@ fn beta_replay(
     let mut beta = RollingBeta::new(window, compensated);
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        out.push(beta.update(xs[i], ys[i]));
+        out.push(beta.update(xs[i], ys[i]).map_err(overflow)?);
     }
     Ok(out)
 }

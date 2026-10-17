@@ -188,13 +188,27 @@ class RollingZScore:
         core = self._core
         if core is None:
             return
-        self._values = deque(core.samples(), maxlen=self.window)
+        # maxlen is fixed at construction. Assigning ``window`` later changes
+        # only the warm check, so the exported deque keeps the core's window.
+        self._values = deque(core.samples(), maxlen=core.window)
         self._core = None
 
-    def update(self, value: float) -> float | None:
+    def _current_core(self) -> object | None:
         core = self._core
+        if core is not None and core.window != self.window:
+            self._leave_rust()
+            return None
+        return core
+
+    def update(self, value: float) -> float | None:
+        core = self._current_core()
         if core is not None and type(value) is float:
-            return core.update(value)
+            try:
+                return core.update(value)
+            except OverflowError:
+                # The sample is already stored. Python ``** 2`` raises.
+                self._leave_rust()
+                return self.value
         if core is not None:
             self._leave_rust()
         self._values.append(value)
@@ -202,13 +216,13 @@ class RollingZScore:
 
     @property
     def is_warm(self) -> bool:
-        if self._core is not None:
+        if self._current_core() is not None:
             return self._core.is_warm
         return len(self._values) >= self.window
 
     @property
     def mean(self) -> float | None:
-        if self._core is not None:
+        if self._current_core() is not None:
             return self._core.mean
         if not self._values:
             return None
@@ -216,8 +230,11 @@ class RollingZScore:
 
     @property
     def stdev(self) -> float | None:
-        if self._core is not None:
-            return self._core.stdev
+        if self._current_core() is not None:
+            try:
+                return self._core.stdev
+            except OverflowError:
+                self._leave_rust()
         n = len(self._values)
         if n < 2:
             return None
@@ -232,8 +249,11 @@ class RollingZScore:
         large number. A constant spread is not an infinitely strong signal — it is no signal,
         and a strategy must be able to tell the difference.
         """
-        if self._core is not None:
-            return self._core.value
+        if self._current_core() is not None:
+            try:
+                return self._core.value
+            except OverflowError:
+                self._leave_rust()
         if not self.is_warm:
             return None
         sd = self.stdev
@@ -280,11 +300,18 @@ class OrderFlowImbalance:
         core = self._core
         if core is None:
             return
-        self._flow = deque(core.quantities(), maxlen=self.window)
+        self._flow = deque(core.quantities(), maxlen=core.window)
         self._core = None
 
-    def update(self, *, signed_qty: int) -> float:
+    def _current_core(self) -> object | None:
         core = self._core
+        if core is not None and core.window != self.window:
+            self._leave_rust()
+            return None
+        return core
+
+    def update(self, *, signed_qty: int) -> float:
+        core = self._current_core()
         if core is not None and type(signed_qty) is int and _I64_MIN <= signed_qty <= _I64_MAX:
             try:
                 return core.update(signed_qty)
@@ -300,7 +327,7 @@ class OrderFlowImbalance:
     @property
     def value(self) -> float:
         """Net signed volume / gross volume. 0.0 on an empty window — genuinely no imbalance."""
-        if self._core is not None:
+        if self._current_core() is not None:
             return self._core.value
         gross = sum(abs(q) for q in self._flow)
         if gross == 0:
@@ -309,7 +336,7 @@ class OrderFlowImbalance:
 
     @property
     def is_warm(self) -> bool:
-        if self._core is not None:
+        if self._current_core() is not None:
             return self._core.is_warm
         return len(self._flow) >= self.window
 
@@ -354,14 +381,25 @@ class RollingBeta:
         core = self._core
         if core is None:
             return
-        self._xs = deque(core.xs(), maxlen=self.window)
-        self._ys = deque(core.ys(), maxlen=self.window)
+        self._xs = deque(core.xs(), maxlen=core.window)
+        self._ys = deque(core.ys(), maxlen=core.window)
         self._core = None
 
-    def update(self, x: float, y: float) -> float | None:
+    def _current_core(self) -> object | None:
         core = self._core
+        if core is not None and core.window != self.window:
+            self._leave_rust()
+            return None
+        return core
+
+    def update(self, x: float, y: float) -> float | None:
+        core = self._current_core()
         if core is not None and type(x) is float and type(y) is float:
-            return core.update(x, y)
+            try:
+                return core.update(x, y)
+            except OverflowError:
+                self._leave_rust()
+                return self.beta
         if core is not None:
             self._leave_rust()
         self._xs.append(x)
@@ -370,14 +408,17 @@ class RollingBeta:
 
     @property
     def is_warm(self) -> bool:
-        if self._core is not None:
+        if self._current_core() is not None:
             return self._core.is_warm
         return len(self._xs) >= self.window
 
     @property
     def beta(self) -> float | None:
-        if self._core is not None:
-            return self._core.beta
+        if self._current_core() is not None:
+            try:
+                return self._core.beta
+            except OverflowError:
+                self._leave_rust()
         n = len(self._xs)
         if n < 3:
             return None
@@ -391,8 +432,11 @@ class RollingBeta:
 
     @property
     def alpha(self) -> float | None:
-        if self._core is not None:
-            return self._core.alpha
+        if self._current_core() is not None:
+            try:
+                return self._core.alpha
+            except OverflowError:
+                self._leave_rust()
         beta = self.beta
         if beta is None:
             return None

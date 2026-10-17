@@ -289,6 +289,82 @@ def test_mutating_lambda_returns_to_python():
     assert seeded._core is None
 
 
+def test_mutating_window_keeps_the_original_deque_and_matches_python():
+    z_r, z_p = _pair(RollingZScore, window=5)
+    for i in range(3):
+        z_r.update(float(i))
+        z_p.update(float(i))
+    z_r.window = 2
+    z_p.window = 2
+    assert z_r.is_warm is True
+    assert z_p.is_warm is True
+    _same(z_r.value, z_p.value)
+    assert z_r._core is None
+    # The construction window still bounds the deque. A sixth sample evicts.
+    for i in range(3, 8):
+        _same(z_r.update(float(i)), z_p.update(float(i)))
+    assert z_r._snapshot() == z_p._snapshot()
+    assert len(z_r._snapshot()) == 5
+
+    grown_r, grown_p = _pair(RollingZScore, window=5)
+    for i in range(5):
+        grown_r.update(float(i))
+        grown_p.update(float(i))
+    grown_r.window = 10
+    grown_p.window = 10
+    assert grown_r.is_warm is False
+    assert grown_r.value is None
+    assert grown_p.value is None
+
+    ofi_r, ofi_p = _pair(OrderFlowImbalance, window=4)
+    for qty in (1, 1, 1):
+        ofi_r.update(signed_qty=qty)
+        ofi_p.update(signed_qty=qty)
+    ofi_r.window = 2
+    ofi_p.window = 2
+    assert ofi_r.is_warm is True
+    assert ofi_p.is_warm is True
+    assert ofi_r.value == ofi_p.value
+    assert ofi_r._core is None
+
+    beta_r, beta_p = _pair(RollingBeta, window=4)
+    for i in range(4):
+        beta_r.update(float(i), float(i))
+        beta_p.update(float(i), float(i))
+    beta_r.window = 3
+    beta_p.window = 3
+    assert beta_r.is_warm is True
+    assert beta_p.is_warm is True
+    _same(beta_r.beta, beta_p.beta)
+    assert beta_r._core is None
+
+
+def test_huge_squares_raise_the_python_overflow():
+    z_r, z_p = _pair(RollingZScore, window=2)
+    assert z_r.update(1e308) is None
+    assert z_p.update(1e308) is None
+    with pytest.raises(OverflowError):
+        z_r.update(-1e308)
+    with pytest.raises(OverflowError):
+        z_p.update(-1e308)
+    assert z_r._core is None
+    assert z_r.mean == z_p.mean == 0.0
+    with pytest.raises(OverflowError):
+        _ = z_r.stdev
+    with pytest.raises(OverflowError):
+        _ = z_p.stdev
+
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    for x in (1e308, 0.0):
+        assert beta_r.update(x, 0.0) is None
+        assert beta_p.update(x, 0.0) is None
+    with pytest.raises(OverflowError):
+        beta_r.update(-1e308, 0.0)
+    with pytest.raises(OverflowError):
+        beta_p.update(-1e308, 0.0)
+    assert beta_r._core is None
+
+
 def test_estimators_compare_by_observation_state():
     left, right = RollingZScore(window=3), RollingZScore(window=3)
     assert left == right
