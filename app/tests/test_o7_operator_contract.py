@@ -450,6 +450,37 @@ def test_validate_response_rejects_duplicate_decision_ids_the_schema_accepts() -
     assert CHECKER.validate_response(validator, conflict, commands) == "duplicate_decision_id"
 
 
+def test_one_refusal_reason_per_decision() -> None:
+    by_request, commands, validator = _candidate_documents()
+    conflict = copy.deepcopy(by_request["req_decisions"])
+    assert CHECKER.validate_response(validator, conflict, commands) is None
+    conflict["result"]["refusals"].append(
+        {
+            "decision_id": "dec_refused",
+            "reason_code": "other_reason",
+            "visible": True,
+        }
+    )
+    assert CHECKER._schema_error(validator, conflict) is None
+    assert CHECKER.classify_response(conflict, commands) == "conflicting_refusal_reason"
+    assert CHECKER.validate_response(validator, conflict, commands) == "conflicting_refusal_reason"
+
+
+def test_response_required_fields_stay_pinned(tmp_path: Path) -> None:
+    widened = tmp_path / "unversioned"
+    root = ROOT / "docs" / "replacement" / "outcomes" / "O7"
+    shutil.copytree(root, widened)
+    schema_path = widened / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["required"] = [name for name in schema["required"] if name != "api_version"]
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(widened, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(widened)
+    assert code == 1
+    assert stdout == ""
+    assert "response schema required fields drifted" in stderr
+
+
 def test_refusal_cannot_name_a_recorded_decision() -> None:
     by_request, commands, validator = _candidate_documents()
     conflict = copy.deepcopy(by_request["req_decisions"])

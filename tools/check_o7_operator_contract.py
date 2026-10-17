@@ -61,6 +61,21 @@ COMMAND_PROPERTIES = (
     "request_id",
     "surface",
 )
+RESPONSE_REQUIRED = (
+    "api_version",
+    "authority_effect",
+    "candidate_maturity",
+    "enforcement_route",
+    "errors",
+    "order_path",
+    "presentation",
+    "profile",
+    "request_id",
+    "result",
+    "status_code",
+    "surface",
+    "visibility",
+)
 RESPONSE_PROPERTIES = (
     "api_version",
     "authority_effect",
@@ -654,12 +669,15 @@ def _require_closed_response_schema(schema: dict[str, Any]) -> None:
     properties = schema.get("properties")
     result = properties.get("result") if isinstance(properties, dict) else None
     result_properties = result.get("properties") if isinstance(result, dict) else None
+    required = schema.get("required")
     if (
         not isinstance(properties, dict)
         or not _object_is_closed(schema)
         or set(properties) != set(RESPONSE_PROPERTIES)
     ):
         raise ContractError("response schema accepts an authority field")
+    if not isinstance(required, list) or len(required) != len(set(required)) or set(required) != set(RESPONSE_REQUIRED):
+        raise ContractError("response schema required fields drifted")
     if not _object_is_closed(result) or set(result_properties or {}) != set(RESULT_PROPERTIES):
         raise ContractError("result schema accepts an authority field")
 
@@ -1077,8 +1095,22 @@ def _dicts(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
+def _conflicting_refusal_reasons(refusals: list[dict[str, Any]]) -> bool:
+    """True when one decision id is given more than one refusal reason."""
+    reasons: dict[Any, Any] = {}
+    for item in refusals:
+        decision_id = item.get("decision_id")
+        reason = item.get("reason_code")
+        if decision_id in reasons and reasons[decision_id] != reason:
+            return True
+        reasons[decision_id] = reason
+    return False
+
+
 def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[dict[str, Any]]) -> bool:
     if any(item.get("visible") is not True for item in refusals):
+        return False
+    if _conflicting_refusal_reasons(refusals):
         return False
     covered = {
         (item.get("decision_id"), item.get("reason_code"))
@@ -1189,6 +1221,8 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "duplicate_decision_id"
     if _refusal_names_recorded_decision(refusals, decision_rows):
         return "refusal_on_recorded_decision"
+    if _conflicting_refusal_reasons(refusals):
+        return "conflicting_refusal_reason"
     refused_decisions = [item for item in decision_rows if item.get("outcome") == "refused"]
     dependencies = _dicts(result.get("dependencies"))
     unknown_items = [
