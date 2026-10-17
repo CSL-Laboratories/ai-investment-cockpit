@@ -32,7 +32,7 @@ testpaths = ["tests"]
 # that module only; every other warning stays in the pytest summary. Python >=3.13
 # is covered by discord.py's audioop-lts marker (see CLAUDE.md), not by this filter.
 filterwarnings = [
-  "ignore:'audioop' is deprecated and slated for removal in Python 3\\.13:DeprecationWarning:discord\\.player",
+  "ignore:'audioop' is deprecated and slated for removal in Python 3\\.13\\Z:DeprecationWarning:discord\\.player\\Z",
 ]
 
 [tool.ruff]
