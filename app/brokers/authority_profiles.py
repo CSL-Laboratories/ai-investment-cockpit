@@ -1179,6 +1179,15 @@ class AuthorityProfileStore:
         _require_now(now)
         client_id = _ident(client_order_id, code="client_order_id")
         with self._txn() as conn:
+            row = conn.execute(
+                "SELECT claimed_at FROM reservations WHERE client_order_id = ?",
+                (client_id,),
+            ).fetchone()
+            stamp_dt = now.astimezone(timezone.utc)
+            # Monotonic lease: a lagging gateway clock must never rewind it.
+            if row is not None and row["claimed_at"] is not None:
+                stamp_dt = max(stamp_dt, _parse_claimed_at(row["claimed_at"]))
+            stamp = stamp_dt.isoformat()
             updated = conn.execute(
                 """
                 UPDATE reservations
@@ -1186,7 +1195,7 @@ class AuthorityProfileStore:
                 WHERE client_order_id = ? AND claim_generation = ? AND handoff_state = 'in_progress'
                   AND handoff_done = 0
                 """,
-                (now.astimezone(timezone.utc).isoformat(), client_id, generation),
+                (stamp, client_id, generation),
             )
         if updated.rowcount != 1:
             raise ProfileRefused(

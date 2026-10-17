@@ -1548,6 +1548,34 @@ def test_first_profile_installs_on_fresh_store_and_oversized_confidence_refuses(
     assert code == "model_output"
 
 
+def test_claim_fence_never_rewinds_lease_on_lagging_clock(tmp_path):
+    path = tmp_path / "monotonic.sqlite"
+    store = AuthorityProfileStore(path)
+    _install(store)
+    store.authorize(
+        "profile-b", action="submit_paper", client_order_id="mono-1",
+        notional=Decimal("10.00"), actor="stop-owner", now=NOW, order_ref="ord-mono",
+    )
+    claim_time = NOW + timedelta(seconds=90)
+    ticket = store.claim_handoff("mono-1", now=claim_time, awaiting_submit=True)
+    assert isinstance(ticket, ClaimTicket)
+    import sqlite3
+
+    def claimed_at():
+        conn = sqlite3.connect(path)
+        try:
+            return conn.execute(
+                "SELECT claimed_at FROM reservations WHERE client_order_id = ?",
+                ("mono-1",),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+    before = claimed_at()
+    store._confirm_claim_before_broker_call("mono-1", ticket.generation, now=NOW)
+    assert claimed_at() == before
+
+
 def test_claim_fence_refreshes_lease_with_current_clock(tmp_path):
     """The fence reads the clock when it fires, so claimed_at advances."""
     from app.brokers import authority_profiles as ap
