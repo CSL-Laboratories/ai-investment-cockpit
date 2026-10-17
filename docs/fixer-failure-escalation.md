@@ -101,3 +101,16 @@ Never manufacture findings/events or reopen resolved findings to qualify it.
 Historical #142 lacks the new context binding and intentionally cannot be
 replayed as new evidence. Existing workflow validation blocks pre-merge live
 qualification of a changed workflow. No bypass is authorized.
+
+## Review repair qualification
+
+Mediation bodies neutralize every case-insensitive Claude mention substring,
+including Unicode suffixes and longer names, on ordinary and failure routes.
+Quoted data never grants a writer trigger. Local fixtures exercise these inputs;
+no hostile trigger is posted to GitHub for testing.
+
+Cockpit retains failure blocks only outside rendered text fences, including
+legacy bodies. Quoted headings, markers, footer and managed-section sentinels
+are neutralized in new output. A current ordinary item supersedes its historical
+failure entry by thread identity; quoted marker text cannot suppress other
+entries. Resolved real threads do not leave forged quoted entries behind.

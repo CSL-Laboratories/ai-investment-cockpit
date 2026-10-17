@@ -249,11 +249,27 @@ def issue_is_active(node: dict[str, Any]) -> bool:
     return str(state.get("type") or "").lower() not in {"completed", "canceled"}
 
 
+def managed_bounds(text: str) -> tuple[int, int] | None:
+    """Locate renderer sentinels outside legacy fenced review quotations."""
+    offset, start, quoted = 0, None, False
+    for line in (text or "").splitlines(keepends=True):
+        value = line.rstrip("\r\n")
+        if value == "```text" and not quoted:
+            quoted = True
+        elif value == "```" and quoted:
+            quoted = False
+        elif not quoted:
+            if value == MANAGED_BEGIN and start is None:
+                start = offset + len(MANAGED_BEGIN)
+            elif value == MANAGED_END and start is not None:
+                return start, offset
+        offset += len(line)
+    return None
+
+
 def managed_section(text: str) -> str:
-    body = text or ""
-    if MANAGED_BEGIN not in body or MANAGED_END not in body:
-        return ""
-    return body.split(MANAGED_BEGIN, 1)[1].split(MANAGED_END, 1)[0]
+    bounds = managed_bounds(text)
+    return text[bounds[0]:bounds[1]] if bounds else ""
 
 
 def pr_markers_in(text: str) -> list[str]:
@@ -368,6 +384,11 @@ def claude_claimed_fix(text: str) -> bool:
 
 def quote_untrusted(text: str, limit: int) -> str:
     cleaned = (text or "").replace("```", "'''").strip()
+    # Quoted data must never acquire the renderer's structural vocabulary.
+    cleaned = re.sub(r"(?m)^### ", "###\u200b ", cleaned)
+    for marker_text in ("<!-- fixer-failure-handoff:", MANAGED_BEGIN, MANAGED_END,
+                        "*Auto-filed by the in-repo stuck-thread watch"):
+        cleaned = cleaned.replace(marker_text, marker_text[0] + "\u200b" + marker_text[1:])
     if len(cleaned) > limit:
         cleaned = cleaned[: limit].rstrip() + "\n…(truncated)"
     return cleaned
@@ -543,6 +564,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
     loc = item.path or "(unknown file)"
     if item.line:
         loc = f"{loc}:{item.line}"
+    loc = loc.replace("`", "").replace("\n", " ").replace("\r", " ")
     devin = quote_untrusted(item.devin_body, cfg.quote_limit)
     claude = quote_untrusted(item.claude_body, cfg.quote_limit)
     evidence = ("\n### Workflow failure evidence\n\n" + item.failure_evidence + "\n") if item.failure_evidence else ""
@@ -565,7 +587,7 @@ def build_mediation_comment(item: StuckThread, cfg: Config) -> str:
         f"### Devin's finding\n\n```text\n{devin}\n```\n\n"
         f"### Claude's reply\n\n```text\n{claude}\n```\n{evidence}"
     )
-    return re.sub(r"@(?=claude\b)", "@ ", body, flags=re.IGNORECASE) if item.failure_evidence else body
+    return re.sub(r"@claude", "@ claude", body, flags=re.IGNORECASE)
 
 
 def build_linear_title(repo: str, number: int) -> str:
@@ -576,7 +598,7 @@ def _thread_loc(item: StuckThread) -> str:
     loc = item.path or "(unknown file)"
     if item.line:
         loc = f"{loc}:{item.line}"
-    return loc
+    return loc.replace("`", "").replace("\n", " ").replace("\r", " ")
 
 
 def build_linear_description(items: list[StuckThread], cfg: Config) -> str:
@@ -630,8 +652,9 @@ def _legacy_human_notes(existing: str) -> str:
 
 
 def human_suffix(existing: str) -> str:
-    if MANAGED_END in existing:
-        return existing.split(MANAGED_END, 1)[1].lstrip("\n")
+    bounds = managed_bounds(existing)
+    if bounds:
+        return existing[bounds[1] + len(MANAGED_END):].lstrip("\n")
     footer = "*Auto-filed by the in-repo stuck-thread watch"
     idx = existing.rfind(footer)
     if idx != -1:
