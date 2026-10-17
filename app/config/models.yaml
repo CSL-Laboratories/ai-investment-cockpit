@@ -8,6 +8,9 @@
 #   decision                  -> Claude Haiku only. Default CLI id is Haiku 4.5.
 #     COCKPIT_DECISION_MODEL=claude-haiku-5-5 opts into Haiku 5.5 when the CLI has it.
 #     Prompts must stay under 100k tokens or Haiku 5.5 bills the whole request at 5x.
+#   jev / auto                -> not CLI providers. Jev is an HTTP decision route
+#     (workflows/jev.py) for paper/read-only only. auto keeps this Claude map and
+#     the router may send one light decision to Jev.
 #   deep                      -> legacy Opus alias, still Claude, no longer the proposal route.
 aliases:
   triage:

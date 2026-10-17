@@ -6,12 +6,19 @@ self-hosted-runner:
 # GitHub supports queue:max (May 2026); actionlint support is pending:
 # https://github.com/rhysd/actionlint/pull/654
 # Keep this exact diagnostic/path exception until the pinned release supports it.
-# tools/test_claude_pr_fixer.py validates all three shared queue blocks, including
-# negative controls. All other actionlint checks remain enabled.
+# tools/test_claude_pr_fixer.py and tools/test_ci_cancel_controller.py validate
+# shared fixer queues and ordinary PR queues, including negative controls.
+# All other actionlint checks remain enabled.
 paths:
   .github/workflows/claude.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
   .github/workflows/conflict-scan.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+  .github/workflows/ci.yml:
+    ignore:
+      - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'
+  .github/workflows/rust.yml:
     ignore:
       - '^unexpected key "queue" for "concurrency" section\. expected one of "cancel-in-progress", "group"$'

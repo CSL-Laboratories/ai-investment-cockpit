@@ -600,6 +600,59 @@ def test_token_bucket_matches_including_a_backwards_clock():
 
 
 @_needs_rust
+def test_allow_many_matches_including_a_backwards_clock():
+    times = [0.0, 0.0, 0.4, 0.4, 1.0, 0.2, 3.0, 3.0, 3.2]
+    rust = TokenBucket(rate_per_sec=2.0, capacity=1.5, now=0.0)
+    python = TokenBucket(rate_per_sec=2.0, capacity=1.5, now=0.0)
+    assert rust.allow_many(times) == _drive_bucket(python, times, python=True)
+    assert rust.tokens == python.tokens
+    assert rust._last == python._last
+    # A one-shot clock is copied before the all-float scan.
+    once = (now for now in (4.0,))
+    rust.tokens = 0.25
+    python.tokens = 0.25
+    assert rust.allow_many(once) == [python_allow(python, 4.0)]
+    assert rust.tokens == python.tokens
+    assert rust._last == python._last
+
+
+def test_allow_many_keeps_progress_when_a_later_timestamp_raises():
+    """A bad timestamp does not roll back the admissions before it."""
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    with pytest.raises(TypeError):
+        bucket.allow_many([1.0, None])
+    assert twin.allow(1.0) is True
+    with pytest.raises(TypeError):
+        twin.allow(None)
+    assert bucket.tokens == twin.tokens
+    assert bucket._last == twin._last
+    assert bucket.allow(1.0) is twin.allow(1.0) is False
+
+
+@_needs_rust
+def test_a_one_shot_float_clock_is_one_extension_call(monkeypatch):
+    """Copying a generator does not keep an all-float clock on Python."""
+    import cockpit_quant
+
+    calls = {"n": 0}
+    real = cockpit_quant.token_bucket_replay
+
+    def wrap(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
+    times = [i * 0.5 for i in range(4)]
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    assert bucket.allow_many(t for t in times) == _drive_bucket(twin, times, python=True)
+    assert calls["n"] == 1
+    assert bucket.tokens == twin.tokens
+    assert bucket._last == twin._last
+
+
+@_needs_rust
 def test_token_bucket_replay_matches_and_starts_empty():
     import cockpit_quant
 
@@ -662,6 +715,11 @@ def test_token_bucket_nan_matches_python_max_and_min():
         assert hot.allow(now) is allowed
         _same_number(hot.tokens, python.tokens)
         _same_number(hot._last, python._last)
+        batched = TokenBucket(rate_per_sec=rate, capacity=capacity, now=last)
+        batched.tokens = tokens
+        assert batched.allow_many([now]) == [allowed]
+        _same_number(batched.tokens, python.tokens)
+        _same_number(batched._last, python._last)
 
 
 @_needs_rust
@@ -741,6 +799,10 @@ def test_a_capacity_past_the_float_range_stays_on_python(monkeypatch):
     assert allowed == [True]
     assert tokens == rust.tokens
     assert last == rust._last
+    batched = TokenBucket(rate_per_sec=1, capacity=huge, now=0)
+    assert batched.allow_many([1]) == [True]
+    assert batched.tokens == rust.tokens
+    assert batched._last == rust._last
 
 
 def test_an_int_batch_stays_on_python_even_when_each_input_is_exact(monkeypatch):
@@ -758,6 +820,11 @@ def test_an_int_batch_stays_on_python_even_when_each_input_is_exact(monkeypatch)
     assert allowed == [python_allow(python, 2**53 + 2)]
     assert tokens == python.tokens == float(2**53)
     assert last == python._last == 2**53 + 2
+    batched = TokenBucket(rate_per_sec=1, capacity=2**54 + 4, now=1)
+    batched.tokens = 1
+    assert batched.allow_many([2**53 + 2]) == allowed
+    assert batched.tokens == tokens
+    assert batched._last == last
 
     small_allowed, small_tokens, small_last = token_bucket_replay(1, 2, 0, 0, [0, 1])
     small = TokenBucket(rate_per_sec=1, capacity=2, now=0)
@@ -775,6 +842,7 @@ def test_per_call_allow_does_not_enter_the_extension(monkeypatch):
         raise AssertionError("per-call allow entered the extension")
 
     monkeypatch.setattr(cockpit_quant, "token_bucket_allow", boom)
+    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", boom)
     hot = TokenBucket(rate_per_sec=1.0, capacity=2.0, now=0.0)
     ref = TokenBucket(rate_per_sec=1.0, capacity=2.0, now=0.0)
     for now in (0.0, 0.0, 1.0, 0.5):
@@ -813,7 +881,7 @@ def _load_probe(path: str) -> str:
     """Load one admission module by path so package init cannot hide the other."""
     return textwrap.dedent(
         f"""
-        spec = importlib.util.spec_from_file_location("admission_probe", "{path}")
+        spec = importlib.util.spec_from_file_location("admission_probe", {path!r})
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         """
@@ -882,6 +950,39 @@ def test_partial_extension_is_not_a_silent_python_fallback(path, symbol):
     ran = _python(script)
     assert ran.returncode != 0, ran.stderr
     assert symbol in ran.stderr
+
+
+def test_a_bucket_without_replay_is_a_partial_wheel():
+    path = str(Path(__file__).resolve().parents[2] / "ingest" / "ratelimit.py")
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                module = types.ModuleType("cockpit_quant")
+                module.token_bucket_allow = lambda *_args, **_kwargs: None
+                return module
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        """
+    ) + _load_probe(path)
+    ran = _python(script)
+    assert ran.returncode != 0, ran.stderr
+    assert "token_bucket_replay" in ran.stderr
 
 
 def test_missing_extension_stays_on_python():

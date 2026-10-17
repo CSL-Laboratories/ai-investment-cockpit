@@ -96,9 +96,12 @@ permissions:
   contents: read
 
 concurrency:
-  # Same-head label reruns supersede PR runs; stale label context cannot cancel a newer head.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
-  cancel-in-progress: true
+  # Ordinary PR heads share a queue without arrival-order cancellation.
+  # The trusted companion cancels only verified ancestors of the live head.
+  # Label expected-head/scope, manual, draft and queue isolation is retained.
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'max' || 'single' }}
 
 jobs:
   filter:
@@ -159,9 +162,29 @@ jobs:
               fh.write("\nEOF\n")
           PY
 
+  # GitHub-hosted debounce; requires corrected #157 cross-head PR concurrency.
+  # Only non-draft synchronize waits. Other events intentionally skip settle.
+  # Waiting consumes hosted capacity and does not guarantee billing savings.
+  settle:
+    name: settle
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for a follow-up push to cancel this run
+        run: sleep 120
+
   rust-book:
     name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
-    needs: filter
+    needs: [filter, settle]
+    if: >
+      always() && !cancelled() &&
+      needs.filter.result == 'success' &&
+      (
+        needs.settle.result == 'success' ||
+        (needs.settle.result == 'skipped' &&
+          (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
+      )
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
