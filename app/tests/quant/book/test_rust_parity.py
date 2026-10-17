@@ -355,3 +355,15 @@ def test_rust_qty_domain_is_signed_64_bit():
     rust.add(order_id="hi", side=Side.SELL, price_ticks=102, qty=2**62)
     with pytest.raises(ValueError, match="signed 64-bit"):
         rust.total_qty(Side.SELL)
+
+
+def test_rust_fit_i64_extraction_bounds_and_types():
+    """FitI64 keeps its contract on the migrated PyO3 extractor."""
+    rust = LimitOrderBook("EXT")
+    rust.add(order_id="max", side=Side.BUY, price_ticks=2**63 - 1, qty=1)
+    assert rust.get("max").price_ticks == 2**63 - 1
+    with pytest.raises(ValueError, match="signed 64-bit"):
+        rust.add(order_id="low", side=Side.BUY, price_ticks=-(2**63) - 1, qty=1)
+    with pytest.raises(TypeError):
+        rust.add(order_id="str", side=Side.BUY, price_ticks=100, qty="1")
+    rust.check_integrity()
