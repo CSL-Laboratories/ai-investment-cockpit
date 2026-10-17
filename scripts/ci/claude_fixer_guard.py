@@ -257,8 +257,14 @@ def model_api(config, args, run=command):
         body = handle.read(65001)
     if not body.strip() or len(body) > 65000:
         raise ValueError("invalid comment body")
-    return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"],
-               input=json.dumps({"body": body}))
+    if args[0] == "reply":
+        # Do not rely on server routing to bind a repository-wide comment ID.
+        target = json.loads(run(["gh", "api", "--method", "GET", f"{root}/pulls/comments/{args[1]}"]))
+        if (not isinstance(target, dict) or type(target.get("id")) is not int
+                or target["id"] != int(args[1]) or target.get("in_reply_to_id") is not None
+                or str(target.get("pull_request_url") or "").casefold() != ("https://api.github.com/" + pull).casefold()):
+            raise ValueError("reply target is not a root on this PR")
+    return run(["gh", "api", "--method", "POST", endpoint, "--input", "-"], input=json.dumps({"body": body}))
 
 
 def main():

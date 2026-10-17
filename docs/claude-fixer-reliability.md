@@ -152,3 +152,8 @@ The existing action token may contain only URL-unreserved characters; multiple
 userinfo separators, encoded delimiters, empty ports and non-ASCII host lookalikes
 are rejected without printing the URL. This defensive parser restriction is not
 proof that a malformed URL previously reached another server.
+
+Before posting a review reply, the helper independently reads the target comment
+and requires its numeric ID, current PR URL and top-level root identity. Missing,
+foreign, malformed or denied target reads produce no POST. This is local binding,
+not a claim that a cross-PR GitHub write was demonstrated.
