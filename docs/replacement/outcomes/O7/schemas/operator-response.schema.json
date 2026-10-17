@@ -3,283 +3,92 @@
   "title": "O7 operator response",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "api_version",
-    "candidate_maturity",
-    "surface",
-    "request_id",
-    "profile",
-    "enforcement_route",
-    "authority_effect",
-    "order_path",
-    "status_code",
-    "visibility",
-    "result",
-    "errors",
-    "presentation"
-  ],
+  "required": ["api_version", "candidate_maturity", "surface", "request_id", "profile", "enforcement_route", "authority_effect", "order_path", "status_code", "visibility", "result", "errors", "presentation"],
   "properties": {
     "api_version": {"const": "o7.operator.v0"},
     "candidate_maturity": {"const": "researched"},
     "surface": {"enum": ["gui", "cli"]},
     "command": {"type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9._:-]+$"},
     "request_id": {"type": "string", "pattern": "^req_[a-z0-9_.:-]{1,80}$"},
-    "profile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["profile_id", "profile_class", "digest", "signature_state"],
-      "properties": {
-        "profile_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "profile_class": {"enum": ["A", "B", "C"]},
-        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-        "signature_state": {"const": "illustrative_unsigned_fixture"}
-      }
-    },
+    "profile": {"type": "object", "additionalProperties": false, "required": ["profile_id", "profile_class", "digest", "signature_state"], "properties": {"profile_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "profile_class": {"enum": ["A", "B", "C"]}, "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "signature_state": {"const": "illustrative_unsigned_fixture"}}},
     "enforcement_route": {"const": "risk_pass_mode_approval_order_gateway"},
     "authority_effect": {"enum": ["none", "intervention_request"]},
     "order_path": {"const": "none"},
     "status_code": {"enum": ["ok", "usage", "refused", "stale_or_unreconciled", "unavailable"]},
-    "visibility": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["uncertainty", "refusal", "stale_data", "reconciliation"],
-      "properties": {
-        "uncertainty": {"enum": ["visible", "absent_not_hidden"]},
-        "refusal": {"enum": ["visible", "absent_not_hidden"]},
-        "stale_data": {"enum": ["visible", "absent_not_hidden"]},
-        "reconciliation": {"enum": ["reconciled", "unreconciled_visible"]}
-      }
-    },
-    "result": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "evidence_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "source_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "retrieved_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
-        "raw_ref": {"type": "string", "pattern": "^raw://[a-z0-9_.:-]{1,64}$"},
-        "summary_ref": {"type": "string", "pattern": "^summary://[a-z0-9_.:-]{1,64}$"},
-        "raw_separated_from_summary": {"const": true},
-        "provenance": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "pattern": "^[a-z_]{1,32}$"}
-        },
-        "strategy_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "qualification": {"enum": ["not_qualified", "qualified"]},
-        "baseline_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "positions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["instrument_id", "venue", "quantity", "currency"],
-            "properties": {
-              "instrument_id": {"type": "string", "pattern": "^[A-Z0-9.-]{1,32}$"},
-              "venue": {"enum": ["stock", "kalshi_demo"]},
-              "quantity": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"},
-              "currency": {"const": "USD"}
-            }
-          }
-        },
-        "collateral": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["currency", "amount", "state"],
-          "properties": {
-            "currency": {"const": "USD"},
-            "amount": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{2}$"},
-            "state": {"enum": ["known", "unknown"]}
-          }
-        },
-        "decisions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["decision_id", "outcome", "reason_code"],
-            "properties": {
-              "decision_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-              "outcome": {"enum": ["recorded", "refused"]},
-              "reason_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}
-            }
-          }
-        },
-        "refusals": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["decision_id", "reason_code", "visible"],
-            "properties": {
-              "decision_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-              "reason_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"},
-              "visible": {"type": "boolean"}
-            }
-          }
-        },
-        "items": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["subject", "state", "visible"],
-            "properties": {
-              "subject": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-              "state": {"enum": ["known", "unknown", "uncertain"]},
-              "visible": {"type": "boolean"}
-            }
-          }
-        },
-        "watch_only": {"type": "boolean"},
-        "stale": {"type": "boolean"},
-        "dependencies": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["name", "status"],
-            "properties": {
-              "name": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-              "status": {"enum": ["ok", "stale", "unavailable"]}
-            }
-          }
-        },
-        "budgets": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["budget_id", "currency", "remaining", "scope"],
-            "properties": {
-              "budget_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-              "currency": {"const": "USD"},
-              "remaining": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{2}$"},
-              "scope": {"const": "profile"}
-            }
-          }
-        },
-        "active_profile_class": {"enum": ["A", "B", "C"]},
-        "local_control_is_account_wide": {"const": false},
-        "surfaces_share_one_profile": {"const": true},
-        "qualification_reference": {"const": "A"},
-        "bounded_direct_authorized": {"const": false},
-        "intervention": {"enum": ["stop", "reconciliation", "revocation"]},
-        "recorded": {"type": "boolean"},
-        "survives_restart": {"type": "boolean"},
-        "restart_requires_reconciliation": {"const": true},
-        "order_submitted": {"const": false},
-        "export_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "chain_head_seq": {"type": "integer", "minimum": 0},
-        "includes_refusals": {"type": "boolean"},
-        "secrets_included": {"const": false},
-        "reconciliation": {"enum": ["reconciled", "unreconciled"]},
-        "unknown_orders": {"type": "integer", "minimum": 0},
-        "restart_allowed": {"type": "boolean"},
-        "bundle_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
-        "contents": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}
-        }
-      }
-    },
-    "errors": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["code", "status_code", "message", "recovery", "color_only"],
-        "properties": {
-          "code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
-          "status_code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]},
-          "message": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
-          "recovery": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
-          "color_only": {"const": false}
-        },
-        "allOf": [
-          {"if": {"properties": {"code": {"const": "usage"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "usage"}}}},
-          {"if": {"properties": {"code": {"const": "refused"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "refused"}}}},
-          {"if": {"properties": {"code": {"const": "stale_or_unreconciled"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "stale_or_unreconciled"}}}},
-          {"if": {"properties": {"code": {"const": "unavailable"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "unavailable"}}}}
-        ]
-      }
-    },
-    "presentation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "exit_code",
-        "machine_readable",
-        "ansi_in_machine_output",
-        "color_only_signal",
-        "text_status",
-        "rendered"
-      ],
-      "properties": {
-        "exit_code": {"enum": [0, 1, 2, 3, 4]},
-        "machine_readable": {"type": "boolean"},
-        "ansi_in_machine_output": {"type": "boolean"},
-        "color_only_signal": {"type": "boolean"},
-        "text_status": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}},
-        "rendered": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}
-      }
-    }
+    "visibility": {"type": "object", "additionalProperties": false, "required": ["uncertainty", "refusal", "stale_data", "reconciliation"], "properties": {"uncertainty": {"enum": ["visible", "absent_not_hidden"]}, "refusal": {"enum": ["visible", "absent_not_hidden"]}, "stale_data": {"enum": ["visible", "absent_not_hidden"]}, "reconciliation": {"enum": ["reconciled", "unreconciled_visible"]}}},
+    "result": {"type": "object", "additionalProperties": false, "properties": {"evidence_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "source_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "retrieved_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"}, "raw_ref": {"type": "string", "pattern": "^raw://[a-z0-9_.:-]{1,64}$"}, "summary_ref": {"type": "string", "pattern": "^summary://[a-z0-9_.:-]{1,64}$"}, "raw_separated_from_summary": {"const": true}, "provenance": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z_]{1,32}$"}}, "strategy_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "qualification": {"enum": ["not_qualified", "qualified"]}, "baseline_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "positions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["instrument_id", "venue", "quantity", "currency"], "properties": {"instrument_id": {"type": "string", "pattern": "^[A-Z0-9.-]{1,32}$"}, "venue": {"enum": ["stock", "kalshi_demo"]}, "quantity": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"}, "currency": {"const": "USD"}}}}, "collateral": {"type": "object", "additionalProperties": false, "required": ["currency", "amount", "state"], "properties": {"currency": {"const": "USD"}, "amount": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{2}$"}, "state": {"enum": ["known", "unknown"]}}}, "decisions": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["decision_id", "outcome", "reason_code"], "properties": {"decision_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "outcome": {"enum": ["recorded", "refused"]}, "reason_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}}}}, "refusals": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["decision_id", "reason_code", "visible"], "properties": {"decision_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "reason_code": {"type": "string", "pattern": "^[a-z0-9_]{1,64}$"}, "visible": {"type": "boolean"}}}}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["subject", "state", "visible"], "properties": {"subject": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "state": {"enum": ["known", "unknown", "uncertain"]}, "visible": {"type": "boolean"}}}}, "watch_only": {"type": "boolean"}, "stale": {"type": "boolean"}, "dependencies": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "status"], "properties": {"name": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "status": {"enum": ["ok", "stale", "unavailable"]}}}}, "budgets": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["budget_id", "currency", "remaining", "scope"], "properties": {"budget_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "currency": {"const": "USD"}, "remaining": {"type": "string", "pattern": "^[0-9]+\\.[0-9]{2}$"}, "scope": {"const": "profile"}}}}, "active_profile_class": {"enum": ["A", "B", "C"]}, "local_control_is_account_wide": {"const": false}, "surfaces_share_one_profile": {"const": true}, "qualification_reference": {"const": "A"}, "bounded_direct_authorized": {"const": false}, "intervention": {"enum": ["stop", "reconciliation", "revocation"]}, "recorded": {"type": "boolean"}, "survives_restart": {"type": "boolean"}, "restart_requires_reconciliation": {"const": true}, "order_submitted": {"const": false}, "export_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "chain_head_seq": {"type": "integer", "minimum": 0}, "includes_refusals": {"type": "boolean"}, "secrets_included": {"const": false}, "reconciliation": {"enum": ["reconciled", "unreconciled"]}, "unknown_orders": {"type": "integer", "minimum": 0}, "restart_allowed": {"type": "boolean"}, "bundle_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"}, "contents": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}}}},
+    "errors": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["code", "status_code", "message", "recovery", "color_only"], "properties": {"code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]}, "status_code": {"enum": ["usage", "refused", "stale_or_unreconciled", "unavailable"]}, "message": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}, "recovery": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}, "color_only": {"const": false}}, "allOf": [{"if": {"properties": {"code": {"const": "usage"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "usage"}}}}, {"if": {"properties": {"code": {"const": "refused"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "refused"}}}}, {"if": {"properties": {"code": {"const": "stale_or_unreconciled"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "stale_or_unreconciled"}}}}, {"if": {"properties": {"code": {"const": "unavailable"}}, "required": ["code"]}, "then": {"properties": {"status_code": {"const": "unavailable"}}}}]}},
+    "presentation": {"type": "object", "additionalProperties": false, "required": ["exit_code", "machine_readable", "ansi_in_machine_output", "color_only_signal", "text_status", "rendered"], "properties": {"exit_code": {"enum": [0, 1, 2, 3, 4]}, "machine_readable": {"type": "boolean"}, "ansi_in_machine_output": {"type": "boolean"}, "color_only_signal": {"type": "boolean"}, "text_status": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}, "rendered": {"type": "string", "minLength": 1, "not": {"pattern": "[\\x1b]"}}}}
   },
   "allOf": [
-    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
     {"if": {"required": ["result"], "properties": {"result": {"anyOf": [{"required": ["stale"], "properties": {"stale": {"const": true}}}, {"required": ["dependencies"], "properties": {"dependencies": {"contains": {"required": ["status"], "properties": {"status": {"enum": ["stale", "unavailable"]}}}}}}]}}}, "then": {"properties": {"result": {"required": ["watch_only"], "properties": {"watch_only": {"const": true}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "reconciliation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "revocation"}}}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"], "properties": {"intervention": {"const": "stop"}}, "allOf": [{"if": {"properties": {"recorded": {"const": true}}, "required": ["recorded"]}, "then": {"properties": {"survives_restart": {"const": true}}}}]}}}},
     {"if": {"required": ["command", "status_code"], "properties": {"command": {"enum": ["operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop"]}, "status_code": {"const": "ok"}}}, "then": {"properties": {"result": {"properties": {"recorded": {"const": true}, "survives_restart": {"const": true}}}}}},
     {"if": {"required": ["command", "result"], "properties": {"command": {"enum": ["operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop"]}, "result": {"required": ["recorded"], "properties": {"recorded": {"const": true}}}}}, "then": {"properties": {"result": {"properties": {"survives_restart": {"const": true}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
     {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "A"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "A"}}}}}},
     {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "B"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "B"}}}}}},
     {"if": {"required": ["command", "profile", "status_code"], "properties": {"command": {"const": "operator.profiles.inspect"}, "status_code": {"not": {"const": "usage"}}, "profile": {"required": ["profile_class"], "properties": {"profile_class": {"const": "C"}}}}}, "then": {"properties": {"result": {"properties": {"active_profile_class": {"const": "C"}}}}}},
-    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"required": ["result"], "properties": {"result": {"required": ["reconciliation", "unknown_orders"], "properties": {"reconciliation": {"const": "reconciled"}, "unknown_orders": {"type": "integer", "minimum": 1}}}}}, "then": false},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["reconciliation"], "properties": {"reconciliation": {"const": "unreconciled_visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}, "result": {"required": ["restart_allowed"], "properties": {"restart_allowed": {"const": false}}, "anyOf": [{"required": ["reconciliation"], "properties": {"reconciliation": {"const": "unreconciled"}}}, {"required": ["unknown_orders"], "properties": {"unknown_orders": {"type": "integer", "minimum": 1}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["stale_data"], "properties": {"stale_data": {"const": "visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["stale_or_unreconciled", "unavailable"]}, "result": {"required": ["watch_only"], "properties": {"watch_only": {"const": true}}, "anyOf": [{"required": ["stale"], "properties": {"stale": {"const": true}}}, {"required": ["dependencies"], "properties": {"dependencies": {"contains": {"required": ["status"], "properties": {"status": {"const": "stale"}}}}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["refusal"], "properties": {"refusal": {"const": "visible"}}}}}, "then": {"properties": {"status_code": {"enum": ["refused", "stale_or_unreconciled", "unavailable"]}, "errors": {"contains": {"required": ["code"], "properties": {"code": {"const": "refused"}}}}, "result": {"anyOf": [{"required": ["refusals"], "properties": {"refusals": {"minItems": 1}}}, {"required": ["decisions"], "properties": {"decisions": {"contains": {"required": ["outcome"], "properties": {"outcome": {"const": "refused"}}}}}}]}}}},
     {"if": {"required": ["visibility"], "properties": {"visibility": {"required": ["uncertainty"], "properties": {"uncertainty": {"const": "visible"}}}}}, "then": {"properties": {"result": {"anyOf": [{"required": ["items"], "properties": {"items": {"contains": {"required": ["state"], "properties": {"state": {"enum": ["unknown", "uncertain"]}}}}}}, {"required": ["collateral"], "properties": {"collateral": {"required": ["state"], "properties": {"state": {"const": "unknown"}}}}}]}}}},
-    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
-    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"not": {"const": "usage"}}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
-    {
-      "if": {
-        "required": ["command", "status_code"],
-        "properties": {
-          "command": {
-            "enum": [
-              "operator.interventions.request_reconciliation",
-              "operator.interventions.request_revocation",
-              "operator.interventions.request_stop"
-            ]
-          },
-          "status_code": {"not": {"const": "usage"}}
-        }
-      },
-      "then": {"properties": {"authority_effect": {"const": "intervention_request"}}},
-      "else": {
-        "properties": {
-          "authority_effect": {"const": "none"},
-          "result": {
-            "properties": {
-              "intervention": false,
-              "recorded": false,
-              "survives_restart": false
-            }
-          }
-        }
-      }
-    },
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"const": "ok"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"const": "refused"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"const": "stale_or_unreconciled"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}, "status_code": {"const": "unavailable"}}, "required": ["command", "status_code"]}, "then": {"properties": {"result": {"required": ["items"]}}}},
+    {"if": {"required": ["command", "status_code"], "properties": {"command": {"enum": ["operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop"]}, "status_code": {"not": {"const": "usage"}}}}, "then": {"properties": {"authority_effect": {"const": "intervention_request"}}}, "else": {"properties": {"authority_effect": {"const": "none"}, "result": {"properties": {"intervention": false, "recorded": false, "survives_restart": false}}}}},
     {"if": {"properties": {"status_code": {"const": "usage"}}, "required": ["status_code"]}, "then": {"properties": {"authority_effect": {"const": "none"}, "result": {"maxProperties": 0}, "errors": {"minItems": 1, "contains": {"required": ["code"], "properties": {"code": {"const": "usage"}}}}}}, "else": {"required": ["command"], "properties": {"command": {"enum": ["operator.audit.export", "operator.budgets.inspect", "operator.decisions.inspect", "operator.evidence.inspect", "operator.export.bundle", "operator.health.inspect", "operator.interventions.request_reconciliation", "operator.interventions.request_revocation", "operator.interventions.request_stop", "operator.positions.inspect", "operator.profiles.inspect", "operator.recovery.inspect", "operator.strategies.inspect", "operator.uncertainty.inspect"]}}}},
     {"if": {"properties": {"status_code": {"const": "ok"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "ok"}, "rendered": {"pattern": "(^|\\s)status=ok($|\\s)", "not": {"pattern": "(^|\\s)status=(?!ok($|\\s))|(^|\\s)status=\\S*\\s(.*\\s)?status="}}}}}}},
     {"if": {"properties": {"status_code": {"const": "usage"}}, "required": ["status_code"]}, "then": {"properties": {"presentation": {"properties": {"text_status": {"const": "usage"}, "rendered": {"pattern": "(^|\\s)status=usage($|\\s)", "not": {"pattern": "(^|\\s)status=(?!usage($|\\s))|(^|\\s)status=\\S*\\s(.*\\s)?status="}}}}}}},

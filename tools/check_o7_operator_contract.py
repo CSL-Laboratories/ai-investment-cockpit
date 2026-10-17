@@ -358,20 +358,51 @@ def _walk_keys(value: Any):
             yield from _walk_keys(child)
 
 
-def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, list[Any]]:
-    """Map each command const to the response result fields its schema requires."""
-    found: dict[str, list[Any]] = {}
+RESULT_STATUSES = ("ok", "refused", "stale_or_unreconciled", "unavailable")
+
+
+def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str, list[Any]]]:
+    """Map each command to the result fields required for every non-usage status."""
+    found: dict[str, dict[str, list[Any]]] = {}
     for clause in schema.get("allOf", []):
         if not isinstance(clause, dict):
             continue
-        command = clause.get("if", {}).get("properties", {}).get("command", {}).get("const")
-        required = clause.get("then", {}).get("properties", {}).get("result", {}).get("required")
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        then = clause.get("then")
+        required = then.get("properties", {}).get("result", {}).get("required") if isinstance(then, dict) else None
         if not isinstance(command, str) or not isinstance(required, list):
             continue
-        if command in found:
+        if set(properties) != {"command", "status_code"}:
+            continue
+        status = properties.get("status_code")
+        status_code = status.get("const") if isinstance(status, dict) else None
+        if status_code not in RESULT_STATUSES:
+            raise ContractError(f"schema result fields are not per status for {command}")
+        by_status = found.setdefault(command, {})
+        if status_code in by_status:
             raise ContractError(f"schema result fields repeated for {command}")
-        found[command] = required
+        by_status[status_code] = required
     return found
+
+
+def _unknown_order_count(result: dict[str, Any]) -> int | None:
+    value = result.get("unknown_orders")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _reconciled_with_unknown_orders(result: dict[str, Any]) -> bool:
+    count = _unknown_order_count(result)
+    return result.get("reconciliation") == "reconciled" and count is not None and count > 0
+
+
+def _is_unreconciled(result: dict[str, Any]) -> bool:
+    if _reconciled_with_unknown_orders(result):
+        return False
+    count = _unknown_order_count(result)
+    return result.get("reconciliation") == "unreconciled" or (count is not None and count > 0)
 
 
 def _intervention_probe(name: str, *, confirmation: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -553,9 +584,9 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
     has_refusal = bool(refusals or refused_decisions)
     stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
     unavailable = any(item.get("status") == "unavailable" for item in dependencies)
-    unreconciled = result.get("reconciliation") == "unreconciled" or (
-        isinstance(result.get("unknown_orders"), int) and result.get("unknown_orders", 0) > 0
-    )
+    if _reconciled_with_unknown_orders(result):
+        return "reconciled_with_unknown_orders"
+    unreconciled = _is_unreconciled(result)
     higher_status = stale or unreconciled or unavailable
     has_uncertainty = bool(unknown_items) or collateral.get("state") == "unknown"
     claims_refusal = visibility.get("refusal") == "visible"
@@ -689,10 +720,11 @@ def _response_claims_event(event_type: Any, response: dict[str, Any]) -> bool:
         stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
         return visibility.get("stale_data") == "visible" and stale
     if event_type == "unreconciled_visible":
-        unreconciled = result.get("reconciliation") == "unreconciled" or (
-            isinstance(result.get("unknown_orders"), int) and result.get("unknown_orders", 0) > 0
+        return (
+            visibility.get("reconciliation") == "unreconciled_visible"
+            and _is_unreconciled(result)
+            and not _reconciled_with_unknown_orders(result)
         )
-        return visibility.get("reconciliation") == "unreconciled_visible" and unreconciled
     if event_type == "intervention_recorded":
         expected = INTERVENTION_NAMES.get(response.get("command"))
         return expected is not None and result.get("intervention") == expected and result.get("recorded") is True
@@ -978,7 +1010,13 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             raise ContractError("schema command enum drifted from the catalog")
         schema_fields = _schema_command_result_fields(response_schema)
         for name, spec in REQUIRED_COMMANDS.items():
-            if schema_fields.get(name) != list(spec["fields"]):
+            by_status = schema_fields.get(name)
+            pinned = list(spec["fields"])
+            if (
+                not isinstance(by_status, dict)
+                or set(by_status) != set(RESULT_STATUSES)
+                or any(fields != pinned for fields in by_status.values())
+            ):
                 raise ContractError(f"schema result fields drifted for {name}")
         response_validator = _validator(response_schema)
         command_validator = _validator(command_schema)

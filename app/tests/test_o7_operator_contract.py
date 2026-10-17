@@ -568,6 +568,56 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result fields drifted for operator.evidence.inspect" in stderr
+    ok_only = tmp_path / "ok-only"
+    shutil.copytree(root, ok_only)
+    schema_path = ok_only / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    kept = []
+    saw_ok = False
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        status = properties.get("status_code", {}).get("const") if isinstance(properties, dict) else None
+        if command == "operator.evidence.inspect" and status in CHECKER.RESULT_STATUSES:
+            if status == "ok" and not saw_ok:
+                kept.append(clause)
+                saw_ok = True
+            continue
+        kept.append(clause)
+    assert saw_ok
+    schema["allOf"] = kept
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(ok_only, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(ok_only)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result fields drifted for operator.evidence.inspect" in stderr
+
+
+def test_reconciled_result_cannot_carry_unknown_orders() -> None:
+    by_request, commands, validator = _candidate_documents()
+    conflict = copy.deepcopy(by_request["req_recovery"])
+    assert conflict["result"]["reconciliation"] == "reconciled"
+    assert conflict["result"]["unknown_orders"] == 0
+    assert CHECKER.classify_response(conflict, commands) is None
+    conflict["result"]["unknown_orders"] = 1
+    conflict["visibility"]["reconciliation"] = "unreconciled_visible"
+    conflict["status_code"] = "stale_or_unreconciled"
+    conflict["result"]["restart_allowed"] = False
+    conflict["errors"] = [
+        {
+            "code": "stale_or_unreconciled",
+            "status_code": "stale_or_unreconciled",
+            "message": "Unknown orders remain.",
+            "recovery": "Reconcile before restart.",
+            "color_only": False,
+        }
+    ]
+    conflict["presentation"]["exit_code"] = 3
+    conflict["presentation"]["text_status"] = "stale_or_unreconciled"
+    conflict["presentation"]["rendered"] = "status=stale_or_unreconciled recovery"
+    assert CHECKER.classify_response(conflict, commands) == "reconciled_with_unknown_orders"
+    assert CHECKER._schema_error(validator, conflict) is not None
 
 
 def test_each_intervention_command_requires_confirmation(tmp_path: Path) -> None:
