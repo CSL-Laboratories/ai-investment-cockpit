@@ -1,0 +1,150 @@
+{
+  "schema_version": "o2.candidate.v1",
+  "maturity": "researched",
+  "contract_frozen": false,
+  "qualification_claimed": false,
+  "empirical_pass_claimed": false,
+  "source_commit": "ebbaa34489f171e079834d02098135711e1d4755",
+  "issue_baseline_commit": "73ab78d9d69494c757cec875855121b1d29320a4",
+  "checked_on": "2026-10-17",
+  "feeds": [
+    {
+      "feed_id": "o2_synthetic_fixture_corpus",
+      "market_family": "cross_market",
+      "qualification": "not_qualified",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "Synthetic adverse cases exercise the candidate rules only. They are not a recorded vendor capture and do not qualify any feed."
+      ]
+    },
+    {
+      "feed_id": "sec_edgar_submissions",
+      "market_family": "equity",
+      "qualification": "public_documented",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "unknowns": [
+        "The public page dated 2024-06-06 and reviewed 2025-04-08 describes unauthenticated submissions JSON and does not pin acceptanceDateTime as a frozen schema.",
+        "SEC programmatic access requires a declared user-agent. This packet does not send one.",
+        "Real-time submissions versus the nightly bulk ZIP were not compared."
+      ]
+    },
+    {
+      "feed_id": "sec_edgar_companyfacts",
+      "market_family": "equity",
+      "qualification": "public_documented",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "unknowns": [
+        "Company facts are an aggregate across submissions. Amendment visibility lag is unmeasured. They are not the as-of source."
+      ]
+    },
+    {
+      "feed_id": "sec_edgar_frames",
+      "market_family": "equity",
+      "qualification": "disqualified_as_asof_source",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
+      "unknowns": [
+        "Frames return the last filed fact that best fits a calendar period. That is a current view, not a decision-time view."
+      ]
+    },
+    {
+      "feed_id": "kalshi_demo_rest_trade_api",
+      "market_family": "event",
+      "qualification": "public_documented",
+      "credentials_required": true,
+      "admitted_for_acquisition": false,
+      "documentation_url": "https://docs.kalshi.com/getting_started/api_environments",
+      "unknowns": [
+        "Demo REST base https://external-api.demo.kalshi.co/trade-api/v2 was observed 2026-10-17. trade-api/v2 is not a selected API version.",
+        "Demo credentials are not shared with production and are not authorized by this packet.",
+        "Historical cutoff timestamps move. A replay must record the cutoff it saw. That experiment was not run."
+      ]
+    },
+    {
+      "feed_id": "kalshi_demo_ws_market_lifecycle_v2",
+      "market_family": "event",
+      "qualification": "public_documented",
+      "credentials_required": true,
+      "admitted_for_acquisition": false,
+      "documentation_url": "https://docs.kalshi.com/websockets/market-and-event-lifecycle",
+      "unknowns": [
+        "Sequence-gap recovery was not tested.",
+        "Multivariate markets use a separate channel and are outside this fixture.",
+        "The fetched lifecycle page lists REST statuses initialized, active, inactive, closed, determined, disputed, amended, and finalized. It does not list void."
+      ]
+    },
+    {
+      "feed_id": "local_edgar_pipeline",
+      "market_family": "equity",
+      "qualification": "local_observed",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "app/ingest/edgar_pipeline.py reads acceptanceDateTime and rejects rows that are not unambiguous newest-first. It does not retain an out-of-order acceptance as a later knowledge version."
+      ]
+    },
+    {
+      "feed_id": "local_filings_raw_store",
+      "market_family": "equity",
+      "qualification": "local_observed",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "app/filings/raw_store.py is vendored write-once accession bytes. This packet does not restructure it and does not treat it as an event-market store."
+      ]
+    },
+    {
+      "feed_id": "local_parquet_snapshot",
+      "market_family": "equity",
+      "qualification": "local_observed",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "app/storage/parquet_store.py is write-once and keyed by date and symbol. It has no event-market identity or correction lineage."
+      ]
+    },
+    {
+      "feed_id": "local_quant_replay",
+      "market_family": "equity",
+      "qualification": "local_observed",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "app/quant/feed/replay.py orders book and trade rows by recv_ts. It does not carry filing corrections, corporate actions, or event resolution."
+      ]
+    },
+    {
+      "feed_id": "local_ingest_dedup",
+      "market_family": "equity",
+      "qualification": "local_observed",
+      "credentials_required": false,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "app/ingest/dedup.py is an in-memory LRU on source and article id. Eviction can forget a key. It is not content-hash identity and it is not durable."
+      ]
+    },
+    {
+      "feed_id": "alpaca_benzinga_and_finnhub",
+      "market_family": "equity",
+      "qualification": "not_qualified",
+      "credentials_required": true,
+      "admitted_for_acquisition": false,
+      "documentation_url": null,
+      "unknowns": [
+        "Current news connectors are stock-centric and outside this envelope. License, spend, and retention are unresolved."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "o2.lineage.schema",
+  "title": "O2 candidate transformation lineage",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "maturity", "contract_frozen", "synthetic", "edges"],
+  "properties": {
+    "schema_version": {"const": "o2.candidate.v1"},
+    "maturity": {"const": "researched"},
+    "contract_frozen": {"const": false},
+    "synthetic": {"const": true},
+    "edges": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "lineage_id",
+          "observation_id",
+          "input_raw_record_ids",
+          "transform_id",
+          "transform_version"
+        ],
+        "properties": {
+          "lineage_id": {"type": "string", "pattern": "^lin-[a-z0-9-]{1,64}$"},
+          "observation_id": {"type": "string", "pattern": "^obs-[a-z0-9-]{1,64}$"},
+          "input_raw_record_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^raw-[a-z0-9-]{1,64}$"}
+          },
+          "transform_id": {"const": "o2.candidate.effective_version"},
+          "transform_version": {"const": "o2.candidate.v1"}
+        }
+      }
+    }
+  }
+}

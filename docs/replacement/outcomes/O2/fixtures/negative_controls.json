@@ -1,0 +1,60 @@
+{
+  "schema_version": "o2.candidate.v1",
+  "maturity": "researched",
+  "contract_frozen": false,
+  "synthetic": true,
+  "pass_claimed": false,
+  "controls": [
+    {
+      "control_id": "future_data_leak",
+      "expect": ["future_data_leak"],
+      "decision_time": "2024-04-01T00:00:00Z",
+      "claimed_visible_raw_record_ids": ["raw-eq-10ka"]
+    },
+    {
+      "control_id": "raw_not_reconstructable",
+      "expect": ["raw_not_reconstructable"],
+      "decision_time": "2024-04-01T00:00:00Z",
+      "observation": {
+        "market_family": "equity",
+        "identity_id": "idn-eq-v1",
+        "natural_key": "sec:fact:0000000001:revenue:fy2023",
+        "raw_record_ids": ["raw-missing"],
+        "resolution": null,
+        "corporate_actions": []
+      }
+    },
+    {
+      "control_id": "lost_resolution_semantics",
+      "expect": ["lost_resolution_semantics"],
+      "decision_time": "2024-09-02T00:00:00Z",
+      "observation": {
+        "market_family": "event",
+        "identity_id": "idn-ev-void",
+        "natural_key": "kalshi_demo:market:kxsynth-26jan01-void:resolution",
+        "effective_raw_record_id": "raw-ev-void",
+        "raw_record_ids": ["raw-ev-void"],
+        "value": null,
+        "resolution": "yes",
+        "lifecycle_status": "finalized",
+        "corporate_actions": null
+      }
+    },
+    {
+      "control_id": "lost_corporate_action_semantics",
+      "expect": ["lost_corporate_action_semantics"],
+      "decision_time": "2024-08-02T00:00:00Z",
+      "observation": {
+        "market_family": "equity",
+        "identity_id": "idn-eq-v2",
+        "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+        "effective_raw_record_id": "raw-eq-split",
+        "raw_record_ids": ["raw-eq-split"],
+        "value": null,
+        "resolution": null,
+        "lifecycle_status": null,
+        "corporate_actions": []
+      }
+    }
+  ]
+}
