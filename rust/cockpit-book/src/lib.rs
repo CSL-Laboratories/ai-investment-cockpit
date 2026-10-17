@@ -17,4 +17,6 @@ pub use book::{Book, DepthLevel, Order};
 pub use error::BookError;
 pub use matching::{match_order, Aggressive, FillOut, MatchOutput, SelfTrade, TimeInForce};
 pub use side::Side;
-pub use synthetic::{synthetic_events, SynthAction, SynthError, SynthEvent, SynthParams};
+pub use synthetic::{
+    synthetic_events, SynthAction, SynthCursor, SynthError, SynthEvent, SynthParams,
+};

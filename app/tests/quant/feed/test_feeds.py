@@ -178,6 +178,29 @@ def test_rust_synthetic_matches_the_python_generator():
         assert list(feed) == list(feed._python_events())
 
 
+def test_rust_synthetic_matches_python_on_repeated_names_and_edges():
+    cockpit = pytest.importorskip("cockpit_quant")
+    if not hasattr(cockpit, "synthetic_cursor"):
+        pytest.skip("synthetic_cursor is not installed")
+    shared = SyntheticFeed(symbols=("S", "S"), n_events=40, seed=3)
+    assert list(shared) == list(shared._python_events())
+    empty = SyntheticFeed(symbols=(), n_events=0, seed=1)
+    assert list(empty) == [] == list(empty._python_events())
+    wide = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=5,
+        params=SyntheticParams(max_size=2**63 - 1),
+    )
+    assert list(wide) == list(wide._python_events())
+    nonfinite = SyntheticFeed(
+        symbols=("S",), n_events=1, seed=5,
+        params=SyntheticParams(tick_volatility=float("nan")),
+    )
+    with pytest.raises(ValueError):
+        list(nonfinite._python_events())
+    with pytest.raises(ValueError):
+        list(nonfinite)
+
+
 def test_a_quiet_generator_still_stabilises_depth():
     feed = SyntheticFeed(symbols=("S",), n_events=4_000, seed=8,
                          params=SyntheticParams(target_resting_orders=15))

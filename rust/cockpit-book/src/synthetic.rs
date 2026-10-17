@@ -4,6 +4,8 @@
 //! interpreter crossing for every add, cancel, and trade just to decide the
 //! next event. Callers still receive the same events, in the same order.
 
+use std::collections::HashMap;
+
 use crate::book::Book;
 use crate::matching::{match_order, Aggressive, SelfTrade, TimeInForce};
 use crate::mt::Mt;
@@ -87,62 +89,143 @@ struct Stamps {
     ingest_ts: i64,
 }
 
-pub fn synthetic_events(
-    symbols: &[String],
-    n_events: i64,
-    seed: i64,
-    params: &SynthParams,
-) -> Result<Vec<SynthEvent>, SynthError> {
-    if symbols.is_empty() {
-        return Err(SynthError("synthetic feed has no symbols".into()));
-    }
-    if n_events <= 0 {
-        return Ok(Vec::new());
-    }
-    if params.exchange_gap_ns == 0 {
-        return Err(SynthError("exchange_gap_ns must not be zero".into()));
-    }
-    let mut rng = Mt::from_seed(seed);
-    let mut state: Vec<SymbolState> = symbols
-        .iter()
-        .map(|symbol| SymbolState {
-            fair: params.initial_ticks as f64,
-            book: Book::new(symbol.clone()),
-            next_ref: 1,
-            seq: 0,
+pub struct SynthCursor {
+    remaining: i64,
+    rng: Mt,
+    symbols: Vec<String>,
+    /// Position in `symbols` -> shared state. A repeated name is one book.
+    slot_for: Vec<usize>,
+    state: Vec<SymbolState>,
+    params: SynthParams,
+    exchange_ts: i64,
+    last_recv: i64,
+    last_ingest: i64,
+}
+
+impl SynthCursor {
+    pub fn open(
+        symbols: &[String],
+        n_events: i64,
+        seed: i64,
+        params: &SynthParams,
+    ) -> Result<Self, SynthError> {
+        if n_events <= 0 {
+            return Ok(Self::empty());
+        }
+        if symbols.is_empty() {
+            return Err(SynthError("synthetic feed has no symbols".into()));
+        }
+        if params.exchange_gap_ns == 0 {
+            return Err(SynthError("exchange_gap_ns must not be zero".into()));
+        }
+        let mut state = Vec::new();
+        let mut slot_for = Vec::with_capacity(symbols.len());
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        for symbol in symbols {
+            if let Some(&slot) = seen.get(symbol) {
+                slot_for.push(slot);
+                continue;
+            }
+            let slot = state.len();
+            seen.insert(symbol.clone(), slot);
+            state.push(SymbolState {
+                fair: params.initial_ticks as f64,
+                book: Book::new(symbol.clone()),
+                next_ref: 1,
+                seq: 0,
+            });
+            slot_for.push(slot);
+        }
+        Ok(Self {
+            remaining: n_events,
+            rng: Mt::from_seed(seed),
+            symbols: symbols.to_vec(),
+            slot_for,
+            state,
+            params: params.clone(),
+            exchange_ts: 1_700_000_000 * 1_000_000_000,
+            last_recv: 0,
+            last_ingest: 0,
         })
-        .collect();
-    let mut exchange_ts: i64 = 1_700_000_000 * 1_000_000_000;
-    let mut last_recv: i64 = 0;
-    let mut last_ingest: i64 = 0;
-    let mut out = Vec::with_capacity(n_events as usize);
-    for _ in 0..n_events {
-        let index = rng.randbelow(symbols.len() as u64) as usize;
-        let symbol = symbols[index].clone();
-        let gap = trunc_i64(rng.expovariate(1.0 / params.exchange_gap_ns as f64));
-        exchange_ts = exchange_ts
+    }
+
+    fn empty() -> Self {
+        Self {
+            remaining: 0,
+            rng: Mt::from_seed(0),
+            symbols: Vec::new(),
+            slot_for: Vec::new(),
+            state: Vec::new(),
+            params: SynthParams::default(),
+            exchange_ts: 0,
+            last_recv: 0,
+            last_ingest: 0,
+        }
+    }
+
+    pub fn next_event(&mut self) -> Result<Option<SynthEvent>, SynthError> {
+        if self.remaining <= 0 {
+            return Ok(None);
+        }
+        self.remaining -= 1;
+        let index = self.rng.randbelow(self.symbols.len() as u64) as usize;
+        let symbol = self.symbols[index].clone();
+        let slot_index = self.slot_for[index];
+        let gap = trunc_i64(
+            self.rng
+                .expovariate(1.0 / self.params.exchange_gap_ns as f64),
+        );
+        self.exchange_ts = self
+            .exchange_ts
             .checked_add(gap.max(1))
             .ok_or_else(|| SynthError("exchange timestamp overflow".into()))?;
-        let recv_draw = rng
-            .randint(-params.feed_jitter_ns, params.feed_jitter_ns)
+        let recv_draw = self
+            .rng
+            .randint(-self.params.feed_jitter_ns, self.params.feed_jitter_ns)
             .ok_or_else(|| SynthError("feed jitter range is empty".into()))?;
-        let recv_ts = (exchange_ts + params.feed_latency_ns)
+        let recv_ts = (self.exchange_ts + self.params.feed_latency_ns)
             .checked_add(recv_draw)
             .ok_or_else(|| SynthError("recv timestamp overflow".into()))?
-            .max(last_recv + 1);
-        let ingest_draw = rng
-            .randint(-params.decode_jitter_ns, params.decode_jitter_ns)
+            .max(self.last_recv + 1);
+        let ingest_draw = self
+            .rng
+            .randint(-self.params.decode_jitter_ns, self.params.decode_jitter_ns)
             .ok_or_else(|| SynthError("decode jitter range is empty".into()))?;
-        let ingest_ts = (recv_ts + params.decode_latency_ns)
+        let ingest_ts = (recv_ts + self.params.decode_latency_ns)
             .checked_add(ingest_draw)
             .ok_or_else(|| SynthError("ingest timestamp overflow".into()))?
-            .max(last_ingest + 1);
-        last_recv = recv_ts;
-        last_ingest = ingest_ts;
-        let slot = &mut state[index];
+            .max(self.last_ingest + 1);
+        self.last_recv = recv_ts;
+        self.last_ingest = ingest_ts;
+        let exchange_ts = self.exchange_ts;
+        let params = self.params.clone();
+        Self::step(
+            &mut self.rng,
+            &mut self.state[slot_index],
+            symbol,
+            exchange_ts,
+            recv_ts,
+            ingest_ts,
+            &params,
+        )
+        .map(Some)
+    }
+
+    fn step(
+        rng: &mut Mt,
+        slot: &mut SymbolState,
+        symbol: String,
+        exchange_ts: i64,
+        recv_ts: i64,
+        ingest_ts: i64,
+        params: &SynthParams,
+    ) -> Result<SynthEvent, SynthError> {
         slot.seq += 1;
         let seq = slot.seq;
         slot.fair += rng.gauss(0.0, params.tick_volatility);
+        if !slot.fair.is_finite() {
+            return Err(SynthError("fair value is not finite".into()));
+        }
         let resting = slot.book.len() as i64;
         let denom = params.target_resting_orders.max(1) as f64;
         let cancel_intensity = (params.cancel_probability * resting as f64 / denom).min(0.90);
@@ -154,16 +237,28 @@ pub fn synthetic_events(
             recv_ts,
             ingest_ts,
         };
-        let event = if roll < params.trade_probability && resting > 0 {
-            match trade(&mut rng, slot, params, &stamps)? {
-                Some(event) => event,
-                None => add(&mut rng, slot, params, &stamps)?,
+        if roll < params.trade_probability && resting > 0 {
+            match trade(rng, slot, params, &stamps)? {
+                Some(event) => Ok(event),
+                None => add(rng, slot, params, &stamps),
             }
         } else if roll < params.trade_probability + cancel_intensity && resting > 0 {
-            cancel(&mut rng, slot, &stamps)?
+            cancel(rng, slot, &stamps)
         } else {
-            add(&mut rng, slot, params, &stamps)?
-        };
+            add(rng, slot, params, &stamps)
+        }
+    }
+}
+
+pub fn synthetic_events(
+    symbols: &[String],
+    n_events: i64,
+    seed: i64,
+    params: &SynthParams,
+) -> Result<Vec<SynthEvent>, SynthError> {
+    let mut cursor = SynthCursor::open(symbols, n_events, seed, params)?;
+    let mut out = Vec::new();
+    while let Some(event) = cursor.next_event()? {
         out.push(event);
     }
     Ok(out)
@@ -185,7 +280,7 @@ fn add(
     while distance < depth_limit && rng.random() > params.arrival_decay {
         distance += 1;
     }
-    let base = py_round(state.fair);
+    let base = py_round(state.fair)?;
     let mut price = if side == Side::Buy {
         base - 1 - distance
     } else {
@@ -264,7 +359,7 @@ fn trade(
     let touch = match touch {
         Some(price) => price,
         None => {
-            let base = py_round(state.fair);
+            let base = py_round(state.fair)?;
             if aggressor == Side::Buy {
                 base + 1
             } else {
@@ -323,8 +418,18 @@ fn event(
 }
 
 fn draw_size(rng: &mut Mt, params: &SynthParams) -> Result<i64, SynthError> {
-    rng.randrange(params.min_size, params.max_size + 1, 100)
-        .ok_or_else(|| SynthError("size range is empty".into()))
+    let start = i128::from(params.min_size);
+    let stop = i128::from(params.max_size) + 1;
+    let step: i128 = 100;
+    if stop <= start {
+        return Err(SynthError("size range is empty".into()));
+    }
+    let n = (stop - start + step - 1) / step;
+    if n <= 0 || n > i128::from(u64::MAX) {
+        return Err(SynthError("size range is empty".into()));
+    }
+    let size = start + step * i128::from(rng.randbelow(n as u64));
+    i64::try_from(size).map_err(|_| SynthError("drawn size does not fit in i64".into()))
 }
 
 fn trunc_i64(value: f64) -> i64 {
@@ -332,12 +437,15 @@ fn trunc_i64(value: f64) -> i64 {
 }
 
 /// Python 3 `round` of a finite float: half goes to the even integer.
-fn py_round(value: f64) -> i64 {
+fn py_round(value: f64) -> Result<i64, SynthError> {
+    if !value.is_finite() {
+        return Err(SynthError("fair value is not finite".into()));
+    }
     let floor = value.floor();
     let frac = value - floor;
     let mut n = floor as i64;
     if frac > 0.5 || (frac == 0.5 && n % 2 != 0) {
         n += 1;
     }
-    n
+    Ok(n)
 }

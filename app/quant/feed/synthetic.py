@@ -100,9 +100,9 @@ class SyntheticFeed:
     params: SyntheticParams = field(default_factory=SyntheticParams)
 
     def __iter__(self) -> Iterator[Event]:
-        native = _rust_events(self)
-        if native is not None:
-            return iter(native)
+        cursor = _rust_cursor(self)
+        if cursor is not None:
+            return _events_from_cursor(cursor)
         return self._python_events()
 
     def _python_events(self) -> Iterator[Event]:
@@ -252,23 +252,24 @@ class SyntheticFeed:
         return len(s["book"]) > 0
 
 
-def _rust_events(feed: SyntheticFeed) -> list[Event] | None:
-    """The same tape from the extension, or None when it is not installed.
+def _rust_cursor(feed: SyntheticFeed):
+    """One native event at a time, or None when the extension is not installed.
 
     A seed that does not fit in a signed 64-bit integer stays on the Python
     generator. Any other failure from a present extension is raised: a broken
-    build must not silently change the stream.
+    build must not silently change the stream. The cursor keeps the book and
+    the RNG in Rust, so the first event does not wait on the rest of the tape.
     """
     try:
         import cockpit_quant
     except ImportError:
         return None
-    generate = getattr(cockpit_quant, "synthetic_events", None)
-    if generate is None:
+    open_cursor = getattr(cockpit_quant, "synthetic_cursor", None)
+    if open_cursor is None:
         return None
     params = feed.params
     try:
-        rows = generate(
+        return open_cursor(
             list(feed.symbols),
             feed.n_events,
             feed.seed,
@@ -289,20 +290,25 @@ def _rust_events(feed: SyntheticFeed) -> list[Event] | None:
         )
     except OverflowError:
         return None
-    events: list[Event] = []
-    for action, symbol, seq, exchange_ts, recv_ts, ingest_ts, side, price, qty, order_ref in rows:
-        stamps = {
-            "symbol": symbol,
-            "seq": seq,
-            "exchange_ts": exchange_ts,
-            "recv_ts": recv_ts,
-            "ingest_ts": ingest_ts,
-        }
-        if action == "trade":
-            events.append(Trade(price_ticks=price, qty=qty, aggressor=Side(side), **stamps))
-        else:
-            events.append(BookUpdate(
-                action=BookAction(action), side=Side(side), price_ticks=price,
-                qty=qty, order_ref=order_ref, **stamps,
-            ))
-    return events
+
+
+def _events_from_cursor(cursor) -> Iterator[Event]:
+    while True:
+        rows = cursor.next_batch(1024)
+        if not rows:
+            return
+        for action, symbol, seq, exchange_ts, recv_ts, ingest_ts, side, price, qty, order_ref in rows:
+            stamps = {
+                "symbol": symbol,
+                "seq": seq,
+                "exchange_ts": exchange_ts,
+                "recv_ts": recv_ts,
+                "ingest_ts": ingest_ts,
+            }
+            if action == "trade":
+                yield Trade(price_ticks=price, qty=qty, aggressor=Side(side), **stamps)
+            else:
+                yield BookUpdate(
+                    action=BookAction(action), side=Side(side), price_ticks=price,
+                    qty=qty, order_ref=order_ref, **stamps,
+                )
