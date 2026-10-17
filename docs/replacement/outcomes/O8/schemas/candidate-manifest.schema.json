@@ -24,6 +24,8 @@
   "properties": {
     "schema_id": {"const": "cockpit.replacement.o8.candidate-manifest.v1"},
     "candidate_id": {"type": "string", "minLength": 1},
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "configuration": {"type": "object", "minProperties": 1},
     "maturity": {"const": "researched"},
     "language_selected": {"const": false},
     "storage_selected": {"const": false},
@@ -114,5 +116,9 @@
         {"contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "hash_chain_audit"}}}}
       ]
     }
+  },
+  "dependentRequired": {
+    "commit": ["configuration"],
+    "configuration": ["commit"]
   }
 }

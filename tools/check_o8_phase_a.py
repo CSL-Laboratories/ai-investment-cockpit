@@ -102,6 +102,20 @@ WORKLOAD_HELPERS = {
     },
     "gui_cli_render": {"render-process": "primary", "ledger-reader": "storage-helper"},
 }
+WORKLOAD_IO_KINDS = {
+    "ingest_to_raw_store": {"disk"},
+    "point_in_time_replay": {"disk"},
+    "frozen_evaluation_run": {"disk"},
+}
+OBSERVATION_UNITS = {
+    "latency": "ms",
+    "throughput": "workload_completions_per_second",
+    "rss_bytes": "bytes",
+    "cpu": "cpu_seconds",
+    "io": "bytes",
+    "tokens": "tokens",
+    "cost": "USD",
+}
 REPLAY_SOURCES = {"raw_inputs", "hash_chain_audit"}
 SHARED_STORES = {"raw_bytes", "hash_chain_audit"}
 TIER1_CASES = (
@@ -172,7 +186,15 @@ NEGATIVES = (
     ("helper-duplicate.json", "benchmark", "helper set does not match the workload"),
     ("tokens-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
     ("cost-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
-    ("tokens-huge-int.json", "benchmark", "tier-3 baseline lacks retained outputs"),
+    ("tokens-huge-int.json", "benchmark", "tier-3 evidence lacks measured observation"),
+    ("fixture-sha-unbound.json", "benchmark", "fixture hash does not match retained fixture"),
+    ("units-missing.json", "benchmark", "observation units missing or invalid"),
+    ("units-mismatched.json", "benchmark", "observation units missing or invalid"),
+    ("baseline-units-mismatched.json", "benchmark", "tier-3 baseline lacks retained outputs"),
+    ("io-kind-memory-only.json", "benchmark", "I/O kinds omit required disk I/O for this workload"),
+    ("candidate-id-unbound.json", "benchmark", "candidate does not match retained candidate manifest"),
+    ("candidate-commit-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
+    ("candidate-config-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
 )
 
 
@@ -243,7 +265,7 @@ def _resolve_local_path(value: str) -> Path | None:
         return None
     try:
         resolved = (ROOT / value).resolve()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return None
     if not resolved.is_relative_to(ROOT):
         return None
@@ -253,18 +275,20 @@ def _resolve_local_path(value: str) -> Path | None:
 def _safe_exists(path: Path) -> bool:
     try:
         return path.exists()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return False
 
 
 def _safe_is_file(path: Path) -> bool:
     try:
         return path.is_file()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return False
 
 
 def _local_path_exists(locator: str) -> bool:
+    if "\x00" in locator:
+        return False
     if locator.startswith(("https://", "http://")):
         return True
     resolved = _resolve_local_path(locator)
@@ -272,12 +296,56 @@ def _local_path_exists(locator: str) -> bool:
 
 
 def _is_finite_nonneg(value: Any) -> bool:
-    """True for a non-bool number that is finite and >= 0; ints skip float conversion."""
+    """Require nonnegative finite metrics representable as a float, without overflowing."""
     if isinstance(value, bool):
         return False
     if isinstance(value, int):
-        return value >= 0
+        return 0 <= value <= sys.float_info.max
     return isinstance(value, float) and math.isfinite(value) and value >= 0
+
+
+def _retained_bytes(reference: Any) -> bytes | None:
+    """Read only digest-matched, repository-contained regular files."""
+    if not isinstance(reference, dict):
+        return None
+    path, digest = reference.get("path"), reference.get("sha256")
+    if not isinstance(path, str) or not isinstance(digest, str):
+        return None
+    if path.startswith(("http://", "https://")):
+        return None
+    retained = _resolve_local_path(path)
+    if retained is None or not _safe_is_file(retained):
+        return None
+    try:
+        raw = retained.read_bytes()
+    except (OSError, ValueError):
+        return None
+    return raw if hashlib.sha256(raw).hexdigest() == digest else None
+
+
+def _retained_candidate_bound(document: dict[str, Any]) -> bool:
+    raw = _retained_bytes(document.get("candidate"))
+    if raw is None:
+        return False
+    try:
+        retained = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
+        )
+    except (UnicodeError, ValueError, RecursionError):
+        return False
+    return (
+        isinstance(retained, dict)
+        and not _schema_errors(retained, CANDIDATE_SCHEMA)
+        and isinstance(retained.get("commit"), str)
+        and isinstance(retained.get("configuration"), dict)
+        and bool(retained["configuration"])
+        and all(retained.get(key) == document.get(key) for key in ("candidate_id", "commit"))
+        and json.dumps(retained["configuration"], sort_keys=True) == json.dumps(document.get("configuration"), sort_keys=True)
+        and retained.get("seam") == document.get("workload_id")
+        and not candidate_reasons(retained)
+    )
 
 
 def benchmark_reasons(document: Any) -> list[str]:
@@ -287,6 +355,11 @@ def benchmark_reasons(document: Any) -> list[str]:
     io = document.get("io")
     if not isinstance(io, dict) or io.get("included") is not True or not io.get("kinds"):
         reasons.append("omits I/O")
+    else:
+        required_io = WORKLOAD_IO_KINDS.get(document.get("workload_id"), set())
+        kinds = io.get("kinds")
+        if required_io and (not isinstance(kinds, list) or not required_io.issubset(str(kind) for kind in kinds)):
+            reasons.append("I/O kinds omit required disk I/O for this workload")
     helpers = document.get("helper_processes")
     helpers_ok = isinstance(helpers, list) and len(helpers) > 0 and all(
         isinstance(item, dict) and item.get("included") is True and item.get("name") and item.get("role")
@@ -327,6 +400,18 @@ def benchmark_reasons(document: Any) -> list[str]:
             reasons.append("tier-3 evidence claimed before measurement")
     if document.get("csl42_evidence") is True:
         baseline = document.get("baseline")
+        fixture = document.get("fixture")
+        raw_fixture = _retained_bytes(fixture)
+        fixture_digest = hashlib.sha256(raw_fixture).hexdigest() if raw_fixture is not None else None
+        if (
+            fixture_digest is None
+            or fixture_digest != document.get("fixture_sha256")
+            or not isinstance(baseline, dict)
+            or fixture_digest != baseline.get("fixture_sha256")
+        ):
+            reasons.append("fixture hash does not match retained fixture")
+        if not _retained_candidate_bound(document):
+            reasons.append("candidate does not match retained candidate manifest")
         if (
             not isinstance(baseline, dict)
             or baseline.get("commit") == document.get("commit")
@@ -363,6 +448,8 @@ def benchmark_reasons(document: Any) -> list[str]:
     if document.get("floors_attached") is True:
         _check_floors(document.get("floors"), reasons, "attached floors invalid")
     if isinstance(variance, dict) and variance.get("status") == "measured":
+        if document.get("units") != OBSERVATION_UNITS:
+            reasons.append("observation units missing or invalid")
         observation = document.get("observation")
         observation = observation if isinstance(observation, dict) else {}
         metrics_ok = all(
@@ -373,7 +460,7 @@ def benchmark_reasons(document: Any) -> list[str]:
             for key in ("tokens", "cost")
         ) and isinstance(observation.get("rss_bytes"), int) and not isinstance(
             observation.get("rss_bytes"), bool
-        ) and observation.get("rss_bytes") >= 0
+        ) and _is_finite_nonneg(observation.get("rss_bytes"))
         helpers_measured = isinstance(helpers, list) and all(
             isinstance(item, dict) and item.get("status") == "measured" for item in helpers
         )
@@ -405,6 +492,7 @@ def _baseline_outputs_bound(raw: bytes, baseline: dict[str, Any]) -> bool:
         )
         and isinstance(retained.get("observation"), dict)
         and len(retained["observation"]) > 0
+        and retained.get("units") == OBSERVATION_UNITS
     )
 
 

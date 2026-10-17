@@ -103,9 +103,43 @@ Tier 1 does not include end-to-end I/O or helper processes. It cannot decide CSL
 
 The observation vector, required on a run and null until then: p50, p95, p99, throughput, RSS, CPU, I/O, tokens, cost, correctness, failure, recovery, and growth. Tokens and cost stay null when the workload does not expose them. Correctness, failure, and recovery are part of the record, not optional commentary.
 
+Measured manifests and retained baseline outputs must include the same fixed `units`
+object: `latency: ms` (p50/p95/p99),
+`throughput: workload_completions_per_second`, `rss_bytes: bytes`,
+`cpu: cpu_seconds`, `io: bytes`, `tokens: tokens`, and `cost: USD`.
+One completion is one whole invocation of the registered workload, rather than an
+individual record inside it. CPU records aggregate process CPU time; I/O records
+aggregate bytes read and written, including the registered helpers. Units cannot
+be changed between baseline and candidate; missing or different units are rejected.
+Unmeasured null observations retain these definitions without claiming a run.
+
+The first three workloads require `disk` in `io.kinds` even when `memory_copy` is
+also included. The validator enforces this per-workload registry for both protocol
+manifests and measured comparisons.
+
 **Tier 3, the only CSL-42 evidence.** A tier-3 manifest may set `csl42_evidence` only when the tier is 3, floors are attached, variance status is `measured`, repetitions are an integer of at least 2, and relative IQR is a number. This packet's tier-3 result count is 0. No workload in the fixture claims that evidence.
 
+Every evidence claim must name a retained `fixture` (`path`, `sha256`). The validator
+hashes its actual bytes and requires that digest to match both `fixture_sha256`
+and `baseline.fixture_sha256`; matching invented strings do not bind a comparison.
+The single retained fixture is the shared frozen input for the matched comparison.
+Missing, unreadable, incorrectly hashed or repository-escaping references fail closed.
+
+Evidence also requires a retained `candidate` manifest reference (`path`, `sha256`)
+and a nonempty `configuration` object. The validator hashes and validates that
+manifest, then checks its `candidate_id`, exact `commit`, configuration and workload
+seam against the benchmark. Candidate manifests used for measurements carry both
+`commit` and `configuration`; the unmeasured phase-A planning candidate carries
+neither. The digest pins all retained candidate fields, including configuration.
+Configuration JSON must match exactly, including numeric versus boolean values.
+Both new references use the same repository containment and cross-platform rooted
+path rejection as retained baseline outputs.
+
 The evidence binds further. Attached floors are the full eleven-row registry, validator-checked — `floors_attached` is not a bare boolean, so a manifest that asserts the flag without the registry fails `attached floors invalid`. The baseline is bound to retained outputs: `baseline.outputs` names a repo path and its sha256, and the validator hashes the file, so a baseline that names only caller-supplied identifiers fails `tier-3 baseline lacks retained outputs`. A measured variance requires a measured observation — measured helper processes and finite, non-negative metrics — else `tier-3 evidence lacks measured observation`; percentiles must order p50 ≤ p95 ≤ p99, else `impossible measured observation`. Non-finite JSON constants (`NaN`, `Infinity`) and exponent-overflowed numbers (`1e309`) are rejected at parse, and every measured metric — including `variance.relative_iqr` and optional `tokens`/`cost` — must be a finite, non-negative number. `baseline.outputs.path` must be a repo-relative path that resolves inside the repository: paths that are absolute or rooted on either POSIX or Windows — leading `/` or `\`, drive-absolute (`C:\x`, `C:/x`), drive-relative (`C:foo`), UNC (`\\server\share`, `//server/share`), or any backslash at all — fail `baseline outputs path must be relative`, and `..` escapes fail `baseline outputs path escapes the repository`. The rejection uses `PurePosixPath` and `PureWindowsPath` together ([pathlib docs](https://docs.python.org/3/library/pathlib.html): `PureWindowsPath.is_absolute`, drive and anchor semantics) so behavior is identical on every OS, and is applied before the `resolve()`/`is_relative_to(ROOT)` containment check on every packet-supplied path the validator joins to the repo root — the standard path-traversal countermeasure ([OWASP Path Traversal](https://owasp.org/www-community/attacks/Path_Traversal), [CWE-22](https://cwe.mitre.org/data/definitions/22.html)). The retained outputs file must carry a non-empty `observation` payload, so identifier-only files are not accepted as a baseline oracle. Helper processes are pinned per workload to the declared registry (names and roles from the table above) and compared as an ordered list of name→role pairs, so a manifest claiming a workload it does not exercise — or repeating a helper — fails `helper set does not match the workload`. The migration's `replay_from` and `shared_stores` each require two distinct members — `uniqueItems` in the packet schema and an explicit set check in the validator — because a duplicated member would silently drop one replay source or store. The packet's `research.parallel_search_ids` records all six searches actually run (two pinned at authoring plus the four added during review) and `cited_urls` their sources, so the claimed research below reconciles exactly with the frozen record.
+
+Measured numbers, including integer tokens, cost, RSS and relative IQR, must also
+fit the finite float range (at most `1.7976931348623157e308`). Integers above that
+range are rejected without converting them to float or throwing an overflow error.
 
 A measured run also records host status `measured` and I/O status `measured`. pyperf's own guidance is the reason the protocol keeps repetitions, worker processes, and a robust spread: [Run a benchmark](https://pyperf.readthedocs.io/en/stable/run_benchmark.html) spawns worker processes sequentially, discards warmup, and warns when the maximum sits far from the mean; [Analyze benchmark results](https://pyperf.readthedocs.io/en/latest/analyze.html) reports quartiles and recommends median and median absolute deviation when outliers remain. This repository already uses median and relative IQR in `app/benchmarks/compare.py`. The protocol keeps that spread. It does not add pyperf to CI.
 
@@ -169,7 +203,21 @@ Checked-in fixtures under `fixtures/negative/`. Each one must fail. The validato
 | `helper-duplicate.json` | helper set does not match the workload (helpers checked as a list, so a duplicated entry fails even though its name→role dict collapses to the expected set) |
 | `tokens-negative.json` | tier-3 evidence lacks measured observation (`tokens: -1` rejected; tokens must be finite and ≥ 0 when present) |
 | `cost-negative.json` | tier-3 evidence lacks measured observation (`cost: -100` rejected; cost must be finite and ≥ 0 when present) |
-| `tokens-huge-int.json` | tier-3 baseline lacks retained outputs (a JSON integer above float range in `tokens` is rejected cleanly, not with a traceback) |
+| `tokens-huge-int.json` | tier-3 evidence lacks measured observation (integer tokens above float range; valid retained baseline outputs isolate numeric validation) |
+| `fixture-sha-unbound.json` | fixture hash does not match retained fixture (candidate and baseline repeat the same invented hash, with a digest-matched retained baseline) |
+| `units-missing.json` | observation units missing or invalid |
+| `units-mismatched.json` | observation units missing or invalid (seconds instead of milliseconds) |
+| `baseline-units-mismatched.json` | tier-3 baseline lacks retained outputs (digest matches but retained throughput uses completions per minute) |
+| `io-kind-memory-only.json` | I/O kinds omit required disk I/O for this workload |
+| `candidate-id-unbound.json` | candidate does not match retained candidate manifest (relabeled candidate ID) |
+| `candidate-commit-mismatch.json` | candidate does not match retained candidate manifest |
+| `candidate-config-mismatch.json` | candidate does not match retained candidate manifest |
+
+The otherwise valid comparison under `fixtures/validator-only/` is entirely synthetic
+and isolates these controls. No benchmark was run; these invented observations and
+commits are validator inputs only and leave the measured tier-3 result count at zero.
+The regression tests require each new control to have only its intended semantic
+failure, so an unrelated baseline rejection cannot mask numeric or identity checks.
 
 A packet whose maturity is anything other than `researched` is rejected. Promoting this artifact to `contract_frozen` requires a human receipt, not an edit.
 

@@ -76,15 +76,15 @@
       "test_locator": "app/storage/audit.py"
     }
   ],
-  "candidate_id": "phase-a-protocol-only",
-  "fixture_sha256": "26b3568519c225383ed0637db4c5fed09b4ba519012d20aa8b57d8aa0605a627",
+  "candidate_id": "validator-only-synthetic",
+  "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
   "baseline": {
     "commit": "ebbaa34489f171e079834d02098135711e1d4755",
     "workload_id": "ingest_to_raw_store",
-    "fixture_sha256": "26b3568519c225383ed0637db4c5fed09b4ba519012d20aa8b57d8aa0605a627",
+    "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
     "outputs": {
-      "path": "docs/replacement/outcomes/O8/fixtures/phase-a-packet.json",
-      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      "path": "docs/replacement/outcomes/O8/fixtures/validator-only/baseline-outputs.json",
+      "sha256": "caadfc042fbf9cec664b73e67c585557d43b1e1f4d8101bf2fe327e6b8189ebe"
     }
   },
   "commit": "ffffffffffffffffffffffffffffffffffffffff",
@@ -132,12 +132,32 @@
     "rss_bytes": 123456,
     "cpu": 0.5,
     "io": 2.0,
-    "tokens": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+    "tokens": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
     "cost": null,
-    "correctness": "matched frozen oracle",
-    "failure": "none observed",
-    "recovery": "not exercised",
-    "growth": "flat",
+    "correctness": "synthetic control only; not measured evidence",
+    "failure": "synthetic control",
+    "recovery": "synthetic control",
+    "growth": "synthetic control",
     "status": "measured"
+  },
+  "candidate": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/candidate.json",
+    "sha256": "5070d643b167ffb8201cf7267722fd724f184a52fcf746eb48c7eb62ad656b29"
+  },
+  "configuration": {
+    "batch_size": 1
+  },
+  "fixture": {
+    "path": "docs/replacement/outcomes/O8/fixtures/validator-only/input.json",
+    "sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3"
+  },
+  "units": {
+    "latency": "ms",
+    "throughput": "workload_completions_per_second",
+    "rss_bytes": "bytes",
+    "cpu": "cpu_seconds",
+    "io": "bytes",
+    "tokens": "tokens",
+    "cost": "USD"
   }
 }

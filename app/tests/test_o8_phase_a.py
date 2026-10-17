@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = "tools/check_o8_phase_a.py"
 
@@ -46,8 +48,16 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: helper-duplicate: helper set does not match the workload",
     "O8 negative control failed as designed: tokens-negative: tier-3 evidence lacks measured observation",
     "O8 negative control failed as designed: cost-negative: tier-3 evidence lacks measured observation",
-    "O8 negative control failed as designed: tokens-huge-int: tier-3 baseline lacks retained outputs",
-    "O8 negative controls: 31 failed as designed",
+    "O8 negative control failed as designed: tokens-huge-int: tier-3 evidence lacks measured observation",
+    "O8 negative control failed as designed: fixture-sha-unbound: fixture hash does not match retained fixture",
+    "O8 negative control failed as designed: units-missing: observation units missing or invalid",
+    "O8 negative control failed as designed: units-mismatched: observation units missing or invalid",
+    "O8 negative control failed as designed: baseline-units-mismatched: tier-3 baseline lacks retained outputs",
+    "O8 negative control failed as designed: io-kind-memory-only: I/O kinds omit required disk I/O for this workload",
+    "O8 negative control failed as designed: candidate-id-unbound: candidate does not match retained candidate manifest",
+    "O8 negative control failed as designed: candidate-commit-mismatch: candidate does not match retained candidate manifest",
+    "O8 negative control failed as designed: candidate-config-mismatch: candidate does not match retained candidate manifest",
+    "O8 negative controls: 39 failed as designed",
 )
 
 
@@ -174,6 +184,19 @@ def test_resolve_local_path_survives_resolve_raising_valueerror(monkeypatch) -> 
     assert CHECK_O8._resolve_local_path("docs/replacement/outcomes/O8/PHASE-A.md") is None
 
 
+def test_o8_rejects_resolve_runtimeerror_without_crashing(monkeypatch) -> None:
+    packet = CHECK_O8._load_json(CHECK_O8.PACKET_PATH)
+
+    def _boom(self):
+        raise RuntimeError("simulated symlink loop")
+
+    monkeypatch.setattr(CHECK_O8.Path, "resolve", _boom)
+    assert CHECK_O8._resolve_local_path("docs/replacement/outcomes/O8/PHASE-A.md") is None
+    assert CHECK_O8._local_path_exists("docs/replacement/outcomes/O8/PHASE-A.md") is False
+    with pytest.raises(CHECK_O8.O8Error, match="missing disposition path"):
+        CHECK_O8.validate_packet(packet)
+
+
 def test_safe_exists_survives_exists_raising_oserror(monkeypatch) -> None:
     def _boom(self):
         raise OSError("simulated exists failure")
@@ -190,6 +213,31 @@ def test_safe_is_file_survives_is_file_raising_valueerror(monkeypatch) -> None:
     assert CHECK_O8._safe_is_file(ROOT / "docs/replacement/outcomes/O8/PHASE-A.md") is False
 
 
+@pytest.mark.parametrize(("method", "helper"), [
+    ("exists", "_safe_exists"), ("is_file", "_safe_is_file"),
+])
+def test_safe_path_checks_survive_runtimeerror(monkeypatch, method: str, helper: str) -> None:
+    def _boom(self):
+        raise RuntimeError("simulated symlink loop")
+
+    monkeypatch.setattr(CHECK_O8.Path, method, _boom)
+    assert getattr(CHECK_O8, helper)(ROOT / "docs/replacement/outcomes/O8/PHASE-A.md") is False
+
+
+@pytest.mark.parametrize("scheme", ["https", "http"])
+def test_o8_rejects_url_locator_with_nul_byte_without_crashing(tmp_path: Path, scheme: str) -> None:
+    locator = f"{scheme}://x\x00y"
+    assert CHECK_O8._local_path_exists(locator) is False
+
+    def mutate(packet: dict) -> None:
+        packet["disposition"][0]["paths"] = [locator]
+
+    result = _packet_with(tmp_path, mutate)
+    assert result.returncode == 1
+    assert "missing disposition path" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_o8_rejects_disposition_path_with_nul_byte_without_crashing(tmp_path: Path) -> None:
     def mutate(packet: dict) -> None:
         packet["disposition"][0]["paths"] = ["app/risk/\x00evil"]
@@ -198,3 +246,120 @@ def test_o8_rejects_disposition_path_with_nul_byte_without_crashing(tmp_path: Pa
     assert result.returncode == 1
     assert "missing disposition path" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def _synthetic_comparison() -> dict:
+    return CHECK_O8._load_json(CHECK_O8.O8 / "fixtures/validator-only/benchmark.json")
+
+
+def test_o8_accepts_structurally_bound_synthetic_comparison() -> None:
+    # Validator acceptance is not empirical evidence: these observations are invented controls.
+    assert CHECK_O8.benchmark_reasons(_synthetic_comparison()) == []
+
+
+def test_o8_candidate_configuration_distinguishes_boolean_from_integer() -> None:
+    document = _synthetic_comparison()
+    document["configuration"]["batch_size"] = True
+    assert "candidate does not match retained candidate manifest" in CHECK_O8.benchmark_reasons(document)
+
+
+def test_o8_candidate_cannot_be_reused_for_a_different_workload_seam() -> None:
+    document = _synthetic_comparison()
+    document["workload_id"] = "point_in_time_replay"
+    assert CHECK_O8._retained_candidate_bound(document) is False
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("tokens-huge-int", "tier-3 evidence lacks measured observation"),
+    ("fixture-sha-unbound", "fixture hash does not match retained fixture"),
+    ("units-missing", "observation units missing or invalid"),
+    ("units-mismatched", "observation units missing or invalid"),
+    ("baseline-units-mismatched", "tier-3 baseline lacks retained outputs"),
+    ("io-kind-memory-only", "I/O kinds omit required disk I/O for this workload"),
+    ("candidate-id-unbound", "candidate does not match retained candidate manifest"),
+    ("candidate-commit-mismatch", "candidate does not match retained candidate manifest"),
+    ("candidate-config-mismatch", "candidate does not match retained candidate manifest"),
+])
+def test_o8_review_negative_controls_isolate_the_intended_failure(name: str, expected: str) -> None:
+    document = CHECK_O8._load_json(CHECK_O8.NEGATIVE_DIR / f"{name}.json")
+    reasons = CHECK_O8.benchmark_reasons(document)
+    # An unrelated semantic failure must not mask a broken control (especially huge tokens).
+    assert [reason for reason in reasons if not reason.startswith("schema ")] == [expected]
+
+
+@pytest.mark.parametrize("workload_id", [
+    "ingest_to_raw_store", "point_in_time_replay", "frozen_evaluation_run",
+])
+def test_o8_disk_workloads_reject_memory_only_io(workload_id: str) -> None:
+    packet = CHECK_O8._load_json(CHECK_O8.PACKET_PATH)
+    workload = next(item for item in packet["workloads"] if item["workload_id"] == workload_id)
+    assert CHECK_O8.benchmark_reasons(workload) == []
+    workload["io"]["kinds"] = ["memory_copy"]
+    assert "I/O kinds omit required disk I/O for this workload" in CHECK_O8.benchmark_reasons(workload)
+    workload["io"]["kinds"] = ["memory_copy", "disk"]
+    assert CHECK_O8.benchmark_reasons(workload) == []
+
+
+@pytest.mark.parametrize("metric", [
+    "p50", "p95", "p99", "throughput", "rss_bytes", "cpu", "io", "tokens", "cost", "relative_iqr",
+])
+def test_o8_rejects_huge_integers_in_every_measured_metric(metric: str) -> None:
+    document = _synthetic_comparison()
+    container = document["variance"] if metric == "relative_iqr" else document["observation"]
+    container[metric] = 10 ** 399
+    reasons = CHECK_O8.benchmark_reasons(document)
+    assert "tier-3 evidence lacks measured observation" in reasons
+    assert "tier-3 baseline lacks retained outputs" not in reasons
+
+
+@pytest.mark.parametrize("field", ["candidate", "fixture"])
+@pytest.mark.parametrize("path", [
+    "", "/outside.json", "../outside.json", "C:/outside.json", "C:outside.json",
+    "\\\\server\\share\\outside.json", "https://example.test/outside.json", "nul\x00.json",
+    "docs/replacement/outcomes/O8/fixtures/validator-only/missing.json",
+])
+def test_o8_evidence_references_fail_closed(field: str, path: str) -> None:
+    document = _synthetic_comparison()
+    document[field]["path"] = path
+    expected = (
+        "candidate does not match retained candidate manifest" if field == "candidate"
+        else "fixture hash does not match retained fixture"
+    )
+    assert expected in CHECK_O8.benchmark_reasons(document)
+
+
+@pytest.mark.parametrize("field", ["candidate", "fixture"])
+def test_o8_evidence_rejects_missing_reference_or_wrong_digest(field: str) -> None:
+    document = _synthetic_comparison()
+    document[field]["sha256"] = "0" * 64
+    expected = (
+        "candidate does not match retained candidate manifest" if field == "candidate"
+        else "fixture hash does not match retained fixture"
+    )
+    assert expected in CHECK_O8.benchmark_reasons(document)
+    del document[field]
+    assert expected in CHECK_O8.benchmark_reasons(document)
+
+
+def test_o8_evidence_rejects_unreadable_files(monkeypatch) -> None:
+    def unreadable(self):
+        raise OSError("simulated read failure")
+
+    document = _synthetic_comparison()
+    monkeypatch.setattr(CHECK_O8.Path, "read_bytes", unreadable)
+    assert CHECK_O8._retained_bytes(document["fixture"]) is None
+    assert CHECK_O8._retained_candidate_bound(document) is False
+
+
+def test_o8_evidence_rejects_symlink_escape(tmp_path: Path, monkeypatch) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    link = repository / "input.json"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this host")
+    monkeypatch.setattr(CHECK_O8, "ROOT", repository)
+    assert CHECK_O8._resolve_local_path("input.json") is None

@@ -72,7 +72,22 @@
       }
     },
     "candidate_id": {"type": "string", "minLength": 1},
+    "candidate": {"$ref": "#/$defs/retainedFile"},
+    "configuration": {"type": "object", "minProperties": 1},
+    "fixture": {"$ref": "#/$defs/retainedFile"},
     "fixture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "units": {
+      "description": "Fixed units for candidate and retained baseline observations; latency covers p50, p95 and p99. Throughput counts complete workload invocations per second. CPU is aggregate process CPU seconds; I/O is aggregate bytes read and written including helpers.",
+      "const": {
+        "latency": "ms",
+        "throughput": "workload_completions_per_second",
+        "rss_bytes": "bytes",
+        "cpu": "cpu_seconds",
+        "io": "bytes",
+        "tokens": "tokens",
+        "cost": "USD"
+      }
+    },
     "baseline": {
       "type": "object",
       "additionalProperties": false,
@@ -209,7 +224,7 @@
             "required": ["status"]
           }
         },
-        "required": ["tier", "floors_attached", "variance", "candidate_id", "baseline", "fixture_sha256"]
+        "required": ["tier", "floors_attached", "variance", "candidate_id", "candidate", "configuration", "baseline", "fixture", "fixture_sha256"]
       }
     },
     {
@@ -218,11 +233,12 @@
         "required": ["variance"]
       },
       "then": {
+        "required": ["units"],
         "properties": {
           "variance": {
             "properties": {
               "repetitions": {"type": "integer", "minimum": 2},
-              "relative_iqr": {"type": "number"}
+              "relative_iqr": {"type": "number", "maximum": 1.7976931348623157e308}
             }
           },
           "host": {"properties": {"status": {"const": "measured"}}, "required": ["status"]},
@@ -233,13 +249,15 @@
           "observation": {
             "properties": {
               "status": {"const": "measured"},
-              "p50": {"type": "number", "minimum": 0},
-              "p95": {"type": "number", "minimum": 0},
-              "p99": {"type": "number", "minimum": 0},
-              "throughput": {"type": "number", "minimum": 0},
-              "rss_bytes": {"type": "integer", "minimum": 0},
-              "cpu": {"type": "number", "minimum": 0},
-              "io": {"type": "number", "minimum": 0}
+              "p50": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "p95": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "p99": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "throughput": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "rss_bytes": {"type": "integer", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "cpu": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "io": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308},
+              "tokens": {"type": ["number", "null"], "minimum": 0, "maximum": 1.7976931348623157e308},
+              "cost": {"type": ["number", "null"], "minimum": 0, "maximum": 1.7976931348623157e308}
             },
             "required": ["status"]
           }
@@ -253,5 +271,16 @@
       },
       "then": {"required": ["floors"]}
     }
-  ]
+  ],
+  "$defs": {
+    "retainedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
 }
