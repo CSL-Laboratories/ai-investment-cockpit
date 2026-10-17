@@ -151,13 +151,15 @@ replay order does not infer a missing transition:
 | `close_date_updated` | `initialized`, `active`, `inactive`, `closed` | Both null; `close_time` required |
 | `determined` | `determined` | Both present and equal |
 | `determined` (synthetic void) | `voided` | Resolution `voided`, result null, official-observed flag false |
-| `settled` | `finalized` | Both present and equal |
+| `settled` (socket) | `finalized` | Resolution present. `result` equals it, or is null only when an earlier record on the same natural key supplies that same resolution |
 | `status_observed` (REST only) | `initialized`, `active`, `inactive`, `closed` | Both null |
 | `status_observed` (REST only) | `determined`, `disputed`, `amended`, `finalized` | Both present and equal |
 
 Non-void resolutions and results must be `yes`/`no` for a binary identity and
-`scalar` for a scalar identity. A REST `settlement_ts`, when present, additionally
-requires `status_rest: finalized`.
+`scalar` for a scalar identity. A socket `settled` message may omit `result`;
+the resolution it asserts must still equal the resolution on an earlier record
+in that correction chain. A REST `settlement_ts`, when present, additionally
+requires `status_rest: finalized` and `settlement_ts <= accepted_at`.
 
 Settlement fields stay on the payload only where official docs confirm them: `determination_ts` and `settlement_value` (socket, only when determined), `settled_ts` (socket, only when settled), and `settlement_ts` (REST market object, populated at `finalized`). `settlement_sources` is event-level (`GET /events/{event_ticker}`) and lives on the event identity, not the market payload. Unconfirmed repeats — for example whether the `settled` message also carries `determination_ts` or `settlement_value` — are listed as unknowns in the qualification matrix.
 

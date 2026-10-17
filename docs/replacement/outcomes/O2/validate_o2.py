@@ -66,6 +66,14 @@ LIFECYCLE_STATUSES = {
     "settled": {"finalized"},
     "status_observed": UNRESOLVED_STATUSES | RESOLVED_STATUSES,
 }
+# Consumers query these suffixes. A lifecycle record may not invent another one.
+LIFECYCLE_KEY_SUFFIX = {
+    "created": "created",
+    "close_date_updated": "close_date",
+    "determined": "resolution",
+    "settled": "resolution",
+    "status_observed": "resolution",
+}
 CONTRACT_RESOLUTIONS = {"binary": {"yes", "no"}, "scalar": {"scalar"}}
 NEGATIVE_CODES = (
     "future_data_leak",
@@ -219,7 +227,7 @@ def _action_applies(bundle: Bundle, record: dict, listing: str) -> bool:
     return listing in (before, after)
 
 
-def _input_identity_ok(bundle: Bundle, observation: dict, record: dict) -> bool:
+def _input_identity_ok(bundle: Bundle, observation: dict, record: dict, decision: datetime) -> bool:
     if record["identity_id"] == observation["identity_id"]:
         return True
     if observation["market_family"] != "equity":
@@ -229,11 +237,16 @@ def _input_identity_ok(bundle: Bundle, observation: dict, record: dict) -> bool:
         return False
     if _action_applies(bundle, record, listing):
         return True
-    # A superseded ancestor stays lineage-only when its correction chain reaches this listing.
+    # A superseded ancestor stays lineage-only when a correction already visible
+    # at the decision moves that chain onto this listing. A later correction
+    # cannot authorize the ancestor.
     if record["payload"].get("kind") != "corporate_action":
         return False
     return any(
-        other["natural_key"] == record["natural_key"] and _action_applies(bundle, other, listing)
+        other["natural_key"] == record["natural_key"]
+        and other["duplicate_of"] is None
+        and parse_time(other["accepted_at"]) <= decision
+        and _action_applies(bundle, other, listing)
         for other in bundle.records.values()
     )
 
@@ -392,6 +405,70 @@ def _require_family_clock(record: dict) -> None:
         raise ContractError(f"unknown market family on {record['raw_record_id']}")
 
 
+def _require_event_natural_key(record: dict, identity: dict) -> None:
+    ticker = identity["event"]["market_ticker"].lower()
+    prefix = f"{identity['venue']}:market:{ticker}:"
+    if not record["natural_key"].startswith(prefix):
+        raise ContractError(f"{record['raw_record_id']} natural key does not name its market identity")
+    payload = record["payload"]
+    if payload.get("kind") != "lifecycle":
+        return
+    suffix = LIFECYCLE_KEY_SUFFIX.get(payload.get("event_type"))
+    if suffix is None or record["natural_key"] != prefix + suffix:
+        raise ContractError(
+            f"{record['raw_record_id']} natural key suffix does not match its event_type"
+        )
+
+
+def _require_equity_natural_key(record: dict, identity: dict) -> None:
+    """The CIK, listing, accession, and fact embedded in an equity key must match the record."""
+    key = record["natural_key"]
+    equity = identity["equity"]
+    cik = equity["issuer_cik"]
+    share = equity["share_class"]
+    payload = record["payload"]
+    kind = payload.get("kind")
+    raw_id = record["raw_record_id"]
+    if key.startswith("sec:fact:"):
+        parts = key.split(":")
+        if len(parts) < 5 or parts[2] != cik or parts[3] != payload.get("concept"):
+            raise ContractError(f"{raw_id} natural key does not name its equity fact")
+        return
+    if key.startswith("sec:accession:"):
+        accession = key[len("sec:accession:") :]
+        if accession != payload.get("accession") or not accession.startswith(f"{cik}-"):
+            raise ContractError(f"{raw_id} natural key does not name its accession")
+        return
+    listing_prefix = f"us-equity:listing:{cik}:{share}:"
+    if key.startswith(listing_prefix):
+        rest = key[len(listing_prefix) :]
+        fact = rest.split(":", 1)[0]
+        if fact != kind:
+            raise ContractError(f"{raw_id} natural key does not name its equity fact")
+        if rest.startswith("corporate_action:ex-") and rest[len("corporate_action:ex-") :] != payload.get("ex_date"):
+            raise ContractError(f"{raw_id} natural key does not name its ex-date")
+        return
+    raise ContractError(f"{raw_id} natural key does not name its equity identity")
+
+
+def _predecessor_resolution(bundle: Bundle, record: dict):
+    """Resolution supplied by an earlier record in this correction chain."""
+    seen: set[str] = set()
+    parent_id = record.get("supersedes")
+    while type(parent_id) is str and parent_id not in seen:
+        seen.add(parent_id)
+        parent = bundle.records.get(parent_id)
+        if parent is None or parent["natural_key"] != record["natural_key"]:
+            return None
+        if parse_time(parent["accepted_at"]) > parse_time(record["accepted_at"]):
+            return None
+        resolution = parent["payload"].get("resolution")
+        if resolution is not None:
+            return resolution
+        parent_id = parent.get("supersedes")
+    return None
+
+
 def validate_records(bundle: Bundle) -> None:
     families: dict[str, str] = {}
     for record in bundle.records.values():
@@ -399,9 +476,9 @@ def validate_records(bundle: Bundle) -> None:
         if identity is None or identity["market_family"] != record["market_family"]:
             raise ContractError(f"{record['raw_record_id']} identity family does not match")
         if record["market_family"] == "event":
-            expected = f"{identity['venue']}:market:{identity['event']['market_ticker'].lower()}:"
-            if not record["natural_key"].startswith(expected):
-                raise ContractError(f"{record['raw_record_id']} natural key does not name its market identity")
+            _require_event_natural_key(record, identity)
+        elif record["market_family"] == "equity":
+            _require_equity_natural_key(record, identity)
         _require_family_clock(record)
         if record["payload"]["kind"] not in SOURCE_KINDS[record["source"]]:
             raise ContractError(f"{record['raw_record_id']} source does not emit {record['payload']['kind']} payloads")
@@ -440,6 +517,18 @@ def validate_records(bundle: Bundle) -> None:
             )
             if not compatible:
                 raise ContractError(f"{record['raw_record_id']} correction changes payload kind")
+            if kind == "filing_amendment":
+                amended = target["payload"]
+                amendment = record["payload"]
+                if amendment.get("amends_accession") != amended.get("accession"):
+                    raise ContractError(
+                        f"{record['raw_record_id']} amends_accession does not name the superseded filing"
+                    )
+                for field in ("concept", "unit"):
+                    if amendment.get(field) != amended.get(field):
+                        raise ContractError(
+                            f"{record['raw_record_id']} amendment changes stable fact field {field}"
+                        )
             if parse_time(target["accepted_at"]) >= parse_time(record["accepted_at"]):
                 raise ContractError(f"{record['raw_record_id']} correction is not later knowledge")
         payload = record["payload"]
@@ -471,6 +560,12 @@ def validate_records(bundle: Bundle) -> None:
                     payload["result"] != payload["resolution"] and not (result_optional and payload["result"] is None)
                 ):
                     raise ContractError(f"{record['raw_record_id']} resolved lifecycle state has no matching result")
+                if result_optional and payload["result"] is None:
+                    supplied = _predecessor_resolution(bundle, record)
+                    if supplied != payload["resolution"]:
+                        raise ContractError(
+                            f"{record['raw_record_id']} settled resolution has no predecessor"
+                        )
             if payload["event_type"] == "close_date_updated":
                 if payload.get("close_time") is None:
                     raise ContractError(f"{record['raw_record_id']} close-date update has no close_time")
@@ -489,9 +584,11 @@ def validate_records(bundle: Bundle) -> None:
             if payload.get("settlement_ts") is not None and payload["channel"] != "rest_get_markets":
                 raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
             if payload.get("settlement_ts") is not None:
-                parse_time(payload["settlement_ts"])
+                settlement_ts = parse_time(payload["settlement_ts"])
                 if payload["status_rest"] != "finalized":
                     raise ContractError(f"{record['raw_record_id']} carries settlement_ts before finalized")
+                if settlement_ts > accepted_at:
+                    raise ContractError(f"{record['raw_record_id']} settlement_ts is after accepted_at")
             # status_observed is a REST poll; the socket never emits it (disputed/amended).
             if (payload["event_type"] == "status_observed") != (payload["channel"] == "rest_get_markets"):
                 raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
@@ -617,8 +714,9 @@ def _fact_value(record: dict):
 
 
 def validate_observations(bundle: Bundle) -> None:
+    observed = _index(bundle.observations, "observation_id", "observation")
     edges = _index(bundle.edges, "observation_id", "lineage observation")
-    if len(edges) != len(bundle.observations):
+    if set(observed) != set(edges):
         raise ContractError("lineage does not cover each observation once")
     for observation in bundle.observations:
         decision = parse_time(observation["decision_time"])
@@ -648,7 +746,7 @@ def validate_observations(bundle: Bundle) -> None:
                 f"{observation['observation_id']} identity does not match its effective raw record"
             )
         for raw_id in observation["raw_record_ids"]:
-            if not _input_identity_ok(bundle, observation, bundle.records[raw_id]):
+            if not _input_identity_ok(bundle, observation, bundle.records[raw_id], decision):
                 raise ContractError(f"{observation['observation_id']} input {raw_id} uses another identity")
         for action in observation["corporate_actions"] or []:
             raw_id = action["raw_record_id"]

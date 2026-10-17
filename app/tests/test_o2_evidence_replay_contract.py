@@ -149,9 +149,9 @@ def test_listing_change_drops_the_revoked_split() -> None:
     }
     assert module.semantic_codes(bundle, observation, decision) == []
     new_obs = {"market_family": "equity", "identity_id": "idn-eq-other"}
-    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split-corr"])
-    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split"])
-    assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-10ka"])
+    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split-corr"], decision)
+    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split"], decision)
+    assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-10ka"], decision)
 
 
 def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
@@ -218,7 +218,7 @@ def test_incompatible_correction_payload_is_rejected(tmp_path: Path) -> None:
         json.dumps(records, indent=2) + "\n", encoding="utf-8"
     )
     _rewrite_manifest(module, copy)
-    with pytest.raises(module.ContractError, match="source does not emit|payload kind"):
+    with pytest.raises(module.ContractError, match="source does not emit|payload kind|equity fact"):
         module.validate_candidate(copy)
 
 
@@ -503,7 +503,7 @@ def test_equity_identity_fields_must_agree(tmp_path: Path, field: str, value: st
     identity = next(i for i in documents["fixtures/identities.json"]["identities"] if i["identity_id"] == "idn-eq-v1")
     identity["equity"][field] = value
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
-    with pytest.raises(module.ContractError, match="listing_key contradicts"):
+    with pytest.raises(module.ContractError, match="listing_key contradicts|natural key does not name its equity"):
         module.validate_candidate(copy)
 
 
@@ -529,15 +529,30 @@ def test_prior_identity_must_refer_to_same_instrument(tmp_path: Path, family: st
         module.validate_candidate(copy)
 
 
+def _ensure_probe_identity(documents: dict) -> None:
+    identities = documents["fixtures/identities.json"]["identities"]
+    if any(item["identity_id"] == "idn-ev-probe" for item in identities):
+        return
+    probe = json.loads(json.dumps(next(item for item in identities if item["identity_id"] == "idn-ev-b1")))
+    probe["identity_id"] = "idn-ev-probe"
+    probe["event"] = dict(probe["event"])
+    probe["event"]["market_ticker"] = "KXSYNTH-26JAN01-PROBE"
+    identities.append(probe)
+
+
 def _add_lifecycle_state_probe(
     documents: dict, event_type: str, status: str, resolution: str | None, result: str | None
 ) -> None:
+    _ensure_probe_identity(documents)
     records = documents["fixtures/raw_records.json"]["records"]
     record = json.loads(json.dumps(next(r for r in records if r["raw_record_id"] == "raw-ev-determined")))
+    suffix = {"close_date_updated": "close_date", "created": "created"}.get(event_type, "resolution")
     record.update(
         raw_record_id="raw-ev-state-probe",
         source_record_key="state-probe",
-        natural_key="kalshi_demo:market:kxsynth-26jan01-b1:state_probe",
+        identity_id="idn-ev-probe",
+        natural_key=f"kalshi_demo:market:kxsynth-26jan01-probe:{suffix}",
+        supersedes=None,
     )
     records.append(record)
     payload = record["payload"]
@@ -601,12 +616,220 @@ def test_unresolved_lifecycle_states_without_results_are_accepted(
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
 
 
-def test_settled_socket_message_without_result_is_accepted(tmp_path: Path) -> None:
+def test_resultless_settled_socket_without_predecessor_is_rejected(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)
     _add_lifecycle_state_probe(documents, "settled", "finalized", "yes", None)
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="settled resolution has no predecessor"):
+        module.validate_candidate(copy)
+
+
+def test_resultless_settled_socket_copies_predecessor_resolution(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _add_lifecycle_state_probe(documents, "determined", "determined", "yes", "yes")
+    records = documents["fixtures/raw_records.json"]["records"]
+    prior = next(item for item in records if item["raw_record_id"] == "raw-ev-state-probe")
+    prior["raw_record_id"] = "raw-ev-probe-determined"
+    prior["source_record_key"] = "probe-determined"
+    settled = json.loads(json.dumps(prior))
+    settled.update(
+        raw_record_id="raw-ev-probe-settled",
+        source_record_key="probe-settled",
+        supersedes="raw-ev-probe-determined",
+        event_time="2024-09-01T18:00:00Z",
+        accepted_at="2024-09-01T18:00:02Z",
+    )
+    settled["payload"] = dict(settled["payload"])
+    settled["payload"].update(
+        event_type="settled",
+        channel="market_lifecycle_v2",
+        status_rest="finalized",
+        resolution="yes",
+        result=None,
+        official_lifecycle_status_observed=True,
+        determination_ts=None,
+        settlement_value=None,
+        settled_ts=1725213600,
+        settlement_ts=None,
+    )
+    records.append(settled)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
+def test_resultless_settled_socket_rejects_contradictory_predecessor(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _add_lifecycle_state_probe(documents, "determined", "determined", "yes", "yes")
+    records = documents["fixtures/raw_records.json"]["records"]
+    prior = next(item for item in records if item["raw_record_id"] == "raw-ev-state-probe")
+    prior["raw_record_id"] = "raw-ev-probe-determined"
+    prior["source_record_key"] = "probe-determined"
+    settled = json.loads(json.dumps(prior))
+    settled.update(
+        raw_record_id="raw-ev-probe-settled",
+        source_record_key="probe-settled",
+        supersedes="raw-ev-probe-determined",
+        event_time="2024-09-01T18:00:00Z",
+        accepted_at="2024-09-01T18:00:02Z",
+    )
+    settled["payload"] = dict(settled["payload"])
+    settled["payload"].update(
+        event_type="settled",
+        channel="market_lifecycle_v2",
+        status_rest="finalized",
+        resolution="no",
+        result=None,
+        official_lifecycle_status_observed=True,
+        determination_ts=None,
+        settlement_value=None,
+        settled_ts=1725213600,
+        settlement_ts=None,
+    )
+    records.append(settled)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="settled resolution has no predecessor"):
+        module.validate_candidate(copy)
+
+
+def test_future_correction_does_not_authorize_lineage_input() -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    bundle = module.Bundle(documents)
+    bundle.identities["idn-eq-moved"] = {
+        "identity_id": "idn-eq-moved",
+        "market_family": "equity",
+        "identity_version": 1,
+        "equity": {
+            "issuer_cik": "0000000002",
+            "listing_key": "us-equity:cik:0000000002:class:common",
+            "share_class": "common",
+        },
+    }
+    quote = json.loads(json.dumps(bundle.records["raw-eq-quote"]))
+    quote.update(
+        raw_record_id="raw-eq-quote-moved",
+        identity_id="idn-eq-moved",
+        source_record_key="quote-moved",
+        natural_key="us-equity:listing:0000000002:common:quote",
+    )
+    bundle.records[quote["raw_record_id"]] = quote
+    move = json.loads(json.dumps(bundle.records["raw-eq-split-corr"]))
+    move.update(
+        raw_record_id="raw-eq-split-move",
+        source_record_key="split-move",
+        event_time="2024-12-01T15:00:00Z",
+        accepted_at="2024-12-01T15:00:00Z",
+        supersedes="raw-eq-split-corr",
+    )
+    move["payload"] = dict(move["payload"])
+    move["payload"]["listing_identity_before"] = "idn-eq-moved"
+    move["payload"]["listing_identity_after"] = "idn-eq-moved"
+    move["payload"]["ratio_numerator"] = 5
+    move["raw_sha256"] = module.payload_sha256(move["payload"])
+    bundle.records[move["raw_record_id"]] = move
+    early = module.parse_time("2024-08-11T00:00:00Z")
+    later = module.parse_time("2024-12-02T00:00:00Z")
+    observation = {
+        "observation_id": "obs-moved-quote",
+        "decision_time": "2024-08-11T00:00:00Z",
+        "market_family": "equity",
+        "identity_id": "idn-eq-moved",
+        "natural_key": quote["natural_key"],
+        "effective_raw_record_id": quote["raw_record_id"],
+        "raw_record_ids": [quote["raw_record_id"], "raw-eq-split"],
+        "value": "50.00",
+        "resolution": None,
+        "lifecycle_status": None,
+        "corporate_actions": [],
+    }
+    assert not module._input_identity_ok(bundle, observation, bundle.records["raw-eq-split"], early)
+    assert module._input_identity_ok(bundle, observation, bundle.records["raw-eq-split"], later)
+    bundle.observations.append(observation)
+    bundle.edges.append(
+        {
+            "lineage_id": "lin-moved-quote",
+            "observation_id": "obs-moved-quote",
+            "input_raw_record_ids": observation["raw_record_ids"],
+            "transform_id": "o2.candidate.effective_version",
+            "transform_version": "o2.candidate.v1",
+        }
+    )
+    with pytest.raises(module.ContractError, match="uses another identity"):
+        module.validate_observations(bundle)
+
+
+def test_equity_natural_key_must_match_identity(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    old = "us-equity:listing:0000000001:common:quote"
+    new = "us-equity:listing:0000000002:common:quote"
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        if record["natural_key"] == old:
+            record["natural_key"] = new
+    for observation in documents["fixtures/observations.json"]["observations"]:
+        if observation["natural_key"] == old:
+            observation["natural_key"] = new
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["natural_key"] == old:
+            check["natural_key"] = new
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="natural key does not name its equity identity"):
+        module.validate_candidate(copy)
+
+
+def test_amendment_must_name_the_superseded_accession(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    amendment = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-10ka"
+    )
+    amendment["payload"]["amends_accession"] = "0000000001-24-000050"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="amends_accession does not name the superseded filing"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_observation_id_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observations = documents["fixtures/observations.json"]["observations"]
+    observations[-1] = json.loads(json.dumps(observations[0]))
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate observation"):
+        module.validate_candidate(copy)
+
+
+def test_lifecycle_natural_key_suffix_must_match_event_type(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    old = "kalshi_demo:market:kxsynth-26jan01-b1:close_date"
+    new = "kalshi_demo:market:kxsynth-26jan01-b1:arbitrary_fact"
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        if record["natural_key"] == old:
+            record["natural_key"] = new
+    for check in documents["fixtures/replay_checks.json"]["checks"]:
+        if check["natural_key"] == old:
+            check["natural_key"] = new
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="natural key suffix does not match its event_type"):
+        module.validate_candidate(copy)
+
+
+def test_settlement_timestamp_after_acceptance_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(
+        item
+        for item in documents["fixtures/raw_records.json"]["records"]
+        if item["raw_record_id"] == "raw-ev-d1-finalized"
+    )
+    record["payload"]["settlement_ts"] = "2099-01-01T00:00:00Z"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="settlement_ts is after accepted_at"):
+        module.validate_candidate(copy)
 
 
 def test_o2_validator_does_not_import_providers() -> None:
