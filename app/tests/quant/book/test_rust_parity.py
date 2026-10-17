@@ -391,3 +391,125 @@ def test_resting_at_matches_the_python_index_order():
             rust.resting_at(bad)
         with pytest.raises(IndexError):
             python.resting_at(bad)
+
+
+def _resting_ids(book) -> list[str]:
+    return [book.resting_at(i).order_id for i in range(len(book))]
+
+
+def _assert_resting_at_agrees(python, rust, expected: list[str]) -> None:
+    """``resting_at`` walks both books in the same order, and stops at ``len``."""
+    assert _resting_ids(python) == expected
+    assert _resting_ids(rust) == expected
+    assert _ids(python) == _ids(rust) == expected
+    for book in (python, rust):
+        with pytest.raises(IndexError):
+            book.resting_at(len(expected))
+    for i, order_id in enumerate(expected):
+        left, right = python.resting_at(i), rust.resting_at(i)
+        assert right.order_id == left.order_id == order_id
+        assert right.side is left.side
+        assert right.price_ticks == left.price_ticks
+        assert right.qty == left.qty
+        assert right.entry_seq == left.entry_seq
+
+
+def test_resting_at_keeps_the_slot_through_reduce_and_moves_a_replace_to_the_end():
+    """``reduce`` keeps time priority, so the index slot stays. ``replace`` is a
+    cancel-and-new, so the id leaves its slot and re-enters at the end."""
+    python, rust = PythonLimitOrderBook("S"), LimitOrderBook("S")
+    rows = (
+        ("o0", Side.BUY, 99, 100),
+        ("o1", Side.SELL, 101, 200),
+        ("o2", Side.BUY, 98, 300),
+        ("o3", Side.SELL, 102, 400),
+        ("o4", Side.BUY, 99, 500),
+    )
+    for seq, (order_id, side, price, qty) in enumerate(rows):
+        for book in (python, rust):
+            book.add(order_id=order_id, side=side, price_ticks=price, qty=qty, seq=seq, ts=seq)
+    _assert_resting_at_agrees(python, rust, ["o0", "o1", "o2", "o3", "o4"])
+
+    # A partial reduce keeps the slot and shrinks the row both books return.
+    for book in (python, rust):
+        book.reduce("o1", 50)
+    _assert_resting_at_agrees(python, rust, ["o0", "o1", "o2", "o3", "o4"])
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 150
+
+    # A reduce to zero leaves the book; later slots shift down by one.
+    for book in (python, rust):
+        book.reduce("o2", 300)
+    _assert_resting_at_agrees(python, rust, ["o0", "o1", "o3", "o4"])
+
+    # A reprice replace re-adds the id at the end of the index.
+    for book in (python, rust):
+        book.replace("o0", new_price_ticks=98, seq=10, ts=10)
+    _assert_resting_at_agrees(python, rust, ["o1", "o3", "o4", "o0"])
+    assert python.resting_at(3).price_ticks == rust.resting_at(3).price_ticks == 98
+
+    # A size-only replace (an increase) also goes to the end, unlike reduce.
+    for book in (python, rust):
+        book.replace("o3", new_qty=450, seq=11, ts=11)
+    _assert_resting_at_agrees(python, rust, ["o1", "o4", "o0", "o3"])
+
+    # Replacing the last id keeps it last; a no-op replace still re-enters.
+    for book in (python, rust):
+        book.replace("o3", seq=12, ts=12)
+    _assert_resting_at_agrees(python, rust, ["o1", "o4", "o0", "o3"])
+    for book in (python, rust):
+        book.replace("o1", seq=13, ts=13)
+    _assert_resting_at_agrees(python, rust, ["o4", "o0", "o3", "o1"])
+
+    # A reduce on the moved id keeps its new slot.
+    for book in (python, rust):
+        book.reduce("o0", 10)
+    _assert_resting_at_agrees(python, rust, ["o4", "o0", "o3", "o1"])
+    assert python.resting_at(1).qty == rust.resting_at(1).qty == 90
+    python.check_integrity()
+    rust.check_integrity()
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_resting_at_agrees_after_every_reduce_and_replace(seed):
+    """A seeded walk of add, reduce and replace, with ``resting_at`` compared after
+    each step. Pins insertion order through both paths, not only at the end."""
+    rng = random.Random(seed)
+    python, rust = PythonLimitOrderBook("WALK"), LimitOrderBook("WALK")
+    counter = 0
+    for step in range(120):
+        live = _ids(python)
+        op = rng.choice(["add", "reduce", "replace", "replace"])
+        if not live or len(live) < 3 and op != "add":
+            op = "add"
+        if op == "add":
+            counter += 1
+            kwargs = dict(
+                order_id=f"o{counter}",
+                side=rng.choice([Side.BUY, Side.SELL]),
+                price_ticks=rng.choice(PRICES),
+                qty=rng.randint(1, 400),
+                seq=step,
+                ts=step,
+            )
+            for book in (python, rust):
+                book.add(**kwargs)
+            expected = live + [f"o{counter}"]
+        elif op == "reduce":
+            order_id = rng.choice(live)
+            qty = rng.randint(1, python.get(order_id).qty)
+            for book in (python, rust):
+                book.reduce(order_id, qty)
+            expected = [i for i in live if i in python]
+        else:
+            order_id = rng.choice(live)
+            kwargs = {}
+            if rng.random() < 0.6:
+                kwargs["new_price_ticks"] = rng.choice(PRICES)
+            if rng.random() < 0.6 or not kwargs:
+                kwargs["new_qty"] = rng.randint(1, 400)
+            for book in (python, rust):
+                book.replace(order_id, seq=step, ts=step, **kwargs)
+            expected = [i for i in live if i != order_id] + [order_id]
+        _assert_resting_at_agrees(python, rust, expected)
+        rust.check_integrity()
+        python.check_integrity()
