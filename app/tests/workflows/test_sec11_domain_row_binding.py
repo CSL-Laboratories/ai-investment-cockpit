@@ -99,8 +99,8 @@ def test_try_consume_refuses_forged_event_type(st, clock):
 def test_try_consume_allows_genuine_filing(st, clock):
     ev = _persist_one(st, clock, event_type="filing")
     b = DeepBudget(st, limit=5)
-    assert b.try_consume(day=DAY, event_id=ev.id, symbol="AAPL",
-                         reason="event_type:filing", corroborated=True) is True
+    assert isinstance(b.try_consume(day=DAY, event_id=ev.id, symbol="AAPL",
+                                    reason="event_type:filing", corroborated=True), str)
     assert b.spent(DAY) == 1
 
 
