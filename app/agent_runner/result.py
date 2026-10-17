@@ -1,6 +1,7 @@
 """WP1b — agent-runner result + status constants."""
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
 OK = "ok"
@@ -21,3 +22,28 @@ class AgentResult:
     prior_raw: str = ""                 # first attempt's raw output when a repair call replaced it
     dispatched: bool = True             # False when refused before any subprocess was spawned
     usage_state: str = "ok"           # ok | degraded | exhausted (vendor window after this call)
+
+
+# Saga pivot for an unused deep-escalation reservation. Set only when a model
+# call is actually handed to a transport or a Jev attempt has dispatched.
+# Preflight refusals leave this false so the reservation can be released.
+_AGENT_DISPATCHED: ContextVar[bool] = ContextVar(
+    "cockpit_agent_dispatched", default=False)
+
+
+def watch_agent_dispatch() -> Token[bool]:
+    """Mark the following span as not yet dispatched."""
+    return _AGENT_DISPATCHED.set(False)
+
+
+def agent_dispatched() -> bool:
+    return _AGENT_DISPATCHED.get()
+
+
+def restore_agent_dispatch_watch(token: Token[bool]) -> None:
+    _AGENT_DISPATCHED.reset(token)
+
+
+def mark_agent_dispatched() -> None:
+    """Record that a model call has reached the transport or Jev HTTP boundary."""
+    _AGENT_DISPATCHED.set(True)

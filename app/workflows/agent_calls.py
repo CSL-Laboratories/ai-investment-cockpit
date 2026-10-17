@@ -15,14 +15,12 @@ to here so tests inject a FakeTransport (never a real subprocess).
 """
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
 from dataclasses import replace
 from decimal import Decimal
 
-from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult
+from agent_runner.result import ERROR, NEEDS_HUMAN, OK, AgentResult, mark_agent_dispatched
 from agent_runner.runner import run_agent, worst_case_repair_overhead
 from agent_runner.spec import AgentSpec
-from agent_runner.transport import SubprocessTransport
 from config.models import (
     configured_decision_runtime,
     job_class_for,
@@ -112,41 +110,6 @@ def _jev_window_moved(state, admitted_generation: int) -> bool:
     return state.usage.window("jev").generation != admitted_generation
 
 
-# Saga pivot for an unused deep-escalation reservation. triage_loop may release
-# that unit only when the proposal handler raises before a model call is dispatched
-# (Jev HTTP or a transport run). Once dispatched the unit stays spent, including
-# when a later line raises; a preflight refusal before dispatch releases it.
-_CALL_AGENT_ENTERED: ContextVar[bool] = ContextVar(
-    "cockpit_call_agent_entered", default=False)
-
-
-class _DispatchMarkingTransport:
-    """Marks the reservation spent only when a transport call is actually made."""
-
-    def __init__(self, inner):
-        self._inner = inner
-
-    def __getattr__(self, name):
-        return getattr(self._inner, name)
-
-    def run(self, *args, **kwargs):
-        _CALL_AGENT_ENTERED.set(True)
-        return self._inner.run(*args, **kwargs)
-
-
-def watch_call_agent() -> Token[bool]:
-    """Mark the following span as not yet inside ``call_agent``."""
-    return _CALL_AGENT_ENTERED.set(False)
-
-
-def call_agent_entered() -> bool:
-    return _CALL_AGENT_ENTERED.get()
-
-
-def restore_call_agent_watch(token: Token[bool]) -> None:
-    _CALL_AGENT_ENTERED.reset(token)
-
-
 def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: str,
                schema_name: str, input_refs: dict, transport=None, timeout_s: float = 120.0,
                max_turns: int = 6, decision_weight=None, jev_packet=None,
@@ -207,10 +170,13 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
                         jev_attempt, accepted=False, reason="jev_stale_attempt", proposal=None,
                     )
                 if jev_attempt.dispatched:
+                    # HTTP already happened. A later raise must keep the unit.
+                    mark_agent_dispatched()
                     state.usage.record("jev")
         except Exception:  # noqa: BLE001 - Jev must not skip the Claude fallback
             dispatched = jev_attempt is not None and jev_attempt.dispatched
             if dispatched:
+                mark_agent_dispatched()
                 # HTTP already happened. A later step (watch-only admission, the
                 # usage record) must not drop the billed usd and token fields.
                 jev_attempt = replace(
@@ -220,8 +186,6 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             else:
                 # Preflight never reached HTTP, so this attempt bills nothing.
                 jev_attempt = blocked_jev_attempt(state.settings, "jev_error")
-    if jev_attempt is not None and jev_attempt.dispatched:
-        _CALL_AGENT_ENTERED.set(True)
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
     if jev_accepted:
@@ -281,9 +245,7 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
             cwd=pinned_cwd,              # SEC-06 (W11): pin the decision-agent sandbox cwd
             model_id=model_id,
         )
-        result = run_agent(spec, transport=_DispatchMarkingTransport(
-                               transport or SubprocessTransport()),
-                           usage=state.usage,
+        result = run_agent(spec, transport=transport, usage=state.usage,
                            secret_values=_provisioned_secret_values(),  # BUG-092: Inv 4
                            pinned_cwd=pinned_cwd,
                            decision_agent_account=getattr(

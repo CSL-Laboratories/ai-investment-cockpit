@@ -21,18 +21,16 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
+from agent_runner.result import (
+    LIMIT_HIT, OK, TIMEOUT, agent_dispatched, restore_agent_dispatch_watch,
+    watch_agent_dispatch,
+)
 from core.ids import new_id
 from orchestrator.breakers import BreakerEngine, BreakerSignals, unsampled
 from orchestrator.limits import current_limits
 from schemas.models.audit_entry import AuditEntry
 from schemas.models.market_event import MarketEvent
-from workflows.agent_calls import (
-    call_agent,
-    call_agent_entered,
-    restore_call_agent_watch,
-    watch_call_agent,
-)
+from workflows.agent_calls import call_agent
 from workflows.budget import (
     BudgetIntegrityError,
     DeepBudget,
@@ -433,16 +431,17 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             _defer(state, dispositions, ev, "deep_budget_exhausted")
             continue
         if cand["holdings_match"] or cand["symbol"] in watchlist:
-            # call_agent is the saga pivot. A raise before it means no model
-            # call, so release this reservation. A raise after it keeps the unit.
-            # The finally only restores the watch — it must not release.
-            watch = watch_call_agent()
+            # Dispatch is the saga pivot, not entering call_agent. A raise before
+            # transport.run or a dispatched Jev attempt releases this reservation.
+            # A raise after that keeps the unit. The finally only restores the
+            # watch — it must not release.
+            watch = watch_agent_dispatch()
             try:
                 outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
                              parquet_root=parquet_root, holdings_symbols=holdings_symbols,
                              watchlist=watchlist, decision_weight=cand["score"])
             except Exception:
-                if not call_agent_entered():
+                if not agent_dispatched():
                     try:
                         budget.release(
                             day=day, event_id=ev.id, reason="pre_dispatch_exception",
@@ -451,7 +450,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
                         pass  # leave the unit spent; still abort the tick
                 raise
             finally:
-                restore_call_agent_watch(watch)
+                restore_agent_dispatch_watch(watch)
             if outcome.status == "context_limited":
                 # No model call: the reservation is unused. Release the exact
                 # row try_consume wrote so a retry is not blocked.
