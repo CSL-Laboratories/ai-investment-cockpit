@@ -51,8 +51,10 @@ REQUIRED_CONTROLS = (
     "color_only_signal",
     "success_exit_on_refusal",
     "contradictory_status_text",
+    "unconfirmed_intervention",
+    "stale_not_watch_only",
 )
-SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass"}
+SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass", "unconfirmed_intervention"}
 CONTROL_REASONS = {
     "gui_cli_semantic_divergence": "semantic_projection_mismatch",
     "hidden_refusal": "refusal_not_visible",
@@ -63,6 +65,8 @@ CONTROL_REASONS = {
     "color_only_signal": "color_only_signal",
     "success_exit_on_refusal": "exit_code_hides_refusal",
     "contradictory_status_text": "status_text_mismatch",
+    "unconfirmed_intervention": "intervention_not_explicit",
+    "stale_not_watch_only": "stale_not_watch_only",
 }
 ORACLE_KINDS = ("responses", "pairs", "commands", "events", "errors")
 REQUIRED_ORACLE_PAIRS = ("positions.inspect.parity", "decisions.inspect.parity")
@@ -618,7 +622,10 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             event_validator,
             error_validator,
         )
-        lines = [_check_negative(control, negatives[control], response_validator, set(commands)) for control in REQUIRED_CONTROLS]
+        lines = [
+            _check_negative(control, negatives[control], response_validator, command_validator, set(commands))
+            for control in REQUIRED_CONTROLS
+        ]
     except (OSError, ContractError, SchemaError, KeyError, TypeError, AttributeError) as exc:
         return 1, "", f"o7-operator-contract: FAIL: {exc}\n"
     stdout = "\n".join([*lines, SUMMARY]) + "\n"
@@ -696,9 +703,21 @@ def _require_schema(validator: Draft202012Validator, instance: Any, label: str) 
         raise ContractError(f"{label} schema: {error}")
 
 
-def _check_negative(control: str, document: dict[str, Any], validator: Draft202012Validator, allowed: set[str]) -> str:
+def _check_negative(
+    control: str,
+    document: dict[str, Any],
+    validator: Draft202012Validator,
+    command_validator: Draft202012Validator,
+    allowed: set[str],
+) -> str:
     if not isinstance(document, dict) or document.get("control") != control:
         return _control_line(control, "WRONG_FAILURE")
+    if control == "unconfirmed_intervention":
+        body = document.get("body")
+        schema_error = None if not isinstance(body, dict) else _schema_error(command_validator, body)
+        if schema_error is not None:
+            return _control_line(control, "FAIL as designed")
+        return _control_line(control, "UNEXPECTED_ACCEPT")
     if control == "gui_cli_semantic_divergence":
         gui, cli = document.get("gui"), document.get("cli")
         gui_error = _schema_error(validator, gui)

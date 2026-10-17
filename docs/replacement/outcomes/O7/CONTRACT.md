@@ -148,7 +148,7 @@ The CHI '21 ACM page linked below was returned by the Parallel search. This sess
 
 ## Negative controls
 
-Each fixture is schema-valid except the privileged bypass, which the response schema must reject. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command.
+Each fixture is schema-valid except the privileged bypass, which the response schema must reject, and the unconfirmed intervention, which the command schema must reject. The checker must also name the control. A control that is accepted is an unexpected accept and fails the candidate command.
 
 | Control | Fixture | What it catches |
 | --- | --- | --- |
@@ -161,6 +161,8 @@ Each fixture is schema-valid except the privileged bypass, which the response sc
 | `color_only_signal` | `fixtures/negative/color-only-signal.json` | `color_only_signal=true` |
 | `success_exit_on_refusal` | `fixtures/negative/success-exit-on-refusal.json` | Refused status with exit code 0 |
 | `contradictory_status_text` | `fixtures/negative/contradictory-status-text.json` | Refused status whose visible text says `ok` |
+| `unconfirmed_intervention` | `fixtures/negative/unconfirmed-intervention.json` | Stop request with `confirmation=not_required` and empty arguments |
+| `stale_not_watch_only` | `fixtures/negative/stale-not-watch-only.json` | Stale health read with `watch_only=false` |
 
 ## Optional TUI decision packet
 

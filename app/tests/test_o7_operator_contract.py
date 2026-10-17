@@ -43,6 +43,8 @@ EXPECTED_LINES = (
     "NEGATIVE CONTROL color_only_signal: FAIL as designed (color_only_signal)",
     "NEGATIVE CONTROL success_exit_on_refusal: FAIL as designed (exit_code_hides_refusal)",
     "NEGATIVE CONTROL contradictory_status_text: FAIL as designed (status_text_mismatch)",
+    "NEGATIVE CONTROL unconfirmed_intervention: FAIL as designed (intervention_not_explicit)",
+    "NEGATIVE CONTROL stale_not_watch_only: FAIL as designed (stale_not_watch_only)",
 )
 ACCEPTED = {
     "docs/replacement/SUCCESSOR-PRODUCT.md": "6e5f0d0cad102077fd058aac4970ac0eb31fd6f6e952f948c43edaa9fe0c919e",

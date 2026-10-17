@@ -57,10 +57,22 @@
       "control": "privileged_order_bypass"
     },
     {
+      "path": "fixtures/negative/stale-not-watch-only.json",
+      "sha256": "3c7fe4ef3f3fa8e30bf4318b4d0593a28d975f0b46099f4505ea2b0b13737d6d",
+      "role": "negative",
+      "control": "stale_not_watch_only"
+    },
+    {
       "path": "fixtures/negative/success-exit-on-refusal.json",
       "sha256": "c8fb47a632ff6c5cd5979e6e1319aa25ead431b3d6b86bcb4bca6fd812398233",
       "role": "negative",
       "control": "success_exit_on_refusal"
+    },
+    {
+      "path": "fixtures/negative/unconfirmed-intervention.json",
+      "sha256": "36df9f327c8842a4ea70ffcaf357e16778e3ad1d84635592636db0e1be90cfa7",
+      "role": "negative",
+      "control": "unconfirmed_intervention"
     },
     {
       "path": "fixtures/oracle/commands.json",
