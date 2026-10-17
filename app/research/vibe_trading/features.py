@@ -176,6 +176,29 @@ def _identity_matches(payload: dict, key: str, requested: str, *, fold: bool = F
     return got == want
 
 
+def _identity_echo(payload: dict, key: str, requested: str) -> str:
+    """``match`` / ``mismatch`` / ``absent`` for one echoed identity field.
+
+    ``alpha_bench``'s upstream envelope omits ``zoo``, ``universe``, and ``period``.
+    A missing field is request-bound, not a stale-cache mismatch. A field that is
+    present and disagrees is still a mismatch.
+    """
+    got = _identity_value(payload, key)
+    if got is None:
+        return "absent"
+    if type(requested) is not str or not requested.strip() or got != requested.strip():
+        return "mismatch"
+    return "match"
+
+
+def _with_source(raw: dict, payload: dict, row: dict | None = None) -> dict:
+    """Keep the exact sidecar object beside the normalized projection (Invariant 8)."""
+    image = {**raw, "source_payload": payload}
+    if row is not None:
+        image["source_row"] = row
+    return image
+
+
 def _aware_dt(value: str) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -212,19 +235,32 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
 
     Factor scores are universe-wide, not stock-specific. ``symbols`` is ignored so
     triage cannot treat a bench as evidence for the operator watchlist.
-    ``None`` means the envelope is malformed or the returned identity does not
-    match the request; ``[]`` is a valid empty result.
+    ``None`` means the envelope is malformed or an echoed identity disagrees with
+    the request. ``[]`` is a valid empty result. Upstream ``run_alpha_bench`` does
+    not echo zoo/universe/period; those labels stay request-bound unless a field
+    or a per-row ``zoo`` is present and matches.
     """
     del symbols
     if not _ok(payload):
         return None
-    if (not _identity_matches(payload, "zoo", zoo)
-            or not _identity_matches(payload, "universe", universe)
-            or not _identity_matches(payload, "period", period)):
+    echoes = {
+        "zoo": _identity_echo(payload, "zoo", zoo),
+        "universe": _identity_echo(payload, "universe", universe),
+        "period": _identity_echo(payload, "period", period),
+    }
+    if "mismatch" in echoes.values():
         return None
     raw_rows = _factor_rows(payload)
     accepted: list[dict] = []
+    zoo_conflict = False
+    row_zoo_confirmed = False
     for row in raw_rows:
+        row_zoo = row.get("zoo")
+        if type(row_zoo) is str and row_zoo.strip():
+            if row_zoo.strip() != zoo:
+                zoo_conflict = True
+                continue
+            row_zoo_confirmed = True
         factor_id = row.get("id")
         ic_mean = _finite(row.get("ic_mean"))
         if type(factor_id) is not str or _FACTOR_ID.fullmatch(factor_id) is None or ic_mean is None:
@@ -243,15 +279,23 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
         if labelled is None:
             continue
         category, source = labelled
-        accepted.append({**projected, "category": category, "category_source": source})
+        accepted.append({
+            **projected, "category": category, "category_source": source, "_row": row,
+        })
+    if echoes["zoo"] == "absent" and row_zoo_confirmed:
+        echoes["zoo"] = "row"
     if not accepted:
-        return []
+        return None if zoo_conflict and not row_zoo_confirmed else []
     alive, reversed_, dead, tested, counts_source = _counts(accepted, payload)
     bias = "true" if universe == "sp500" else "unverified"
+    label = {"match": "echo", "absent": "request", "row": "row"}
     summary = (
         f"alpha_bench zoo={zoo} universe={universe} period={period} "
         f"alive={alive} reversed={reversed_} dead={dead} tested={tested} "
-        f"counts_scope={counts_source} survivorship_bias={bias}"
+        f"counts_scope={counts_source} survivorship_bias={bias} "
+        f"identity_zoo={label[echoes['zoo']]} "
+        f"identity_universe={label[echoes['universe']]} "
+        f"identity_period={label[echoes['period']]}"
     )
     lines = [FeatureLine(
         priority=(1, 0, ""),
@@ -275,10 +319,10 @@ def project_alpha_bench(payload: dict, *, zoo: str, universe: str, period: str,
             text=text,
             event_type=EVENT_ALPHA,
             symbols=(),
-            raw={"kind": "alpha_factor", "factor": {
+            raw=_with_source({"kind": "alpha_factor", "factor": {
                 "id": row["id"], "ic_mean": row["ic_mean"], "ir": row["ir"],
                 "category": row["category"], "category_source": row["category_source"],
-            }},
+            }}, payload, row["_row"]),
             tool="alpha_bench",
         ))
     return lines
@@ -321,10 +365,10 @@ def project_holdings(payload: dict, *, ticker: str) -> list[FeatureLine] | None:
             text=text,
             event_type=EVENT_13F,
             symbols=(ticker,),
-            raw={"kind": "13f_holder", "ticker": ticker, "holder": {
+            raw=_with_source({"kind": "13f_holder", "ticker": ticker, "holder": {
                 "manager": manager, "quarter": quarter, "shares": shares,
                 "value_usd": value, "held": held if type(held) is bool else None,
-            }},
+            }}, payload, row),
             tool="get_institutional_holdings",
         ))
     return lines
@@ -398,8 +442,8 @@ def project_etf(payload: dict, *, etf: str, universe: frozenset[str]) -> list[Fe
         text=text,
         event_type=EVENT_ETF,
         symbols=ordered,
-        raw={"kind": "etf_constituents", "etf": etf, "as_of": as_of,
-             "constituents": kept, "outside_universe": outside},
+        raw=_with_source({"kind": "etf_constituents", "etf": etf, "as_of": as_of,
+                          "constituents": kept, "outside_universe": outside}, payload),
         tool="etf_holdings",
     )]
 
@@ -459,8 +503,8 @@ def project_contracts(payload: dict, *, query: str) -> list[FeatureLine] | None:
             text=text,
             event_type=EVENT_PROBABILITY,
             symbols=(),
-            raw={"kind": "event_probability", "contract_id": contract_id,
-                 "implied_probability": probability, "as_of": as_of},
+            raw=_with_source({"kind": "event_probability", "contract_id": contract_id,
+                              "implied_probability": probability, "as_of": as_of}, payload, row),
             tool="prediction_market",
         ))
     return lines

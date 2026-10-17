@@ -28,7 +28,11 @@ from research.vibe_trading.features import (
     categorise,
     normalize_run_card,
     project_alpha_bench,
+    project_contracts,
+    project_etf,
+    project_holdings,
     project_run_card,
+    to_events,
     _finite,
 )
 from research.vibe_trading.mcp_client import (
@@ -640,12 +644,70 @@ def test_holdings_mismatching_ticker_are_quarantined():
 
 def test_alpha_bench_mismatching_identity_is_quarantined():
     payload = _load("alpha_bench.json")
-    assert project_alpha_bench(
+    lines = project_alpha_bench(
         payload, zoo="alpha101", universe="sp500", period="2018-2025",
     )
+    assert lines
+    assert "identity_zoo=echo" in lines[0].text
+    assert "identity_universe=echo" in lines[0].text
     assert project_alpha_bench(
         payload, zoo="alpha101", universe="csi300", period="2018-2025",
     ) is None
+
+
+def test_alpha_bench_accepts_the_upstream_envelope_without_echoed_identity():
+    """Upstream run_alpha_bench omits zoo, universe, and period on the envelope."""
+    payload = {
+        "status": "ok",
+        "report_path": "/tmp/alpha_bench.html",
+        "n_alphas_tested": 1,
+        "n_skipped": 0,
+        "horizon": 1,
+        "forward_return_sampling": "daily",
+        "top": [{
+            "id": "alpha101_006",
+            "zoo": "alpha101",
+            "theme": ["momentum"],
+            "ic_mean": 0.041,
+            "ic_std": 0.01,
+            "ir": 0.82,
+            "ic_positive_ratio": 0.7,
+            "ic_count": 100,
+        }],
+    }
+    lines = project_alpha_bench(
+        payload, zoo="alpha101", universe="sp500", period="2018-2025",
+    )
+    assert lines
+    assert "identity_zoo=row" in lines[0].text
+    assert "identity_universe=request" in lines[0].text
+    assert "identity_period=request" in lines[0].text
+    assert "universe=sp500" in lines[0].text
+    assert lines[1].raw["source_row"]["theme"] == ["momentum"]
+    payload["top"][0]["zoo"] = "qlib158"
+    assert project_alpha_bench(
+        payload, zoo="alpha101", universe="sp500", period="2018-2025",
+    ) is None
+
+
+def test_projected_events_keep_the_sidecar_source_image():
+    from ingest.normalize import content_hash
+
+    holdings = project_holdings(_load("holdings.json"), ticker="AAPL")
+    assert holdings[0].raw["source_row"]["cik"] == "0001067983"
+    assert holdings[0].raw["source_payload"]["paging"]["count"] == 1
+    assert holdings[0].raw["source_payload"]["source"] == "sec_edgar_13f"
+    etf = project_etf(_load("etf.json"), etf="SPY", universe=frozenset({"AAPL"}))
+    assert etf[0].raw["source_payload"]["data"]["holdings"][0]["name"] == "APPLE INC"
+    assert etf[0].raw["source_payload"]["paging"]["count"] == 2
+    contracts = project_contracts(_load("prediction.json"), query="Fed cut")
+    assert "SYSTEM:" in contracts[0].raw["source_row"]["title"]
+    events = to_events([*holdings, *etf, *contracts], ts=NOW)
+    for event in events:
+        assert event["content_hash"] == content_hash(event["raw_input"])
+    holding = next(event for event in events if event["event_type"] == "signal:13f")
+    assert "0001067983" in json.dumps(holding["raw_input"])
+    assert "sec_edgar_13f" in json.dumps(holding["raw_input"])
 
 
 def test_prediction_mismatching_or_missing_query_is_quarantined():
@@ -775,6 +837,47 @@ def test_poller_surfaces_a_partial_collection(tmp_path):
     window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
     assert window
     assert all(row.source == "vibe-trading" for row in window)
+
+
+def test_poller_propagates_a_persist_failure(tmp_path):
+    from workflows.events import persist_events
+
+    settings = _settings(
+        watchlist="", vibe_trading_max_symbols=0, vibe_trading_etfs="",
+        vibe_trading_event_queries="",
+    )
+    state = _state(tmp_path, settings, name="persist-fail.db")
+    failed = {"open": True}
+
+    def flaky(db, events, **kwargs):
+        headline = events[0].get("headline", "") if events else ""
+        if failed["open"] and headline.startswith("alpha_factor"):
+            failed["open"] = False
+            raise OSError("disk full")
+        return persist_events(db, events, **kwargs)
+
+    adapter = ResearchAdapter(
+        settings, transport=FakeSidecar({"alpha_bench": _load("alpha_bench.json")}),
+    )
+    runner = IngestRunner(
+        state, parquet_root=tmp_path / "raw", clock=FrozenClock(NOW), persist_fn=flaky,
+    )
+    poller = VibeTradingPoller(adapter, state=state)
+    runner.add_poller(FEED_VIBE_TRADING, poller)
+    out = runner.poll(FEED_VIBE_TRADING)
+    assert out["status"] == "error"
+    assert "disk full" in out["error"]
+    assert out["emitted"] == 1
+    assert runner.polls[FEED_VIBE_TRADING].emitted == 1
+    assert poller.counters["emit_error"] == 1
+    window = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
+    assert len(window) == 1
+    assert window[0].headline.startswith("alpha_bench")
+    retry = runner.poll(FEED_VIBE_TRADING)
+    assert retry["status"] == "ok"
+    assert retry["emitted"] > 1
+    again = events_in_window(state, NOW - timedelta(hours=1), NOW + timedelta(seconds=1))
+    assert len(again) > 1
 
 
 def test_vibe_poller_persists_parquet_backed_events(tmp_path):

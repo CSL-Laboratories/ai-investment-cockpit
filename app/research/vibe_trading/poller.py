@@ -25,9 +25,18 @@ class VibeTradingPoller:
         for event in batch.events:
             try:
                 on_event(event)
-            except Exception:
+            except Exception as exc:
                 self.counters["emit_error"] += 1
-                continue
+                # PersistSink records the missed identity and re-raises. Continuing
+                # would report a healthy tick, and a later sidecar image may never
+                # retry this one, so the delivery gap would stay open.
+                try:
+                    exc.emitted = emitted
+                except (AttributeError, TypeError):
+                    wrapped = RuntimeError("vibe-trading persist failed")
+                    wrapped.emitted = emitted
+                    raise wrapped from exc
+                raise
             emitted += 1
         if batch.status != "ok":
             error = RuntimeError(f"vibe-trading collect status={batch.status}")
