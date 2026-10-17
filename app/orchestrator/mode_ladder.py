@@ -24,7 +24,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-from config.models import runtime_for
+from config.models import DECISION_STAGE_ALIASES, runtime_for
 from config.settings import Mode
 from core.ids import new_id
 from schemas.models.audit_entry import AuditEntry
@@ -41,7 +41,7 @@ _LADDER: list[Mode] = [
 _RUNG: dict[Mode, int] = {m: i for i, m in enumerate(_LADDER)}
 _AUTO_MODES: frozenset[Mode] = frozenset({Mode.auto_veto, Mode.auto_full})
 _LIVE_MODES: frozenset[Mode] = frozenset({Mode.review_live, Mode.auto_veto, Mode.auto_full})
-_DECISION_STAGE_ALIASES = ("triage", "deep")
+_DECISION_STAGE_ALIASES = DECISION_STAGE_ALIASES
 
 
 class IllegalTransition(Exception):
@@ -81,8 +81,10 @@ def legal_transition(src: Mode, dst: Mode) -> bool:
 def default_decision_stage_runtimes(settings=None) -> list[str]:
     """Resolve decision roles for this deployment.
 
-    The auto gate below still requires both to be Claude. Passing Settings makes a configured
-    Codex paper deployment visibly fail that gate instead of inspecting the legacy YAML default.
+    ``auto`` resolves these aliases to Claude. The arm gate still requires the configured
+    decision runtime itself to be Claude, so that resolution is not enough to arm an auto rung.
+    Passing Settings makes a configured Codex paper deployment visibly fail that gate instead
+    of inspecting the legacy YAML default.
     """
     from config.models import configured_decision_runtime
 
@@ -240,9 +242,11 @@ class ModeLadder:
                 from config.models import configured_decision_runtime
 
                 runtime = configured_decision_runtime(self.st.settings)
-                if runtime != "claude":
+                # ``auto`` resolves to Claude on this rung. Explicit jev stays paper-only.
+                if runtime not in {"claude", "auto"}:
                     raise IllegalTransition(
-                        "review_live requires COCKPIT_DECISION_RUNTIME=claude; "
+                        "review_live requires COCKPIT_DECISION_RUNTIME=claude or auto "
+                        "(auto stays on Claude in live modes); "
                         f"configured runtime is {runtime!r}"
                     )
             if not legal_transition(src, target):
@@ -255,11 +259,12 @@ class ModeLadder:
                       operator=None, clock=None, decision_stage_specs=None) -> ArmResult:
         """Arm ``auto_veto`` / ``auto_full``. REFUSES (returns ``armed=False``, nothing
         persisted) unless: target is an auto mode reachable by a single-rung step up, the
-        performance gate passed for exactly this target (SEC-20), every decision-stage runtime
-        is ``claude`` (Inv 2), AND every decision-stage job resolves to a tool/MCP-STARVED argv
-        (SEC-06 / W11 — deny-by-default on the actual constructed argv). On success, stamps
-        armed_at / armed_until (disarm at market close) / armed_by and persists via
-        record_state_change."""
+        performance gate passed for exactly this target (SEC-20), the configured decision
+        runtime is ``claude`` (Inv 2 — ``auto`` may enter ``review_live`` only), every
+        decision-stage runtime is ``claude``, AND every decision-stage job resolves to a
+        tool/MCP-STARVED argv (SEC-06 / W11 — deny-by-default on the actual constructed argv).
+        On success, stamps armed_at / armed_until (disarm at market close) / armed_by and
+        persists via record_state_change."""
         clock = clock or self.st.clock
         target = _as_mode(target)
         # Whole read-modify-write under the lock so a concurrent killswitch cannot interleave
@@ -286,6 +291,16 @@ class ModeLadder:
                 if gt not in (target.value, target):
                     reasons.append(f"performance gate target {gt!r} != requested {target.value}")
 
+            from config.models import configured_decision_runtime
+
+            # ``auto`` resolves the stage map to Claude and may enter review_live. It must
+            # not arm. A caller-supplied all-Claude list does not override the setting.
+            selected_runtime = configured_decision_runtime(self.st.settings)
+            if selected_runtime != "claude":
+                reasons.append(
+                    "auto rungs require COCKPIT_DECISION_RUNTIME=claude; "
+                    f"configured runtime is {selected_runtime!r} (Inv 2)"
+                )
             runtimes = (default_decision_stage_runtimes(self.st.settings)
                         if decision_stage_runtimes is None else list(decision_stage_runtimes))
             non_claude = sorted({r for r in runtimes if r != "claude"})

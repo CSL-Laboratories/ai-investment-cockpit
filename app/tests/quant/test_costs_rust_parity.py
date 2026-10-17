@@ -7,8 +7,13 @@ are what this module compares against it.
 """
 from __future__ import annotations
 
+import os
 import random
-from decimal import Decimal
+import subprocess
+import sys
+import textwrap
+from decimal import ROUND_DOWN, Decimal, InvalidOperation, localcontext
+from pathlib import Path
 
 import pytest
 
@@ -24,8 +29,14 @@ from quant.costs import (
 from quant.events import Fill, Liquidity, PriceScale, Side
 from quant.pnl import PNL_BACKEND, PnLTracker, _make_pnl_core, _rust_mark, _rust_on_fill
 
+# The rust.yml job sets this so a wheel that installs but does not activate
+# fails the job. Hosted Python gates leave it unset and skip.
+_REQUIRE_RUST = os.environ.get("COCKPIT_REQUIRE_RUST") == "1"
+if _REQUIRE_RUST and (COSTS_BACKEND != "rust" or PNL_BACKEND != "rust"):
+    raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but the costs backend is python")
+
 pytestmark = pytest.mark.skipif(
-    COSTS_BACKEND != "rust" or PNL_BACKEND != "rust",
+    not _REQUIRE_RUST and (COSTS_BACKEND != "rust" or PNL_BACKEND != "rust"),
     reason="cockpit_quant costs extension is not installed",
 )
 
@@ -295,6 +306,254 @@ def test_batched_fee_and_pnl_replay_match_single_calls():
     assert (None if last_mid is None else Decimal(last_mid)) == accelerated._last_mid
     assert last_ts == accelerated._last_ts
     assert Decimal(cash) == accelerated._cash
+
+
+def test_nonfinite_mids_stay_on_the_python_path():
+    """NaN and ±Inf stay on Decimal. PnlCore rejects them, so the live call does not use it."""
+    for mid in (float("nan"), float("inf"), float("-inf")):
+        accelerated, reference = _trackers(ZERO_FEES)
+        try:
+            reference.mark(mid, ts=0)
+        except Exception as exc:
+            with pytest.raises(type(exc)):
+                accelerated.mark(mid, ts=0)
+            assert accelerated._core is None
+            continue
+        accelerated.mark(mid, ts=0)
+        assert accelerated._core is None
+        assert reference._last_mid is not None and accelerated._last_mid is not None
+        if reference._last_mid.is_nan():
+            assert accelerated._last_mid.is_nan()
+        else:
+            assert accelerated._last_mid == reference._last_mid
+        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=mid)
+        assert accelerated.position == reference.position == 100
+        assert accelerated.fills == reference.fills == 1
+
+
+def test_pnl_core_rejects_a_nonfinite_mid():
+    core = _make_pnl_core(ZERO_FEES)
+    assert core is not None
+    with pytest.raises(ValueError):
+        core.mark("nan", "0.01", 0, None)
+
+
+def test_huge_integer_mid_stays_on_decimal():
+    """``math.isfinite`` raises OverflowError for ints past the float range."""
+    accelerated, reference = _trackers(ZERO_FEES)
+    mid = 10**309
+    accelerated.mark(mid, ts=0)
+    reference.mark(mid, ts=0)
+    _assert_same_tracker(accelerated, reference)
+    assert accelerated._core is None
+
+
+def test_position_past_i64_stays_on_the_decimal_ledger():
+    """A fill past i64 stays on Decimal. The live tracker never attaches a core."""
+    qty = 2**62
+    accelerated, reference = _trackers(SCHEDULE)
+    accelerated.mark(100.0, ts=0)
+    reference.mark(100.0, ts=0)
+    accelerated.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=100.0)
+    reference.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=100.0)
+    accelerated.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=102.0)
+    reference.on_fill(_fill(Side.BUY, qty, 100), mid_ticks=102.0)
+    _assert_same_tracker(accelerated, reference)
+    assert accelerated.position == 2**63
+    assert accelerated._core is None
+    accelerated.mark(102.0, ts=1)
+    reference.mark(102.0, ts=1)
+    _assert_same_tracker(accelerated, reference)
+
+
+def test_pnl_custom_decimal_context_matches_python():
+    """PnLTracker honours a non-default context. The live call does not use 28-digit Rust."""
+    with localcontext() as ctx:
+        ctx.prec = 6
+        accelerated, reference = _trackers(SCHEDULE)
+        accelerated.mark(10_000.5, ts=0)
+        reference.mark(10_000.5, ts=0)
+        accelerated.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
+        reference.on_fill(_fill(Side.BUY, 100, 10_000), mid_ticks=10_000.5)
+        _assert_same_tracker(accelerated, reference)
+        assert accelerated._core is None
+
+
+def test_nonfinite_borrow_seconds_stay_on_the_python_path():
+    """Non-finite seconds stay on Decimal and do not hit Rust's parser."""
+    for seconds in (
+        float("nan"), float("inf"), float("-inf"),
+        Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity"),
+    ):
+        try:
+            expected = python_borrow_cost(
+                SCHEDULE, short_notional=Decimal("1000000"), seconds=seconds,
+            )
+        except Exception as exc:
+            with pytest.raises(type(exc)):
+                SCHEDULE.borrow_cost(short_notional=Decimal("1000000"), seconds=seconds)
+            continue
+        got = SCHEDULE.borrow_cost(short_notional=Decimal("1000000"), seconds=seconds)
+        if expected.is_nan():
+            assert got.is_nan()
+        else:
+            assert got == expected
+
+
+def test_custom_decimal_context_matches_python():
+    """A narrowed, re-rounded, or untrapped context stays on Decimal."""
+    one = Decimal("1")
+    seven = Decimal("7")
+    with localcontext() as ctx:
+        ctx.prec = 6
+        assert costs.cost_bps(one, seven) == python_cost_bps(one, seven) == Decimal("1428.57")
+        assert SCHEDULE.borrow_cost(short_notional=one, seconds=1) == python_borrow_cost(
+            SCHEDULE, short_notional=one, seconds=1,
+        )
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_DOWN
+        assert costs.cost_bps(one, seven) == python_cost_bps(one, seven)
+        assert costs.cost_bps(one, seven) == Decimal("1428.571428571428571428571428")
+    with localcontext() as ctx:
+        ctx.traps[InvalidOperation] = False
+        borrowed = SCHEDULE.borrow_cost(short_notional=Decimal("NaN"), seconds=1)
+        reference = python_borrow_cost(SCHEDULE, short_notional=Decimal("NaN"), seconds=1)
+        assert borrowed.is_nan() and reference.is_nan()
+    assert costs.cost_bps(one, seven) == python_cost_bps(one, seven)
+    assert costs.cost_bps(one, seven) == Decimal("1428.571428571428571428571429")
+
+
+def _python(script: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    app = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = app + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=app,
+        env=env,
+        check=False,
+    )
+
+
+def test_broken_costs_extension_import_is_not_swallowed():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                raise ImportError("broken extension")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.costs
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "broken extension" in ran.stderr
+
+
+def test_partial_costs_extension_is_not_a_silent_python_fallback():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                return types.ModuleType("cockpit_quant")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.costs
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "fee_for" in ran.stderr
+
+
+def test_partial_pnl_extension_is_not_a_silent_python_fallback():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                module = types.ModuleType("cockpit_quant")
+                for attr in ("fee_for", "borrow_cost", "cost_bps", "fee_for_many"):
+                    setattr(module, attr, lambda *a, **k: None)
+                return module
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.pnl
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0, ran.stderr
+    assert "PnlCore" in ran.stderr
+
+
+def test_missing_costs_extension_stays_on_python():
+    script = textwrap.dedent(
+        """
+        import importlib.util
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return None
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        import quant.costs as costs
+        import quant.pnl as pnl
+        assert costs.COSTS_BACKEND == "python", costs.COSTS_BACKEND
+        assert pnl.PNL_BACKEND == "python", pnl.PNL_BACKEND
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode == 0, ran.stderr
 
 
 def test_live_tracker_does_not_attach_a_core():
