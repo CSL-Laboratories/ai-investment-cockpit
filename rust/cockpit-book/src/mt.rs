@@ -3,6 +3,14 @@
 //! The synthetic feed's stream is defined by that generator, including
 //! `gauss`'s cached second sample. Seeding follows `_random.Random.seed` for a
 //! Python int: the absolute value, little-endian 32-bit limbs, `init_by_array`.
+//!
+//! `sin`, `cos`, and `ln` go through the pure-Rust `libm` crate. `f64::sin`,
+//! `f64::cos`, and `f64::ln` call the platform libm, and Rust does not promise
+//! those results match across platforms or versions. A one-ulp change in the
+//! raw sample can move `round` or the gap cut. With the default gap and
+//! volatility, `libm` stays within a few ulps of CPython and the rounded
+//! events match `random.Random`. A gap whose mean is large enough that one
+//! ulp is already more than a nanosecond can move the integer timestamp.
 
 const N: usize = 624;
 const M: usize = 397;
@@ -177,15 +185,15 @@ impl Mt {
             cached
         } else {
             let x2pi = self.random() * std::f64::consts::TAU;
-            let g2rad = (-2.0 * (1.0 - self.random()).ln()).sqrt();
-            self.gauss_next = Some(x2pi.sin() * g2rad);
-            x2pi.cos() * g2rad
+            let g2rad = (-2.0 * libm::log(1.0 - self.random())).sqrt();
+            self.gauss_next = Some(libm::sin(x2pi) * g2rad);
+            libm::cos(x2pi) * g2rad
         };
         mu + z * sigma
     }
 
     pub fn expovariate(&mut self, lambd: f64) -> f64 {
-        -(1.0 - self.random()).ln() / lambd
+        -libm::log(1.0 - self.random()) / lambd
     }
 }
 
@@ -223,16 +231,54 @@ mod tests {
     }
 
     #[test]
-    fn gauss_matches_cpython_libm_for_seed_3() {
+    fn gauss_locks_the_portable_libm_stream_for_seed_3() {
         let mut mt = Mt::from_seed(3);
-        let bits = [
-            4584937924398319004,
+        // libm 0.2.15, the version Cargo.lock pins. The fourth sample is one
+        // ulp under CPython's platform libm on glibc; the other three match.
+        let portable = [
+            4584937924398319004u64,
+            4601553072989498596,
+            13822916034150412811,
+            4599928597848966274,
+        ];
+        let cpython = [
+            4584937924398319004u64,
             4601553072989498596,
             13822916034150412811,
             4599928597848966275,
         ];
-        for expected in bits {
+        for (&got, python) in portable.iter().zip(cpython) {
+            assert!(got.abs_diff(python) <= 1, "{got} vs {python}");
+        }
+        for expected in portable {
             assert_eq!(mt.gauss(0.0, 0.35).to_bits(), expected);
+        }
+    }
+
+    #[test]
+    fn a_few_ulps_stay_clear_of_the_tape_cuts() {
+        // Default gap and volatility. A few ulps here are far below 1e-8,
+        // which is still well clear of an integer gap and a half-tick fair.
+        let gap_lambda = 1.0 / 250_000.0;
+        for seed in [0, 3, 5, -1, 42] {
+            let mut mt = Mt::from_seed(seed);
+            let mut fair = 10_000.0_f64;
+            for _ in 0..4_000 {
+                let gap = mt.expovariate(gap_lambda);
+                let frac = gap - (gap as i64 as f64);
+                let dist_int = frac.min(1.0 - frac);
+                assert!(
+                    dist_int > 1e-8,
+                    "seed {seed} gap {gap} sits {dist_int} from an integer"
+                );
+                fair += mt.gauss(0.0, 0.35);
+                let frac = fair - fair.floor();
+                let dist_half = (frac - 0.5).abs();
+                assert!(
+                    dist_half > 1e-8,
+                    "seed {seed} fair {fair} sits {dist_half} from a half tick"
+                );
+            }
         }
     }
 }

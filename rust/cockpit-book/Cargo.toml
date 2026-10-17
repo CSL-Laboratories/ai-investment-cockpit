@@ -7,3 +7,6 @@ description = "FIFO limit order book and price-time matcher (QT-01)"
 license = "UNLICENSED"
 
 [dependencies]
+# Pure-Rust sin/cos/ln. f64::{sin, cos, ln} call the platform libm, which Rust
+# does not promise is bit-identical across hosts. Cargo.lock pins the crate.
+libm = "=0.2.15"
