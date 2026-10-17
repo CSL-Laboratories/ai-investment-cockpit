@@ -434,13 +434,47 @@ def semantic_codes(bundle: Bundle, observation: dict, decision: datetime) -> lis
     return []
 
 
+def _resolve_duplicate(bundle: Bundle, record: dict) -> dict | None:
+    """The original this row copies, or None when the row is not a duplicate.
+
+    Every duplicate_of lookup comes through here. The link must name a different
+    record that exists, was accepted no later than this row, and is not itself a
+    duplicate. A self-link, a missing or later target, and any chain or cycle fail.
+    """
+    target_id = record.get("duplicate_of")
+    if not target_id:
+        return None
+    raw_id = record["raw_record_id"]
+    if target_id == raw_id:
+        raise ContractError(f"{raw_id} duplicate refers to itself")
+    target = bundle.records.get(target_id)
+    if target is None:
+        raise ContractError(f"{raw_id} duplicate names a missing record")
+    if parse_time(record["accepted_at"]) < parse_time(target["accepted_at"]):
+        raise ContractError(f"{raw_id} duplicate precedes its target")
+    if target.get("duplicate_of"):
+        seen = {raw_id, target_id}
+        current_id = target.get("duplicate_of")
+        while type(current_id) is str:
+            if current_id in seen:
+                raise ContractError(f"{raw_id} duplicate cycle")
+            seen.add(current_id)
+            current = bundle.records.get(current_id)
+            if current is None or not current.get("duplicate_of"):
+                break
+            current_id = current.get("duplicate_of")
+        raise ContractError(f"{raw_id} duplicate chains through another duplicate")
+    if target["natural_key"] != record["natural_key"] or target["raw_sha256"] != record["raw_sha256"]:
+        raise ContractError(f"{raw_id} duplicate does not match its target")
+    return target
+
+
 def _is_genuine_duplicate(bundle: Bundle, raw_id: str) -> bool:
-    """A claimed duplicate must be a recorded duplicate with identical bytes."""
+    """A claimed duplicate must resolve to an original with identical bytes."""
     record = bundle.records.get(raw_id)
-    if record is None or record["duplicate_of"] is None:
+    if record is None or not record.get("duplicate_of"):
         return False
-    target = bundle.records.get(record["duplicate_of"])
-    return target is not None and target["raw_sha256"] == record["raw_sha256"]
+    return _resolve_duplicate(bundle, record) is not None
 
 
 def _family_collapse_code(bundle: Bundle, observation: dict) -> list[str]:
@@ -635,7 +669,11 @@ def _chain_accessions(bundle: Bundle, record: dict) -> set[str]:
 def _predecessor_resolution(bundle: Bundle, record: dict):
     """Resolution supplied by an earlier record in this correction chain."""
     seen: set[str] = set()
-    parent_id = record.get("supersedes") or record.get("duplicate_of")
+    if record.get("duplicate_of"):
+        original = _resolve_duplicate(bundle, record)
+        parent_id = None if original is None else original["raw_record_id"]
+    else:
+        parent_id = record.get("supersedes")
     while type(parent_id) is str and parent_id not in seen:
         seen.add(parent_id)
         parent = bundle.records.get(parent_id)
@@ -674,16 +712,7 @@ def validate_records(bundle: Bundle) -> None:
             raise ContractError(f"natural key crosses market families: {record['natural_key']}")
         if record["duplicate_of"] and record["supersedes"]:
             raise ContractError(f"{record['raw_record_id']} is both a duplicate and a correction")
-        if record["duplicate_of"]:
-            target = bundle.records.get(record["duplicate_of"])
-            if (
-                target is None
-                or target["natural_key"] != record["natural_key"]
-                or target["raw_sha256"] != record["raw_sha256"]
-            ):
-                raise ContractError(f"{record['raw_record_id']} duplicate does not match its target")
-            if parse_time(record["accepted_at"]) < parse_time(target["accepted_at"]):
-                raise ContractError(f"{record['raw_record_id']} duplicate precedes its target")
+        _resolve_duplicate(bundle, record)
         if record["supersedes"]:
             target = bundle.records.get(record["supersedes"])
             if target is None or target["natural_key"] != record["natural_key"]:

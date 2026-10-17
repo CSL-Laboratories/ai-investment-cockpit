@@ -1295,6 +1295,76 @@ def test_unknown_corporate_action_suffix_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def _copy_filing(documents: dict, raw_id: str, duplicate_of: str, accepted_at: str) -> dict:
+    records = documents["fixtures/raw_records.json"]["records"]
+    base = json.loads(json.dumps(next(item for item in records if item["raw_record_id"] == "raw-eq-10k")))
+    base.update(
+        raw_record_id=raw_id,
+        source_record_key=raw_id,
+        duplicate_of=duplicate_of,
+        supersedes=None,
+        event_time="2024-03-01T21:30:00Z",
+        accepted_at=accepted_at,
+    )
+    records.append(base)
+    return base
+
+
+def test_duplicate_self_reference_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    duplicate = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-10k-dup"
+    )
+    duplicate["duplicate_of"] = "raw-eq-10k-dup"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate refers to itself"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_of_missing_record_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    duplicate = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-10k-dup"
+    )
+    duplicate["duplicate_of"] = "raw-eq-missing"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate names a missing record"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_of_later_record_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    duplicate = next(
+        item for item in documents["fixtures/raw_records.json"]["records"] if item["raw_record_id"] == "raw-eq-10k-dup"
+    )
+    duplicate["accepted_at"] = "2024-03-01T21:30:01Z"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate precedes its target"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_chain_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _copy_filing(documents, "raw-eq-10k-dup-chain", "raw-eq-10k-dup", "2024-03-01T21:32:00Z")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate chains through another duplicate"):
+        module.validate_candidate(copy)
+
+
+def test_duplicate_cycle_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _copy_filing(documents, "raw-eq-10k-cycle-a", "raw-eq-10k-cycle-b", "2024-03-02T21:31:00Z")
+    _copy_filing(documents, "raw-eq-10k-cycle-b", "raw-eq-10k-cycle-a", "2024-03-02T21:31:00Z")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="duplicate cycle"):
+        module.validate_candidate(copy)
+
+
 def test_listing_key_tail_must_be_the_payload_kind(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)

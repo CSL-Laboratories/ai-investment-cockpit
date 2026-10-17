@@ -123,7 +123,7 @@ Ordering by `event_time` is not visibility. The out-of-order fixture has an even
 
 `acquisition_route` is `synthetic_fixture` on every row. The raw image is the canonical JSON of `payload` (`sort_keys`, compact separators, UTF-8). `raw_sha256` is the SHA-256 of those bytes. A derived observation cites raw ids. Reconstruction recomputes the hash from the retained payload. A summary that cites a missing id, or a hash that does not match, is `raw_not_reconstructable`.
 
-Duplicates set `duplicate_of` and must share the natural key and the hash. They are retained and they are not a new version. Corrections set `supersedes`, use a later `accepted_at`, and are a new payload. A row cannot be both. An exact duplicate of a result-less settled socket message is the same payload. It is idempotent: it does not become a new version, and the predecessor resolution is read through `duplicate_of`. A duplicate whose bytes differ is rejected.
+Duplicates set `duplicate_of` to one original and must share its natural key and hash. That original is a different record, accepted no later than the duplicate, and is not itself a duplicate. A self-link, a missing or later target, and any duplicate chain or cycle are rejected. Duplicates are retained and they are not a new version. Corrections set `supersedes`, use a later `accepted_at`, and are a new payload. A row cannot be both. An exact duplicate of a result-less settled socket message is the same payload. It is idempotent: it does not become a new version, and the predecessor resolution is read from that original. A duplicate whose bytes differ is rejected.
 
 ## Lineage
 
