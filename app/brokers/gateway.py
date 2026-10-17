@@ -27,9 +27,11 @@ consuming the single-use approval and advancing the order to ``submitted`` (both
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -140,6 +142,10 @@ _ORDER_AUTHORITY_BY_SCOPE = {
     "live": frozenset({"review_live", "auto_veto", "auto_full"}),
 }
 _AUTO_MODES = frozenset({"auto_veto", "auto_full"})
+# Final admission may block; if it waits longer than this the claim is re-fenced (the lease is
+# far longer) and admission re-read, bounded so a stuck lock fails closed.
+_ADMISSION_WAIT_BUDGET_S = 5.0
+_MAX_FENCE_ROUNDS = 3
 
 # Defaults for the SEC-07 pending-exposure cap and approval time-to-live (Settings/limits
 # override via getattr; the gateway ctor overrides both for tests).
@@ -215,6 +221,16 @@ class OrderGateway:
         # Production paper composition enables this.  Low-level gateway fixtures that test
         # unrelated gates may omit agent lineage, but the real proposal path may not.
         self._require_analysis_generation = bool(require_analysis_generation)
+
+    @property
+    def execution_scope(self) -> str:
+        """Scope pinned at construction for this gateway's own mode check.
+
+        Profile handoff does not treat this attribute as paper authority. A
+        caller can pass ``execution_scope="paper"`` to ``OrderGateway``. Paper
+        admission is the ``PaperOrderGateway`` type.
+        """
+        return self._execution_scope
 
     def _resolve_state(self, ladder):
         """Return the pinned TRUST ROOT for gate (e). The signed audit chain is the order authority;
@@ -797,11 +813,19 @@ class OrderGateway:
     # ---- public: the single LOCKED submit transaction (a)-(h) + two-phase submit --------
     def submit(self, order, *, approval, risk_decision, ladder, breaker_engine, risk_recheck,
                positions, token_nonce, producing_runtime, analysis_vendor=None,
-               analysis_generation=None, clock=None) -> GateOutcome:
+               analysis_generation=None, clock=None,
+               claim_fence: Callable[[], None] | None = None) -> GateOutcome:
         """Re-run EVERY gate immediately before the broker call, failing CLOSED on the first
         failure (audited; bypass events recorded so the gate sees them). Only if all pass:
         two-phase submit (intent -> broker.submit_order -> result), consume the single-use
-        approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13)."""
+        approval, and advance the order to ``submitted`` — all audited (Inv 1/6; SEC-13).
+
+        ``claim_fence``, when given, is called before the final safety checks and transport
+        (CSL-218): an external claim/lease owner (the paper-profile store) gets one last
+        conditional-update check that its fencing token is still current, so a caller
+        whose claim was already re-owned elsewhere is refused here instead of reaching
+        the broker a second time. A raised exception aborts the same way as any other
+        pre-broker safety refusal; the intent is already open and gets a covering result."""
         st = self._resolve_state(ladder)
         clock = clock or st.clock
         resolved_hash = order_tuple_hash(self._resolve_tuple(order))
@@ -918,30 +942,75 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
+            # Pin the transport before the potentially blocking, caller-supplied fence.
+            # The callback cannot replace the adapter or widen its paper scope.
+            broker = self._broker
+            broker_type = type(broker)
+            execution_scope = self._execution_scope
+            paper_transport = isinstance(self, PaperOrderGateway)
+            if claim_fence is not None:
+                try:
+                    claim_fence()
+                except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason=f"claim fence refused the broker call: {exc}",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+
+            from brokers.alpaca_paper import AlpacaPaperBroker
+
+            if (
+                self._broker is not broker
+                or type(broker) is not broker_type
+                or self._execution_scope != execution_scope
+                or (paper_transport and (
+                    self._execution_scope != "paper"
+                    or not isinstance(broker, AlpacaPaperBroker)
+                ))
+            ):
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="transport_scope",
+                    reason="broker transport changed during the claim fence",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
+
             # D3 linearization point. A denial admitted first wins. Authorization first permits
             # this already-authorized call to enter and later admissions bar subsequent calls.
-            # The short lock is released before broker I/O; nothing fallible or user-controlled
-            # occurs between that release and the private transport entry.
-            final_stage = None
-            final_reason = None
-            with st.safety_admission_lock:
-                final_reason = breaker_engine.watch_only_reason()
-                if final_reason is not None:
-                    final_stage = "mode"
-                elif (
-                    self._require_analysis_generation
-                    or analysis_vendor is not None
-                    or analysis_generation is not None
-                ):
-                    try:
-                        if analysis_vendor != producing_runtime:
-                            raise StaleAnalysisError("analysis vendor mismatch")
-                        breaker_engine.assert_fresh_analysis(
-                            analysis_vendor, analysis_generation
-                        )
-                    except (StaleAnalysisError, TypeError, ValueError):
-                        final_stage = "analysis_freshness"
-                        final_reason = "stale_analysis"
+            # The fence has returned before admission. The short lock is released
+            # before the final fail-closed HALT probe and private transport entry.
+            def _final_admission() -> tuple[str | None, str | None]:
+                stage = None
+                reason = None
+                with st.safety_admission_lock:
+                    reason = breaker_engine.watch_only_reason()
+                    if reason is not None:
+                        stage = "mode"
+                    elif (
+                        self._require_analysis_generation
+                        or analysis_vendor is not None
+                        or analysis_generation is not None
+                    ):
+                        try:
+                            if analysis_vendor != producing_runtime:
+                                raise StaleAnalysisError("analysis vendor mismatch")
+                            breaker_engine.assert_fresh_analysis(
+                                analysis_vendor, analysis_generation
+                            )
+                        except (StaleAnalysisError, TypeError, ValueError):
+                            stage = "analysis_freshness"
+                            reason = "stale_analysis"
+                return stage, reason
+
+            final_stage, final_reason = _final_admission()
             if final_stage is not None:
                 return self._abort_after_intent(
                     st,
@@ -953,6 +1022,77 @@ class OrderGateway:
                     resolved_hash=resolved_hash,
                 )
 
+            # The admission read can block past the claim lease, letting a reconciler take
+            # over. Re-run the fence (generation + unexpired lease CAS) and then re-read
+            # admission. An admission read that itself blocked past the budget is followed
+            # by a fresh fence, so no unchecked wait precedes transport.
+            if claim_fence is not None:
+                for _round in range(_MAX_FENCE_ROUNDS):
+                    try:
+                        claim_fence()
+                    except Exception as exc:  # noqa: BLE001 - any fence failure refuses closed
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage="claim_fence",
+                            reason=f"claim fence refused the broker call: {exc}",
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    if (
+                        self._broker is not broker
+                        or type(broker) is not broker_type
+                        or self._execution_scope != execution_scope
+                    ):
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage="transport_scope",
+                            reason="broker transport changed during the claim fence",
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    started = time.monotonic()
+                    final_stage, final_reason = _final_admission()
+                    waited = time.monotonic() - started
+                    if final_stage is not None:
+                        return self._abort_after_intent(
+                            st,
+                            order,
+                            intent,
+                            stage=final_stage,
+                            reason=final_reason,
+                            actor=producing_runtime,
+                            resolved_hash=resolved_hash,
+                        )
+                    if waited <= _ADMISSION_WAIT_BUDGET_S:
+                        break
+                else:
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage="claim_fence",
+                        reason="admission wait exceeded the claim lease budget",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+
+            # HALT may arrive while the claim store blocks or during the final
+            # admission checks. Probe after both, immediately before transport.
+            if _halt_active(default_halt_path()):
+                return self._abort_after_intent(
+                    st,
+                    order,
+                    intent,
+                    stage="halt",
+                    reason="HALT set immediately before broker call (SEC-04)",
+                    actor=producing_runtime,
+                    resolved_hash=resolved_hash,
+                )
+
             # The private broker call (SEC-03: never a module global / string dispatch).
             # ``client_order_id`` is stable transport metadata and cannot change the approved
             # symbol/side/size/price/TIF tuple.
@@ -960,7 +1100,7 @@ class OrderGateway:
                 # F1: the response-shape contract is validated INSIDE the protected region,
                 # so a broker that RETURNS garbage (None/str/non-JSON-native fields) takes
                 # the same covered abort path as a broker that raises.
-                result = _sanitize_broker_response(self._broker.submit_order(broker_request))
+                result = _sanitize_broker_response(broker.submit_order(broker_request))
             except BaseException as exc:                                 # noqa: BLE001
                 # BUG-062: a broker failure between the intent and its result used to leave
                 # the SEC-13 intent dangling FOREVER. Complete the
@@ -1117,6 +1257,37 @@ class OrderGateway:
             token_nonce=token_nonce, producing_runtime=producing_runtime,
             analysis_vendor=analysis_vendor, analysis_generation=analysis_generation, clock=clock,
         )
+
+
+class PaperOrderGateway(OrderGateway):
+    """Paper transport by concrete type, not by a caller-set scope string.
+
+    Construction forces the paper scope, fresh analysis and the admitted paper adapter. A
+    plain ``OrderGateway(..., execution_scope="paper")`` is a different type
+    and is not paper authority for a profile handoff.
+    """
+
+    def __init__(self, broker, **kwargs):
+        from brokers.alpaca_paper import AlpacaPaperBroker
+
+        if not isinstance(broker, AlpacaPaperBroker):
+            raise ValueError("paper gateway requires the admitted paper adapter")
+        if kwargs.get("execution_scope", "paper") != "paper":
+            raise ValueError("paper gateway cannot select another scope")
+        if kwargs.get("require_analysis_generation", True) is not True:
+            raise ValueError("paper gateway requires analysis generation checks")
+        kwargs["execution_scope"] = "paper"
+        kwargs["require_analysis_generation"] = True
+        super().__init__(broker, **kwargs)
+
+    def submit(self, order, **kwargs):
+        from brokers.alpaca_paper import AlpacaPaperBroker
+
+        if self._execution_scope != "paper" or not isinstance(self._broker, AlpacaPaperBroker):
+            return GateOutcome(
+                False, "transport_scope", "paper gateway pin does not match its type"
+            )
+        return super().submit(order, **kwargs)
 
 
 def _verdict_get(verdict, key):
