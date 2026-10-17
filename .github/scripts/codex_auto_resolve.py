@@ -1980,17 +1980,38 @@ def scan_pr(
             pat_login=pat_login,
         )
         if reason == "retry-mark":
-            blocked, _pr, _threads, _issue, _reviews = live_evidence_state(gh, cfg, number)
+            blocked, _pr, live_threads, live_issue, live_reviews = live_evidence_state(
+                gh, cfg, number
+            )
             if blocked:
                 if blocked in EVIDENCE_ABORT_SKIPS:
                     abort_scan = True
                 logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={blocked}")
                 continue
-            mark_sha = (verdict.sha if verdict else "") or head_sha
-            comments = thread_comments(thread) + issue_comments
+            live_id = str(thread.get("id") or "")
+            live_thread = next(
+                (item for item in live_threads if str(item.get("id") or "") == live_id),
+                None,
+            )
+            if live_thread is None:
+                logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip=no-verdict")
+                continue
+            live_latest = latest_verdicts(all_codex_items(live_threads, live_issue, live_reviews))
+            live_reason, live_verdict = classify_thread(
+                live_thread,
+                head_sha=head_sha,
+                latest=live_latest,
+                issue_comments=live_issue,
+                pat_login=pat_login,
+            )
+            if live_reason != "retry-mark":
+                logs.append(f"codex-auto-resolve: pr={number} thread={tid} skip={live_reason}")
+                continue
+            mark_sha = (live_verdict.sha if live_verdict else "") or head_sha
+            comments = thread_comments(live_thread) + live_issue
             cite_when = cite_time_for_thread(
                 comments,
-                str(thread.get("id") or ""),
+                live_id,
                 actor_login=pat_login,
                 sha=mark_sha,
             )
