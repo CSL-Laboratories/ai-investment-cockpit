@@ -1,7 +1,7 @@
 ---
 title: CSL-221 unresolved blockers — qualification evidence
 type: evidence
-status: open
+status: reference
 last-verified: 2026-10-17
 issue: CSL-221
 ---

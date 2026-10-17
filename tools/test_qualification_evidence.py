@@ -121,6 +121,18 @@ class QualificationEvidenceTests(unittest.TestCase):
         target.unlink()
         self.assertIn(MOD.MISSING_JUNIT, codes(self.validate()))
 
+    def test_suite_summary_must_match_testcases(self) -> None:
+        mismatched = (
+            b'<testsuite tests="2" errors="1">'
+            b'<testcase classname="qualification.fixture" name="ok"></testcase>'
+            b"</testsuite>"
+        )
+        with self.assertRaises(MOD.JunitSuiteError):
+            MOD.parse_junit(mismatched)
+        target = self.root / self.bundle["cells"][0]["artifact_dir"] / "junit.xml"
+        target.write_bytes(mismatched)
+        self.assertIn(MOD.NOT_PASS, codes(self.validate()))
+
     def test_junit_skip_is_not_pass(self) -> None:
         cell = json.loads(json.dumps(self.bundle["cells"][0]))
         skipped = (

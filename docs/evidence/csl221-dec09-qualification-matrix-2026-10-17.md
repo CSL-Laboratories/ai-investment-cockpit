@@ -64,7 +64,11 @@ commit SHA, Git tree SHA, workflow run id, numeric job id, runner image,
 CPython version, canonical dependency digest, JUnit inventory, and SHA-256s
 of `junit.xml`, `dependencies.txt`, and `runner.json`. The hosted suite is
 `tools/test_qualification_evidence.py`. It does not call a broker, a model
-provider, or a market-data vendor.
+provider, or a market-data vendor. The hosted six-cell matrix runs on the
+same events as the Windows gate: push to `main`, a pull request with
+`ci:full`, or a full workflow dispatch. An ordinary pull request and a
+`scope=linux` dispatch do not start the Windows or macOS cells. A partial
+matrix is not a pass.
 
 Excluded tiers are defined so they cannot be reported as pass. Hetzner is not
 a cell. Native Windows and Ubuntu WSL2 remain DEC-09's package-acceptance

@@ -275,7 +275,8 @@ class DispatchScopeTests(unittest.TestCase):
         negative = self.ci['jobs']['qualification-negative-controls']
         validate = self.ci['jobs']['qualification-validate']
         self.assertEqual(qualification['needs'], 'filter')
-        self.assertEqual(qualification['if'], self.ci['jobs']['linux']['if'])
+        self.assertEqual(qualification['if'], self.ci['jobs']['windows']['if'])
+        self.assertEqual(negative['if'], self.ci['jobs']['linux']['if'])
         self.assertEqual(qualification['strategy']['fail-fast'], 'false')
         self.assertEqual(qualification['strategy']['matrix']['platform'], ['linux', 'windows', 'macos'])
         self.assertEqual(qualification['strategy']['matrix']['python-version'], ['3.11', '3.12'])
@@ -298,6 +299,13 @@ class DispatchScopeTests(unittest.TestCase):
         self.assertIn('--junitxml=qualification-output/junit.xml', joined)
         upload = next(step for step in qualification['steps'] if step.get('uses') == 'actions/upload-artifact@v4')
         self.assertIn('qualification-provider-free-', upload['with']['name'])
+        self.assertIn('attempt-${{ github.run_attempt }}', upload['with']['name'])
+        download = next(step for step in validate['steps']
+                        if step.get('uses') == 'actions/download-artifact@v4')
+        self.assertEqual(
+            download['with']['pattern'],
+            'qualification-provider-free-*-attempt-${{ github.run_attempt }}',
+        )
         validate_script = '\n'.join(step.get('run', '') for step in validate['steps'])
         self.assertIn('tools/qualification_evidence.py validate', validate_script)
         self.assertIn('tools/qualification_evidence.py negative-controls', validate_script)

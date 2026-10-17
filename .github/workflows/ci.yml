@@ -406,14 +406,23 @@ jobs:
 
   # CSL-221 provider-free evidence. Not a DEC-09 cell, not linux-gates, and not
   # a release decision. Checkout is the PR head, because pull_request GITHUB_SHA
-  # is the merge commit.
+  # is the merge commit. The six-cell matrix uses the Windows gate: main,
+  # ci:full, or a full dispatch. Ordinary PRs and scope=linux do not start
+  # Windows or macOS. Artifact names include the run attempt so a rerun does
+  # not collide, and a partial rerun cannot mix attempts.
   qualification:
     name: qualification (${{ matrix.platform }}, ${{ matrix.python-version }})
     permissions:
       contents: read
       actions: write
     needs: filter
-    if: needs.filter.outputs.run-tests == 'true'
+    if: >
+      needs.filter.outputs.run-tests == 'true' &&
+      (
+        (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full'))
+      )
     strategy:
       fail-fast: false
       matrix:
@@ -526,7 +535,7 @@ jobs:
             --output qualification-cell
       - uses: actions/upload-artifact@v4
         with:
-          name: qualification-provider-free-${{ matrix.platform }}-${{ matrix.python-version }}
+          name: qualification-provider-free-${{ matrix.platform }}-${{ matrix.python-version }}-attempt-${{ github.run_attempt }}
           path: qualification-cell
           if-no-files-found: error
           retention-days: 90
@@ -592,7 +601,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
-          pattern: qualification-provider-free-*
+          pattern: qualification-provider-free-*-attempt-${{ github.run_attempt }}
           path: qualification-artifacts
       - name: Assemble, validate, and prove the negative controls on this bundle
         env:
@@ -626,7 +635,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: qualification-evidence-bundle
+          name: qualification-evidence-bundle-attempt-${{ github.run_attempt }}
           path: qualification-evidence-bundle
           if-no-files-found: error
           retention-days: 90

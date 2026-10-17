@@ -114,6 +114,10 @@ class QualificationError(Exception):
     """The evidence contract file itself is unusable."""
 
 
+class JunitSuiteError(QualificationError):
+    """A JUnit suite summary does not match its testcases."""
+
+
 def digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
@@ -261,30 +265,66 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
+def _case_status(element: ElementTree.Element) -> str:
+    status = "passed"
+    for child in element:
+        name = _local(child.tag)
+        if name == "error":
+            return "error"
+        if name == "failure" and status != "error":
+            status = "failure"
+        elif name == "skipped" and status == "passed":
+            status = "skipped"
+    return status
+
+
+def _require_suite_counts(element: ElementTree.Element) -> None:
+    declared = {}
+    for key in ("tests", "failures", "errors", "skipped"):
+        if key not in element.attrib:
+            continue
+        try:
+            declared[key] = int(element.attrib[key])
+        except ValueError as exc:
+            raise JunitSuiteError(f"junit suite {key} is not an integer") from exc
+    if not declared:
+        return
+    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    for child in element.iter():
+        if child is element or _local(child.tag) != "testcase":
+            continue
+        counts["tests"] += 1
+        status = _case_status(child)
+        if status == "failure":
+            counts["failures"] += 1
+        elif status == "error":
+            counts["errors"] += 1
+        elif status == "skipped":
+            counts["skipped"] += 1
+    for key, value in declared.items():
+        if counts[key] != value:
+            raise JunitSuiteError(
+                f"junit suite {key}={value} does not match {counts[key]} testcases"
+            )
+
+
 def parse_junit(data: bytes) -> dict:
     try:
         root = ElementTree.fromstring(data)
     except ElementTree.ParseError as exc:
         raise QualificationError(f"junit xml: {exc}") from exc
+    for element in root.iter():
+        if _local(element.tag) in {"testsuite", "testsuites"}:
+            _require_suite_counts(element)
     cases = []
     for element in root.iter():
         if _local(element.tag) != "testcase":
             continue
-        status = "passed"
-        for child in element:
-            name = _local(child.tag)
-            if name == "error":
-                status = "error"
-                break
-            if name == "failure" and status != "error":
-                status = "failure"
-            elif name == "skipped" and status == "passed":
-                status = "skipped"
         cases.append(
             {
                 "classname": element.attrib.get("classname", ""),
                 "name": element.attrib.get("name", ""),
-                "status": status,
+                "status": _case_status(element),
             }
         )
     cases.sort(key=lambda item: (item["classname"], item["name"]))
@@ -461,6 +501,9 @@ def _validate_required_cell(
     junit_bytes = junit_path.read_bytes()
     try:
         parsed = parse_junit(junit_bytes)
+    except JunitSuiteError as exc:
+        errors.append(err(NOT_PASS, f"{cell_id} {exc}"))
+        return errors
     except QualificationError as exc:
         errors.append(err(MISSING_JUNIT, f"{cell_id} {exc}"))
         return errors
@@ -560,7 +603,9 @@ def build_cell_files(
         "runner_os": spec["runner_os"],
     }
     runner_bytes = canonical_json(runner)
-    artifact_dir = f"qualification-provider-free-{spec['platform']}-{spec['python']}"
+    artifact_dir = (
+        f"qualification-provider-free-{spec['platform']}-{spec['python']}-attempt-{run_attempt}"
+    )
     files = {
         "junit.xml": junit_bytes,
         "dependencies.txt": dependencies,
