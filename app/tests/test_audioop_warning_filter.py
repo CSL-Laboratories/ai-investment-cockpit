@@ -26,7 +26,11 @@ def _emit(message: str, category: type[Warning], module: str, lineno: int) -> No
 
 
 def test_audioop_filter_suppresses_only_the_discord_player_deprecation(pytestconfig):
-    """Pytest's configured filter drops the exact warning and records the rest."""
+    """Pytest's configured filter drops the exact warning and records the rest.
+
+    The ``filterwarnings`` equality is an intentional tripwire. Adding a second
+    filter fails this test on purpose, so a broader ignore cannot land quietly.
+    """
     assert list(pytestconfig.getini("filterwarnings")) == [_FILTER]
 
     # Nested catch_warnings records whatever the live pytest filters let through.
