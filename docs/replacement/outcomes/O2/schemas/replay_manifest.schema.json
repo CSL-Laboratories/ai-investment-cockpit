@@ -43,7 +43,11 @@
           "natural_key": {"type": "string", "minLength": 1},
           "visible_raw_record_ids": {"type": "array", "items": {"type": "string"}},
           "hidden_raw_record_ids": {"type": "array", "items": {"type": "string"}},
-          "effective_raw_record_id": {"type": ["string", "null"]}
+          "effective_raw_record_id": {"type": ["string", "null"]},
+          "expected_close_time": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          }
         }
       }
     }

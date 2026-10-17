@@ -8,10 +8,13 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import warnings
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 O2 = ROOT / "docs" / "replacement" / "outcomes" / "O2"
@@ -57,6 +60,25 @@ def test_o2_candidate_replays_and_negative_controls_fail_as_designed() -> None:
         assert line in completed.stdout
     assert "contract_frozen" in completed.stdout
     assert "Not claimed" in completed.stdout
+
+
+def test_swapped_event_identity_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    copy = tmp_path / "O2"
+    shutil.copytree(O2, copy)
+    observations = json.loads((copy / "fixtures" / "observations.json").read_text(encoding="utf-8"))
+    swapped = next(item for item in observations["observations"] if item["observation_id"] == "obs-ev-void")
+    swapped["identity_id"] = "idn-ev-b1"
+    (copy / "fixtures" / "observations.json").write_text(
+        json.dumps(observations, indent=2) + "\n", encoding="utf-8"
+    )
+    manifest = json.loads((copy / "fixtures" / "manifest.json").read_text(encoding="utf-8"))
+    manifest["files"] = {
+        rel: hashlib.sha256((copy / rel).read_bytes()).hexdigest() for rel in module.EXPECTED_FILES
+    }
+    (copy / "fixtures" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    with pytest.raises(module.ContractError, match="identity"):
+        module.validate_candidate(copy)
 
 
 def test_o2_validator_does_not_import_providers() -> None:

@@ -137,6 +137,33 @@
       }
     },
     {
+      "raw_record_id": "raw-eq-split-corr",
+      "market_family": "equity",
+      "identity_id": "idn-eq-v2",
+      "source": "synthetic_corporate_action",
+      "source_record_key": "split-2024-08-01#corr",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "event_time": "2024-08-10T15:00:00Z",
+      "accepted_at": "2024-08-10T15:00:00Z",
+      "duplicate_of": null,
+      "supersedes": "raw-eq-split",
+      "raw_sha256": "a10a7133fa5ed5a3dad05ddcfc4b6290e7fb6b8306d1fe5ac0efa69341641768",
+      "acquisition_route": "synthetic_fixture",
+      "calendar": {
+        "calendar_id": "XNYS",
+        "session_date": "2024-08-12"
+      },
+      "payload": {
+        "kind": "corporate_action",
+        "action_type": "split",
+        "ratio_numerator": 3,
+        "ratio_denominator": 1,
+        "ex_date": "2024-08-01",
+        "listing_identity_before": "idn-eq-v1",
+        "listing_identity_after": "idn-eq-v2"
+      }
+    },
+    {
       "raw_record_id": "raw-eq-quote",
       "market_family": "equity",
       "identity_id": "idn-eq-v1",
@@ -171,7 +198,7 @@
       "accepted_at": "2024-08-20T18:00:02Z",
       "duplicate_of": null,
       "supersedes": null,
-      "raw_sha256": "dd2a5c9aaff874ab6b48cfe03818ffbbb8390ea86dd089ed5253bb18c120463f",
+      "raw_sha256": "d9302dd585b8d4e37b549603a4f61468c18bf1dae984fce747065d1acbc50aaa",
       "acquisition_route": "synthetic_fixture",
       "calendar": {
         "calendar_id": "kalshi_demo_exchange",
@@ -184,7 +211,8 @@
         "resolution": "yes",
         "status_rest": "determined",
         "result": "yes",
-        "official_lifecycle_status_observed": true
+        "official_lifecycle_status_observed": true,
+        "close_time": null
       }
     },
     {
@@ -198,7 +226,7 @@
       "accepted_at": "2024-08-25T12:00:00Z",
       "duplicate_of": null,
       "supersedes": null,
-      "raw_sha256": "16f7658f03b59b3c315a27efce8abb520a1c18198109a1368871276e4cfc4845",
+      "raw_sha256": "6098c0b43e74e26bb21bdfcfdb6fd3e1d2497dfb8ef30a225c5df9d3c05d3966",
       "acquisition_route": "synthetic_fixture",
       "calendar": {
         "calendar_id": "kalshi_demo_exchange",
@@ -211,7 +239,8 @@
         "resolution": null,
         "status_rest": "active",
         "result": null,
-        "official_lifecycle_status_observed": true
+        "official_lifecycle_status_observed": true,
+        "close_time": "2024-09-05T20:00:00Z"
       }
     },
     {
@@ -225,7 +254,7 @@
       "accepted_at": "2024-09-01T18:00:02Z",
       "duplicate_of": null,
       "supersedes": "raw-ev-determined",
-      "raw_sha256": "520fcea05ee8b14d415419fb8a84c4091fc61004f1f797e9d41d8b053510cd5e",
+      "raw_sha256": "a550a09512616a5c3ee4f2df62d55f8b21e35f6ce9bf62c9288b42159922d7c9",
       "acquisition_route": "synthetic_fixture",
       "calendar": {
         "calendar_id": "kalshi_demo_exchange",
@@ -238,7 +267,8 @@
         "resolution": "yes",
         "status_rest": "finalized",
         "result": "yes",
-        "official_lifecycle_status_observed": true
+        "official_lifecycle_status_observed": true,
+        "close_time": null
       }
     },
     {
@@ -252,7 +282,7 @@
       "accepted_at": "2024-09-01T19:00:02Z",
       "duplicate_of": null,
       "supersedes": null,
-      "raw_sha256": "d94e36a69691bcf529a5b8478c302959ca737caa9d8b64fa0c933cfccfd481ff",
+      "raw_sha256": "af21dec9bb5974b94528612c969af9ae12d8c5562684c08c868a9b20780bb1bf",
       "acquisition_route": "synthetic_fixture",
       "calendar": {
         "calendar_id": "kalshi_demo_exchange",
@@ -265,7 +295,8 @@
         "resolution": "voided",
         "status_rest": "voided",
         "result": null,
-        "official_lifecycle_status_observed": false
+        "official_lifecycle_status_observed": false,
+        "close_time": null
       }
     }
   ]

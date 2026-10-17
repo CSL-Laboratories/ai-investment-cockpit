@@ -50,7 +50,7 @@
       "identity_id": "idn-eq-v1",
       "natural_key": "sec:fact:0000000001:revenue:fy2023",
       "effective_raw_record_id": "raw-eq-10ka",
-      "raw_record_ids": ["raw-eq-10k", "raw-eq-10ka"],
+      "raw_record_ids": ["raw-eq-10k", "raw-eq-10ka", "raw-eq-split"],
       "value": "120",
       "resolution": null,
       "lifecycle_status": null,
@@ -71,7 +71,7 @@
       "identity_id": "idn-eq-v1",
       "natural_key": "us-equity:listing:0000000001:common:quote",
       "effective_raw_record_id": "raw-eq-quote",
-      "raw_record_ids": ["raw-eq-quote"],
+      "raw_record_ids": ["raw-eq-quote", "raw-eq-split"],
       "value": "50.00",
       "resolution": null,
       "lifecycle_status": null,
@@ -103,6 +103,27 @@
           "ratio_denominator": 1,
           "ex_date": "2024-08-01",
           "raw_record_id": "raw-eq-split"
+        }
+      ]
+    },
+    {
+      "observation_id": "obs-split-corr",
+      "decision_time": "2024-08-11T00:00:00Z",
+      "market_family": "equity",
+      "identity_id": "idn-eq-v2",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "effective_raw_record_id": "raw-eq-split-corr",
+      "raw_record_ids": ["raw-eq-split", "raw-eq-split-corr"],
+      "value": null,
+      "resolution": null,
+      "lifecycle_status": null,
+      "corporate_actions": [
+        {
+          "action_type": "split",
+          "ratio_numerator": 3,
+          "ratio_denominator": 1,
+          "ex_date": "2024-08-01",
+          "raw_record_id": "raw-eq-split-corr"
         }
       ]
     },

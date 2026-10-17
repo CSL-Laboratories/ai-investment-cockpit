@@ -28,14 +28,14 @@
     {
       "lineage_id": "lin-revenue-aug",
       "observation_id": "obs-revenue-aug",
-      "input_raw_record_ids": ["raw-eq-10k", "raw-eq-10ka"],
+      "input_raw_record_ids": ["raw-eq-10k", "raw-eq-10ka", "raw-eq-split"],
       "transform_id": "o2.candidate.effective_version",
       "transform_version": "o2.candidate.v1"
     },
     {
       "lineage_id": "lin-quote-aug",
       "observation_id": "obs-quote-aug",
-      "input_raw_record_ids": ["raw-eq-quote"],
+      "input_raw_record_ids": ["raw-eq-quote", "raw-eq-split"],
       "transform_id": "o2.candidate.effective_version",
       "transform_version": "o2.candidate.v1"
     },
@@ -43,6 +43,13 @@
       "lineage_id": "lin-split-aug",
       "observation_id": "obs-split-aug",
       "input_raw_record_ids": ["raw-eq-split"],
+      "transform_id": "o2.candidate.effective_version",
+      "transform_version": "o2.candidate.v1"
+    },
+    {
+      "lineage_id": "lin-split-corr",
+      "observation_id": "obs-split-corr",
+      "input_raw_record_ids": ["raw-eq-split", "raw-eq-split-corr"],
       "transform_id": "o2.candidate.effective_version",
       "transform_version": "o2.candidate.v1"
     },

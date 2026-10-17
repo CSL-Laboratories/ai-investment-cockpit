@@ -51,8 +51,16 @@
       "decision_time": "2024-08-02T00:00:00Z",
       "natural_key": "us-equity:listing:0000000001:common:corporate_action",
       "visible_raw_record_ids": ["raw-eq-split"],
-      "hidden_raw_record_ids": [],
+      "hidden_raw_record_ids": ["raw-eq-split-corr"],
       "effective_raw_record_id": "raw-eq-split"
+    },
+    {
+      "check_id": "corporate_action_correction_is_effective",
+      "decision_time": "2024-08-11T00:00:00Z",
+      "natural_key": "us-equity:listing:0000000001:common:corporate_action",
+      "visible_raw_record_ids": ["raw-eq-split", "raw-eq-split-corr"],
+      "hidden_raw_record_ids": [],
+      "effective_raw_record_id": "raw-eq-split-corr"
     },
     {
       "check_id": "unadjusted_quote_not_rewritten",
@@ -84,7 +92,8 @@
       "natural_key": "kalshi_demo:market:kxsynth-26jan01-b1:close_date",
       "visible_raw_record_ids": ["raw-ev-close-ooo"],
       "hidden_raw_record_ids": [],
-      "effective_raw_record_id": "raw-ev-close-ooo"
+      "effective_raw_record_id": "raw-ev-close-ooo",
+      "expected_close_time": "2024-09-05T20:00:00Z"
     },
     {
       "check_id": "event_settled_keeps_determination_raw",

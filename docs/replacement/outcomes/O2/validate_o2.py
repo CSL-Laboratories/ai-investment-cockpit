@@ -167,29 +167,50 @@ def _listing_key(identities: dict, identity_id: str):
     return identity["equity"]["listing_key"]
 
 
+def _action_tuple(record: dict) -> tuple:
+    payload = record["payload"]
+    return (
+        payload["action_type"],
+        payload["ratio_numerator"],
+        payload["ratio_denominator"],
+        payload["ex_date"],
+        record["raw_record_id"],
+    )
+
+
+def _action_applies(bundle: Bundle, record: dict, listing: str) -> bool:
+    payload = record["payload"]
+    if payload.get("kind") != "corporate_action" or record["duplicate_of"] is not None:
+        return False
+    before = _listing_key(bundle.identities, payload["listing_identity_before"])
+    after = _listing_key(bundle.identities, payload["listing_identity_after"])
+    return listing in (before, after)
+
+
+def _input_identity_ok(bundle: Bundle, observation: dict, record: dict) -> bool:
+    if record["identity_id"] == observation["identity_id"]:
+        return True
+    if observation["market_family"] != "equity":
+        return False
+    listing = _listing_key(bundle.identities, observation["identity_id"])
+    return listing is not None and _action_applies(bundle, record, listing)
+
+
 def required_corporate_actions(bundle: Bundle, identity_id: str, decision: datetime) -> set[tuple]:
+    """Effective corporate-action version per natural key. A superseded ratio is not required."""
     listing = _listing_key(bundle.identities, identity_id)
     if listing is None:
         return set()
-    found = set()
+    keys = set()
     for record in bundle.records.values():
-        payload = record["payload"]
-        if payload.get("kind") != "corporate_action" or record["duplicate_of"] is not None:
+        if parse_time(record["accepted_at"]) > decision or not _action_applies(bundle, record, listing):
             continue
-        if parse_time(record["accepted_at"]) > decision:
-            continue
-        before = _listing_key(bundle.identities, payload["listing_identity_before"])
-        after = _listing_key(bundle.identities, payload["listing_identity_after"])
-        if listing in (before, after):
-            found.add(
-                (
-                    payload["action_type"],
-                    payload["ratio_numerator"],
-                    payload["ratio_denominator"],
-                    payload["ex_date"],
-                    record["raw_record_id"],
-                )
-            )
+        keys.add(record["natural_key"])
+    found = set()
+    for key in keys:
+        record = effective_record(bundle.records, key, decision)
+        if record is not None and _action_applies(bundle, record, listing):
+            found.add(_action_tuple(record))
     return found
 
 
@@ -231,8 +252,9 @@ def reconstruction_codes(bundle: Bundle, raw_ids: list, decision: datetime) -> l
 
 def semantic_codes(bundle: Bundle, observation: dict, decision: datetime) -> list[str]:
     family = observation.get("market_family")
-    if family == "event":
-        effective = effective_record(bundle.records, observation.get("natural_key"), decision)
+    natural_key = str(observation.get("natural_key") or "")
+    if family == "event" and natural_key.endswith(":resolution"):
+        effective = effective_record(bundle.records, natural_key, decision)
         payload = effective["payload"] if effective is not None else None
         if (
             payload is None
@@ -313,6 +335,12 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} claims void was an observed official result")
             if not voided and not payload["official_lifecycle_status_observed"]:
                 raise ContractError(f"{record['raw_record_id']} drops an observed lifecycle status")
+            if payload["event_type"] == "close_date_updated":
+                if payload.get("close_time") is None:
+                    raise ContractError(f"{record['raw_record_id']} close-date update has no close_time")
+                parse_time(payload["close_time"])
+            elif payload.get("close_time") is not None:
+                raise ContractError(f"{record['raw_record_id']} carries a close_time without a close-date update")
     for identity in bundle.identities.values():
         prior_id = identity["prior_identity_id"]
         if prior_id is None:
@@ -343,6 +371,10 @@ def validate_replay(bundle: Bundle) -> None:
         effective = visible[-1]["raw_record_id"] if visible else None
         if effective != check["effective_raw_record_id"]:
             raise ContractError(f"{check['check_id']} effective record mismatch: {effective}")
+        if "expected_close_time" in check:
+            payload = bundle.records[effective]["payload"] if effective is not None else {}
+            if payload.get("close_time") != check["expected_close_time"]:
+                raise ContractError(f"{check['check_id']} close_time was not preserved")
 
 
 def _fact_value(record: dict):
@@ -372,6 +404,26 @@ def validate_observations(bundle: Bundle) -> None:
         identity = bundle.identities[observation["identity_id"]]
         if identity["market_family"] != observation["market_family"]:
             raise ContractError(f"{observation['observation_id']} collapses market families")
+        if observation["identity_id"] != effective["identity_id"]:
+            raise ContractError(
+                f"{observation['observation_id']} identity does not match its effective raw record"
+            )
+        for raw_id in observation["raw_record_ids"]:
+            if not _input_identity_ok(bundle, observation, bundle.records[raw_id]):
+                raise ContractError(f"{observation['observation_id']} input {raw_id} uses another identity")
+        for action in observation["corporate_actions"] or []:
+            raw_id = action["raw_record_id"]
+            if raw_id not in observation["raw_record_ids"]:
+                raise ContractError(f"{observation['observation_id']} action {raw_id} has no lineage input")
+            source = bundle.records[raw_id]
+            if source["payload"].get("kind") != "corporate_action" or _action_tuple(source) != (
+                action["action_type"],
+                action["ratio_numerator"],
+                action["ratio_denominator"],
+                action["ex_date"],
+                raw_id,
+            ):
+                raise ContractError(f"{observation['observation_id']} action {raw_id} does not match its raw record")
         edge = edges[observation["observation_id"]]
         if edge["input_raw_record_ids"] != observation["raw_record_ids"]:
             raise ContractError(f"{observation['observation_id']} lineage inputs differ from raw ids")

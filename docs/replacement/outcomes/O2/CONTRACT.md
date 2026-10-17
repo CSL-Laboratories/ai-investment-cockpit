@@ -82,6 +82,8 @@ Equity identity: venue `us_equity`, issuer CIK, listing key, ticker, share class
 
 Event identity: venue `kalshi_demo`, environment `demo`, series ticker, event ticker, market ticker, contract family, and collateral return type (`""`, `MECNET`, or `DIRECNET`). `api_path_observed_not_selected` is fixed to the observed string `trade-api/v2`. Two markets in one series are two identities. A voided market is not the settled market.
 
+An observation's identity is the identity on its effective raw record. An event observation cannot cite another market's identity. An equity observation may also cite a corporate-action raw record for the other version of the same listing key.
+
 Schemas: `schemas/identity.schema.json`.
 
 ## Source and as-of
@@ -100,7 +102,7 @@ Duplicates set `duplicate_of` and must share the natural key and the hash. They 
 
 ## Lineage
 
-Each derived observation has one lineage edge. `transform_id` is `o2.candidate.effective_version` and `transform_version` is `o2.candidate.v1`. The edge's input ids are the observation's raw ids, in the same order. Lineage is not a license to drop a raw parent: the late revenue observation cites both the 10-K and the 10-K/A.
+Each derived observation has one lineage edge. `transform_id` is `o2.candidate.effective_version` and `transform_version` is `o2.candidate.v1`. The edge's input ids are the observation's raw ids, in the same order. Lineage is not a license to drop a raw parent: the late revenue observation cites both the 10-K and the 10-K/A. Every corporate action named on an observation cites that action's raw id in the same input list.
 
 ## Clocks and calendars
 
@@ -110,11 +112,11 @@ Equity records carry calendar `XNYS` and a session date. Event records carry cal
 
 Resolution inputs stay on the event payload: `resolution`, `status_rest`, `result`, and `official_lifecycle_status_observed`. The synthetic settled market moves from `determined`/`yes` to `finalized`/`yes`. Both raw records remain. The synthetic voided market has `resolution: voided`, `status_rest: voided`, `result: null`, and `official_lifecycle_status_observed: false`. A derived event observation must copy the effective resolution and status. Mapping voided to `yes` is `lost_resolution_semantics`.
 
-A close-date update is a lifecycle raw record with a null resolution. It is replayed on its own natural key. It is not written into the resolution field.
+A close-date update is a lifecycle raw record with a null resolution and a `close_time`. It is replayed on its own natural key. It is not written into the resolution field. Resolution checks apply only to natural keys that end in `:resolution`.
 
 ## Corporate actions
 
-The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the action. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping the action is `lost_corporate_action_semantics`.
+The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-01`, listing identity before and after. Once its `accepted_at` is visible, every equity observation on that listing key must carry the effective action. A later 3-for-1 correction on the same natural key replaces that required ratio. The earlier raw record stays in the store and in the correction's input list. It is not a second required ratio. The unadjusted quote stays `50.00` with `adjustment: unadjusted`. The split is a label beside the quote, not a silent rewrite of the raw price. Dropping the action is `lost_corporate_action_semantics`.
 
 ## Replay manifest
 
@@ -123,7 +125,8 @@ The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-0
 - late correction, before and after the amendment
 - duplicate that must not supersede
 - out-of-order acceptance, hidden then visible
-- corporate action retained
+- corporate action retained, then corrected to 3-for-1
+- close time preserved after a late close-date acceptance
 - unadjusted quote not rewritten
 - event determination before a late close message
 - settlement that keeps the determination raw
