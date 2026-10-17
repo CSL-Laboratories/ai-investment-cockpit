@@ -982,26 +982,30 @@ class OrderGateway:
             # this already-authorized call to enter and later admissions bar subsequent calls.
             # The fence has returned before admission. The short lock is released
             # before the final fail-closed HALT probe and private transport entry.
-            final_stage = None
-            final_reason = None
-            with st.safety_admission_lock:
-                final_reason = breaker_engine.watch_only_reason()
-                if final_reason is not None:
-                    final_stage = "mode"
-                elif (
-                    self._require_analysis_generation
-                    or analysis_vendor is not None
-                    or analysis_generation is not None
-                ):
-                    try:
-                        if analysis_vendor != producing_runtime:
-                            raise StaleAnalysisError("analysis vendor mismatch")
-                        breaker_engine.assert_fresh_analysis(
-                            analysis_vendor, analysis_generation
-                        )
-                    except (StaleAnalysisError, TypeError, ValueError):
-                        final_stage = "analysis_freshness"
-                        final_reason = "stale_analysis"
+            def _final_admission() -> tuple[str | None, str | None]:
+                stage = None
+                reason = None
+                with st.safety_admission_lock:
+                    reason = breaker_engine.watch_only_reason()
+                    if reason is not None:
+                        stage = "mode"
+                    elif (
+                        self._require_analysis_generation
+                        or analysis_vendor is not None
+                        or analysis_generation is not None
+                    ):
+                        try:
+                            if analysis_vendor != producing_runtime:
+                                raise StaleAnalysisError("analysis vendor mismatch")
+                            breaker_engine.assert_fresh_analysis(
+                                analysis_vendor, analysis_generation
+                            )
+                        except (StaleAnalysisError, TypeError, ValueError):
+                            stage = "analysis_freshness"
+                            reason = "stale_analysis"
+                return stage, reason
+
+            final_stage, final_reason = _final_admission()
             if final_stage is not None:
                 return self._abort_after_intent(
                     st,
@@ -1040,6 +1044,19 @@ class OrderGateway:
                         intent,
                         stage="transport_scope",
                         reason="broker transport changed during the claim fence",
+                        actor=producing_runtime,
+                        resolved_hash=resolved_hash,
+                    )
+                # The second fence can block while a denial is admitted; re-read admission
+                # after it so a denial admitted during the fence wins.
+                final_stage, final_reason = _final_admission()
+                if final_stage is not None:
+                    return self._abort_after_intent(
+                        st,
+                        order,
+                        intent,
+                        stage=final_stage,
+                        reason=final_reason,
                         actor=producing_runtime,
                         resolved_hash=resolved_hash,
                     )
