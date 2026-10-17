@@ -70,6 +70,59 @@ def _drive_bucket(bucket, times, *, python: bool):
 
 
 @_needs_rust
+class _StickyInt(int):
+    """Compares as never less than a length, so a numeric 1 does not evict."""
+
+    def __lt__(self, other):
+        return False
+
+    def __le__(self, other):
+        return False
+
+    def __gt__(self, other):
+        return False
+
+    def __ge__(self, other):
+        return True
+
+
+class _AddOp(str):
+    """Equal to ``"a"`` whatever its text is. PyO3 would keep the text."""
+
+    def __eq__(self, other):
+        return isinstance(other, str) and str.__eq__(other, "a")
+
+    def __hash__(self):
+        return hash("a")
+
+
+def test_an_int_subclass_capacity_stays_on_python_comparison(monkeypatch):
+    if DEDUP_BACKEND == "rust":
+        import cockpit_quant
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("int-subclass capacity entered the extension")
+
+        monkeypatch.setattr(cockpit_quant, "dedup_replay", boom)
+    cap = _StickyInt(1)
+    ops = [("a", "a"), ("a", "b"), ("a", "a")]
+    assert dedup_replay(cap, ops) == [True, True, False]
+    assert _script(cap, ops) == [True, True, False]
+
+
+def test_an_op_subclass_stays_on_python_equality(monkeypatch):
+    if DEDUP_BACKEND == "rust":
+        import cockpit_quant
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("op subclass entered the extension")
+
+        monkeypatch.setattr(cockpit_quant, "dedup_replay", boom)
+    ops = [(_AddOp("z"), "k"), ("a", "k")]
+    assert dedup_replay(4, ops) == [True, False]
+    assert _script(4, ops) == [True, False]
+
+
 def test_dedup_replay_materializes_a_one_shot_script():
     ops = [("a", "k"), ("a", "k"), ("d", "k")]
     assert dedup_replay(4, (item for item in ops)) == dedup_replay(4, ops)
@@ -257,6 +310,40 @@ def test_copy_keeps_a_string_slot_declaration():
         assert clone.add("a") is False
         clone.feed = "other"
     assert seen.feed == "news"
+
+
+class _PrivateSlotDedup(Dedup):
+    __slots__ = ("__feed",)
+
+    def __init__(self, capacity):
+        super().__init__(capacity)
+        self.__feed = "news"
+
+    def reveal(self):
+        return self.__feed
+
+    def set_feed(self, value):
+        self.__feed = value
+
+
+def test_copy_keeps_a_private_slot():
+    """``__feed`` is stored as ``_PrivateSlotDedup__feed``, not the literal name."""
+    seen = _PrivateSlotDedup(2)
+    seen.add("a")
+    stored = "_PrivateSlotDedup__feed"
+    assert getattr(seen, stored) == "news"
+    for clone in (
+        copy.copy(seen),
+        copy.deepcopy(seen),
+        pickle.loads(pickle.dumps(seen)),
+    ):
+        assert type(clone) is _PrivateSlotDedup
+        assert clone.reveal() == "news"
+        assert getattr(clone, stored) == "news"
+        assert clone.add("a") is False
+        clone.set_feed("other")
+        assert clone.reveal() == "other"
+    assert seen.reveal() == "news"
 
 
 def test_copy_keeps_a_slotted_subclass_attribute():

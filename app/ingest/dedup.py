@@ -38,11 +38,13 @@ def _load_native() -> None:
 
 
 def _rust_cap(capacity: int) -> bool:
-    return (
-        isinstance(capacity, int)
-        and not isinstance(capacity, bool)
-        and _I64_MIN <= capacity <= _I64_MAX
-    )
+    """True when ``capacity`` is an exact ``int`` the extension can store.
+
+    An ``int`` subclass can override comparison, which ``Dedup.add`` uses for
+    ``len(self._seen) > capacity``. PyO3 would keep only the numeric value.
+    ``bool`` is not an exact ``int``.
+    """
+    return type(capacity) is int and _I64_MIN <= capacity <= _I64_MAX
 
 
 def _core_key(key: str) -> str:
@@ -178,15 +180,31 @@ def _declared_slots(cls) -> tuple:
     return tuple(slots)
 
 
+def _stored_slot(cls, name: str) -> str | None:
+    """The attribute name Python actually stores for a declared slot.
+
+    ``__feed`` on class ``Feed`` is stored as ``_Feed__feed``. Looking up the
+    declared text raises ``AttributeError`` and the copy drops the value.
+    """
+    if name in ("__dict__", "__weakref__"):
+        return None
+    if name.startswith("__") and not name.endswith("__"):
+        stripped = cls.__name__.lstrip("_")
+        if stripped:
+            return f"_{stripped}{name}"
+    return name
+
+
 def _slot_values(obj) -> dict:
     """Slot attributes on ``obj``, including those declared by a subclass."""
     values = {}
     for cls in type(obj).__mro__:
         for name in _declared_slots(cls):
-            if name in ("__dict__", "__weakref__") or name in values:
+            stored = _stored_slot(cls, name)
+            if stored is None or stored in values:
                 continue
             try:
-                values[name] = getattr(obj, name)
+                values[stored] = getattr(obj, stored)
             except AttributeError:
                 continue
     return values
@@ -204,14 +222,15 @@ def _new_dedup(cls, capacity) -> Dedup:
 
 
 def _str_script(ops) -> bool:
-    """True when every key is an exact ``str`` the extension can store.
+    """True when every op and key is an exact ``str`` the extension can store.
 
-    A ``str`` subclass may override equality. ``isinstance`` would send it
-    across PyO3, which keeps only the text, so that script stays on the
-    OrderedDict with ``Dedup.add``.
+    A ``str`` subclass may override equality. ``isinstance`` or ``==`` would
+    send it across PyO3, which keeps only the text, so that script stays on
+    the OrderedDict with ``Dedup.add``. An op subclass that compares equal to
+    ``"a"`` but whose text is something else would raise in Rust.
     """
     for op, key in ops:
-        if op not in ("a", "d") or type(key) is not str:
+        if type(op) is not str or op not in ("a", "d") or type(key) is not str:
             return False
     return True
 
