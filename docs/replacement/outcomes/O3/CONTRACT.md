@@ -249,6 +249,13 @@ fails `balance_mismatch`. When an order reserved collateral up front,
 its later fills do not re-post premium — the reservation already holds
 it — so those fills are exempt from the per-fill premium check while
 their fees still reconcile per fill.
+A `fill` debits `position_cost` and any `fees_expense` and credits
+`cash_available` for the same total. A `reserve_collateral` debits
+`collateral_reserved` and credits `cash_available` for the same total.
+A `trade_fee` debits `fees_expense` and credits `cash_available` for
+the same total. Another account or side on those reasons, including a
+realized-P&L credit in place of the cash credit, fails
+`balance_mismatch`.
 Every line on a referenced entry must post the referenced fill's or
 order's own `instrument_id`, never a different declared instrument. A
 posting with a missing, unknown, checkpointed, conflicting, or

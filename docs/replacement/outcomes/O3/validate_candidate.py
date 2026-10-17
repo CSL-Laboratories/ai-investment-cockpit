@@ -441,6 +441,26 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             failures.add("balance_mismatch")
         if entry["reason"] == "trade_fee" and fill_ref is None:
             failures.add("balance_mismatch")
+        if entry["reason"] in {"fill", "reserve_collateral", "trade_fee"}:
+            allowed = {
+                "fill": {("position_cost", "dr"), ("fees_expense", "dr"), ("cash_available", "cr")},
+                "reserve_collateral": {("collateral_reserved", "dr"), ("cash_available", "cr")},
+                "trade_fee": {("fees_expense", "dr"), ("cash_available", "cr")},
+            }[entry["reason"]]
+            cash_credit = 0
+            funded = 0
+            for line in entry["lines"]:
+                pair = (line["account"], line["side"])
+                if pair not in allowed:
+                    failures.add("balance_mismatch")
+                    continue
+                amount = _line_amount(line, failures)
+                if pair == ("cash_available", "cr"):
+                    cash_credit += amount
+                else:
+                    funded += amount
+            if cash_credit != funded:
+                failures.add("balance_mismatch")
         ref_instrument = None
         if fill_ref in fills_by_id:
             ref_instrument = fills_by_id[fill_ref]["instrument_id"]

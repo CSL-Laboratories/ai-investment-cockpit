@@ -59,6 +59,19 @@ def test_o3_fill_price_must_match_journal_cost() -> None:
         assert "balance_mismatch" in _evaluate(fixture)
 
 
+def test_o3_execution_postings_require_cash_credit() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    reserve = next(entry for entry in fixture["journal"] if entry["reason"] == "reserve_collateral")
+    cash_line = next(line for line in reserve["lines"] if line["account"] == "cash_available")
+    amount = cash_line["amount_minor"]
+    cash_line["account"] = "realized_pnl"
+    fixture["reported"]["cash_available"] += amount
+    fixture["reported"]["attribution"][0]["realized_pnl_minor"] += amount
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
 def test_o3_fill_postings_require_fill_reference() -> None:
     path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
     fixture = json.loads(path.read_text(encoding="utf-8"))
