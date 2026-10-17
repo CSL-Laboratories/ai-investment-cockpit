@@ -202,6 +202,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     checkpoint = fixture["checkpoint"]
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
     applied_fill_fees = 0
+    fill_cost: dict[str, int] = {}
+    journal_cost: dict[str, int] = {}
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -240,6 +242,9 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             continue
         derived[fill["instrument_id"]] = derived.get(fill["instrument_id"], 0) + fill["qty"]
         applied_fill_fees += fill["fee_minor"]
+        fill_cost[fill["instrument_id"]] = (
+            fill_cost.get(fill["instrument_id"], 0) + fill["qty"] * fill["price_minor"]
+        )
 
     pre_settlement = dict(derived)
     for market in fixture["markets"]:
@@ -407,6 +412,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 collateral += amount if side == "dr" else -amount
                 if entry["reason"] == "settlement_payout" and side == "cr":
                     settlement_collateral_cr += amount
+                if entry["reason"] == "reserve_collateral":
+                    journal_cost[line["instrument_id"]] = (
+                        journal_cost.get(line["instrument_id"], 0)
+                        + (amount if side == "dr" else -amount)
+                    )
             elif account == "realized_pnl":
                 delta = amount if side == "cr" else -amount
                 bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
@@ -419,8 +429,19 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 bucket["fees_minor"] += delta
                 if entry["reason"] == "settlement_payout":
                     fee_on_net_payout = True
-            elif account != "position_cost":
+            elif account == "position_cost":
+                if entry["reason"] == "fill":
+                    journal_cost[line["instrument_id"]] = (
+                        journal_cost.get(line["instrument_id"], 0)
+                        + (amount if side == "dr" else -amount)
+                    )
+            else:
                 failures.add("schema_invalid")
+
+    if not (failures & FILL_DEFECTS):
+        for instrument_id, cost in fill_cost.items():
+            if journal_cost.get(instrument_id, 0) != cost:
+                failures.add("balance_mismatch")
 
     if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
         failures.add("fee_mismatch")

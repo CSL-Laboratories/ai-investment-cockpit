@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -39,6 +40,22 @@ def test_o3_negative_controls_fail_as_designed() -> None:
     for line in result.stdout.splitlines():
         if line.startswith("O3 NEGATIVE CONTROL FAILED AS DESIGNED:"):
             warnings.warn(line, UserWarning, stacklevel=1)
+
+
+def _evaluate(fixture: dict) -> set[str]:
+    spec = importlib.util.spec_from_file_location("o3_validate_candidate", VALIDATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.evaluate_semantics(fixture)
+
+
+def test_o3_fill_price_must_match_journal_cost() -> None:
+    for name in ("equity_partial_then_dividend", "event_yes_settlement"):
+        path = VALIDATOR.parent / "fixtures" / f"{name}.json"
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        assert _evaluate(fixture) == set()
+        fixture["fills"][0]["price_minor"] *= 2
+        assert "balance_mismatch" in _evaluate(fixture)
 
 
 def test_o3_registry_maturity_stays_researched() -> None:
