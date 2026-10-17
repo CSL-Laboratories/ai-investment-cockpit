@@ -65,7 +65,7 @@ class EnvFileSecretError(RuntimeError):
 _KEYRING_SECRET_NAMES = (
     "audit-hmac-key", "discord_bot_token", "alpaca_key", "alpaca_secret",
     "finnhub_key", "cockpit_api_key", "witness_s3_access_key_id",
-    "witness_s3_secret_access_key",
+    "witness_s3_secret_access_key", "jev_api_key",
 )
 # Generic shapes that are a secret regardless of vendor. A name we have never seen before is
 # still refused if it looks like a credential — the allowlist is what may PASS, not what fails.

@@ -4,17 +4,17 @@ Jev is not an OpenAI-compatible chat API. A call is ``POST
 https://api.typesafe.ai/v1/systemone`` with a state plus named questions, and
 the response is typed answers (choice / score / yes-no) with probabilities.
 There is no free-text rationale, so thesis text is a template over those
-answers. The bearer token is read from the process environment ``JEV_API_KEY``
-at call time and is never logged, stored, or written into ``.env``.
+answers. The bearer token is the keyring secret ``jev_api_key`` (Invariant 4).
+It is never read from the environment, logged, or written into ``.env``.
 
 Live and auto-trading modes never reach this module. Oversized packets, low
-confidence, and transport errors are returned as fallback reasons so the
-caller can use Claude without opening watch-only.
+confidence, and ordinary transport errors are returned as fallback reasons so
+the caller can use Claude. An HTTP 429 is a vendor limit: the attempt is
+marked so the caller can open watch-only for Jev and still fall back.
 """
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -29,9 +29,11 @@ from config.models import (
     JEV_STATE_HARD_LIMIT,
 )
 from core.ids import new_id
+from core.secrets import get_secret
+from ingest.normalize import escape_untrusted
 from workflows.context_limit import estimate_tokens, fit_packet
 from workflows.cost_log import quote_cost
-from workflows.packets import Packet
+from workflows.packets import Packet, PacketItem, wrap_untrusted
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 _REF = re.compile(r"^[A-Za-z0-9:/#._\-]{1,128}$")
@@ -62,6 +64,7 @@ class JevAttempt:
     raw: str
     sent_refs: tuple[str, ...]
     dropped: int
+    vendor_limited: bool = False
 
     def audit_payload(self) -> dict:
         """Fixed tokens only. No state text, no answer prose, no credential."""
@@ -82,10 +85,25 @@ class JevAttempt:
         return body
 
 
+JEV_SECRET_NAME = "jev_api_key"
+# Same role-marker class ingest uses before a feed may enter a prompt (SEC-02).
+_ROLE_MARKERS = re.compile(
+    r"(?i)\b(?:system|assistant|human|developer|user|tool|function)\s*:"
+    r"|</?untrusted-content|<\|im_(?:start|end)\|>|\[/?INST\]|###\s*instruction",
+)
+_WRAPPED = re.compile(
+    r"^<untrusted-content\b[^>]*>\n(.*)\n</untrusted-content>$",
+    re.DOTALL,
+)
+
+
 def jev_api_key() -> str | None:
-    """Bearer token from the environment. Empty means unconfigured."""
-    value = os.environ.get("JEV_API_KEY", "")
-    if not isinstance(value, str) or not value.strip():
+    """Bearer token from the OS credential store. Missing means unconfigured."""
+    secret = get_secret(JEV_SECRET_NAME)
+    if secret is None:
+        return None
+    value = secret.reveal()
+    if not value.strip():
         return None
     return value
 
@@ -170,21 +188,52 @@ def decision_questions(symbol: str) -> dict:
     }
 
 
+def _framed_pair(state: str, name: str, question: dict) -> int:
+    """Tokens in the JSON of state plus one named question, including keys."""
+    fragment = {"state": state, name: question}
+    return estimate_tokens(json.dumps(fragment, ensure_ascii=False))
+
+
+def _prepare_packet(packet: Packet) -> Packet | None:
+    """Neutralize feed text before it can be sent as Jev state.
+
+    A packet that is already a single untrusted-content block is kept when its
+    inner text has no live role marker. Anything else is escaped and wrapped.
+    A live marker inside an existing wrapper is refused rather than sent.
+    """
+    prepared: list[PacketItem] = []
+    for item in packet.items:
+        text = item.text or ""
+        wrapped = _WRAPPED.fullmatch(text)
+        if wrapped:
+            inner = wrapped.group(1)
+            if _ROLE_MARKERS.search(inner) or "<" in inner or ">" in inner:
+                return None
+            prepared.append(item)
+            continue
+        inner = escape_untrusted(text)
+        block = wrap_untrusted(inner, source="packet", article_ref=item.raw_ref)
+        prepared.append(PacketItem(item.event_id, item.raw_ref, item.symbol, block))
+    return Packet(items=tuple(prepared))
+
+
 def _fit_state(packet: Packet, questions: dict, model: str, *,
                state_cap: int, request_cap: int) -> Packet | None:
-    """Tail-trim until state+one question and the whole request both fit."""
-    largest = max(
-        estimate_tokens(json.dumps(question, ensure_ascii=False))
-        for question in questions.values()
+    """Tail-trim until each framed state+question pair and the whole request fit."""
+    overhead = max(
+        _framed_pair("", name, question) for name, question in questions.items()
     )
-    state_budget = state_cap - largest
+    state_budget = state_cap - overhead
     if state_budget < 1:
         return None
     fitted = fit_packet(packet, reserved_tokens=0, cap=state_budget)
     items = list(fitted.packet.items)
     while items:
         state = "\n\n".join(item.text for item in items)
-        if estimate_tokens(state) + largest > state_cap:
+        if any(
+            _framed_pair(state, name, question) > state_cap
+            for name, question in questions.items()
+        ):
             items.pop()
             continue
         body = {"state": state, "model": model, "questions": questions}
@@ -195,9 +244,15 @@ def _fit_state(packet: Packet, questions: dict, model: str, *,
     return None
 
 
+def blocked_jev_attempt(settings, reason: str) -> JevAttempt:
+    """A fallback that never calls HTTP. Used when Jev is already watch-only."""
+    model = _model_pin(settings) or DEFAULT_JEV_MODEL
+    return _fallback(reason, model)
+
+
 def _fallback(reason: str, model: str, *, estimated: int = 0, dropped: int = 0,
               usage: tuple[int, int] | None = None, response_model: str | None = None,
-              raw: str = "") -> JevAttempt:
+              raw: str = "", vendor_limited: bool = False) -> JevAttempt:
     usd = rate = scope = source = None
     billed = False
     inp = out = None
@@ -213,7 +268,7 @@ def _fallback(reason: str, model: str, *, estimated: int = 0, dropped: int = 0,
         response_model=response_model, input_tokens=inp, output_tokens=out,
         input_token_source=source, estimated_input=estimated, usd=usd,
         rate_tier=rate, usd_scope=scope, billed=billed, raw=raw, sent_refs=(),
-        dropped=dropped,
+        dropped=dropped, vendor_limited=vendor_limited,
     )
 
 
@@ -295,8 +350,8 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
                       client=None, secret_values=None) -> JevAttempt:
     """Ask Jev for one proposal, or return a fallback reason without raising.
 
-    HTTP failures, low confidence, and schema-invalid answers do not open
-    watch-only. The caller falls back to Claude.
+    Ordinary HTTP failures, low confidence, and schema-invalid answers do not
+    open watch-only. HTTP 429 is marked ``vendor_limited`` so the caller can.
     """
     model = _model_pin(settings) or DEFAULT_JEV_MODEL
     ticker = str(symbol or "").strip().upper()
@@ -304,13 +359,18 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
         return _fallback("jev_error", model)
     if not _SYMBOL.fullmatch(ticker):
         return _fallback("jev_invalid", model)
+    original_count = len(packet.items)
+    prepared = _prepare_packet(packet)
+    if prepared is None:
+        return _fallback("jev_error", model)
+    packet = prepared
     questions = decision_questions(ticker)
     state_cap = _cap(settings, "jev_state_token_cap", 30_000, JEV_STATE_HARD_LIMIT)
     request_cap = _cap(settings, "jev_request_token_cap", 60_000, JEV_REQUEST_HARD_LIMIT)
     fitted = _fit_state(
         packet, questions, model, state_cap=state_cap, request_cap=request_cap,
     )
-    dropped = 0 if fitted is None else len(packet.items) - len(fitted.items)
+    dropped = 0 if fitted is None else original_count - len(fitted.items)
     if fitted is None or not fitted.items:
         return _fallback("jev_over_cap", model, dropped=dropped)
     state = fitted.prompt_block()
@@ -334,6 +394,11 @@ def evaluate_decision(settings, packet: Packet, *, symbol: str | None, schema: d
             response = _post(body, api_key=key, client=http)
         except (httpx.HTTPError, OSError):
             return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
+        if response.status_code == 429:
+            return _fallback(
+                "jev_vendor_limit", model, estimated=estimated, dropped=dropped,
+                vendor_limited=True,
+            )
         if response.status_code != 200:
             return _fallback("jev_error", model, estimated=estimated, dropped=dropped)
         try:

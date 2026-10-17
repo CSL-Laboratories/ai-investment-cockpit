@@ -35,7 +35,7 @@ from schemas.models.agent_job import AgentJob
 from workflows.constants import EVENT_AGENT_JOB
 from workflows.context_limit import context_token_cap, estimate_tokens
 from workflows.cost_log import parse_vendor_usage, quote_cost, sum_quotes
-from workflows.jev import evaluate_decision, jev_weight
+from workflows.jev import blocked_jev_attempt, evaluate_decision, jev_weight
 from workflows.schema_loader import load_schema, schema_path
 
 # AgentResult.status -> AgentJob.status (anything else is a vendor/limit failure).
@@ -129,10 +129,17 @@ def call_agent(state, *, alias: str, prompt_ref: str, prompt_hash: str, prompt: 
     if _jev_eligible(
         selected_runtime, job_class, mode, decision_weight, state.settings, jev_packet,
     ):
-        jev_attempt = evaluate_decision(
-            state.settings, jev_packet, symbol=jev_symbol, schema=load_schema(schema_name),
-            client=jev_client, secret_values=_provisioned_secret_values(),
-        )
+        if BreakerEngine(state).is_watch_only("jev"):
+            jev_attempt = blocked_jev_attempt(state.settings, "jev_vendor_limit")
+        else:
+            jev_attempt = evaluate_decision(
+                state.settings, jev_packet, symbol=jev_symbol, schema=load_schema(schema_name),
+                client=jev_client, secret_values=_provisioned_secret_values(),
+            )
+            if jev_attempt.vendor_limited:
+                BreakerEngine(state).enter_watch_only(
+                    "jev", "jev vendor limit", actor="agent_calls", state="exhausted",
+                )
     jev_accepted = jev_attempt is not None and jev_attempt.accepted
     cap = context_token_cap(state.settings)
     if jev_accepted:
