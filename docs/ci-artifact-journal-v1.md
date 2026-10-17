@@ -9,11 +9,11 @@ unchanged and remains explicitly unqualified for protected authority, exactly as
 recorded in [rollout limits](ci-queue-rollout.md). No workflow, trigger, permission,
 setting, secret, label or consumer wiring changes with this document.
 
-The open [superseded-policy recovery finding on #168](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/168#discussion_r4301252507)
-remains held: an unchanged stacked candidate can retain a reservation under an older
-default policy, with no authenticated operator recovery path implemented. Removing
-that reservation or changing a head is not proof of non-delivery. This offline module
-preserves uncertainty; it does not implement or authorize live recovery.
+The [superseded-policy recovery finding on #168](https://github.com/CSL-Laboratories/ai-investment-cockpit/pull/168#discussion_r4301252507)
+was corrected at `aa1eef1` and marked resolved by Devin. That diagnostic recovery
+does not authenticate the shared comment journal; journal-origin and protected-policy
+holds remain. Removing a reservation or changing a head is not proof of non-delivery.
+This offline module preserves uncertainty and grants no live recovery authority.
 
 Contract status: **DRAFT, proposed for peer review.** This is the shared v1 contract
 text as proposed; it is not accepted implementation authority for any repository until
