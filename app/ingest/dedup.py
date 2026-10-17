@@ -1,7 +1,11 @@
 """WP3 — bounded dedup by (source, article id). LRU-evicts past capacity."""
 from __future__ import annotations
 
+import importlib.util
+import logging
 from collections import OrderedDict
+
+log = logging.getLogger(__name__)
 
 _MISSING = object()      # distinct from None, which is the stored VALUE of every seen key
 _I64_MIN = -2**63
@@ -13,18 +17,22 @@ _NATIVE = None
 def _load_native() -> None:
     """Use the Rust dedup when the extension is installed.
 
-    A missing module keeps the pure-Python path. Any other import failure is a
-    broken extension and is not swallowed. The map is memory only.
+    A missing module keeps the pure-Python path. A present extension that
+    fails to import is broken and the error propagates. A present module
+    missing ``DedupCore`` is a partial wheel, not a silent Python fallback.
+    The map is memory only.
     """
     global _NATIVE, DEDUP_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("DEDUP_BACKEND=%s", DEDUP_BACKEND)
         return
+    import cockpit_quant as native
+
     if not hasattr(native, "DedupCore"):
-        return
+        raise ImportError("cockpit_quant is installed but does not provide DedupCore")
     _NATIVE = native
     DEDUP_BACKEND = "rust"
+    log.info("DEDUP_BACKEND=%s", DEDUP_BACKEND)
 
 
 def _rust_cap(capacity: int) -> bool:

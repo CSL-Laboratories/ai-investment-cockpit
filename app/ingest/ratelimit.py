@@ -2,7 +2,11 @@
 never be exceeded (the runner passes monotonic ``now`` seconds)."""
 from __future__ import annotations
 
+import importlib.util
+import logging
 import numbers
+
+log = logging.getLogger(__name__)
 
 RATELIMIT_BACKEND = "python"
 _NATIVE = None
@@ -11,18 +15,24 @@ _NATIVE = None
 def _load_native() -> None:
     """Use the Rust bucket step when the extension is installed.
 
-    A missing module keeps the pure-Python path. Any other import failure is a
-    broken extension and is not swallowed. Time stays caller-supplied.
+    A missing module keeps the pure-Python path. A present extension that
+    fails to import is broken and the error propagates. A present module
+    missing ``token_bucket_allow`` is a partial wheel, not a silent Python
+    fallback. Time stays caller-supplied.
     """
     global _NATIVE, RATELIMIT_BACKEND
-    try:
-        import cockpit_quant as native
-    except ImportError:
+    if importlib.util.find_spec("cockpit_quant") is None:
+        log.info("RATELIMIT_BACKEND=%s", RATELIMIT_BACKEND)
         return
+    import cockpit_quant as native
+
     if not hasattr(native, "token_bucket_allow"):
-        return
+        raise ImportError(
+            "cockpit_quant is installed but does not provide token_bucket_allow"
+        )
     _NATIVE = native
     RATELIMIT_BACKEND = "rust"
+    log.info("RATELIMIT_BACKEND=%s", RATELIMIT_BACKEND)
 
 
 def _real(value) -> bool:

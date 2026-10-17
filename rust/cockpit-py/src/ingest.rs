@@ -430,6 +430,7 @@ fn content_hash_py(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<String>
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[pyfunction]
 #[pyo3(name = "market_event", signature = (source, article_id, symbols, headline, summary, event_type, raw=None))]
 fn market_event_py(
