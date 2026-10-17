@@ -1,0 +1,25 @@
+{
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "human_decision": "open",
+  "decided": false,
+  "owner": "Lucas",
+  "build_now": false,
+  "candidate_posture": "defer_until_measured",
+  "why_this_candidate_does_not_include_a_tui": [
+    "SUCCESSOR-PRODUCT and MONTH-PROGRAM require measured operator value before a TUI.",
+    "No measured task-time or error-rate delta versus the shared GUI and CLI exists in this packet.",
+    "A TUI is a third interaction model. Terminal redraws and spinner-style progress are a known screen-reader failure mode in the GitHub CLI accessibility work.",
+    "This candidate selects no framework and runs no framework spike, including no TUI toolkit spike."
+  ],
+  "evidence_required_before_any_build": [
+    "Named journeys with a measured time or error-rate comparison against the shared GUI and CLI.",
+    "Screen-reader and no-color transcripts where refusal, uncertainty, stale data, and unreconciled state stay visible as text.",
+    "A maintenance-cost note the owner accepts.",
+    "Proof the TUI calls only this shared API and adds no order path."
+  ],
+  "falsifiers": [
+    "The TUI hides a refusal, uncertainty, stale, or unreconciled state that the shared API exposes.",
+    "The TUI submits an order or widens a profile outside risk-pass, mode, approval, and OrderGateway."
+  ]
+}

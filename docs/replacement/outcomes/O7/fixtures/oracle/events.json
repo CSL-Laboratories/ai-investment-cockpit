@@ -1,0 +1,70 @@
+{
+  "kind": "events",
+  "api_version": "o7.operator.v0",
+  "candidate_maturity": "researched",
+  "events": [
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "evidence_viewed",
+      "command": "operator.evidence.inspect",
+      "request_id": "req_evidence",
+      "visibility": "visible",
+      "status_code": "ok"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "refusal_visible",
+      "command": "operator.decisions.inspect",
+      "request_id": "req_decisions",
+      "visibility": "visible",
+      "status_code": "refused"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "uncertainty_visible",
+      "command": "operator.uncertainty.inspect",
+      "request_id": "req_uncertainty",
+      "visibility": "visible",
+      "status_code": "ok"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "stale_visible",
+      "command": "operator.health.inspect",
+      "request_id": "req_health_stale",
+      "visibility": "visible",
+      "status_code": "stale_or_unreconciled"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "unreconciled_visible",
+      "command": "operator.recovery.inspect",
+      "request_id": "req_recovery_open",
+      "visibility": "unreconciled_visible",
+      "status_code": "stale_or_unreconciled"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "intervention_recorded",
+      "command": "operator.interventions.request_stop",
+      "request_id": "req_stop",
+      "visibility": "visible",
+      "status_code": "ok"
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "event_type": "export_recorded",
+      "command": "operator.export.bundle",
+      "request_id": "req_export",
+      "visibility": "visible",
+      "status_code": "ok"
+    }
+  ]
+}

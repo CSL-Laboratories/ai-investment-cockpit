@@ -283,6 +283,12 @@ impl BookCore {
         self.book.orders().into_iter().map(order_tuple).collect()
     }
 
+    fn order_at(&self, index: usize) -> PyResult<OrderTuple> {
+        self.book.order_at(index).map(order_tuple).ok_or_else(|| {
+            pyo3::exceptions::PyIndexError::new_err("resting order index out of range")
+        })
+    }
+
     fn last_stamps(&self) -> (i64, i64) {
         self.book.last_stamps()
     }

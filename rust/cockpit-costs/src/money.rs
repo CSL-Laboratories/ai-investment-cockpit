@@ -21,13 +21,16 @@ pub struct Dec {
 }
 
 impl PartialEq for Dec {
+    /// Numeric equality, like Python's ``Decimal.__eq__``: ``Decimal("30003") ==
+    /// Decimal("30003.00")`` is true even though the two have different scale.
+    /// Comparing the stored digits/exponent directly would reject that, and
+    /// `canon()` deliberately keeps trailing zeros (the scale) rather than
+    /// normalizing them away, so equality has to go through `cmp()` instead.
     fn eq(&self, other: &Self) -> bool {
-        let a = self.clone().canon();
-        let b = other.clone().canon();
-        if a.is_zero() && b.is_zero() {
+        if self.is_zero() && other.is_zero() {
             return true;
         }
-        a.neg == b.neg && a.digs == b.digs && a.exp == b.exp
+        cmp(self, other) == Ordering::Equal
     }
 }
 
@@ -120,19 +123,16 @@ impl Dec {
         self.is_zero() || self.neg
     }
 
+    /// Strip leading zero digits only. Trailing zeros are kept deliberately:
+    /// they *are* the scale (Python's Decimal keeps them too — multiplication
+    /// keeps the operands' combined exponent and addition keeps the smaller
+    /// one, instead of normalizing the coefficient down to its minimal form).
     fn canon(mut self) -> Self {
         if self.is_zero() {
             return Self::zero();
         }
         while self.digs.first() == Some(&0) && self.digs.len() > 1 {
             self.digs.remove(0);
-        }
-        while self.digs.last() == Some(&0) && self.digs.len() > 1 {
-            self.digs.pop();
-            self.exp += 1;
-        }
-        if self.is_zero() {
-            return Self::zero();
         }
         self
     }
@@ -302,7 +302,17 @@ pub fn div(left: &Dec, right: &Dec) -> Result<Dec, String> {
                 digs: quot,
                 exp,
             };
-            if !exact {
+            if exact {
+                // Python's exact quotient uses the ideal exponent
+                // (left.exp - right.exp): strip padding zeros only down to it,
+                // e.g. Decimal(1) / Decimal(2) == Decimal("0.5") and
+                // Decimal("10.00") / Decimal(2) == Decimal("5.00").
+                let ideal = left.exp - right.exp;
+                while out.exp < ideal && out.digs.len() > 1 && out.digs.last() == Some(&0) {
+                    out.digs.pop();
+                    out.exp += 1;
+                }
+            } else {
                 // Fold a non-zero remainder into the sticky bit. Every digit past
                 // PREC + 1 only feeds `sticky`, so turning a trailing 0 into a 1
                 // records the remainder without changing the round digit.
@@ -809,6 +819,48 @@ mod tests {
     }
 
     #[test]
+    fn equality_ignores_scale_like_python_decimal() {
+        // Decimal("30003") == Decimal("30003.00") is True in Python even though
+        // the two have different exponents; `to_plain_string` must still show them
+        // differently, since that string is what crosses the PyO3 bridge.
+        assert_eq!(d("30003"), d("30003.00"));
+        assert_ne!(d("30003").to_plain_string(), d("30003.00").to_plain_string());
+    }
+
+    #[test]
+    fn from_i64_keeps_the_integer_digit_count() {
+        // Python's Decimal(300) has coefficient "300", not "3" scaled by 10**2;
+        // from_i64 must not let canon() collapse the trailing zeros away.
+        assert_eq!(Dec::from_i64(300).to_plain_string(), "300");
+    }
+
+    #[test]
+    fn mul_keeps_the_combined_exponent() {
+        // 10000.00 (exponent -2) * 3 (exponent 0) keeps exponent -2, matching
+        // Python: Decimal("10000.00") * Decimal(3) == Decimal("30000.00").
+        assert_eq!(mul(&d("10000.00"), &Dec::from_i64(3)).to_plain_string(), "30000.00");
+        // price * Decimal(qty): a plain integer quantity must not lose the
+        // price's decimal places in the product.
+        assert_eq!(
+            mul(&d("100.01"), &Dec::from_i64(300)).to_plain_string(),
+            "30003.00"
+        );
+    }
+
+    #[test]
+    fn add_keeps_the_smaller_exponent() {
+        // Python: Decimal("10000.00") * Decimal(3) + Decimal("3.00") == Decimal("30003.00").
+        let notional = add(&mul(&d("10000.00"), &Dec::from_i64(3)), &d("3.00"));
+        assert_eq!(notional.to_plain_string(), "30003.00");
+    }
+
+    #[test]
+    fn sub_keeps_the_smaller_exponent() {
+        // Mirrors add(): Decimal("30003.00") - Decimal("3.00") == Decimal("30000.00").
+        assert_eq!(sub(&d("30003.00"), &d("3.00")).to_plain_string(), "30000.00");
+    }
+
+    #[test]
     fn maker_rebate_is_negative() {
         let fee = fee_for(&sched(), Side::Buy, 1_000, &d("100.00"), Liquidity::Maker).unwrap();
         assert_eq!(fee, d("-1.80"));
@@ -865,6 +917,9 @@ mod tests {
             d("0.1666666666666666666666666667")
         );
         assert_eq!(div(&d("1"), &d("2")).unwrap(), d("0.5"));
+        assert_eq!(div(&d("1"), &d("2")).unwrap().to_plain_string(), "0.5");
+        assert_eq!(div(&d("10.00"), &d("2")).unwrap().to_plain_string(), "5.00");
+        assert_eq!(div(&d("100"), &d("4")).unwrap().to_plain_string(), "25");
         assert_eq!(
             cost_bps(&d("1"), &d("3")).unwrap(),
             d("3333.333333333333333333333333")
