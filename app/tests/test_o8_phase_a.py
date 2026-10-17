@@ -40,7 +40,8 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: helper-duplicate: helper set does not match the workload",
     "O8 negative control failed as designed: tokens-negative: tier-3 evidence lacks measured observation",
     "O8 negative control failed as designed: cost-negative: tier-3 evidence lacks measured observation",
-    "O8 negative controls: 30 failed as designed",
+    "O8 negative control failed as designed: tokens-huge-int: tier-3 baseline lacks retained outputs",
+    "O8 negative controls: 31 failed as designed",
 )
 
 

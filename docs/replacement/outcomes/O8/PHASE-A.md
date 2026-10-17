@@ -169,6 +169,7 @@ Checked-in fixtures under `fixtures/negative/`. Each one must fail. The validato
 | `helper-duplicate.json` | helper set does not match the workload (helpers checked as a list, so a duplicated entry fails even though its name→role dict collapses to the expected set) |
 | `tokens-negative.json` | tier-3 evidence lacks measured observation (`tokens: -1` rejected; tokens must be finite and ≥ 0 when present) |
 | `cost-negative.json` | tier-3 evidence lacks measured observation (`cost: -100` rejected; cost must be finite and ≥ 0 when present) |
+| `tokens-huge-int.json` | tier-3 baseline lacks retained outputs (a JSON integer above float range in `tokens` is rejected cleanly, not with a traceback) |
 
 A packet whose maturity is anything other than `researched` is rejected. Promoting this artifact to `contract_frozen` requires a human receipt, not an edit.
 

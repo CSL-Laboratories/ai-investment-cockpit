@@ -172,6 +172,7 @@ NEGATIVES = (
     ("helper-duplicate.json", "benchmark", "helper set does not match the workload"),
     ("tokens-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
     ("cost-negative.json", "benchmark", "tier-3 evidence lacks measured observation"),
+    ("tokens-huge-int.json", "benchmark", "tier-3 baseline lacks retained outputs"),
 )
 
 
@@ -251,6 +252,15 @@ def _local_path_exists(locator: str) -> bool:
         return True
     resolved = _resolve_local_path(locator)
     return resolved is not None and resolved.exists()
+
+
+def _is_finite_nonneg(value: Any) -> bool:
+    """True for a non-bool number that is finite and >= 0; ints skip float conversion."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    return isinstance(value, float) and math.isfinite(value) and value >= 0
 
 
 def benchmark_reasons(document: Any) -> list[str]:
@@ -336,19 +346,10 @@ def benchmark_reasons(document: Any) -> list[str]:
         observation = document.get("observation")
         observation = observation if isinstance(observation, dict) else {}
         metrics_ok = all(
-            isinstance(observation.get(key), (int, float))
-            and not isinstance(observation.get(key), bool)
-            and math.isfinite(observation.get(key))
-            and observation.get(key) >= 0
+            _is_finite_nonneg(observation.get(key))
             for key in ("p50", "p95", "p99", "throughput", "cpu", "io")
         ) and all(
-            observation.get(key) is None
-            or (
-                isinstance(observation.get(key), (int, float))
-                and not isinstance(observation.get(key), bool)
-                and math.isfinite(observation.get(key))
-                and observation.get(key) >= 0
-            )
+            observation.get(key) is None or _is_finite_nonneg(observation.get(key))
             for key in ("tokens", "cost")
         ) and isinstance(observation.get("rss_bytes"), int) and not isinstance(
             observation.get("rss_bytes"), bool
@@ -357,12 +358,7 @@ def benchmark_reasons(document: Any) -> list[str]:
             isinstance(item, dict) and item.get("status") == "measured" for item in helpers
         )
         relative_iqr = variance.get("relative_iqr")
-        iqr_finite = (
-            isinstance(relative_iqr, (int, float))
-            and not isinstance(relative_iqr, bool)
-            and math.isfinite(relative_iqr)
-            and relative_iqr >= 0
-        )
+        iqr_finite = _is_finite_nonneg(relative_iqr)
         if observation.get("status") != "measured" or not metrics_ok or not helpers_measured or not iqr_finite:
             reasons.append("tier-3 evidence lacks measured observation")
         elif not (observation["p50"] <= observation["p95"] <= observation["p99"]):
