@@ -21,6 +21,9 @@
   "task_id": "task.schema_valid_value_wrong",
   "route_id": "current.decision",
   "suite_digest": "5e1b3931505f877878d672e1fa367fb38fd679d73ff256022a2564db8f597468",
+  "output": {
+    "name": "American country music artist"
+  },
   "schema_compliance": true,
   "value_correctness": true,
   "grounding_ok": false,

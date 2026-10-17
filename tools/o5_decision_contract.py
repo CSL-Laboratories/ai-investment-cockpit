@@ -538,14 +538,18 @@ def _admit_result(document: dict[str, Any], ctx: Context) -> Admission:
     case = ctx.cases.get(document.get("task_id"))
     if case is None:
         return _refuse("result_contradicts_suite", "result task is not in the frozen suite")
+    # The frozen task fixes schema and ground truth. The provider's retained output is rescored here.
+    scored = {**case, "output": document.get("output")}
     if case["polarity"] == "measurement":
-        if document.get("schema_compliance") is not case["expected"]["schema_compliance"]:
-            return _refuse("result_contradicts_suite", "result schema_compliance contradicts the frozen task")
-        if document.get("value_correctness") is not case["expected"]["value_correctness"]:
-            return _refuse("result_contradicts_suite", "result value_correctness contradicts the frozen task")
+        schema_ok, value_ok = _score_measurement(scored)
+        if document.get("schema_compliance") is not schema_ok:
+            return _refuse("result_contradicts_suite", "result schema_compliance contradicts the rescored output")
+        if document.get("value_correctness") is not value_ok:
+            return _refuse("result_contradicts_suite", "result value_correctness contradicts the rescored output")
     elif case["polarity"] == "grounding":
-        if document.get("grounding_ok") is not case["expected"]["grounding_ok"]:
-            return _refuse("result_contradicts_suite", "result grounding_ok contradicts the frozen task")
+        grounded = isinstance(scored["output"], dict) and _score_grounding(scored)
+        if document.get("grounding_ok") is not grounded:
+            return _refuse("result_contradicts_suite", "result grounding_ok contradicts the rescored output")
     else:
         return _refuse("result_contradicts_suite", "a refusal task is answered by a decision_refusal, not a result")
     if document.get("authority_granted") is not False or document.get("order_emitted") is not False:

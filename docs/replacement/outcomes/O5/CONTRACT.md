@@ -216,9 +216,9 @@ This packet does not decide any of these.
   any advice characterization. Unresolved by the inherited authority research.
 - **Architecture.** Whether any candidate route becomes a successor decision
   route. Inv 2 stays as implemented until a separately reviewed amendment.
-  Whether a `decision_result` may carry the retained provider output, so the
-  validator can rescore that output instead of the submitted boolean labels,
-  is also undecided. The wire schema does not have that field.
+  A `decision_result` carries the retained provider `output`. The validator
+  rescores it against the frozen schema and ground truth and rejects any
+  submitted label that differs. The frozen suite's canned output is not the oracle.
 - **Release.** This packet is not release evidence.
 - **Live.** No live trading, no live authority, and no capital movement.
 - **O4 artifact.** Whether a future accepted O4 population replaces this candidate
