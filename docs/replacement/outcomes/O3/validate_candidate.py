@@ -178,6 +178,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
     orders = {}
     for order in fixture["orders"]:
         orders[order["order_id"]] = order
+        if order["instrument_id"] not in known_instruments:
+            failures.add("unknown_instrument")
         if order["family"] != book_id:
             failures.add("family_crossed")
         allowed = EQUITY_STATES if book_id == "equity" else EVENT_STATES
@@ -197,13 +199,28 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         if item["reverses_entry_id"] in journal_entry_ids:
             admitted.add(item["admits_fill_id"])
     seen_fills: set[str] = set()
+    accepted_fills: list[dict] = []
+    checkpointed_fill_ids: set[str] = set()
     defect_instruments: set[str] = set()
     accepted_qty: dict[str, int] = {}
     checkpoint = fixture["checkpoint"]
+    for row in checkpoint["positions"] + checkpoint["open_reservations"]:
+        if row["instrument_id"] not in known_instruments:
+            failures.add("unknown_instrument")
+    checkpoint_reservations: dict[str, int] = {}
+    for reservation in checkpoint["open_reservations"]:
+        checkpoint_reservations[reservation["instrument_id"]] = (
+            checkpoint_reservations.get(reservation["instrument_id"], 0)
+            + reservation["amount_minor"]
+        )
+    if sum(checkpoint_reservations.values()) != checkpoint["collateral_reserved"]:
+        failures.add("collateral_double_count")
     derived = {row["instrument_id"]: row["qty"] for row in checkpoint["positions"]}
     applied_fill_fees = 0
-    fill_cost: dict[str, int] = {}
-    journal_cost: dict[str, int] = {}
+    fill_ids = {fill["fill_id"] for fill in fixture["fills"]}
+    posted_premium: dict[str, int] = {}
+    posted_fees: dict[str, int] = {}
+    order_fee_total = 0
 
     for fill in sorted(fixture["fills"], key=lambda item: item["sequence"]):
         if fill["order_id"] not in orders:
@@ -239,12 +256,11 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             continue
         accepted_qty[order["order_id"]] = filled + fill["qty"]
         if fill["sequence"] <= checkpoint["sequence"]:
+            checkpointed_fill_ids.add(fill["fill_id"])
             continue
+        accepted_fills.append(fill)
         derived[fill["instrument_id"]] = derived.get(fill["instrument_id"], 0) + fill["qty"]
         applied_fill_fees += fill["fee_minor"]
-        fill_cost[fill["instrument_id"]] = (
-            fill_cost.get(fill["instrument_id"], 0) + fill["qty"] * fill["price_minor"]
-        )
 
     pre_settlement = dict(derived)
     for market in fixture["markets"]:
@@ -314,6 +330,137 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         else:
             failures.add("position_divergence")
 
+    cash = checkpoint["cash_available"]
+    collateral = checkpoint["collateral_reserved"]
+    seen_keys = set(checkpoint["applied_keys"])
+    floor = checkpoint["sequence"]
+    attribution: dict[str, dict[str, int]] = {}
+    replay_detected = False
+    journal_fees = 0
+    corporate_cash = 0
+    settlement_cash_dr = 0
+    settlement_cash_by: dict[str, int] = {}
+    settlement_collateral_by: dict[str, int] = {}
+    settlement_fee_by: set[str] = set()
+    reserved_presettle = dict(checkpoint_reservations)
+    reserved_end = dict(checkpoint_reservations)
+
+    for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
+        debits = 0
+        credits = 0
+        for line in entry["lines"]:
+            amount = _line_amount(line, failures)
+            if line["side"] == "dr":
+                debits += amount
+            elif line["side"] == "cr":
+                credits += amount
+            else:
+                failures.add("schema_invalid")
+            if (book_id == "equity" and line["account"] == "collateral_reserved") or (
+                book_id == "event" and line["account"] == "position_cost"
+            ):
+                failures.add("family_crossed")
+        if debits != credits:
+            failures.add("unbalanced_entry")
+        replay = entry["sequence"] <= floor or entry["idempotency_key"] in seen_keys
+        if replay:
+            replay_detected = True
+            if book_id == "event":
+                failures.add("collateral_double_count")
+            else:
+                failures.add("restart_replay")
+            continue
+        seen_keys.add(entry["idempotency_key"])
+        strategy_id = entry["strategy_id"]
+        fill_ref = entry.get("fill_id")
+        order_ref = entry.get("order_id")
+        if fill_ref is not None and (fill_ref not in fill_ids or fill_ref in checkpointed_fill_ids):
+            failures.add("position_divergence")
+        if order_ref is not None and order_ref not in orders:
+            failures.add("position_divergence")
+        if entry["reason"] == "fill" and fill_ref is None:
+            failures.add("balance_mismatch")
+        if entry["reason"] in {"reserve_collateral", "trade_fee"} and fill_ref is None and order_ref is None:
+            failures.add("balance_mismatch")
+        if entry["reason"] == "corporate_action":
+            for line in entry["lines"]:
+                if (line["account"], line["side"]) not in {
+                    ("cash_available", "dr"),
+                    ("realized_pnl", "cr"),
+                }:
+                    failures.add("corporate_action_mismatch")
+        premium_delta = 0
+        fee_delta = 0
+        for line in entry["lines"]:
+            amount = _line_amount(line, failures)
+            if line["instrument_id"] not in known_instruments:
+                failures.add("unknown_instrument")
+            account = line["account"]
+            side = line["side"]
+            if fill_ref is not None:
+                signed = amount if side == "dr" else -amount
+                if account in {"position_cost", "collateral_reserved"}:
+                    premium_delta += signed
+                elif account == "fees_expense":
+                    fee_delta += signed
+            if account == "cash_available":
+                cash += amount if side == "dr" else -amount
+                if entry["reason"] == "corporate_action" and side == "dr":
+                    corporate_cash += amount
+                if entry["reason"] == "settlement_payout" and side == "dr":
+                    settlement_cash_dr += amount
+                    settlement_cash_by[line["instrument_id"]] = (
+                        settlement_cash_by.get(line["instrument_id"], 0) + amount
+                    )
+            elif account == "collateral_reserved":
+                collateral += amount if side == "dr" else -amount
+                collateral_delta = amount if side == "dr" else -amount
+                reserved_end[line["instrument_id"]] = (
+                    reserved_end.get(line["instrument_id"], 0) + collateral_delta
+                )
+                if entry["reason"] != "settlement_payout":
+                    reserved_presettle[line["instrument_id"]] = (
+                        reserved_presettle.get(line["instrument_id"], 0) + collateral_delta
+                    )
+                elif side == "cr":
+                    settlement_collateral_by[line["instrument_id"]] = (
+                        settlement_collateral_by.get(line["instrument_id"], 0) + amount
+                    )
+                if entry["reason"] not in {"reserve_collateral", "settlement_payout", "void_unwind"}:
+                    failures.add("balance_mismatch")
+            elif account == "realized_pnl":
+                delta = amount if side == "cr" else -amount
+                bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
+                bucket["realized_pnl_minor"] += delta
+            elif account == "fees_expense":
+                delta = amount if side == "dr" else -amount
+                if entry["reason"] != "settlement_payout":
+                    journal_fees += delta
+                if order_ref is not None:
+                    order_fee_total += delta
+                bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
+                bucket["fees_minor"] += delta
+                if entry["reason"] == "settlement_payout":
+                    settlement_fee_by.add(line["instrument_id"])
+            elif account == "position_cost":
+                if entry["reason"] != "fill":
+                    failures.add("balance_mismatch")
+            else:
+                failures.add("schema_invalid")
+        if fill_ref is not None:
+            posted_premium[fill_ref] = posted_premium.get(fill_ref, 0) + premium_delta
+            posted_fees[fill_ref] = posted_fees.get(fill_ref, 0) + fee_delta
+
+    if not (failures & FILL_DEFECTS):
+        for fill in accepted_fills:
+            if posted_premium.get(fill["fill_id"], 0) != fill["qty"] * fill["price_minor"]:
+                failures.add("balance_mismatch")
+            if posted_fees.get(fill["fill_id"], 0) != fill["fee_minor"]:
+                failures.add("fee_mismatch")
+
+    if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees + order_fee_total:
+        failures.add("fee_mismatch")
+
     for market in fixture["markets"]:
         if market["state"] != "voided":
             continue
@@ -353,103 +500,13 @@ def evaluate_semantics(fixture: dict) -> set[str]:
             or unwind_other
             or unwind_cash != unwind_collateral
             or reported_positions.get(instrument_id, 0) != 0
-            or fixture["reported"]["collateral_reserved"] != 0
+            or reserved_end.get(instrument_id, 0) != 0
+            or any(
+                row["instrument_id"] == instrument_id
+                for row in fixture["reported"]["open_reservations"]
+            )
         ):
             failures.add("void_unreconciled")
-
-    cash = checkpoint["cash_available"]
-    collateral = checkpoint["collateral_reserved"]
-    seen_keys = set(checkpoint["applied_keys"])
-    floor = checkpoint["sequence"]
-    attribution: dict[str, dict[str, int]] = {}
-    replay_detected = False
-    journal_fees = 0
-    corporate_cash = 0
-    settlement_cash_dr = 0
-    settlement_cash_by: dict[str, int] = {}
-    settlement_collateral_cr = 0
-    collateral_before_settlement: int | None = None
-    settlement_fee_by: set[str] = set()
-
-    for entry in sorted(fixture["journal"], key=lambda item: item["sequence"]):
-        debits = 0
-        credits = 0
-        for line in entry["lines"]:
-            amount = _line_amount(line, failures)
-            if line["side"] == "dr":
-                debits += amount
-            elif line["side"] == "cr":
-                credits += amount
-            else:
-                failures.add("schema_invalid")
-            if (book_id == "equity" and line["account"] == "collateral_reserved") or (
-                book_id == "event" and line["account"] == "position_cost"
-            ):
-                failures.add("family_crossed")
-        if debits != credits:
-            failures.add("unbalanced_entry")
-        replay = entry["sequence"] <= floor or entry["idempotency_key"] in seen_keys
-        if replay:
-            replay_detected = True
-            if book_id == "event":
-                failures.add("collateral_double_count")
-            else:
-                failures.add("restart_replay")
-            continue
-        seen_keys.add(entry["idempotency_key"])
-        strategy_id = entry["strategy_id"]
-        if entry["reason"] == "settlement_payout" and collateral_before_settlement is None:
-            collateral_before_settlement = collateral
-        for line in entry["lines"]:
-            amount = _line_amount(line, failures)
-            account = line["account"]
-            side = line["side"]
-            if account == "cash_available":
-                cash += amount if side == "dr" else -amount
-                if entry["reason"] == "corporate_action" and side == "dr":
-                    corporate_cash += amount
-                if entry["reason"] == "settlement_payout" and side == "dr":
-                    settlement_cash_dr += amount
-                    settlement_cash_by[line["instrument_id"]] = (
-                        settlement_cash_by.get(line["instrument_id"], 0) + amount
-                    )
-            elif account == "collateral_reserved":
-                collateral += amount if side == "dr" else -amount
-                if entry["reason"] == "settlement_payout" and side == "cr":
-                    settlement_collateral_cr += amount
-                if entry["reason"] == "reserve_collateral":
-                    journal_cost[line["instrument_id"]] = (
-                        journal_cost.get(line["instrument_id"], 0)
-                        + (amount if side == "dr" else -amount)
-                    )
-            elif account == "realized_pnl":
-                delta = amount if side == "cr" else -amount
-                bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
-                bucket["realized_pnl_minor"] += delta
-            elif account == "fees_expense":
-                delta = amount if side == "dr" else -amount
-                if entry["reason"] != "settlement_payout":
-                    journal_fees += delta
-                bucket = attribution.setdefault(strategy_id, {"realized_pnl_minor": 0, "fees_minor": 0})
-                bucket["fees_minor"] += delta
-                if entry["reason"] == "settlement_payout":
-                    settlement_fee_by.add(line["instrument_id"])
-            elif account == "position_cost":
-                if entry["reason"] == "fill":
-                    journal_cost[line["instrument_id"]] = (
-                        journal_cost.get(line["instrument_id"], 0)
-                        + (amount if side == "dr" else -amount)
-                    )
-            else:
-                failures.add("schema_invalid")
-
-    if not (failures & FILL_DEFECTS):
-        for instrument_id, cost in fill_cost.items():
-            if journal_cost.get(instrument_id, 0) != cost:
-                failures.add("balance_mismatch")
-
-    if not (failures & FILL_DEFECTS) and journal_fees != applied_fill_fees:
-        failures.add("fee_mismatch")
 
     expected_dividend = sum(
         action["cash_minor"] for action in fixture["corporate_actions"] if action["kind"] == "cash_dividend"
@@ -472,11 +529,8 @@ def evaluate_semantics(fixture: dict) -> set[str]:
                 failures.add("settlement_unreconciled")
             if evidence[0]["fee_already_deducted_from_payout"] and instrument_id in settlement_fee_by:
                 failures.add("fee_double_count")
-        if (
-            collateral_before_settlement is None
-            or settlement_collateral_cr != collateral_before_settlement
-        ):
-            failures.add("settlement_unreconciled")
+            if settlement_collateral_by.get(instrument_id, 0) != reserved_presettle.get(instrument_id, 0):
+                failures.add("settlement_unreconciled")
 
     reported = fixture["reported"]
     cash_differs = cash != reported["cash_available"]
@@ -495,6 +549,18 @@ def evaluate_semantics(fixture: dict) -> set[str]:
         reserved = sum(item["amount_minor"] for item in reported["open_reservations"])
         if reserved != reported["collateral_reserved"]:
             failures.add("collateral_double_count")
+        reported_reservations: dict[str, int] = {}
+        for row in reported["open_reservations"]:
+            if row["instrument_id"] not in known_instruments:
+                failures.add("unknown_instrument")
+            reported_reservations[row["instrument_id"]] = (
+                reported_reservations.get(row["instrument_id"], 0) + row["amount_minor"]
+            )
+        for instrument_id in set(reported_reservations) | set(reserved_end):
+            if instrument_id in voided:
+                continue
+            if reported_reservations.get(instrument_id, 0) != reserved_end.get(instrument_id, 0):
+                failures.add("collateral_double_count")
 
     reported_attribution = {row["strategy_id"]: row for row in reported["attribution"]}
     if set(reported_attribution) != set(attribution):

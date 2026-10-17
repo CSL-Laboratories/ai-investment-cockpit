@@ -44,6 +44,7 @@
       "entry_id": "j1",
       "sequence": 1,
       "idempotency_key": "fill-late",
+      "fill_id": "f-late",
       "strategy_id": "s-equity",
       "reason": "fill",
       "lines": [

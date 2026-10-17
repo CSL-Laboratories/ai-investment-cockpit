@@ -8,6 +8,8 @@
     "sequence": {"type": "integer", "minimum": 1},
     "idempotency_key": {"type": "string", "minLength": 1},
     "strategy_id": {"type": "string", "minLength": 1},
+    "fill_id": {"type": "string", "minLength": 1},
+    "order_id": {"type": "string", "minLength": 1},
     "reason": {
       "enum": [
         "reserve_collateral",

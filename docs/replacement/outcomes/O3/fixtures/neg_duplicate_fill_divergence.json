@@ -52,6 +52,7 @@
       "entry_id": "j1",
       "sequence": 1,
       "idempotency_key": "fill-dup-a",
+      "fill_id": "f-dup",
       "strategy_id": "s-equity",
       "reason": "fill",
       "lines": [
@@ -79,6 +80,7 @@
       "entry_id": "j2",
       "sequence": 2,
       "idempotency_key": "fill-dup-b",
+      "fill_id": "f-dup",
       "strategy_id": "s-equity",
       "reason": "fill",
       "lines": [

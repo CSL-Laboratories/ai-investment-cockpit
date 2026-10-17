@@ -19,6 +19,7 @@ NEGATIVE_IDS = (
     "neg_partial_fill_divergence",
     "neg_duplicate_fill_divergence",
     "neg_late_fill_divergence",
+    "neg_offsetting_fill_prices",
 )
 
 
@@ -56,6 +57,107 @@ def test_o3_fill_price_must_match_journal_cost() -> None:
         assert _evaluate(fixture) == set()
         fixture["fills"][0]["price_minor"] *= 2
         assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_fill_postings_require_fill_reference() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    del fixture["journal"][0]["fill_id"]
+    assert "balance_mismatch" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][0]["fill_id"] = "ghost-fill"
+    assert "position_divergence" in _evaluate(fixture)
+
+
+def test_o3_resting_order_reservation_is_not_fill_cost() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_resting_order_reservation.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    del fixture["journal"][2]["order_id"]
+    assert "balance_mismatch" in _evaluate(fixture)
+
+
+def test_o3_unknown_instrument_references_rejected() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["orders"][0]["instrument_id"] = "ghost"
+    assert "unknown_instrument" in _evaluate(fixture)
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    for entry in fixture["journal"]:
+        for line in entry["lines"]:
+            line["instrument_id"] = "ghost"
+    assert "unknown_instrument" in _evaluate(fixture)
+
+
+def test_o3_checkpoint_reservations_must_reconcile() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_restart_idempotent.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    assert _evaluate(fixture) == set()
+    fixture["checkpoint"]["open_reservations"][0]["amount_minor"] = 1
+    assert "collateral_double_count" in _evaluate(fixture)
+
+
+def test_o3_dividend_posting_shape() -> None:
+    path = VALIDATOR.parent / "fixtures" / "equity_partial_then_dividend.json"
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    fixture["journal"][2]["lines"][1]["account"] = "position_cost"
+    assert "corporate_action_mismatch" in _evaluate(fixture)
+
+
+def _resting_extension(fixture: dict) -> dict:
+    fixture["instruments"].append({
+        "instrument_id": "ev-two",
+        "family": "event_contract",
+        "venue_id": "venue-event-candidate",
+        "venue_symbol": "OTHER-23DEC31",
+        "currency": "USD",
+        "unit": "contract",
+        "contract_style": "binary",
+        "outcome_side": "yes",
+        "collateral_model": "fully_collateralized",
+    })
+    fixture["orders"].append({
+        "order_id": "ord-rest",
+        "instrument_id": "ev-two",
+        "family": "event",
+        "side": "buy",
+        "qty": 5,
+        "state": "resting",
+    })
+    fixture["journal"].append({
+        "entry_id": "j-rest",
+        "sequence": 4,
+        "idempotency_key": "reserve-rest-1",
+        "order_id": "ord-rest",
+        "strategy_id": "s-event",
+        "reason": "reserve_collateral",
+        "lines": [
+            {"account": "collateral_reserved", "side": "dr", "amount_minor": 2000000, "instrument_id": "ev-two"},
+            {"account": "cash_available", "side": "cr", "amount_minor": 2000000, "instrument_id": "ev-two"},
+        ],
+    })
+    fixture["reported"]["cash_available"] -= 2000000
+    fixture["reported"]["collateral_reserved"] += 2000000
+    fixture["reported"]["open_reservations"].append({
+        "reservation_id": "reserve-rest",
+        "instrument_id": "ev-two",
+        "amount_minor": 2000000,
+    })
+    return fixture
+
+
+def test_o3_settlement_collateral_scoped_per_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_yes_settlement.json"
+    fixture = _resting_extension(json.loads(path.read_text(encoding="utf-8")))
+    assert _evaluate(fixture) == set()
+    fixture["journal"][2]["lines"][1]["amount_minor"] -= 1
+    assert "settlement_unreconciled" in _evaluate(fixture)
+
+
+def test_o3_void_collateral_scoped_per_instrument() -> None:
+    path = VALIDATOR.parent / "fixtures" / "event_void_reconciled.json"
+    fixture = _resting_extension(json.loads(path.read_text(encoding="utf-8")))
+    assert _evaluate(fixture) == set()
 
 
 def test_o3_registry_maturity_stays_researched() -> None:

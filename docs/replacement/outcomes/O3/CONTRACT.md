@@ -231,6 +231,17 @@ not a second set of accounts. If the rollup disagrees with the reported
 attribution, the fixture fails `attribution_mismatch`. Strategy labels in
 the fixtures are placeholders.
 
+Posting references tie each entry to its cause. An entry with reason
+`fill` carries the `fill_id` it posts, and the premium and fee on those
+entries must equal that fill's `qty * price_minor` and `fee_minor`
+per fill, not just in aggregate. `reserve_collateral` and `trade_fee`
+entries carry a `fill_id` when they post an executed fill, or an
+`order_id` when they post the reservation of a resting (unfilled) order.
+A resting-order reservation is not fill cost and is exempt from the
+per-fill premium check; it still reserves collateral and still needs a
+reference. A posting with a missing, unknown, or checkpointed reference
+fails the fixture.
+
 ## Fills
 
 Position quantity changes from accepted fills, corporate actions that change
@@ -266,11 +277,17 @@ already in the payout, and the pre-rounding amount. The long quantity has
 to match the pre-settlement position in that instrument. Reported quantity
 and collateral are then zero. A settled market without that evidence, or
 with a payout that does not match the journal, fails
-`settlement_unreconciled`.
+`settlement_unreconciled`. The collateral the settlement releases is
+per instrument: the credit on `collateral_reserved` must equal the
+reservation that instrument held before settlement, so an open
+reservation on a different instrument is not a reason to under- or
+over-release this one.
 
 A voided market reconciles only when all of the following hold: a retained
 `market_void` record exists, reported quantity is zero, collateral is zero,
-and the journal has no settlement payout. Anything else fails
+and the journal has no settlement payout. Quantity, reserved collateral,
+and open reservations are checked for that instrument only; an unrelated
+instrument's open reservation does not block the void. Anything else fails
 `void_unreconciled`. Returning the reserved premium to available cash is a
 `void_unwind` entry, not a winning settlement. A clearing reject that the
 rulebook calls void ab initio is this kind of unwind, not a determined
@@ -283,7 +300,10 @@ remain source facts. They are not automatic prices in this candidate.
 
 Cash and positions reconcile separately. Either mismatch fails the fixture.
 A checkpoint stores the sequence, the applied idempotency keys, cash,
-collateral, positions, and open reservations. Replay applies only entries
+collateral, positions, and open reservations. The checkpoint's own open
+reservations must sum to its `collateral_reserved`; a checkpoint that
+disagrees with itself fails `collateral_double_count` before replay
+starts. Checkpoint instruments must also be declared. Replay applies only entries
 with a higher sequence and a new idempotency key. Reapplying a key, or an
 entry at or below the checkpoint sequence, is a restart replay. On the
 event book that failure is `collateral_double_count`. On the equity book it
@@ -307,6 +327,8 @@ checkpoint.
 | `neg_partial_fill_divergence` | negative | 40 of 100 shares filled; reported position is 100. |
 | `neg_duplicate_fill_divergence` | negative | The same fill id is applied twice; reported position is 80. |
 | `neg_late_fill_divergence` | negative | A fill is sequenced after cancel; reported position includes it. |
+| `event_resting_order_reservation` | positive | A filled position plus a resting order's `order_id`-linked reservation. The reservation is collateral, not fill cost. |
+| `neg_offsetting_fill_prices` | negative | Two fills whose prices disagree with their postings but net out in aggregate. Per-fill linkage fails it. |
 
 The retained oracle is [oracle/designed-failures.json](oracle/designed-failures.json).
 Its hash is pinned in the manifest. The negative controls are required to
@@ -358,6 +380,17 @@ No tax conclusion. No broker selection. No margin or options scope. No live
 ledger migration. No credentials. No capital movement. No change to order
 authority. No Polymarket lifecycle. No claim that the current OMS, P&L, or
 paper reconciliation implements this candidate.
+
+## Known gaps
+
+- **Checkpointed corrections and admitted late fills.** A correction record
+  can admit a fill sequenced after a terminal state, but a fill that was
+  already checkpointed before its admitting correction cannot be admitted
+  by the current rule set: replay treats it as a late fill and fails
+  `late_fill_divergence`. The candidate keeps the stricter replay rule.
+  A correction that predates the checkpoint may admit a checkpointed fill.
+  Owner: ledger-contract reviewer. Recorded for a later candidate; not
+  blocking `researched`.
 
 ## Unresolved decisions (owner: Lucas)
 

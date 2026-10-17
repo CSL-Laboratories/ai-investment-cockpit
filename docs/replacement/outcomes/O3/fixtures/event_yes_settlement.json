@@ -45,6 +45,7 @@
       "entry_id": "j-reserve",
       "sequence": 1,
       "idempotency_key": "reserve-1",
+            "fill_id": "f-yes",
       "strategy_id": "s-event",
       "reason": "reserve_collateral",
       "lines": [
@@ -66,6 +67,7 @@
       "entry_id": "j-fee",
       "sequence": 2,
       "idempotency_key": "fee-1",
+            "fill_id": "f-yes",
       "strategy_id": "s-event",
       "reason": "trade_fee",
       "lines": [

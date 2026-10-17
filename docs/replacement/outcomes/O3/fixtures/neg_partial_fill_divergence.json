@@ -42,6 +42,7 @@
       "entry_id": "j1",
       "sequence": 1,
       "idempotency_key": "fill-partial",
+      "fill_id": "f-partial",
       "strategy_id": "s-equity",
       "reason": "fill",
       "lines": [

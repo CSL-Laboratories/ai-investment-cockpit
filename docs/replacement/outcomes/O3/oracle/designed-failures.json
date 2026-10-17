@@ -16,28 +16,45 @@
   "negative_controls": [
     {
       "id": "neg_double_counted_collateral_after_restart",
-      "failure_codes": ["collateral_double_count"],
+      "failure_codes": [
+        "collateral_double_count"
+      ],
       "catches": "double-counted collateral after restart"
     },
     {
       "id": "neg_voided_market_unreconciled",
-      "failure_codes": ["void_unreconciled"],
+      "failure_codes": [
+        "void_unreconciled"
+      ],
       "catches": "a voided market that cannot reconcile to retained evidence"
     },
     {
       "id": "neg_partial_fill_divergence",
-      "failure_codes": ["partial_fill_divergence"],
+      "failure_codes": [
+        "partial_fill_divergence"
+      ],
       "catches": "silent position divergence from a partial fill"
     },
     {
       "id": "neg_duplicate_fill_divergence",
-      "failure_codes": ["duplicate_fill_divergence"],
+      "failure_codes": [
+        "duplicate_fill_divergence"
+      ],
       "catches": "silent position divergence from a duplicate fill"
     },
     {
       "id": "neg_late_fill_divergence",
-      "failure_codes": ["late_fill_divergence"],
+      "failure_codes": [
+        "late_fill_divergence"
+      ],
       "catches": "silent position divergence from a late fill"
+    },
+    {
+      "id": "neg_offsetting_fill_prices",
+      "failure_codes": [
+        "balance_mismatch"
+      ],
+      "catches": "fill prices that disagree with their per-fill journal postings while netting out in aggregate"
     }
   ]
 }
