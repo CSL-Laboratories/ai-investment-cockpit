@@ -93,6 +93,11 @@ Facts used, and the limits of those facts:
 
 Equity identity: venue `us_equity`, issuer CIK, listing key, ticker, share class, currency `USD`, and an integer version. A later listing version points at the prior identity. The ticker is not the stable key. The synthetic issuer is CIK `0000000001`, ticker `SYNTH`.
 
+The listing key must equal `us-equity:cik:<issuer_cik>:class:<share_class>`.
+A prior-identity link must preserve the equity listing key or event market ticker,
+as applicable, and strictly advance the identity version. Separate instruments
+cannot share one version history.
+
 Event identity: venue `kalshi_demo`, environment `demo`, series ticker, event ticker, market ticker, contract family, and collateral return type (`""`, `MECNET`, or `DIRECNET`). `api_path_observed_not_selected` is fixed to the observed string `trade-api/v2`. Two markets in one series are two identities. A voided market is not the settled market.
 
 An observation's identity is the identity on its effective raw record. An event observation cannot cite another market's identity. An equity observation may also cite a corporate-action raw record for the other version of the same listing key.
@@ -102,6 +107,9 @@ Schemas: `schemas/identity.schema.json`.
 ## Source and as-of
 
 Each raw record has `event_time` (when the source says the fact happened) and `accepted_at` (when it became visible to this cockpit). Both are timezone-aware UTC instants with a `Z` suffix. Naive timestamps are rejected.
+
+Every raw record, including duplicates and records not used by an observation,
+must satisfy `event_time <= accepted_at`.
 
 A non-duplicate record is in the decision-time version set when `accepted_at <= decision_time`. The effective record is the latest of those by `accepted_at`, then `raw_record_id`. Knowledge-valid-to is derived from the next correction's `accepted_at`. It is not stored on the earlier row, so a late correction does not rewrite history.
 
@@ -123,6 +131,9 @@ Each derived observation has one lineage edge. `transform_id` is `o2.candidate.e
 
 Equity records carry calendar `XNYS` and a session date. Event records carry calendar `kalshi_demo_exchange` and `session_date: null`. Kalshi demo is not an NYSE session. This candidate does not encode the NYSE holiday list and does not select a market-data vendor calendar.
 
+An equity session label must parse as a real calendar date. This does not certify
+that the exchange was open on that date.
+
 ## Event resolution
 
 Resolution inputs stay on the event payload: `resolution`, `status_rest`, `result`, and `official_lifecycle_status_observed`. The synthetic settled market moves from `determined`/`yes` to `finalized`/`yes`. Both raw records remain. The synthetic voided market has `resolution: voided`, `status_rest: voided`, `result: null`, and `official_lifecycle_status_observed: false`. A derived event observation must copy the effective resolution and status. Mapping voided to `yes` is `lost_resolution_semantics`.
@@ -130,6 +141,23 @@ Resolution inputs stay on the event payload: `resolution`, `status_rest`, `resul
 A close-date update is a lifecycle raw record with a null resolution and a `close_time`. It is replayed on its own natural key. It is not written into the resolution field. Resolution checks apply only to natural keys that end in `:resolution`.
 
 A second synthetic market exercises event-side correction: `determined`/`yes` is superseded by a REST-observed `disputed`, then by an `amended` re-determination to `no`, then by `finalized`. Disputed and amended carry no `market_lifecycle_v2` event, so the fixture captures them as `rest_get_markets` snapshots with `event_type: status_observed`.
+
+Each raw lifecycle record must satisfy this candidate's snapshot-state rules;
+replay order does not infer a missing transition:
+
+| Event type | Permitted `status_rest` | Resolution and result |
+| --- | --- | --- |
+| `created` | `initialized` | Both null |
+| `close_date_updated` | `initialized`, `active`, `inactive`, `closed` | Both null; `close_time` required |
+| `determined` | `determined` | Both present and equal |
+| `determined` (synthetic void) | `voided` | Resolution `voided`, result null, official-observed flag false |
+| `settled` | `finalized` | Both present and equal |
+| `status_observed` (REST only) | `initialized`, `active`, `inactive`, `closed` | Both null |
+| `status_observed` (REST only) | `determined`, `disputed`, `amended`, `finalized` | Both present and equal |
+
+Non-void resolutions and results must be `yes`/`no` for a binary identity and
+`scalar` for a scalar identity. A REST `settlement_ts`, when present, additionally
+requires `status_rest: finalized`.
 
 Settlement fields stay on the payload only where official docs confirm them: `determination_ts` and `settlement_value` (socket, only when determined), `settled_ts` (socket, only when settled), and `settlement_ts` (REST market object, populated at `finalized`). `settlement_sources` is event-level (`GET /events/{event_ticker}`) and lives on the event identity, not the market payload. Unconfirmed repeats — for example whether the `settled` message also carries `determination_ts` or `settlement_value` — are listed as unknowns in the qualification matrix.
 

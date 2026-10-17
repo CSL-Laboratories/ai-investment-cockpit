@@ -55,6 +55,18 @@ SOURCE_KINDS = {
     "synthetic_equity_quote": {"quote"},
     "synthetic_kalshi_demo_lifecycle": {"lifecycle"},
 }
+UNRESOLVED_STATUSES = {"initialized", "active", "inactive", "closed"}
+RESOLVED_STATUSES = {"determined", "disputed", "amended", "finalized"}
+# These are admissible snapshot states, not transitions inferred from replay
+# order. REST can observe any official state; synthetic void is determined-only.
+LIFECYCLE_STATUSES = {
+    "created": {"initialized"},
+    "close_date_updated": UNRESOLVED_STATUSES,
+    "determined": {"determined", "voided"},
+    "settled": {"finalized"},
+    "status_observed": UNRESOLVED_STATUSES | RESOLVED_STATUSES,
+}
+CONTRACT_RESOLUTIONS = {"binary": {"yes", "no"}, "scalar": {"scalar"}}
 NEGATIVE_CODES = (
     "future_data_leak",
     "raw_not_reconstructable",
@@ -372,6 +384,7 @@ def _require_family_clock(record: dict) -> None:
     if record["market_family"] == "equity":
         if calendar != "XNYS" or record["payload"]["kind"] not in EQUITY_KINDS:
             raise ContractError(f"{record['raw_record_id']} mixes equity with a non-equity clock or payload")
+        parse_date(record["calendar"]["session_date"])
     elif record["market_family"] == "event":
         if calendar != "kalshi_demo_exchange" or record["payload"]["kind"] != EVENT_KIND:
             raise ContractError(f"{record['raw_record_id']} mixes an event market with an equity clock or payload")
@@ -392,8 +405,10 @@ def validate_records(bundle: Bundle) -> None:
         _require_family_clock(record)
         if record["payload"]["kind"] not in SOURCE_KINDS[record["source"]]:
             raise ContractError(f"{record['raw_record_id']} source does not emit {record['payload']['kind']} payloads")
-        parse_time(record["event_time"])
-        parse_time(record["accepted_at"])
+        event_time = parse_time(record["event_time"])
+        accepted_at = parse_time(record["accepted_at"])
+        if event_time > accepted_at:
+            raise ContractError(f"{record['raw_record_id']} event_time is after accepted_at")
         if payload_sha256(record["payload"]) != record["raw_sha256"]:
             raise ContractError(f"{record['raw_record_id']} raw bytes do not reconstruct")
         prior = families.setdefault(record["natural_key"], record["market_family"])
@@ -438,6 +453,20 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} drops an observed lifecycle status")
             if payload["result"] is not None and payload["result"] != payload["resolution"]:
                 raise ContractError(f"{record['raw_record_id']} result contradicts its resolution")
+            resolutions = CONTRACT_RESOLUTIONS[identity["event"]["contract_family"]]
+            for field in ("resolution", "result"):
+                value = payload[field]
+                if value not in (None, "voided") and value not in resolutions:
+                    raise ContractError(f"{record['raw_record_id']} {field} contradicts its contract family")
+            status = payload["status_rest"]
+            if status not in LIFECYCLE_STATUSES.get(payload["event_type"], set()):
+                raise ContractError(f"{record['raw_record_id']} lifecycle state contradicts its event_type")
+            if status in UNRESOLVED_STATUSES:
+                if payload["resolution"] is not None or payload["result"] is not None:
+                    raise ContractError(f"{record['raw_record_id']} unresolved lifecycle state carries a result")
+            elif not voided:
+                if payload["resolution"] not in resolutions or payload["result"] != payload["resolution"]:
+                    raise ContractError(f"{record['raw_record_id']} resolved lifecycle state has no matching result")
             if payload["event_type"] == "close_date_updated":
                 if payload.get("close_time") is None:
                     raise ContractError(f"{record['raw_record_id']} close-date update has no close_time")
@@ -457,6 +486,8 @@ def validate_records(bundle: Bundle) -> None:
                 raise ContractError(f"{record['raw_record_id']} carries REST settlement_ts on {payload['channel']}")
             if payload.get("settlement_ts") is not None:
                 parse_time(payload["settlement_ts"])
+                if payload["status_rest"] != "finalized":
+                    raise ContractError(f"{record['raw_record_id']} carries settlement_ts before finalized")
             # status_observed is a REST poll; the socket never emits it (disputed/amended).
             if (payload["event_type"] == "status_observed") != (payload["channel"] == "rest_get_markets"):
                 raise ContractError(f"{record['raw_record_id']} pairs {payload['event_type']} with {payload['channel']}")
@@ -472,12 +503,21 @@ def validate_records(bundle: Bundle) -> None:
     for group in by_key.values():
         _require_version_chain(group)
     for identity in bundle.identities.values():
+        if identity["market_family"] == "equity":
+            equity = identity["equity"]
+            expected = f"us-equity:cik:{equity['issuer_cik']}:class:{equity['share_class']}"
+            if equity["listing_key"] != expected:
+                raise ContractError(f"{identity['identity_id']} listing_key contradicts its issuer_cik or share_class")
         prior_id = identity["prior_identity_id"]
         if prior_id is None:
             continue
         prior = bundle.identities.get(prior_id)
         if prior is None or prior["market_family"] != identity["market_family"]:
             raise ContractError(f"{identity['identity_id']} prior identity crosses families")
+        family = identity["market_family"]
+        stable_key = "listing_key" if family == "equity" else "market_ticker"
+        if identity[family][stable_key] != prior[family][stable_key]:
+            raise ContractError(f"{identity['identity_id']} prior identity changes instrument")
         if identity["identity_version"] <= prior["identity_version"]:
             raise ContractError(f"{identity['identity_id']} version does not advance")
 

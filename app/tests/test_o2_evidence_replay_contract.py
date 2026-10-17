@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import warnings
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -372,6 +373,7 @@ def test_duplicate_before_target_is_rejected(tmp_path: Path) -> None:
     shutil.copytree(O2, copy)
     records = json.loads((copy / "fixtures" / "raw_records.json").read_text(encoding="utf-8"))
     record = next(item for item in records["records"] if item["raw_record_id"] == "raw-eq-10k-dup")
+    record["event_time"] = "2020-01-01T00:00:00Z"
     record["accepted_at"] = "2020-01-01T00:00:00Z"
     (copy / "fixtures" / "raw_records.json").write_text(
         json.dumps(records, indent=2) + "\n", encoding="utf-8"
@@ -410,6 +412,193 @@ def test_impossible_ex_date_is_rejected(tmp_path: Path) -> None:
     _rewrite_manifest(module, copy)
     with pytest.raises(module.ContractError, match="calendar date"):
         module.validate_candidate(copy)
+
+
+def _candidate_documents(module) -> dict:
+    return {rel: json.loads((O2 / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR}
+
+
+def _write_modified_candidate(module, copy: Path, documents: dict) -> Path:
+    shutil.copytree(O2, copy)
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        record["raw_sha256"] = module.payload_sha256(record["payload"])
+    for rel, document in documents.items():
+        (copy / rel).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    _rewrite_manifest(module, copy)
+    return copy
+
+
+@pytest.mark.parametrize("raw_id", ["raw-eq-ooo", "raw-eq-10k-dup", "raw-ev-close-ooo"])
+def test_record_event_time_after_acceptance_is_rejected(tmp_path: Path, raw_id: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(r for r in documents["fixtures/raw_records.json"]["records"] if r["raw_record_id"] == raw_id)
+    future = module.parse_time(record["accepted_at"]) + timedelta(seconds=1)
+    record["event_time"] = future.strftime("%Y-%m-%dT%H:%M:%SZ")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="event_time is after accepted_at"):
+        module.validate_candidate(copy)
+
+
+def _set_event_contract_resolution(documents: dict, contract_family: str, resolution: str) -> None:
+    identity = next(i for i in documents["fixtures/identities.json"]["identities"] if i["identity_id"] == "idn-ev-b1")
+    identity["event"]["contract_family"] = contract_family
+    # Change every resolution and observation consistently: copy checks alone
+    # cannot detect the wrong contract family.
+    for record in documents["fixtures/raw_records.json"]["records"]:
+        if record["identity_id"] == identity["identity_id"] and record["payload"]["resolution"] is not None:
+            record["payload"]["resolution"] = resolution
+            record["payload"]["result"] = resolution
+    for observation in documents["fixtures/observations.json"]["observations"]:
+        if observation["identity_id"] == identity["identity_id"]:
+            observation["resolution"] = resolution
+
+
+@pytest.mark.parametrize("contract_family,resolution", [("binary", "scalar"), ("scalar", "yes"), ("scalar", "no")])
+def test_event_resolution_must_match_contract_family(
+    tmp_path: Path, contract_family: str, resolution: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _set_event_contract_resolution(documents, contract_family, resolution)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="contract family"):
+        module.validate_candidate(copy)
+
+
+def test_matching_scalar_event_resolution_is_accepted(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _set_event_contract_resolution(documents, "scalar", "scalar")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
+
+
+@pytest.mark.parametrize("raw_id", ["raw-ev-d1-disputed", "raw-ev-d1-amended"])
+def test_rest_settlement_timestamp_requires_finalized(tmp_path: Path, raw_id: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(r for r in documents["fixtures/raw_records.json"]["records"] if r["raw_record_id"] == raw_id)
+    record["payload"]["settlement_ts"] = record["event_time"]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="settlement_ts before finalized"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("session_date", ["2024-02-31", "2023-02-29", "0000-01-01"])
+def test_impossible_equity_session_date_is_rejected(tmp_path: Path, session_date: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    record = next(r for r in documents["fixtures/raw_records.json"]["records"] if r["raw_record_id"] == "raw-eq-quote")
+    record["calendar"]["session_date"] = session_date
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="calendar date"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("field,value", [("issuer_cik", "0000000002"), ("share_class", "preferred")])
+def test_equity_identity_fields_must_agree(tmp_path: Path, field: str, value: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    identity = next(i for i in documents["fixtures/identities.json"]["identities"] if i["identity_id"] == "idn-eq-v1")
+    identity["equity"][field] = value
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="listing_key contradicts"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("family", ["equity", "event"])
+def test_prior_identity_must_refer_to_same_instrument(tmp_path: Path, family: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    identities = documents["fixtures/identities.json"]["identities"]
+    if family == "equity":
+        unrelated = json.loads(json.dumps(identities[0]))
+        unrelated["identity_id"] = "idn-eq-other"
+        unrelated["equity"]["issuer_cik"] = "0000000002"
+        unrelated["equity"]["listing_key"] = "us-equity:cik:0000000002:class:common"
+        identities.append(unrelated)
+        identity = next(i for i in identities if i["identity_id"] == "idn-eq-v2")
+        identity["prior_identity_id"] = unrelated["identity_id"]
+    else:
+        identity = next(i for i in identities if i["identity_id"] == "idn-ev-b1")
+        identity["identity_version"] = 2
+        identity["prior_identity_id"] = "idn-ev-void"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="prior identity changes instrument"):
+        module.validate_candidate(copy)
+
+
+def _add_lifecycle_state_probe(
+    documents: dict, event_type: str, status: str, resolution: str | None, result: str | None
+) -> None:
+    records = documents["fixtures/raw_records.json"]["records"]
+    record = json.loads(json.dumps(next(r for r in records if r["raw_record_id"] == "raw-ev-determined")))
+    record.update(
+        raw_record_id="raw-ev-state-probe",
+        source_record_key="state-probe",
+        natural_key="kalshi_demo:market:kxsynth-26jan01-b1:state_probe",
+    )
+    records.append(record)
+    payload = record["payload"]
+    payload.update(
+        event_type=event_type,
+        channel="rest_get_markets" if event_type == "status_observed" else "market_lifecycle_v2",
+        status_rest=status,
+        resolution=resolution,
+        result=result,
+        official_lifecycle_status_observed=status != "voided",
+        close_time="2024-09-05T20:00:00Z" if event_type == "close_date_updated" else None,
+    )
+    for field in ("determination_ts", "settled_ts", "settlement_value", "settlement_ts"):
+        payload.pop(field, None)
+
+
+@pytest.mark.parametrize(
+    "event_type,status,resolution,result",
+    [
+        ("created", "finalized", "yes", "yes"),
+        ("created", "active", None, None),
+        ("created", "initialized", "yes", "yes"),
+        ("created", "voided", "voided", None),
+        ("close_date_updated", "finalized", "yes", "yes"),
+        ("close_date_updated", "active", "yes", "yes"),
+        ("determined", "finalized", "yes", "yes"),
+        ("determined", "determined", None, None),
+        ("determined", "determined", "yes", None),
+        ("settled", "determined", "yes", "yes"),
+        ("settled", "finalized", None, None),
+        ("settled", "voided", "voided", None),
+        ("status_observed", "initialized", "yes", "yes"),
+        ("status_observed", "disputed", None, None),
+        ("status_observed", "amended", "no", None),
+        ("status_observed", "finalized", None, None),
+        ("status_observed", "voided", "voided", None),
+    ],
+)
+def test_lifecycle_event_state_contradictions_are_rejected(
+    tmp_path: Path, event_type: str, status: str, resolution: str | None, result: str | None
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _add_lifecycle_state_probe(documents, event_type, status, resolution, result)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="lifecycle state"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize(
+    "event_type,status",
+    [("created", "initialized"), ("close_date_updated", "closed"), ("status_observed", "active")],
+)
+def test_unresolved_lifecycle_states_without_results_are_accepted(
+    tmp_path: Path, event_type: str, status: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _add_lifecycle_state_probe(documents, event_type, status, None, None)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
 
 
 def test_o2_validator_does_not_import_providers() -> None:
