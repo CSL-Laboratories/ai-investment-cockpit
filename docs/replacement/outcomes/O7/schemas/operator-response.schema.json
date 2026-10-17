@@ -89,7 +89,6 @@
         "baseline_id": {"type": "string", "pattern": "^[a-z0-9_.:-]{1,64}$"},
         "positions": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -97,7 +96,7 @@
             "properties": {
               "instrument_id": {"type": "string", "pattern": "^[A-Z0-9.-]{1,32}$"},
               "venue": {"enum": ["stock", "kalshi_demo"]},
-              "quantity": {"type": "string", "pattern": "^[0-9]+$"},
+              "quantity": {"type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$"},
               "currency": {"const": "USD"}
             }
           }
@@ -240,5 +239,21 @@
         "rendered": {"type": "string", "minLength": 1}
       }
     }
-  }
+  },
+  "allOf": [
+    {"if": {"properties": {"command": {"const": "operator.audit.export"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["export_id", "chain_head_seq", "includes_refusals", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.budgets.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["budgets"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.decisions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["decisions", "refusals"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.evidence.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["evidence_id", "source_id", "retrieved_at", "raw_ref", "summary_ref", "raw_separated_from_summary", "provenance"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.export.bundle"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["bundle_id", "contents", "secrets_included"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.health.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["watch_only", "stale", "dependencies"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_reconciliation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_revocation"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.interventions.request_stop"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["intervention", "recorded", "survives_restart", "restart_requires_reconciliation", "order_submitted"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.positions.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["positions", "collateral"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.profiles.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["active_profile_class", "local_control_is_account_wide", "surfaces_share_one_profile", "qualification_reference", "bounded_direct_authorized"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.recovery.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["reconciliation", "unknown_orders", "restart_allowed", "restart_requires_reconciliation"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.strategies.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["strategy_id", "qualification", "baseline_id"]}}}},
+    {"if": {"properties": {"command": {"const": "operator.uncertainty.inspect"}}, "required": ["command"]}, "then": {"properties": {"result": {"required": ["items"]}}}}
+  ]
 }

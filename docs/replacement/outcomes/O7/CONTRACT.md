@@ -89,13 +89,22 @@ Both surfaces carry the same `status_code`. The CLI maps it to a process exit co
 | --- | --- | --- |
 | `ok` | 0 | No refusal, stale data, or unreconciled state in the payload |
 | `usage` | 1 | Malformed command |
-| `refused` | 2 | One or more refusals are present and visible |
-| `stale_or_unreconciled` | 3 | Stale data is visible, or reconciliation is unreconciled and visible |
+| `refused` | 2 | A refusal is visible and no stale or unreconciled condition outranks it |
+| `stale_or_unreconciled` | 3 | Stale data or unreconciled state is visible. A coexisting refusal stays visible |
 | `unavailable` | 4 | A dependency cannot be read |
 
 Machine-readable JSON goes to stdout with no ANSI. Diagnostics go to stderr. `NO_COLOR` and `--no-color` are required of a future CLI. Color, a spinner, or an icon cannot be the only status signal. Cancellation does not imply that a recorded stop or fill was undone.
 
-A refusal forces `status_code=refused` and `visibility.refusal=visible`. Stale data forces `visibility.stale_data=visible` and `status_code=stale_or_unreconciled`. Unreconciled state forces `visibility.reconciliation=unreconciled_visible`, `restart_allowed=false`, and the same status. Unknown uncertainty forces `visibility.uncertainty=visible`. An empty result must say what is empty, and must not look like a hidden refusal.
+One response has one `status_code`. When more than one condition is present, precedence picks that code and every condition stays visible:
+
+1. Unreconciled state (`reconciliation=unreconciled` or `unknown_orders` greater than zero) selects `stale_or_unreconciled`.
+2. Stale data selects the same status. Stale data is `stale=true` or any `dependencies[*].status` of `stale`.
+3. A refusal selects `refused` only when neither condition above is present. A refusal is a `refusals` entry or a `decisions[*].outcome` of `refused`. Each refused decision has a matching refusal with the same id, the same reason, and `visible=true`.
+4. `ok` is allowed only when none of those conditions are present.
+
+A refusal that loses the status to stale or unreconciled data still requires `visibility.refusal=visible`, the matching visible refusal, and an error whose code is `refused`. The winning status also has its own error. `presentation.text_status` equals `status_code` and that same text appears in `rendered`. Unknown or uncertain items, and collateral `state=unknown`, require `visibility.uncertainty=visible` on every command. They do not by themselves change `status_code`.
+
+An empty `positions` array is a known empty portfolio. Position `quantity` is a signed decimal string: an unsigned value is long, a leading `-` is short, and a fractional part is allowed. An empty `result` object is invalid for every catalog command. The response schema requires that command's result fields.
 
 ## Parity
 
@@ -150,6 +159,7 @@ Each fixture is schema-valid except the privileged bypass, which the response sc
 | `privileged_order_bypass` | `fixtures/negative/privileged-order-bypass.json` | `operator.orders.submit`, `broker_direct`, `surface_private` |
 | `color_only_signal` | `fixtures/negative/color-only-signal.json` | `color_only_signal=true` |
 | `success_exit_on_refusal` | `fixtures/negative/success-exit-on-refusal.json` | Refused status with exit code 0 |
+| `contradictory_status_text` | `fixtures/negative/contradictory-status-text.json` | Refused status whose visible text says `ok` |
 
 ## Optional TUI decision packet
 
@@ -182,6 +192,8 @@ Inherited, not re-decided: US individual and personal account; stocks plus predi
 - A surface submits an order or otherwise bypasses risk-pass, mode, approval, and `OrderGateway`.
 - A local control is treated as an account-wide restriction.
 - The candidate is described as frozen, qualified, or a PASS.
+- Visible status text disagrees with `status_code`.
+- A success response omits the result fields its command requires.
 
 ## Evidence limits
 

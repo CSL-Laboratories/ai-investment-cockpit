@@ -50,6 +50,7 @@ REQUIRED_CONTROLS = (
     "privileged_order_bypass",
     "color_only_signal",
     "success_exit_on_refusal",
+    "contradictory_status_text",
 )
 SCHEMA_VALID_CONTROLS = frozenset(REQUIRED_CONTROLS) - {"privileged_order_bypass"}
 CONTROL_REASONS = {
@@ -61,6 +62,7 @@ CONTROL_REASONS = {
     "privileged_order_bypass": "surface_order_path",
     "color_only_signal": "color_only_signal",
     "success_exit_on_refusal": "exit_code_hides_refusal",
+    "contradictory_status_text": "status_text_mismatch",
 }
 ORACLE_KINDS = ("responses", "pairs", "commands", "events", "errors")
 REQUIRED_ORACLE_PAIRS = ("positions.inspect.parity", "decisions.inspect.parity")
@@ -192,6 +194,22 @@ def _project(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _refusal_disclosed(refusals: list[dict[str, Any]], refused_decisions: list[dict[str, Any]]) -> bool:
+    if any(item.get("visible") is not True for item in refusals):
+        return False
+    covered = {
+        (item.get("decision_id"), item.get("reason_code"))
+        for item in refusals
+    }
+    return all((item.get("decision_id"), item.get("reason_code")) in covered for item in refused_decisions)
+
+
 def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | None:
     """Return the negative-control code for an unsafe response, or None."""
     if not isinstance(doc, dict):
@@ -211,28 +229,30 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         return "privileged_order_bypass"
     if profile.get("signature_state") != "illustrative_unsigned_fixture":
         return "privileged_order_bypass"
-    refusals = result.get("refusals") if isinstance(result.get("refusals"), list) else []
-    if visibility.get("refusal") == "hidden" or refusals:
-        refusal_visible = visibility.get("refusal") == "visible" and doc.get("status_code") == "refused"
-        hidden_item = any(isinstance(item, dict) and item.get("visible") is False for item in refusals)
-        if not refusal_visible or hidden_item:
-            return "hidden_refusal"
-    if doc.get("command") == "operator.uncertainty.inspect":
-        items = result.get("items") if isinstance(result.get("items"), list) else []
-        unknown = [item for item in items if isinstance(item, dict) and item.get("state") in {"unknown", "uncertain"}]
-        if unknown and (
-            visibility.get("uncertainty") != "visible"
-            or any(item.get("visible") is False for item in unknown)
-        ):
-            return "hidden_uncertainty"
-    if visibility.get("uncertainty") == "hidden":
-        return "hidden_uncertainty"
-    if visibility.get("stale_data") == "hidden" or result.get("stale") is True:
-        if visibility.get("stale_data") != "visible" or doc.get("status_code") != "stale_or_unreconciled":
-            return "hidden_stale_data"
+    refusals = _dicts(result.get("refusals"))
+    refused_decisions = [item for item in _dicts(result.get("decisions")) if item.get("outcome") == "refused"]
+    dependencies = _dicts(result.get("dependencies"))
+    unknown_items = [
+        item for item in _dicts(result.get("items")) if item.get("state") in {"unknown", "uncertain"}
+    ]
+    collateral = result.get("collateral") if isinstance(result.get("collateral"), dict) else {}
+    has_refusal = bool(refusals or refused_decisions)
+    stale = result.get("stale") is True or any(item.get("status") == "stale" for item in dependencies)
     unreconciled = result.get("reconciliation") == "unreconciled" or (
         isinstance(result.get("unknown_orders"), int) and result.get("unknown_orders", 0) > 0
     )
+    higher_status = stale or unreconciled
+    has_uncertainty = bool(unknown_items) or collateral.get("state") == "unknown"
+    if visibility.get("refusal") == "hidden" or has_refusal:
+        disclosed = visibility.get("refusal") == "visible" and _refusal_disclosed(refusals, refused_decisions)
+        if not disclosed or (not higher_status and doc.get("status_code") != "refused"):
+            return "hidden_refusal"
+    if visibility.get("uncertainty") == "hidden" or has_uncertainty:
+        if visibility.get("uncertainty") != "visible" or any(item.get("visible") is not True for item in unknown_items):
+            return "hidden_uncertainty"
+    if visibility.get("stale_data") == "hidden" or stale:
+        if visibility.get("stale_data") != "visible" or doc.get("status_code") != "stale_or_unreconciled":
+            return "hidden_stale_data"
     if visibility.get("reconciliation") == "hidden" or unreconciled:
         visible = (
             visibility.get("reconciliation") == "unreconciled_visible"
@@ -246,6 +266,7 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         or presentation.get("ansi_in_machine_output") is True
         or presentation.get("machine_readable") is not True
         or not presentation.get("text_status")
+        or (isinstance(presentation.get("rendered"), str) and "\x1b" in presentation["rendered"])
     ):
         return "color_only_signal"
     expected_exit = EXIT_CODES.get(doc.get("status_code"))
@@ -253,19 +274,37 @@ def classify_response(doc: dict[str, Any], allowed_commands: set[str]) -> str | 
         if doc.get("status_code") == "refused" and presentation.get("exit_code") == 0:
             return "success_exit_on_refusal"
         return "exit_code_mismatch"
+    text_status = presentation.get("text_status")
+    rendered = presentation.get("rendered")
+    if text_status != doc.get("status_code") or not isinstance(rendered, str) or text_status not in rendered:
+        return "contradictory_status_text"
     if doc.get("candidate_maturity") != MATURITY:
         return "maturity_promotion"
     errors = doc.get("errors")
     status = doc.get("status_code")
     if not isinstance(errors, list):
         return "status_error_mismatch"
+    active_codes: set[str] = set()
+    if stale or unreconciled:
+        active_codes.add("stale_or_unreconciled")
+    if has_refusal:
+        active_codes.add("refused")
+    if status in {"usage", "unavailable"}:
+        active_codes.add(status)
     if status == "ok":
-        if errors:
+        if errors or active_codes:
             return "status_error_mismatch"
-    elif not errors or any(
-        not isinstance(item, dict) or item.get("code") != status or item.get("status_code") != status
-        or item.get("color_only") is not False
-        for item in errors
+    elif (
+        status not in active_codes
+        or not errors
+        or any(
+            not isinstance(item, dict)
+            or item.get("code") not in active_codes
+            or item.get("status_code") != item.get("code")
+            or item.get("color_only") is not False
+            for item in errors
+        )
+        or any(code not in {item.get("code") for item in errors if isinstance(item, dict)} for code in active_codes)
     ):
         return "status_error_mismatch"
     return None
@@ -520,7 +559,7 @@ def evaluate(root: Path | None = None) -> tuple[int, str, str]:
             error_validator,
         )
         lines = [_check_negative(control, negatives[control], response_validator, set(commands)) for control in REQUIRED_CONTROLS]
-    except (OSError, ContractError, SchemaError) as exc:
+    except (OSError, ContractError, SchemaError, KeyError, TypeError, AttributeError) as exc:
         return 1, "", f"o7-operator-contract: FAIL: {exc}\n"
     stdout = "\n".join([*lines, SUMMARY]) + "\n"
     if "UNEXPECTED_ACCEPT" in stdout or "WRONG_FAILURE" in stdout:

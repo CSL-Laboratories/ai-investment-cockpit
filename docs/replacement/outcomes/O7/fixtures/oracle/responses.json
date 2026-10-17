@@ -692,6 +692,168 @@
         "text_status": "stale_or_unreconciled",
         "rendered": "status=stale_or_unreconciled canonical unreconciled recovery"
       }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.positions.inspect",
+      "request_id": "req_positions_empty",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "positions": [],
+        "collateral": {
+          "currency": "USD",
+          "amount": "0.00",
+          "state": "known"
+        }
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok empty positions"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.positions.inspect",
+      "request_id": "req_positions_signed",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "ok",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "absent_not_hidden",
+        "stale_data": "absent_not_hidden",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "positions": [
+          {
+            "instrument_id": "AAPL",
+            "venue": "stock",
+            "quantity": "100.5",
+            "currency": "USD"
+          },
+          {
+            "instrument_id": "MSFT",
+            "venue": "stock",
+            "quantity": "-2",
+            "currency": "USD"
+          }
+        ],
+        "collateral": {
+          "currency": "USD",
+          "amount": "0.00",
+          "state": "known"
+        }
+      },
+      "errors": [],
+      "presentation": {
+        "exit_code": 0,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "ok",
+        "rendered": "status=ok signed positions"
+      }
+    },
+    {
+      "api_version": "o7.operator.v0",
+      "candidate_maturity": "researched",
+      "surface": "cli",
+      "command": "operator.decisions.inspect",
+      "request_id": "req_decisions_refused_and_stale",
+      "profile": {
+        "profile_id": "illustrative_profile_a",
+        "profile_class": "A",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab",
+        "signature_state": "illustrative_unsigned_fixture"
+      },
+      "enforcement_route": "risk_pass_mode_approval_order_gateway",
+      "authority_effect": "none",
+      "order_path": "none",
+      "status_code": "stale_or_unreconciled",
+      "visibility": {
+        "uncertainty": "absent_not_hidden",
+        "refusal": "visible",
+        "stale_data": "visible",
+        "reconciliation": "reconciled"
+      },
+      "result": {
+        "decisions": [
+          {
+            "decision_id": "dec_recorded",
+            "outcome": "recorded",
+            "reason_code": "proposal_only_no_order"
+          },
+          {
+            "decision_id": "dec_refused",
+            "outcome": "refused",
+            "reason_code": "watch_only"
+          }
+        ],
+        "refusals": [
+          {
+            "decision_id": "dec_refused",
+            "reason_code": "watch_only",
+            "visible": true
+          }
+        ],
+        "stale": true
+      },
+      "errors": [
+        {
+          "code": "stale_or_unreconciled",
+          "status_code": "stale_or_unreconciled",
+          "message": "Stale evidence accompanies a visible refusal. No order was submitted.",
+          "recovery": "Refresh the evidence and read the refusal before any later request.",
+          "color_only": false
+        },
+        {
+          "code": "refused",
+          "status_code": "refused",
+          "message": "Refused: watch_only. No order was submitted.",
+          "recovery": "Inspect health and the illustrative profile. Do not retry an order from this surface.",
+          "color_only": false
+        }
+      ],
+      "presentation": {
+        "exit_code": 3,
+        "machine_readable": true,
+        "ansi_in_machine_output": false,
+        "color_only_signal": false,
+        "text_status": "stale_or_unreconciled",
+        "rendered": "status=stale_or_unreconciled refused and stale"
+      }
     }
   ]
 }

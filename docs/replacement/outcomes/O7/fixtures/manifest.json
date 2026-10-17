@@ -15,6 +15,12 @@
       "control": "color_only_signal"
     },
     {
+      "path": "fixtures/negative/contradictory-status-text.json",
+      "sha256": "ff080a510a74b6c863cd7f603e343194e97bd742e4b71af70f51ea837c3a95c6",
+      "role": "negative",
+      "control": "contradictory_status_text"
+    },
+    {
       "path": "fixtures/negative/gui-cli-divergence.json",
       "sha256": "1fa227e511e30cf79d35808f37315d3bb917ca66c58897e49b73ac33d6b2503d",
       "role": "negative",
@@ -78,7 +84,7 @@
     },
     {
       "path": "fixtures/oracle/responses.json",
-      "sha256": "6d2fd68c3370c4fcb5b77bf8c3f8fd56194aec17eaedc2ef768a80856eb01dac",
+      "sha256": "bca8030e72af2f9cedd3e43517242cb6988690a3588db629de4e31feb694f270",
       "role": "oracle"
     },
     {
@@ -108,7 +114,7 @@
     },
     {
       "path": "schemas/operator-response.schema.json",
-      "sha256": "1045530f42e5751f55885244a031af6378c6bffdf5ba92d9588cfbd767313503",
+      "sha256": "93578b7288e16407ce29891d22017cee68fee6535eeb0ef26a490ab49053d157",
       "role": "pinned"
     },
     {
