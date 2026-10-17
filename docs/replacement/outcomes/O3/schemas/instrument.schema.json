@@ -1,0 +1,17 @@
+{
+  "title": "O3 candidate instrument identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument_id", "family", "venue_id", "venue_symbol", "currency", "unit"],
+  "properties": {
+    "instrument_id": {"type": "string", "minLength": 1},
+    "family": {"enum": ["equity_share", "event_contract"]},
+    "venue_id": {"type": "string", "minLength": 1},
+    "venue_symbol": {"type": "string", "minLength": 1},
+    "currency": {"enum": ["USD"]},
+    "unit": {"enum": ["share", "contract"]},
+    "contract_style": {"enum": ["binary", "scalar"]},
+    "outcome_side": {"enum": ["yes", "no"]},
+    "collateral_model": {"enum": ["fully_collateralized"]}
+  }
+}

@@ -1,0 +1,105 @@
+{
+      "fixture_id": "neg_double_counted_collateral_after_restart",
+      "book": {
+            "book_id": "event",
+            "currency": "USD",
+            "scale": 6
+      },
+      "instruments": [
+            {
+                  "instrument_id": "ev-yes",
+                  "family": "event_contract",
+                  "venue_id": "venue-event-candidate",
+                  "venue_symbol": "HIGHNY-23DEC31",
+                  "currency": "USD",
+                  "unit": "contract",
+                  "contract_style": "binary",
+                  "outcome_side": "yes",
+                  "collateral_model": "fully_collateralized"
+            }
+      ],
+      "orders": [
+            {
+                  "order_id": "ord-yes",
+                  "instrument_id": "ev-yes",
+                  "family": "event",
+                  "side": "buy",
+                  "qty": 10,
+                  "state": "filled",
+                  "checkpoint_filled_qty": 10
+            }
+      ],
+      "fills": [],
+      "journal": [
+            {
+                  "entry_id": "j-replay",
+                  "sequence": 2,
+                  "idempotency_key": "reserve-1",
+                  "strategy_id": "s-event",
+                  "reason": "reserve_collateral",
+                  "lines": [
+                        {
+                              "account": "collateral_reserved",
+                              "side": "dr",
+                              "amount_minor": 4000000,
+                              "instrument_id": "ev-yes"
+                        },
+                        {
+                              "account": "cash_available",
+                              "side": "cr",
+                              "amount_minor": 4000000,
+                              "instrument_id": "ev-yes"
+                        }
+                  ]
+            }
+      ],
+      "markets": [],
+      "corporate_actions": [],
+      "corrections": [],
+      "evidence": [],
+      "checkpoint": {
+            "sequence": 2,
+            "applied_keys": [
+                  "reserve-1",
+                  "fee-1"
+            ],
+            "cash_available": 9995930000,
+            "collateral_reserved": 4000000,
+            "positions": [
+                  {
+                        "instrument_id": "ev-yes",
+                        "qty": 10
+                  }
+            ],
+            "open_reservations": [
+                  {
+                        "reservation_id": "reserve-1",
+                        "instrument_id": "ev-yes",
+                        "amount_minor": 4000000
+                  }
+            ]
+      },
+      "reported": {
+            "cash_available": 9991930000,
+            "collateral_reserved": 8000000,
+            "positions": [
+                  {
+                        "instrument_id": "ev-yes",
+                        "qty": 10
+                  }
+            ],
+            "open_reservations": [
+                  {
+                        "reservation_id": "reserve-1",
+                        "instrument_id": "ev-yes",
+                        "amount_minor": 4000000
+                  },
+                  {
+                        "reservation_id": "reserve-1-replay",
+                        "instrument_id": "ev-yes",
+                        "amount_minor": 4000000
+                  }
+            ],
+            "attribution": []
+      }
+}

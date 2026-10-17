@@ -1,0 +1,20 @@
+{
+  "title": "O3 candidate event-contract market lifecycle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument_id", "state"],
+  "properties": {
+    "instrument_id": {"type": "string", "minLength": 1},
+    "state": {
+      "enum": [
+        "listed",
+        "open",
+        "closed_pending_determination",
+        "determined",
+        "settled",
+        "voided",
+        "corrected"
+      ]
+    }
+  }
+}

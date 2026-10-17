@@ -1,0 +1,192 @@
+{
+    "fixture_id": "event_resting_order_reservation",
+    "book": {
+        "book_id": "event",
+        "currency": "USD",
+        "scale": 6
+    },
+    "instruments": [
+        {
+            "instrument_id": "ev-yes",
+            "family": "event_contract",
+            "venue_id": "venue-event-candidate",
+            "venue_symbol": "HIGHNY-23DEC31",
+            "currency": "USD",
+            "unit": "contract",
+            "contract_style": "binary",
+            "outcome_side": "yes",
+            "collateral_model": "fully_collateralized"
+        }
+    ],
+    "orders": [
+        {
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 10,
+            "state": "filled"
+        },
+        {
+            "order_id": "ord-rest",
+            "instrument_id": "ev-yes",
+            "family": "event",
+            "side": "buy",
+            "qty": 5,
+            "state": "partially_filled"
+        }
+    ],
+    "fills": [
+        {
+            "fill_id": "f-yes",
+            "order_id": "ord-yes",
+            "instrument_id": "ev-yes",
+            "sequence": 1,
+            "qty": 10,
+            "price_minor": 400000,
+            "fee_minor": 70000,
+            "side": "buy"
+        },
+        {
+            "fill_id": "f-rest",
+            "order_id": "ord-rest",
+            "instrument_id": "ev-yes",
+            "sequence": 4,
+            "qty": 2,
+            "price_minor": 400000,
+            "fee_minor": 30000,
+            "side": "buy"
+        }
+    ],
+    "journal": [
+        {
+            "entry_id": "j-reserve",
+            "sequence": 1,
+            "idempotency_key": "reserve-1",
+            "fill_id": "f-yes",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 4000000,
+                    "instrument_id": "ev-yes"
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 4000000,
+                    "instrument_id": "ev-yes"
+                }
+            ]
+        },
+        {
+            "entry_id": "j-fee",
+            "sequence": 2,
+            "idempotency_key": "fee-1",
+            "fill_id": "f-yes",
+            "strategy_id": "s-event",
+            "reason": "trade_fee",
+            "lines": [
+                {
+                    "account": "fees_expense",
+                    "side": "dr",
+                    "amount_minor": 70000,
+                    "instrument_id": "ev-yes"
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 70000,
+                    "instrument_id": "ev-yes"
+                }
+            ]
+        },
+        {
+            "entry_id": "j-reserve-rest",
+            "sequence": 3,
+            "idempotency_key": "reserve-rest-1",
+            "order_id": "ord-rest",
+            "strategy_id": "s-event",
+            "reason": "reserve_collateral",
+            "lines": [
+                {
+                    "account": "collateral_reserved",
+                    "side": "dr",
+                    "amount_minor": 830000,
+                    "instrument_id": "ev-yes"
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 830000,
+                    "instrument_id": "ev-yes"
+                }
+            ]
+        },
+        {
+            "entry_id": "j-fee-rest",
+            "sequence": 5,
+            "idempotency_key": "fee-rest-1",
+            "fill_id": "f-rest",
+            "strategy_id": "s-event",
+            "reason": "trade_fee",
+            "lines": [
+                {
+                    "account": "fees_expense",
+                    "side": "dr",
+                    "amount_minor": 30000,
+                    "instrument_id": "ev-yes"
+                },
+                {
+                    "account": "cash_available",
+                    "side": "cr",
+                    "amount_minor": 30000,
+                    "instrument_id": "ev-yes"
+                }
+            ]
+        }
+    ],
+    "markets": [],
+    "corporate_actions": [],
+    "corrections": [],
+    "evidence": [],
+    "checkpoint": {
+        "sequence": 0,
+        "applied_keys": [],
+        "cash_available": 10000000000,
+        "collateral_reserved": 0,
+        "positions": [],
+        "open_reservations": []
+    },
+    "reported": {
+        "cash_available": 9995070000,
+        "collateral_reserved": 4830000,
+        "positions": [
+            {
+                "instrument_id": "ev-yes",
+                "qty": 12
+            }
+        ],
+        "open_reservations": [
+            {
+                "reservation_id": "reserve-1",
+                "instrument_id": "ev-yes",
+                "amount_minor": 4000000
+            },
+            {
+                "reservation_id": "reserve-rest",
+                "instrument_id": "ev-yes",
+                "amount_minor": 830000
+            }
+        ],
+        "attribution": [
+            {
+                "strategy_id": "s-event",
+                "realized_pnl_minor": 0,
+                "fees_minor": 100000
+            }
+        ]
+    }
+}
