@@ -385,6 +385,42 @@ def test_python_snapshot_is_reused_until_the_book_changes():
     assert book.snapshot() is not first
 
 
+def test_rejected_edits_keep_the_snapshot():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        with pytest.raises(ValueError):
+            book.reduce("a", 11)
+        with pytest.raises(ValueError):
+            book.reduce("a", 0)
+        with pytest.raises(ValueError):
+            book.replace("a", new_qty=0)
+        with pytest.raises(ValueError):
+            book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=1)
+        assert book.snapshot() is first
+        assert book.snapshot().bids[0].qty == 10
+
+
+def test_a_direct_level_total_edit_refreshes_the_snapshot():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        level = book.level(Side.BUY, 100)
+        level.total_qty = 10
+        assert book.snapshot() is first
+        level.total_qty = 11
+        second = book.snapshot()
+        assert second is not first
+        assert second.bids[0].qty == 11
+        assert book.depth(Side.BUY, 1)[0].qty == 11
+
+
 def test_resting_at_follows_insertion_order_and_rejects_a_bad_index(book):
     book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
     book.add(order_id="b", side=Side.SELL, price_ticks=101, qty=20)
