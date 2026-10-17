@@ -144,6 +144,10 @@ def test_listing_change_drops_the_revoked_split() -> None:
         "corporate_actions": [],
     }
     assert module.semantic_codes(bundle, observation, decision) == []
+    new_obs = {"market_family": "equity", "identity_id": "idn-eq-other"}
+    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split-corr"])
+    assert module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-split"])
+    assert not module._input_identity_ok(bundle, new_obs, bundle.records["raw-eq-10ka"])
 
 
 def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:

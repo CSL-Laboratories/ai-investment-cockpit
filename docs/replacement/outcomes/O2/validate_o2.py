@@ -193,7 +193,17 @@ def _input_identity_ok(bundle: Bundle, observation: dict, record: dict) -> bool:
     if observation["market_family"] != "equity":
         return False
     listing = _listing_key(bundle.identities, observation["identity_id"])
-    return listing is not None and _action_applies(bundle, record, listing)
+    if listing is None:
+        return False
+    if _action_applies(bundle, record, listing):
+        return True
+    # A superseded ancestor stays lineage-only when its correction chain reaches this listing.
+    if record["payload"].get("kind") != "corporate_action":
+        return False
+    return any(
+        other["natural_key"] == record["natural_key"] and _action_applies(bundle, other, listing)
+        for other in bundle.records.values()
+    )
 
 
 def _chain_leaves(records: list[dict]) -> list[dict]:
