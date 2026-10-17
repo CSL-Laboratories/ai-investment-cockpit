@@ -73,7 +73,8 @@ def _version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
 
 def test_project_requires_starlette_with_rfc9110_status_names():
     """The quoted ``>=`` token is intentional. A comment, or a rewrapped
-    install line that drops the quotes, must not satisfy pyproject or CLAUDE.md."""
+    install line that drops the quotes, must not satisfy pyproject, CLAUDE.md,
+    or the Windows bootstrap."""
     root = APP.parent
     paths = (
         APP / "pyproject.toml",
