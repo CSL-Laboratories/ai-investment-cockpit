@@ -633,6 +633,25 @@ def test_catalog_journey_and_result_fields_are_pinned(tmp_path: Path) -> None:
     assert code == 1
     assert stdout == ""
     assert "schema result consequent cannot apply for operator.evidence.inspect" in stderr
+    bounded = tmp_path / "max-properties"
+    shutil.copytree(root, bounded)
+    schema_path = bounded / "schemas" / "operator-response.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    patched = False
+    for clause in schema["allOf"]:
+        properties = clause.get("if", {}).get("properties", {})
+        command = properties.get("command", {}).get("const") if isinstance(properties, dict) else None
+        status = properties.get("status_code", {}).get("const") if isinstance(properties, dict) else None
+        if command == "operator.evidence.inspect" and status == "refused":
+            clause["then"]["properties"]["result"]["maxProperties"] = 0
+            patched = True
+    assert patched
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(bounded, "schemas/operator-response.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(bounded)
+    assert code == 1
+    assert stdout == ""
+    assert "schema result consequent cannot apply for operator.evidence.inspect" in stderr
 
 
 def test_schema_annotations_do_not_block_result_clauses(tmp_path: Path) -> None:
@@ -747,6 +766,28 @@ def test_event_schema_rejects_an_unconstrained_intervention(tmp_path: Path) -> N
     assert code == 1
     assert stdout == ""
     assert "event schema does not constrain intervention_recorded" in stderr
+    blocked = tmp_path / "blocked-status"
+    shutil.copytree(ROOT / "docs" / "replacement" / "outcomes" / "O7", blocked)
+    schema_path = blocked / "schemas" / "operator-event.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["allOf"].append(
+        {
+            "if": {
+                "required": ["event_type", "status_code"],
+                "properties": {
+                    "event_type": {"const": "uncertainty_visible"},
+                    "status_code": {"const": "refused"},
+                },
+            },
+            "then": False,
+        }
+    )
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    _retarget(blocked, "schemas/operator-event.schema.json")
+    code, stdout, stderr = CHECKER.evaluate(blocked)
+    assert code == 1
+    assert stdout == ""
+    assert "event schema rejects uncertainty_visible refused" in stderr
 
 
 def test_refused_intervention_cannot_be_recorded(tmp_path: Path) -> None:

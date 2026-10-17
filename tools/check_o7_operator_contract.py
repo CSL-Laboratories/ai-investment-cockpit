@@ -425,13 +425,71 @@ def _schema_command_result_fields(schema: dict[str, Any]) -> dict[str, dict[str,
             or _assertion_keys(status) != {"const"}
         ):
             raise ContractError(f"schema result clause cannot apply for {command}")
-        if _assertion_keys(then) != {"properties"} or set(result_properties) != {"result"}:
+        if (
+            _assertion_keys(then) != {"properties"}
+            or set(result_properties) != {"result"}
+            or not _result_consequent_applies(result_schema, required)
+        ):
             raise ContractError(f"schema result consequent cannot apply for {command}")
         by_status = found.setdefault(command, {})
         if status_code in by_status:
             raise ContractError(f"schema result fields repeated for {command}")
         by_status[status_code] = required
     return found
+
+
+def _plain_value(schema: Any) -> bool:
+    """True when a property schema admits a string or boolean and nothing else."""
+    if not isinstance(schema, dict):
+        return False
+    keys = _assertion_keys(schema)
+    if keys == {"const"}:
+        value = schema.get("const")
+        return isinstance(value, str) or type(value) is bool
+    values = schema.get("enum")
+    return (
+        keys == {"enum"}
+        and isinstance(values, list)
+        and bool(values)
+        and all(isinstance(item, str) for item in values)
+    )
+
+
+def _result_clause_applies(clause: Any, names: set[str]) -> bool:
+    """True when an allOf item can still be satisfied by the required result fields."""
+    if not isinstance(clause, dict) or clause.get("then") is False:
+        return False
+    if _assertion_keys(clause) - {"if", "then"}:
+        return False
+    then = clause.get("then")
+    properties = then.get("properties") if isinstance(then, dict) else None
+    if not isinstance(then, dict) or _assertion_keys(then) != {"properties"} or not isinstance(properties, dict):
+        return False
+    if not set(properties) <= names:
+        return False
+    return all(_plain_value(child) for child in properties.values())
+
+
+def _result_consequent_applies(result_schema: dict[str, Any], required: list[Any]) -> bool:
+    """Reject a result consequent that cannot be satisfied by its own required fields."""
+    if _assertion_keys(result_schema) - {"required", "properties", "allOf"}:
+        return False
+    if not required or not all(isinstance(item, str) for item in required):
+        return False
+    names = set(required)
+    if "properties" in result_schema:
+        properties = result_schema.get("properties")
+        if not isinstance(properties, dict) or not set(properties) <= names:
+            return False
+        if any(not _plain_value(child) for child in properties.values()):
+            return False
+    if "allOf" in result_schema:
+        clauses = result_schema.get("allOf")
+        if not isinstance(clauses, list) or not clauses:
+            return False
+        if any(not _result_clause_applies(clause, names) for clause in clauses):
+            return False
+    return True
 
 
 def _const_value(schema: Any) -> Any:
@@ -676,20 +734,33 @@ def _require_event_clauses(schema: dict[str, Any]) -> None:
 
 
 def _require_event_schema_rejections(validator: Draft202012Validator) -> None:
-    """A schema-only consumer must reject a command or status outside the event type."""
-    catalog = set(REQUIRED_COMMANDS)
+    """A schema-only consumer must accept every allowed combination and reject the rest."""
+    catalog = list(REQUIRED_COMMANDS)
     for event_type, allowed in EVENT_COMMANDS.items():
         visibility = EVENT_VISIBILITY[event_type]
-        status = sorted(EVENT_STATUSES[event_type])[0]
-        command = sorted(allowed)[0]
-        if _schema_error(validator, _event_probe(event_type, command, status, visibility)) is not None:
-            raise ContractError(f"event schema rejects {event_type}")
-        if _schema_error(validator, _event_probe(event_type, command, "usage", visibility)) is None:
-            raise ContractError(f"event schema accepts a mismatched status for {event_type}")
-        if set(allowed) != catalog:
-            outsider = sorted(catalog - set(allowed))[0]
-            if _schema_error(validator, _event_probe(event_type, outsider, status, visibility)) is None:
+        commands = sorted(allowed)
+        statuses = sorted(EVENT_STATUSES[event_type])
+        for command in commands:
+            for status in statuses:
+                probe = _event_probe(event_type, command, status, visibility)
+                if _schema_error(validator, probe) is not None:
+                    raise ContractError(f"event schema rejects {event_type} {status}")
+        for status in EXIT_CODES:
+            if status in EVENT_STATUSES[event_type]:
+                continue
+            probe = _event_probe(event_type, commands[0], status, visibility)
+            if _schema_error(validator, probe) is None:
+                raise ContractError(f"event schema accepts a mismatched status for {event_type}")
+        for command in catalog:
+            if command in allowed:
+                continue
+            probe = _event_probe(event_type, command, statuses[0], visibility)
+            if _schema_error(validator, probe) is None:
                 raise ContractError(f"event schema accepts a mismatched command for {event_type}")
+        other_visibility = "unreconciled_visible" if visibility == "visible" else "visible"
+        hidden = _event_probe(event_type, commands[0], statuses[0], other_visibility)
+        if _schema_error(validator, hidden) is None:
+            raise ContractError(f"event schema accepts a mismatched visibility for {event_type}")
 
 
 def _validator(schema: dict[str, Any]) -> Draft202012Validator:
