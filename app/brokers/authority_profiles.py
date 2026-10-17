@@ -26,7 +26,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterator, Mapping
 
@@ -37,7 +37,7 @@ FUTURE_PROFILE_CLASS = "C"
 MAX_PROFILE_LIFETIME = timedelta(days=7)
 _MONEY = Decimal("0.01")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
-_MONEY_TEXT = re.compile(r"^[0-9]+(?:\.[0-9]{1,2})?$")
+_MONEY_TEXT = re.compile(r"^[0-9]{1,15}(?:\.[0-9]{1,2})?$")
 
 # These names are refused examples, not switches. Admission is the set above.
 NAMED_REFUSED_ENVIRONMENTS = frozenset({
@@ -188,14 +188,22 @@ def load_profile(document: Mapping, *, now: datetime) -> AuthorityProfile:
         raise ProfileRefused("schema_version", "unsupported profile schema version")
 
     profile_class = document["profile_class"]
+    if type(profile_class) is not str:
+        raise ProfileRefused("profile_class", "profile class is not admitted")
     if profile_class == FUTURE_PROFILE_CLASS:
         raise ProfileRefused("profile_class", "profile C has no runtime")
     if profile_class not in RUNTIME_PROFILE_CLASSES:
         raise ProfileRefused("profile_class", "profile class is not admitted")
 
     environment = document["environment"]
-    if environment not in ADMITTED_ENVIRONMENTS:
+    if type(environment) is not str or environment not in ADMITTED_ENVIRONMENTS:
         raise ProfileRefused("environment", "environment is not admitted")
+
+    if any(
+        type(document[key]) is not str
+        for key in ("venue", "adapter", "venue_family", "account_kind", "jurisdiction")
+    ):
+        raise ProfileRefused("perimeter", "account or venue perimeter is not admitted")
 
     binding = (
         environment,
@@ -213,8 +221,8 @@ def load_profile(document: Mapping, *, now: datetime) -> AuthorityProfile:
     if (
         not isinstance(actions, list)
         or not actions
-        or len(actions) != len(set(actions))
         or any(type(item) is not str for item in actions)
+        or len(actions) != len(set(actions))
         or not set(actions) <= allowed
     ):
         raise ProfileRefused("allowed_actions", "allowed actions exceed the profile class")
@@ -338,7 +346,8 @@ _SCHEMA = (
         action TEXT NOT NULL,
         notional TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        handoff_done INTEGER NOT NULL DEFAULT 0
+        handoff_done INTEGER NOT NULL DEFAULT 0,
+        order_ref TEXT
     )
     """,
 )
@@ -384,8 +393,9 @@ class AuthorityProfileStore:
                 """
                 SELECT profile_id FROM profiles
                 WHERE account_id = ? AND venue = ? AND environment = ? AND revoked = 0
+                  AND expires_at > ?
                 """,
-                profile.binding(),
+                (*profile.binding(), now.astimezone(timezone.utc).isoformat()),
             ).fetchone()
             if occupied is not None:
                 raise ProfileRefused(
@@ -489,10 +499,13 @@ class AuthorityProfileStore:
         actor: str,
         now: datetime,
         model_output: object = None,
+        order_ref: str | None = None,
     ) -> Reservation:
         """Reserve one action, or return the original reservation for the same id."""
         if model_output_grants_authority(model_output):
             raise ProfileRefused("model_authority", "model output cannot grant authority")
+        if order_ref is not None:
+            order_ref = _ident(order_ref, code="order_ref")
         _require_now(now)
         client_id = _ident(client_order_id, code="client_order_id")
         amount = _parse_money(notional, code="notional")
@@ -507,7 +520,9 @@ class AuthorityProfileStore:
                 (client_id,),
             ).fetchone()
             if existing is not None:
-                if not _same_reservation(existing, profile.profile_id, action, amount):
+                if not _same_reservation(existing, profile.profile_id, action, amount) or (
+                    existing["order_ref"] != order_ref
+                ):
                     raise ProfileRefused(
                         "client_order_conflict", "client order id is already bound"
                     )
@@ -544,8 +559,8 @@ class AuthorityProfileStore:
                 """
                 INSERT INTO reservations (
                     client_order_id, profile_id, account_id, venue, environment,
-                    action, notional, created_at, handoff_done
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    action, notional, created_at, handoff_done, order_ref
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
                 """,
                 (
                     client_id,
@@ -556,6 +571,7 @@ class AuthorityProfileStore:
                     action,
                     format(amount, "f"),
                     now.astimezone(timezone.utc).isoformat(),
+                    order_ref,
                 ),
             )
         return Reservation(
@@ -600,11 +616,14 @@ class AuthorityProfileStore:
                 (row["account_id"], row["venue"], row["environment"]),
             ).fetchone()
             blocked = _control_code(control)
+            if blocked:
+                # A blocked reservation stays pending so a retry after release can run.
+                return blocked
             conn.execute(
                 "UPDATE reservations SET handoff_done = 1 WHERE client_order_id = ?",
                 (client_order_id,),
             )
-            return blocked or "claimed"
+            return "claimed"
 
     def _set_stop(
         self, profile_id: str, *, actor: str, now: datetime, reason: str, column: str
@@ -790,6 +809,7 @@ def handoff_to_gateway(
     if model_output_grants_authority(model_output):
         raise ProfileRefused("model_authority", "model output cannot grant authority")
     kwargs = dict(submit_kwargs or {})
+    order_ref = None
     if action == "submit_paper":
         scope = getattr(gateway, "execution_scope", None)
         if scope != "paper":
@@ -806,6 +826,10 @@ def handoff_to_gateway(
             notional, code="notional"
         ):
             raise ProfileRefused("notional_mismatch", "order notional does not match the reservation")
+        order_ref = getattr(order, "id", None)
+        if order_ref is None:
+            raise ProfileRefused("order_required", "paper submit requires an order id")
+        order_ref = str(order_ref)
     elif action not in {"propose", "submit_dry_run"}:
         raise ProfileRefused("action_refused", "action is outside the profile handoff")
 
@@ -817,6 +841,7 @@ def handoff_to_gateway(
         actor=actor,
         now=now,
         model_output=model_output,
+        order_ref=order_ref,
     )
     claim = store.claim_handoff(reservation.client_order_id)
     if claim == "replay":
@@ -895,12 +920,19 @@ def _parse_money(value: object, *, code: str) -> Decimal:
             raise ProfileRefused(code, "money values must be exact decimals")
         parsed = Decimal(value)
     elif isinstance(value, Decimal):
-        if not value.is_finite() or value != value.quantize(_MONEY):
+        try:
+            exact = value.is_finite() and value == value.quantize(_MONEY)
+        except InvalidOperation:
+            exact = False
+        if not exact:
             raise ProfileRefused(code, "money values must be exact decimals")
         parsed = value
     else:
         raise ProfileRefused(code, "money values must be exact decimals")
-    quantized = parsed.quantize(_MONEY)
+    try:
+        quantized = parsed.quantize(_MONEY)
+    except InvalidOperation as exc:
+        raise ProfileRefused(code, "money values must be exact decimals") from exc
     if quantized <= 0:
         raise ProfileRefused(code, "money values must be positive")
     return quantized
