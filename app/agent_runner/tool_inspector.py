@@ -244,14 +244,14 @@ def assert_decision_cwd(cwd, *, pinned_cwd) -> None:
 
 
 def default_decision_stage_specs(settings=None):
-    """Representative specs for the canonical decision-stage aliases (triage, deep) — the argv the
-    deployment WOULD launch. ``arm_auto_mode`` inspects these when the caller passes no explicit
-    specs, so a wiring that made a decision alias non-Claude (Inv 2) or tool-bearing (SEC-06) is
-    caught at arm time, not at first run."""
+    """Representative specs for the decision-stage aliases — the argv the deployment WOULD
+    launch. ``arm_auto_mode`` inspects these when the caller passes no explicit specs, so a
+    wiring that made a decision alias non-Claude (Inv 2) or tool-bearing (SEC-06) is caught
+    at arm time, not at first run."""
     from agent_runner.spec import AgentSpec
-    from config.models import configured_decision_runtime, runtime_for
+    from config.models import DECISION_STAGE_ALIASES, configured_decision_runtime, runtime_for
 
-    aliases = ("triage", "deep")
+    aliases = DECISION_STAGE_ALIASES
     selected = configured_decision_runtime(settings) if settings is not None else None
     return [
         AgentSpec(job_id=f"arm-check:{a}",

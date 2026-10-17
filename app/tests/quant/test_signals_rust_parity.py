@@ -10,7 +10,13 @@ contract.
 from __future__ import annotations
 
 import math
+import os
 import random
+import subprocess
+import sys
+import textwrap
+from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -22,8 +28,14 @@ from quant.signals import (
     RollingZScore,
 )
 
+# The rust.yml job sets this so a wheel that installs but does not activate
+# fails the job. Hosted Python gates leave it unset and skip.
+_REQUIRE_RUST = os.environ.get("COCKPIT_REQUIRE_RUST") == "1"
+if _REQUIRE_RUST and SIGNALS_BACKEND != "rust":
+    raise RuntimeError("COCKPIT_REQUIRE_RUST=1 but the signals backend is python")
+
 pytestmark = pytest.mark.skipif(
-    SIGNALS_BACKEND != "rust",
+    not _REQUIRE_RUST and SIGNALS_BACKEND != "rust",
     reason="cockpit_quant signals extension is not installed",
 )
 
@@ -32,6 +44,9 @@ def _same(rust_value, python_value) -> None:
     if rust_value is None or python_value is None:
         assert rust_value is python_value
         return
+    if isinstance(rust_value, float) and isinstance(python_value, float):
+        if math.isnan(rust_value) and math.isnan(python_value):
+            return
     if rust_value == python_value:
         return
     assert rust_value == pytest.approx(python_value, rel=1e-12, abs=1e-12)
@@ -58,13 +73,20 @@ def test_window_messages_stay_on_the_python_path():
 
 def test_ewma_matches_including_non_positive_prices():
     rust, python = _pair(EwmaVolatility, lam=0.94)
-    prices = [100.0, 101.0, 100.5, 0.0, -3.0, 102.0, 99.0, 100.0, 1e-6, 1e6]
+    prices = [100.0, 101.0, 100.5, 0.0, -3.0, 102.0, 99.0, 100.0, 1e-6, 1e6, -0.0]
     for price in prices:
         _same(rust.update(price), python.update(price))
         _same(rust.value, python.value)
         assert rust.is_warm is python.is_warm
+    # A non-float keeps the Python result. Bool is 1, and the extension does not
+    # raise where the reference accepts the value.
+    _same(rust.update(True), python.update(True))
+    _same(rust.value, python.value)
+    assert rust._core is None
     with pytest.raises(TypeError):
-        rust.update(True)
+        rust.update("nope")
+    with pytest.raises(TypeError):
+        python.update("nope")
 
 
 def test_ewma_replay_matches_the_python_loop():
@@ -82,6 +104,55 @@ def test_ewma_replay_matches_the_python_loop():
         _same(replayed, python.update(price))
 
 
+def test_ewma_non_float_inputs_match_python():
+    rust, python = _pair(EwmaVolatility, lam=0.94)
+    for price in (100, 110, 90, True, Decimal("100")):
+        assert rust.update(price) == python.update(price)
+        assert rust.value == python.value
+    assert rust._core is None
+
+    rust, python = _pair(EwmaVolatility, lam=0.94)
+    for price in (100.0, 1e308):
+        _same(rust.update(price), python.update(price))
+    # The next tiny price underflows to a zero ratio. Both paths raise, and
+    # the estimate already published stays put.
+    before_r, before_p = rust.value, python.value
+    with pytest.raises(ValueError, match="math domain error"):
+        rust.update(1e-308)
+    with pytest.raises(ValueError, match="math domain error"):
+        python.update(1e-308)
+    _same(rust.value, before_r)
+    _same(python.value, before_p)
+
+    # +inf followed by a finite price is a zero ratio. Both paths raise.
+    followed = EwmaVolatility(lam=0.94)
+    plain = EwmaVolatility(lam=0.94)
+    plain._core = None
+    assert followed.update(float("inf")) is None
+    assert plain.update(float("inf")) is None
+    with pytest.raises(ValueError, match="math domain error"):
+        followed.update(100.0)
+    with pytest.raises(ValueError, match="math domain error"):
+        plain.update(100.0)
+
+    # A finite price then +inf is a non-finite ratio. ``math.log`` would return
+    # inf; the extension raises so an infinite volatility cannot be quoted.
+    finite = EwmaVolatility(lam=0.94)
+    finite.update(100.0)
+    with pytest.raises(ValueError, match="math domain error"):
+        finite.update(float("inf"))
+    assert finite.value is None
+
+    # ``math.log(nan)`` is nan and advances the estimator. The core stays.
+    nan_r, nan_p = _pair(EwmaVolatility, lam=0.94)
+    for price in (float("nan"), 100.0, 101.0, float("nan")):
+        _same(nan_r.update(price), nan_p.update(price))
+        _same(nan_r.value, nan_p.value)
+    assert nan_r._core is not None
+    assert math.isnan(nan_r.value)
+    assert math.isnan(nan_p.value)
+
+
 def test_zscore_matches_through_rollover_and_a_constant_window():
     rust, python = _pair(RollingZScore, window=8)
     series = [float(i % 5) for i in range(20)] + [3.0] * 8 + [50.0, -50.0]
@@ -97,6 +168,16 @@ def test_zscore_matches_through_rollover_and_a_constant_window():
         constant.update(3.0)
     assert constant.stdev == 0.0
     assert constant.value is None
+
+    # Integer observations use an exact sum. Converting each one to f64 first
+    # would drop the +1.
+    wide_r, wide_p = _pair(RollingZScore, window=3)
+    for value in (2**53, 1, -(2**53), 4, True):
+        assert wide_r.update(value) == wide_p.update(value)
+        assert wide_r.mean == wide_p.mean
+        assert wide_r.stdev == wide_p.stdev
+        assert wide_r.value == wide_p.value
+    assert wide_r._core is None
 
 
 def test_ofi_sign_balance_and_the_signed_64_bit_domain():
@@ -117,13 +198,24 @@ def test_ofi_sign_balance_and_the_signed_64_bit_domain():
     assert extreme.update(signed_qty=-(2**63)) == twin.update(signed_qty=-(2**63))
     assert extreme.update(signed_qty=2**63 - 1) == twin.update(signed_qty=2**63 - 1)
 
-    with pytest.raises(ValueError, match="signed 64-bit"):
-        rust.update(signed_qty=2**63)
-    with pytest.raises(TypeError):
-        rust.update(signed_qty=True)
-    # The reference path still accepts a Python int outside the signed-64 domain.
-    twin.update(signed_qty=2**63)
-    assert twin.value == 1.0
+    # Outside signed 64-bit, and any non-int, the extension steps aside.
+    assert rust.update(signed_qty=2**63) == python.update(signed_qty=2**63)
+    assert rust.update(signed_qty=True) == python.update(signed_qty=True)
+    assert rust.update(signed_qty=1.5) == python.update(signed_qty=1.5)
+    assert rust._core is None
+
+    ratio_r, ratio_p = _pair(OrderFlowImbalance, window=3)
+    # float(2**53 - 1) / float(2**53 + 1) rounds to 1. Python's true division does not.
+    assert ratio_r.update(signed_qty=2**53) == ratio_p.update(signed_qty=2**53)
+    got = ratio_r.update(signed_qty=-1)
+    assert got == ratio_p.update(signed_qty=-1)
+    assert got == ((2**53) - 1) / ((2**53) + 1)
+    assert ratio_r.value == ratio_p.value
+
+    import cockpit_quant
+
+    replay = cockpit_quant.ofi_replay(3, [2**53, -1])
+    assert replay[-1] == ((2**53) - 1) / ((2**53) + 1)
 
 
 def test_beta_matches_a_line_a_flat_x_and_a_regime_change():
@@ -147,3 +239,308 @@ def test_beta_matches_a_line_a_flat_x_and_a_regime_change():
     assert flat_r.residual(5.0, 1.0) is None
     with pytest.raises(TypeError):
         rust.residual("x", 1.0)
+
+    ints_r, ints_p = _pair(RollingBeta, window=4)
+    for i in range(6):
+        assert ints_r.update(i, 3 + 2 * i) == ints_p.update(i, 3 + 2 * i)
+        assert ints_r.beta == ints_p.beta
+        assert ints_r.alpha == ints_p.alpha
+        assert ints_r.residual(1, 0) == ints_p.residual(1, 0)
+    assert ints_r._core is None
+
+
+def test_constant_window_and_compensated_sum_match_python():
+    z_r, z_p = _pair(RollingZScore, window=200)
+    for _ in range(200):
+        assert z_r.update(100.37) == z_p.update(100.37)
+    assert z_r.mean == z_p.mean
+    assert z_r.stdev == z_p.stdev
+    # 3.11's left-to-right sum leaves a nonzero stdev, so both sides return the
+    # same float. Identity would fail for two equal float objects.
+    _same(z_r.value, z_p.value)
+    if sys.version_info >= (3, 12):
+        assert z_p.mean == 100.37
+        assert z_p.stdev == 0.0
+        assert z_p.value is None
+
+    beta_r, beta_p = _pair(RollingBeta, window=200)
+    for i in range(200):
+        assert beta_r.update(100.37, float(i)) == beta_p.update(100.37, float(i))
+    _same(beta_r.beta, beta_p.beta)
+    if sys.version_info >= (3, 12):
+        assert beta_p.beta is None
+
+    partial_r, partial_p = _pair(RollingZScore, window=5)
+    for value in (1e16, 1.0, -1e16, 2.0, 3.0):
+        assert partial_r.update(value) == partial_p.update(value)
+    assert partial_r.mean == partial_p.mean
+    if sys.version_info >= (3, 12):
+        assert partial_p.mean == 1.2
+
+
+def test_invalid_lambda_is_refused_at_construction():
+    import cockpit_quant
+
+    for lam in (1.5, 1.0, 0.0, -0.5, float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            EwmaVolatility(lam=lam)
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            cockpit_quant.EwmaCore(lam)
+        with pytest.raises(ValueError, match=r"lam must be in \(0, 1\)"):
+            cockpit_quant.ewma_replay(lam, [100.0, 101.0, 100.5])
+
+
+def test_mutating_lambda_returns_to_python():
+    rust, python = _pair(EwmaVolatility, lam=0.94)
+    for price in (100.0, 101.0, 100.5, 102.0):
+        _same(rust.update(price), python.update(price))
+    rust.lam = 0.0
+    python.lam = 0.0
+    _same(rust.update(103.0), python.update(103.0))
+    assert rust._core is None
+    seeded = EwmaVolatility(0.94, _variance=0.25, _last=10.0, _count=4)
+    assert seeded._core is None
+
+
+def test_mutating_window_keeps_the_original_deque_and_matches_python():
+    z_r, z_p = _pair(RollingZScore, window=5)
+    for i in range(3):
+        z_r.update(float(i))
+        z_p.update(float(i))
+    z_r.window = 2
+    z_p.window = 2
+    assert z_r.is_warm is True
+    assert z_p.is_warm is True
+    _same(z_r.value, z_p.value)
+    assert z_r._core is None
+    # The construction window still bounds the deque. A sixth sample evicts.
+    for i in range(3, 8):
+        _same(z_r.update(float(i)), z_p.update(float(i)))
+    assert z_r._snapshot() == z_p._snapshot()
+    assert len(z_r._snapshot()) == 5
+
+    grown_r, grown_p = _pair(RollingZScore, window=5)
+    for i in range(5):
+        grown_r.update(float(i))
+        grown_p.update(float(i))
+    grown_r.window = 10
+    grown_p.window = 10
+    assert grown_r.is_warm is False
+    assert grown_r.value is None
+    assert grown_p.value is None
+
+    ofi_r, ofi_p = _pair(OrderFlowImbalance, window=4)
+    for qty in (1, 1, 1):
+        ofi_r.update(signed_qty=qty)
+        ofi_p.update(signed_qty=qty)
+    ofi_r.window = 2
+    ofi_p.window = 2
+    assert ofi_r.is_warm is True
+    assert ofi_p.is_warm is True
+    assert ofi_r.value == ofi_p.value
+    assert ofi_r._core is None
+
+    beta_r, beta_p = _pair(RollingBeta, window=4)
+    for i in range(4):
+        beta_r.update(float(i), float(i))
+        beta_p.update(float(i), float(i))
+    beta_r.window = 3
+    beta_p.window = 3
+    assert beta_r.is_warm is True
+    assert beta_p.is_warm is True
+    _same(beta_r.beta, beta_p.beta)
+    assert beta_r._core is None
+
+
+def test_huge_squares_raise_the_python_overflow():
+    z_r, z_p = _pair(RollingZScore, window=2)
+    assert z_r.update(1e308) is None
+    assert z_p.update(1e308) is None
+    with pytest.raises(OverflowError):
+        z_r.update(-1e308)
+    with pytest.raises(OverflowError):
+        z_p.update(-1e308)
+    assert z_r._core is None
+    assert z_r.mean == z_p.mean == 0.0
+    with pytest.raises(OverflowError):
+        _ = z_r.stdev
+    with pytest.raises(OverflowError):
+        _ = z_p.stdev
+
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    for x in (1e308, 0.0):
+        assert beta_r.update(x, 0.0) is None
+        assert beta_p.update(x, 0.0) is None
+    with pytest.raises(OverflowError):
+        beta_r.update(-1e308, 0.0)
+    with pytest.raises(OverflowError):
+        beta_p.update(-1e308, 0.0)
+    assert beta_r._core is None
+
+
+def test_non_finite_samples_stay_on_rust():
+    import cockpit_quant
+
+    z_r, z_p = _pair(RollingZScore, window=2)
+    z_r.update(1.0)
+    z_p.update(1.0)
+    _same(z_r.update(float("nan")), z_p.update(float("nan")))
+    _same(z_r.stdev, z_p.stdev)
+    _same(z_r.value, z_p.value)
+    assert z_r._core is not None
+
+    inf_r, inf_p = _pair(RollingZScore, window=2)
+    inf_r.update(1.0)
+    inf_p.update(1.0)
+    _same(inf_r.update(float("inf")), inf_p.update(float("inf")))
+    _same(inf_r.stdev, inf_p.stdev)
+    assert inf_r._core is not None
+
+    plain = RollingZScore(window=2)
+    plain._core = None
+    expected = [plain.update(1.0), plain.update(float("nan"))]
+    replay = cockpit_quant.zscore_replay(2, [1.0, float("nan")])
+    _same(replay[0], expected[0])
+    _same(replay[1], expected[1])
+
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    for x, y in ((1.0, 1.0), (2.0, 2.0), (float("nan"), 3.0)):
+        _same(beta_r.update(x, y), beta_p.update(x, y))
+    assert beta_r._core is not None
+
+
+def test_overflowed_covariance_matches_python_infinity():
+    beta_r, beta_p = _pair(RollingBeta, window=3)
+    pairs = ((-2.0, -1e308), (0.0, 0.0), (2.0, 1e308))
+    for x, y in pairs:
+        _same(beta_r.update(x, y), beta_p.update(x, y))
+    assert beta_r.beta == math.inf
+    assert beta_p.beta == math.inf
+    assert beta_r._core is not None
+
+    z_r, z_p = _pair(RollingZScore, window=2)
+    z_r.update(1e308)
+    z_p.update(1e308)
+    _same(z_r.update(1e308), z_p.update(1e308))
+    assert z_r.mean == math.inf
+    assert z_p.mean == math.inf
+    assert z_r._core is not None
+
+
+def test_estimators_compare_by_observation_state():
+    left, right = RollingZScore(window=3), RollingZScore(window=3)
+    assert left == right
+    left.update(1.0)
+    assert left != right
+    right.update(1.0)
+    assert left == right
+    assert EwmaVolatility(lam=0.94) == EwmaVolatility(lam=0.94)
+    assert OrderFlowImbalance(window=4) == OrderFlowImbalance(window=4)
+    assert RollingBeta(window=5) == RollingBeta(window=5)
+
+
+def test_direct_core_rejects_an_empty_window():
+    import cockpit_quant
+
+    with pytest.raises(ValueError, match=r"window must be >= 2"):
+        cockpit_quant.ZScoreCore(0, True)
+    with pytest.raises(ValueError, match=r"window must be >= 1"):
+        cockpit_quant.OfiCore(0)
+    with pytest.raises(ValueError, match=r"window must be >= 3"):
+        cockpit_quant.BetaCore(0, True)
+
+
+def _python(script: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    app = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = app + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=app,
+        env=env,
+        check=False,
+    )
+
+
+def test_broken_extension_import_is_not_swallowed():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                raise ImportError("broken extension")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.signals
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "broken extension" in ran.stderr
+
+
+def test_partial_extension_is_not_a_silent_python_fallback():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import importlib.util
+        import types
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return real_find("json")
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        real_import = builtins.__import__
+
+        def guarded(name, *args, **kwargs):
+            if name == "cockpit_quant":
+                return types.ModuleType("cockpit_quant")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = guarded
+        import quant.signals
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode != 0
+    assert "EwmaCore" in ran.stderr
+
+
+def test_missing_extension_stays_on_python():
+    script = textwrap.dedent(
+        """
+        import importlib.util
+
+        real_find = importlib.util.find_spec
+
+        def find_spec(name, package=None):
+            if name == "cockpit_quant":
+                return None
+            return real_find(name, package)
+
+        importlib.util.find_spec = find_spec
+        import quant.signals as signals
+        assert signals.SIGNALS_BACKEND == "python", signals.SIGNALS_BACKEND
+        """
+    )
+    ran = _python(script)
+    assert ran.returncode == 0, ran.stderr
