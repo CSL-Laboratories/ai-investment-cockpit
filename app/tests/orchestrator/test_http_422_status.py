@@ -78,6 +78,7 @@ def test_project_requires_starlette_with_rfc9110_status_names():
     paths = (
         APP / "pyproject.toml",
         root / "CLAUDE.md",
+        root / "tools" / "bootstrap_windows.ps1",
     )
     missing = [
         str(path.relative_to(root))
