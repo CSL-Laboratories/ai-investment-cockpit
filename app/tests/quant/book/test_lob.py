@@ -19,8 +19,8 @@ The properties pinned, in the order they matter:
     never drift from each other — ``check_integrity`` is asserted after every mutation
     sequence, not just at the end.
 
-No matcher is constructed anywhere in this file. The book is state; matching is policy, and
-fusing them would make every book test transitively depend on matching rules.
+The snapshot-refresh test applies one aggressive order so a fill moves the cache. Every
+other sequence drives the book directly.
 """
 from __future__ import annotations
 
@@ -353,6 +353,174 @@ def test_snapshot_derived_statistics_agree_with_the_live_book(book):
     assert snap.mid_ticks == 101.0
     assert snap.microprice == pytest.approx(101.8)
     assert snap.imbalance == pytest.approx(0.8)
+
+
+def test_snapshot_is_reused_until_the_book_changes(book):
+    from quant.events import Side
+
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    book.add(order_id="b", side=Side.SELL, price_ticks=101, qty=4)
+    first = book.snapshot()
+    assert book.snapshot() is first
+    assert book.snapshot(levels=5) is first
+    stamped = book.snapshot(ts=7)
+    assert stamped is not first and stamped.ts == 7
+    assert book.snapshot(ts=7) is stamped
+    book.reduce("a", 3)
+    second = book.snapshot()
+    assert second is not first
+    assert second.bids[0].qty == 7
+    assert book.snapshot() is second
+
+
+def test_python_snapshot_is_reused_until_the_book_changes():
+    from quant.book.lob import PythonLimitOrderBook
+    from quant.events import Side
+
+    book = PythonLimitOrderBook("S")
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    first = book.snapshot()
+    assert book.snapshot() is first
+    book.add(order_id="c", side=Side.BUY, price_ticks=99, qty=1)
+    assert book.snapshot() is not first
+
+
+def test_rejected_edits_keep_the_snapshot():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        with pytest.raises(ValueError):
+            book.reduce("a", 11)
+        with pytest.raises(ValueError):
+            book.reduce("a", 0)
+        with pytest.raises(ValueError):
+            book.replace("a", new_qty=0)
+        with pytest.raises(ValueError):
+            book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=1)
+        assert book.snapshot() is first
+        assert book.snapshot().bids[0].qty == 10
+
+
+def test_a_rejected_add_does_not_invent_a_level():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        with pytest.raises(ValueError):
+            book.add(order_id="bad", side=Side.BUY, price_ticks=101, qty=0)
+        assert book.best_bid() == 100
+        assert book.level(Side.BUY, 101) is None
+        assert book.snapshot() is first
+        assert book.snapshot().best_bid_ticks == 100
+
+
+def test_snapshot_refreshes_after_cancel_replace_and_fill():
+    from quant.book.lob import PythonLimitOrderBook
+    from quant.book.matching import AggressiveOrder, match
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        book.add(order_id="deep", side=Side.BUY, price_ticks=99, qty=3)
+        full = book.snapshot()
+        top = book.snapshot(levels=1)
+        assert top is not full
+        assert len(top.bids) == 1
+        stamped = book.snapshot(seq=3)
+        assert stamped is not full and stamped.seq == 3
+
+        book.cancel("a")
+        after_cancel = book.snapshot()
+        assert after_cancel is not full
+        assert after_cancel.bids[0].price_ticks == 99
+
+        book.add(order_id="b", side=Side.BUY, price_ticks=100, qty=10)
+        held = book.snapshot()
+        book.replace("b", new_qty=4, new_price_ticks=101)
+        after_replace = book.snapshot()
+        assert after_replace is not held
+        assert after_replace.bids[0].price_ticks == 101
+        assert after_replace.bids[0].qty == 4
+
+        book.add(order_id="ask", side=Side.SELL, price_ticks=102, qty=4)
+        before_fill = book.snapshot()
+        match(
+            book,
+            AggressiveOrder(order_id="hit", side=Side.BUY, qty=4, price_ticks=102),
+        )
+        after_fill = book.snapshot()
+        assert after_fill is not before_fill
+        assert after_fill.asks == ()
+
+
+def test_a_phantom_ladder_price_drops_the_cached_touch():
+    from quant.book.lob import PythonLimitOrderBook
+
+    books = [PythonLimitOrderBook("S")]
+    if LimitOrderBook.backend == "rust":
+        books.insert(0, LimitOrderBook("S"))
+    for book in books:
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        cached = book.snapshot(levels=1)
+        assert cached.bids[0].price_ticks == 100
+        book._bid_prices.append(105)
+        if book.backend == "rust":
+            fresh = book.snapshot(levels=1)
+            assert fresh is not cached
+            assert fresh.bids == ()
+        else:
+            with pytest.raises(KeyError):
+                book.snapshot(levels=1)
+
+
+def test_a_failed_cancel_cleanup_refreshes_the_snapshot():
+    from quant.book.lob import PythonLimitOrderBook
+
+    book = PythonLimitOrderBook("S")
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    first = book.snapshot()
+    book._bid_prices.pop()
+    with pytest.raises(BookIntegrityError):
+        book.cancel("a")
+    fresh = book.snapshot()
+    assert fresh is not first
+    assert fresh.bids == ()
+
+
+def test_a_corrupt_total_does_not_partially_cancel():
+    if LimitOrderBook.backend != "rust":
+        pytest.skip("python ints do not overflow a cached total")
+    book = LimitOrderBook("S")
+    book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+    book.level(Side.BUY, 100).total_qty = -2**63
+    cached = book.snapshot()
+    with pytest.raises(ValueError):
+        book.cancel("a")
+    assert book.get("a") is not None
+    assert book.snapshot() is cached
+    assert book.depth(Side.BUY, 1)[0].order_count == 1
+
+
+def test_a_direct_level_total_edit_refreshes_the_snapshot():
+    from quant.book.lob import PythonLimitOrderBook
+
+    for make in (LimitOrderBook, PythonLimitOrderBook):
+        book = make("S")
+        book.add(order_id="a", side=Side.BUY, price_ticks=100, qty=10)
+        first = book.snapshot()
+        level = book.level(Side.BUY, 100)
+        level.total_qty = 10
+        assert book.snapshot() is first
+        level.total_qty = 11
+        second = book.snapshot()
+        assert second is not first
+        assert second.bids[0].qty == 11
+        assert book.depth(Side.BUY, 1)[0].qty == 11
 
 
 def test_resting_at_follows_insertion_order_and_rejects_a_bad_index(book):

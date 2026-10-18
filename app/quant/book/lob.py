@@ -137,7 +137,23 @@ class PriceLevel:
 
     price_ticks: int
     orders: dict[str, RestingOrder] = field(default_factory=dict)
-    total_qty: int = 0
+    _total_qty: int = field(default=0, repr=False)
+    # The book that owns this level, so a direct total edit drops its snapshot.
+    # Integrity tests write ``total_qty`` on purpose; that write changes depth.
+    _book: object | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def total_qty(self) -> int:
+        return self._total_qty
+
+    @total_qty.setter
+    def total_qty(self, value: int) -> None:
+        if value == self._total_qty:
+            return
+        self._total_qty = value
+        book = self._book
+        if book is not None:
+            book._snap = None
 
     def __len__(self) -> int:
         return len(self.orders)
@@ -274,6 +290,24 @@ class BookSnapshot:
         return (bid_qty - ask_qty) / total
 
 
+class _PriceLadder(list):
+    """Ascending price index. ``append`` is the integrity-test corruption hook.
+
+    A phantom price changes the touch. The snapshot cache has to notice, or a
+    later ``depth(levels=1)`` keeps the old best bid.
+    """
+
+    __slots__ = ("_book",)
+
+    def __init__(self, book: "LimitOrderBook") -> None:
+        super().__init__()
+        self._book = book
+
+    def append(self, price: int) -> None:
+        super().append(price)
+        self._book._snap = None
+
+
 class LimitOrderBook:
     """A single symbol's two-sided book with exact per-order queue positions.
 
@@ -287,7 +321,10 @@ class LimitOrderBook:
     # extension is installed. The class object itself stays the reference impl.
     backend = "python"
 
-    __slots__ = ("symbol", "_bids", "_asks", "_bid_prices", "_ask_prices", "_index", "_last_seq", "_last_ts")
+    __slots__ = (
+        "symbol", "_bids", "_asks", "_bid_prices", "_ask_prices", "_index",
+        "_last_seq", "_last_ts", "_snap",
+    )
 
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
@@ -296,11 +333,12 @@ class LimitOrderBook:
         # Both kept ASCENDING. Best bid is the last element, best ask the first — one sort
         # order for both sides means bisect is used identically and there is no reversed
         # comparator to get backwards.
-        self._bid_prices: list[int] = []
-        self._ask_prices: list[int] = []
+        self._bid_prices: list[int] = _PriceLadder(self)
+        self._ask_prices: list[int] = _PriceLadder(self)
         self._index: dict[str, RestingOrder] = {}
         self._last_seq = 0
         self._last_ts = 0
+        self._snap: tuple | None = None
 
     # ---- internals -------------------------------------------------------------------
 
@@ -313,7 +351,7 @@ class LimitOrderBook:
         levels, prices = self._side_maps(side)
         level = levels.get(price_ticks)
         if level is None:
-            level = PriceLevel(price_ticks=price_ticks)
+            level = PriceLevel(price_ticks=price_ticks, _book=self)
             levels[price_ticks] = level
             bisect.insort(prices, price_ticks)
         return level
@@ -354,6 +392,8 @@ class LimitOrderBook:
         """
         if order_id in self._index:
             raise ValueError(f"duplicate order_id {order_id!r} already resting in the book")
+        if qty <= 0:
+            raise ValueError(f"resting order {order_id!r} must have positive qty, got {qty}")
         level = self._level_for_write(side, price_ticks)
         order = RestingOrder(
             order_id=order_id,
@@ -365,6 +405,7 @@ class LimitOrderBook:
             owner=owner,
             qty_ahead_at_entry=level.total_qty,
         )
+        self._snap = None
         level.append(order)
         self._index[order_id] = order
         self._last_seq = max(self._last_seq, seq)
@@ -376,6 +417,7 @@ class LimitOrderBook:
         order = self._index.pop(order_id, None)
         if order is None:
             raise OrderNotFound(order_id)
+        self._snap = None
         levels, _ = self._side_maps(order.side)
         level = levels.get(order.price_ticks)
         if level is None:
@@ -393,6 +435,13 @@ class LimitOrderBook:
             raise OrderNotFound(order_id)
         levels, _ = self._side_maps(order.side)
         level = levels[order.price_ticks]
+        if qty <= 0:
+            raise ValueError(f"reduce qty must be positive, got {qty}")
+        if qty > order.qty:
+            raise ValueError(
+                f"cannot reduce order {order_id!r} by {qty}: only {order.qty} remaining"
+            )
+        self._snap = None
         level.reduce(order_id, qty)
         if order.qty == 0:
             del self._index[order_id]
@@ -426,6 +475,7 @@ class LimitOrderBook:
         qty = existing.qty if new_qty is None else new_qty
         if qty <= 0:
             raise ValueError(f"replace qty must be positive, got {qty}")
+        self._snap = None
         side, owner = existing.side, existing.owner
         self.cancel(order_id)
         return self.add(
@@ -565,13 +615,26 @@ class LimitOrderBook:
         raise IndexError(index)
 
     def snapshot(self, *, levels: int = 5, seq: int | None = None, ts: int | None = None) -> BookSnapshot:
-        return BookSnapshot(
+        """Immutable depth. Repeated reads of an unchanged book return the same object.
+
+        The paper loop builds a context before and after each event. Most of those
+        reads see the same levels. The object is frozen, so keeping it is safe.
+        """
+        out_seq = self._last_seq if seq is None else seq
+        out_ts = self._last_ts if ts is None else ts
+        key = (levels, seq, ts, out_seq, out_ts)
+        cached = self._snap
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        snap = BookSnapshot(
             symbol=self.symbol,
-            seq=self._last_seq if seq is None else seq,
-            ts=self._last_ts if ts is None else ts,
+            seq=out_seq,
+            ts=out_ts,
             bids=tuple(self.depth(Side.BUY, levels)),
             asks=tuple(self.depth(Side.SELL, levels)),
         )
+        self._snap = (key, snap)
+        return snap
 
     def check_integrity(self) -> None:
         """Assert the book's accounting agrees with itself. For tests and the randomized sweep.

@@ -291,6 +291,10 @@ impl BookCore {
         self.book.last_stamps()
     }
 
+    fn generation(&self) -> u64 {
+        self.book.generation()
+    }
+
     fn check_integrity(&self) -> PyResult<()> {
         self.book.check_integrity().map_err(raise)
     }

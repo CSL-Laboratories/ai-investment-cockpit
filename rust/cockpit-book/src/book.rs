@@ -114,12 +114,16 @@ impl Level {
     }
 
     fn remove(&mut self, order_id: &str) -> Result<Order, BookError> {
-        let idx = self
+        let idx = *self
             .by_id
-            .remove(order_id)
+            .get(order_id)
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
+        // A corrupt cached total must fail before the order leaves the level.
+        // Otherwise a caught error leaves the depth changed and the snapshot stale.
+        let new_total = fit_sub(self.total_qty, self.orders.get(idx).qty)?;
+        self.by_id.remove(order_id);
         let order = self.orders.remove(idx);
-        self.total_qty = fit_sub(self.total_qty, order.qty)?;
+        self.total_qty = new_total;
         Ok(order)
     }
 
@@ -140,12 +144,11 @@ impl Level {
                 py_str_repr(order_id)
             )));
         }
-        {
-            let order = self.orders.get_mut(idx);
-            order.qty = fit_sub(order.qty, qty)?;
-        }
-        self.total_qty = fit_sub(self.total_qty, qty)?;
-        let remaining = self.orders.get(idx).qty;
+        let new_qty = fit_sub(current, qty)?;
+        let new_total = fit_sub(self.total_qty, qty)?;
+        self.orders.get_mut(idx).qty = new_qty;
+        self.total_qty = new_total;
+        let remaining = new_qty;
         if remaining == 0 {
             self.by_id.remove(order_id);
             self.orders.remove(idx);
@@ -208,6 +211,9 @@ pub struct Book {
     by_id: HashMap<String, Loc>,
     last_seq: i64,
     last_ts: i64,
+    /// Bumps on every successful mutation. Snapshot caches key on this, not on
+    /// `last_seq`: two adds can share a sequence number and still change depth.
+    generation: u64,
 }
 
 impl Book {
@@ -220,7 +226,16 @@ impl Book {
             by_id: HashMap::new(),
             last_seq: 0,
             last_ts: 0,
+            generation: 0,
         }
+    }
+
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn bump(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     pub fn symbol(&self) -> &str {
@@ -355,13 +370,19 @@ impl Book {
         );
         self.last_seq = self.last_seq.max(seq);
         self.last_ts = self.last_ts.max(ts);
+        self.bump();
         Ok(order)
     }
 
     pub fn cancel(&mut self, order_id: &str) -> Result<Order, BookError> {
         let loc = self
             .by_id
-            .remove(order_id)
+            .get(order_id)
+            .map(|loc| Loc {
+                node: loc.node,
+                side: loc.side,
+                price: loc.price,
+            })
             .ok_or_else(|| BookError::NotFound(order_id.to_string()))?;
         let order = {
             let level = self
@@ -377,7 +398,11 @@ impl Book {
                 })?;
             level.remove(order_id)?
         };
+        self.by_id.remove(order_id);
         self.index.remove(loc.node);
+        // The order is already gone. Bump before cleanup: a missing ladder
+        // entry removes the level and then returns Integrity.
+        self.bump();
         self.drop_level_if_empty(loc.side, loc.price)?;
         Ok(order)
     }
@@ -410,6 +435,9 @@ impl Book {
                 .ok_or_else(|| BookError::Integrity(format!("missing level for {order_id}")))?;
             level.reduce(order_id, qty)?
         };
+        // Quantity already changed. Bump before cleanup so a failed
+        // drop_level_if_empty cannot leave the cached snapshot on the old depth.
+        self.bump();
         if remaining == 0 {
             self.by_id.remove(order_id);
             self.index.remove(loc.node);
@@ -599,6 +627,19 @@ impl Book {
     /// (`_bid_prices.append`) uses this to prove the check can fail.
     pub fn append_price(&mut self, side: Side, price: i64) {
         self.side_book_mut(side).prices.push(price);
+        self.bump();
+    }
+
+    /// Drop a price from the ladder and leave its level. Tests use this to
+    /// make ``drop_level_if_empty`` fail after it has already removed the level.
+    #[cfg(test)]
+    fn forget_indexed_price(&mut self, side: Side, price: i64) {
+        let prices = &mut self.side_book_mut(side).prices;
+        let pos = prices
+            .iter()
+            .position(|&existing| existing == price)
+            .expect("price is on the ladder");
+        prices.remove(pos);
     }
 
     pub fn set_cached_total(
@@ -607,12 +648,22 @@ impl Book {
         price: i64,
         total: i64,
     ) -> Result<(), BookError> {
-        let level = self
-            .side_book_mut(side)
-            .levels
-            .get_mut(&price)
-            .ok_or_else(|| BookError::NotFound(format!("level {price}")))?;
-        level.total_qty = total;
+        let changed = {
+            let level = self
+                .side_book_mut(side)
+                .levels
+                .get_mut(&price)
+                .ok_or_else(|| BookError::NotFound(format!("level {price}")))?;
+            if level.total_qty == total {
+                false
+            } else {
+                level.total_qty = total;
+                true
+            }
+        };
+        if changed {
+            self.bump();
+        }
         Ok(())
     }
 
@@ -775,6 +826,63 @@ mod tests {
         book.add("ours", Side::Buy, 100, 200, 0, 0, Some("mm".into()))
             .unwrap();
         book.add("behind", Side::Buy, 100, 300, 0, 0, None).unwrap();
+    }
+
+    #[test]
+    fn generation_moves_only_when_the_book_changes() {
+        let mut book = fresh();
+        assert_eq!(book.generation(), 0);
+        book.add("a", Side::Buy, 100, 10, 1, 1, None).unwrap();
+        assert_eq!(book.generation(), 1);
+        assert!(book.add("a", Side::Buy, 100, 10, 1, 1, None).is_err());
+        assert_eq!(book.generation(), 1);
+        book.set_cached_total(Side::Buy, 100, 10).unwrap();
+        assert_eq!(book.generation(), 1);
+        book.set_cached_total(Side::Buy, 100, 11).unwrap();
+        assert_eq!(book.generation(), 2);
+        assert_eq!(book.depth(Side::Buy, 1)[0].qty, 11);
+        book.reduce_qty("a", 4).unwrap();
+        assert_eq!(book.generation(), 3);
+        book.cancel("a").unwrap();
+        assert_eq!(book.generation(), 4);
+        let before_ladder = book.generation();
+        book.append_price(Side::Buy, 105);
+        assert_eq!(book.generation(), before_ladder + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
+    }
+
+    #[test]
+    fn a_failed_cleanup_still_moves_generation() {
+        let mut book = fresh();
+        book.add("a", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        let before = book.generation();
+        book.forget_indexed_price(Side::Buy, 100);
+        let err = book.cancel("a").unwrap_err();
+        assert!(matches!(err, BookError::Integrity(_)));
+        assert_eq!(book.generation(), before + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
+
+        book.add("b", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        let before_reduce = book.generation();
+        book.forget_indexed_price(Side::Buy, 100);
+        let err = book.reduce_qty("b", 10).unwrap_err();
+        assert!(matches!(err, BookError::Integrity(_)));
+        assert_eq!(book.generation(), before_reduce + 1);
+        assert!(book.depth(Side::Buy, 1).is_empty());
+    }
+
+    #[test]
+    fn a_corrupt_total_does_not_partially_cancel() {
+        let mut book = fresh();
+        book.add("a", Side::Buy, 100, 10, 0, 0, None).unwrap();
+        book.set_cached_total(Side::Buy, 100, i64::MIN).unwrap();
+        let generation = book.generation();
+        let err = book.cancel("a").unwrap_err();
+        assert!(matches!(err, BookError::Value(_)));
+        assert_eq!(book.generation(), generation);
+        assert!(book.get("a").is_some());
+        assert_eq!(book.depth(Side::Buy, 1)[0].order_count, 1);
+        assert_eq!(book.depth(Side::Buy, 1)[0].qty, i64::MIN);
     }
 
     #[test]
