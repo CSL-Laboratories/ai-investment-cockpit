@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ EXPECTED_FILES = (
     "fixtures/observations.json",
     "fixtures/lineage.json",
     "fixtures/replay_checks.json",
+    "fixtures/coverage.json",
     "fixtures/qualification_matrix.json",
     "fixtures/negative_controls.json",
     "schemas/identity.schema.json",
@@ -29,6 +31,7 @@ EXPECTED_FILES = (
     "schemas/observation.schema.json",
     "schemas/lineage.schema.json",
     "schemas/replay_manifest.schema.json",
+    "schemas/coverage.schema.json",
     "schemas/qualification_matrix.schema.json",
     "schemas/negative_control.schema.json",
     "schemas/manifest.schema.json",
@@ -40,6 +43,7 @@ SCHEMA_FOR = {
     "fixtures/observations.json": "schemas/observation.schema.json",
     "fixtures/lineage.json": "schemas/lineage.schema.json",
     "fixtures/replay_checks.json": "schemas/replay_manifest.schema.json",
+    "fixtures/coverage.json": "schemas/coverage.schema.json",
     "fixtures/qualification_matrix.json": "schemas/qualification_matrix.schema.json",
     "fixtures/negative_controls.json": "schemas/negative_control.schema.json",
     "fixtures/manifest.json": "schemas/manifest.schema.json",
@@ -913,36 +917,30 @@ def _require_version_chain(records: list[dict]) -> None:
         raise ContractError(f"natural key {key} is not a single correction chain")
 
 
-REQUIRED_REPLAY_CHECKS = (
-    "late_correction_before_amendment",
-    "duplicate_does_not_supersede",
-    "late_correction_after_amendment",
-    "out_of_order_acceptance_hidden",
-    "out_of_order_acceptance_visible_after_accept",
-    "corporate_action_retained",
-    "corporate_action_correction_is_effective",
-    "independent_corporate_action_hidden",
-    "independent_corporate_action_retained",
-    "independent_action_does_not_replace_correction",
-    "unadjusted_quote_not_rewritten",
-    "event_resolution_before_late_message",
-    "event_close_out_of_order_hidden",
-    "event_close_visible_only_after_accept",
-    "event_settled_keeps_determination_raw",
-    "voided_event_stays_distinct",
-    "event_dispute_chain_determined_only",
-    "event_dispute_correction_is_effective",
-    "event_amendment_supersedes_dispute",
-    "event_finalized_keeps_dispute_chain",
-)
+def coverage_scenario(check: dict) -> dict:
+    """The scenario a replay check id promises: key, decision time, and outcome."""
+    outcome = {
+        "visible_raw_record_ids": list(check["visible_raw_record_ids"]),
+        "hidden_raw_record_ids": list(check["hidden_raw_record_ids"]),
+        "effective_raw_record_id": check["effective_raw_record_id"],
+    }
+    if "expected_close_time" in check:
+        outcome["expected_close_time"] = check["expected_close_time"]
+    return {
+        "check_id": check["check_id"],
+        "natural_key": check["natural_key"],
+        "decision_time": check["decision_time"],
+        "outcome": outcome,
+    }
+
+
+_COVERAGE_DIGEST = re.compile(r"Coverage manifest SHA-256: `([0-9a-f]{64})`")
 
 
 def validate_replay(bundle: Bundle) -> None:
     check_ids = [check["check_id"] for check in bundle.checks]
     if len(check_ids) != len(set(check_ids)):
         raise ContractError("duplicate replay check")
-    if set(check_ids) != set(REQUIRED_REPLAY_CHECKS):
-        raise ContractError("replay checks are not the required set")
     for check in bundle.checks:
         decision = parse_time(check["decision_time"])
         visible = visible_versions(bundle.records, check["natural_key"], decision)
@@ -1117,6 +1115,28 @@ def validate_qualification(bundle: Bundle) -> None:
         raise ContractError("qualification decisions are not the required set")
 
 
+def validate_coverage(root: Path, bundle: Bundle) -> None:
+    """Replay scenarios and observation ids must equal the coverage manifest.
+
+    The manifest digest recorded in the contract is the pin. A swapped scenario
+    or a deleted observation fails this equality even when the remaining corpus
+    is internally consistent.
+    """
+    path = root / "fixtures" / "coverage.json"
+    digest = _sha_file(path)
+    recorded = _COVERAGE_DIGEST.findall((root / "CONTRACT.md").read_text(encoding="utf-8"))
+    if recorded != [digest]:
+        raise ContractError("coverage manifest digest does not match the contract")
+    coverage = _load_json(path)
+    if not isinstance(coverage, dict):
+        raise ContractError("coverage manifest root must be an object")
+    if [coverage_scenario(check) for check in bundle.checks] != coverage.get("checks"):
+        raise ContractError("replay scenario does not match the coverage manifest")
+    observation_ids = [observation["observation_id"] for observation in bundle.observations]
+    if observation_ids != coverage.get("observation_ids"):
+        raise ContractError("observation set does not match the coverage manifest")
+
+
 def validate_candidate(root: Path | None = None) -> list[str]:
     root = ROOT if root is None else root
     documents = {rel: _load_json(root / rel) for rel in (*SCHEMA_FOR,)}
@@ -1126,6 +1146,7 @@ def validate_candidate(root: Path | None = None) -> list[str]:
     validate_records(bundle)
     validate_replay(bundle)
     validate_observations(bundle)
+    validate_coverage(root, bundle)
     validate_qualification(bundle)
     lines = [
         "O2 candidate corpus: ok",

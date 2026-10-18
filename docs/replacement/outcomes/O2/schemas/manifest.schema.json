@@ -21,6 +21,7 @@
         "fixtures/observations.json",
         "fixtures/lineage.json",
         "fixtures/replay_checks.json",
+        "fixtures/coverage.json",
         "fixtures/qualification_matrix.json",
         "fixtures/negative_controls.json",
         "schemas/identity.schema.json",
@@ -28,6 +29,7 @@
         "schemas/observation.schema.json",
         "schemas/lineage.schema.json",
         "schemas/replay_manifest.schema.json",
+        "schemas/coverage.schema.json",
         "schemas/qualification_matrix.schema.json",
         "schemas/negative_control.schema.json",
         "schemas/manifest.schema.json"
@@ -40,6 +42,7 @@
         "fixtures/observations.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fixtures/lineage.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fixtures/replay_checks.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "fixtures/coverage.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fixtures/qualification_matrix.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "fixtures/negative_controls.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/identity.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -47,6 +50,7 @@
         "schemas/observation.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/lineage.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/replay_manifest.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "schemas/coverage.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/qualification_matrix.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/negative_control.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "schemas/manifest.schema.json": {"type": "string", "pattern": "^[0-9a-f]{64}$"}

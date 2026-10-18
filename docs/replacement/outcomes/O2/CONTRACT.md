@@ -188,6 +188,10 @@ The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-0
 - voided event kept distinct from the settled market
 - event dispute chain: determined, then disputed, then amended to `no`, then finalized — each correction effective at its own acceptance
 
+`fixtures/coverage.json` is the coverage manifest. It binds each replay check id to its natural key, decision time, and expected outcome, and it lists every required observation id. The validator requires the replay checks and the observation ids to equal that manifest. Deleting an observation, or copying one replay scenario onto another check id, is rejected even when the remaining rows still agree with each other. The manifest digest is recorded in this contract:
+
+Coverage manifest SHA-256: `b618b930e95f5c9b4dee9e0ef5ae74e768ad6b62a5a1de34170e8827e2ab83f6`
+
 `fixtures/manifest.json` binds SHA-256 hashes of this document, the validator, the fixtures, and the schemas.
 
 ## Feed qualification and unknowns

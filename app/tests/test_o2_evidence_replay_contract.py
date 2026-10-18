@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -176,6 +177,29 @@ def test_correction_without_its_raw_parent_is_rejected(tmp_path: Path) -> None:
     (copy / "fixtures" / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     with pytest.raises(module.ContractError, match="raw parent"):
         module.validate_candidate(copy)
+
+
+def _sync_coverage_pin(module, copy: Path) -> None:
+    """Move the coverage pin to a candidate whose scenarios were intentionally extended."""
+    checks = json.loads((copy / "fixtures" / "replay_checks.json").read_text(encoding="utf-8"))["checks"]
+    observations = json.loads((copy / "fixtures" / "observations.json").read_text(encoding="utf-8"))["observations"]
+    coverage = json.loads((copy / "fixtures" / "coverage.json").read_text(encoding="utf-8"))
+    coverage["checks"] = [module.coverage_scenario(check) for check in checks]
+    coverage["observation_ids"] = [item["observation_id"] for item in observations]
+    text = json.dumps(coverage, indent=2) + "\n"
+    (copy / "fixtures" / "coverage.json").write_text(text, encoding="utf-8")
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    contract_path = copy / "CONTRACT.md"
+    contract = contract_path.read_text(encoding="utf-8")
+    updated, count = re.subn(
+        r"Coverage manifest SHA-256: `[0-9a-f]{64}`",
+        f"Coverage manifest SHA-256: `{digest}`",
+        contract,
+        count=1,
+    )
+    assert count == 1
+    contract_path.write_text(updated, encoding="utf-8")
+    _rewrite_manifest(module, copy)
 
 
 def _rewrite_manifest(module, copy: Path) -> None:
@@ -1041,6 +1065,7 @@ def test_agent_filed_accession_key_is_accepted_when_issuer_matches(tmp_path: Pat
         if check["natural_key"] == old:
             check["natural_key"] = record["natural_key"]
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _sync_coverage_pin(module, copy)
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
 
 
@@ -1092,6 +1117,7 @@ def test_later_amendment_may_name_the_original_filing(tmp_path: Path) -> None:
         "140",
     )
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _sync_coverage_pin(module, copy)
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
 
 
@@ -1220,6 +1246,7 @@ def test_ex_date_correction_is_replayable(tmp_path: Path) -> None:
     )
     edge["input_raw_record_ids"] = list(observation["raw_record_ids"])
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _sync_coverage_pin(module, copy)
     assert module.validate_candidate(copy)[0] == "O2 candidate corpus: ok"
     bundle = module.Bundle({rel: json.loads((copy / rel).read_text(encoding="utf-8")) for rel in module.SCHEMA_FOR})
     effective = module.effective_record(
@@ -1375,6 +1402,35 @@ def test_listing_key_tail_must_be_the_payload_kind(tmp_path: Path) -> None:
     )
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
     with pytest.raises(module.ContractError, match="natural key does not name its equity fact"):
+        module.validate_candidate(copy)
+
+
+def test_deleted_observation_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observations = documents["fixtures/observations.json"]["observations"]
+    removed = observations.pop()
+    edges = documents["fixtures/lineage.json"]["edges"]
+    documents["fixtures/lineage.json"]["edges"] = [
+        edge for edge in edges if edge["observation_id"] != removed["observation_id"]
+    ]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="observation set does not match the coverage manifest"):
+        module.validate_candidate(copy)
+
+
+def test_swapped_replay_scenario_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    checks = documents["fixtures/replay_checks.json"]["checks"]
+    source = next(item for item in checks if item["check_id"] == "late_correction_before_amendment")
+    target = next(item for item in checks if item["check_id"] == "out_of_order_acceptance_hidden")
+    kept = target["check_id"]
+    target.clear()
+    target.update(json.loads(json.dumps(source)))
+    target["check_id"] = kept
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="replay scenario does not match the coverage manifest"):
         module.validate_candidate(copy)
 
 
