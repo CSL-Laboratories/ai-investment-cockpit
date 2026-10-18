@@ -2582,9 +2582,10 @@ def test_duplicate_head_lines_are_ambiguous():
         f"HEAD: {SHA}\n"
     )
     parsed = mod.parse_thread_verdicts(body)
-    assert parsed[0].verdict == "AMBIGUOUS"
-    assert parsed[0].reason == "malformed-head"
-    assert parsed[0].sha == ""
+    assert [(v.verdict, v.sha, v.reason) for v in parsed] == [
+        ("AMBIGUOUS", SHA2, "malformed-head"),
+        ("AMBIGUOUS", SHA, "malformed-head"),
+    ]
 
 
 def test_valid_plus_malformed_head_keeps_unique_sha():
@@ -2656,6 +2657,35 @@ def test_valid_plus_malformed_head_ambiguous_sticks():
     assert reason == "ambiguous"
     assert verdict is not None and verdict.verdict == "AMBIGUOUS"
     assert verdict.sha == SHA
+
+
+def test_duplicate_valid_heads_ambiguous_sticks_on_either_sha():
+    malformed = comment(
+        CODEX,
+        (
+            f"{mod.verdict_marker(THREAD)}\n"
+            "CODEX-THREAD: DECIDE\n"
+            f"HEAD: {SHA}\n"
+            f"HEAD: {SHA2}\n"
+        ),
+        NOW - timedelta(minutes=5),
+    )
+    later = comment(CODEX, verdict_body("RESOLVE"), NOW)
+    later_other = comment(CODEX, verdict_body("RESOLVE", sha=SHA2), NOW)
+    latest = mod.latest_verdicts([malformed, later, later_other])
+    t = thread(comments=[malformed, later, later_other])
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[]
+    )
+    assert reason == "ambiguous"
+    assert verdict is not None and verdict.verdict == "AMBIGUOUS"
+    assert verdict.sha == SHA
+    reason_other, verdict_other = mod.classify_thread(
+        t, head_sha=SHA2, latest=latest, issue_comments=[]
+    )
+    assert reason_other == "ambiguous"
+    assert verdict_other is not None and verdict_other.verdict == "AMBIGUOUS"
+    assert verdict_other.sha == SHA2
 
 
 def test_linux_gates_skipped_is_not_green():
@@ -3048,7 +3078,7 @@ def test_original_verdict_human_veto_survives_live_refresh():
         nonlocal reads
         if "reviewThreads" in query:
             reads += 1
-            if reads == 2:
+            if reads == 3:
                 gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
                     comment("alice", "Human stop", NOW + timedelta(seconds=30), association="OWNER")
                 )
@@ -3082,7 +3112,7 @@ def test_original_verdict_human_veto_survives_retry_live_refresh():
         nonlocal reads
         if "reviewThreads" in query:
             reads += 1
-            if reads == 1:
+            if reads == 2:
                 gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
                     comment("alice", "Human stop", NOW + timedelta(seconds=30), association="OWNER")
                 )

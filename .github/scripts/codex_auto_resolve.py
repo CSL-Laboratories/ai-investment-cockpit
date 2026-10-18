@@ -554,22 +554,15 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
             if head_match:
                 head_values.append(head_match.group(1).strip())
         actions = [str(item).upper() for item in VERDICT_ACTION_RE.findall(block)]
-        unique_sha = _unique_valid_sha(head_values)
         if not thread_lines:
-            found.append(
-                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason="missing-action", source="block")
-            )
+            found.extend(_ambiguous_for_heads(tid, head_values, "missing-action"))
             continue
         if thread_lines != len(actions) or len(set(actions)) != 1:
-            found.append(
-                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason="malformed", source="block")
-            )
+            found.extend(_ambiguous_for_heads(tid, head_values, "malformed"))
             continue
         if len(head_values) != 1:
             reason = "missing-head" if not head_values else "malformed-head"
-            found.append(
-                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason=reason, source="block")
-            )
+            found.extend(_ambiguous_for_heads(tid, head_values, reason))
             continue
         digest = safe_sha(head_values[0])
         if not digest:
@@ -592,14 +585,26 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
     return [collapsed[key] for key in order]
 
 
-def _unique_valid_sha(head_values: list[str]) -> str:
-    """Preserve a uniquely valid HEAD so malformed AMBIGUOUS sticks to that SHA."""
+def _valid_shas(head_values: list[str]) -> list[str]:
     found: list[str] = []
     for raw in head_values:
         digest = safe_sha(raw)
         if digest and digest not in found:
             found.append(digest)
-    return found[0] if len(found) == 1 else ""
+    return found
+
+
+def _ambiguous_for_heads(
+    tid: str, head_values: list[str], reason: str
+) -> list[ThreadVerdict]:
+    """Sticky AMBIGUOUS per uniquely valid HEAD so a later RESOLVE cannot override."""
+    shas = _valid_shas(head_values)
+    if not shas:
+        return [ThreadVerdict(tid, "", "AMBIGUOUS", reason=reason, source="block")]
+    return [
+        ThreadVerdict(tid, digest, "AMBIGUOUS", reason=reason, source="block")
+        for digest in shas
+    ]
 
 
 def parse_resolved_markers(text: str | None) -> list[tuple[str, str]]:
