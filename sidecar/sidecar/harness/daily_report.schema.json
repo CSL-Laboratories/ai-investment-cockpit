@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sidecar.daily_report.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "mode", "strategy_id", "generated_at", "orders_submitted",
+    "broker_writes", "caveats", "equity_curve", "evalstats", "tca"
+  ],
+  "properties": {
+    "schema_version": {"const": "sidecar.daily_report.v1"},
+    "mode": {"enum": ["offline_backtest", "alpaca_paper_readonly"]},
+    "strategy_id": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "bars_path": {"type": "string"},
+    "bars_sha256": {"type": "string"},
+    "paper_base_url": {"const": "https://paper-api.alpaca.markets"},
+    "data_base_url": {"const": "https://data.alpaca.markets"},
+    "orders_submitted": {"const": 0},
+    "broker_writes": {"const": false},
+    "account": {"type": "object"},
+    "primary_config": {"type": "object"},
+    "caveats": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "equity_curve": {"type": "array"},
+    "evalstats": {"type": "object"},
+    "tca": {"type": "object"},
+    "sizer": {"type": ["object", "null"]},
+    "calibration": {"type": ["object", "null"]},
+    "llm_audit": {"type": ["object", "null"]},
+    "trial_ledger": {"type": ["object", "null"]}
+  }
+}

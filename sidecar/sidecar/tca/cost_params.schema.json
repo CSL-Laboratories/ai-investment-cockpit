@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sidecar.cost_params.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "specification", "status", "n_fills", "recommended",
+    "does_not_replace_fee_schedule"
+  ],
+  "properties": {
+    "schema_version": {"const": "sidecar.cost_params.v1"},
+    "specification": {"const": "almgren_linear_v1"},
+    "status": {"enum": ["fit", "insufficient_sample", "singular"]},
+    "n_fills": {"type": "integer", "minimum": 0},
+    "epsilon": {"type": "string"},
+    "temporary_eta": {"type": "string"},
+    "permanent_gamma": {"type": "string"},
+    "r_squared": {"type": ["string", "null"]},
+    "recommended": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["epsilon", "temporary_eta", "permanent_gamma"],
+          "properties": {
+            "epsilon": {"type": "string"},
+            "temporary_eta": {"type": "string"},
+            "permanent_gamma": {"type": "string"}
+          }
+        }
+      ]
+    },
+    "does_not_replace_fee_schedule": {"const": true},
+    "paper_venue_note": {"type": "string"}
+  }
+}

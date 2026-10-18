@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sidecar.route_scorecard.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "threshold_status", "yield_claim", "n_rows", "n_scored", "excluded", "routes", "notes"],
+  "properties": {
+    "schema_version": {"const": "sidecar.route_scorecard.v1"},
+    "threshold_status": {"const": "not_frozen"},
+    "yield_claim": {"const": false},
+    "n_rows": {"type": "integer", "minimum": 0},
+    "n_scored": {"type": "integer", "minimum": 0},
+    "excluded": {"type": "object"},
+    "routes": {"type": "array"},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

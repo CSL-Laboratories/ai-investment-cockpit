@@ -1,0 +1,13 @@
+{
+  "status": "proposed_not_frozen",
+  "applied_as_gate": false,
+  "note": "Literature illustrations only. Freezing a numeric gate is a human protocol step and has to happen before any measurement population is authorized. evalstats never emits qualify or reject.",
+  "examples": {
+    "psr_often_discussed": 0.95,
+    "pbo_illustrative_upper": 0.2,
+    "sources": [
+      "Bailey and Lopez de Prado, The Deflated Sharpe Ratio (2014)",
+      "Bailey, Borwein, Lopez de Prado, and Zhu, The Probability of Backtest Overfitting"
+    ]
+  }
+}
