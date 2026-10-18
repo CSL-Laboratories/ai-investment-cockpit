@@ -937,10 +937,39 @@ def coverage_scenario(check: dict) -> dict:
 _COVERAGE_DIGEST = re.compile(r"Coverage manifest SHA-256: `([0-9a-f]{64})`")
 
 
+# Minimum replay scenarios, fixed here so the regenerable coverage fixture cannot drop one.
+REQUIRED_CHECK_IDS = frozenset(
+    {
+        "late_correction_before_amendment",
+        "duplicate_does_not_supersede",
+        "late_correction_after_amendment",
+        "out_of_order_acceptance_hidden",
+        "out_of_order_acceptance_visible_after_accept",
+        "corporate_action_retained",
+        "corporate_action_correction_is_effective",
+        "independent_corporate_action_hidden",
+        "independent_corporate_action_retained",
+        "independent_action_does_not_replace_correction",
+        "unadjusted_quote_not_rewritten",
+        "event_resolution_before_late_message",
+        "event_close_out_of_order_hidden",
+        "event_close_visible_only_after_accept",
+        "event_settled_keeps_determination_raw",
+        "voided_event_stays_distinct",
+        "event_dispute_chain_determined_only",
+        "event_dispute_correction_is_effective",
+        "event_amendment_supersedes_dispute",
+        "event_finalized_keeps_dispute_chain",
+    }
+)
+
+
 def validate_replay(bundle: Bundle) -> None:
     check_ids = [check["check_id"] for check in bundle.checks]
     if len(check_ids) != len(set(check_ids)):
         raise ContractError("duplicate replay check")
+    if not REQUIRED_CHECK_IDS <= set(check_ids):
+        raise ContractError("required replay scenario is missing")
     for check in bundle.checks:
         decision = parse_time(check["decision_time"])
         visible = visible_versions(bundle.records, check["natural_key"], decision)
@@ -1130,10 +1159,24 @@ def validate_coverage(root: Path, bundle: Bundle) -> None:
     coverage = _load_json(path)
     if not isinstance(coverage, dict):
         raise ContractError("coverage manifest root must be an object")
-    if [coverage_scenario(check) for check in bundle.checks] != coverage.get("checks"):
+    expected_checks = coverage.get("checks")
+    if not isinstance(expected_checks, list) or not all(
+        isinstance(item, dict) and "check_id" in item for item in expected_checks
+    ):
+        raise ContractError("coverage manifest checks are malformed")
+    by_id = {item["check_id"]: item for item in expected_checks}
+    if len(by_id) != len(expected_checks):
+        raise ContractError("coverage manifest repeats a check")
+    actual = {check["check_id"]: coverage_scenario(check) for check in bundle.checks}
+    if actual != by_id:
         raise ContractError("replay scenario does not match the coverage manifest")
     observation_ids = [observation["observation_id"] for observation in bundle.observations]
-    if observation_ids != coverage.get("observation_ids"):
+    expected_ids = coverage.get("observation_ids")
+    if (
+        not isinstance(expected_ids, list)
+        or len(set(observation_ids)) != len(observation_ids)
+        or sorted(observation_ids) != sorted(expected_ids)
+    ):
         raise ContractError("observation set does not match the coverage manifest")
 
 
