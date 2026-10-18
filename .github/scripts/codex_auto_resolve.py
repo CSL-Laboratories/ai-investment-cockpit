@@ -1664,8 +1664,14 @@ def live_resolve_skip(
     thread_id: str,
     sha: str,
     pat_login: str,
+    after: datetime | None = None,
 ) -> str:
-    """Empty if live evidence still authorizes this resolve; otherwise a skip."""
+    """Empty if live evidence still authorizes this resolve; otherwise a skip.
+
+    Classification uses the newest stamp. ``after`` is the original cited
+    ruling's stamp: a trusted human reply in that window still vetoes even
+    when a later RESOLVE would otherwise reauthorize the same scan.
+    """
     skip, pr, threads, issue_comments, reviews = live_evidence_state(gh, cfg, number)
     if skip:
         return skip
@@ -1700,6 +1706,8 @@ def live_resolve_skip(
                 pat_login=pat_login,
             )
         return reason
+    if after is None or later_human_veto(thread_comments(live_thread), after, pat_login):
+        return "human-veto"
     return ""
 
 
@@ -1748,7 +1756,13 @@ def reply_and_resolve(
     ):
         return "human-veto"
     blocked = live_resolve_skip(
-        gh, cfg, number=number, thread_id=thread_id, sha=sha, pat_login=actor or "",
+        gh,
+        cfg,
+        number=number,
+        thread_id=thread_id,
+        sha=sha,
+        pat_login=actor or "",
+        after=after,
     )
     if blocked:
         return blocked
@@ -1775,18 +1789,36 @@ def reply_and_resolve(
         ):
             return "human-veto"
         blocked = live_resolve_skip(
-            gh, cfg, number=number, thread_id=thread_id, sha=sha, pat_login=actor or "",
+            gh,
+            cfg,
+            number=number,
+            thread_id=thread_id,
+            sha=sha,
+            pat_login=actor or "",
+            after=after,
         )
         if blocked:
             return blocked
-    # live_resolve_skip classifies against the newest stamp. Recheck the
-    # original cited ruling's veto window after that last refresh so a
-    # human reply between the cited RESOLVE and a later one cannot ride
-    # the mutation. Same check on first-time and retry paths.
+    # Recheck the cited ruling's last-40 tail, then revalidate every
+    # verdict source on that same original stamp. Classification uses
+    # the newest stamp; the original-stamp veto on the live comment
+    # snapshot is what keeps an intervening human reply from riding a
+    # later RESOLVE. Same order on first-time and retry paths.
     if thread_tail_vetoes(
         gh, cfg, thread_id=thread_id, after=after, pat_login=actor
     ):
         return "human-veto"
+    blocked = live_resolve_skip(
+        gh,
+        cfg,
+        number=number,
+        thread_id=thread_id,
+        sha=sha,
+        pat_login=actor or "",
+        after=after,
+    )
+    if blocked:
+        return blocked
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
         return "stale-sha"

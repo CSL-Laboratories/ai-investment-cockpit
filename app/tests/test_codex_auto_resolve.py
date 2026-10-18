@@ -3060,6 +3060,52 @@ def test_original_verdict_human_veto_survives_retry_live_refresh():
     assert any("skip=human-veto" in line for line in logs)
 
 
+def test_intervening_decide_after_final_tail_blocks_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        result = orig(query, variables, token)
+        if "comments(last: 40)" in query and gh.thread_tail_calls >= 3:
+            gh.reviews[12] = [comment(CODEX, verdict_body("DECIDE"))]
+        return result
+
+    gh.graphql = graphql
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    assert any("skip=decide" in line for line in logs)
+
+
+def test_intervening_decide_after_retry_final_tail_blocks_resolve():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        result = orig(query, variables, token)
+        if "comments(last: 40)" in query and gh.thread_tail_calls >= 2:
+            gh.reviews[12] = [comment(CODEX, verdict_body("DECIDE"))]
+        return result
+
+    gh.graphql = graphql
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert not any(mod.RESOLVED_PREFIX in body for _n, body in gh.issue_posts)
+    assert any("skip=decide" in line for line in logs)
+
+
 def test_scan_tail_error_is_human_veto():
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     gh.fail_thread_tail = True
