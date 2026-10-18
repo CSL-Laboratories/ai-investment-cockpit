@@ -14,6 +14,7 @@ from agent_runner.runner import build_argv, run_agent
 from agent_runner.spec import AgentSpec
 from agent_runner.tool_inspector import (
     ToolStarvationError,
+    _flag_value_at,
     assert_all_decision_specs_tool_starved,
     assert_decision_cwd,
     default_decision_stage_specs,
@@ -101,6 +102,18 @@ def test_settings_and_system_prompt_flags_refused(flag):
 
 def test_nondecision_codex_readonly_argv_allowed():
     inspect_argv(["codex", "exec", "--sandbox", "read-only", "--json"], decision_stage=False)
+
+
+# ---- _flag_value_at --------------------------------------------------------------------
+@pytest.mark.parametrize("tokens,i,expected", [
+    (["--flag=v"], 0, "v"),               # inline nonempty value
+    (["--flag", "v", "--other"], 0, "v"),  # next-token value
+    (["--flag="], 0, ""),                 # inline empty value (explicit, not missing)
+    (["--flag"], 0, None),                # terminal flag: no value
+    (["--flag=a=b"], 0, "a=b"),           # inline value keeps later '=' chars
+])
+def test_flag_value_at(tokens, i, expected):
+    assert _flag_value_at(tokens, i) == expected
 
 
 # ---- cwd pin ---------------------------------------------------------------------------
