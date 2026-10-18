@@ -1,0 +1,14 @@
+{
+  "upstream": "https://github.com/shiyu-coder/Kronos",
+  "commit": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+  "committed_at": "2026-04-13T12:38:49Z",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025 ShiYu",
+  "files": [
+    "LICENSE",
+    "model/__init__.py",
+    "model/kronos.py",
+    "model/module.py"
+  ],
+  "note": "Inference sources only, copied verbatim at the pinned commit. The MIT notice in LICENSE applies."
+}

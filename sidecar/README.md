@@ -17,6 +17,7 @@ The offline packages and the read-only paper observer do not place orders. `side
 | `sidecar.sizer` | Volatility target and fractional Kelly. Decimal only. Can only shrink a cap |
 | `sidecar.harness` | Offline replay, a read-only Alpaca paper observer, and a separate experimental paper runner |
 | `sidecar.rl` | Simulated GRU market maker. Behavioral cloning from a vendored Avellaneda-Stoikov expert, prioritized fictitious self-play, potential-based shaping. Never live |
+| `sidecar.kronos_signal` | Walk-forward Kronos OHLCV forecasts after the June 2024 pretraining cutoff. Optional paper-runner strategy. Weights load only in the offline eval |
 
 P6–P8 from the research note are not separate packages. Down-market beta is reported by `evalstats` when a benchmark series is passed in. A data-quality gate would have to call the orchestrator breakers, and a latency model would have to edit `app/quant/`. Neither belongs in this tree.
 
@@ -90,6 +91,19 @@ python -m sidecar.rl.train --profile report --out examples/rl_mm_eval.json --led
 
 `examples/rl_mm_eval.json` is the report-profile run committed with this tree. It is a short CPU simulation, not a live book and not a claim that the learner beat the Avellaneda-Stoikov baseline. Read that file's `caveats` before quoting it. The comparison block is the measured difference in mean session return.
 
+## Kronos forecasts
+
+```bash
+python -m pip install -e ".[kronos]"
+python -m sidecar.kronos_signal.evaluate --profile smoke
+python -m sidecar.kronos_signal.evaluate --profile report --out examples/kronos_eval.json --ledger examples/kronos_eval.ledger.jsonl
+python -m sidecar.harness.runner --strategy kronos --when close
+```
+
+The default runner strategy is still `inverse_vol`. `--strategy kronos` reads `examples/kronos_eval.json` and does not load the model. It refuses to trade when that report is missing. `examples/kronos_eval.json` is the report-profile run committed with this tree. Read its `caveats` before quoting a number. `live_eligible` means the July 2024 protocol finished. It does not mean the forecast beat zero-return, trailing mean, or buy-and-hold.
+
+On that committed run the primary config (mini, lookback 64, temperature 1.0, 36 post-cutoff decisions) ended at 91945.01467356542211066211403 from 100000. PSR 0.270841980117, DSR 0.0192597888218, max drawdown 0.121297714523. Pooled IC 0.16113576, directional hit rate 0.52777778, Brier 0.27854938 against a constant-0.5 Brier of 0.25. Trailing mean ended at 103025.6929640805959608712531 and buy-and-hold at 101418.4563917799362885658572. The flat book stayed at 100000. `beats_baselines` is false. PBO across the eight configs is 0.333333333333 on the forecast-weighted series, not on the equity curve. See `sidecar/kronos_signal/README.md`.
+
 ## Retrofit
 
 Do this only after the cockpit's own fixes, as a reviewed change. These packages stay the computation. The cockpit change is the thin adapter.
@@ -136,6 +150,12 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 - **Reads:** nothing outside this tree except the committed daily-bar fixture for the labeled non-L1 replay.
 - **Emits:** `sidecar.rl_mm_eval.v1` with `live_trading: false` and `orders_submitted: 0`. PSR, DSR, and PBO are attached through `evalstats`. The trial ledger records the hyperparameter rows.
 - **Plug-in:** do not connect it to a broker. The vendored Avellaneda-Stoikov function is for the simulator's expert and for comparison. It is not a second quoter on the cockpit order path.
+
+### kronos
+
+- **Reads:** the local daily bar file already used by the harness, and the public Hugging Face checkpoints named in `sidecar/kronos_signal/README.md`. The paper runner reads only the finished JSON report.
+- **Emits:** `sidecar.kronos_eval.v1` with `orders_submitted: 0`. Scored decisions start on 2024-07-01. The edge and dispersion go to the existing sizer.
+- **Plug-in:** do not load the model on the cockpit order path. The experimental runner may size from the report only after that file exists. That runner is still not the cockpit order path.
 
 ## Not a performance claim
 

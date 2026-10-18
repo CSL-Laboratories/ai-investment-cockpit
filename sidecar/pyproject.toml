@@ -11,6 +11,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+kronos = [
+    "torch>=2.2",
+    "pandas>=2.2",
+    "einops>=0.8",
+    "huggingface_hub==0.33.1",
+    "safetensors>=0.4",
+    "tqdm>=4.66",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -19,6 +27,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 src = ["sidecar", "tests"]
+extend-exclude = ["sidecar/kronos_signal/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F"]

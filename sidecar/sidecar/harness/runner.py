@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+from collections import Counter
 from datetime import date, datetime, time, timezone
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
@@ -60,6 +61,8 @@ CLOSE_START = time(15, 40)
 CLOSE_END = time(16, 5)
 SPY_ONLY_ID = "sidecar.spy_only_fractional_kelly.v1"
 AS_SIM_ID = "sidecar.avellaneda_stoikov.sim_only.v1"
+KRONOS_ID = "sidecar.kronos_signal.v1"
+DEFAULT_KRONOS_REPORT = ROOT / "examples" / "kronos_eval.json"
 DEFAULT_KILL = ROOT / "artifacts" / "KILL"
 DEFAULT_OUT = ROOT / "artifacts" / "paper_runner_report.json"
 DEFAULT_LEDGER = ROOT / "artifacts" / "paper_runner.ledger.jsonl"
@@ -169,6 +172,18 @@ def _configs(strategy: str, *, target_vol: str, kelly_frac: str, rebalance_every
     rows.append(
         {
             "kind": "strategy_config",
+            "name": KRONOS_ID,
+            "config": {
+                "strategy_id": KRONOS_ID,
+                "live_eligible": False,
+                "traded_this_run": strategy == "kronos",
+                "reason": "trades only when examples/kronos_eval.json exists and records the July 2024 cutoff",
+            },
+        }
+    )
+    rows.append(
+        {
+            "kind": "strategy_config",
             "name": AS_SIM_ID,
             "config": {
                 "strategy_id": AS_SIM_ID,
@@ -198,6 +213,7 @@ def plan_orders(
     lookback: int = PRIMARY_LOOKBACK,
     target_vol: Decimal = Decimal("0.01"),
     kelly_frac: Decimal = Decimal("0.25"),
+    targets: dict[str, Decimal] | None = None,
 ) -> tuple[list[OrderIntent], dict]:
     """Diff vol-targeted fractional-Kelly targets against the current book.
 
@@ -205,15 +221,21 @@ def plan_orders(
     then shrunk again by the per-order and gross-exposure caps. The sizer itself only
     shrinks; this function does not raise its suggestion.
     """
-    history = {symbol: _history_window(grouped[symbol], lookback) for symbol in symbols}
-    targets, bindings = _targets(
-        equity,
-        list(symbols),
-        history,
-        lookback=lookback,
-        target_vol=target_vol,
-        kelly_frac=kelly_frac,
-    )
+    if targets is None:
+        history = {symbol: _history_window(grouped[symbol], lookback) for symbol in symbols}
+        targets, bindings = _targets(
+            equity,
+            list(symbols),
+            history,
+            lookback=lookback,
+            target_vol=target_vol,
+            kelly_frac=kelly_frac,
+        )
+    else:
+        bindings = Counter()
+        missing = [symbol for symbol in symbols if symbol not in targets]
+        if missing:
+            raise RunnerError(f"kronos targets are missing {missing}")
     held_value: dict[str, Decimal] = {}
     held_qty: dict[str, Decimal] = {}
     for row in positions:
@@ -376,6 +398,7 @@ def run_runner(
     order_log_path: Path = DEFAULT_ORDER_LOG,
     kill_file: Path | None = None,
     strategy: str = "inverse_vol",
+    kronos_report: Path = DEFAULT_KRONOS_REPORT,
     when: str = "auto",
     execute: bool = False,
     force_window: bool = False,
@@ -384,8 +407,8 @@ def run_runner(
     limits: PaperLimits | None = None,
     bootstrap_reps: int = 200,
 ) -> dict:
-    if strategy not in {"inverse_vol", "spy_only"}:
-        raise RunnerError("strategy must be inverse_vol or spy_only")
+    if strategy not in {"inverse_vol", "spy_only", "kronos"}:
+        raise RunnerError("strategy must be inverse_vol, spy_only, or kronos")
     moment = now or datetime.now(timezone.utc)
     phase = session_phase(moment)
     try:
@@ -403,10 +426,18 @@ def run_runner(
     kill = _kill_path(kill_file)
     grouped = load_bars(bars_path)
     symbols = ("SPY",) if strategy == "spy_only" else ("SPY", "QQQ", "IWM")
+    kronos_gate = None
+    if strategy == "kronos":
+        from sidecar.kronos_signal.gate import KronosGateError, load_kronos_gate
+
+        try:
+            kronos_gate = load_kronos_gate(kronos_report)
+        except KronosGateError as exc:
+            raise RunnerError(str(exc)) from exc
     missing = [symbol for symbol in symbols if symbol not in grouped]
     if missing:
         raise RunnerError(f"bars are missing {missing}")
-    strategy_id = SPY_ONLY_ID if strategy == "spy_only" else STRATEGY_ID
+    strategy_id = {"spy_only": SPY_ONLY_ID, "kronos": KRONOS_ID}.get(strategy, STRATEGY_ID)
     ledger = TrialLedger(ledger_path)
     _append_trials(ledger, strategy, target_vol="0.01", kelly_frac="0.25")
     order_log = ChainLog(order_log_path)
@@ -422,6 +453,19 @@ def run_runner(
     )
     owns_client = False
     account = None
+    if strategy == "kronos" and execute:
+        from sidecar.kronos_signal.gate import KronosGateError, targets_from_report
+
+        try:
+            targets_from_report(
+                kronos_gate,
+                equity=Decimal("100000"),
+                symbols=symbols,
+                session_day=moment.astimezone(ET).date(),
+                enforce_age=True,
+            )
+        except KronosGateError as exc:
+            raise RunnerError(str(exc)) from exc
     if execute:
         if client is None:
             key, secret = load_sidecar_paper_credentials()
@@ -432,9 +476,29 @@ def run_runner(
         equity = Decimal(str(account["equity"]))
         session_day = moment.astimezone(ET).date()
     else:
-        broker_positions = _positions_from_sim(simulated, grouped, symbols)
-        equity = simulated["curve"][-1][1]
+        if strategy == "kronos":
+            broker_positions = [
+                {"symbol": symbol, "qty": "0", "market_value": "0"} for symbol in symbols
+            ]
+            equity = Decimal("100000")
+        else:
+            broker_positions = _positions_from_sim(simulated, grouped, symbols)
+            equity = simulated["curve"][-1][1]
         session_day = grouped[symbols[0]][-1].day
+    kronos_targets = None
+    if kronos_gate is not None:
+        from sidecar.kronos_signal.gate import KronosGateError, targets_from_report
+
+        try:
+            kronos_targets = targets_from_report(
+                kronos_gate,
+                equity=equity,
+                symbols=symbols,
+                session_day=session_day,
+                enforce_age=execute,
+            )
+        except KronosGateError as exc:
+            raise RunnerError(str(exc)) from exc
     intents, plan = plan_orders(
         grouped=grouped,
         symbols=symbols,
@@ -443,6 +507,7 @@ def run_runner(
         positions=broker_positions,
         session_day=session_day,
         limits=limits,
+        targets=kronos_targets,
     )
     submitted = 0
     broker_writes = False
@@ -560,6 +625,21 @@ def run_runner(
         "Trailing mean return is a naive edge input to the sizer, not a validated forecast.",
         "Targets are sized from the local daily bar file passed to this process, not from a live quote.",
     ]
+    if strategy == "kronos" and kronos_gate is not None:
+        stored_curve = kronos_gate.get("equity_curve") or []
+        stored_returns = [float(value) for value in kronos_gate.get("strategy_returns") or []]
+        if stored_curve and len(stored_returns) >= 8:
+            curve = stored_curve
+            returns = stored_returns
+            equity_source = "kronos_offline_eval"
+            tca_fills = []
+            tca_note = "The equity curve is the offline Kronos walk-forward. This runner does not recompute it."
+        caveats.append(
+            "Kronos is eligible only because an offline report exists. live_eligible means the July 2024 protocol finished, not that the forecast beat its nulls."
+        )
+        caveats.append(
+            "The order plan uses the report's last unscored forecast. It does not refit Kronos in this process."
+        )
     if execute and client is not None:
         history = client.portfolio_history()
         parsed = _equity_returns(history) if isinstance(history, dict) else None
@@ -585,13 +665,30 @@ def run_runner(
     if killed:
         caveats.append("Kill switch file was present. No new order was allowed.")
     benchmark = _spy_benchmark(grouped.get("SPY"), [day for day, _value in simulated["returns"]])
-    if equity_source != "simulated_local_book":
+    periods_per_year = 252
+    if equity_source == "kronos_offline_eval":
+        benchmark = None
+        stored_periods = (kronos_gate.get("evalstats") or {}).get("periods_per_year")
+        if isinstance(stored_periods, int) and stored_periods >= 1:
+            periods_per_year = stored_periods
+        caveats.append(
+            "SPY benchmark was omitted because the equity curve is the offline Kronos trial, not this process's inverse-vol simulation."
+        )
+    elif equity_source != "simulated_local_book":
         benchmark = None
         caveats.append(
             "SPY benchmark was omitted because the equity curve came from the broker and is not aligned to the local bar dates."
         )
     n_trials = ledger.distinct_config_count()
-    stats = evaluate(returns, n_trials, benchmark, bootstrap_reps=bootstrap_reps, n_slices=8, seed=0)
+    stats = evaluate(
+        returns,
+        n_trials,
+        benchmark,
+        bootstrap_reps=bootstrap_reps,
+        n_slices=8,
+        seed=0,
+        periods_per_year=periods_per_year,
+    )
     summary = summarize_fills(tca_fills) if tca_fills else {"n_fills": 0, "note": "no fills"}
     report = {
         "schema_version": "sidecar.daily_report.v1",
@@ -666,7 +763,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--when", choices=("auto", "open", "close"), default="auto")
     parser.add_argument("--execute", action="store_true", help="Post to the sidecar Alpaca paper account")
     parser.add_argument("--force-window", action="store_true", help="Allow --execute outside the session window")
-    parser.add_argument("--strategy", choices=("inverse_vol", "spy_only"), default="inverse_vol")
+    parser.add_argument("--strategy", choices=("inverse_vol", "spy_only", "kronos"), default="inverse_vol")
+    parser.add_argument("--kronos-report", type=Path, default=DEFAULT_KRONOS_REPORT)
     parser.add_argument("--bars", type=Path, default=DEFAULT_BARS)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
@@ -691,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
             order_log_path=args.order_log,
             kill_file=args.kill_file,
             strategy=args.strategy,
+            kronos_report=args.kronos_report,
             when=args.when,
             execute=args.execute,
             force_window=args.force_window,

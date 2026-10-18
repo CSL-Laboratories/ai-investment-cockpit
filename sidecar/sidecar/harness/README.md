@@ -61,7 +61,7 @@ Kill switch: create `artifacts/KILL`, or set `SIDECAR_KILL_FILE`. New orders are
 touch artifacts/KILL
 ```
 
-Strategies for a live run: `inverse_vol` (the predeclared offline rule, default) or `spy_only`. One book per process. Every run appends the inverse-vol lookbacks, the SPY-only config, and the simulation-only Avellaneda-Stoikov config to the trial ledger. The market maker is not sent to the broker.
+Strategies for a live run: `inverse_vol` (the predeclared offline rule, default) or `spy_only`. `kronos` is optional and is refused unless `examples/kronos_eval.json` (or `--kronos-report`) exists, records evaluation start `2024-07-01` and pretraining through `2024-06-30`, and is marked `live_eligible`. The runner does not load Kronos weights. One book per process. Every run appends the inverse-vol lookbacks, the SPY-only config, the Kronos config, and the simulation-only Avellaneda-Stoikov config to the trial ledger. The market maker is not sent to the broker. The Kronos ledger row stays `live_eligible: false`; the report file is the gate.
 
 The daily report is `sidecar.daily_report.v1`: equity curve, PSR/DSR, drawdown, TCA, and a SPY benchmark when the curve is the local simulation. Execute mode uses broker portfolio history and aligned paper fills when those samples are long enough. Otherwise the curve and TCA stay on the local simulation and the report says so. `orders_submitted` counts new posts. A dry-run is 0.
 

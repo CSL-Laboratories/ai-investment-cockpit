@@ -1,0 +1,1189 @@
+{
+  "bars_path": "fixtures/etf_daily.csv",
+  "baselines": {
+    "buy_and_hold": {
+      "ending_equity": "101418.4563917799362885658572",
+      "evalstats": {
+        "benchmark": null,
+        "bootstrap": {
+          "block_length": 3,
+          "max_drawdown_ci95": [
+            "0.0501886058253",
+            "0.271010514864"
+          ],
+          "mean_return_ci95": [
+            "-0.00612869824544",
+            "0.00709776654487"
+          ],
+          "method": "stationary",
+          "reps_requested": 80,
+          "reps_used": 80,
+          "seed": 2,
+          "sharpe_per_period_ci95": [
+            "-0.240625416825",
+            "0.336758867614"
+          ]
+        },
+        "drawdown": {
+          "current_drawdown": "0.106021749063",
+          "max_drawdown": "0.11318155771",
+          "max_drawdown_duration": 14,
+          "peak_index": 22,
+          "trough_index": 35,
+          "ulcer_index": "0.0383958235988"
+        },
+        "dsr": "0.0978540411666",
+        "kurtosis_pearson": "3.08076866018",
+        "mean_return": "0.000684357460998",
+        "min_track_record_length": "3473.40800486",
+        "min_track_record_years": "69.4681600973",
+        "minimum_observations": 8,
+        "n_observations": 36,
+        "n_trials": 8,
+        "notes": [
+          "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+          "threshold_status is not_frozen. This report is not a qualify or reject decision."
+        ],
+        "pbo": null,
+        "periods_per_year": 50,
+        "psr": "0.565582151057",
+        "reason": null,
+        "schema_version": "sidecar.eval_report.v1",
+        "sharpe_annualized": "0.198877769022",
+        "sharpe_per_period": "0.0281255638206",
+        "skewness": "-0.528055386086",
+        "sr_benchmark": "0",
+        "sr_deflation_threshold": "0.248493375178",
+        "status": "ok",
+        "threshold_status": "not_frozen",
+        "track_record_confidence": "0.95",
+        "volatility": "0.0243322219374"
+      }
+    },
+    "trailing_mean": {
+      "ending_equity": "103025.6929640805959608712531",
+      "evalstats": {
+        "benchmark": null,
+        "bootstrap": {
+          "block_length": 3,
+          "max_drawdown_ci95": [
+            "0.0503817936922",
+            "0.209568741322"
+          ],
+          "mean_return_ci95": [
+            "-0.00461639342235",
+            "0.00561133376141"
+          ],
+          "method": "stationary",
+          "reps_requested": 80,
+          "reps_used": 80,
+          "seed": 1,
+          "sharpe_per_period_ci95": [
+            "-0.198454726781",
+            "0.278306853349"
+          ]
+        },
+        "drawdown": {
+          "current_drawdown": "0.0550142394932",
+          "max_drawdown": "0.0775648025825",
+          "max_drawdown_duration": 16,
+          "peak_index": 1,
+          "trough_index": 5,
+          "ulcer_index": "0.0336069038048"
+        },
+        "dsr": "0.120846851722",
+        "kurtosis_pearson": "3.53184685297",
+        "mean_return": "0.00110747036551",
+        "min_track_record_length": "1140.68099649",
+        "min_track_record_years": "22.8136199299",
+        "minimum_observations": 8,
+        "n_observations": 36,
+        "n_trials": 8,
+        "notes": [
+          "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+          "threshold_status is not_frozen. This report is not a qualify or reject decision."
+        ],
+        "pbo": null,
+        "periods_per_year": 50,
+        "psr": "0.613422389804",
+        "reason": null,
+        "schema_version": "sidecar.eval_report.v1",
+        "sharpe_annualized": "0.348681864839",
+        "sharpe_per_period": "0.0493110622209",
+        "skewness": "-0.461115804884",
+        "sr_benchmark": "0",
+        "sr_deflation_threshold": "0.249594042183",
+        "status": "ok",
+        "threshold_status": "not_frozen",
+        "track_record_confidence": "0.95",
+        "volatility": "0.0224588624871"
+      },
+      "quality": {
+        "brier_direction": "0.38888889",
+        "directional_hit_rate": "0.61111111",
+        "information_coefficient": "-0.13759115",
+        "mean_forecast": "0.00359375",
+        "mean_realized": "0.00089087",
+        "n": 36,
+        "rank_ic": "-0.25302445"
+      }
+    },
+    "zero_return": {
+      "ending_equity": "100000.0000000000000000000000",
+      "evalstats": {
+        "n": 36,
+        "reason": "baseline step returns are missing or have no variance",
+        "status": "insufficient_sample"
+      },
+      "quality": {
+        "brier_direction": "0.25000000",
+        "directional_hit_rate": null,
+        "information_coefficient": null,
+        "mean_forecast": "0.00000000",
+        "mean_realized": "0.00089087",
+        "n": 36,
+        "rank_ic": null
+      }
+    }
+  },
+  "beats_baselines": false,
+  "broker_writes": false,
+  "caveats": [
+    "Kronos pretraining runs through 2024-06-30 (arXiv 2508.02739: data extends up to June 2024; the paper's test period starts in July 2024). Scored decisions are on or after 2024-07-01.",
+    "A repository comment also describes training through February 2024 and validation through May 2024. July 2024 is after that validation window as well.",
+    "Walk-forward only. The context ends on the decision close. The label is the close pred_len sessions later. Future prices are not passed to the model.",
+    "The last tradable_signals row is an unscored forecast from the final bar. Weekday dates after that bar are time features, not observed sessions.",
+    "Yahoo daily bars are backward-adjusted as of the fixture download. They are not a point-in-time tape. Amount is volume times close, a proxy Kronos's amount field was not given.",
+    "This run does not fine-tune Kronos. The weights are the public Hugging Face checkpoints.",
+    "The sizer horizon target is 1% times the square root of pred_len, so edge and volatility share the forecast horizon. A non-positive edge sizes to zero.",
+    "Fills are the next adjusted open plus 1 bp. That is the harness convention, not an exchange print.",
+    "Each step return runs from one fill open to the next, and the last step ends at the open pred_len sessions after the final fill. Bars after that horizon are not in the trial. Annualized Sharpe uses 252/stride periods per year.",
+    "PBO ranks the predeclared grid on forecast-weighted realized returns (pooled mean forecast times pooled N-bar realized return), one point per decision. It does not rank the long-only cash book: a non-positive edge is a zero weight, and a flat book has no variance to split. CSCV is not purged and it is not a qualify gate.",
+    "threshold_status is not_frozen. live_eligible means the post-cutoff protocol finished. It does not mean the forecast beat the nulls.",
+    "Zero-return is a constant probability of 0.5 and a flat book. Trailing mean uses only N-bar returns that end on or before the decision."
+  ],
+  "ending_equity": "91945.01467356542211066211403",
+  "equity_curve": [
+    {
+      "date": "2024-07-02",
+      "equity": "100567.5850811052461206358116"
+    },
+    {
+      "date": "2024-07-03",
+      "equity": "100780.4738726254994451993238"
+    },
+    {
+      "date": "2024-07-05",
+      "equity": "100834.7039898914830207752467"
+    },
+    {
+      "date": "2024-07-08",
+      "equity": "101243.3686823438315229711485"
+    },
+    {
+      "date": "2024-07-09",
+      "equity": "101074.7018203774100412336224"
+    },
+    {
+      "date": "2024-07-10",
+      "equity": "102061.8540404391744753542225"
+    },
+    {
+      "date": "2024-07-11",
+      "equity": "102243.5337872879451882389073"
+    },
+    {
+      "date": "2024-07-12",
+      "equity": "103063.0530671055360950340356"
+    },
+    {
+      "date": "2024-07-15",
+      "equity": "103923.1911932327998046247856"
+    },
+    {
+      "date": "2024-07-16",
+      "equity": "105376.2488224919681727643884"
+    },
+    {
+      "date": "2024-07-17",
+      "equity": "102687.2665783962885455692935"
+    },
+    {
+      "date": "2024-07-18",
+      "equity": "102201.3051498777826140971620"
+    },
+    {
+      "date": "2024-07-19",
+      "equity": "101295.4233705508294179884426"
+    },
+    {
+      "date": "2024-07-22",
+      "equity": "102804.5047615992805398480752"
+    },
+    {
+      "date": "2024-07-23",
+      "equity": "102442.1507432984761701866150"
+    },
+    {
+      "date": "2024-07-24",
+      "equity": "98767.52536523106038466086187"
+    },
+    {
+      "date": "2024-07-25",
+      "equity": "97678.35128488632127822640760"
+    },
+    {
+      "date": "2024-07-26",
+      "equity": "98680.13300013675719364324879"
+    },
+    {
+      "date": "2024-07-29",
+      "equity": "98878.34170446432353883671969"
+    },
+    {
+      "date": "2024-07-30",
+      "equity": "97520.62125922876509680075373"
+    },
+    {
+      "date": "2024-07-31",
+      "equity": "100221.7669658016263590569281"
+    },
+    {
+      "date": "2024-08-01",
+      "equity": "98297.50405997348284962527805"
+    },
+    {
+      "date": "2024-08-02",
+      "equity": "96216.75391282475154245414859"
+    },
+    {
+      "date": "2024-08-05",
+      "equity": "93381.45981869984492660392357"
+    },
+    {
+      "date": "2024-08-06",
+      "equity": "94257.95190458072356563705460"
+    },
+    {
+      "date": "2024-08-07",
+      "equity": "93240.03509727609411479710470"
+    },
+    {
+      "date": "2024-08-08",
+      "equity": "95664.22187594999553188638353"
+    },
+    {
+      "date": "2024-08-09",
+      "equity": "95906.32176500281852588988462"
+    },
+    {
+      "date": "2024-08-12",
+      "equity": "95707.34062516844444574389258"
+    },
+    {
+      "date": "2024-08-13",
+      "equity": "97551.57747165841780949111347"
+    },
+    {
+      "date": "2024-08-14",
+      "equity": "97758.12458965863459201243265"
+    },
+    {
+      "date": "2024-08-15",
+      "equity": "97758.12458965863459201243265"
+    },
+    {
+      "date": "2024-08-16",
+      "equity": "97758.12458965863459201243265"
+    },
+    {
+      "date": "2024-08-19",
+      "equity": "97758.12458965863459201243265"
+    },
+    {
+      "date": "2024-08-20",
+      "equity": "97758.12458965863459201243265"
+    },
+    {
+      "date": "2024-08-21",
+      "equity": "97896.77448151287222504364936"
+    },
+    {
+      "date": "2024-08-22",
+      "equity": "97128.41466156340117329612503"
+    },
+    {
+      "date": "2024-08-23",
+      "equity": "98160.45589536164641303703650"
+    },
+    {
+      "date": "2024-08-26",
+      "equity": "97926.44794016030223132535424"
+    },
+    {
+      "date": "2024-08-27",
+      "equity": "98060.91364190105939535121003"
+    },
+    {
+      "date": "2024-08-28",
+      "equity": "97334.91558720026923741933870"
+    },
+    {
+      "date": "2024-08-29",
+      "equity": "97612.47371924196008646441634"
+    },
+    {
+      "date": "2024-08-30",
+      "equity": "98475.07792787521612202293257"
+    },
+    {
+      "date": "2024-09-03",
+      "equity": "95474.45493690623183967828342"
+    },
+    {
+      "date": "2024-09-04",
+      "equity": "95270.08727849582911285180705"
+    },
+    {
+      "date": "2024-09-05",
+      "equity": "95319.56295262017277855680480"
+    },
+    {
+      "date": "2024-09-06",
+      "equity": "93239.13152797600412338799516"
+    },
+    {
+      "date": "2024-09-09",
+      "equity": "94360.48904616832808234567160"
+    },
+    {
+      "date": "2024-09-10",
+      "equity": "95001.81456616142599880973292"
+    },
+    {
+      "date": "2024-09-11",
+      "equity": "96521.48441010296582397068808"
+    },
+    {
+      "date": "2024-09-12",
+      "equity": "96565.92845210829174869698688"
+    },
+    {
+      "date": "2024-09-13",
+      "equity": "96565.92845210829174869698688"
+    },
+    {
+      "date": "2024-09-16",
+      "equity": "96565.92845210829174869698688"
+    },
+    {
+      "date": "2024-09-17",
+      "equity": "96565.92845210829174869698688"
+    },
+    {
+      "date": "2024-09-18",
+      "equity": "96565.92845210829174869698688"
+    },
+    {
+      "date": "2024-09-19",
+      "equity": "96259.71772582038828615669792"
+    },
+    {
+      "date": "2024-09-20",
+      "equity": "95228.23273594956875215034939"
+    },
+    {
+      "date": "2024-09-23",
+      "equity": "94880.09720673215700128157271"
+    },
+    {
+      "date": "2024-09-24",
+      "equity": "95039.12681612468607740476514"
+    },
+    {
+      "date": "2024-09-25",
+      "equity": "93879.91147020298293961532558"
+    },
+    {
+      "date": "2024-09-26",
+      "equity": "94565.12289411868050698865849"
+    },
+    {
+      "date": "2024-09-27",
+      "equity": "94730.99869333588209057991015"
+    },
+    {
+      "date": "2024-09-30",
+      "equity": "95048.07572090368282904804449"
+    },
+    {
+      "date": "2024-10-01",
+      "equity": "93995.27677075402327602528312"
+    },
+    {
+      "date": "2024-10-02",
+      "equity": "93969.17945480341224057243065"
+    },
+    {
+      "date": "2024-10-03",
+      "equity": "93699.67976491477858945103613"
+    },
+    {
+      "date": "2024-10-04",
+      "equity": "94791.47196362177928219256776"
+    },
+    {
+      "date": "2024-10-07",
+      "equity": "93919.25130244780684793448834"
+    },
+    {
+      "date": "2024-10-08",
+      "equity": "94704.18786813095367751245743"
+    },
+    {
+      "date": "2024-10-09",
+      "equity": "95241.96326159202377098455104"
+    },
+    {
+      "date": "2024-10-10",
+      "equity": "94976.02426661031438125553539"
+    },
+    {
+      "date": "2024-10-11",
+      "equity": "95859.52408263884006845565476"
+    },
+    {
+      "date": "2024-10-14",
+      "equity": "96624.00470282317124869628356"
+    },
+    {
+      "date": "2024-10-15",
+      "equity": "95973.72505887804882984147395"
+    },
+    {
+      "date": "2024-10-16",
+      "equity": "96652.36526764344383215873148"
+    },
+    {
+      "date": "2024-10-17",
+      "equity": "96627.09898825148120353711431"
+    },
+    {
+      "date": "2024-10-18",
+      "equity": "96998.77022212755414862763033"
+    },
+    {
+      "date": "2024-10-21",
+      "equity": "96839.47959429948936498487487"
+    },
+    {
+      "date": "2024-10-22",
+      "equity": "96788.03702313820051220142558"
+    },
+    {
+      "date": "2024-10-23",
+      "equity": "95903.63937889599309321200192"
+    },
+    {
+      "date": "2024-10-24",
+      "equity": "96090.47895908736672819251268"
+    },
+    {
+      "date": "2024-10-25",
+      "equity": "96154.16933719852263610365591"
+    },
+    {
+      "date": "2024-10-28",
+      "equity": "96777.82518162657497548826671"
+    },
+    {
+      "date": "2024-10-29",
+      "equity": "97035.28212573169549339388482"
+    },
+    {
+      "date": "2024-10-30",
+      "equity": "96647.93963532045674837268649"
+    },
+    {
+      "date": "2024-10-31",
+      "equity": "94692.52472920588672112899554"
+    },
+    {
+      "date": "2024-11-01",
+      "equity": "95242.25508559277496512560262"
+    },
+    {
+      "date": "2024-11-04",
+      "equity": "95001.00243080062416601925998"
+    },
+    {
+      "date": "2024-11-05",
+      "equity": "96181.27516138503814690971616"
+    },
+    {
+      "date": "2024-11-06",
+      "equity": "98683.24451678818118666400785"
+    },
+    {
+      "date": "2024-11-07",
+      "equity": "99118.85136127931226551656705"
+    },
+    {
+      "date": "2024-11-08",
+      "equity": "99118.85136127931226551656705"
+    },
+    {
+      "date": "2024-11-11",
+      "equity": "99118.85136127931226551656705"
+    },
+    {
+      "date": "2024-11-12",
+      "equity": "99118.85136127931226551656705"
+    },
+    {
+      "date": "2024-11-13",
+      "equity": "99118.85136127931226551656705"
+    },
+    {
+      "date": "2024-11-14",
+      "equity": "98485.52831501933592576992146"
+    },
+    {
+      "date": "2024-11-15",
+      "equity": "96139.02123594053142265502278"
+    },
+    {
+      "date": "2024-11-18",
+      "equity": "96806.95116575767249261350510"
+    },
+    {
+      "date": "2024-11-19",
+      "equity": "97472.95933078304485239934078"
+    },
+    {
+      "date": "2024-11-20",
+      "equity": "97416.82252914530874311321780"
+    },
+    {
+      "date": "2024-11-21",
+      "equity": "98001.38939687006381807193498"
+    },
+    {
+      "date": "2024-11-22",
+      "equity": "98001.38939687006381807193498"
+    },
+    {
+      "date": "2024-11-25",
+      "equity": "98001.38939687006381807193498"
+    },
+    {
+      "date": "2024-11-26",
+      "equity": "98001.38939687006381807193498"
+    },
+    {
+      "date": "2024-11-27",
+      "equity": "98001.38939687006381807193498"
+    },
+    {
+      "date": "2024-11-29",
+      "equity": "98596.69338447552538051844351"
+    },
+    {
+      "date": "2024-12-02",
+      "equity": "99222.42504576929676522740102"
+    },
+    {
+      "date": "2024-12-03",
+      "equity": "99398.30434123011678040548338"
+    },
+    {
+      "date": "2024-12-04",
+      "equity": "100323.5375021510388251632835"
+    },
+    {
+      "date": "2024-12-05",
+      "equity": "100101.3988892773569873283230"
+    },
+    {
+      "date": "2024-12-06",
+      "equity": "100070.7094811022025009071592"
+    },
+    {
+      "date": "2024-12-09",
+      "equity": "99561.73390183953535324462669"
+    },
+    {
+      "date": "2024-12-10",
+      "equity": "99191.40734080982911997041018"
+    },
+    {
+      "date": "2024-12-11",
+      "equity": "99799.43243231311955411370820"
+    },
+    {
+      "date": "2024-12-12",
+      "equity": "98895.49580180185714469858588"
+    },
+    {
+      "date": "2024-12-13",
+      "equity": "98548.03877885691160053471423"
+    },
+    {
+      "date": "2024-12-16",
+      "equity": "99047.98806071696222101694891"
+    },
+    {
+      "date": "2024-12-17",
+      "equity": "98277.04818104089260232790064"
+    },
+    {
+      "date": "2024-12-18",
+      "equity": "94639.81136510132150038843739"
+    },
+    {
+      "date": "2024-12-19",
+      "equity": "94417.52345094744360804729969"
+    },
+    {
+      "date": "2024-12-20",
+      "equity": "95435.60116658007141348067390"
+    },
+    {
+      "date": "2024-12-23",
+      "equity": "95863.11092540734541806548210"
+    },
+    {
+      "date": "2024-12-24",
+      "equity": "96938.28337595787383855669978"
+    },
+    {
+      "date": "2024-12-26",
+      "equity": "97246.38532156374148294277927"
+    },
+    {
+      "date": "2024-12-27",
+      "equity": "96001.69543136273927330771063"
+    },
+    {
+      "date": "2024-12-30",
+      "equity": "94964.09604473953581928654981"
+    },
+    {
+      "date": "2024-12-31",
+      "equity": "94620.18634987754007789425549"
+    },
+    {
+      "date": "2025-01-02",
+      "equity": "94507.09053025576833018507278"
+    },
+    {
+      "date": "2025-01-03",
+      "equity": "95884.99529816055885149144251"
+    },
+    {
+      "date": "2025-01-06",
+      "equity": "96447.33635683241529893181495"
+    },
+    {
+      "date": "2025-01-07",
+      "equity": "95231.54285286593792218192332"
+    },
+    {
+      "date": "2025-01-08",
+      "equity": "95161.87080416603606056500146"
+    },
+    {
+      "date": "2025-01-10",
+      "equity": "93509.82177095386936468300849"
+    },
+    {
+      "date": "2025-01-13",
+      "equity": "93506.97917972858383069045190"
+    },
+    {
+      "date": "2025-01-14",
+      "equity": "93827.60412262991625985285033"
+    },
+    {
+      "date": "2025-01-15",
+      "equity": "95909.75353527658876941072644"
+    },
+    {
+      "date": "2025-01-16",
+      "equity": "95725.29435880078393244050133"
+    },
+    {
+      "date": "2025-01-17",
+      "equity": "96686.37705972061593312367527"
+    },
+    {
+      "date": "2025-01-21",
+      "equity": "97571.38632467738991215652369"
+    },
+    {
+      "date": "2025-01-22",
+      "equity": "98119.90035501036311282054140"
+    },
+    {
+      "date": "2025-01-23",
+      "equity": "98006.52518010109003889717015"
+    },
+    {
+      "date": "2025-01-24",
+      "equity": "98006.52518010109003889717015"
+    },
+    {
+      "date": "2025-01-27",
+      "equity": "98006.52518010109003889717015"
+    },
+    {
+      "date": "2025-01-28",
+      "equity": "98006.52518010109003889717015"
+    },
+    {
+      "date": "2025-01-29",
+      "equity": "98006.52518010109003889717015"
+    },
+    {
+      "date": "2025-01-30",
+      "equity": "98015.39571491383709320033344"
+    },
+    {
+      "date": "2025-01-31",
+      "equity": "97500.79312256617084843163714"
+    },
+    {
+      "date": "2025-02-03",
+      "equity": "96642.23184414386292041582775"
+    },
+    {
+      "date": "2025-02-04",
+      "equity": "97698.92610639671894585711735"
+    },
+    {
+      "date": "2025-02-05",
+      "equity": "98332.42086707771916920218858"
+    },
+    {
+      "date": "2025-02-06",
+      "equity": "97809.84832016176485855460016"
+    },
+    {
+      "date": "2025-02-07",
+      "equity": "96676.26078955338921182737101"
+    },
+    {
+      "date": "2025-02-10",
+      "equity": "97112.57448329508854034431608"
+    },
+    {
+      "date": "2025-02-11",
+      "equity": "96547.91720813550090688390890"
+    },
+    {
+      "date": "2025-02-12",
+      "equity": "95658.17120235101526557058154"
+    },
+    {
+      "date": "2025-02-13",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-14",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-18",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-19",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-20",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-21",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-24",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-25",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-26",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-27",
+      "equity": "96255.97886679909150962391452"
+    },
+    {
+      "date": "2025-02-28",
+      "equity": "97690.65968182271068839855976"
+    },
+    {
+      "date": "2025-03-03",
+      "equity": "95517.16059237995063205596770"
+    },
+    {
+      "date": "2025-03-04",
+      "equity": "94684.60259911471622733016888"
+    },
+    {
+      "date": "2025-03-05",
+      "equity": "95749.44132291931979045405200"
+    },
+    {
+      "date": "2025-03-06",
+      "equity": "93812.93925435496320341566428"
+    },
+    {
+      "date": "2025-03-07",
+      "equity": "94320.07933002134101311049808"
+    },
+    {
+      "date": "2025-03-10",
+      "equity": "91472.56563229919572271082454"
+    },
+    {
+      "date": "2025-03-11",
+      "equity": "91142.47864849580357142684895"
+    },
+    {
+      "date": "2025-03-12",
+      "equity": "91697.68870050242628162616858"
+    },
+    {
+      "date": "2025-03-13",
+      "equity": "90284.38382059083460490727133"
+    },
+    {
+      "date": "2025-03-14",
+      "equity": "92360.88801227300953746755918"
+    },
+    {
+      "date": "2025-03-17",
+      "equity": "93186.47098853377318034634130"
+    },
+    {
+      "date": "2025-03-18",
+      "equity": "92052.25527625714106572828539"
+    },
+    {
+      "date": "2025-03-19",
+      "equity": "93274.72864749456502764206420"
+    },
+    {
+      "date": "2025-03-20",
+      "equity": "92881.09560802277272150274039"
+    },
+    {
+      "date": "2025-03-21",
+      "equity": "91945.01467356542211066211403"
+    }
+  ],
+  "evalstats": {
+    "benchmark": null,
+    "bootstrap": {
+      "block_length": 3,
+      "max_drawdown_ci95": [
+        "0.0527181897363",
+        "0.246636766042"
+      ],
+      "mean_return_ci95": [
+        "-0.00736382919404",
+        "0.00263105500625"
+      ],
+      "method": "stationary",
+      "reps_requested": 80,
+      "reps_used": 80,
+      "seed": 0,
+      "sharpe_per_period_ci95": [
+        "-0.382245652824",
+        "0.148015315868"
+      ]
+    },
+    "drawdown": {
+      "current_drawdown": "0.114232523482",
+      "max_drawdown": "0.121297714523",
+      "max_drawdown_duration": 34,
+      "peak_index": 2,
+      "trough_index": 35,
+      "ulcer_index": "0.0701212918297"
+    },
+    "dsr": "0.0192597888218",
+    "kurtosis_pearson": "2.59557826715",
+    "mean_return": "-0.0020492933604",
+    "min_track_record_length": null,
+    "min_track_record_years": null,
+    "minimum_observations": 8,
+    "n_observations": 36,
+    "n_trials": 8,
+    "notes": [
+      "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+      "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+      "PBO is the fraction of CSCV splits where the in-sample winner's out-of-sample Sharpe is at or below the median. Splits are not purged.",
+      "No finite minimum track record: per-period Sharpe does not exceed the benchmark.",
+      "PSR, DSR, and drawdown use the long-only cost-aware step returns. PBO ranks forecast-weighted realized returns (pooled mean forecast times pooled realized return)."
+    ],
+    "pbo": {
+      "mean_oos_sharpe_of_selected": "0.133987686009",
+      "median_logit": "0.223143551314",
+      "n_slices": 4,
+      "n_splits": 3,
+      "n_strategies": 8,
+      "observations_dropped_prefix": 0,
+      "observations_used": 36,
+      "pbo": "0.333333333333",
+      "status": "ok"
+    },
+    "periods_per_year": 50,
+    "psr": "0.270841980117",
+    "reason": null,
+    "schema_version": "sidecar.eval_report.v1",
+    "sharpe_annualized": "-0.71741828213",
+    "sharpe_per_period": "-0.101458266448",
+    "skewness": "-0.361896848228",
+    "sr_benchmark": "0",
+    "sr_deflation_threshold": "0.242563788171",
+    "status": "ok",
+    "threshold_status": "not_frozen",
+    "track_record_confidence": "0.95",
+    "volatility": "0.0201983872989"
+  },
+  "evaluation_start": "2024-07-01",
+  "generated_at": "2026-10-18T23:08:23.527533+00:00",
+  "kronos_commit": "67b630e67f6a18c9e9be918d9b4337c960db1e9a",
+  "live_eligible": true,
+  "orders_submitted": 0,
+  "paper_citation": "arXiv:2508.02739",
+  "pbo_input": "forecast_weighted_realized",
+  "per_symbol": {
+    "IWM": {
+      "brier_direction": "0.23611111",
+      "directional_hit_rate": "0.55555556",
+      "information_coefficient": "0.12103610",
+      "mean_forecast": "-0.00043610",
+      "mean_realized": "0.00120464",
+      "n": 36,
+      "rank_ic": "0.11093951"
+    },
+    "QQQ": {
+      "brier_direction": "0.40451389",
+      "directional_hit_rate": "0.41666667",
+      "information_coefficient": "-0.04151459",
+      "mean_forecast": "0.00267255",
+      "mean_realized": "0.00024931",
+      "n": 36,
+      "rank_ic": "-0.13256113"
+    },
+    "SPY": {
+      "brier_direction": "0.29687500",
+      "directional_hit_rate": "0.61111111",
+      "information_coefficient": "0.24815804",
+      "mean_forecast": "0.00173600",
+      "mean_realized": "0.00121865",
+      "n": 36,
+      "rank_ic": "0.24118404"
+    }
+  },
+  "pretraining_through": "2024-06-30",
+  "primary_config": {
+    "config_hash": "a461a7b2d75f5405657dba8ebda924c722574cfb29ec8de1ba6babbf147766e5",
+    "lookback": 64,
+    "model": "mini",
+    "pred_len": 5,
+    "primary": true,
+    "sample_count": 4,
+    "stride": 5,
+    "temperature": 1.0,
+    "top_p": 0.9
+  },
+  "profile": "report",
+  "schema_version": "sidecar.kronos_eval.v1",
+  "signal_quality": {
+    "brier_direction": "0.27854938",
+    "directional_hit_rate": "0.52777778",
+    "information_coefficient": "0.16113576",
+    "mean_forecast": "0.00132415",
+    "mean_realized": "0.00089087",
+    "n": 36,
+    "rank_ic": "0.11814672"
+  },
+  "strategy_id": "sidecar.kronos_signal.v1",
+  "strategy_returns": [
+    0.014205834457256898,
+    0.026482049840574926,
+    -0.02961406852654896,
+    -0.012557612417095661,
+    -0.04152832389690291,
+    0.023027605344962815,
+    0.0,
+    0.002572375655831942,
+    -0.02811923894115732,
+    0.014284650822844762,
+    0.0,
+    -0.015212329547502368,
+    -0.015800523103521483,
+    0.012151722089871902,
+    0.026665232243386506,
+    -0.010121033509529151,
+    -0.0011628740487164939,
+    0.03148792013668589,
+    0.0,
+    -0.011076195004565418,
+    0.0,
+    0.02284312074701507,
+    -0.012157503861600812,
+    -0.05095267603954576,
+    0.010516605509916293,
+    0.01933808359691638,
+    -0.012897742171189027,
+    0.02620551740318477,
+    0.0,
+    0.006346228705528538,
+    -0.023729885660134814,
+    0.0,
+    0.0,
+    -0.027494988231765976,
+    -0.025516995855660817,
+    0.008040483287221893
+  ],
+  "symbols": [
+    "SPY",
+    "QQQ",
+    "IWM"
+  ],
+  "tradable_signals": [
+    {
+      "as_of": "2026-10-16",
+      "edge": "-0.00502431",
+      "horizon_bars": 5,
+      "p_up": "0.250000",
+      "scored": false,
+      "symbol": "SPY",
+      "vol": "0.01144448"
+    },
+    {
+      "as_of": "2026-10-16",
+      "edge": "-0.03100856",
+      "horizon_bars": 5,
+      "p_up": "0.000000",
+      "scored": false,
+      "symbol": "QQQ",
+      "vol": "0.01132406"
+    },
+    {
+      "as_of": "2026-10-16",
+      "edge": "-0.00587763",
+      "horizon_bars": 5,
+      "p_up": "0.250000",
+      "scored": false,
+      "symbol": "IWM",
+      "vol": "0.00729128"
+    }
+  ],
+  "trial_ledger": {
+    "distinct_configs": 8,
+    "entries": 8,
+    "head_hash": "2be0f2c524535bb6ddc63462684319e5a273bc9b9d04082e8af1083d99ef9979",
+    "path": "examples/kronos_eval.ledger.jsonl"
+  },
+  "trials": [
+    {
+      "brier_direction": "0.27854938",
+      "directional_hit_rate": "0.52777778",
+      "ending_equity": "91945.01467356542211066211403",
+      "information_coefficient": "0.16113576",
+      "lookback": 64,
+      "mean_step_return": "-0.00204929",
+      "model": "mini",
+      "primary": true,
+      "temperature": 1.0
+    },
+    {
+      "brier_direction": "0.31037809",
+      "directional_hit_rate": "0.44444444",
+      "ending_equity": "100434.0788295053439636083953",
+      "information_coefficient": "0.05197707",
+      "lookback": 64,
+      "mean_step_return": "0.00038286",
+      "model": "mini",
+      "primary": false,
+      "temperature": 0.7
+    },
+    {
+      "brier_direction": "0.29571759",
+      "directional_hit_rate": "0.52777778",
+      "ending_equity": "110170.9932321301447932239270",
+      "information_coefficient": "0.22562463",
+      "lookback": 128,
+      "mean_step_return": "0.00307139",
+      "model": "mini",
+      "primary": false,
+      "temperature": 0.7
+    },
+    {
+      "brier_direction": "0.26234568",
+      "directional_hit_rate": "0.55555556",
+      "ending_equity": "114446.8329072878574543375526",
+      "information_coefficient": "0.21614282",
+      "lookback": 128,
+      "mean_step_return": "0.00410356",
+      "model": "mini",
+      "primary": false,
+      "temperature": 1.0
+    },
+    {
+      "brier_direction": "0.27334105",
+      "directional_hit_rate": "0.52777778",
+      "ending_equity": "109241.9585792511377381457816",
+      "information_coefficient": "0.08076369",
+      "lookback": 64,
+      "mean_step_return": "0.00285927",
+      "model": "small",
+      "primary": false,
+      "temperature": 0.7
+    },
+    {
+      "brier_direction": "0.24864969",
+      "directional_hit_rate": "0.63888889",
+      "ending_equity": "114142.0353981939740016734770",
+      "information_coefficient": "0.09528355",
+      "lookback": 64,
+      "mean_step_return": "0.00401650",
+      "model": "small",
+      "primary": false,
+      "temperature": 1.0
+    },
+    {
+      "brier_direction": "0.25617284",
+      "directional_hit_rate": "0.61111111",
+      "ending_equity": "104831.1070322119500761576373",
+      "information_coefficient": "0.25891497",
+      "lookback": 128,
+      "mean_step_return": "0.00166035",
+      "model": "small",
+      "primary": false,
+      "temperature": 0.7
+    },
+    {
+      "brier_direction": "0.22048611",
+      "directional_hit_rate": "0.72222222",
+      "ending_equity": "109945.2070923260784166367957",
+      "information_coefficient": "0.28060361",
+      "lookback": 128,
+      "mean_step_return": "0.00293874",
+      "model": "small",
+      "primary": false,
+      "temperature": 1.0
+    }
+  ]
+}
