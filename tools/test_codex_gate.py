@@ -1463,6 +1463,7 @@ class WorkflowStructureTests(unittest.TestCase):
 
     def test_review_job_if_is_codex_only(self) -> None:
         self.assertIn("chatgpt-codex-connector[bot]", self.text)
+        self.assertIn("github.event.pull_request.draft == false", self.text)
         self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", self.text)
         self.assertIn("group: codex-gate", self.text)
         self.assertNotIn("github.run_id", self.text)
@@ -1511,7 +1512,7 @@ class WorkflowStructureTests(unittest.TestCase):
         gates = self.ci.split("\n  linux-gates:\n", 1)[1].split("\n  windows:\n", 1)[0]
         header = gates.split("steps:", 1)[0]
         self.assertIn("name: linux-gates", self.ci)
-        self.assertIn("always() && !cancelled() && github.event_name != 'schedule'", header)
+        self.assertIn("always() && github.event_name != 'schedule'", header)
         self.assertNotIn("needs.filter.result != 'skipped'", header)
         self.assertIn('FILTER_RESULT" != "success"', gates)
         self.assertNotIn("required check passes.", self.ci)

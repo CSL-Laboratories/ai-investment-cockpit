@@ -107,7 +107,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 `DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
 Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort. Hosted Actions
 do not replace that matrix: Linux `linux-gates` is the cheap required PR check; Windows runs
-on `main`, the `ci:full` label, or `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
+on push to `main`, `merge_group`, the `ci:full` label, or full `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
 skipped if idle 24h), on `ci:full`, or on `workflow_dispatch`. Hetzner is not part of
 current package validation. This changes platform evidence only and does not waive any online,
 broker, witness, paper-day, or pre-live gate.
@@ -122,6 +122,11 @@ ruff check .
 Install the full runtime set in every matrix cell, including `discord.py`. The Discord
 command-tree tests run offline with the real dependency; a separate isolated subprocess
 forces its import to fail and covers the fallback without skipping either path.
+`discord.py` 2.7.1 declares `audioop-lts; python_version >= "3.13"` in its PyPI
+`requires_dist`. On 3.11 and 3.12 the stdlib `audioop` import in `discord.player` is a
+DeprecationWarning, and pytest ignores that one warning only. That marker is why a
+`<3.13` cap is not added for this warning. A 3.13 matrix cell stays a separate support
+decision.
 
 ## Where things are
 - **Core engines (solid — change with care + adversarial review):** `app/risk/`,
