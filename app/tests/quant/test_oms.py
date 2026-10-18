@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from copy import copy
 from dataclasses import replace
+from types import MappingProxyType
 
 import pytest
 
@@ -22,6 +23,7 @@ from quant.events import Fill, Liquidity, Side
 from quant.oms import (
     OMS,
     IllegalTransition,
+    LiveIndexInvariantError,
     NewOrder,
     OrderIdSequence,
     OrderState,
@@ -323,3 +325,114 @@ def test_an_orders_overlay_is_what_exposure_reads(oms):
     assert view.exposure_ticks() == 100
     assert view.open_side_qty("TEST", Side.BUY) == 10
     assert oms.exposure_ticks() == 50
+
+
+def test_a_completing_fill_leaves_the_live_index_empty(oms):
+    """``exposure_ticks()`` is 0 at zero remaining size, so an exposure check would
+    pass with a FILLED id still indexed. Pin the index itself, for a fill that
+    completes a partial and for one that fills a fresh order outright."""
+    oms.register(_new("a", Side.BUY, 4, price=7), strategy="mm")
+    oms.on_acknowledged("a")
+    oms.on_fill(_fill("a", Side.BUY, 1, price=7))
+    assert [order.client_id for order in oms.live_orders()] == ["a"]
+    oms.on_fill(_fill("a", Side.BUY, 3, price=7))
+    assert oms.get("a").state is OrderState.FILLED
+    assert oms.live_orders() == []
+    assert oms.live_orders(strategy="mm") == []
+    assert oms.live_orders(symbol="TEST") == []
+    assert [order.client_id for order in oms._orders.values() if order.is_live] == []
+
+    oms.register(_new("b", Side.SELL, 2, price=9), strategy="mm")
+    oms.on_fill(_fill("b", Side.SELL, 2, price=9))
+    assert oms.get("b").state is OrderState.FILLED
+    assert oms.live_orders() == []
+    assert oms.exposure_ticks() == 0
+    assert oms.position("TEST") == 2
+
+
+def test_a_copied_view_cannot_write_the_shared_live_index(oms):
+    """``copy()`` is AutoLoop's guard view. It shares the live index with the original,
+    so a cancel routed at the view would otherwise pop the real order's id while the
+    original keeps it pending and real exposure comes out short. The view's index
+    is a read-only proxy: reads stay current, writes raise, the original is untouched."""
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    view = copy(oms)
+    assert isinstance(view._live, MappingProxyType)
+    assert [order.client_id for order in view.live_orders()] == ["a"]
+
+    with pytest.raises(TypeError):
+        view._live["a"] = oms.get("a")
+    with pytest.raises(TypeError):
+        del view._live["a"]
+    with pytest.raises((TypeError, AttributeError)):
+        view.on_cancelled("a")
+    with pytest.raises((TypeError, AttributeError)):
+        view.on_rejected("a", reason="no")
+
+    assert oms.get("a").state is OrderState.PENDING_NEW
+    assert [order.client_id for order in oms.live_orders()] == ["a"]
+    assert oms.exposure_ticks() == 50
+
+    oms.on_cancelled("a")
+    assert view.live_orders() == []
+    assert view.exposure_ticks() == 0
+
+
+def test_a_copied_view_rejects_fills_and_replaces_before_touching_shared_state(oms):
+    """A partial fill never touches the live index, so the read-only proxy cannot
+    be what stops it. The view has to refuse the callback before shared fill
+    accounting moves. A completing fill, a replace, and a register do the same."""
+    oms.register(_new("a", Side.BUY, 5, price=10), strategy="mm")
+    view = copy(oms)
+    with pytest.raises(TypeError):
+        view.on_fill(_fill("a", Side.BUY, 1, price=10))
+    with pytest.raises(TypeError):
+        view.on_fill(_fill("a", Side.BUY, 5, price=10))
+    with pytest.raises(TypeError):
+        view.on_replaced("a", new_qty=9)
+    with pytest.raises(TypeError):
+        view.on_acknowledged("a")
+    with pytest.raises(TypeError):
+        view.register(_new("b", qty=1, price=1), strategy="mm")
+    order = oms.get("a")
+    assert order.state is OrderState.PENDING_NEW
+    assert order.filled_qty == 0
+    assert order.qty == 5
+    assert oms.position("TEST") == 0
+    assert oms.get("b") is None
+    assert [live.client_id for live in oms.live_orders()] == ["a"]
+
+
+def test_a_retained_view_sees_a_reused_id_inserted_out_of_order(oms):
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    view = copy(oms)
+    oms.on_cancelled("a")
+    oms.register(_new("b", qty=5, price=10), strategy="mm")
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    assert [o.client_id for o in oms.live_orders()] == ["a", "b"]
+    assert [o.client_id for o in view.live_orders()] == ["a", "b"]
+
+
+def test_a_live_id_without_an_order_raises_instead_of_being_skipped(oms):
+    """Nothing deletes from ``_orders`` and the guard view copies the whole map, so
+    the public API cannot reach this. If the index and the map ever diverge, a
+    skipped id would quietly shorten exposure. Force the divergence both ways:
+    on the OMS itself and through a guard overlay that lost an id."""
+    oms.register(_new("a", qty=5, price=10), strategy="mm")
+    oms.register(_new("b", qty=5, price=10), strategy="mm")
+
+    view = copy(oms)
+    view._orders = {"a": oms.get("a")}
+    with pytest.raises(LiveIndexInvariantError):
+        view.live_orders()
+    with pytest.raises(LiveIndexInvariantError):
+        view.exposure_ticks()
+    assert [order.client_id for order in oms.live_orders()] == ["a", "b"]
+
+    del oms._orders["b"]
+    with pytest.raises(LiveIndexInvariantError):
+        oms.live_orders()
+    with pytest.raises(LiveIndexInvariantError):
+        oms.live_orders(strategy="mm")
+    with pytest.raises(LiveIndexInvariantError):
+        oms.open_side_qty("TEST", Side.BUY)

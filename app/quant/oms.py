@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from quant.events import Fill, Side
 
@@ -77,6 +78,16 @@ class IllegalTransition(RuntimeError):
     Raised, never logged-and-continued. An order that went from FILLED back to WORKING means
     the fill stream and the ack stream disagree about reality, and every position derived
     afterwards is wrong. In a simulator this is always our own bug, so it must be loud.
+    """
+
+
+class LiveIndexInvariantError(RuntimeError):
+    """A live id has no order behind it.
+
+    ``_live`` and ``_orders`` are written together, so an id in the index with no order
+    in the map means the two diverged. Skipping the id would quietly shorten exposure
+    and open-side projections, which is the failure the index must never introduce.
+    No public path reaches this today; it is loud so a future one cannot hide.
     """
 
 
@@ -165,7 +176,7 @@ class OMS:
     what keeps the OMS usable identically for replay, sim execution and post-hoc analysis.
     """
 
-    __slots__ = ("_orders", "_positions", "_by_strategy", "_live", "_rank", "_next_rank")
+    __slots__ = ("_orders", "_positions", "_by_strategy", "_live", "_rank", "_next_rank", "_read_only")
 
     def __init__(self) -> None:
         self._orders: dict[str, ManagedOrder] = {}
@@ -178,6 +189,28 @@ class OMS:
         self._live: dict[str, ManagedOrder] = {}
         self._rank: dict[str, int] = {}
         self._next_rank = 0
+        self._read_only = False
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise TypeError("a copied OMS is a read-only guard view; mutate the original")
+
+    def __copy__(self) -> OMS:
+        """A copy is a read-only guard view, not a second OMS.
+
+        AutoLoop copies the OMS to overlay worst-case pending-replace terms onto
+        ``_orders`` and read exposure through it. Every other map is shared with the
+        original, so a venue callback routed at the copy would pop the shared live
+        index while the real order stays pending, understating real exposure. The
+        copy's index is therefore a read-only proxy over the original's: reads stay
+        current, and a write through the copy raises instead of reaching the original.
+        """
+        view = object.__new__(OMS)
+        for name in OMS.__slots__:
+            setattr(view, name, getattr(self, name))
+        view._live = MappingProxyType(self._live)
+        view._read_only = True
+        return view
 
     # ---- intake ----------------------------------------------------------------------
 
@@ -188,6 +221,7 @@ class OMS:
         for a live order makes cancels ambiguous, and an ambiguous cancel in a simulator is
         a silently wrong fill sequence rather than an error.
         """
+        self._require_writable()
         existing = self._orders.get(intent.client_id)
         if existing is not None and existing.is_live:
             raise ValueError(
@@ -232,7 +266,9 @@ class OMS:
             placed[key] = current
         if not inserted:
             placed[client_id] = order
-        self._live = placed
+        # Mutate in place: copies hold a read-only proxy over this exact dict.
+        self._live.clear()
+        self._live.update(placed)
 
     def _transition(self, order: ManagedOrder, dst: OrderState, *, ts: int, reason: str | None = None) -> None:
         if not legal_transition(order.state, dst):
@@ -240,29 +276,35 @@ class OMS:
                 f"order {order.client_id!r}: {order.state.value} -> {dst.value} is not a legal "
                 "transition; the ack and fill streams disagree about reality"
             )
-        order.state = dst
-        order.updated_ts = ts
-        if reason is not None:
-            order.reason = reason
+        # Index first, order second. On the real OMS the dict writes cannot fail, so
+        # the end state is the same either way; on a read-only guard view the index
+        # write raises before the shared order object has been touched.
         if dst in TERMINAL_STATES:
             self._live.pop(order.client_id, None)
         elif order.client_id not in self._live:
             self._place_live(order)
+        order.state = dst
+        order.updated_ts = ts
+        if reason is not None:
+            order.reason = reason
 
     # ---- venue callbacks ---------------------------------------------------------------
 
     def on_acknowledged(self, client_id: str, *, ts: int = 0) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         if order.state is OrderState.PENDING_NEW:
             self._transition(order, OrderState.WORKING, ts=ts)
         return order
 
     def on_rejected(self, client_id: str, *, reason: str, ts: int = 0) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         self._transition(order, OrderState.REJECTED, ts=ts, reason=reason)
         return order
 
     def on_cancelled(self, client_id: str, *, ts: int = 0, reason: str | None = None) -> ManagedOrder:
+        self._require_writable()
         order = self._require(client_id)
         self._transition(order, OrderState.CANCELLED, ts=ts, reason=reason)
         return order
@@ -283,6 +325,7 @@ class OMS:
         or still partially filled. It only changes the terms. ``None`` means "leave this one
         alone", so a pure reprice does not silently retire the order's size.
         """
+        self._require_writable()
         order = self._require(client_id)
         if order.is_terminal:
             raise IllegalTransition(
@@ -308,6 +351,7 @@ class OMS:
         over the disagreement and leave the position quietly short of reality — the exact
         failure that makes a live desync undetectable until reconciliation.
         """
+        self._require_writable()
         order = self._require(fill.order_id)
         if fill.qty > order.remaining_qty:
             raise IllegalTransition(
@@ -365,7 +409,10 @@ class OMS:
         for client_id in self._live:
             order = orders.get(client_id)
             if order is None:
-                continue
+                raise LiveIndexInvariantError(
+                    f"live index holds {client_id!r} but there is no such order in the "
+                    "OMS; the index and the order map diverged"
+                )
             if strategy is not None and order.strategy != strategy:
                 continue
             if symbol is not None and order.symbol != symbol:

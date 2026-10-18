@@ -326,6 +326,9 @@ class AutoLoop:
         """
         if not self._awaiting_replacements:
             return self.oms
+        # Read-only view. ``OMS.__copy__`` shares the live index with the real OMS
+        # through a read-only proxy: read exposure and open-side size through it,
+        # never route a venue callback (ack/fill/cancel) at it.
         view = copy(self.oms)
         view._orders = dict(self.oms._orders)
         for client_id, requests in self._awaiting_replacements.items():
