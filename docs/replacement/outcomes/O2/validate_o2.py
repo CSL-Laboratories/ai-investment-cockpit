@@ -838,18 +838,44 @@ def validate_records(bundle: Bundle) -> None:
     for identity in bundle.identities.values():
         if identity["market_family"] == "equity":
             _identity_issuer(identity)
-        prior_id = identity["prior_identity_id"]
-        if prior_id is None:
+    _require_identity_lineage(bundle)
+
+
+def _instrument_key(identity: dict) -> tuple:
+    family = identity["market_family"]
+    stable = "listing_key" if family == "equity" else "market_ticker"
+    return (family, identity[family][stable])
+
+
+def _require_identity_lineage(bundle: Bundle) -> None:
+    """Version 1 is a root. Every later version names the previous version of its instrument.
+
+    This is the only identity-version check. A null prior on a later version does not
+    skip the lineage. The prior must be the same instrument at exactly the previous version.
+    """
+    claimed: dict[tuple, str] = {}
+    for identity in bundle.identities.values():
+        identity_id = identity["identity_id"]
+        version = identity["identity_version"]
+        instrument = _instrument_key(identity)
+        slot = (*instrument, version)
+        if slot in claimed:
+            raise ContractError(f"{identity_id} repeats identity version {version}")
+        claimed[slot] = identity_id
+        prior_id = identity.get("prior_identity_id")
+        if version == 1:
+            if prior_id is not None:
+                raise ContractError(f"{identity_id} first identity version names a prior")
             continue
+        if not prior_id:
+            raise ContractError(f"{identity_id} identity version does not name its prior")
         prior = bundle.identities.get(prior_id)
         if prior is None or prior["market_family"] != identity["market_family"]:
-            raise ContractError(f"{identity['identity_id']} prior identity crosses families")
-        family = identity["market_family"]
-        stable_key = "listing_key" if family == "equity" else "market_ticker"
-        if identity[family][stable_key] != prior[family][stable_key]:
-            raise ContractError(f"{identity['identity_id']} prior identity changes instrument")
-        if identity["identity_version"] <= prior["identity_version"]:
-            raise ContractError(f"{identity['identity_id']} version does not advance")
+            raise ContractError(f"{identity_id} prior identity crosses families")
+        if _instrument_key(prior) != instrument:
+            raise ContractError(f"{identity_id} prior identity changes instrument")
+        if prior.get("identity_version") != version - 1:
+            raise ContractError(f"{identity_id} identity version does not follow its prior")
 
 
 def _require_version_chain(records: list[dict]) -> None:
@@ -1047,14 +1073,48 @@ def validate_controls(bundle: Bundle) -> list[str]:
     return lines
 
 
+# Decided feed rows: market family, qualification, credentials required.
+# Admitted acquisition is false for every feed. This is the only qualification check.
+FEED_DECISIONS = {
+    "o2_synthetic_fixture_corpus": ("cross_market", "not_qualified", False),
+    "sec_edgar_submissions": ("equity", "public_documented", False),
+    "sec_edgar_companyfacts": ("equity", "public_documented", False),
+    "sec_edgar_frames": ("equity", "disqualified_as_asof_source", False),
+    "kalshi_demo_rest_trade_api": ("event", "public_documented", True),
+    "kalshi_demo_ws_market_lifecycle_v2": ("event", "public_documented", True),
+    "local_edgar_pipeline": ("equity", "local_observed", False),
+    "local_filings_raw_store": ("equity", "local_observed", False),
+    "local_parquet_snapshot": ("equity", "local_observed", False),
+    "local_quant_replay": ("equity", "local_observed", False),
+    "local_ingest_dedup": ("equity", "local_observed", False),
+    "alpaca_benzinga_and_finnhub": ("equity", "not_qualified", True),
+}
+
+
 def validate_qualification(bundle: Bundle) -> None:
+    """Every feed must match the decided qualification table. No other feed is admitted."""
     if not bundle.feeds:
         raise ContractError("qualification matrix is empty")
+    seen: list[str] = []
     for feed in bundle.feeds:
-        if feed["qualification"] in {"qualified", "pass", "provider_free_verified"}:
-            raise ContractError(f"{feed['feed_id']} claims qualification")
+        feed_id = feed["feed_id"]
+        if feed_id in seen:
+            raise ContractError(f"duplicate feed {feed_id}")
+        seen.append(feed_id)
+        expected = FEED_DECISIONS.get(feed_id)
+        if expected is None:
+            raise ContractError(f"{feed_id} is not a decided feed")
+        family, qualification, credentials = expected
+        if (
+            feed["market_family"] != family
+            or feed["qualification"] != qualification
+            or feed["credentials_required"] is not credentials
+        ):
+            raise ContractError(f"{feed_id} qualification decision does not match")
         if feed["admitted_for_acquisition"]:
-            raise ContractError(f"{feed['feed_id']} admits acquisition")
+            raise ContractError(f"{feed_id} admits acquisition")
+    if set(seen) != set(FEED_DECISIONS):
+        raise ContractError("qualification decisions are not the required set")
 
 
 def validate_candidate(root: Path | None = None) -> list[str]:

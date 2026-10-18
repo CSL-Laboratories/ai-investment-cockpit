@@ -91,13 +91,14 @@ Facts used, and the limits of those facts:
 
 ## Identity
 
-Equity identity: venue `us_equity`, issuer CIK, listing key, ticker, share class, currency `USD`, and an integer version. A later listing version points at the prior identity. The ticker is not the stable key. The synthetic issuer is CIK `0000000001`, ticker `SYNTH`.
+Equity identity: venue `us_equity`, issuer CIK, listing key, ticker, share class, currency `USD`, and an integer version. Version 1 has no prior link. Every later version names the previous version of that same listing. The ticker is not the stable key. The synthetic issuer is CIK `0000000001`, ticker `SYNTH`.
 
 The listing key must equal `us-equity:cik:<issuer_cik>:class:<share_class>`.
 
 An SEC accession's 10-digit filer prefix may be the issuer CIK or a filing agent's CIK. The record still carries the issuer CIK, and that CIK must match the fact's issuer. That is one binding for every equity record: the identity, its listing key, a `sec:fact` key, a listing natural key, and a filing payload. A filing stored on a listing key does not skip it. An issuer-filed accession carries that CIK in the prefix. An agent-filed accession is allowed only when `payload.issuer_cik` is that same issuer. A filing amendment may name the original filing, or any accession already in its `supersedes` ancestry, so a later 10-K/A may still amend the original filing. The amendment's own accession is distinct from those submissions. An amendment may supersede only its own form family: `10-K/A` may supersede `10-K` or `10-K/A`, and `8-K/A` may supersede `8-K` or `8-K/A`. A base form may supersede only that same form.
 A prior-identity link must preserve the equity listing key or event market ticker,
-as applicable, and strictly advance the identity version. Separate instruments
+as applicable. The later version is exactly one greater than that prior version.
+Two identities cannot claim the same version of one instrument. Separate instruments
 cannot share one version history.
 
 Event identity: venue `kalshi_demo`, environment `demo`, series ticker, event ticker, market ticker, contract family, and collateral return type (`""`, `MECNET`, or `DIRECNET`). `api_path_observed_not_selected` is fixed to the observed string `trade-api/v2`. Two markets in one series are two identities. A voided market is not the settled market.
@@ -193,7 +194,7 @@ The synthetic 2-for-1 split is its own raw record: ratio 2/1, ex-date `2024-08-0
 
 `fixtures/qualification_matrix.json` is the matrix. `qualification_claimed` is false. `admitted_for_acquisition` is false on every row. Allowed qualification values are `public_documented`, `local_observed`, `disqualified_as_asof_source`, and `not_qualified`.
 
-No feed is qualified. SEC frames are disqualified as an as-of source. Kalshi demo REST and lifecycle sockets are public-documented and credentialed, and they are not admitted. Local stock components are local observations, not the cross-market envelope.
+One table decides every feed: its id, market family, qualification, and whether credentials are required. A feed outside that table, or a row that changes any of those decisions, is rejected. No feed is qualified. SEC frames are disqualified as an as-of source. Kalshi demo REST and lifecycle sockets are public-documented and credentialed, and they are not admitted. Local stock components are local observations, not the cross-market envelope.
 
 ## Negative controls
 

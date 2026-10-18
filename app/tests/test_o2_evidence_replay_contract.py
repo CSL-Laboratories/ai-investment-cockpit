@@ -1378,6 +1378,30 @@ def test_listing_key_tail_must_be_the_payload_kind(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def test_later_identity_without_prior_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    identity = next(
+        item for item in documents["fixtures/identities.json"]["identities"] if item["identity_id"] == "idn-eq-v2"
+    )
+    identity["prior_identity_id"] = None
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="identity version does not name its prior"):
+        module.validate_candidate(copy)
+
+
+def test_frames_qualification_decision_is_enforced(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    feed = next(
+        item for item in documents["fixtures/qualification_matrix.json"]["feeds"] if item["feed_id"] == "sec_edgar_frames"
+    )
+    feed["qualification"] = "public_documented"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="sec_edgar_frames qualification decision does not match"):
+        module.validate_candidate(copy)
+
+
 def test_o2_validator_does_not_import_providers() -> None:
     text = VALIDATOR.read_text(encoding="utf-8")
     for banned in ("urllib", "httpx", "requests", "socket", "websockets", "boto3", "keyring"):
