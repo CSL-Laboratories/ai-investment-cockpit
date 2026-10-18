@@ -4,7 +4,7 @@ Standalone research modules for the AI Investment Cockpit. Nothing in this tree 
 
 The offline packages and the read-only paper observer do not place orders. `sidecar.harness.runner` is a separate experimental path: it can post to its own Alpaca **paper** account, and only that account. `sidecar.options.runner` is a second experimental paper path, for defined-risk option spreads only, on that same sidecar paper account. Neither is the cockpit's single order path. An order inside the cockpit still has to pass risk, mode, and approval before the gateway. `app/risk/` stays Decimal and stdlib-only. `app/quant/` still must not import `app/brokers/`. This tree does not import either. The experimental paths have to be reconciled at integration time; they do not replace the cockpit path and they do not weaken it.
 
-`sidecar.rl` and `sidecar.intraday_mm` are simulation only. They never place an order.
+`sidecar.rl` and `sidecar.intraday_mm` are simulation only. They never place an order. `sidecar.flow` and `sidecar.sentiment` only read market data and local text. They write alerts and snapshots. They do not place orders.
 
 ## What is here
 
@@ -20,6 +20,8 @@ The offline packages and the read-only paper observer do not place orders. `side
 | `sidecar.kronos_signal` | Walk-forward Kronos OHLCV forecasts after the June 2024 pretraining cutoff. Optional paper-runner strategy. Weights load only in the offline eval |
 | `sidecar.options` | Defined-risk put credit spreads and iron condors. Synthetic Black-Scholes book, plus a paper runner that can post a multi-leg limit only to the sidecar paper account |
 | `sidecar.intraday_mm` | Avellaneda-Stoikov and the GRU clone on a quote/trade tape. Queue and latency fills, markouts, parquet replay. Never places an order |
+| `sidecar.flow` | Unusual options activity from Alpaca indicative or OPRA data. Scored alerts, a feature series, and a 1-session / 5-session event study. Read-only |
+| `sidecar.sentiment` | r/wallstreetbets and a local X inbox. Mention velocity, a fixed lexicon, unusual-buzz snapshots, a join to flow alerts, and the same event study. Read-only |
 
 P6–P8 from the research note are not separate packages. Down-market beta is reported by `evalstats` when a benchmark series is passed in. A data-quality gate would have to call the orchestrator breakers, and a latency model would have to edit `app/quant/`. Neither belongs in this tree.
 
@@ -154,6 +156,19 @@ The last command is the only one that opens a socket, and only `wss://stream.dat
 
 Learner minus AS mean per-minute return: **-4.02557869207e-05**. `beats_as` is false. Behavioral-cloning loss moved from 2.16699257669 to 0.0986595777378. Markouts are negative at every horizon, which is adverse selection. Fills in the last 30 seconds have no 30-second markout; those values are omitted, not set to zero. The 50 millisecond and 100 millisecond AS trials produced the same fills as 75 milliseconds, because trades on this tape are several hundred milliseconds apart. PBO on those three identical series is 1, on 3 splits of 12 returns. That is not a separate latency result. Annualized Sharpe on 12 one-minute returns is only a display scaling. `orders_submitted` is 0. `threshold_status` is `not_frozen`.
 
+## Flow and sentiment event studies
+
+`examples/flow_event_study.json` and `examples/sentiment_event_study.json` use the local ETF bars. Neither file is a historical options tape or a social-media archive, so neither answers whether those signals predict returns. The flow events are every 21st SPY session starting at index 252. The sentiment events are a canned post rule on that same calendar (eight bullish `$SPY` posts every 30th session). Both studies score the adjusted close 1 and 5 sessions later and count those horizons as two trials. Bonferroni's bar is `1 - PSR < 0.025`. Five-session returns overlap.
+
+| Study | Horizon | Events | Mean return | Hit rate | PSR | DSR | Clears Bonferroni |
+|---|---|---:|---:|---:|---:|---:|---|
+| Flow calendar | 1 (primary) | 48 | -0.00063130791115 | 0.479166666667 | 0.34130343899 | 0.176531685547 | no |
+| Flow calendar | 5 | 48 | 0.00447979580265 | 0.604166666667 | 0.953539256152 | 0.877062872537 | no |
+| Sentiment fixture | 1 (primary) | 33 | 0.000704710566369 | 0.484848484848 | 0.728508831929 | 0.535281809613 | no |
+| Sentiment fixture | 5 | 33 | 0.00580647129446 | 0.666666666667 | 0.950534709933 | 0.870826150548 | no |
+
+The 5-session PSR on the flow calendar is what a date rule can print. It is not evidence of unusual options activity. `threshold_status` is `not_frozen`. `orders_submitted` is 0. `examples/flow_scan_sample.md` is a hand-built chain for the alert layout.
+
 ## Retrofit
 
 Do this only after the cockpit's own fixes, as a reviewed change. These packages stay the computation. The cockpit change is the thin adapter.
@@ -219,8 +234,20 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 - **Emits:** `sidecar.intraday_mm_eval.v1` with `live_trading: false` and `orders_submitted: 0`.
 - **Plug-in:** do not connect it to a broker. The queue and latency model is a research fill, not an exchange simulator certification.
 
+### flow
+
+- **Reads:** Alpaca option snapshots and trades (`indicative` unless `opra` is requested by name), paper-host contract open interest, and the underlying IEX price. The event study reads `fixtures/etf_daily.csv`.
+- **Emits:** `sidecar.flow.scan.v1` and `sidecar.flow.event_study.v1`, both with `orders_submitted: 0`. The feature rows are there for a later options reader. This package does not call the options runner.
+- **Plug-in:** do not let a flow score submit an order. OPRA history was not downloaded, so the committed event study is a calendar null.
+
+### sentiment
+
+- **Reads:** Reddit's public listing when the three `SIDECAR_REDDIT_*` variables are set, and JSONL files in `artifacts/x_inbox/`. The event study reads the local bar file and the snapshots it just wrote.
+- **Emits:** append-only snapshot JSONL and `sidecar.sentiment.event_study.v1` with `orders_submitted: 0`. Posts after 16:00 America/New_York roll to the next calendar date.
+- **Plug-in:** do not put the buzz score on an order path. The committed posts are a fixture. Reddit was not called for that file.
+
 ## Not a performance claim
 
 `examples/offline_report.json` is one simulated path of one predeclared rule. Quote it only with the report's caveats. Do not treat PSR, DSR, or PBO from that file as a frozen gate, and do not describe the path as evidence the cockpit's merger strategy has edge. The merger model was not fit on that run: there is no real point-in-time deal cohort in the fixture, and synthetic deals are refused unless the caller sets `allow_synthetic=True`.
 
-`examples/options_eval.json` lost money against cash on a synthetic option book. `examples/intraday_mm_eval.json` did not beat Avellaneda-Stoikov, and both books lost on the synthetic tape. Neither file is a live fill.
+`examples/options_eval.json` lost money against cash on a synthetic option book. `examples/intraday_mm_eval.json` did not beat Avellaneda-Stoikov, and both books lost on the synthetic tape. Neither file is a live fill. `examples/flow_event_study.json` and `examples/sentiment_event_study.json` are calendar checks. They do not measure unusual options activity or a social archive, and neither primary horizon clears its Bonferroni bar.

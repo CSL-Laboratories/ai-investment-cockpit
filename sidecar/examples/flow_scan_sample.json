@@ -1,0 +1,95 @@
+{
+  "alert_score": 3.0,
+  "contracts": [
+    {
+      "aggressive_buy": true,
+      "alert": true,
+      "components": {
+        "aggressive": 1.0,
+        "premium": 1.0,
+        "short_dated_otm": 1.0,
+        "skew_shift": 0.0,
+        "sweep": 1.0,
+        "vol_oi": 3.0,
+        "volume_z": 0.0
+      },
+      "expiration": "2024-06-07",
+      "flags": [
+        "vol_oi",
+        "premium",
+        "aggressive",
+        "sweep",
+        "short_dated_otm"
+      ],
+      "large_premium": true,
+      "max_premium": 51000.0,
+      "open_interest": 200.0,
+      "right": "call",
+      "score": 7.0,
+      "short_dated_otm": true,
+      "skew": null,
+      "skew_shift": null,
+      "strike": 520.0,
+      "sweep": true,
+      "symbol": "SPY240607C00520000",
+      "underlying": "SPY",
+      "vol_oi": 7.5,
+      "volume": 1500.0,
+      "volume_z": null
+    },
+    {
+      "aggressive_buy": false,
+      "alert": false,
+      "components": {
+        "aggressive": 0.0,
+        "premium": 0.0,
+        "short_dated_otm": 1.0,
+        "skew_shift": 0.0,
+        "sweep": 0.0,
+        "vol_oi": 0.0,
+        "volume_z": 0.0
+      },
+      "expiration": "2024-06-07",
+      "flags": [
+        "short_dated_otm"
+      ],
+      "large_premium": false,
+      "max_premium": null,
+      "open_interest": 500.0,
+      "right": "put",
+      "score": 1.0,
+      "short_dated_otm": true,
+      "skew": null,
+      "skew_shift": null,
+      "strike": 480.0,
+      "sweep": false,
+      "symbol": "SPY240607P00480000",
+      "underlying": "SPY",
+      "vol_oi": 0.08,
+      "volume": 40.0,
+      "volume_z": null
+    }
+  ],
+  "feed": "indicative",
+  "fixture": true,
+  "live_trading": false,
+  "note": "Hand-built chain to show the alert document. Not a live market scan and not an input to the event study.",
+  "orders_submitted": 0,
+  "schema_version": "sidecar.flow.scan.v1",
+  "session_date": "2024-06-03",
+  "underlyings": [
+    {
+      "alert_count": 1,
+      "call_volume": 1500.0,
+      "flagged_count": 2,
+      "max_contract_score": 7.0,
+      "put_call_volume_ratio": 0.0266666666667,
+      "put_volume": 40.0,
+      "session_date": "2024-06-03",
+      "short_dated_otm_volume_share": 1.0,
+      "skew": null,
+      "skew_shift": null,
+      "underlying": "SPY"
+    }
+  ]
+}
