@@ -1,0 +1,266 @@
+{
+  "as": {
+    "ending_inventory": 7,
+    "ending_mtm": "-12.5618445107",
+    "evalstats": {
+      "benchmark": null,
+      "bootstrap": {
+        "block_length": 2,
+        "max_drawdown_ci95": [
+          "0.00172251138114",
+          "0.00452426111034"
+        ],
+        "mean_return_ci95": [
+          "-0.000377764680414",
+          "-0.000143650674217"
+        ],
+        "method": "stationary",
+        "reps_requested": 400,
+        "reps_used": 400,
+        "seed": 0,
+        "sharpe_per_period_ci95": [
+          "-1.95143272483",
+          "-0.864733458835"
+        ]
+      },
+      "drawdown": {
+        "current_drawdown": "0.00300221443079",
+        "max_drawdown": "0.00300221443079",
+        "max_drawdown_duration": 12,
+        "peak_index": 0,
+        "trough_index": 12,
+        "ulcer_index": "0.00158064613651"
+      },
+      "dsr": "4.35958796841e-09",
+      "kurtosis_pearson": "5.26482922671",
+      "mean_return": "-0.000250506879461",
+      "min_track_record_length": null,
+      "min_track_record_years": null,
+      "minimum_observations": 8,
+      "n_observations": 12,
+      "n_trials": 4,
+      "notes": [
+        "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+        "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+        "PBO is the fraction of CSCV splits where the in-sample winner's out-of-sample Sharpe is at or below the median. Splits are not purged.",
+        "No finite minimum track record: per-period Sharpe does not exceed the benchmark."
+      ],
+      "pbo": {
+        "mean_oos_sharpe_of_selected": "-1.23254235228",
+        "median_logit": "0",
+        "n_slices": 4,
+        "n_splits": 3,
+        "n_strategies": 3,
+        "observations_dropped_prefix": 0,
+        "observations_used": 12,
+        "pbo": "1",
+        "status": "ok"
+      },
+      "periods_per_year": 98280,
+      "psr": "1.28933853821e-06",
+      "reason": null,
+      "schema_version": "sidecar.eval_report.v1",
+      "sharpe_annualized": "-353.933933802",
+      "sharpe_per_period": "-1.12898878858",
+      "skewness": "-1.52772229828",
+      "sr_benchmark": "0",
+      "sr_deflation_threshold": "0.252633631542",
+      "status": "ok",
+      "threshold_status": "not_frozen",
+      "track_record_confidence": "0.95",
+      "volatility": "0.000221886064765"
+    },
+    "markouts": {
+      "1000": {
+        "mean": "-0.00924256756822",
+        "n": 789
+      },
+      "30000": {
+        "mean": "-0.0151083535503",
+        "n": 751
+      },
+      "5000": {
+        "mean": "-0.00932436115628",
+        "n": 784
+      }
+    },
+    "mean_minute_return": "-0.000250506879461",
+    "n_fills": 791,
+    "n_minute_returns": 12
+  },
+  "bc_loss_end": "0.0986595777378",
+  "bc_loss_start": "2.16699257669",
+  "beats_as": false,
+  "caveats": [
+    "This module never places an order. orders_submitted is 0.",
+    "The primary latency is 75 milliseconds, inside a 50\u2013100 millisecond retail assumption. 50 and 100 are trials for PBO on the Avellaneda-Stoikov fill path only.",
+    "Queue ahead is the displayed size when the order joins the touch at arrival, and zero when it improves. A price behind the touch fills only on a trade strictly through it.",
+    "Trades before the order's live time do not fill. Markouts at 1s, 5s, and 30s are omitted when the tape ends first; they are not filled in as zero.",
+    "The GRU is behaviorally cloned, on the earlier 60 percent of the tape, toward the nearest discrete Avellaneda-Stoikov action. The later 40 percent is the comparison. Both books start flat at the split.",
+    "Gamma and kappa are the sidecar simulator units. On a one-cent IEX market those quotes can rest behind the touch. This synthetic tape uses a six-cent touch so the quote can improve it. That is not a live IEX result.",
+    "beats_as compares mean per-minute returns on one tape. It is not a qualify decision. threshold_status is not_frozen.",
+    "Annualized Sharpe scales per-minute returns by sqrt(252 * 390). Read the per-minute mean before the annualized figure.",
+    "On this tape the 50, 75, and 100 millisecond runs produced the same fills and the same minute returns. Trades are several hundred milliseconds apart, so every latency in that band is live before the next trade. PBO is then comparing identical series."
+  ],
+  "difference_mean_minute_return": "-4.02557869207e-05",
+  "latency_ms_assumption": "75ms inside the stated 50-100ms retail range",
+  "latency_trials": [
+    {
+      "ending_inventory": 7,
+      "ending_mtm": "-12.5618445107",
+      "latency_ms": 50,
+      "markouts": {
+        "1000": {
+          "mean": "-0.00924256756822",
+          "n": 789
+        },
+        "30000": {
+          "mean": "-0.0151083535503",
+          "n": 751
+        },
+        "5000": {
+          "mean": "-0.00932436115628",
+          "n": 784
+        }
+      },
+      "mean_minute_return": "-0.000250506879461",
+      "n_fills": 791,
+      "n_minute_returns": 12,
+      "primary": false
+    },
+    {
+      "ending_inventory": 7,
+      "ending_mtm": "-12.5618445107",
+      "latency_ms": 75,
+      "markouts": {
+        "1000": {
+          "mean": "-0.00924256756822",
+          "n": 789
+        },
+        "30000": {
+          "mean": "-0.0151083535503",
+          "n": 751
+        },
+        "5000": {
+          "mean": "-0.00932436115628",
+          "n": 784
+        }
+      },
+      "mean_minute_return": "-0.000250506879461",
+      "n_fills": 791,
+      "n_minute_returns": 12,
+      "primary": true
+    },
+    {
+      "ending_inventory": 7,
+      "ending_mtm": "-12.5618445107",
+      "latency_ms": 100,
+      "markouts": {
+        "1000": {
+          "mean": "-0.00924256756822",
+          "n": 789
+        },
+        "30000": {
+          "mean": "-0.0151083535503",
+          "n": 751
+        },
+        "5000": {
+          "mean": "-0.00932436115628",
+          "n": 784
+        }
+      },
+      "mean_minute_return": "-0.000250506879461",
+      "n_fills": 791,
+      "n_minute_returns": 12,
+      "primary": false
+    }
+  ],
+  "ledger_distinct_configs": 4,
+  "ledger_head_hash": "4a467dcafbacee5ef989e799a1f23ce8a35b6ceab551797fd047823fa525c32a",
+  "live_trading": false,
+  "orders_submitted": 0,
+  "primary_latency_ms": 75,
+  "rl": {
+    "ending_inventory": 8,
+    "ending_mtm": "-14.5778638398",
+    "evalstats": {
+      "benchmark": null,
+      "bootstrap": {
+        "block_length": 2,
+        "max_drawdown_ci95": [
+          "0.00135564799496",
+          "0.00631239837136"
+        ],
+        "mean_return_ci95": [
+          "-0.000523874876298",
+          "-4.39575342394e-05"
+        ],
+        "method": "stationary",
+        "reps_requested": 400,
+        "reps_used": 400,
+        "seed": 0,
+        "sharpe_per_period_ci95": [
+          "-1.55348456558",
+          "-0.0778825254065"
+        ]
+      },
+      "drawdown": {
+        "current_drawdown": "0.00369235352351",
+        "max_drawdown": "0.00369235352351",
+        "max_drawdown_duration": 11,
+        "peak_index": 1,
+        "trough_index": 12,
+        "ulcer_index": "0.00167164063401"
+      },
+      "dsr": "0.00314581911532",
+      "kurtosis_pearson": "1.84873616143",
+      "mean_return": "-0.000290762666382",
+      "min_track_record_length": null,
+      "min_track_record_years": null,
+      "minimum_observations": 8,
+      "n_observations": 12,
+      "n_trials": 4,
+      "notes": [
+        "PSR and DSR use the per-period Sharpe. Annualized Sharpe is a display scaling.",
+        "threshold_status is not_frozen. This report is not a qualify or reject decision.",
+        "No finite minimum track record: per-period Sharpe does not exceed the benchmark."
+      ],
+      "pbo": null,
+      "periods_per_year": 98280,
+      "psr": "0.0464729051239",
+      "reason": null,
+      "schema_version": "sidecar.eval_report.v1",
+      "sharpe_annualized": "-182.157096865",
+      "sharpe_per_period": "-0.58105002228",
+      "skewness": "0.420108692542",
+      "sr_benchmark": "0",
+      "sr_deflation_threshold": "0.36387766169",
+      "status": "ok",
+      "threshold_status": "not_frozen",
+      "track_record_confidence": "0.95",
+      "volatility": "0.000500409009952"
+    },
+    "markouts": {
+      "1000": {
+        "mean": "-0.0104860109837",
+        "n": 800
+      },
+      "30000": {
+        "mean": "-0.021656802306",
+        "n": 762
+      },
+      "5000": {
+        "mean": "-0.00994173072756",
+        "n": 795
+      }
+    },
+    "mean_minute_return": "-0.000290762666382",
+    "n_fills": 802,
+    "n_minute_returns": 12
+  },
+  "schema_version": "sidecar.intraday_mm_eval.v1",
+  "symbol": "SPY",
+  "tape": "synthetic",
+  "threshold_status": "not_frozen",
+  "train_fraction": 0.6
+}

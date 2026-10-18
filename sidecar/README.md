@@ -2,9 +2,9 @@
 
 Standalone research modules for the AI Investment Cockpit. Nothing in this tree is imported by `app/`. Integrating a module later is a separate, reviewed change.
 
-The offline packages and the read-only paper observer do not place orders. `sidecar.harness.runner` is a separate experimental path: it can post to its own Alpaca **paper** account, and only that account. It is not the cockpit's single order path. An order inside the cockpit still has to pass risk, mode, and approval before the gateway. `app/risk/` stays Decimal and stdlib-only. `app/quant/` still must not import `app/brokers/`. This tree does not import either. The experimental path has to be reconciled at integration time; it does not replace the cockpit path and it does not weaken it.
+The offline packages and the read-only paper observer do not place orders. `sidecar.harness.runner` is a separate experimental path: it can post to its own Alpaca **paper** account, and only that account. `sidecar.options.runner` is a second experimental paper path, for defined-risk option spreads only, on that same sidecar paper account. Neither is the cockpit's single order path. An order inside the cockpit still has to pass risk, mode, and approval before the gateway. `app/risk/` stays Decimal and stdlib-only. `app/quant/` still must not import `app/brokers/`. This tree does not import either. The experimental paths have to be reconciled at integration time; they do not replace the cockpit path and they do not weaken it.
 
-`sidecar.rl` is simulation only. It never places an order.
+`sidecar.rl` and `sidecar.intraday_mm` are simulation only. They never place an order.
 
 ## What is here
 
@@ -18,6 +18,8 @@ The offline packages and the read-only paper observer do not place orders. `side
 | `sidecar.harness` | Offline replay, a read-only Alpaca paper observer, and a separate experimental paper runner |
 | `sidecar.rl` | Simulated GRU market maker. Behavioral cloning from a vendored Avellaneda-Stoikov expert, prioritized fictitious self-play, potential-based shaping. Never live |
 | `sidecar.kronos_signal` | Walk-forward Kronos OHLCV forecasts after the June 2024 pretraining cutoff. Optional paper-runner strategy. Weights load only in the offline eval |
+| `sidecar.options` | Defined-risk put credit spreads and iron condors. Synthetic Black-Scholes book, plus a paper runner that can post a multi-leg limit only to the sidecar paper account |
+| `sidecar.intraday_mm` | Avellaneda-Stoikov and the GRU clone on a quote/trade tape. Queue and latency fills, markouts, parquet replay. Never places an order |
 
 P6–P8 from the research note are not separate packages. Down-market beta is reported by `evalstats` when a benchmark series is passed in. A data-quality gate would have to call the orchestrator breakers, and a latency model would have to edit `app/quant/`. Neither belongs in this tree.
 
@@ -106,6 +108,52 @@ The default runner strategy is still `inverse_vol`. `--strategy kronos` reads `e
 
 On that committed run the primary config (mini, lookback 64, temperature 1.0, 36 post-cutoff decisions) ended at 91945.01467356542211066211403 from 100000. PSR 0.270841980117, DSR 0.0192597888218, max drawdown 0.121297714523. Pooled IC 0.16113576, directional hit rate 0.52777778, Brier 0.27854938 against a constant-0.5 Brier of 0.25. Trailing mean ended at 103025.6929640805959608712531 and buy-and-hold at 101418.4563917799362885658572. The flat book stayed at 100000. `beats_baselines` is false. PBO across the eight configs is 0.333333333333 on the forecast-weighted series, not on the equity curve. See `sidecar/kronos_signal/README.md`.
 
+## Defined-risk options
+
+```bash
+python -m sidecar.options.evaluate --out examples/options_eval.json --ledger examples/options_eval.ledger.jsonl
+python -m sidecar.options.runner
+python -m sidecar.options.runner --execute
+```
+
+`examples/options_eval.json` is the synthetic book on `fixtures/etf_daily.csv`. There is no historical OPRA chain in this tree. Premiums are Black-Scholes with zero rates, and the "implied vol" is the trailing 60-session realized vol of the same underlying. The signal is that proxy's rank versus the prior 252 sessions, plus a 60-day minus 10-day realized spread above 0.02. The primary was fixed first: put credit spread, absolute delta 0.20, width $5, about 30 calendar days, close at 7 DTE, take profit at half the entry mid, stop at twice the entry mid. Delta 0.15, IV-rank floor 0.40, and the iron condor are trials. They did not replace the primary.
+
+The full spread on each leg is max($0.05, 8% of the model mid). Sells hit the bid and buys hit the ask. The signal uses one close and the fill is the next session's close.
+
+That run ended at **99039.00** from 100000. `beats_cash` is false. 82 opens, all closed (69 take-profit, 12 stop, 1 at the DTE limit). 943 daily returns. Mean return -1.01773291136e-05. Per-period Sharpe -0.0287261485653. Annualized Sharpe -0.456013471371. PSR 0.168970384225. DSR 0.0221962979604. Max drawdown 0.0140357527633. PBO across the four configs 0.584770784771. Median implementation shortfall versus the model mid 402.0100502512562814070351759 bps (mean 502.0144135083238239900633058). That shortfall is the 8% spread, not an OPRA print. The other rows also finished below 100000 (99483.00, 98934.00, and 99235.00). `orders_submitted` is 0. This is not evidence of a volatility-risk premium.
+
+The paper runner uses the same sidecar credentials as the equity runner (`SIDECAR_PAPER_ALPACA_KEY_ID` and `SIDECAR_PAPER_ALPACA_SECRET`, or keyring service `ai-investment-cockpit-sidecar`). It does not read the cockpit pair. Dry-run is the default and does not post. `--execute` posts a multi-leg **limit** to `https://paper-api.alpaca.markets` only, after `GET /v2/account` on that host. A credit open uses a negative limit price. A close uses a positive debit. Market orders are refused. The live host `https://api.alpaca.markets` is refused.
+
+Hard limits, checked before any post: defined-risk only (every short is covered by a further-OTM long, same expiry and right), max loss $1,000 per spread, $5,000 across open spreads, at most 5 open spreads, entry DTE 7–45, allowlist SPY/QQQ/IWM. `artifacts/KILL` blocks new orders and, on execute, cancels resting sidecar ids. It does not flatten positions. A missing greek, a quote older than 15 minutes, a crossed or very wide market, or an options approval level that is missing or below 3 refuses the open. IV rank needs 252 prior rows in `artifacts/iv_history.jsonl`. Until that file has them, the runner opens nothing. An option position the state file does not explain also blocks new risk.
+
+Regular session is 09:30–16:00 America/New_York, weekdays. Outside that window the command exits 3 unless `--force-window` is set. Missing sidecar credentials exit 2. Snapshots use `feed=indicative`, not OPRA. This environment had no sidecar paper keys, so the live chain was not called. Execute was tested with a mock transport only.
+
+## Intraday market maker
+
+```bash
+python -m sidecar.intraday_mm.session --synthetic --minutes 30 --out examples/intraday_mm_eval.json --ledger examples/intraday_mm_eval.ledger.jsonl
+python -m sidecar.intraday_mm.session --replay path/to/session.parquet
+python -m sidecar.intraday_mm.session --minutes 30
+```
+
+The last command is the only one that opens a socket, and only `wss://stream.data.alpaca.markets/v2/iex`. SIP, the live trading host, and the paper trading host are refused. It subscribes to quotes and trades. It does not send an order. It records parquet under `artifacts/` and then runs the same simulator. It requires the sidecar paper credentials for the data socket, and it runs only in the regular session unless `--force-window` is set (exit 3 outside the window, exit 2 if the credentials are missing). `--synthetic` and `--replay` do not need credentials and are not windowed.
+
+`examples/intraday_mm_eval.json` is the synthetic tape, seed 0, 30 minutes, symbol SPY. It is not a live IEX session. The touch is six cents wide so the simulator-unit Avellaneda-Stoikov quote (about two cents) can improve it. On a one-cent IEX book those same parameters can rest behind the touch. Primary latency is 75 milliseconds. The GRU is cloned on the first 60 percent of the tape toward the nearest discrete AS action, then both books are scored on the last 40 percent, starting flat. That held-out slice is 12 per-minute returns.
+
+| Item | Avellaneda-Stoikov | GRU clone |
+|---|---|---|
+| Fills | 791 | 802 |
+| Ending mark-to-market | -12.5618445107 | -14.5778638398 |
+| Ending inventory (cap 10) | 7 | 8 |
+| Mean per-minute return | -0.000250506879461 | -0.000290762666382 |
+| PSR | 1.28933853821e-06 | 0.0464729051239 |
+| DSR | 4.35958796841e-09 | 0.00314581911532 |
+| Markout 1s (n) | -0.00924256756822 (789) | -0.0104860109837 (800) |
+| Markout 5s (n) | -0.00932436115628 (784) | -0.00994173072756 (795) |
+| Markout 30s (n) | -0.0151083535503 (751) | -0.021656802306 (762) |
+
+Learner minus AS mean per-minute return: **-4.02557869207e-05**. `beats_as` is false. Behavioral-cloning loss moved from 2.16699257669 to 0.0986595777378. Markouts are negative at every horizon, which is adverse selection. Fills in the last 30 seconds have no 30-second markout; those values are omitted, not set to zero. The 50 millisecond and 100 millisecond AS trials produced the same fills as 75 milliseconds, because trades on this tape are several hundred milliseconds apart. PBO on those three identical series is 1, on 3 splits of 12 returns. That is not a separate latency result. Annualized Sharpe on 12 one-minute returns is only a display scaling. `orders_submitted` is 0. `threshold_status` is `not_frozen`.
+
 ## Retrofit
 
 Do this only after the cockpit's own fixes, as a reviewed change. These packages stay the computation. The cockpit change is the thin adapter.
@@ -159,6 +207,20 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 - **Emits:** `sidecar.kronos_eval.v1` with `orders_submitted: 0`. Scored decisions start on 2024-07-01. The edge and dispersion go to the existing sizer.
 - **Plug-in:** do not load the model on the cockpit order path. The experimental runner may size from the report only after that file exists. That runner is still not the cockpit order path.
 
+### options
+
+- **Reads:** an indicative option chain and greeks from Alpaca market data, adjusted IEX daily bars for a 10-day realized vol, and the local IV-rank history. The offline book reads only `fixtures/etf_daily.csv`.
+- **Emits:** `sidecar.options_eval.v1` with `orders_submitted: 0`, and, from the runner, `sidecar.options_runner.v1`. The runner can post a defined-risk multi-leg limit to the sidecar paper account. That post is not the cockpit order path.
+- **Plug-in:** do not point this client at the cockpit gateway or the cockpit keys. Do not treat the synthetic Black-Scholes book as an OPRA backtest.
+
+### intraday market maker
+
+- **Reads:** a parquet quote/trade tape, or the free IEX websocket. No broker write.
+- **Emits:** `sidecar.intraday_mm_eval.v1` with `live_trading: false` and `orders_submitted: 0`.
+- **Plug-in:** do not connect it to a broker. The queue and latency model is a research fill, not an exchange simulator certification.
+
 ## Not a performance claim
 
 `examples/offline_report.json` is one simulated path of one predeclared rule. Quote it only with the report's caveats. Do not treat PSR, DSR, or PBO from that file as a frozen gate, and do not describe the path as evidence the cockpit's merger strategy has edge. The merger model was not fit on that run: there is no real point-in-time deal cohort in the fixture, and synthetic deals are refused unless the caller sets `allow_synthetic=True`.
+
+`examples/options_eval.json` lost money against cash on a synthetic option book. `examples/intraday_mm_eval.json` did not beat Avellaneda-Stoikov, and both books lost on the synthetic tape. Neither file is a live fill.
