@@ -1779,6 +1779,14 @@ def reply_and_resolve(
         )
         if blocked:
             return blocked
+    # live_resolve_skip classifies against the newest stamp. Recheck the
+    # original cited ruling's veto window after that last refresh so a
+    # human reply between the cited RESOLVE and a later one cannot ride
+    # the mutation. Same check on first-time and retry paths.
+    if thread_tail_vetoes(
+        gh, cfg, thread_id=thread_id, after=after, pat_login=actor
+    ):
+        return "human-veto"
     live, rollup = fetch_head_state(gh, cfg, number)
     if not live or live != sha:
         return "stale-sha"

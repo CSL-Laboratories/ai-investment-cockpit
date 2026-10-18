@@ -3002,6 +3002,64 @@ def test_scan_rechecks_thread_tail_after_cite_before_resolve():
     assert any("skip=human-veto" in line for line in logs)
 
 
+def test_original_verdict_human_veto_survives_live_refresh():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    original = gh.graphql
+    reads = 0
+
+    def graphql(query, variables, token=None):
+        nonlocal reads
+        if "reviewThreads" in query:
+            reads += 1
+            if reads == 2:
+                gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
+                    comment("alice", "Human stop", NOW + timedelta(seconds=30), association="OWNER")
+                )
+                gh.reviews[12].append(comment(CODEX, verdict_body(), NOW + timedelta(seconds=60)))
+        return original(query, variables, token)
+
+    gh.graphql = graphql
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
+def test_original_verdict_human_veto_survives_retry_live_refresh():
+    gh = ready_gh(
+        threads=[
+            thread(
+                comments=[
+                    comment(DEVIN, "please fix", NOW - timedelta(seconds=60)),
+                    comment(CODEX, verdict_body()),
+                    comment(PAT_LOGIN, mod.cite_marker(THREAD, SHA)),
+                ]
+            )
+        ],
+        reviews=[comment(CODEX, verdict_body())],
+    )
+    original = gh.graphql
+    reads = 0
+
+    def graphql(query, variables, token=None):
+        nonlocal reads
+        if "reviewThreads" in query:
+            reads += 1
+            if reads == 1:
+                gh.pr_by_number[12]["reviewThreads"]["nodes"][0]["comments"]["nodes"].append(
+                    comment("alice", "Human stop", NOW + timedelta(seconds=30), association="OWNER")
+                )
+                gh.reviews[12].append(comment(CODEX, verdict_body(), NOW + timedelta(seconds=60)))
+        return original(query, variables, token)
+
+    gh.graphql = graphql
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.issue_posts == []
+    assert gh.replies == []
+    assert any("skip=human-veto" in line for line in logs)
+
+
 def test_scan_tail_error_is_human_veto():
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     gh.fail_thread_tail = True
@@ -3030,7 +3088,7 @@ def test_scan_resolves_still_revalidates_empty_tail():
     gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
     logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
     assert gh.resolves == [THREAD]
-    assert gh.thread_tail_calls >= 2
+    assert gh.thread_tail_calls >= 3
     assert any("resolve=posted" in line for line in logs)
 
 
