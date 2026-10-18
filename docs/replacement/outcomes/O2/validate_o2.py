@@ -737,8 +737,17 @@ def validate_records(bundle: Bundle) -> None:
                     raise ContractError(
                         f"{record['raw_record_id']} form family does not match its predecessor"
                     )
+                correction = "amendment" if kind == "filing_amendment" else "filing correction"
+                if record["payload"].get("accession") in _chain_accessions(bundle, record):
+                    raise ContractError(
+                        f"{record['raw_record_id']} {correction} reuses a predecessor accession"
+                    )
+                for field in ("concept", "unit"):
+                    if record["payload"].get(field) != target["payload"].get(field):
+                        raise ContractError(
+                            f"{record['raw_record_id']} {correction} changes stable fact field {field}"
+                        )
             if kind == "filing_amendment":
-                amended = target["payload"]
                 amendment = record["payload"]
                 # A later 10-K/A may name the original filing, not only its predecessor.
                 chain_accessions = _chain_accessions(bundle, record)
@@ -746,15 +755,6 @@ def validate_records(bundle: Bundle) -> None:
                     raise ContractError(
                         f"{record['raw_record_id']} amends_accession does not name the superseded filing"
                     )
-                if amendment.get("accession") in chain_accessions:
-                    raise ContractError(
-                        f"{record['raw_record_id']} amendment reuses a predecessor accession"
-                    )
-                for field in ("concept", "unit"):
-                    if amendment.get(field) != amended.get(field):
-                        raise ContractError(
-                            f"{record['raw_record_id']} amendment changes stable fact field {field}"
-                        )
             if parse_time(target["accepted_at"]) >= parse_time(record["accepted_at"]):
                 raise ContractError(f"{record['raw_record_id']} correction is not later knowledge")
         payload = record["payload"]
@@ -1030,6 +1030,13 @@ def validate_observations(bundle: Bundle) -> None:
     if set(observed) != set(edges):
         raise ContractError("lineage does not cover each observation once")
     for observation in bundle.observations:
+        edge = edges[observation["observation_id"]]
+        for label, raw_ids in (
+            ("observation", observation["raw_record_ids"]),
+            ("lineage", edge["input_raw_record_ids"]),
+        ):
+            if len(raw_ids) != len(set(raw_ids)):
+                raise ContractError(f"{observation['observation_id']} repeats {label} raw input")
         _require_unique_actions(observation)
         decision = parse_time(observation["decision_time"])
         codes = reconstruction_codes(bundle, observation["raw_record_ids"], decision)
@@ -1073,7 +1080,17 @@ def validate_observations(bundle: Bundle) -> None:
                 raw_id,
             ):
                 raise ContractError(f"{observation['observation_id']} action {raw_id} does not match its raw record")
-        edge = edges[observation["observation_id"]]
+        # The effective-version transform uses the fact chain plus the applicable
+        # action chains. Sharing an identity does not make another fact an input.
+        required_inputs = {effective["raw_record_id"]}
+        if observation["market_family"] == "equity":
+            required_inputs.update(
+                action[4]
+                for action in required_corporate_actions(bundle, observation["identity_id"], decision)
+            )
+        required_inputs.update(_missing_raw_parents(bundle, list(required_inputs), decision))
+        if set(observation["raw_record_ids"]) != required_inputs:
+            raise ContractError(f"{observation['observation_id']} inputs are not the effective and action chains")
         if edge["input_raw_record_ids"] != observation["raw_record_ids"]:
             raise ContractError(f"{observation['observation_id']} lineage inputs differ from raw ids")
         for raw_id in edge["input_raw_record_ids"]:

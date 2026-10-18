@@ -187,7 +187,7 @@ def _sync_coverage_pin(module, copy: Path) -> None:
     coverage["checks"] = [module.coverage_scenario(check) for check in checks]
     coverage["observation_ids"] = [item["observation_id"] for item in observations]
     text = json.dumps(coverage, indent=2) + "\n"
-    (copy / "fixtures" / "coverage.json").write_text(text, encoding="utf-8")
+    (copy / "fixtures" / "coverage.json").write_text(text, encoding="utf-8", newline="\n")
     digest = hashlib.sha256(text.encode()).hexdigest()
     contract_path = copy / "CONTRACT.md"
     contract = contract_path.read_text(encoding="utf-8")
@@ -198,7 +198,7 @@ def _sync_coverage_pin(module, copy: Path) -> None:
         count=1,
     )
     assert count == 1
-    contract_path.write_text(updated, encoding="utf-8")
+    contract_path.write_text(updated, encoding="utf-8", newline="\n")
     _rewrite_manifest(module, copy)
 
 
@@ -448,7 +448,8 @@ def _write_modified_candidate(module, copy: Path, documents: dict) -> Path:
     for record in documents["fixtures/raw_records.json"]["records"]:
         record["raw_sha256"] = module.payload_sha256(record["payload"])
     for rel, document in documents.items():
-        (copy / rel).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        # Preserve the LF bytes hashed by the coverage pin on Windows as well.
+        (copy / rel).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8", newline="\n")
     _rewrite_manifest(module, copy)
     return copy
 
@@ -1403,6 +1404,130 @@ def test_listing_key_tail_must_be_the_payload_kind(tmp_path: Path) -> None:
     copy = _write_modified_candidate(module, tmp_path / "O2", documents)
     with pytest.raises(module.ContractError, match="natural key does not name its equity fact"):
         module.validate_candidate(copy)
+
+
+def _base_filing_correction(documents: dict, form: str) -> dict:
+    records = documents["fixtures/raw_records.json"]["records"]
+    for record in records:
+        if record["raw_record_id"] in {"raw-eq-10k", "raw-eq-10k-dup"}:
+            record["payload"]["form"] = form
+    correction = next(record for record in records if record["raw_record_id"] == "raw-eq-10ka")
+    correction["payload"].update(kind="filing", form=form)
+    correction["payload"].pop("amends_accession")
+    return correction
+
+
+@pytest.mark.parametrize("form", ["10-K", "8-K"])
+def test_base_filing_correction_requires_distinct_accession(tmp_path: Path, form: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    correction = _base_filing_correction(documents, form)
+    correction["payload"]["accession"] = "0000000001-24-000001"
+    correction["source_record_key"] = "0000000001-24-000001"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="filing correction reuses a predecessor accession"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("form", ["10-K", "8-K"])
+def test_base_filing_correction_preserves_unit(tmp_path: Path, form: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    correction = _base_filing_correction(documents, form)
+    correction["payload"]["unit"] = "text"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="filing correction changes stable fact field unit"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("form", ["10-K", "8-K"])
+def test_base_filing_correction_preserves_concept_on_listing_key(form: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    correction = _base_filing_correction(documents, form)
+    records = documents["fixtures/raw_records.json"]["records"]
+    for record in records:
+        if record["raw_record_id"] in {"raw-eq-10k", "raw-eq-10k-dup", "raw-eq-10ka"}:
+            record["natural_key"] = "us-equity:listing:0000000001:common:filing"
+        record["raw_sha256"] = module.payload_sha256(record["payload"])
+    # A listing key does not itself bind the concept, unlike a sec:fact key.
+    module.validate_records(module.Bundle(documents))
+    correction["payload"]["concept"] = "other_fact"
+    correction["raw_sha256"] = module.payload_sha256(correction["payload"])
+    with pytest.raises(module.ContractError, match="filing correction changes stable fact field concept"):
+        module.validate_records(module.Bundle(documents))
+
+
+@pytest.mark.parametrize("form", ["10-K", "8-K"])
+def test_distinct_base_filing_correction_preserves_valid_replay(tmp_path: Path, form: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _base_filing_correction(documents, form)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
+@pytest.mark.parametrize("repeat_in", ["observation", "lineage", "both"])
+def test_observation_and_lineage_inputs_must_be_unique(tmp_path: Path, repeat_in: str) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observation = documents["fixtures/observations.json"]["observations"][0]
+    edge = next(
+        item for item in documents["fixtures/lineage.json"]["edges"]
+        if item["observation_id"] == observation["observation_id"]
+    )
+    if repeat_in in {"observation", "both"}:
+        observation["raw_record_ids"].append("raw-eq-10k")
+    if repeat_in in {"lineage", "both"}:
+        edge["input_raw_record_ids"].append("raw-eq-10k")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="repeats (observation|lineage) raw input"):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize(
+    ("observation_id", "raw_id"),
+    [
+        ("obs-revenue-jul", "raw-eq-ooo"),
+        ("obs-revenue-apr", "raw-eq-10k-dup"),
+        ("obs-ev-sep", "raw-ev-close-ooo"),
+    ],
+)
+def test_observation_rejects_inputs_outside_effective_and_action_chains(
+    tmp_path: Path, observation_id: str, raw_id: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observation = next(
+        item for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] == observation_id
+    )
+    observation["raw_record_ids"].append(raw_id)
+    edge = next(
+        item for item in documents["fixtures/lineage.json"]["edges"]
+        if item["observation_id"] == observation_id
+    )
+    edge["input_raw_record_ids"] = list(observation["raw_record_ids"])
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(module.ContractError, match="inputs are not the effective and action chains"):
+        module.validate_candidate(copy)
+
+
+def test_valid_action_chain_inputs_keep_observation_and_edge_order(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observation = next(
+        item for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] == "obs-splits-sep"
+    )
+    observation["raw_record_ids"].reverse()
+    edge = next(
+        item for item in documents["fixtures/lineage.json"]["edges"]
+        if item["observation_id"] == observation["observation_id"]
+    )
+    edge["input_raw_record_ids"] = list(observation["raw_record_ids"])
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
 
 
 def test_deleted_observation_is_rejected(tmp_path: Path) -> None:
