@@ -137,6 +137,11 @@ ruff check .
 Install the full runtime set in every matrix cell, including `discord.py`. The Discord
 command-tree tests run offline with the real dependency; a separate isolated subprocess
 forces its import to fail and covers the fallback without skipping either path.
+`discord.py` 2.7.1 declares `audioop-lts; python_version >= "3.13"` in its PyPI
+`requires_dist`. On 3.11 and 3.12 the stdlib `audioop` import in `discord.player` is a
+DeprecationWarning, and pytest ignores that one warning only. That marker is why a
+`<3.13` cap is not added for this warning. A 3.13 matrix cell stays a separate support
+decision.
 
 ## Where things are
 - **Core engines (solid — change with care + adversarial review):** `app/risk/`,
