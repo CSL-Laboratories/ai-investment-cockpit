@@ -1,11 +1,12 @@
 [project]
 name = "cockpit-sidecar"
 version = "0.1.0"
-description = "Standalone quant sidecars for the AI Investment Cockpit. Not on the order path."
+description = "Standalone quant sidecars. The experimental paper runner is a separate Alpaca paper path, not the cockpit order path."
 requires-python = ">=3.11"
 dependencies = [
     "jsonschema>=4",
     "httpx>=0.27",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

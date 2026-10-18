@@ -1,8 +1,10 @@
 # Quant sidecars
 
-Standalone research modules for the AI Investment Cockpit. They read exported or public data, write schema-checked JSON, and do not place orders. Nothing in this tree is imported by `app/`. Integrating a module later is a separate, reviewed change.
+Standalone research modules for the AI Investment Cockpit. Nothing in this tree is imported by `app/`. Integrating a module later is a separate, reviewed change.
 
-The nine cockpit invariants still apply to that later change. In particular, an order still has to pass risk, mode, and approval before `OrderGateway`. `app/risk/` stays Decimal and stdlib-only. `app/quant/` still must not import `app/brokers/`. These packages do not weaken any of that.
+The offline packages and the read-only paper observer do not place orders. `sidecar.harness.runner` is a separate experimental path: it can post to its own Alpaca **paper** account, and only that account. It is not the cockpit's single order path. An order inside the cockpit still has to pass risk, mode, and approval before the gateway. `app/risk/` stays Decimal and stdlib-only. `app/quant/` still must not import `app/brokers/`. This tree does not import either. The experimental path has to be reconciled at integration time; it does not replace the cockpit path and it does not weaken it.
+
+`sidecar.rl` is simulation only. It never places an order.
 
 ## What is here
 
@@ -13,7 +15,8 @@ The nine cockpit invariants still apply to that later change. In particular, an 
 | `sidecar.tca` | Implementation shortfall and an Almgren-style impact fit |
 | `sidecar.llm_audit` | Judgment log, Brier / reliability / Spearman IC, look-ahead and training-cutoff filters |
 | `sidecar.sizer` | Volatility target and fractional Kelly. Decimal only. Can only shrink a cap |
-| `sidecar.harness` | Offline replay on committed daily bars, and a read-only Alpaca **paper** observer |
+| `sidecar.harness` | Offline replay, a read-only Alpaca paper observer, and a separate experimental paper runner |
+| `sidecar.rl` | Simulated GRU market maker. Behavioral cloning from a vendored Avellaneda-Stoikov expert, prioritized fictitious self-play, potential-based shaping. Never live |
 
 P6–P8 from the research note are not separate packages. Down-market beta is reported by `evalstats` when a benchmark series is passed in. A data-quality gate would have to call the orchestrator breakers, and a latency model would have to edit `app/quant/`. Neither belongs in this tree.
 
@@ -41,11 +44,11 @@ That run is a simulation. It is not a broker fill, not a survivorship-free stock
 
 ## Paper observer
 
-The client is hard-pinned to `https://paper-api.alpaca.markets` for account reads and `https://data.alpaca.markets` for IEX bars. `GET` only. `https://api.alpaca.markets` is rejected. No order route exists in this tree.
+The read-only client is hard-pinned to `https://paper-api.alpaca.markets` for account reads and `https://data.alpaca.markets` for IEX bars. `GET` only. `https://api.alpaca.markets` is rejected.
 
-Credentials, first complete pair wins:
+Credentials for the observer only, first complete pair wins:
 
-1. Keyring service `ai-investment-cockpit`, names `alpaca_key` and `alpaca_secret` (the same names as `app/core/secrets.py`).
+1. Keyring service `ai-investment-cockpit`, names `alpaca_key` and `alpaca_secret` (the same names as the cockpit secret helper).
 2. Otherwise both environment variables `SIDECAR_ALPACA_KEY_ID` and `SIDECAR_ALPACA_SECRET`.
 
 A partial pair is ignored. Values are not written into the report or the error text.
@@ -54,9 +57,38 @@ A partial pair is ignored. Values are not written into the report or the error t
 python -m sidecar.harness.paper --out artifacts/paper_report.json
 ```
 
-Exit code 2 means the credentials are not available. The command above is the one to run once they are. This environment had neither keyring nor the env pair, so the live paper report was not produced here.
+Exit code 2 means the credentials are not available. Alpaca paper fills are simulated by Alpaca. A TCA block in that report is a paper-venue calibration, not a live impact estimate. Decision price and arrival are daily proxies (previous close, session open), labeled as such.
 
-Alpaca paper fills are simulated by Alpaca. A TCA block in that report is a paper-venue calibration, not a live impact estimate. Decision price and arrival are daily proxies (previous close, session open), labeled as such.
+## Experimental paper runner
+
+This is not the cockpit order path. It posts, when `--execute` is set, only to a **different** Alpaca paper account. It never reads `alpaca_key`, `alpaca_secret`, `SIDECAR_ALPACA_KEY_ID`, or `SIDECAR_ALPACA_SECRET`.
+
+Dry-run (no credentials, no broker writes):
+
+```bash
+python -m sidecar.harness.runner --when open
+python -m sidecar.harness.runner --when close
+```
+
+Execute, after provisioning the sidecar pair:
+
+```bash
+keyring set ai-investment-cockpit-sidecar paper_key
+keyring set ai-investment-cockpit-sidecar paper_secret
+# or export both SIDECAR_PAPER_ALPACA_KEY_ID and SIDECAR_PAPER_ALPACA_SECRET
+python -m sidecar.harness.runner --when close --execute --out artifacts/paper_execute_report.json
+```
+
+The trading URL is fixed at `https://paper-api.alpaca.markets`. Any other trading base URL is rejected. Before an order, `GET /v2/account` on that host must return an ACTIVE account; an explicit non-paper mode field or a blocked account is refused. Limits (max $2,000 notional, $20,000 gross, 3 positions, $500 daily loss, allowlist SPY/QQQ/IWM) can only shrink or refuse the sizer. Client order ids are stable per session and intent. `artifacts/KILL` (or `SIDECAR_KILL_FILE`) blocks new orders and, on execute, cancels open sidecar ids. The default strategy is the predeclared inverse-vol rule. `spy_only` is the other live choice. The Avellaneda-Stoikov config is logged on the trial ledger and is not traded. See `sidecar/harness/README.md` for the cron lines and the account-attestation caveat.
+
+## Simulated market maker
+
+```bash
+python -m sidecar.rl.train --profile smoke
+python -m sidecar.rl.train --profile report --out examples/rl_mm_eval.json --ledger examples/rl_mm_eval.ledger.jsonl
+```
+
+`examples/rl_mm_eval.json` is the report-profile run committed with this tree. It is a short CPU simulation, not a live book and not a claim that the learner beat the Avellaneda-Stoikov baseline. Read that file's `caveats` before quoting it. The comparison block is the measured difference in mean session return.
 
 ## Retrofit
 
@@ -91,7 +123,19 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 
 - **Reads:** Decimal `edge`, `vol`, `target_vol`, `kelly_frac`, `caps`, `equity`. Floats are rejected. `edge` and `vol` must already share a horizon.
 - **Emits:** a cent-quantized notional, rounded down, that is `<= caps`. Non-positive edge returns 0. `ewma_volatility` is the RiskMetrics recursion seeded with the first squared return.
-- **Plug-in:** in `app/risk/engine.py`, the allowed notional becomes `min(existing max_allowed_notional, suggestion)`. The function cannot raise a cap. It does not belong on a path that calls a broker by itself.
+- **Plug-in:** in the cockpit risk engine, the allowed notional becomes `min(existing max_allowed_notional, suggestion)`. The function cannot raise a cap. It does not belong on a path that calls a broker by itself. The experimental runner calls the same function and then applies a second, tighter paper limit. That second limit is not a cockpit risk verdict.
+
+### experimental paper runner
+
+- **Reads:** the local daily bar file, and, only in `--execute`, the sidecar Alpaca paper account (equity, positions, portfolio history, closed orders). Credentials are the sidecar keyring service or `SIDECAR_PAPER_*` only.
+- **Emits:** `sidecar.daily_report.v1` with `experimental_order_path: true`, plus an append-only order log and trial-ledger rows for every config considered, including the simulation-only market maker.
+- **Plug-in:** none until a reviewed integration. This client must not be called from the cockpit gateway, and the cockpit gateway must not grow a fallback to these keys. The two paths stay separate until that review deletes one of them on purpose.
+
+### rl
+
+- **Reads:** nothing outside this tree except the committed daily-bar fixture for the labeled non-L1 replay.
+- **Emits:** `sidecar.rl_mm_eval.v1` with `live_trading: false` and `orders_submitted: 0`. PSR, DSR, and PBO are attached through `evalstats`. The trial ledger records the hyperparameter rows.
+- **Plug-in:** do not connect it to a broker. The vendored Avellaneda-Stoikov function is for the simulator's expert and for comparison. It is not a second quoter on the cockpit order path.
 
 ## Not a performance claim
 

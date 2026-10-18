@@ -280,6 +280,8 @@ def _simulate(
         "mean_gross": (
             sum(gross_samples, Decimal(0)) / Decimal(len(gross_samples)) if gross_samples else Decimal(0)
         ),
+        "shares": dict(shares),
+        "cash": cash,
     }
 
 

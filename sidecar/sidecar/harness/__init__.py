@@ -1,1 +1,1 @@
-"""Paper-read and offline replay harness. It does not submit orders."""
+"""Offline replay, a read-only paper observer, and a separate experimental paper runner."""
