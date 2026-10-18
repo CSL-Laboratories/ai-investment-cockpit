@@ -1296,6 +1296,71 @@ def _rename_natural_key(documents: dict, old: str, new: str) -> None:
             check["natural_key"] = new
 
 
+@pytest.mark.parametrize("repin_coverage", [False, True])
+def test_fact_period_relabel_cannot_bypass_the_unchanged_contract(
+    tmp_path: Path, repin_coverage: bool
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _rename_natural_key(
+        documents, "sec:fact:0000000001:revenue:fy2023", "sec:fact:0000000001:revenue:fy2099"
+    )
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    expected = "replay scenario does not match the coverage manifest"
+    if repin_coverage:
+        coverage = documents["fixtures/coverage.json"]
+        coverage["checks"] = [module.coverage_scenario(check) for check in documents["fixtures/replay_checks.json"]["checks"]]
+        (copy / "fixtures/coverage.json").write_text(
+            json.dumps(coverage, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
+        _rewrite_manifest(module, copy)
+        expected = "coverage manifest digest does not match the contract"
+    else:
+        assert (copy / "fixtures/coverage.json").read_bytes() == (O2 / "fixtures/coverage.json").read_bytes()
+    assert (copy / "CONTRACT.md").read_bytes() == (O2 / "CONTRACT.md").read_bytes()
+    # No payload reporting period exists: this protects the frozen corpus label,
+    # not arbitrary SEC fiscal-period semantics or a newly repinned contract.
+    with pytest.raises(module.ContractError, match=expected):
+        module.validate_candidate(copy)
+
+
+@pytest.mark.parametrize("form", ["10-K", "8-K"])
+@pytest.mark.parametrize("representation", ["correction", "duplicate", "new_accession"])
+def test_accession_key_preserves_raw_bytes(
+    tmp_path: Path, form: str, representation: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    records = documents["fixtures/raw_records.json"]["records"]
+    original = json.loads(json.dumps(next(record for record in records if record["raw_record_id"] == "raw-eq-ooo")))
+    original.update(
+        raw_record_id="raw-accession-original", source_record_key="0000000001-24-000051",
+        natural_key="sec:accession:0000000001-24-000051",
+    )
+    original["payload"].update(form=form, accession="0000000001-24-000051")
+    later = json.loads(json.dumps(original))
+    later.update(raw_record_id="raw-accession-later", source_record_key="later", accepted_at="2024-05-03T15:00:00Z")
+    if representation == "duplicate":
+        later["duplicate_of"] = original["raw_record_id"]
+    else:
+        later["payload"]["value"] = "changed"
+        if representation == "correction":
+            later["supersedes"] = original["raw_record_id"]
+        else:
+            later["payload"]["accession"] = "0000000001-24-000052"
+            later["source_record_key"] = "0000000001-24-000052"
+            later["natural_key"] = "sec:accession:0000000001-24-000052"
+    records.extend((original, later))
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    for retained in ("CONTRACT.md", "fixtures/coverage.json"):
+        assert (copy / retained).read_bytes() == (O2 / retained).read_bytes()
+    if representation == "correction":
+        with pytest.raises(module.ContractError, match="filing correction reuses a predecessor accession"):
+            module.validate_candidate(copy)
+    else:
+        assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
 def test_duplicate_corporate_action_is_rejected(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)
