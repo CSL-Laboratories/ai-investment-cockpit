@@ -107,6 +107,24 @@ def verdict_body(kind: str = "RESOLVE", sha: str = SHA, tid: str = THREAD, extra
     )
 
 
+def failing_linux_gates() -> dict:
+    return {
+        "state": "FAILURE",
+        "contexts": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "linux-gates",
+                    "conclusion": "FAILURE",
+                    "status": "COMPLETED",
+                    "isRequired": True,
+                }
+            ],
+        },
+    }
+
+
 def passing_rollup() -> dict:
     return {
         "state": "SUCCESS",
@@ -1155,6 +1173,77 @@ def test_list_pr_repeat_cursor_stays_truncated():
     out = mod.list_pr(gh, cfg(), 12)
     assert gh.calls == 2
     assert out["reviewThreads"]["pageInfo"]["hasNextPage"] is True
+
+
+def test_scan_pr_truncated_threads_abort_independent_of_live_refresh():
+    other = thread(THREAD2)
+    gh = ready_gh(
+        threads=[thread(), other],
+        reviews=[
+            comment(CODEX, verdict_body()),
+            comment(CODEX, verdict_body(tid=THREAD2)),
+        ],
+    )
+    gh.pr_by_number[12]["reviewThreads"]["pageInfo"] = {
+        "hasNextPage": True,
+        "endCursor": "more",
+    }
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            payload = dict(gh.pr_by_number[12])
+            payload["reviewThreads"] = {
+                "nodes": gh.pr_by_number[12]["reviewThreads"]["nodes"],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }
+            return {"repository": {"pullRequest": payload}}
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=truncated-threads" in line for line in logs)
+
+
+def test_live_refresh_truncated_threads_aborts_before_writes():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "reviewThreads" in query:
+            gh.pr_by_number[12]["reviewThreads"]["pageInfo"] = {
+                "hasNextPage": True,
+                "endCursor": "more",
+            }
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert gh.resolves == []
+    assert gh.replies == []
+    assert any("skip=truncated-threads" in line for line in logs)
+
+
+def test_linux_gates_failure_after_cite_blocks_resolve():
+    gh = ready_gh(threads=[thread()], reviews=[comment(CODEX, verdict_body())])
+    seen = {"n": 0}
+    orig = gh.graphql
+
+    def graphql(query, variables, token=None):
+        if "statusCheckRollup" in query:
+            seen["n"] += 1
+            if seen["n"] >= 4:
+                gh.rollup_by_sha[SHA] = failing_linux_gates()
+        return orig(query, variables, token)
+
+    gh.graphql = graphql  # type: ignore[method-assign]
+    logs = mod.scan_pr(gh.pr_by_number[12], cfg(), gh, NOW)
+    assert seen["n"] >= 4
+    assert gh.resolves == []
+    assert gh.replies
+    assert any("skip=checks=linux-gates-not-green" in line for line in logs)
 
 
 def test_truncated_thread_list_aborts_entire_pr_scan():
