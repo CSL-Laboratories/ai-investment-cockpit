@@ -36,6 +36,8 @@ from sidecar.harness.backtest import (
     _targets,
     load_bars,
 )
+from sidecar.harness.alpaca import PaperReadClient
+from sidecar.harness.bars import BarsRefreshError, refresh_allowlist_daily_bars
 from sidecar.harness.paper_credentials import (
     SidecarCredentialsMissing,
     load_sidecar_paper_credentials,
@@ -406,6 +408,9 @@ def run_runner(
     client: PaperTradeClient | None = None,
     limits: PaperLimits | None = None,
     bootstrap_reps: int = 200,
+    refresh: bool = True,
+    bars_client: PaperReadClient | None = None,
+    bars_out: Path | None = None,
 ) -> dict:
     if strategy not in {"inverse_vol", "spy_only", "kronos"}:
         raise RunnerError("strategy must be inverse_vol, spy_only, or kronos")
@@ -424,8 +429,37 @@ def run_runner(
         )
     limits = limits or PaperLimits()
     kill = _kill_path(kill_file)
+    symbols = ("SPY",) if strategy == "spy_only" else limits.allowlist
+    bars_source = "local_file"
+    bars_note = None
+    if refresh:
+        session_day = moment.astimezone(ET).date()
+        try:
+            bars_path = refresh_allowlist_daily_bars(
+                dest=bars_out or (ROOT / "artifacts" / "daily_bars.csv"),
+                as_of=session_day,
+                now=moment,
+                client=bars_client,
+                symbols=limits.allowlist,
+            )
+            bars_source = "alpaca_iex_adjusted"
+        except SidecarCredentialsMissing:
+            if execute:
+                raise
+            bars_note = (
+                "Bars were not refreshed because the sidecar paper credentials are missing. "
+                "This dry-run used the local bar file and did not submit orders."
+            )
+        except BarsRefreshError as exc:
+            if execute:
+                raise RunnerError(
+                    "bars refresh failed; refusing to submit orders. " + str(exc)
+                ) from exc
+            bars_note = (
+                "Bars refresh failed. This dry-run used the local bar file and did not submit orders. "
+                + str(exc)
+            )
     grouped = load_bars(bars_path)
-    symbols = ("SPY",) if strategy == "spy_only" else ("SPY", "QQQ", "IWM")
     kronos_gate = None
     if strategy == "kronos":
         from sidecar.kronos_signal.gate import KronosGateError, load_kronos_gate
@@ -623,8 +657,17 @@ def run_runner(
         "The Avellaneda-Stoikov config on the trial ledger is simulation-only and was not sent to the broker.",
         "No numeric threshold in this sidecar is a frozen qualify gate.",
         "Trailing mean return is a naive edge input to the sizer, not a validated forecast.",
-        "Targets are sized from the local daily bar file passed to this process, not from a live quote.",
+        "Targets are sized from the bar file this process loaded, not from a live quote.",
     ]
+    if bars_note:
+        caveats.append(bars_note)
+    elif bars_source == "alpaca_iex_adjusted":
+        caveats.append(
+            "Daily bars were refreshed from Alpaca IEX with adjustment=all. "
+            "adj_close equals the adjusted close. The committed fixture was not used."
+        )
+    else:
+        caveats.append("Daily bars came from the local file. Refresh was off (--no-refresh) or was not requested.")
     if strategy == "kronos" and kronos_gate is not None:
         stored_curve = kronos_gate.get("equity_curve") or []
         stored_returns = [float(value) for value in kronos_gate.get("strategy_returns") or []]
@@ -714,6 +757,7 @@ def run_runner(
         "primary_config": {
             "strategy": strategy,
             "scheduled_when": scheduled,
+            "bars_source": bars_source,
             "lookback": PRIMARY_LOOKBACK,
             "config_hash": sha256_canonical(
                 {
@@ -766,6 +810,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--strategy", choices=("inverse_vol", "spy_only", "kronos"), default="inverse_vol")
     parser.add_argument("--kronos-report", type=Path, default=DEFAULT_KRONOS_REPORT)
     parser.add_argument("--bars", type=Path, default=DEFAULT_BARS)
+    parser.add_argument(
+        "--no-refresh",
+        action="store_true",
+        help="Use --bars as-is. Default refreshes adjusted IEX daily bars for the allowlist.",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
     parser.add_argument("--order-log", type=Path, default=DEFAULT_ORDER_LOG)
@@ -784,6 +833,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = run_runner(
             bars_path=args.bars,
+            refresh=not args.no_refresh,
             out=args.out,
             ledger_path=args.ledger,
             order_log_path=args.order_log,

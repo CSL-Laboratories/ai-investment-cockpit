@@ -47,10 +47,11 @@ That run is a simulation. It is not a broker fill, not a survivorship-free stock
 
 The read-only client is hard-pinned to `https://paper-api.alpaca.markets` for account reads and `https://data.alpaca.markets` for IEX bars. `GET` only. `https://api.alpaca.markets` is rejected.
 
-Credentials for the observer only, first complete pair wins:
+Credentials for the observer, first complete pair wins:
 
 1. Keyring service `ai-investment-cockpit`, names `alpaca_key` and `alpaca_secret` (the same names as the cockpit secret helper).
 2. Otherwise both environment variables `SIDECAR_ALPACA_KEY_ID` and `SIDECAR_ALPACA_SECRET`.
+3. Otherwise the sidecar paper pair: keyring service `ai-investment-cockpit-sidecar`, names `paper_key` and `paper_secret`, or both `SIDECAR_PAPER_ALPACA_KEY_ID` and `SIDECAR_PAPER_ALPACA_SECRET`.
 
 A partial pair is ignored. Values are not written into the report or the error text.
 
@@ -64,11 +65,12 @@ Exit code 2 means the credentials are not available. Alpaca paper fills are simu
 
 This is not the cockpit order path. It posts, when `--execute` is set, only to a **different** Alpaca paper account. It never reads `alpaca_key`, `alpaca_secret`, `SIDECAR_ALPACA_KEY_ID`, or `SIDECAR_ALPACA_SECRET`.
 
-Dry-run (no credentials, no broker writes):
+Dry-run does not construct a trade client. It refreshes adjusted allowlist bars when the sidecar paper credentials are present, and otherwise plans from the local file:
 
 ```bash
 python -m sidecar.harness.runner --when open
 python -m sidecar.harness.runner --when close
+python -m sidecar.harness.runner --when close --no-refresh
 ```
 
 Execute, after provisioning the sidecar pair:
@@ -141,7 +143,7 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 
 ### experimental paper runner
 
-- **Reads:** the local daily bar file, and, only in `--execute`, the sidecar Alpaca paper account (equity, positions, portfolio history, closed orders). Credentials are the sidecar keyring service or `SIDECAR_PAPER_*` only.
+- **Reads:** adjusted IEX daily bars for the allowlist from Alpaca market data (or the local file when `--no-refresh` is set or a dry-run refresh cannot run), and, only in `--execute`, the sidecar Alpaca paper account (equity, positions, portfolio history, closed orders). Credentials are the sidecar keyring service or `SIDECAR_PAPER_*` only. A failed refresh in `--execute` submits no orders.
 - **Emits:** `sidecar.daily_report.v1` with `experimental_order_path: true`, plus an append-only order log and trial-ledger rows for every config considered, including the simulation-only market maker.
 - **Plug-in:** none until a reviewed integration. This client must not be called from the cockpit gateway, and the cockpit gateway must not grow a fallback to these keys. The two paths stay separate until that review deletes one of them on purpose.
 

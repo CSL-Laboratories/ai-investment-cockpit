@@ -22,13 +22,18 @@ python -m sidecar.harness.paper --out artifacts/paper_report.json
 
 Reads `GET /v2/account`, `GET /v2/account/portfolio/history`, `GET /v2/orders?status=closed`, and IEX daily bars. The trading host constant is `https://paper-api.alpaca.markets`. Any other trading host, including `https://api.alpaca.markets`, raises. The method must be `GET`.
 
-Credentials for this observer only: keyring service `ai-investment-cockpit` / `alpaca_key` + `alpaca_secret`, or both `SIDECAR_ALPACA_KEY_ID` and `SIDECAR_ALPACA_SECRET`. Exit code 2 if neither pair is present. The daily runner below does not accept these names.
+Credentials, first complete pair wins:
+
+1. Keyring service `ai-investment-cockpit` / `alpaca_key` + `alpaca_secret`, or both `SIDECAR_ALPACA_KEY_ID` and `SIDECAR_ALPACA_SECRET`.
+2. Otherwise the sidecar paper pair: keyring service `ai-investment-cockpit-sidecar` / `paper_key` + `paper_secret`, or both `SIDECAR_PAPER_ALPACA_KEY_ID` and `SIDECAR_PAPER_ALPACA_SECRET`.
+
+Exit code 2 if neither pair is present. One sidecar paper pair is enough for this observer and for the runner below. The runner still does not accept the cockpit names.
 
 Account ids are not copied into the report. Decision and arrival prices on paper fills are the previous daily close and that session's open, and the venue label is `alpaca_paper`.
 
 ## Experimental paper runner
 
-Dry-run is the default. It sizes the book with the same sizer, writes the plan and an append-only order log, and does not load credentials or construct a trade client.
+Dry-run is the default. It sizes the book with the same sizer and writes the plan and an append-only order log. It does not construct a trade client. By default it first refreshes adjusted IEX daily bars for SPY, QQQ, and IWM from `https://data.alpaca.markets` (`adjustment=all`) into `artifacts/daily_bars.csv`, using the sidecar paper credentials. That read does not place an order and does not modify `fixtures/etf_daily.csv`. If the refresh fails, a dry-run keeps the local `--bars` file and says so. `--execute` refuses to submit orders when the refresh fails, including when the latest bar is more than five days behind the session date. `--no-refresh` skips the fetch and uses `--bars` (the committed fixture, unless you pass another file).
 
 ```bash
 python -m sidecar.harness.runner --when open

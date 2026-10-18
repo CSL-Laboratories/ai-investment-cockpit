@@ -93,7 +93,14 @@ class PaperReadClient:
             raise PaperEndpointError("orders response was not a list")
         return body
 
-    def daily_bars(self, symbols: list[str], *, start: str, end: str | None = None) -> dict:
+    def daily_bars(
+        self,
+        symbols: list[str],
+        *,
+        start: str,
+        end: str | None = None,
+        page_token: str | None = None,
+    ) -> dict:
         if not symbols:
             return {"bars": {}}
         params = {
@@ -106,4 +113,35 @@ class PaperReadClient:
         }
         if end:
             params["end"] = end
+        if page_token:
+            params["page_token"] = page_token
         return self._request("GET", DATA_BASE_URL + "/v2/stocks/bars", params=params)
+
+    def adjusted_daily_bars(self, symbols: list[str], *, start: str) -> dict:
+        """Follow ``next_page_token`` and merge adjusted IEX daily bars.
+
+        ``adjustment=all`` is set on every page. This method only GETs the data host.
+        """
+        merged: dict[str, list] = {symbol: [] for symbol in symbols}
+        token: str | None = None
+        seen: set[str] = set()
+        for _page in range(40):
+            if token is not None:
+                if token in seen:
+                    raise PaperEndpointError("daily bars page token repeated")
+                seen.add(token)
+            page = self.daily_bars(symbols, start=start, page_token=token)
+            if not isinstance(page, dict):
+                raise PaperEndpointError("daily bars response was not an object")
+            bars = page.get("bars") or {}
+            if not isinstance(bars, dict):
+                raise PaperEndpointError("daily bars payload was not a map")
+            for symbol, rows in bars.items():
+                if not isinstance(rows, list):
+                    raise PaperEndpointError("daily bars for a symbol were not a list")
+                merged.setdefault(str(symbol).upper(), []).extend(rows)
+            nxt = page.get("next_page_token")
+            if not nxt:
+                return {"bars": merged}
+            token = str(nxt)
+        raise PaperEndpointError("daily bars pagination exceeded 40 pages")

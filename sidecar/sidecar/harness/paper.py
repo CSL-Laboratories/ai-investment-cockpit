@@ -13,6 +13,10 @@ from zoneinfo import ZoneInfo
 
 from sidecar.harness.alpaca import DATA_BASE_URL, PAPER_BASE_URL, PaperReadClient
 from sidecar.harness.backtest import ROOT
+from sidecar.harness.paper_credentials import (
+    SidecarCredentialsMissing,
+    load_sidecar_paper_credentials,
+)
 from sidecar.harness.secrets import CredentialsMissing, load_alpaca_credentials
 from sidecar.evalstats.report import evaluate
 from sidecar.jsonutil import validate, write_json
@@ -173,6 +177,28 @@ def build_paper_report(client: PaperReadClient, *, period: str = "1A") -> dict:
     return validate(report, SCHEMA)
 
 
+def load_observer_credentials() -> tuple[str, str]:
+    """Cockpit paper pair first, then the sidecar paper pair.
+
+    Either complete pair is enough. A partial pair is ignored. Values are not
+    included in the error text.
+    """
+    try:
+        return load_alpaca_credentials()
+    except CredentialsMissing:
+        pass
+    try:
+        return load_sidecar_paper_credentials()
+    except SidecarCredentialsMissing:
+        raise CredentialsMissing(
+            "No Alpaca paper credentials. Provision the cockpit pair "
+            "(keyring service ai-investment-cockpit, names alpaca_key and alpaca_secret, "
+            "or both SIDECAR_ALPACA_KEY_ID and SIDECAR_ALPACA_SECRET) or the sidecar pair "
+            "(keyring service ai-investment-cockpit-sidecar, names paper_key and paper_secret, "
+            "or both SIDECAR_PAPER_ALPACA_KEY_ID and SIDECAR_PAPER_ALPACA_SECRET)."
+        ) from None
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -181,12 +207,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--period", default="1A")
     args = parser.parse_args(argv)
     try:
-        key_id, secret = load_alpaca_credentials()
+        key_id, secret = load_observer_credentials()
     except CredentialsMissing as exc:
         print(str(exc))
         print("Command: python -m sidecar.harness.paper --out sidecar/artifacts/paper_report.json")
         print("Env: SIDECAR_ALPACA_KEY_ID and SIDECAR_ALPACA_SECRET")
         print("Or keyring service ai-investment-cockpit names alpaca_key and alpaca_secret")
+        print("The sidecar paper pair also works: SIDECAR_PAPER_ALPACA_KEY_ID and SIDECAR_PAPER_ALPACA_SECRET")
+        print("Or keyring service ai-investment-cockpit-sidecar names paper_key and paper_secret")
         return 2
     client = PaperReadClient(key_id, secret)
     try:

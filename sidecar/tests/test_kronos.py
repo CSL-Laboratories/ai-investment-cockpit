@@ -124,6 +124,7 @@ def test_missing_or_early_report_does_not_open_a_trade_client(tmp_path: Path, mo
             execute=True,
             force_window=True,
             bootstrap_reps=60,
+            refresh=False,
         )
     early = {
         "schema_version": "sidecar.kronos_eval.v1",
@@ -182,6 +183,7 @@ def test_runner_sizes_kronos_from_the_report_without_loading_weights(tmp_path: P
         when="close",
         execute=False,
         bootstrap_reps=60,
+        refresh=False,
     )
     assert report["orders_submitted"] == 0
     assert report["broker_writes"] is False

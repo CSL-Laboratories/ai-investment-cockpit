@@ -175,6 +175,53 @@ def test_offline_backtest_on_the_fixture(tmp_path: Path):
     assert out.exists()
 
 
+def test_observer_accepts_the_sidecar_paper_pair_and_keeps_the_cockpit_pair_first(monkeypatch):
+    import sys
+    import types
+
+    from sidecar.harness.paper import load_observer_credentials
+
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service, name: None
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+    monkeypatch.delenv("SIDECAR_ALPACA_KEY_ID", raising=False)
+    monkeypatch.delenv("SIDECAR_ALPACA_SECRET", raising=False)
+    monkeypatch.delenv("SIDECAR_PAPER_ALPACA_KEY_ID", raising=False)
+    monkeypatch.delenv("SIDECAR_PAPER_ALPACA_SECRET", raising=False)
+    monkeypatch.setenv("SIDECAR_PAPER_ALPACA_KEY_ID", "paper-key")
+    monkeypatch.setenv("SIDECAR_PAPER_ALPACA_SECRET", "paper-secret")
+    assert load_observer_credentials() == ("paper-key", "paper-secret")
+    monkeypatch.setenv("SIDECAR_ALPACA_KEY_ID", "cockpit-key")
+    monkeypatch.setenv("SIDECAR_ALPACA_SECRET", "cockpit-secret")
+    assert load_observer_credentials() == ("cockpit-key", "cockpit-secret")
+
+
+def test_adjusted_daily_bars_follow_the_page_token():
+    pages = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.host == "data.alpaca.markets"
+        assert request.url.params["adjustment"] == "all"
+        pages["n"] += 1
+        if pages["n"] == 1:
+            assert "page_token" not in request.url.params
+            return httpx.Response(
+                200,
+                json={"bars": {"SPY": [{"t": "2026-10-01T04:00:00Z"}]}, "next_page_token": "next"},
+            )
+        assert request.url.params["page_token"] == "next"
+        return httpx.Response(200, json={"bars": {"SPY": [{"t": "2026-10-02T04:00:00Z"}]}, "next_page_token": None})
+
+    client = PaperReadClient("key-id", "secret-value", transport=httpx.MockTransport(handler))
+    payload = client.adjusted_daily_bars(["SPY"], start="2016-01-01")
+    assert [row["t"] for row in payload["bars"]["SPY"]] == [
+        "2026-10-01T04:00:00Z",
+        "2026-10-02T04:00:00Z",
+    ]
+    client.close()
+
+
 def test_package_does_not_import_the_order_path():
     root = Path(__file__).resolve().parents[1] / "sidecar"
     text = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.py"))

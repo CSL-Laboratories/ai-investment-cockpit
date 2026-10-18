@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import types
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from sidecar.chainlog import ChainError, ChainLog
+from sidecar.harness.alpaca import PaperReadClient
 from sidecar.harness.paper_credentials import (
     SIDECAR_KEYRING_SERVICE,
     SidecarCredentialsMissing,
@@ -203,6 +204,7 @@ def test_dry_run_does_not_construct_a_trade_client(tmp_path: Path, monkeypatch):
         execute=False,
         now=now,
         bootstrap_reps=60,
+        refresh=False,
     )
     assert report["mode"] == "sidecar_paper_dry_run"
     assert report["orders_submitted"] == 0
@@ -264,6 +266,7 @@ def test_execute_posts_once_and_the_kill_switch_cancels_instead(tmp_path: Path):
         now=now,
         client=client,
         bootstrap_reps=60,
+        refresh=False,
     )
     assert report["mode"] == "sidecar_paper_execute"
     assert report["orders_submitted"] == len(posted) > 0
@@ -278,6 +281,7 @@ def test_execute_posts_once_and_the_kill_switch_cancels_instead(tmp_path: Path):
         now=now,
         client=client,
         bootstrap_reps=60,
+        refresh=False,
     )
     assert again["orders_submitted"] == 0
     assert len(posted) == report["orders_submitted"]
@@ -293,11 +297,133 @@ def test_execute_posts_once_and_the_kill_switch_cancels_instead(tmp_path: Path):
         now=now,
         client=client,
         bootstrap_reps=60,
+        refresh=False,
     )
     assert stopped["orders_submitted"] == 0
     assert stopped["kill_switch"] is True
     assert deleted
     client.close()
+
+
+def _weekday_bars_ending(end: date, count: int) -> list[dict]:
+    days = []
+    day = end
+    while len(days) < count:
+        if day.weekday() < 5:
+            days.append(day)
+        day -= timedelta(days=1)
+    rows = []
+    for index, session in enumerate(reversed(days)):
+        price = 100 + index
+        stamp = datetime(session.year, session.month, session.day, 4, 0, tzinfo=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        rows.append({"t": stamp, "o": price, "h": price + 1, "l": price - 0.5, "c": price + 0.25, "v": 1000 + index})
+    return rows
+
+
+def _bars_client(rows: list[dict]) -> PaperReadClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.host == "data.alpaca.markets"
+        assert request.url.path == "/v2/stocks/bars"
+        assert request.url.params["adjustment"] == "all"
+        symbols = request.url.params["symbols"].split(",")
+        return httpx.Response(200, json={"bars": {symbol: rows for symbol in symbols}, "next_page_token": None})
+
+    return PaperReadClient("key-id", "secret-value", transport=httpx.MockTransport(handler))
+
+
+def test_runner_sizes_from_refreshed_bars_and_leaves_the_fixture(tmp_path: Path, monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise AssertionError("refresh constructed a trade client")
+
+    monkeypatch.setattr(PaperTradeClient, "__init__", explode)
+    rows = _weekday_bars_ending(date(2026, 10, 13), 40)
+    client = _bars_client(rows)
+    now = datetime(2026, 10, 14, 12, 0, tzinfo=ET)
+    report = run_runner(
+        out=tmp_path / "report.json",
+        ledger_path=tmp_path / "ledger.jsonl",
+        order_log_path=tmp_path / "orders.jsonl",
+        kill_file=tmp_path / "absent",
+        when="open",
+        execute=False,
+        now=now,
+        bootstrap_reps=60,
+        refresh=True,
+        bars_client=client,
+        bars_out=tmp_path / "daily_bars.csv",
+    )
+    client.close()
+    assert report["orders_submitted"] == 0
+    assert report["broker_writes"] is False
+    assert report["primary_config"]["bars_source"] == "alpaca_iex_adjusted"
+    text = (tmp_path / "daily_bars.csv").read_text(encoding="utf-8")
+    assert text.startswith("date,symbol,open,high,low,close,adj_close,volume\n")
+    assert "2026-10-13,SPY," in text or "2026-10-13,QQQ," in text
+    assert "2021-10-18" not in text
+    fixture = (ROOT / "fixtures" / "etf_daily.csv").read_text(encoding="utf-8")
+    assert fixture.startswith("date,symbol,open,high,low,close,adj_close,volume\n")
+    assert "2021-10-18,SPY," in fixture
+
+
+def test_execute_refuses_orders_when_the_bar_refresh_fails(tmp_path: Path, monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise AssertionError("failed refresh constructed a trade client")
+
+    monkeypatch.setattr(PaperTradeClient, "__init__", explode)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        return httpx.Response(503, json={"message": "down"})
+
+    client = PaperReadClient("key-id", "secret-value", transport=httpx.MockTransport(handler))
+    now = datetime(2026, 10, 14, 15, 45, tzinfo=ET)
+    with pytest.raises(RunnerError, match="refusing to submit orders"):
+        run_runner(
+            out=tmp_path / "report.json",
+            ledger_path=tmp_path / "ledger.jsonl",
+            order_log_path=tmp_path / "orders.jsonl",
+            kill_file=tmp_path / "absent",
+            when="close",
+            execute=True,
+            now=now,
+            bootstrap_reps=60,
+            refresh=True,
+            bars_client=client,
+            bars_out=tmp_path / "daily_bars.csv",
+        )
+    client.close()
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_dry_run_uses_the_local_file_when_refresh_credentials_are_missing(tmp_path: Path, monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise AssertionError("dry-run constructed a trade client")
+
+    monkeypatch.setattr(PaperTradeClient, "__init__", explode)
+
+    def missing():
+        raise SidecarCredentialsMissing("missing sidecar paper credentials")
+
+    monkeypatch.setattr("sidecar.harness.bars.load_sidecar_paper_credentials", missing)
+    now = datetime(2026, 10, 14, 12, 0, tzinfo=ET)
+    report = run_runner(
+        out=tmp_path / "report.json",
+        ledger_path=tmp_path / "ledger.jsonl",
+        order_log_path=tmp_path / "orders.jsonl",
+        kill_file=tmp_path / "absent",
+        when="open",
+        execute=False,
+        now=now,
+        bootstrap_reps=60,
+        refresh=True,
+    )
+    assert report["orders_submitted"] == 0
+    assert report["broker_writes"] is False
+    assert report["primary_config"]["bars_source"] == "local_file"
+    assert any("were not refreshed" in line for line in report["caveats"])
 
 
 def test_execute_outside_the_window_is_refused(tmp_path: Path):
