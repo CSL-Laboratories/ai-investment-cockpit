@@ -21,7 +21,10 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
+from agent_runner.result import (
+    LIMIT_HIT, OK, TIMEOUT, agent_dispatched, restore_agent_dispatch_watch,
+    watch_agent_dispatch,
+)
 from core.ids import new_id
 from orchestrator.breakers import BreakerEngine, BreakerSignals, unsampled
 from orchestrator.limits import current_limits
@@ -35,12 +38,18 @@ from workflows.budget import (
     make_event_type_verifier,
     rank_candidates,
 )
-from workflows.constants import EVENT_ESCALATION_DEFERRED, EVENT_TRIAGE_BATCH
+from workflows.constants import (
+    DEEP_BUDGET_RELEASE_NOOP,
+    EVENT_ESCALATION_DEFERRED,
+    EVENT_TRIAGE_BATCH,
+)
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.events import events_in_window
 from workflows.grounding import injection_predicate
 from workflows.packets import build_packet
 from workflows.prompts import load_prompt
-from workflows.proposals import draft_proposal
+from workflows.proposals import draft_proposal, subject_fits_context
 
 _FALLBACK_WINDOW = timedelta(minutes=30)
 _BURST_THRESHOLD = 4          # SEC-21 same-ticker novelty breaker (>= 4 candidates, one tick)
@@ -249,12 +258,33 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
 
     # ---- ONE batched triage call over the survivors --------------------------------------
     tmpl = load_prompt("triage_batch")
+    overhead = estimate_tokens(tmpl.render(
+        batch_id=batch_id, window_start=window_start, window_end=window_end, packet_block=""))
+    fit = fit_packet(
+        packet, reserved_tokens=overhead + repair_reserve_tokens(), cap=context_token_cap(state.settings))
+    if fit.dropped:
+        dropped_ids = {item.event_id for item in fit.dropped}
+        for ev in list(survivors):
+            if ev.id in dropped_ids:
+                _defer(state, dispositions, ev, "context_limit")
+        survivors = [ev for ev in survivors if ev.id not in dropped_ids]
+        packet = fit.packet
+    if not survivors:
+        _audit_batch(state, batch_id=batch_id, window_start=window_start,
+                     window_end=window_end, scored=[], dispositions=dispositions,
+                     degraded=False, consumed=False)
+        return {"status": "context_limited", "window_start": window_start,
+                "window_end": window_end,
+                "deferred": sorted(k for k, v in dispositions.items() if v == "deferred"),
+                "system_events": system_events}
     prompt = tmpl.render(batch_id=batch_id, window_start=window_start,
                          window_end=window_end, packet_block=packet.prompt_block())
     t_result, _t_job = call_agent(
         state, alias="triage", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TriageResult",
-        input_refs={"raw_refs": sorted(packet.dispatched_refs)}, transport=transport,
+        input_refs={"raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(fit.dropped)},
+        transport=transport,
     )
     jobs_total += 1
     if t_result.status in (LIMIT_HIT, TIMEOUT):
@@ -373,26 +403,76 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
     degraded = False
     escalated: list[str] = []
     fn = propose_fn if propose_fn is not None else draft_proposal
+    # Preflight uses the default draft_proposal template, so it only applies to that
+    # handler or a wrapper that declares it (build_services' ``_propose`` does); other
+    # injected handlers may use a different template and must still be called.
+    preflight = propose_fn is None or getattr(
+        propose_fn, "uses_draft_proposal_template", False)
     for cand in rank_candidates(cands):
         ev = cand["_event"]
         if degraded:
             _defer(state, dispositions, ev, "degraded_watch_only")
             continue
+        if preflight and (cand["holdings_match"] or cand["symbol"] in watchlist) \
+                and not subject_fits_context(state, ev, packet):
+            # Production build_services wraps draft_proposal, so the wrapper
+            # declares the marker rather than relying on `fn is draft_proposal`.
+            _defer(state, dispositions, ev, "context_limit")
+            continue
         try:
-            consumed = budget.try_consume(
+            entry_id = budget.try_consume(
                 day=day, event_id=ev.id, symbol=cand["symbol"],
                 reason=cand["reason"], corroborated=cand["corroborated"])
         except BudgetIntegrityError:
             # tampered budget ledger -> treat as NO budget (fail closed), never spent=0
             _defer(state, dispositions, ev, "deep_budget_integrity")
             continue
-        if not consumed:
+        if not entry_id:
             _defer(state, dispositions, ev, "deep_budget_exhausted")
             continue
         if cand["holdings_match"] or cand["symbol"] in watchlist:
-            outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
-                         parquet_root=parquet_root, holdings_symbols=holdings_symbols,
-                         watchlist=watchlist)
+            # Dispatch is the saga pivot, not entering call_agent. A raise before
+            # a child exists or a Jev request is sent releases this reservation.
+            # A raise after that keeps the unit. The finally only restores the
+            # watch — it must not release.
+            watch = watch_agent_dispatch()
+            dispatched = False
+            try:
+                outcome = fn(state, clock, event=ev, packet=packet, transport=transport,
+                             parquet_root=parquet_root, holdings_symbols=holdings_symbols,
+                             watchlist=watchlist, decision_weight=cand["score"])
+                # Snapshot before finally restores the watch. A context_limited
+                # status after a real send must not refund the unit.
+                dispatched = agent_dispatched()
+            except Exception:
+                if not agent_dispatched():
+                    try:
+                        budget.release(
+                            day=day, event_id=ev.id, reason="pre_dispatch_exception",
+                            entry_id=entry_id)
+                    except Exception:
+                        pass  # leave the unit spent; the handler exception still aborts
+                raise
+            finally:
+                restore_agent_dispatch_watch(watch)
+            if outcome.status == "context_limited":
+                if dispatched:
+                    _defer(state, dispositions, ev, "context_limit")
+                    continue
+                # No model call: the reservation is unused. Release the exact
+                # row try_consume wrote so a retry is not blocked.
+                try:
+                    released = budget.release(
+                        day=day, event_id=ev.id, reason="context_limit",
+                        entry_id=entry_id)
+                except BudgetIntegrityError:
+                    _defer(state, dispositions, ev, "deep_budget_integrity")
+                else:
+                    _defer(
+                        state, dispositions, ev,
+                        "context_limit" if released else DEEP_BUDGET_RELEASE_NOOP,
+                    )
+                continue
             jobs_total += 1
             if outcome.status == "degraded":
                 degraded = True
@@ -403,7 +483,7 @@ def triage_loop(state, clock=None, *, transport=None, deliver=None, parquet_root
             dispositions[ev.id] = "escalated"
             escalated.append(ev.id)
             if deliver is not None and outcome.embed is not None \
-                    and outcome.status in ("drafted", "flagged"):
+                    and outcome.status in ("drafted", "flagged", "needs_human"):
                 if not _safe_deliver(deliver, "#proposals", outcome.embed):
                     undelivered.append(ev.id)
         else:

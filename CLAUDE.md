@@ -11,6 +11,18 @@ order and the reviewed migration from the current implementation described below
 The nine invariants and runtime rules here remain in force until their separately
 scoped, reviewed implementation amendments; ratification alone grants no new authority.
 
+For the replacement program, read
+[SUCCESSOR-PRODUCT.md](docs/replacement/SUCCESSOR-PRODUCT.md),
+[MONTH-PROGRAM.md](docs/replacement/MONTH-PROGRAM.md) and the exact acceptance
+record in [program.json](docs/replacement/program.json). Accepted bytes and scoped
+gates remain controlling. Follow [AGENTS.md's founder decision and integration rules](AGENTS.md#founder-decisions-and-integration)
+for operational authority; they do not amend accepted contracts, activate R2a or
+unlock live capital. Founders merge after the required current-head reviews and checks;
+agents never merge. A founder's own PR requires another founder's approval before merge,
+regardless of ruleset enforcement. Non-author approval checks alone do not establish
+founder identity. All three founders participate in the final
+release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
@@ -56,7 +68,8 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 - **Execution stays model-free.** Models serve awareness/reasoning only.
 - **Research/dev host is Cursor Cloud Agent Linux VM.** Cursor-native fresh
   sessions are preferred; Codex/OpenCode development routes require exact-host
-  qualification and admitted budgets. Devin is retired. Muse synthesis requires
+  qualification and admitted budgets. Devin is retired from research/dev swarm dispatch;
+  its GitHub PR-review role in `AGENTS.md` remains active. Muse synthesis requires
   a different model family; OpenRouter/Hive are capped fallback synthesis only.
   Current process: `docs/research/agent-swarm-rebase-2026-09-14.md`.
   Cloud handoff: `docs/research/cursor-cloud-rdt-handoff-2026-09-14.md`.
@@ -94,7 +107,7 @@ chief among them SEC-11 (`docs/security-hardening-backlog.md`).
 `DEC-09` defines the release-blocking matrix: run the full suite and Ruff locally on native
 Windows and Ubuntu/WSL2, each with Python 3.11 and 3.12. macOS is best-effort. Hosted Actions
 do not replace that matrix: Linux `linux-gates` is the cheap required PR check; Windows runs
-on `main`, the `ci:full` label, or `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
+on push to `main`, `merge_group`, the `ci:full` label, or full `workflow_dispatch`; macOS runs nightly on `main` (07:17 UTC,
 skipped if idle 24h), on `ci:full`, or on `workflow_dispatch`. Hetzner is not part of
 current package validation. This changes platform evidence only and does not waive any online,
 broker, witness, paper-day, or pre-live gate.
@@ -109,6 +122,11 @@ ruff check .
 Install the full runtime set in every matrix cell, including `discord.py`. The Discord
 command-tree tests run offline with the real dependency; a separate isolated subprocess
 forces its import to fail and covers the fallback without skipping either path.
+`discord.py` 2.7.1 declares `audioop-lts; python_version >= "3.13"` in its PyPI
+`requires_dist`. On 3.11 and 3.12 the stdlib `audioop` import in `discord.player` is a
+DeprecationWarning, and pytest ignores that one warning only. That marker is why a
+`<3.13` cap is not added for this warning. A 3.13 matrix cell stays a separate support
+decision.
 
 ## Where things are
 - **Core engines (solid — change with care + adversarial review):** `app/risk/`,

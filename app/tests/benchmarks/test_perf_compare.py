@@ -225,7 +225,7 @@ def test_benchmarks_job_is_not_part_of_linux_gates():
     text = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     gates = text.split("  linux-gates:", 1)[1].split("  windows:", 1)[0]
     assert "benchmarks" not in gates
-    assert "needs: [filter, linux]" in text
+    assert "needs: [filter, settle, linux]" in gates
     before_jobs = text.split("jobs:", 1)[0]
     assert "issues: write" not in before_jobs
     assert "pull-requests: write" not in before_jobs

@@ -138,6 +138,44 @@ def _take_row(book, row, *, fresh: bool = False, zero_leaves: bool = False):
     return order
 
 
+def _absorb_batch(book, rows) -> list:
+    """Apply a batch result to orders the caller already holds.
+
+    ``"a"`` and ``"p"`` are new objects (replace is cancel-plus-add). ``"c"``
+    drops the order and leaves its qty. ``"r"`` edits qty, including a full
+    reduce to 0. ``"m"`` applies the matcher's qty updates and self-trade
+    cancels. The qty-update list is not part of the public row.
+    """
+    public = []
+    for row in rows:
+        kind = row[0]
+        if kind in ("a", "p"):
+            # A new order. Forget the previous object without allocating one
+            # the caller of the batch did not ask to hold.
+            book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "c":
+            book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "r":
+            order = _cached(book, row[1])
+            if order is not None:
+                order.qty = row[4]
+                if order.qty <= 0:
+                    order.qty = 0
+                    book._live.pop(row[1], None)
+            public.append(row)
+        elif kind == "m":
+            # (kind, status, filled, remaining, trades, fills, resting, stp, touched)
+            stp = row[7]
+            touched = row[8] if len(row) > 8 else ()
+            _apply_effects(book, touched, stp)
+            public.append(row[:8])
+        else:
+            public.append(row)
+    return public
+
+
 def _apply_effects(book, touched, cancelled) -> None:
     """Update only the orders the matcher names.
 
@@ -261,6 +299,20 @@ class LimitOrderBook:
     def _index(self) -> dict:
         return {row[0]: _take_row(self, row) for row in self._core.orders()}
 
+    def resting_at(self, index: int):
+        """One resting order in insertion order, without copying the index.
+
+        ``_index`` builds a ``RestingOrder`` for every live id. The synthetic
+        feed used that to pick one cancel target, and the copies dominated the
+        generator. This asks the book for that one row.
+        """
+        # Reject before the extension. A Python int past ``usize`` becomes
+        # ``OverflowError`` inside PyO3, while the pure book raises ``IndexError``
+        # for every nonnegative index that is not a live slot.
+        if type(index) is not int or index < 0 or index >= len(self):
+            raise IndexError(index)
+        return _take_row(self, self._core.order_at(index))
+
     @property
     def _bid_prices(self) -> _Ladder:
         return _Ladder(self._core, "buy")
@@ -337,6 +389,89 @@ class LimitOrderBook:
 
     def check_integrity(self) -> None:
         _call(self._core.check_integrity)
+
+    def apply_many(self, ops):
+        """Apply add, cancel, reduce, replace, and match ops in one call.
+
+        Each op is a tuple. Sides, time-in-force, and self-trade values are the
+        same strings the enums use (``"buy"``, ``"day"``, ``"cancel_resting"``):
+
+        * ``("a", order_id, side, price_ticks, qty, seq, ts, owner)``
+        * ``("c", order_id)``
+        * ``("r", order_id, qty)``
+        * ``("p", order_id, new_price_ticks, new_qty, seq, ts)`` — price or qty may be None
+        * ``("m", order_id, side, qty, price_ticks, tif, owner, stp, seq, exchange_ts)``
+          — ``price_ticks`` None is a market order
+
+        Returns one tagged tuple per op. The tag is the op kind. Order ops carry
+        the same fields a single call returns; a match op carries the matcher
+        payload (status, filled, remaining, trades, fills, resting id, stp ids).
+        Fill timestamps stay in Python: this payload is the book mutation only.
+
+        A bad op raises the same exception the single-call method would. Ops
+        before it stay applied, including on any ``RestingOrder`` the caller
+        already holds.
+
+        A generator costs one native call per op so a book read between yields
+        sees the earlier op. Pass a list when speed matters.
+        """
+        if isinstance(ops, (list, tuple)):
+            return self._apply_sequence(list(ops))
+        # A generator runs its body on each pull. Apply the op it just yielded
+        # before asking for the next one, so a read of the book between yields
+        # sees the earlier op. Listing it first would run those reads too early.
+        public: list = []
+        for op in ops:
+            public.extend(self._apply_chunk([op]))
+        return public
+
+    def _apply_sequence(self, ops: list):
+        if not self._live:
+            return self._apply_chunk(ops)
+        # A match ends its chunk. The next op is absorbed only after the held
+        # qty from that match is applied, so a later cancel cannot look like a fill.
+        public: list = []
+        start = 0
+        for index, op in enumerate(ops):
+            if isinstance(op, tuple) and op and op[0] == "m":
+                public.extend(self._apply_chunk(ops[start:index + 1]))
+                start = index + 1
+        if start < len(ops):
+            public.extend(self._apply_chunk(ops[start:]))
+        return public
+
+    def _apply_chunk(self, chunk: list) -> list:
+        try:
+            rows = self._core.apply_many(chunk)
+        except Exception as exc:
+            applied = getattr(exc, "applied", None) or []
+            if applied:
+                _absorb_batch(self, applied)
+            # A failed match may already have traded or cancelled. Those ids are
+            # on the error. An id that is merely missing was not filled.
+            _apply_effects(self, getattr(exc, "touched", ()), getattr(exc, "stp_cancelled", ()))
+            if isinstance(exc, (
+                cockpit_quant.NotFound,
+                cockpit_quant.IntegrityError,
+                cockpit_quant.BookValueError,
+            )):
+                _raise(exc)
+            raise
+        return _absorb_batch(self, rows)
+
+    def apply_quiet(self, ops) -> int:
+        """Same sequence as ``apply_many``, returning only how many ops applied.
+
+        The quiet fast path exists only when nobody holds a ``RestingOrder``.
+        Otherwise the rows still update retained orders, so a held
+        object cannot go stale after a quiet reduce, cancel, replace, or fill.
+        A generator is applied one op at a time, same as ``apply_many``.
+        """
+        if not isinstance(ops, (list, tuple)):
+            return len(self.apply_many(ops))
+        if self._live:
+            return len(self.apply_many(ops))
+        return _call(self._core.apply_quiet, ops)
 
 
 def match_core(book: LimitOrderBook, order, *, seq: int, exchange_ts: int, recv_ts: int, ingest_ts: int):

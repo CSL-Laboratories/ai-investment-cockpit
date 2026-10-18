@@ -1,6 +1,6 @@
 name: rust
 
-# CSL-42: Rust book, costs, and PnL. This job builds the crate, runs its tests,
+# CSL-42: Rust book, costs, PnL, feed normalization, online estimators, and ingest admission. This job builds the crate, runs its tests,
 # installs the PyO3 extension, and re-runs the Python tests against that extension.
 #
 # Hosted cells follow the split already used by ci.yml:
@@ -29,28 +29,13 @@ name: rust
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - "rust/**"
-      - "app/quant/book/**"
-      - "app/quant/costs.py"
-      - "app/quant/pnl.py"
-      - "app/tests/quant/book/**"
-      - "app/tests/quant/test_pnl.py"
-      - "app/tests/quant/test_costs_rust_parity.py"
-      - "app/tests/quant/test_w21_cost_model.py"
-      - ".github/workflows/rust.yml"
+  # No `paths:` trigger filter: every PR and queue group must report rust-gates,
+  # so Rust path relevance is decided inside `filter` (RUST_PATHS below) and the
+  # aggregate records an explicit irrelevant-path noop instead of a missing check.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
-    paths:
-      - "rust/**"
-      - "app/quant/book/**"
-      - "app/quant/costs.py"
-      - "app/quant/pnl.py"
-      - "app/tests/quant/book/**"
-      - "app/tests/quant/test_pnl.py"
-      - "app/tests/quant/test_costs_rust_parity.py"
-      - "app/tests/quant/test_w21_cost_model.py"
-      - ".github/workflows/rust.yml"
   workflow_dispatch:
     inputs:
       scope:
@@ -78,9 +63,12 @@ permissions:
   contents: read
 
 concurrency:
-  # Same-head label reruns supersede PR runs; stale label context cannot cancel a newer head.
-  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ inputs.pr_head_sha || github.event.pull_request.head.sha || 'branch' }}-${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft' || 'default' }}
-  cancel-in-progress: true
+  # Ordinary PR heads share a queue without arrival-order cancellation.
+  # The trusted companion cancels only verified ancestors of the live head.
+  # Label expected-head/scope, manual, draft and queue isolation is retained.
+  group: rust-${{ github.workflow }}-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number && format('label-{0}-{1}', inputs.pr_head_sha, inputs.scope || 'full') || github.event_name == 'workflow_dispatch' && format('manual-{0}', inputs.scope || 'full') || github.event_name == 'merge_group' && 'queue' || (github.event_name == 'pull_request' && github.event.pull_request.draft && 'draft') || 'default' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'max' || 'single' }}
 
 jobs:
   filter:
@@ -90,6 +78,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.gate.outputs.matrix }}
+      has-cells: ${{ steps.gate.outputs.has-cells }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,33 +106,126 @@ jobs:
       - name: Choose hosted cells
         id: gate
         env:
-          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          SKIP_CELLS: "false"
+          CHECK_PATHS: ${{ github.event_name != 'workflow_dispatch' }}
+          RUN_WINDOWS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'merge_group') || (github.event_name == 'push') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
           RUN_MACOS: ${{ (github.event_name == 'workflow_dispatch' && inputs.scope != 'linux') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')) }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          MERGE_CANDIDATE: ${{ github.sha }}
+          DIFF_BASE: ${{ github.event.merge_group.base_sha || github.event.before }}
+          DIFF_HEAD: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
+          set -euo pipefail
+          if [ "${CHECK_PATHS}" = "true" ] && [ -z "${DIFF_FILES+x}" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              # Diff the exact tested merge tree against its first parent. A raw
+              # base-tip -> PR-head diff mistakes base-only additions for PR deletions.
+              # A missing/stale/non-merge checkout must select tests, never a noop.
+              if [[ "$MERGE_CANDIDATE" =~ ^[0-9a-f]{40}$ ]] &&
+                 [[ "$EXPECTED_PR_HEAD" =~ ^[0-9a-f]{40}$ ]] &&
+                 [ "$(git rev-parse HEAD)" = "$MERGE_CANDIDATE" ] &&
+                 [ "$(git rev-parse HEAD^2)" = "$EXPECTED_PR_HEAD" ] &&
+                 base="$(git rev-parse HEAD^1)"; then
+                DIFF_FILES="$(git diff --name-only "$base" "$MERGE_CANDIDATE" || printf 'rust/\n')"
+              else
+                DIFF_FILES='rust/'
+              fi
+            else
+              # Push and queue events retain their explicit before/base -> head range.
+              git fetch --depth=1 origin "$DIFF_BASE" "$DIFF_HEAD" || true
+              DIFF_FILES="$(git diff --name-only "$DIFF_BASE" "$DIFF_HEAD" || printf 'rust/\n')"
+            fi
+            export DIFF_FILES
+          fi
           python3 - <<'PY'
           import json, os
-          include = [
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
-              {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
-          ]
-          if os.environ["RUN_WINDOWS"] == "true":
-              include.extend([
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
-                  {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
-              ])
-          if os.environ["RUN_MACOS"] == "true":
-              include.append(
-                  {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
-              )
+
+          # Keep in step with the Rust regex in ci-label-retrigger.yml and the
+          # pytest list in rust-book below; tools/test_ci_dispatch_scope.py
+          # executes both selectors against the same paths.
+          RUST_PATHS = (
+              "rust/",
+              "app/quant/book/",
+              "app/quant/costs.py",
+              "app/quant/pnl.py",
+              "app/quant/signals.py",
+              "app/ingest/normalize.py",
+              "app/ingest/dedup.py",
+              "app/ingest/ratelimit.py",
+              "app/tests/quant/book/",
+              "app/tests/quant/test_pnl.py",
+              "app/tests/quant/test_costs_rust_parity.py",
+              "app/tests/quant/test_signals.py",
+              "app/tests/quant/test_signals_rust_parity.py",
+              "app/tests/quant/test_w21_cost_model.py",
+              "app/tests/ingest/test_normalize.py",
+              "app/tests/ingest/test_normalize_rust_parity.py",
+              "app/tests/ingest/test_admission_rust_parity.py",
+              ".github/",
+              "tools/required_ci_gate.py",
+              "tools/test_queue_gates.py",
+          )
+
+          def relevant(files):
+              for raw in files.splitlines():
+                  f = raw.strip()
+                  if not f:
+                      continue
+                  for prefix in RUST_PATHS:
+                      if prefix.endswith("/"):
+                          if f.startswith(prefix) or f == prefix.rstrip("/"):
+                              return True
+                      elif f == prefix:
+                          return True
+              return False
+
+          include = []
+          if os.environ.get("SKIP_CELLS") != "true" and (
+                  os.environ.get("CHECK_PATHS") != "true" or relevant(os.environ.get("DIFF_FILES", "rust/"))):
+              include = [
+                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.11", "os-name": "linux"},
+                  {"runner": "blacksmith-2vcpu-ubuntu-2404", "python-version": "3.12", "os-name": "linux"},
+              ]
+              if os.environ["RUN_WINDOWS"] == "true":
+                  include.extend([
+                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.11", "os-name": "windows"},
+                      {"runner": "blacksmith-2vcpu-windows-2025", "python-version": "3.12", "os-name": "windows"},
+                  ])
+              if os.environ["RUN_MACOS"] == "true":
+                  include.append(
+                      {"runner": "macos-latest", "python-version": "3.12", "os-name": "macos"}
+                  )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write("matrix<<EOF\n")
               fh.write(json.dumps({"include": include}))
               fh.write("\nEOF\n")
+              fh.write(f"has-cells={'true' if include else 'false'}\n")
           PY
+
+  # GitHub-hosted debounce; requires corrected #157 cross-head PR concurrency.
+  # Only non-draft synchronize waits. Other events intentionally skip settle.
+  # Waiting consumes hosted capacity and does not guarantee billing savings.
+  settle:
+    name: settle
+    if: github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wait for a follow-up push to cancel this run
+        run: sleep 120
 
   rust-book:
     name: rust-book (${{ matrix.os-name }} / py${{ matrix.python-version }})
-    needs: filter
+    needs: [filter, settle]
+    if: >
+      always() && !cancelled() &&
+      needs.filter.result == 'success' &&
+      (
+        needs.settle.result == 'success' ||
+        (needs.settle.result == 'skipped' &&
+          (github.event_name != 'pull_request' || github.event.action != 'synchronize' || github.event.pull_request.draft == true))
+      ) && needs.filter.outputs.has-cells == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -174,10 +256,46 @@ jobs:
           python -c "import glob, subprocess, sys; wheels = glob.glob('rust/target/wheels/cockpit_quant-*.whl'); assert wheels, 'no wheel built'; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', *wheels])"
       - name: Python book tests against the extension
         working-directory: app
+        env:
+          COCKPIT_REQUIRE_RUST: "1"
         run: |
           python -m pip install pytest keyring
-          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_verify.py tests/test_invariants.py
+          python -m pytest -q tests/quant/book tests/quant/feed/test_feeds.py tests/quant/test_runner.py tests/quant/test_execution.py tests/quant/test_pnl.py tests/quant/test_w21_cost_model.py tests/quant/test_costs_rust_parity.py tests/quant/test_signals.py tests/quant/test_signals_rust_parity.py tests/quant/strategies tests/quant/test_verify.py tests/test_invariants.py tests/ingest/test_normalize.py tests/ingest/test_normalize_rust_parity.py tests/ingest/test_admission_rust_parity.py
       - name: Benchmark Rust against the Python reference
         run: |
           python rust/bench_compare.py
           python rust/bench_costs.py
+          python rust/bench_normalize.py
+          python rust/bench_signals.py
+          python rust/bench_admission.py
+
+  rust-gates:
+    name: rust-gates
+    needs: [filter, settle, rust-book]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.merge_sha || github.sha }}
+          persist-credentials: false
+      - name: Require all selected Rust cells or an explicit path noop
+        env:
+          FILTER_RESULT: ${{ needs.filter.result }}
+          REQUIRED: ${{ needs.filter.outputs.has-cells }}
+          RESULTS: ${{ toJSON(needs.rust-book.result) }}
+          SETTLE_RESULT: ${{ needs.settle.result }}
+          SETTLE_EXPECTED: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.event.pull_request.draft != true }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from tools.required_ci_gate import gate, settled
+          passed = (settled(os.environ['SETTLE_RESULT'], os.environ['SETTLE_EXPECTED'])
+                    and gate(os.environ['FILTER_RESULT'], os.environ['REQUIRED'],
+                             [json.loads(os.environ['RESULTS'])]))
+          raise SystemExit(0 if passed else 'Required Rust gate failed closed')
+          PY
+      - name: Reject workflow cancellation
+        if: cancelled()
+        run: exit 1

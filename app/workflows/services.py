@@ -48,6 +48,8 @@ def build_services(state, *, transport=None, deliver=None, parquet_root=None,
                               verify_params=verify_params,
                               edge_provider=edge_provider, **kw)
 
+    _propose.uses_draft_proposal_template = True
+
     def brew(st, clock) -> dict:
         # The watchlist is what keeps the brew's calendar pre-filter from being holdings-only.
         # ``intraday`` has always received it; ``brew`` was the one caller that did not, which

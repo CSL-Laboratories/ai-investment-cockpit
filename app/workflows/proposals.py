@@ -28,7 +28,7 @@ from agent_runner.result import LIMIT_HIT, OK, TIMEOUT
 from brokers.order_state_machine import create_order
 from brokers.order_tuple import canonical_order_tuple, order_tuple_hash
 from brokers.sell_reservations import pending_sell_reservations
-from bridge.embeds import render_proposal_embed
+from bridge.embeds import render_proposal_embed, render_size_pending_embed
 from core.ids import new_id
 from core.proposal_authority import proposal_payload_hash
 from ingest.normalize import escape_untrusted
@@ -53,6 +53,8 @@ from schemas.models.portfolio_snapshot import PortfolioSnapshot
 from schemas.models.proposal_record import ProposalRecord
 from schemas.models.risk_decision import RiskDecision
 from workflows.agent_calls import call_agent
+from workflows.context_limit import (
+    context_token_cap, estimate_tokens, fit_packet, repair_reserve_tokens)
 from workflows.constants import EVENT_PROPOSAL
 from workflows.events import resolve_raw
 from workflows.grounding import evaluate_grounding
@@ -63,7 +65,7 @@ from workflows.scrubber import scrub_output_fields
 
 @dataclass(frozen=True)
 class ProposalOutcome:
-    status: str  # drafted | flagged | needs_human | quarantined | degraded
+    status: str  # drafted | flagged | needs_human | quarantined | degraded | context_limited
     proposal: dict | None
     record: ProposalRecord | None
     risk_decision: RiskDecision | None
@@ -370,6 +372,27 @@ def _persist_record(state, clock, *, proposal: dict, status: str, flagged: bool,
     return record
 
 
+def fit_proposal_packet(state, event: MarketEvent, packet: Packet):
+    """Keep the subject event first and fit it under the proposal template + repair reserve."""
+    owned = [item for item in packet.items if item.event_id == event.id]
+    others = [item for item in packet.items if item.event_id != event.id]
+    ordered = Packet(items=tuple(owned + others))
+    tmpl = load_prompt("trade_proposal")
+    overhead = estimate_tokens(tmpl.render(symbol=event.symbol, packet_block=""))
+    return fit_packet(
+        ordered,
+        reserved_tokens=overhead + repair_reserve_tokens(),
+        cap=context_token_cap(state.settings),
+    ), tmpl
+
+
+def subject_fits_context(state, event: MarketEvent, packet: Packet) -> bool:
+    """Pure preflight: does ``event``'s evidence survive the context cap? Lets the
+    caller defer BEFORE spending deep budget on a call that cannot be dispatched."""
+    fit, _tmpl = fit_proposal_packet(state, event, packet)
+    return any(item.event_id == event.id for item in fit.packet.items)
+
+
 def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    transport=None, parquet_root=None, quote_fn=None, book_fn=None,
                    observation_fn=None, metrics_fn=None,
@@ -379,7 +402,9 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
                    borrow_quote: BorrowQuote | None = None,
                    holdings_symbols: frozenset[str] = frozenset(),
                    watchlist: frozenset[str] = frozenset(),
-                   account: str = "paper") -> ProposalOutcome:
+                   account: str = "paper",
+                   decision_weight=None,
+                   jev_client=None) -> ProposalOutcome:
     """Draft ONE trade proposal for ``event`` over the dispatched ``packet``.
 
     ``quote_fn(symbol) -> {"price", "age_s", "spread_pct"} | None`` is the injected quote
@@ -393,14 +418,30 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     clock = clock if clock is not None else state.clock
     reasons: list[str] = []
 
-    # ---- ONE deep call (trade_proposal.v1, schema TradeProposal) ------------------------
-    tmpl = load_prompt("trade_proposal")
+    # ---- ONE decision call (trade_proposal.v1, schema TradeProposal) --------------------
+    # Keep the subject event's items first so the token cap sheds other symbols' tail
+    # before it sheds the evidence this proposal is allowed to cite (SEC-14).
+    fit, tmpl = fit_proposal_packet(state, event, packet)
+    packet = fit.packet
+    if not any(item.event_id == event.id for item in packet.items):
+        # Template + repair fit, but the subject evidence does not. An empty
+        # decision call would draft without citations; grounding then flags and
+        # triage_loop would mark the event escalated (never retried). Defer.
+        return ProposalOutcome(
+            "context_limited", None, None, None, None, None,
+            ("subject evidence does not fit the context cap",),
+        )
     prompt = tmpl.render(symbol=event.symbol, packet_block=packet.prompt_block())
     result, job = call_agent(
-        state, alias="deep", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
+        state, alias="decision", prompt_ref=tmpl.ref, prompt_hash=tmpl.sha256, prompt=prompt,
         schema_name="TradeProposal",
-        input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs)},
+        input_refs={"event_id": event.id, "raw_refs": sorted(packet.dispatched_refs),
+                    "context_dropped": len(fit.dropped)},
         transport=transport,
+        decision_weight=decision_weight,
+        jev_packet=packet,
+        jev_symbol=event.symbol,
+        jev_client=jev_client,
     )
     if result.status in (LIMIT_HIT, TIMEOUT):
         return ProposalOutcome("degraded", None, None, None, None, None,
@@ -428,13 +469,6 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
         return ProposalOutcome("quarantined", proposal, record, None, None, None,
                                ("outbound scrub blocked (SEC-09)",))
 
-    # BUG-149: incomplete sizing is still persisted model output. Scrub it first.
-    if proposal.get("quantity") is None and proposal.get("notional") is None:
-        record = _persist_record(state, clock, proposal=proposal, status="needs_human",
-                                 flagged=False, job_id=job.id)
-        return ProposalOutcome("needs_human", proposal, record, None, None, None,
-                               ("neither quantity nor notional present",))
-
     # ---- SEC-14: fail-closed grounding (flag-only; NEVER clears) -------------------------
     def _resolver(ref: str) -> dict:
         return resolve_raw(parquet_root, ref, state=state)
@@ -442,6 +476,28 @@ def draft_proposal(state, clock=None, *, event: MarketEvent, packet: Packet,
     grounding = evaluate_grounding(state, proposal, packet.dispatched_refs, _resolver,
                                    transport=transport,
                                    symbol_universe=holdings_symbols | watchlist)
+
+    # BUG-149: incomplete sizing is persisted model output, already scrubbed.
+    # Grounding runs first so a size-pending card cannot skip SEC-14. No risk
+    # decision and no order.
+    if proposal.get("quantity") is None and proposal.get("notional") is None:
+        flagged = grounding.flagged
+        if flagged:
+            reasons.extend(grounding.reasons)
+        status = "flagged" if flagged else "needs_human"
+        record = _persist_record(state, clock, proposal=proposal, status=status,
+                                 flagged=flagged, job_id=job.id)
+
+        def _excerpt(ref) -> str:
+            item = resolve_raw(parquet_root, str(ref), state=state)
+            return escape_untrusted(str(item.get("headline", "")))[:200]
+
+        embed = render_size_pending_embed(
+            record.payload, raw_excerpt_fn=_excerpt, flagged=flagged,
+            reasons=grounding.reasons,
+        )
+        return ProposalOutcome(status, proposal, record, None, None, embed,
+                               tuple(reasons) or ("neither quantity nor notional present",))
     flagged = grounding.flagged
     if flagged:
         reasons.extend(grounding.reasons)
