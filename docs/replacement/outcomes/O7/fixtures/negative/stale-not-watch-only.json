@@ -1,0 +1,54 @@
+{
+  "kind": "negative_response",
+  "control": "stale_not_watch_only",
+  "body": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.health.inspect",
+    "request_id": "req_health_stale_open",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "authority_effect": "none",
+    "order_path": "none",
+    "status_code": "stale_or_unreconciled",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "absent_not_hidden",
+      "stale_data": "visible",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "watch_only": false,
+      "stale": true,
+      "dependencies": [
+        {
+          "name": "evidence",
+          "status": "stale"
+        }
+      ]
+    },
+    "errors": [
+      {
+        "code": "stale_or_unreconciled",
+        "status_code": "stale_or_unreconciled",
+        "message": "Stale: evidence is not current. No order was submitted.",
+        "recovery": "Refresh the evidence feed and read health again.",
+        "color_only": false
+      }
+    ],
+    "presentation": {
+      "exit_code": 3,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "stale_or_unreconciled",
+      "rendered": "status=stale_or_unreconciled watch_only=false"
+    }
+  }
+}

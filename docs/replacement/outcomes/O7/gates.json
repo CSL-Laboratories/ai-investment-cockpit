@@ -1,0 +1,68 @@
+{
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "claims": {
+    "human_decided": false,
+    "contract_frozen": false,
+    "prototyped": false,
+    "implemented": false,
+    "provider_free_verified": false,
+    "qualification": false,
+    "demo_or_paper_qualified": false,
+    "shadow_qualified": false,
+    "limited_live_qualified": false,
+    "release_qualified": false
+  },
+  "framework_selected": null,
+  "framework_spike_ran": false,
+  "tui_selected": false,
+  "wcag_conformance_claimed": false,
+  "wcag": {
+    "version": "2.2",
+    "level": "AA",
+    "recommendation": "https://www.w3.org/TR/WCAG22/",
+    "published": "2023-10-05",
+    "parsing_4_1_1_required": false,
+    "a_criteria_added_in_2_2": ["3.2.6", "3.3.7"],
+    "aa_criteria_added_in_2_2": ["2.4.11", "2.5.7", "2.5.8", "3.3.8"]
+  },
+  "gui_checks_required": [
+    "text_not_color_alone",
+    "focus_not_obscured_minimum",
+    "dragging_has_single_pointer_alternative",
+    "target_size_24_css_px",
+    "accessible_authentication_minimum",
+    "consistent_help",
+    "redundant_entry",
+    "refusal_uncertainty_stale_unreconciled_in_text"
+  ],
+  "cli": {
+    "zero_exit_on_success": true,
+    "nonzero_exit_on_failure": true,
+    "machine_readable_stdout": true,
+    "diagnostics_stderr": true,
+    "no_color_only_signals": true,
+    "honor_no_color": true,
+    "no_ansi_in_machine_output": true
+  },
+  "automation": {
+    "same_canonical_payload": true,
+    "network_in_validator": false,
+    "stable_exit_codes": {
+      "ok": 0,
+      "usage": 1,
+      "refused": 2,
+      "stale_or_unreconciled": 3,
+      "unavailable": 4
+    }
+  },
+  "authority": {
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "surface_order_path": "none",
+    "local_control_implies_account_wide": false,
+    "o6_fragment": "docs/replacement/MONTH-PROGRAM.md#o6",
+    "o6_fragment_digest": "f28b75244a4eef5e9d3095349d6088bcd08e09547ab8e0fbc03ba52a119f3001",
+    "o6_outcome_artifact": "pending_outcome_artifact",
+    "widens_o6_authority": false
+  }
+}

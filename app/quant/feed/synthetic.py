@@ -201,8 +201,9 @@ class SyntheticFeed:
 
     def _cancel(self, rng: random.Random, s: dict, stamps: dict) -> BookUpdate:
         book: LimitOrderBook = s["book"]
-        resting = [o for o in book._index.values()]
-        order = resting[rng.randrange(len(resting))]
+        # Insertion order, one order. Copying ``_index`` wrapped every resting
+        # id just to discard all but one, which was the generator's hot path.
+        order = book.resting_at(rng.randrange(len(book)))
         book.cancel(order.order_id)
         return BookUpdate(action=BookAction.CANCEL, side=order.side,
                           price_ticks=order.price_ticks, qty=order.qty,
