@@ -738,7 +738,9 @@ def validate_records(bundle: Bundle) -> None:
                         f"{record['raw_record_id']} form family does not match its predecessor"
                     )
                 correction = "amendment" if kind == "filing_amendment" else "filing correction"
-                if record["payload"].get("accession") in _chain_accessions(bundle, record):
+                # An accession-keyed key binds every record in its chain to one accession.
+                binds_accession = kind == "filing" and record["natural_key"].startswith("sec:accession:")
+                if not binds_accession and record["payload"].get("accession") in _chain_accessions(bundle, record):
                     raise ContractError(
                         f"{record['raw_record_id']} {correction} reuses a predecessor accession"
                     )

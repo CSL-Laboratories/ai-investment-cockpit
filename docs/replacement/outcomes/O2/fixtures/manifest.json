@@ -5,7 +5,7 @@
   "synthetic": true,
   "files": {
     "CONTRACT.md": "15f3f4ed30b41c54bd27600636bd96735761c4e4a5b5ab9d69e8465c685ec741",
-    "validate_o2.py": "245d7821af22f047e61291e2181965c12408a16dce93d97c44ecfdf7de09d4c4",
+    "validate_o2.py": "399d296ade24ffb64ba9bb119140d8c2fcd84f062f64fa49b8a48ca9c689dd8b",
     "fixtures/identities.json": "a7fc283a14744417a509be3d35634aec6a4be1c3f18c33aa032e70e29796d9ab",
     "fixtures/raw_records.json": "04354f947f3ef32f50d9ddc92a8cd98a04604225704a8efd9ae7a801bda9fdb4",
     "fixtures/observations.json": "3773b09dd3d1ad9f9358dc887860bc22bff2a77fca6bc7ef903c4501e3c93dd2",
