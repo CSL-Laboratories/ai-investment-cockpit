@@ -2584,6 +2584,21 @@ def test_duplicate_head_lines_are_ambiguous():
     parsed = mod.parse_thread_verdicts(body)
     assert parsed[0].verdict == "AMBIGUOUS"
     assert parsed[0].reason == "malformed-head"
+    assert parsed[0].sha == ""
+
+
+def test_valid_plus_malformed_head_keeps_unique_sha():
+    body = (
+        f"{mod.verdict_marker(THREAD)}\n"
+        "CODEX-THREAD: RESOLVE\n"
+        f"HEAD: {SHA}\n"
+        "HEAD: not-a-sha\n"
+    )
+    parsed = mod.parse_thread_verdicts(body)
+    assert len(parsed) == 1
+    assert parsed[0].verdict == "AMBIGUOUS"
+    assert parsed[0].reason == "malformed-head"
+    assert parsed[0].sha == SHA
 
 
 def test_malformed_decide_line_is_ambiguous():
@@ -2607,6 +2622,28 @@ def test_malformed_ambiguous_sticks_to_stated_head():
             "CODEX-THREAD: RESOLVE\n"
             "CODEX-THREAD: KEEP reason=unresolved\n"
             f"HEAD: {SHA}\n"
+        ),
+        NOW - timedelta(minutes=5),
+    )
+    later = comment(CODEX, verdict_body("RESOLVE"), NOW)
+    latest = mod.latest_verdicts([malformed, later])
+    t = thread(comments=[malformed, later])
+    reason, verdict = mod.classify_thread(
+        t, head_sha=SHA, latest=latest, issue_comments=[]
+    )
+    assert reason == "ambiguous"
+    assert verdict is not None and verdict.verdict == "AMBIGUOUS"
+    assert verdict.sha == SHA
+
+
+def test_valid_plus_malformed_head_ambiguous_sticks():
+    malformed = comment(
+        CODEX,
+        (
+            f"{mod.verdict_marker(THREAD)}\n"
+            "CODEX-THREAD: RESOLVE\n"
+            f"HEAD: {SHA}\n"
+            "HEAD: not-a-sha\n"
         ),
         NOW - timedelta(minutes=5),
     )

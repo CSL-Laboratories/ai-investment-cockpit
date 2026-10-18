@@ -567,7 +567,9 @@ def parse_thread_verdicts(text: str | None) -> list[ThreadVerdict]:
             continue
         if len(head_values) != 1:
             reason = "missing-head" if not head_values else "malformed-head"
-            found.append(ThreadVerdict(tid, "", "AMBIGUOUS", reason=reason, source="block"))
+            found.append(
+                ThreadVerdict(tid, unique_sha, "AMBIGUOUS", reason=reason, source="block")
+            )
             continue
         digest = safe_sha(head_values[0])
         if not digest:
