@@ -630,9 +630,111 @@ def test_allow_many_keeps_progress_when_a_later_timestamp_raises():
     assert bucket.allow(1.0) is twin.allow(1.0) is False
 
 
+def _assert_same_bucket(actual: TokenBucket, expected: TokenBucket) -> None:
+    """Match value and type. ``True == 1.0``, and a numpy scalar compares equal to ``float``."""
+    assert actual.tokens == expected.tokens
+    assert type(actual.tokens) is type(expected.tokens)
+    assert actual._last == expected._last
+    assert type(actual._last) is type(expected._last)
+
+
+def _block_token_bucket_extension(monkeypatch, reason: str) -> None:
+    if RATELIMIT_BACKEND != "rust":
+        return
+    import cockpit_quant
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError(reason)
+
+    monkeypatch.setattr(cockpit_quant, "token_bucket_replay", boom)
+    monkeypatch.setattr(cockpit_quant, "token_bucket_allow", boom)
+
+
+def test_allow_many_empty_clock_matches_the_per_call_loop(monkeypatch):
+    """``allow_many([])`` is the empty per-call loop: no admission, same tokens and ``_last``.
+
+    With the extension installed, that empty clock is one ``token_bucket_replay``
+    call. The returned tokens and ``_last`` still match the loop.
+    """
+    calls = {"n": 0}
+    if RATELIMIT_BACKEND == "rust":
+        import cockpit_quant
+
+        real = cockpit_quant.token_bucket_replay
+
+        def wrap(*args, **kwargs):
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
+    bucket = TokenBucket(rate_per_sec=1.5, capacity=3.0, now=2.0)
+    twin = TokenBucket(rate_per_sec=1.5, capacity=3.0, now=2.0)
+    bucket.tokens = 0.25
+    twin.tokens = 0.25
+    assert bucket.allow_many([]) == _drive_bucket(twin, [], python=True) == []
+    _assert_same_bucket(bucket, twin)
+    assert bucket.tokens == 0.25
+    assert type(bucket.tokens) is float
+    assert bucket._last == 2.0
+    assert type(bucket._last) is float
+    assert calls["n"] == (1 if RATELIMIT_BACKEND == "rust" else 0)
+
+
+def test_a_bool_clock_stays_on_per_call_allow(monkeypatch):
+    """``bool`` is an ``int`` subclass, so a ``True`` / ``False`` clock stays on ``allow``.
+
+    The step stores the timestamp on ``_last``. ``False == 0.0``, so the match includes the type.
+    """
+    _block_token_bucket_extension(monkeypatch, "bool clock entered the extension")
+    times = [True, False]
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    assert bucket.allow_many(times) == _drive_bucket(twin, times, python=True) == [True, False]
+    _assert_same_bucket(bucket, twin)
+    assert bucket._last is False
+    assert type(bucket.tokens) is float
+
+
+def test_a_numpy_float64_clock_stays_on_per_call_allow(monkeypatch):
+    """``numpy.float64`` is not an exact ``float``, so the clock stays on ``allow``."""
+    numpy = pytest.importorskip("numpy")
+    _block_token_bucket_extension(monkeypatch, "numpy.float64 clock entered the extension")
+    times = [numpy.float64(0.0), numpy.float64(0.5), numpy.float64(1.5)]
+    assert all(isinstance(now, float) and type(now) is numpy.float64 for now in times)
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    assert (
+        bucket.allow_many(times)
+        == _drive_bucket(twin, times, python=True)
+        == [False, False, True]
+    )
+    _assert_same_bucket(bucket, twin)
+    assert type(bucket._last) is numpy.float64
+
+
+class _ClockFloat(float):
+    """A float subclass. ``isinstance`` is true and ``type(x) is float`` is not."""
+
+
+def test_a_float_subclass_clock_stays_on_per_call_allow(monkeypatch):
+    """An inexact ``float`` stays on ``allow`` without a numpy install."""
+    _block_token_bucket_extension(monkeypatch, "float subclass clock entered the extension")
+    times = [_ClockFloat(0.0), _ClockFloat(0.5), _ClockFloat(1.5)]
+    assert all(isinstance(now, float) and type(now) is _ClockFloat for now in times)
+    bucket = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    twin = TokenBucket(rate_per_sec=1.0, capacity=1.0, now=0.0)
+    assert (
+        bucket.allow_many(times)
+        == _drive_bucket(twin, times, python=True)
+        == [False, False, True]
+    )
+    _assert_same_bucket(bucket, twin)
+    assert type(bucket._last) is _ClockFloat
+
+
 @_needs_rust
 def test_a_one_shot_float_clock_is_one_extension_call(monkeypatch):
-    """Copying a generator does not keep an all-float clock on Python."""
+    """An all-float clock, including a one-shot generator, is one ``token_bucket_replay`` call."""
     import cockpit_quant
 
     calls = {"n": 0}
@@ -644,12 +746,20 @@ def test_a_one_shot_float_clock_is_one_extension_call(monkeypatch):
 
     monkeypatch.setattr(cockpit_quant, "token_bucket_replay", wrap)
     times = [i * 0.5 for i in range(4)]
+    assert all(type(now) is float for now in times)
+
     bucket = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
     twin = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
-    assert bucket.allow_many(t for t in times) == _drive_bucket(twin, times, python=True)
+    assert bucket.allow_many(times) == _drive_bucket(twin, times, python=True)
     assert calls["n"] == 1
-    assert bucket.tokens == twin.tokens
-    assert bucket._last == twin._last
+    _assert_same_bucket(bucket, twin)
+
+    calls["n"] = 0
+    once = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    once_twin = TokenBucket(rate_per_sec=1.0, capacity=5.0, now=0.0)
+    assert once.allow_many(t for t in times) == _drive_bucket(once_twin, times, python=True)
+    assert calls["n"] == 1
+    _assert_same_bucket(once, once_twin)
 
 
 @_needs_rust

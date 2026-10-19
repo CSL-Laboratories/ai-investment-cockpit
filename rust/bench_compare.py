@@ -66,6 +66,31 @@ def _match_only(book_cls, n: int) -> None:
     return time.perf_counter() - start
 
 
+def _build_pick(book, n: int) -> None:
+    for i in range(n):
+        book.add(
+            order_id=str(i),
+            side=Side.BUY if i % 2 == 0 else Side.SELL,
+            price_ticks=(100 - (i % 8)) if i % 2 == 0 else (101 + (i % 8)),
+            qty=100,
+            seq=i,
+            ts=i,
+        )
+
+
+def _pick_via_index(book, picks: int) -> None:
+    n = len(book)
+    for i in range(picks):
+        resting = list(book._index.values())
+        resting[i % n]
+
+
+def _pick_via_resting_at(book, picks: int) -> None:
+    n = len(book)
+    for i in range(picks):
+        book.resting_at(i % n)
+
+
 def _mutate_once(book_cls, n: int) -> None:
     book = book_cls("S")
     live: list[str] = []
@@ -173,6 +198,17 @@ def main() -> None:
     print(row(f"batch quiet, ops packed ({MUTATE_N})", rust_quiet, py_mutate))
     print(row(f"batch detailed, ops packed ({MUTATE_N})", rust_detailed, py_mutate))
     print(row(f"batch quiet, pack included ({MUTATE_N})", rust_pack, py_mutate))
+    pick_n = 64
+    picks = 20_000
+    rust_book = LimitOrderBook("S")
+    _build_pick(rust_book, pick_n)
+    _pick_via_index(rust_book, 4)
+    _pick_via_resting_at(rust_book, 4)
+    via_index = _time(lambda: _pick_via_index(rust_book, picks))
+    via_at = _time(lambda: _pick_via_resting_at(rust_book, picks))
+    print(row(f"pick one of {pick_n}, {picks} times", via_at, via_index))
+    if via_index / via_at < 1.0:
+        sys.exit("resting_at regressed below copying the order index")
 
 
 if __name__ == "__main__":

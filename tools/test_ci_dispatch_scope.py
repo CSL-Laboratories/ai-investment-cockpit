@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,7 @@ def evaluate(expression, **overrides):
     """
     values = {
         'github.event_name': 'pull_request',
+        'github.event.before': 'e' * 40,
         'github.event.action': 'synchronize',
         'github.workflow': 'ci',
         'github.run_id': 12345,
@@ -43,12 +45,20 @@ def evaluate(expression, **overrides):
         'github.event.pull_request.number': 149,
         'needs.filter.result': 'success',
         'needs.settle.result': 'success',
+        'github.event.merge_group.head_ref': 'refs/heads/feature',
+        'github.event.merge_group.base_sha': 'c' * 40,
+        'github.event.merge_group.head_sha': 'd' * 40,
         'inputs.scope': '',
         'inputs.pr_number': '',
         'inputs.pr_head_sha': '',
         'inputs.merge_sha': '',
+        'inputs.pr_base_sha': '',
+        'inputs.merge_tree_sha': '',
+        'inputs.candidate_id': '',
+        'inputs.dispatch_nonce': '',
         'needs.filter.outputs.run-tests': 'true',
         'needs.filter.outputs.run-macos': 'true',
+        'needs.filter.outputs.has-cells': 'true',
     }
     values.update(overrides)
     expression = expression.strip().removeprefix('${{').removesuffix('}}').strip()
@@ -79,6 +89,32 @@ class DispatchScopeTests(unittest.TestCase):
         self.rust = workflow('rust.yml')
         self.label = workflow('ci-label-retrigger.yml')
         self.step = self.label['jobs']['retrigger']['steps'][0]
+
+    def test_merge_group_trigger_and_isolated_concurrency(self):
+        self.assertEqual(self.ci['on']['merge_group']['types'], ['checks_requested'])
+        self.assertEqual(self.rust['on']['merge_group']['types'], ['checks_requested'])
+        self.assertIn('MG_BASE', next(step['env'] for step in self.ci['jobs']['filter']['steps']
+                                      if step.get('id') == 'decide'))
+        self.assertNotIn("github.event_name != 'push'", self.ci['jobs']['linux']['if'])
+        self.assertIn("github.event_name == 'merge_group'", self.ci['jobs']['windows']['if'])
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                         self.ci['jobs']['windows']['if'])
+        for cells in ('true', 'false', ''):
+            self.assertEqual(bool(evaluate(self.rust['jobs']['rust-book']['if'], **{
+                'needs.filter.outputs.has-cells': cells})), cells == 'true')
+        def group(doc, **context):
+            return re.sub(r'\$\{\{(.*?)\}\}',
+                          lambda match: str(evaluate(match[1], **context)),
+                          doc['concurrency']['group'])
+        for doc in (self.ci, self.rust):
+            pr = group(doc)
+            queued = group(doc, **{'github.event_name': 'merge_group',
+                                   'github.event.pull_request.number': '',
+                                   'github.ref': 'refs/heads/feature',
+                                   'github.event.merge_group.head_ref': 'refs/heads/feature'})
+            self.assertNotEqual(pr, queued)
+            self.assertIn('queue', queued)
+            self.assertIn('refs/heads/feature', queued)
 
     def test_dispatch_defaults_and_existing_events(self):
         for doc in (self.ci, self.rust):
@@ -124,6 +160,7 @@ class DispatchScopeTests(unittest.TestCase):
             ('pull_request', '', ['enhancement'], False, False, False, False),
             ('pull_request', '', ['ci:full'], True, True, True, True),
             ('push', '', [], True, False, True, False),
+            ('merge_group', '', [], True, False, True, False),
             ('schedule', '', [], False, True, False, False),
         ]:
             with self.subTest(event=event, scope=scope, labels=labels):
@@ -132,20 +169,36 @@ class DispatchScopeTests(unittest.TestCase):
                            'github.event.pull_request.labels.*.name': labels}
                 self.assertEqual(bool(evaluate(self.ci['jobs']['windows']['if'], **context)), win)
                 self.assertEqual(bool(evaluate(self.ci['jobs']['macos']['if'], **context)), mac)
+                self.assertEqual(bool(evaluate(self.ci['jobs']['linux']['if'], **context)), True)
                 env = {key: str(bool(evaluate(expr, **context))).lower()
                        for key, expr in rust_step['env'].items()}
-                self.assertEqual(env, {'RUN_WINDOWS': str(rust_win).lower(),
-                                       'RUN_MACOS': str(rust_mac).lower()})
+                self.assertEqual(env['RUN_WINDOWS'], str(rust_win).lower())
+                self.assertEqual(env['RUN_MACOS'], str(rust_mac).lower())
+                self.assertEqual(env['SKIP_CELLS'], 'false')
+                self.assertEqual(env['CHECK_PATHS'], str(event != 'workflow_dispatch').lower())
+                run_env = {**os.environ, **env}
+                if event != 'workflow_dispatch':
+                    run_env['DIFF_FILES'] = 'rust/src/lib.rs'
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp) / 'output'
                     subprocess.run(['bash', '-eu', '-c', rust_step['run']], check=True,
-                                   env={**os.environ, **env, 'GITHUB_OUTPUT': str(output)})
+                                   env={**run_env, 'GITHUB_OUTPUT': str(output)})
                     matrix = json.loads(output.read_text().splitlines()[1])['include']
                 self.assertEqual([c['os-name'] for c in matrix],
-                                 ['linux', 'linux'] + ['windows'] * (2 * rust_win)
-                                 + ['macos'] * rust_mac)
+                                     ['linux', 'linux'] + ['windows'] * (2 * rust_win)
+                                     + ['macos'] * rust_mac)
         self.assertFalse(evaluate(self.ci['jobs']['macos']['if'], **{
             'github.event_name': 'schedule', 'needs.filter.outputs.run-macos': 'false'}))
+        rust_step = next(step for step in self.rust['jobs']['filter']['steps']
+                         if step.get('id') == 'gate')
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'output'
+            subprocess.run(['bash', '-eu', '-c', rust_step['run']], check=True,
+                           env={**os.environ, 'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
+                                'RUN_WINDOWS': 'true', 'RUN_MACOS': 'false',
+                                'DIFF_FILES': 'docs/example.md', 'GITHUB_OUTPUT': str(output)})
+            self.assertEqual(json.loads(output.read_text().splitlines()[1])['include'], [])
+            self.assertIn('has-cells=false', output.read_text())
 
     def test_settle_debounce_gates_blacksmith_only_on_pr_synchronize(self):
         for doc, billed in ((self.ci, ('linux', 'windows', 'benchmarks')),
@@ -214,7 +267,25 @@ class DispatchScopeTests(unittest.TestCase):
         # Stub gh locally. This executes the workflow shell, never the real CLI.
         for scope in ('linux', 'full'):
             for changed, expected in [('docs/example.md', ['ci.yml']),
-                                      ('rust/crate/src/lib.rs', ['ci.yml', 'rust.yml'])]:
+                                      ('rust/crate/src/lib.rs', ['ci.yml', 'rust.yml']),
+                                      ('.github/workflows/ci.yml', ['ci.yml', 'rust.yml']),
+                                      ('.github/actions/run-gates/action.yml', ['ci.yml', 'rust.yml']),
+                                      ('.github/actionlint.yaml', ['ci.yml', 'rust.yml']),
+                                      ('tools/required_ci_gate.py', ['ci.yml', 'rust.yml']),
+                                      ('tools/test_queue_gates.py', ['ci.yml', 'rust.yml']),
+                                      ('tools/test_queue_gates.py.bak', ['ci.yml']),
+                                      ('app/quant/pnl.py.bak', ['ci.yml']),
+                                      # Native signals/normalization coverage added on main.
+                                      ('app/quant/signals.py', ['ci.yml', 'rust.yml']),
+                                      ('app/ingest/normalize.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/quant/test_signals.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/quant/test_signals_rust_parity.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/ingest/test_normalize.py', ['ci.yml', 'rust.yml']),
+                                      ('app/tests/ingest/test_normalize_rust_parity.py', ['ci.yml', 'rust.yml']),
+                                      ('app/quant/signals.py.bak', ['ci.yml']),
+                                      ('app/ingest/normalize_edgar.py', ['ci.yml']),
+                                      ('app/ingest/edgar.py', ['ci.yml']),
+                                      ('app/tests/ingest/test_edgar_brew.py', ['ci.yml'])]:
                 with self.subTest(scope=scope, changed=changed), tempfile.TemporaryDirectory() as tmp:
                     tmp = Path(tmp)
                     gh = tmp / 'gh'
@@ -238,6 +309,141 @@ class DispatchScopeTests(unittest.TestCase):
                                               capture_output=True, check=False)
                     self.assertNotEqual(rejected.returncode, 0)
                     self.assertFalse((tmp/'calls').exists())
+
+    def test_label_regex_and_rust_filter_route_native_paths_consistently(self):
+        # Both CI-owned selectors must agree on every Rust-owned path, including
+        # the native signals/normalization coverage added on main. Each side is
+        # executed as checked in: the dispatcher's grep via bash, the rust.yml
+        # matrix generator via its embedded Python.
+        regex = re.search(r"grep -Eq '(\^\(.*?\))'", self.step['run']).group(1)
+        gate = next(step for step in self.rust['jobs']['filter']['steps']
+                    if step.get('id') == 'gate')
+        generator = gate['run'].split("<<'PY'", 1)[1].rsplit('PY', 1)[0]
+
+        def label_selects(path):
+            return subprocess.run(['bash', '-c', 'printf "%s\\n" "$1" | grep -Eq "$2"', '_', path, regex],
+                                  check=False).returncode == 0
+
+        def rust_selects(path):
+            with tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / 'output'
+                subprocess.run([sys.executable, '-c', generator], check=True, env={
+                    **os.environ, 'SKIP_CELLS': 'false', 'CHECK_PATHS': 'true',
+                    'RUN_WINDOWS': 'false', 'RUN_MACOS': 'false', 'DIFF_FILES': path,
+                    'GITHUB_OUTPUT': str(output)})
+                return 'has-cells=true' in output.read_text()
+
+        selected = ['rust/cockpit-signals/src/lib.rs', 'rust/cockpit-ingest/src/normalize.rs',
+                    'rust/bench_signals.py', 'rust/bench_normalize.py',
+                    'app/quant/book/_rust_backend.py', 'app/quant/costs.py', 'app/quant/pnl.py',
+                    'app/quant/signals.py', 'app/ingest/normalize.py',
+                    'app/tests/quant/book/test_book_batch.py', 'app/tests/quant/test_pnl.py',
+                    'app/tests/quant/test_costs_rust_parity.py', 'app/tests/quant/test_signals.py',
+                    'app/tests/quant/test_signals_rust_parity.py', 'app/tests/quant/test_w21_cost_model.py',
+                    'app/tests/ingest/test_normalize.py', 'app/tests/ingest/test_normalize_rust_parity.py',
+                    'app/ingest/dedup.py', 'app/ingest/ratelimit.py',
+                    'app/tests/ingest/test_admission_rust_parity.py',
+                    '.github/workflows/rust.yml', 'tools/required_ci_gate.py', 'tools/test_queue_gates.py']
+        ignored = ['docs/ci-queue-rollout.md', 'app/ingest/edgar.py', 'app/ingest/normalize_edgar.py',
+                   'app/quant/signals.py.bak', 'app/quant/strategies/market_maker.py',
+                   'app/tests/ingest/test_edgar_brew.py', 'app/tests/quant/test_signals_extra.py',
+                   'app/workflows/morning_brew.py', 'tools/test_ci_dispatch_scope.py']
+        for path in selected + ignored:
+            with self.subTest(path=path):
+                expected = path in selected
+                self.assertEqual(label_selects(path), expected)
+                self.assertEqual(rust_selects(path), expected)
+        # Every selected Python source/test path is exercised by rust-book against the
+        # strictly required extension, and the main benchmarks all run.
+        pytest_step = next(step for step in self.rust['jobs']['rust-book']['steps']
+                           if step.get('name') == 'Python book tests against the extension')
+        self.assertEqual(pytest_step['env']['COCKPIT_REQUIRE_RUST'], '1')
+        for test_path in ('tests/quant/test_signals.py', 'tests/quant/test_signals_rust_parity.py',
+                          'tests/ingest/test_normalize.py', 'tests/ingest/test_normalize_rust_parity.py',
+                          'tests/quant/book', 'tests/quant/test_pnl.py',
+                          'tests/quant/test_costs_rust_parity.py', 'tests/quant/test_w21_cost_model.py',
+                          'tests/ingest/test_admission_rust_parity.py'):
+            self.assertIn(f' {test_path}', pytest_step['run'])
+        bench_step = next(step for step in self.rust['jobs']['rust-book']['steps']
+                          if step.get('name') == 'Benchmark Rust against the Python reference')
+        self.assertEqual(bench_step['run'].split(),
+                         ['python', 'rust/bench_compare.py', 'python', 'rust/bench_costs.py',
+                          'python', 'rust/bench_normalize.py', 'python', 'rust/bench_signals.py',
+                          'python', 'rust/bench_admission.py'])
+        for script in ('bench_compare.py', 'bench_costs.py', 'bench_normalize.py', 'bench_signals.py',
+                       'bench_admission.py'):
+            self.assertTrue((ROOT / 'rust' / script).is_file(), script)
+
+    def test_actual_rust_merge_tree_filter_with_diverged_base(self):
+        step = next(s for s in self.rust['jobs']['filter']['steps'] if s.get('id') == 'gate')
+        # Run the actual workflow shell and Python matrix generator against real
+        # commits. No DIFF_FILES override or mocked git can hide the regression.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'user.name=CI Test',
+                    '-c', 'user.email=ci@example.invalid', '-c', 'commit.gpgsign=false',
+                    '-c', 'core.hooksPath=/dev/null', *args], cwd=root,
+                    text=True, stderr=subprocess.DEVNULL).strip()
+
+            def commit(path, content, message):
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding='utf-8')
+                git('add', path)
+                git('commit', '-m', message)
+                return git('rev-parse', 'HEAD')
+
+            git('init', '-b', 'main')
+            ancestor = commit('README.md', 'base\n', 'base')
+            git('checkout', '-b', 'docs-pr')
+            pr_head = commit('docs/example.md', 'docs only\n', 'docs')
+            git('checkout', 'main')
+            base = commit('rust/base-only.rs', '// base-only Rust\n', 'base Rust')
+            git('merge', '--no-ff', 'docs-pr', '-m', 'immutable docs merge candidate')
+            candidate = git('rev-parse', 'HEAD')
+            git('remote', 'add', 'origin', str(root))
+            self.assertIn('rust/base-only.rs', git('diff', '--name-only', base, pr_head))
+            self.assertEqual(git('diff', '--name-only', base, candidate), 'docs/example.md')
+
+            def cells(event='pull_request', **overrides):
+                output = root / 'matrix-output'
+                output.write_text('', encoding='utf-8')
+                # Isolate event identity from any ambient real Actions SHA.
+                env = {key: value for key, value in os.environ.items()
+                       if key not in {'DIFF_FILES', 'EVENT_NAME', 'EXPECTED_PR_HEAD',
+                                      'MERGE_CANDIDATE', 'DIFF_BASE', 'DIFF_HEAD'}}
+                env.update({'CHECK_PATHS': 'true', 'SKIP_CELLS': 'false',
+                            'RUN_WINDOWS': 'true', 'RUN_MACOS': 'false',
+                            'EVENT_NAME': event, 'EXPECTED_PR_HEAD': pr_head,
+                            'MERGE_CANDIDATE': candidate, 'DIFF_BASE': base,
+                            'DIFF_HEAD': candidate, 'GITHUB_OUTPUT': str(output),
+                            **overrides})
+                result = subprocess.run(['bash', '-eu', '-c', step['run']], cwd=root,
+                                        env=env, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(output.read_text().splitlines()[1])['include']
+
+            self.assertEqual(cells(), [])
+            docs_base, docs_candidate = base, candidate
+            for overrides in [{'MERGE_CANDIDATE': pr_head},
+                              {'EXPECTED_PR_HEAD': base}, {'MERGE_CANDIDATE': ''}]:
+                self.assertEqual(len(cells(**overrides)), 4)
+            git('checkout', 'docs-pr')
+            self.assertEqual(len(cells(MERGE_CANDIDATE=pr_head)), 4)
+            pr_head = commit('rust/pr-owned.rs', '// PR Rust\n', 'PR Rust')
+            git('checkout', 'main')
+            base = git('rev-parse', 'HEAD')
+            git('merge', '--no-ff', 'docs-pr', '-m', 'immutable code merge candidate')
+            candidate = git('rev-parse', 'HEAD')
+            self.assertEqual(len(cells()), 4)
+            # Fetching explicit push/queue ranges can shallow the local fixture;
+            # finish constructing all merge candidates before these actual fetches.
+            for event in ['push', 'merge_group']:
+                self.assertEqual(cells(event, DIFF_BASE=docs_base, DIFF_HEAD=docs_candidate), [])
+                self.assertEqual(len(cells(event, DIFF_BASE=ancestor, DIFF_HEAD=docs_base)), 4)
+                self.assertEqual(len(cells(event, DIFF_BASE='0' * 40)), 4)
 
     def test_pr_concurrency_queues_old_heads_but_isolates_drafts(self):
         for doc in (self.ci, self.rust):
@@ -335,13 +541,31 @@ class DispatchScopeTests(unittest.TestCase):
             inputs = doc['on']['workflow_dispatch']['inputs']
             for key in ('pr_number', 'pr_head_sha', 'merge_sha'):
                 self.assertEqual(inputs[key]['default'], '')
+            candidate = {'github.event_name': 'workflow_dispatch', 'inputs.scope': 'full',
+                         'inputs.candidate_id': 'e' * 64, 'inputs.dispatch_nonce': 'f' * 32,
+                         'inputs.pr_base_sha': 'b' * 40, 'inputs.merge_tree_sha': 'd' * 40,
+                         'inputs.merge_sha': 'c' * 40}
             for job in jobs:
-                checkout = next(step for step in doc['jobs'][job]['steps']
-                                if step.get('uses') == 'actions/checkout@v4')
-                ref = checkout['with']['ref']
+                checkouts = [step for step in doc['jobs'][job]['steps']
+                             if step.get('uses') == 'actions/checkout@v4']
+                # Exactly one conditional trusted-policy checkout (github.sha on
+                # the default branch) precedes the single merge-context checkout.
+                policy, merge = checkouts
+                self.assertEqual(len(checkouts), 2)
+                self.assertEqual(policy['with']['ref'], '${{ github.sha }}')
+                self.assertEqual(policy['with']['fetch-depth'], '1')
+                self.assertEqual(policy['with']['persist-credentials'], 'false')
+                self.assertFalse(evaluate(policy['if']))
+                self.assertFalse(evaluate(policy['if'], **{'github.event_name': 'workflow_dispatch',
+                                                           'inputs.pr_number': '149',
+                                                           'inputs.merge_sha': 'b' * 40}))
+                self.assertTrue(evaluate(policy['if'], **candidate))
+                self.assertNotIn('if', merge)
+                ref = merge['with']['ref']
                 self.assertEqual(evaluate(ref), 'a' * 40)
                 self.assertEqual(evaluate(ref, **{'inputs.merge_sha': 'b' * 40}), 'b' * 40)
-            self.assertEqual(doc['jobs']['filter']['steps'][0]['with']['fetch-depth'], '2')
+                self.assertEqual(evaluate(ref, **candidate), 'c' * 40)
+                self.assertEqual(merge['with']['fetch-depth'], '2')
         self.assertEqual(self.step['env']['PR_HEAD_SHA'], '${{ github.event.pull_request.head.sha }}')
         self.assertEqual(self.step['env']['MERGE_SHA'], '${{ github.sha }}')
 

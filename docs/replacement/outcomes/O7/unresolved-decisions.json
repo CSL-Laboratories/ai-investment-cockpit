@@ -1,0 +1,107 @@
+{
+  "api_version": "o7.operator.v0",
+  "maturity": "researched",
+  "owner": "Lucas",
+  "decided_here": false,
+  "decisions": [
+    {
+      "id": "gui-framework",
+      "class": "architecture",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Which GUI framework, if any, should implement this candidate?",
+      "candidate_action": "No framework is selected and no framework spike was run."
+    },
+    {
+      "id": "gui-distribution-and-os",
+      "class": "architecture",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Is the GUI local desktop, local web, or hosted, and on which operating systems?",
+      "candidate_action": "Distribution and operating systems stay unresolved."
+    },
+    {
+      "id": "cli-implementation-stack",
+      "class": "architecture",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Which stack should implement the scriptable CLI?",
+      "candidate_action": "The wire contract names no CLI stack."
+    },
+    {
+      "id": "tui-authorization",
+      "class": "architecture",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Does measured operator value justify a TUI and its maintenance cost?",
+      "candidate_action": "The TUI packet defers the build. It does not authorize one."
+    },
+    {
+      "id": "legacy-surface-migration",
+      "class": "architecture",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Do the current Discord bridge and loopback routes remain as adapters?",
+      "candidate_action": "Left for O8. This candidate does not retire or replace them."
+    },
+    {
+      "id": "month-slice-surfaces",
+      "class": "release",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Which operator surfaces ship in the month slice?",
+      "candidate_action": "No release scope is selected."
+    },
+    {
+      "id": "operator-surface-spend",
+      "class": "spend",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Is any framework license, design system, or hosted distribution spend approved?",
+      "candidate_action": "No spend is requested or approved."
+    },
+    {
+      "id": "operator-authentication",
+      "class": "credentials",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "Which operator authentication meets WCAG 2.2 SC 3.3.8 while secrets stay in the OS credential store?",
+      "candidate_action": "No credential is added or chosen."
+    },
+    {
+      "id": "surface-eligibility-language",
+      "class": "tax_legal",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "May any surface imply account, venue, tax, or adviser eligibility?",
+      "candidate_action": "This candidate decides none of those questions. Surfaces must not imply eligibility."
+    },
+    {
+      "id": "live-surface-effects",
+      "class": "live",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "May a GUI or CLI ever move live capital or arm an auto rung?",
+      "candidate_action": "No live effect is enabled. Any future live surface stays behind the existing gates."
+    },
+    {
+      "id": "intervention-scope",
+      "class": "authority",
+      "status": "open",
+      "decided": false,
+      "owner": "Lucas",
+      "question": "May a surface request anything beyond stop, reconciliation, revocation, and export?",
+      "candidate_action": "Wider requests stay blocked pending a human O6 receipt. This candidate does not widen O6."
+    }
+  ]
+}

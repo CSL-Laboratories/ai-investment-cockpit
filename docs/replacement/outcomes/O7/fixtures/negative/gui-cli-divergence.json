@@ -1,0 +1,110 @@
+{
+  "kind": "negative_pair",
+  "control": "gui_cli_semantic_divergence",
+  "gui": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "gui",
+    "command": "operator.positions.inspect",
+    "request_id": "req_positions_diverged",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "authority_effect": "none",
+    "order_path": "none",
+    "status_code": "ok",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "absent_not_hidden",
+      "stale_data": "absent_not_hidden",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "positions": [
+        {
+          "instrument_id": "AAPL",
+          "venue": "stock",
+          "quantity": "10",
+          "currency": "USD"
+        },
+        {
+          "instrument_id": "KXDEMO-1",
+          "venue": "kalshi_demo",
+          "quantity": "0",
+          "currency": "USD"
+        }
+      ],
+      "collateral": {
+        "currency": "USD",
+        "amount": "0.00",
+        "state": "known"
+      }
+    },
+    "errors": [],
+    "presentation": {
+      "exit_code": 0,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "ok",
+      "rendered": "status=ok GUI positions AAPL 10"
+    }
+  },
+  "cli": {
+    "api_version": "o7.operator.v0",
+    "candidate_maturity": "researched",
+    "surface": "cli",
+    "command": "operator.positions.inspect",
+    "request_id": "req_positions_diverged",
+    "profile": {
+      "profile_id": "illustrative_profile_a",
+      "profile_class": "A",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab",
+      "signature_state": "illustrative_unsigned_fixture"
+    },
+    "enforcement_route": "risk_pass_mode_approval_order_gateway",
+    "authority_effect": "none",
+    "order_path": "none",
+    "status_code": "ok",
+    "visibility": {
+      "uncertainty": "absent_not_hidden",
+      "refusal": "absent_not_hidden",
+      "stale_data": "absent_not_hidden",
+      "reconciliation": "reconciled"
+    },
+    "result": {
+      "positions": [
+        {
+          "instrument_id": "AAPL",
+          "venue": "stock",
+          "quantity": "12",
+          "currency": "USD"
+        },
+        {
+          "instrument_id": "KXDEMO-1",
+          "venue": "kalshi_demo",
+          "quantity": "0",
+          "currency": "USD"
+        }
+      ],
+      "collateral": {
+        "currency": "USD",
+        "amount": "0.00",
+        "state": "known"
+      }
+    },
+    "errors": [],
+    "presentation": {
+      "exit_code": 0,
+      "machine_readable": true,
+      "ansi_in_machine_output": false,
+      "color_only_signal": false,
+      "text_status": "ok",
+      "rendered": "status=ok CLI positions AAPL 12"
+    }
+  }
+}
