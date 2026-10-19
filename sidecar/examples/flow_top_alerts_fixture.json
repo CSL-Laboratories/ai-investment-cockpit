@@ -1,0 +1,50 @@
+{
+  "alert_score": 3.0,
+  "alert_score_without_z": 4.0,
+  "alerts": [
+    {
+      "aggressor": "buy",
+      "alert": true,
+      "alert_bar": 4.0,
+      "contract": "SPY00009000",
+      "direction": "bullish",
+      "dte": 10,
+      "expiration": "2026-10-26",
+      "flags": [
+        "vol_oi",
+        "aggressive",
+        "sweep",
+        "short_dated_otm"
+      ],
+      "premium": 200000.0,
+      "right": "call",
+      "score": 6.0,
+      "strike": 520.0,
+      "ticker": "SPY",
+      "volume_z_status": "unavailable"
+    }
+  ],
+  "clusters": [
+    {
+      "alert_count": 1,
+      "contracts": 1,
+      "direction": "bullish",
+      "expiration": "2026-10-26",
+      "max_score": 6.0,
+      "premium": 200000.0,
+      "ticker": "SPY"
+    }
+  ],
+  "feed": "indicative",
+  "live_trading": false,
+  "max_per_underlying": 3,
+  "note": "Fixture, not a live 2026-10-16 tape. 892 contracts are DTE 0-2 with open interest 150 and volume 2000. All 892 cleared a fixed vol/OI ratio of 3. None alert under the revised rule. One 10-DTE outlier does.",
+  "orders_submitted": 0,
+  "raw_alert_count": 1,
+  "scanned_contracts": 933,
+  "schema_version": "sidecar.flow.top_alerts.v1",
+  "session_date": "2026-10-16",
+  "tape": "fixture",
+  "top_n": 15,
+  "volume_z_note": "Volume z is unavailable until that contract has 20 prior sessions. While z is unavailable the alert bar is 4 instead of 3, so a vol/OI percentile or a three-point print combination is not an alert by itself."
+}

@@ -89,8 +89,12 @@ def test_missing_sidecar_credentials_do_not_fall_back(monkeypatch):
 
 def test_volume_over_open_interest_and_stale_interest():
     fresh = score_book([_contract(volume=300, open_interest=100)], [], feed="indicative", session_date=date(2024, 6, 3))
-    assert fresh["contracts"][0]["alert"] is True
+    # The ratio is still reported. One contract has no peer bucket, so it does not score.
     assert fresh["contracts"][0]["vol_oi"] == 3
+    assert "vol_oi" not in fresh["contracts"][0]["flags"]
+    assert fresh["contracts"][0]["alert"] is False
+    assert fresh["contracts"][0]["volume_z_status"] == "unavailable"
+    assert fresh["contracts"][0]["alert_bar"] == 4
     stale = score_book(
         [_contract(volume=300, open_interest=100, open_interest_date=date(2024, 5, 1))],
         [],
@@ -146,10 +150,32 @@ def test_sweep_and_aggressive_print_score():
     assert row["large_premium"] is True
     assert row["aggressive_buy"] is True
     assert row["sweep"] is True
-    assert row["alert"] is True
-    text = render_markdown(scored)
+    assert row["direction"] == "bullish"
+    assert row["aggressor"] == "buy"
+    # Three print points and no volume baseline stay under the raised bar.
+    assert row["alert"] is False
+    assert row["alert_bar"] == 4
+    history = [
+        {
+            "kind": "volume",
+            "session_date": (date(2024, 6, 3) - timedelta(days=index)).isoformat(),
+            "symbol": "SPY240607C00520000",
+            "volume": 100.0 if index > 1 else 50.0,
+        }
+        for index in range(1, 21)
+    ]
+    confirmed = score_book(
+        [_contract(volume=1000, open_interest=None, prints=prints)],
+        history,
+        feed="opra",
+        session_date=date(2024, 6, 3),
+    )
+    assert confirmed["contracts"][0]["volume_z_status"] == "ok"
+    assert confirmed["contracts"][0]["alert"] is True
+    text = render_markdown(confirmed)
     assert "SPY240607C00520000" in text
     assert "Orders submitted: 0" in text
+    assert "unavailable" in render_markdown(scored)
 
 
 def test_skew_shift_is_applied_only_to_short_dated_otm():
@@ -319,6 +345,7 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
         symbols=("SPY",),
         today=date(2026, 10, 18),
         client=client,
+        alerts_dir=tmp_path / "flow",
     )
     assert scan["session_date"] == "2026-10-16"
     assert scan["tape"] == "snapshot_only"
@@ -329,6 +356,10 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
     assert row["open_interest"] == 1500
     trade_calls = [call for call in calls if call.url.path.endswith("/options/trades")]
     assert len(trade_calls) == 1
+    payload = json.loads((tmp_path / "flow" / "top_alerts_2026-10-16.json").read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "sidecar.flow.top_alerts.v1"
+    assert payload["orders_submitted"] == 0
+    assert payload["tape"] == "snapshot_only"
 
 
 def test_trade_batches_stay_within_100_symbols():
@@ -363,16 +394,226 @@ def test_last_trading_session_skips_the_weekend_and_a_holiday():
 
 
 def test_events_from_scan_keep_the_highest_score():
+    session = date(2024, 6, 3)
+    history = [
+        {
+            "kind": "volume",
+            "session_date": (session - timedelta(days=index)).isoformat(),
+            "symbol": "SPY240607C00520000",
+            "volume": 100.0 if index > 1 else 50.0,
+        }
+        for index in range(1, 21)
+    ]
     scored = score_book(
         [
-            _contract(volume=300, open_interest=100),
+            _contract(volume=1000, open_interest=None),
             _contract(symbol="SPY240607C00530000", strike=530, volume=10, open_interest=None),
         ],
-        [],
+        history,
         feed="indicative",
-        session_date=date(2024, 6, 3),
+        session_date=session,
     )
     events = events_from_scan(scored)
     assert len(events) == 1
     assert events[0]["symbol"] == "SPY"
     assert events[0]["source"] == "options_flow"
+
+
+def _chain_contract(index: int, *, session: date, dte: int, volume: float, open_interest: float, **overrides) -> ContractView:
+    return _contract(
+        symbol=f"SPY{index:08d}",
+        expiration=session + timedelta(days=dte),
+        strike=520.0,
+        volume=volume,
+        open_interest=open_interest,
+        open_interest_date=session,
+        session_date=session,
+        **overrides,
+    )
+
+
+def test_short_dated_volume_does_not_flood_and_top_n_is_capped():
+    """892 of the 2026-10-16 SPY alerts were 0–3 DTE vol/OI. This fixture keeps that class.
+
+    There is no saved tape from that scan. The 892 contracts are the same shape:
+    DTE 0–2, open interest at least 100, and volume several times open interest.
+    Under the old fixed ratio those 892 cleared a score of 3. Under the revised
+    rule none of them do, and one later outlier does.
+    """
+    session = date(2026, 10, 16)
+    noisy = [
+        _chain_contract(
+            index,
+            session=session,
+            dte=index % 3,
+            volume=2000,
+            open_interest=150,
+            underlying="SPY",
+        )
+        for index in range(892)
+    ]
+    peers = [
+        _chain_contract(
+            1000 + index,
+            session=session,
+            dte=10,
+            volume=200,
+            open_interest=400,
+            underlying="SPY",
+        )
+        for index in range(40)
+    ]
+    stamp = datetime(2026, 10, 16, 14, 30, tzinfo=timezone.utc)
+    outlier = _chain_contract(
+        9000,
+        session=session,
+        dte=10,
+        volume=20000,
+        open_interest=400,
+        underlying="SPY",
+        prints=(
+            OptionPrint(5.0, 200.0, stamp, 5.0),
+            OptionPrint(5.0, 200.0, stamp + timedelta(milliseconds=400), 5.0),
+        ),
+    )
+    scored = score_book(noisy + peers + [outlier], [], feed="indicative", session_date=session)
+    by_symbol = {row["symbol"]: row for row in scored["contracts"]}
+    assert all("vol_oi" not in by_symbol[row.symbol]["flags"] for row in noisy)
+    assert all(not by_symbol[row.symbol]["short_dated_otm"] for row in noisy)
+    assert all(not by_symbol[row.symbol]["alert"] for row in noisy)
+    assert by_symbol[outlier.symbol]["alert"] is True
+    assert "vol_oi" in by_symbol[outlier.symbol]["flags"]
+    assert by_symbol[outlier.symbol]["direction"] == "bullish"
+    assert scored["raw_alert_count"] == 1
+    assert scored["scanned_contracts"] == 933
+    assert len(scored["top_alerts"]) == 1
+    assert scored["top_alerts"][0]["ticker"] == "SPY"
+    assert scored["top_alerts"][0]["contract"] == outlier.symbol
+    assert scored["clusters"][0]["direction"] == "bullish"
+    assert scored["clusters"][0]["premium"] == 200000
+    old_rule = sum(
+        1
+        for row in noisy
+        if row.volume is not None
+        and row.open_interest is not None
+        and row.volume >= 100
+        and row.volume / row.open_interest >= 3
+    )
+    assert old_rule == 892
+    committed = json.loads(
+        (Path(__file__).resolve().parents[1] / "examples" / "flow_top_alerts_fixture.json").read_text(encoding="utf-8")
+    )
+    assert committed["raw_alert_count"] == 1
+    assert committed["scanned_contracts"] == 933
+    assert committed["tape"] == "fixture"
+    assert committed["orders_submitted"] == 0
+    assert committed["alerts"][0]["direction"] == "bullish"
+
+
+def test_open_interest_floor_and_near_expiry_are_excluded_from_percentiles():
+    session = date(2024, 6, 3)
+    thin = [
+        _chain_contract(index, session=session, dte=10, volume=5000, open_interest=50)
+        for index in range(25)
+    ]
+    near = [
+        _chain_contract(100 + index, session=session, dte=1, volume=5000, open_interest=500)
+        for index in range(25)
+    ]
+    scored = score_book(thin + near, [], feed="indicative", session_date=session)
+    assert all("vol_oi" not in row["flags"] for row in scored["contracts"])
+    assert all(not row["short_dated_otm"] for row in scored["contracts"] if row["dte"] <= 2)
+    assert scored["raw_alert_count"] == 0
+
+
+def test_top_alerts_keep_at_most_three_per_underlying():
+    session = date(2024, 6, 3)
+    names = ("SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA")
+    contracts = []
+    history = []
+    for name_index, name in enumerate(names):
+        for strike_index in range(4):
+            symbol = f"{name}{name_index}{strike_index}"
+            dte = 4 if name == "SPY" else 30
+            contracts.append(
+                _contract(
+                    underlying=name,
+                    symbol=symbol,
+                    expiration=session + timedelta(days=dte),
+                    volume=1000,
+                    open_interest=None,
+                    session_date=session,
+                )
+            )
+            history.extend(
+                {
+                    "kind": "volume",
+                    "session_date": (session - timedelta(days=index)).isoformat(),
+                    "symbol": symbol,
+                    "volume": 100.0 if index > 1 else 50.0,
+                }
+                for index in range(1, 21)
+            )
+    scored = score_book(contracts, history, feed="indicative", session_date=session)
+    assert scored["raw_alert_count"] == 24
+    assert len(scored["top_alerts"]) == 15
+    counts: dict[str, int] = {}
+    for row in scored["top_alerts"]:
+        counts[row["ticker"]] = counts.get(row["ticker"], 0) + 1
+    assert counts["SPY"] == 3
+    assert all(count <= 3 for count in counts.values())
+
+
+def test_put_bought_is_bearish_and_put_sold_is_bullish():
+    from sidecar.flow.score import flow_direction
+
+    assert flow_direction("call", "buy") == "bullish"
+    assert flow_direction("call", "sell") == "bearish"
+    assert flow_direction("put", "buy") == "bearish"
+    assert flow_direction("put", "sell") == "bullish"
+    assert flow_direction("call", "unknown") == "bullish"
+
+
+def test_flow_watchlist_is_configurable_and_sentiment_stays_on_the_original_twelve(monkeypatch):
+    from sidecar.flow.config import FLOW_UNIVERSE, WATCHLIST, flow_watchlist
+    from sidecar.sentiment.tickers import ALLOWED
+
+    assert len(FLOW_UNIVERSE) == 33
+    assert len([name for name in FLOW_UNIVERSE if name not in {"SPY", "QQQ", "IWM"}]) == 30
+    assert flow_watchlist() == FLOW_UNIVERSE
+    monkeypatch.setenv("SIDECAR_FLOW_WATCHLIST", "spy, aapl")
+    assert flow_watchlist() == ("SPY", "AAPL")
+    with pytest.raises(FlowError):
+        flow_watchlist("SPY,NOTREAL")
+    assert ALLOWED == frozenset(WATCHLIST)
+    assert "NFLX" not in ALLOWED
+    assert "NFLX" in FLOW_UNIVERSE
+
+
+def test_stock_snapshots_batch_and_a_429_retries():
+    seen: list[str] = []
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        seen.append(request.url.params["symbols"])
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={"message": "slow"})
+        body = {symbol: {"latestTrade": {"p": 10}} for symbol in request.url.params["symbols"].split(",")}
+        return httpx.Response(200, json=body)
+
+    slept: list[float] = []
+    client = FlowDataClient(
+        "key",
+        "secret",
+        transport=httpx.MockTransport(handler),
+        min_interval=0.3,
+        sleeper=slept.append,
+    )
+    symbols = ["SPY", "QQQ", "IWM", "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "TSLA"]
+    prices = client.stock_prices(symbols)
+    client.close()
+    assert prices["SPY"] == 10
+    assert len(seen) == 2
+    assert seen[0] == ",".join(symbols)
+    assert any(pause > 0.2 for pause in slept)

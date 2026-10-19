@@ -8,9 +8,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sidecar.flow.client import FlowDataClient
-from sidecar.flow.config import MIN_VOLUME, WATCHLIST, FlowError, resolve_feed
+from sidecar.flow.config import FLOW_UNIVERSE, MIN_VOLUME, FlowError, flow_watchlist, resolve_feed
 from sidecar.flow.normalize import assemble_chain
-from sidecar.flow.score import ContractView, render_markdown, score_book
+from sidecar.flow.score import ContractView, render_markdown, score_book, top_alerts_payload
 from sidecar.flow.session import NY, expiration_bounds, last_trading_session, session_window
 from sidecar.flow.study import DEFAULT_BARS, write_null_study
 from sidecar.jsonutil import write_json
@@ -48,6 +48,7 @@ def run_scan(
     symbols: tuple[str, ...],
     today: date | None = None,
     client: FlowDataClient | None = None,
+    alerts_dir: Path | None = None,
 ) -> dict:
     owns_client = client is None
     if client is None:
@@ -64,12 +65,13 @@ def run_scan(
         session_row = last_trading_session(calendar, calendar_day)
         session = date.fromisoformat(str(session_row["date"])[:10])
         start, end = session_window(session_row)
+        spots = client.stock_prices(list(symbols))
         for underlying in symbols:
             snapshots = client.snapshots(underlying, feed)
             symbols_on_chain = list(snapshots.get("snapshots", {}))
             expiry_gte, expiry_lte = expiration_bounds(symbols_on_chain, session)
             reference = client.contracts(underlying, expiration_gte=expiry_gte, expiration_lte=expiry_lte)
-            spot = client.stock_price(underlying)
+            spot = spots.get(underlying)
             rough = assemble_chain(
                 underlying=underlying,
                 session_date=session,
@@ -110,6 +112,8 @@ def run_scan(
         scan["session_note"] = None
     write_json(out, scan)
     markdown.write_text(render_markdown(scan), encoding="utf-8")
+    alerts_root = alerts_dir if alerts_dir is not None else Path("artifacts/flow")
+    write_json(alerts_root / f"top_alerts_{session.isoformat()}.json", top_alerts_payload(scan))
     _append_history(history_path, history_rows, session.isoformat())
     return scan
 
@@ -122,14 +126,16 @@ def main(argv: list[str] | None = None) -> None:
     scan.add_argument("--out", type=Path, required=True)
     scan.add_argument("--markdown", type=Path, required=True)
     scan.add_argument("--history", type=Path, required=True)
-    scan.add_argument("--symbols", nargs="*", default=list(WATCHLIST))
+    scan.add_argument("--symbols", nargs="*")
+    scan.add_argument("--alerts-dir", type=Path, default=Path("artifacts/flow"))
     study = sub.add_parser("study")
     study.add_argument("--bars", type=Path, default=DEFAULT_BARS)
     study.add_argument("--out", type=Path, required=True)
     study.add_argument("--ledger", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "scan":
-        unknown = [symbol for symbol in args.symbols if symbol not in WATCHLIST]
+        chosen = tuple(args.symbols) if args.symbols else flow_watchlist()
+        unknown = [symbol for symbol in chosen if symbol not in FLOW_UNIVERSE]
         if unknown:
             raise SystemExit(f"symbol not on the flow watchlist: {unknown[0]}")
         run_scan(
@@ -137,7 +143,8 @@ def main(argv: list[str] | None = None) -> None:
             out=args.out,
             markdown=args.markdown,
             history_path=args.history,
-            symbols=tuple(args.symbols),
+            symbols=chosen,
+            alerts_dir=args.alerts_dir,
         )
         return
     write_null_study(args.bars, args.out, args.ledger)

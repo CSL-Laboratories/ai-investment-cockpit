@@ -10,25 +10,35 @@ Open interest comes from the paper host's contract reference (`GET /v2/options/c
 
 The session is the last Alpaca calendar day on or before the scan date. A Saturday, Sunday, or holiday uses that session for the trade window and the score, and the document says so.
 
-The watchlist is fixed in `config.py`: SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, META, TSLA, GOOGL, AMD, AVGO. It does not change what the options runner is allowed to send.
+The scan universe is `FLOW_UNIVERSE` in `config.py`: SPY, QQQ, IWM, and 30 single names (AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AMD, AVGO, NFLX, JPM, BAC, XOM, UNH, LLY, COIN, PLTR, MSTR, SMCI, BA, DIS, INTC, MU, UBER, CRM, ORCL, QCOM, HD, COST, WMT). `SIDECAR_FLOW_WATCHLIST` may name a comma-separated subset. It cannot add a symbol. Sentiment still uses the original twelve-name `WATCHLIST`. Neither list changes what the options runner is allowed to send.
+
+Live GETs wait `SIDECAR_FLOW_MIN_INTERVAL` seconds (default 0.3, about 200 requests per minute) and retry HTTP 429 up to three more times. Stock snapshots are batched 50 symbols at a time. Option trades stay in batches of 100. Underlying chains are still requested one name at a time because that is how the snapshots route is shaped.
 
 Credentials are the sidecar paper pair only (`SIDECAR_PAPER_ALPACA_KEY_ID` / `SIDECAR_PAPER_ALPACA_SECRET`, or the sidecar keyring service). A missing pair stops the scan. The offline event study does not need them.
 
 ## Score
 
-The weights were set before any return in this tree was computed from them.
+The first live SPY scan (session 2026-10-16, indicative, tape of trades) flagged 892 of 12,630 contracts at a score of 3 or more, mostly 0–3 DTE where volume over open interest is ordinary. The gates below were set after that scan. No return in this tree has been computed from them.
 
 | Flag | Rule | Points |
 |---|---|---|
-| Volume / open interest | volume ≥ 100 and volume / open interest ≥ 2 | `min(3, ratio)` |
-| Volume z-score | volume ≥ 100 and z ≥ 2 against the previous 20 sessions of that contract | `min(3, z)` |
-| Large premium | one print with price × size × 100 ≥ $50,000 | 1 |
-| Aggressive buy | such a print at or above the ask | 1 |
-| Sweep | at least two of those prints inside 1 second, total premium ≥ $50,000 | 1 |
-| Short-dated OTM | 0–14 days, strike more than 2% through spot (delta band only if spot is missing) | 1 |
+| Volume / open interest | DTE greater than 2, open interest at least 100, volume at least 100, and the ratio's percentile inside that underlying and DTE bucket is at least 0.95. The bucket needs 20 eligible contracts. | 1 at the 95th, 2 at the 97th, 3 at the 99th |
+| Volume z-score | volume at least 100 and z at least 2 against the previous 20 sessions of that contract | `min(3, z)` |
+| Premium | the largest print's percentile inside that underlying and DTE bucket is at least 0.95, among at least 20 contracts that printed | 1 |
+| Aggressive buy | a print at or above the ask with price × size × 100 at least $50,000 | 1 |
+| Sweep | at least two of those prints inside 1 second, total premium at least $50,000 | 1 |
+| Short-dated OTM | 3–14 days, not 0–2, strike more than 2% through spot (delta band only if spot is missing) | 1 |
 | Skew shift | that same contract, and put IV minus call IV rose by at least 0.02 versus the previous stored session | 1 |
 
-An alert is a score of at least 3. Each flag is stored. A flag is an alert on its own only when its points reach 3, which is a volume/open-interest ratio of at least 3 or a volume z-score of at least 3. The print flags are 1 point each, so a large aggressive sweep is an alert because those three points add up. The z-score uses the sample standard deviation of prior sessions only. Fewer than 20 priors, or a zero standard deviation, leaves z empty. The ask stamped on a print is the scan's quote unless the trade payload has its own ask. That is a same-scan approximation, not a reconstructed NBBO.
+DTE buckets are 0–2, 3–14, 15–45, 46–180, and 181+. A percentile is the share of the bucket strictly below the contract, so a tie does not put every copy at the top. A bucket smaller than 20 awards no vol/OI and no premium point.
+
+Volume z stays empty until that contract has 20 prior sessions, or when those sessions have zero variance. The field is `volume_z_status: unavailable`. The alert bar is then 4 instead of 3. A vol/OI percentile of 3, or a large aggressive sweep, is not an alert by itself until the baseline exists or another point is present. Once z is a number, the bar returns to 3 even if z itself is small.
+
+An alert is a score at or above that bar. The published list is the top 15 alerts, at most 3 per underlying, ranked by score, then premium, then contract. Clusters group the same underlying, expiration, and direction and sum print premium. Direction is bullish for a call bought or a put sold, and bearish for a put bought or a call sold. If the largest print is not at the ask or the bid, the direction follows the call or the put and `aggressor` is `unknown`. The ask on a print is the scan's quote unless the trade payload has its own ask. That is a same-scan approximation, not a reconstructed NBBO.
+
+The scan writes `artifacts/flow/top_alerts_<session>.json` (`sidecar.flow.top_alerts.v1`) with ticker, contract, direction, premium, flags, and score. `orders_submitted` is 0. That file is the input for an external X or news check. It is not an order.
+
+No saved tape of the 2026-10-16 chain is in this tree. A fixture with the same 892 short-dated contracts (DTE 0–2, open interest 150, volume 2000) plus 40 ordinary 10-DTE contracts and one 10-DTE outlier scores 1 raw alert of 933 contracts. All 892 cleared a fixed vol/OI ratio of 3. None of them alert under this rule. The outlier is the only row in the top list. That document is `examples/flow_top_alerts_fixture.json`. `artifacts/` is gitignored, so a live scan writes the same shape there and does not commit it.
 
 Skew uses at least two puts and two calls in a 2% to 10% out-of-the-money band. The underlying row also carries put and call volume, the put/call volume ratio, and the short-dated OTM volume share. Those ratios are features. They are not extra alert rules.
 
@@ -51,3 +61,5 @@ The market question is unanswered. The 5-session PSR is the kind of number a cal
 python -m sidecar.flow scan --out artifacts/flow_scan.json --markdown artifacts/flow_scan.md --history artifacts/flow_history.jsonl
 python -m sidecar.flow study --out examples/flow_event_study.json --ledger examples/flow_event_trials.jsonl
 ```
+
+The scan also writes `artifacts/flow/top_alerts_<session>.json`. `--symbols SPY` limits one run. `--alerts-dir` changes the directory.

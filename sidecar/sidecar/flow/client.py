@@ -7,11 +7,23 @@ This client has no write method.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 import httpx
 
-from sidecar.flow.config import CONTRACT_PAGE_LIMIT, FEEDS, MAX_PAGES, TRADE_BATCH, WATCHLIST, FlowError
+from sidecar.flow.config import (
+    CONTRACT_PAGE_LIMIT,
+    FEEDS,
+    FLOW_UNIVERSE,
+    MAX_PAGES,
+    REQUEST_RETRIES,
+    STOCK_BATCH,
+    TRADE_BATCH,
+    FlowError,
+    request_interval,
+)
 from sidecar.harness.paper_credentials import load_sidecar_paper_credentials
 
 DATA_HOST = "data.alpaca.markets"
@@ -60,17 +72,30 @@ def assert_flow_url(url: str, method: str) -> None:
 
 
 class FlowDataClient:
-    def __init__(self, key_id: str, secret_key: str, *, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        key_id: str,
+        secret_key: str,
+        *,
+        transport: httpx.BaseTransport | None = None,
+        min_interval: float | None = None,
+        sleeper: Callable[[float], None] | None = None,
+    ) -> None:
         if not key_id or not secret_key:
             raise FlowError("missing sidecar paper credentials")
         self._key_id = key_id
         self._secret_key = secret_key
+        self._min_interval = 0.0 if min_interval is None else min_interval
+        if self._min_interval < 0:
+            raise FlowError("request interval must be >= 0")
+        self._sleep = time.sleep if sleeper is None else sleeper
+        self._last_request: float | None = None
         self._client = httpx.Client(transport=transport, timeout=30.0)
 
     @classmethod
     def from_sidecar_credentials(cls, *, transport: httpx.BaseTransport | None = None) -> FlowDataClient:
         key_id, secret_key = load_sidecar_paper_credentials()
-        return cls(key_id, secret_key, transport=transport)
+        return cls(key_id, secret_key, transport=transport, min_interval=request_interval())
 
     def __repr__(self) -> str:
         return "FlowDataClient()"
@@ -78,18 +103,47 @@ class FlowDataClient:
     def close(self) -> None:
         self._client.close()
 
-    def _get(self, url: str, params: dict[str, str]) -> dict:
+    def _pace(self) -> None:
+        if self._min_interval <= 0 or self._last_request is None:
+            self._last_request = time.monotonic()
+            return
+        wait = self._min_interval - (time.monotonic() - self._last_request)
+        if wait > 0:
+            self._sleep(wait)
+        self._last_request = time.monotonic()
+
+    def _backoff(self, response: httpx.Response, attempt: int) -> None:
+        header = response.headers.get("Retry-After")
+        try:
+            pause = float(header) if header is not None else min(8.0, 2.0**attempt)
+        except ValueError:
+            pause = min(8.0, 2.0**attempt)
+        if pause < 0:
+            pause = 0.0
+        if pause > 30:
+            pause = 30.0
+        if pause > 0:
+            self._sleep(pause)
+
+    def _request(self, url: str, params: dict[str, str]) -> httpx.Response:
         assert_flow_url(url, "GET")
-        response = self._client.request(
-            "GET",
-            url,
-            params=params,
-            headers={
-                "APCA-API-KEY-ID": self._key_id,
-                "APCA-API-SECRET-KEY": self._secret_key,
-                "Accept": "application/json",
-            },
-        )
+        headers = {
+            "APCA-API-KEY-ID": self._key_id,
+            "APCA-API-SECRET-KEY": self._secret_key,
+            "Accept": "application/json",
+        }
+        response: httpx.Response | None = None
+        for attempt in range(REQUEST_RETRIES):
+            self._pace()
+            response = self._client.request("GET", url, params=params, headers=headers)
+            if response.status_code != 429 or attempt + 1 == REQUEST_RETRIES:
+                return response
+            self._backoff(response, attempt)
+        assert response is not None
+        return response
+
+    def _get(self, url: str, params: dict[str, str]) -> dict:
+        response = self._request(url, params)
         if response.status_code >= 400:
             raise FlowHttpError(response.status_code)
         body = response.json()
@@ -127,7 +181,7 @@ class FlowDataClient:
         raise FlowError("pagination did not finish")
 
     def snapshots(self, underlying: str, feed: str) -> dict:
-        if underlying not in WATCHLIST:
+        if underlying not in FLOW_UNIVERSE:
             raise FlowError("underlying is not on the flow watchlist")
         if feed not in FEEDS:
             raise FlowError("options feed must be 'indicative' or 'opra'")
@@ -173,7 +227,7 @@ class FlowDataClient:
         return {"trades": merged, "pages": pages, "batches": batches, "available": True, "reason": None}
 
     def contracts(self, underlying: str, *, expiration_gte: str, expiration_lte: str) -> dict:
-        if underlying not in WATCHLIST:
+        if underlying not in FLOW_UNIVERSE:
             raise FlowError("underlying is not on the flow watchlist")
         if not expiration_gte or not expiration_lte:
             raise FlowError("contracts require an explicit expiration window")
@@ -194,17 +248,7 @@ class FlowDataClient:
 
     def calendar(self, start: str, end: str) -> list[dict]:
         url = f"https://{PAPER_HOST}/v2/calendar"
-        assert_flow_url(url, "GET")
-        response = self._client.request(
-            "GET",
-            url,
-            params={"start": start, "end": end},
-            headers={
-                "APCA-API-KEY-ID": self._key_id,
-                "APCA-API-SECRET-KEY": self._secret_key,
-                "Accept": "application/json",
-            },
-        )
+        response = self._request(url, {"start": start, "end": end})
         if response.status_code >= 400:
             raise FlowHttpError(response.status_code)
         body = response.json()
@@ -212,16 +256,7 @@ class FlowDataClient:
             raise FlowError("calendar response was not a list")
         return body
 
-    def stock_price(self, underlying: str) -> float | None:
-        if underlying not in WATCHLIST:
-            raise FlowError("underlying is not on the flow watchlist")
-        url = f"https://{DATA_HOST}/v2/stocks/snapshots"
-        body = self._get(url, {"symbols": underlying, "feed": "iex"})
-        if isinstance(body.get("snapshots"), dict):
-            body = body["snapshots"]
-        row = body.get(underlying)
-        if not isinstance(row, dict):
-            return None
+    def _price_from_snapshot(self, row: dict) -> float | None:
         trade = row.get("latestTrade") if isinstance(row.get("latestTrade"), dict) else {}
         price = trade.get("p")
         if isinstance(price, (int, float)) and not isinstance(price, bool):
@@ -231,3 +266,26 @@ class FlowDataClient:
         if isinstance(close, (int, float)) and not isinstance(close, bool):
             return float(close)
         return None
+
+    def stock_prices(self, symbols: list[str]) -> dict[str, float | None]:
+        """One IEX snapshot call per STOCK_BATCH names, not one call per ticker."""
+        if any(symbol not in FLOW_UNIVERSE for symbol in symbols):
+            unknown = next(symbol for symbol in symbols if symbol not in FLOW_UNIVERSE)
+            raise FlowError(f"underlying is not on the flow watchlist: {unknown}")
+        found: dict[str, float | None] = {symbol: None for symbol in symbols}
+        url = f"https://{DATA_HOST}/v2/stocks/snapshots"
+        for offset in range(0, len(symbols), STOCK_BATCH):
+            batch = symbols[offset : offset + STOCK_BATCH]
+            if not batch:
+                continue
+            body = self._get(url, {"symbols": ",".join(batch), "feed": "iex"})
+            if isinstance(body.get("snapshots"), dict):
+                body = body["snapshots"]
+            for symbol in batch:
+                row = body.get(symbol)
+                if isinstance(row, dict):
+                    found[symbol] = self._price_from_snapshot(row)
+        return found
+
+    def stock_price(self, underlying: str) -> float | None:
+        return self.stock_prices([underlying])[underlying]

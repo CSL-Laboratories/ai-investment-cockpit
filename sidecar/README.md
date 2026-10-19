@@ -237,7 +237,7 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 ### flow
 
 - **Reads:** Alpaca option snapshots and trades (`indicative` unless `opra` is requested by name), paper-host contract open interest, and the underlying IEX price. The event study reads `fixtures/etf_daily.csv`.
-- **Emits:** `sidecar.flow.scan.v1` and `sidecar.flow.event_study.v1`, both with `orders_submitted: 0`. The feature rows are there for a later options reader. This package does not call the options runner.
+- **Emits:** `sidecar.flow.scan.v1`, `sidecar.flow.top_alerts.v1` (top 15, at most 3 per name), and `sidecar.flow.event_study.v1`, all with `orders_submitted: 0`. The feature rows are there for a later options reader. This package does not call the options runner. Vol/OI and premium are percentiles inside an underlying and DTE bucket. Contracts with 2 DTE or less do not get those two flags. Until 20 volume sessions exist, z is unavailable and the alert bar is 4.
 - **Plug-in:** do not let a flow score submit an order. OPRA history was not downloaded, so the committed event study is a calendar null.
 
 ### sentiment
