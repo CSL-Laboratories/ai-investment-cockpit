@@ -643,7 +643,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {
@@ -706,7 +706,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {
@@ -769,7 +769,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {
@@ -832,7 +832,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {
@@ -901,7 +901,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {
@@ -970,7 +970,7 @@
       "commit": "ebbaa34489f171e079834d02098135711e1d4755",
       "host": {
         "runner": "required_on_run",
-        "python": "required_on_run",
+        "python": "3.12.3",
         "status": "required_on_run"
       },
       "io": {

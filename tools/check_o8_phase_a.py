@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -26,6 +27,7 @@ SCHEMAS = O8 / "schemas"
 BENCHMARK_SCHEMA = SCHEMAS / "benchmark-manifest.schema.json"
 CANDIDATE_SCHEMA = SCHEMAS / "candidate-manifest.schema.json"
 PACKET_SCHEMA = SCHEMAS / "phase-a-packet.schema.json"
+PYTHON_RUNTIME_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+([a-z]+[0-9]+)?(\s.+)?$"
 
 INSPECTION_COMMIT = "ebbaa34489f171e079834d02098135711e1d4755"
 REGISTRY_BASELINE = "73ab78d9d69494c757cec875855121b1d29320a4"
@@ -253,6 +255,9 @@ NEGATIVES = (
     ("candidate-commit-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
     ("candidate-config-mismatch.json", "benchmark", "candidate does not match retained candidate manifest"),
     ("baseline-host-mismatch.json", "benchmark", "tier-3 baseline host does not match the candidate"),
+    ("baseline-runner-mismatch.json", "benchmark", "tier-3 baseline host does not match the candidate"),
+    ("baseline-config-mismatch.json", "benchmark", "tier-3 baseline host does not match the candidate"),
+    ("baseline-python-coarse.json", "benchmark", "tier-3 baseline host does not match the candidate"),
     ("floor-results-missing.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-wrong-commit.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-failed.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
@@ -638,7 +643,7 @@ def _execution_identity(host: Any, configuration: Any) -> tuple[str, str, str] |
     python = host.get("python")
     if not isinstance(runner, str) or not runner.strip():
         return None
-    if not isinstance(python, str) or not python.strip():
+    if not isinstance(python, str) or not re.fullmatch(PYTHON_RUNTIME_PATTERN, python):
         return None
     return (runner, python, json.dumps(configuration, sort_keys=True, separators=(",", ":")))
 
