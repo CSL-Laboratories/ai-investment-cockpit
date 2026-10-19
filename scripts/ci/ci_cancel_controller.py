@@ -157,21 +157,44 @@ def run_identity(run, repo, repo_id, workflows):
 
 
 def live_pr(api, repo, repo_id, number):
+    """Strict open-PR read; used for every pre-cancellation reread."""
+    live, _ = pr_state(api, repo, repo_id, number)
+    return live
+
+
+def closed_lifecycle(pr):
+    """Return 'merged'/'closed' only for coherent closed evidence, else None."""
+    merged = pr.get('merged')
+    if pr.get('state') != 'closed' or type(merged) is not bool:
+        return None
+    if 'merged_at' in pr:
+        merged_at = pr['merged_at']
+        if merged and not (isinstance(merged_at, str) and merged_at):
+            return None
+        if not merged and merged_at is not None:
+            return None
+    return 'merged' if merged else 'closed'
+
+
+def pr_state(api, repo, repo_id, number, allow_closed=False):
+    """Return (identity, lifecycle); lifecycle is None unless closure is explicitly allowed."""
     pr = api.read(f'repos/{repo}/pulls/{number}')
     if not isinstance(pr, dict):
         raise Refused('Malformed live PR')
     head, base = pr.get('head'), pr.get('base')
     if not isinstance(head, dict) or not isinstance(base, dict):
         raise Refused('Malformed live PR head/base')
+    lifecycle = closed_lifecycle(pr) if allow_closed else None
     if (pr.get('number') != number or not positive(pr.get('id'))
-            or pr.get('state') != 'open' or pr.get('draft') is not False
+            or (pr.get('state') != 'open' and lifecycle is None)
+            or pr.get('draft') is not False
             or not same_repo(head.get('repo'), repo, repo_id)
             or not same_repo(base.get('repo'), repo, repo_id)
             or not SHA.fullmatch(str(head.get('sha', '')))):
         raise Refused('PR is not an open, non-draft, same-repository target')
     if any(not isinstance(side.get('ref'), str) or not side['ref'] for side in (head, base)):
         raise Refused('Missing live branch identity')
-    return (pr['number'], pr['id'], head['ref'], base['ref'], head['sha'])
+    return (pr['number'], pr['id'], head['ref'], base['ref'], head['sha']), lifecycle
 
 
 def belongs(identity, live):
@@ -328,9 +351,13 @@ def reconcile(api, repo, event_name, event):
     source = api.read(f'repos/{repo}/actions/runs/{triggered[0]}')
     if run_identity(source, repo, repo_id, workflows) != triggered:
         raise Refused('Triggering run identity changed')
-    live = live_pr(api, repo, repo_id, triggered[6])
+    # Closure is accepted only here, after all identity checks; final rereads stay strict.
+    live, lifecycle = pr_state(api, repo, repo_id, triggered[6], allow_closed=True)
     if not belongs(triggered, live):
         raise Refused('Triggering PR/branch identity changed')
+    if lifecycle is not None:
+        print(f'::notice::PR #{live[0]} is {lifecycle}; no cancellation needed', flush=True)
+        return []
     plans = []
     # Complete both workflow snapshots and ancestry reads before any cancellation.
     for workflow_id in workflows.values():
