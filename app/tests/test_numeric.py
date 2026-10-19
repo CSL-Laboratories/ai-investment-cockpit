@@ -68,9 +68,13 @@ def test_non_finite_parses_through_not_swallowed(value, expect_nan):
     assert got.is_nan() is expect_nan
 
 
-def test_breaker_drawdown_fails_closed_via_helper():
-    """Representative consumer: the daily-drawdown breaker must trip, not pass,
-    when the signed payload's drawdown is unparseable or non-finite."""
+def test_breaker_drawdown_trips_on_unreadable_and_over_limit():
+    """Consumer contract: the daily-drawdown breaker trips on unreadable or
+    non-finite input and on drawdown over limit; it passes within limit.
+    (``_breach_unreadable`` short-circuits malformed input before
+    ``decimal_or_nan`` runs — this pins the breaker contract, not the helper's
+    NaN path; that is covered by the gate malformed-drawdown pin in
+    ``tests/test_bugfix_audit_2026_09_07.py`` and by the notional test below.)"""
     from orchestrator.breakers import breach_daily_equity_drawdown
 
     assert breach_daily_equity_drawdown("bad", "500") is True
@@ -78,3 +82,16 @@ def test_breaker_drawdown_fails_closed_via_helper():
     assert breach_daily_equity_drawdown("Infinity", "500") is True
     assert breach_daily_equity_drawdown("600", "500") is True
     assert breach_daily_equity_drawdown("100", "500") is False
+
+
+def test_order_notional_falls_through_on_unparseable():
+    """Consumer where the helper's NaN decides the outcome: an unparseable
+    explicit notional must fall through to qty*limit_price (or "0" for an
+    un-priced order), not read as a real notional value."""
+    from brokers.order_state_machine import _payload_notional
+    from schemas.models.order import Order
+
+    assert _payload_notional(Order(notional="bad", qty="2", limit_price="10")) == "20"
+    assert _payload_notional(Order(notional="bad", qty="2", limit_price=None)) == "0"
+    assert _payload_notional(Order(notional="7.5", qty="2", limit_price="10")) == "7.5"
+    assert _payload_notional(Order(notional=None, qty="2", limit_price="10")) == "20"
