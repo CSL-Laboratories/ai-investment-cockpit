@@ -847,6 +847,38 @@ def validate_records(bundle: Bundle) -> None:
         if identity["market_family"] == "equity":
             _identity_issuer(identity)
     _require_identity_lineage(bundle)
+    _require_event_settlement_sources(bundle)
+
+
+def _settlement_source_collection(identity: dict) -> tuple:
+    """Name+URL pairs as an order-free multiset. Array order is not a priority rule."""
+    return tuple(sorted((source["name"], source["url"]) for source in identity["event"]["settlement_sources"]))
+
+
+def _require_event_settlement_sources(bundle: Bundle) -> None:
+    """Every market identity of one event carries one settlement-source collection.
+
+    settlement_sources is Event-level metadata (GET /events/{event_ticker}) copied
+    onto each market identity. identity_version versions one market_ticker, not
+    the Event, and no identity field says when Event metadata took effect. Two
+    different collections for one (venue, event_ticker), on sibling markets or on
+    versions of one market, therefore cannot be ordered by this candidate, and it
+    refuses them. This is a candidate limitation, not a claim that provider source
+    metadata is immutable. Distinct events stay independent. Only settlement_sources
+    is compared here; shapes are already enforced by the identity schema.
+    """
+    first: dict[tuple, tuple] = {}
+    for identity in bundle.identities.values():
+        if identity["market_family"] != "event":
+            continue
+        event = (identity["venue"], identity["event"]["event_ticker"])
+        sources = _settlement_source_collection(identity)
+        prior_id, prior_sources = first.setdefault(event, (identity["identity_id"], sources))
+        if sources != prior_sources:
+            raise ContractError(
+                f"{identity['identity_id']} settlement_sources conflict with {prior_id} "
+                f"for event {event[0]}:{event[1]}; the candidate cannot order them"
+            )
 
 
 def _instrument_key(identity: dict) -> tuple:

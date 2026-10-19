@@ -1636,6 +1636,99 @@ def test_later_identity_without_prior_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+# settlement_sources is Event-level metadata copied onto each market identity.
+# The candidate cannot order two collections for one (venue, event_ticker), so it
+# refuses them; identity_version is per market_ticker and is not an Event version.
+# This scope is settlement_sources only and makes no provider-immutability claim.
+#
+# Fiscal/reporting-period certification remains deferred. The coverage digest and
+# contract pins protect the researched synthetic corpus, including its fy2023 key
+# label (see test_fact_period_relabel_cannot_bypass_the_unchanged_contract). They
+# do not certify general reporting-period truth, and no test here infers a period.
+_EVENT_MARKETS = ("idn-ev-b1", "idn-ev-void", "idn-ev-d1")
+
+
+def _event_identity(documents: dict, identity_id: str) -> dict:
+    return next(
+        item for item in documents["fixtures/identities.json"]["identities"] if item["identity_id"] == identity_id
+    )
+
+
+def test_unchanged_fixture_shares_one_settlement_source_collection_per_event() -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    events = {_event_identity(documents, identity_id)["event"]["event_ticker"] for identity_id in _EVENT_MARKETS}
+    # The sibling-conflict cases below rely on these markets sharing one event.
+    assert events == {"KXSYNTH-26JAN01"}
+    assert module.validate_candidate(O2)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
+@pytest.mark.parametrize(
+    ("identity_id", "field", "value"),
+    [
+        ("idn-ev-void", "name", "Other determination source"),
+        ("idn-ev-d1", "url", "https://example.invalid/other-determination"),
+    ],
+)
+def test_sibling_market_settlement_source_conflict_is_rejected(
+    tmp_path: Path, identity_id: str, field: str, value: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _event_identity(documents, identity_id)["event"]["settlement_sources"][0][field] = value
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    with pytest.raises(
+        module.ContractError,
+        match=f"{identity_id} settlement_sources conflict with idn-ev-b1 for event kalshi_demo:KXSYNTH-26JAN01",
+    ):
+        module.validate_candidate(copy)
+
+
+def test_reordered_settlement_source_collection_is_consistent(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    backup = {"name": "Synthetic backup source", "url": "https://example.invalid/kxsynth-backup"}
+    for identity_id in _EVENT_MARKETS:
+        _event_identity(documents, identity_id)["event"]["settlement_sources"].append(dict(backup))
+    # Array order is not a priority rule: the same collection in another order agrees.
+    _event_identity(documents, "idn-ev-void")["event"]["settlement_sources"].reverse()
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
+def test_separate_events_may_differ_in_settlement_sources(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    event = _event_identity(documents, "idn-ev-d1")["event"]
+    event["event_ticker"] = "KXSYNTH-26JAN02"
+    event["settlement_sources"] = [
+        {"name": "Other determination source", "url": "https://example.invalid/other-determination"}
+    ]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_later_market_version_settlement_source_conflict_is_ambiguous(tmp_path: Path, conflict: bool) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    later = json.loads(json.dumps(_event_identity(documents, "idn-ev-b1")))
+    later.update(identity_id="idn-ev-b1-v2", identity_version=2, prior_identity_id="idn-ev-b1")
+    if conflict:
+        later["event"]["settlement_sources"][0]["url"] = "https://example.invalid/other-determination"
+    documents["fixtures/identities.json"]["identities"].append(later)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    if not conflict:
+        # The version lineage itself is valid; only the source conflict is refused.
+        assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+        return
+    with pytest.raises(
+        module.ContractError,
+        match="idn-ev-b1-v2 settlement_sources conflict with idn-ev-b1 for event kalshi_demo:KXSYNTH-26JAN01",
+    ):
+        module.validate_candidate(copy)
+
+
 def test_frames_qualification_decision_is_enforced(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)
