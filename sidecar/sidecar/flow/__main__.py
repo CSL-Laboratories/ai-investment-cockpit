@@ -11,7 +11,7 @@ from sidecar.flow.client import FlowDataClient
 from sidecar.flow.config import FLOW_UNIVERSE, MIN_VOLUME, FlowError, flow_watchlist, resolve_feed
 from sidecar.flow.normalize import assemble_chain
 from sidecar.flow.score import ContractView, render_markdown, score_book, top_alerts_payload
-from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, session_window
+from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, historical_trade_window, session_window
 from sidecar.flow.study import DEFAULT_BARS, write_null_study
 from sidecar.jsonutil import write_json
 
@@ -73,7 +73,8 @@ def run_scan(
         )
         session_row = completed_trading_session(calendar, moment)
         session = date.fromisoformat(str(session_row["date"])[:10])
-        start, end = session_window(session_row)
+        opened, closed = session_window(session_row)
+        trade_start, trade_end = historical_trade_window(opened, closed, moment)
         spots = client.stock_prices(list(symbols))
         for underlying in symbols:
             snapshots = client.snapshots(underlying, feed)
@@ -90,7 +91,12 @@ def run_scan(
                 trades={"trades": {}},
             )
             busy = [item.symbol for item in rough if item.volume is not None and item.volume >= MIN_VOLUME]
-            fetched = client.trades(busy, start=start.isoformat(), end=end.isoformat())
+            fetched = client.trades(
+                busy,
+                start=trade_start.isoformat(),
+                end=trade_end.isoformat(),
+                now=moment,
+            )
             if not fetched["available"]:
                 tape_available = False
                 tape_reason = fetched["reason"]
@@ -113,6 +119,8 @@ def run_scan(
     history_rows = scan.pop("history_rows")
     scan["calendar_date"] = calendar_day.isoformat()
     scan["as_of"] = moment.isoformat()
+    scan["trade_start"] = trade_start.isoformat()
+    scan["trade_end"] = trade_end.isoformat()
     scan["tape"] = tape_name
     scan["tape_reason"] = tape_reason
     if calendar_day != session:

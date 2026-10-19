@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sidecar.flow.config import FlowError
+from sidecar.flow.config import TRADE_DELAY_MINUTES, FlowError
 from sidecar.flow.symbols import parse_occ
 
 NY = ZoneInfo("America/New_York")
@@ -42,6 +42,24 @@ def last_trading_session(rows: list[dict], today: date) -> dict:
     """Completed session as of the end of `today` in America/New_York."""
     moment = datetime.combine(today, time(23, 59), tzinfo=NY)
     return completed_trading_session(rows, moment)
+
+
+def historical_trade_window(start: datetime, close: datetime, now: datetime) -> tuple[datetime, datetime]:
+    """Start and end for a free historical options-trades request.
+
+    End is the session close when that close is already outside the live OPRA
+    window. Otherwise end is `now` minus 16 minutes, and never later than the
+    close. The latest 15 minutes are real-time OPRA.
+    """
+    if now.tzinfo is None or start.tzinfo is None or close.tzinfo is None:
+        raise FlowError("trade window requires timezone-aware clocks")
+    opened = start.astimezone(timezone.utc)
+    session_close = close.astimezone(timezone.utc)
+    delayed = now.astimezone(timezone.utc) - timedelta(minutes=TRADE_DELAY_MINUTES)
+    trade_end = min(session_close, delayed)
+    if trade_end <= opened:
+        raise FlowError("historical trade window ends at or before the session open")
+    return opened, trade_end
 
 
 def session_window(row: dict) -> tuple[datetime, datetime]:

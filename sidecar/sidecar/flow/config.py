@@ -101,6 +101,9 @@ HORIZONS = (1, 5)
 PRIMARY_HORIZON = 1
 # Alpaca's historical option trades endpoint allows at most 100 symbols per call.
 TRADE_BATCH = 100
+# Free historical options trades stop before the latest 15 minutes of OPRA.
+# Sixteen minutes leaves one minute of slack. There is no agreement to sign.
+TRADE_DELAY_MINUTES = 16
 STOCK_BATCH = 50
 CONTRACT_PAGE_LIMIT = 1000
 MAX_PAGES = 40

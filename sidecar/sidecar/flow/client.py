@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
@@ -21,6 +22,7 @@ from sidecar.flow.config import (
     REQUEST_RETRIES,
     STOCK_BATCH,
     TRADE_BATCH,
+    TRADE_DELAY_MINUTES,
     FlowError,
     request_interval,
 )
@@ -41,6 +43,32 @@ class FlowHttpError(FlowError):
     def __init__(self, status: int) -> None:
         super().__init__(f"market data request failed with status {status}")
         self.status = status
+
+
+def _require_delayed_trade_window(start: str, end: str, now: datetime | None) -> None:
+    """Reject a missing bound or an end inside the live OPRA window."""
+    opened = _parse_trade_bound(start, "start")
+    closing = _parse_trade_bound(end, "end")
+    moment = datetime.now(timezone.utc) if now is None else now
+    if moment.tzinfo is None:
+        raise FlowError("options trades clock must be timezone-aware")
+    latest = moment.astimezone(timezone.utc) - timedelta(minutes=TRADE_DELAY_MINUTES)
+    if closing <= opened:
+        raise FlowError("options trades end is not after the start")
+    if closing.astimezone(timezone.utc) > latest:
+        raise FlowError("options trades end is inside the real-time OPRA window")
+
+
+def _parse_trade_bound(value: str, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise FlowError(f"options trades require an explicit {label}")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise FlowError(f"options trades {label} is not a timestamp") from exc
+    if parsed.tzinfo is None:
+        raise FlowError(f"options trades {label} must be timezone-aware")
+    return parsed.astimezone(timezone.utc)
 
 
 def _next_token(body: dict) -> str | None:
@@ -188,11 +216,14 @@ class FlowDataClient:
         url = f"https://{DATA_HOST}/v1beta1/options/snapshots/{underlying}"
         return self._pages(url, {"feed": feed, "limit": "1000"}, "snapshots")
 
-    def trades(self, symbols: list[str], *, start: str, end: str) -> dict:
+    def trades(self, symbols: list[str], *, start: str, end: str, now: datetime | None = None) -> dict:
         """Historical trades. This endpoint rejects a feed parameter.
 
-        A 403 means the key has no OPRA agreement. The caller scores from snapshots.
+        `start` and `end` are required. `end` must be at least 16 minutes before
+        `now`, because the latest 15 minutes are real-time OPRA. A 403 after
+        that still falls back to snapshot scoring.
         """
+        _require_delayed_trade_window(start, end, now)
         if not symbols:
             return {"trades": {}, "pages": 0, "batches": 0, "available": True, "reason": None}
         url = f"https://{DATA_HOST}/v1beta1/options/trades"
@@ -220,8 +251,9 @@ class FlowDataClient:
                 "batches": batches,
                 "available": False,
                 "reason": (
-                    "options trades returned 403. This key has no OPRA agreement. "
-                    "Scoring uses each snapshot's latest trade only, so sweeps are not detected."
+                    "options trades returned 403. Free historical data excludes the latest "
+                    "15 minutes of OPRA. Scoring uses each snapshot's latest trade only, "
+                    "so sweeps are not detected."
                 ),
             }
         return {"trades": merged, "pages": pages, "batches": batches, "available": True, "reason": None}

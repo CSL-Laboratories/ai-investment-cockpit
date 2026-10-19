@@ -352,8 +352,12 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
     assert "close" in scan["session_note"]
     assert scan["tape"] == "snapshot_only"
     assert "403" in scan["tape_reason"]
+    assert "agreement" not in scan["tape_reason"].lower()
     text = (tmp_path / "scan.md").read_text(encoding="utf-8")
     assert "snapshot" in text.lower() or "403" in text
+    assert "agreement" not in text.lower()
+    # Monday 00:50 ET is long after Friday's close, so the request ends at that close.
+    assert datetime.fromisoformat(scan["trade_end"]) == datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)
     row = next(item for item in scan["contracts"] if item["symbol"] == "SPY261219C00600000")
     assert row["open_interest"] == 1500
     assert row["direction"] == "unknown"
@@ -362,10 +366,113 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
     assert "aggressive" not in row["flags"]
     trade_calls = [call for call in calls if call.url.path.endswith("/options/trades")]
     assert len(trade_calls) == 1
+    assert "feed" not in trade_calls[0].url.params
+    assert datetime.fromisoformat(trade_calls[0].url.params["start"]) == datetime(
+        2026, 10, 16, 13, 30, tzinfo=timezone.utc
+    )
+    assert datetime.fromisoformat(trade_calls[0].url.params["end"]) == datetime(
+        2026, 10, 16, 20, 0, tzinfo=timezone.utc
+    )
     payload = json.loads((tmp_path / "flow" / "top_alerts_2026-10-16.json").read_text(encoding="utf-8"))
     assert payload["schema_version"] == "sidecar.flow.top_alerts.v1"
     assert payload["orders_submitted"] == 0
     assert payload["tape"] == "snapshot_only"
+
+
+def test_a_fresh_close_requests_trades_sixteen_minutes_behind_the_clock(tmp_path: Path):
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        path = request.url.path
+        if path.endswith("/v2/calendar"):
+            return httpx.Response(200, json=[{"date": "2026-10-16", "open": "09:30", "close": "16:00"}])
+        if "/options/snapshots/" in path:
+            return httpx.Response(
+                200,
+                json={
+                    "snapshots": {
+                        "SPY261219C00600000": {
+                            "dailyBar": {"v": 400},
+                            "latestQuote": {"bp": 1.0, "ap": 1.2},
+                            "latestTrade": {"p": 1.2, "s": 10, "t": "2026-10-16T19:50:00Z"},
+                        }
+                    }
+                },
+            )
+        if path.endswith("/v2/options/contracts"):
+            return httpx.Response(200, json={"option_contracts": [], "next_page_token": None})
+        if path.endswith("/v2/stocks/snapshots"):
+            return httpx.Response(200, json={"SPY": {"latestTrade": {"p": 500}}})
+        if path.endswith("/options/trades"):
+            assert "feed" not in request.url.params
+            return httpx.Response(
+                200,
+                json={
+                    "trades": {
+                        "SPY261219C00600000": [
+                            {"p": 1.2, "s": 10, "t": "2026-10-16T19:40:00Z"},
+                            {"p": 1.2, "s": 10, "t": "2026-10-16T19:40:00.400000Z"},
+                        ]
+                    }
+                },
+            )
+        return httpx.Response(404, json={})
+
+    from sidecar.flow.__main__ import run_scan
+    from sidecar.flow.session import NY
+
+    client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
+    scan = run_scan(
+        feed="indicative",
+        out=tmp_path / "scan.json",
+        markdown=tmp_path / "scan.md",
+        history_path=tmp_path / "history.jsonl",
+        symbols=("SPY",),
+        as_of=datetime(2026, 10, 16, 16, 10, tzinfo=NY),
+        client=client,
+        alerts_dir=tmp_path / "flow",
+    )
+    trade_calls = [call for call in calls if call.url.path.endswith("/options/trades")]
+    assert len(trade_calls) == 1
+    assert datetime.fromisoformat(trade_calls[0].url.params["end"]) == datetime(
+        2026, 10, 16, 19, 54, tzinfo=timezone.utc
+    )
+    assert scan["session_date"] == "2026-10-16"
+    assert scan["tape"] == "trades"
+    assert scan["tape_reason"] is None
+
+
+def test_trades_refuse_a_live_end_and_a_late_403_stays_snapshot_only():
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.params["end"])
+        return httpx.Response(403, json={"message": "OPRA agreement is not signed"})
+
+    client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
+    now = datetime(2026, 10, 16, 20, 10, tzinfo=timezone.utc)
+    with pytest.raises(FlowError, match="real-time"):
+        client.trades(
+            ["SPY261219C00600000"],
+            start="2026-10-16T13:30:00+00:00",
+            end="2026-10-16T20:00:00+00:00",
+            now=now,
+        )
+    with pytest.raises(FlowError, match="explicit"):
+        client.trades(["SPY261219C00600000"], start="2026-10-16T13:30:00+00:00", end="  ", now=now)
+    assert calls == []
+    result = client.trades(
+        ["SPY261219C00600000"],
+        start="2026-10-16T13:30:00+00:00",
+        end="2026-10-16T19:54:00+00:00",
+        now=now,
+    )
+    client.close()
+    assert result["available"] is False
+    assert "403" in result["reason"]
+    assert "agreement" not in result["reason"].lower()
+    assert calls == ["2026-10-16T19:54:00+00:00"]
 
 
 def test_trade_batches_stay_within_100_symbols():
@@ -378,7 +485,12 @@ def test_trade_batches_stay_within_100_symbols():
 
     client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
     symbols = [f"SPY261219C{index:08d}" for index in range(101)]
-    result = client.trades(symbols, start="2026-10-16T13:30:00+00:00", end="2026-10-16T20:00:00+00:00")
+    result = client.trades(
+        symbols,
+        start="2026-10-16T13:30:00+00:00",
+        end="2026-10-16T20:00:00+00:00",
+        now=datetime(2026, 10, 19, 12, tzinfo=timezone.utc),
+    )
     client.close()
     assert result["available"] is True
     assert result["batches"] == 2
@@ -388,7 +500,14 @@ def test_trade_batches_stay_within_100_symbols():
 def test_last_trading_session_skips_the_weekend_and_a_holiday():
     from zoneinfo import ZoneInfo
 
-    from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, last_trading_session
+    from sidecar.flow.session import (
+        NY,
+        completed_trading_session,
+        expiration_bounds,
+        historical_trade_window,
+        last_trading_session,
+        session_window,
+    )
 
     weekend = [
         {"date": "2026-10-16", "open": "09:30", "close": "16:00"},
@@ -415,6 +534,23 @@ def test_last_trading_session_skips_the_weekend_and_a_holiday():
     with pytest.raises(FlowError):
         completed_trading_session(weekend, datetime(2026, 10, 19, 0, 50))
     assert expiration_bounds(["SPY261219C00600000", "NOT"], date(2026, 10, 16)) == ("2026-10-16", "2026-12-19")
+    opened, closed = session_window(weekend[0])
+    # A session that closed days ago keeps its close.
+    monday = datetime(2026, 10, 19, 0, 50, tzinfo=NY)
+    assert historical_trade_window(opened, closed, monday)[1] == closed
+    # Ten minutes after the close, the end stops 16 minutes before the clock.
+    fresh = datetime(2026, 10, 16, 16, 10, tzinfo=NY)
+    assert historical_trade_window(opened, closed, fresh)[1] == datetime(2026, 10, 16, 19, 54, tzinfo=timezone.utc)
+    # Exactly 16 minutes after the close, the end is the close.
+    settled = datetime(2026, 10, 16, 16, 16, tzinfo=NY)
+    assert historical_trade_window(opened, closed, settled)[1] == closed
+    half_open, half_close = session_window(half[1])
+    half_now = datetime(2026, 11, 27, 13, 10, tzinfo=NY)
+    assert historical_trade_window(half_open, half_close, half_now)[1] == datetime(
+        2026, 11, 27, 17, 54, tzinfo=timezone.utc
+    )
+    with pytest.raises(FlowError):
+        historical_trade_window(opened, closed, datetime(2026, 10, 16, 9, 40, tzinfo=NY))
 
 
 def test_events_from_scan_keep_the_highest_score():
