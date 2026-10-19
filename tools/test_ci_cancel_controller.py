@@ -393,6 +393,87 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(api.cancelled, [])
         self.assertEqual(FakeGitHub().reconcile(), [1])
 
+    def test_verified_closed_or_merged_trigger_pr_is_notice_noop(self):
+        for merged, word, merged_at in ((True, 'merged', '2026-10-18T00:00:00Z'),
+                                        (False, 'closed', None)):
+            for action in ('requested', 'completed'):
+                for fields in ({}, {'merged_at': merged_at}):
+                    api = FakeGitHub()
+                    api.pr.update(state='closed', merged=merged, **fields)
+                    api.event['action'] = action
+                    output = io.StringIO()
+                    with self.subTest(merged=merged, action=action, fields=fields):
+                        with contextlib.redirect_stdout(output):
+                            self.assertEqual(api.reconcile(), [])
+                        self.assertEqual(api.cancelled, [])
+                        self.assertFalse(any('/runs?' in p or '/compare/' in p
+                                             for p in api.reads))
+                        self.assertEqual(api.reads[-1], f'repos/{REPO}/pulls/42')
+                        self.assertIn(f'::notice::PR #42 is {word}', output.getvalue())
+
+    def test_closed_trigger_pr_still_requires_full_identity_evidence(self):
+        changes = [lambda a: a.pr.update(draft=True),
+                   lambda a: a.pr.update(draft=None),
+                   lambda a: a.pr['head']['repo'].update(id=99),
+                   lambda a: a.pr['base']['repo'].update(full_name='foreign/repo'),
+                   lambda a: a.pr['head'].update(ref='different'),
+                   lambda a: a.pr['base'].update(ref='different'),
+                   lambda a: a.pr['head'].update(sha=None),
+                   lambda a: a.pr.update(id=None),
+                   lambda a: a.pr.update(number=43),
+                   lambda a: a.event['workflow_run'].update(run_attempt=2),
+                   lambda a: a.event['workflow_run'].update(pull_requests=[]),
+                   lambda a: a.event['repository'].update(id=99)]
+        for change in changes:
+            for merged in (True, False):
+                api = FakeGitHub()
+                api.pr.update(state='closed', merged=merged)
+                change(api)
+                with self.subTest(change=change, merged=merged), self.assertRaises(m.Refused):
+                    api.reconcile()
+                self.assertEqual(api.cancelled, [])
+                self.assertFalse(any('/runs?' in p for p in api.reads))
+
+    def test_malformed_or_contradictory_closed_lifecycle_refuses(self):
+        cases = ([{'state': 'closed', 'merged': v} for v in (None, 'true', 1, 0, [], {})]
+                 + [{'state': 'closed'}]
+                 + [{'state': s, 'merged': True} for s in ('merged', 'Closed', None, '')]
+                 + [{'state': 'closed', 'merged': True, 'merged_at': v} for v in (None, '', 1)]
+                 + [{'state': 'closed', 'merged': False, 'merged_at': v}
+                    for v in ('2026-10-18T00:00:00Z', '')])
+        for fields in cases:
+            api = FakeGitHub()
+            api.pr.update(fields)
+            if 'merged' not in fields:
+                api.pr.pop('merged', None)
+            with self.subTest(fields=fields), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+        api = FakeGitHub()
+        api.pr.pop('state')
+        api.pr['merged'] = True
+        with self.assertRaises(m.Refused):
+            api.reconcile()
+        self.assertEqual(api.cancelled, [])
+
+    def test_pr_closing_during_cancellation_plan_still_refuses(self):
+        for merged in (True, False):
+            api = FakeGitHub()
+            count = 0
+            def race(path, value, merged=merged):
+                nonlocal count
+                if path.endswith('/pulls/42'):
+                    count += 1
+                    if count == 2:
+                        return {**value, 'state': 'closed', 'merged': merged}
+                return value
+            api.hook = race
+            with self.subTest(merged=merged), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(count, 2)
+            self.assertTrue(any('/runs?' in p for p in api.reads))
+            self.assertEqual(api.cancelled, [])
+
     def test_live_head_advance_or_divergence_before_cancel_aborts(self):
         for new in (C, X, A):
             api = FakeGitHub()
