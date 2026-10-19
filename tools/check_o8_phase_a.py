@@ -27,7 +27,7 @@ SCHEMAS = O8 / "schemas"
 BENCHMARK_SCHEMA = SCHEMAS / "benchmark-manifest.schema.json"
 CANDIDATE_SCHEMA = SCHEMAS / "candidate-manifest.schema.json"
 PACKET_SCHEMA = SCHEMAS / "phase-a-packet.schema.json"
-PYTHON_RUNTIME_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+([a-z]+[0-9]+)?(\s.+)?$"
+PYTHON_RUNTIME_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+([a-z]+[0-9]+)?([ \t][^\r\n\u2028\u2029]+)?(?![\s\S])"
 
 INSPECTION_COMMIT = "ebbaa34489f171e079834d02098135711e1d4755"
 REGISTRY_BASELINE = "73ab78d9d69494c757cec875855121b1d29320a4"

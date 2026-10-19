@@ -137,7 +137,7 @@
     "fixture_sha256": "ab21d05d4a2b23ecf53457ecc3f6e907f376cf9243e44c8802e91b1072d181f3",
     "outputs": {
       "path": "docs/replacement/outcomes/O8/fixtures/validator-only/baseline-runner-mismatch.json",
-      "sha256": "45d335f4dd6cd8b48ccf65b594e1f9579afb3059a5f11f74cb1b25e080a7a13a"
+      "sha256": "6240338aa728add17623a9a91917646e029339b95de5326fdd60968806837e53"
     }
   },
   "commit": "ffffffffffffffffffffffffffffffffffffffff",

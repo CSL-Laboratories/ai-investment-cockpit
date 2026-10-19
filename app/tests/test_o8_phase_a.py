@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -269,6 +270,60 @@ def test_o8_candidate_configuration_distinguishes_boolean_from_integer() -> None
     document = _synthetic_comparison()
     document["configuration"]["batch_size"] = True
     assert "candidate does not match retained candidate manifest" in CHECK_O8.benchmark_reasons(document)
+
+
+@pytest.mark.parametrize(("python_runtime", "expected_valid"), [
+    ("3.11.9", True),
+    ("3.12.3", True),
+    ("3.13.0rc1", True),
+    ("3.12.3 (64bit)", True),
+    ("3", False),
+    ("3.12", False),
+    ("cpython", False),
+    ("3.12.3\n", False),
+    ("3.12.3 \n", False),
+    ("", False),
+])
+def test_o8_checker_python_runtime_pattern(python_runtime: str, expected_valid: bool) -> None:
+    identity = CHECK_O8._execution_identity(
+        {"runner": "test-runner", "python": python_runtime},
+        {"batch_size": 1},
+    )
+    assert (identity is not None) is expected_valid
+
+
+@pytest.mark.parametrize(("python_runtime", "expected_valid"), [
+    ("3.11.9", True),
+    ("3.12.3", True),
+    ("3.13.0rc1", True),
+    ("3.12.3 (64bit)", True),
+    ("3", False),
+    ("3.12", False),
+    ("cpython", False),
+    ("3.12.3\n", False),
+    ("3.12.3 \n", False),
+    ("", False),
+])
+def test_o8_benchmark_schema_python_runtime_pattern(python_runtime: str, expected_valid: bool) -> None:
+    schema = json.loads(
+        (ROOT / "docs/replacement/outcomes/O8/schemas/benchmark-manifest.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    python_schema = schema["properties"]["host"]["properties"]["python"]
+    assert python_schema["pattern"] == CHECK_O8.PYTHON_RUNTIME_PATTERN
+    validator = jsonschema.Draft202012Validator(python_schema)
+    assert validator.is_valid(python_runtime) is expected_valid
+
+
+def test_o8_runner_negative_differs_from_candidate_only_in_runner() -> None:
+    candidate = CHECK_O8._load_json(CHECK_O8.NEGATIVE_DIR / "baseline-runner-mismatch.json")
+    retained_path = ROOT / candidate["baseline"]["outputs"]["path"]
+    retained = CHECK_O8._load_json(retained_path)
+
+    assert retained["host"]["python"] == candidate["host"]["python"]
+    assert retained["host"]["runner"] != candidate["host"]["runner"]
+    assert retained["configuration"] == candidate["configuration"]
 
 
 def test_o8_candidate_cannot_be_reused_for_a_different_workload_seam() -> None:
