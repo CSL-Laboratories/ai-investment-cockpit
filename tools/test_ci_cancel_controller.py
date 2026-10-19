@@ -96,7 +96,7 @@ class FakeGitHub:
         return m.reconcile(self, REPO, 'workflow_run', self.event)
 
 
-SECRET = 'ghp_SECRET0123456789'
+SECRET = 'synthetic redaction fixture'
 CONFLICT = f'HTTP/2.0 409 Conflict\nAuthorization: token {SECRET}\n\n{{"message": "{SECRET}"}}'
 ACCEPTED = 'HTTP/2.0 202 Accepted\nContent-Type: application/json\n\n{}'
 
