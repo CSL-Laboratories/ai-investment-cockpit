@@ -21,8 +21,10 @@ from sidecar.flow.config import (
     PERCENTILE_FLOOR,
     PERCENTILE_MIN_N,
     PREMIUM_MIN,
+    DEEP_ITM_ABS_DELTA,
     SKEW_MIN_SIDE,
     SKEW_SHIFT_MIN,
+    STRONG_QUOTE_PRINTS,
     SWEEP_MIN_PRINTS,
     SWEEP_SECONDS,
     TOP_N,
@@ -202,6 +204,8 @@ def print_flags(contract: ContractView) -> dict:
             best = (premium, side)
     large = bool(premiums) and max(premiums) >= PREMIUM_MIN
     aggressive_large = bool(aggressive_premiums) and max(aggressive_premiums) >= PREMIUM_MIN
+    buy_count = len(aggressive_premiums)
+    sell_count = len(sell_premiums)
     aggressive.sort(key=lambda item: item.timestamp)
     sweep = False
     for index, left in enumerate(aggressive):
@@ -232,7 +236,22 @@ def print_flags(contract: ContractView) -> dict:
         "aggressive_sell": bool(sell_premiums) and max(sell_premiums) >= PREMIUM_MIN,
         "sweep": sweep,
         "aggressor": "unknown" if best is None else best[1],
+        "buy_count": buy_count,
+        "sell_count": sell_count,
     }
+
+
+def quote_side_is_strong(prints: dict) -> bool:
+    """True when at least two prints sit on the same side of the quote."""
+    return max(int(prints["buy_count"]), int(prints["sell_count"])) >= STRONG_QUOTE_PRINTS
+
+
+def deep_itm(contract: ContractView) -> bool:
+    """|delta| above the cap is usually stock replacement or financing, not a bet."""
+    delta = _num(contract.delta)
+    if delta is None:
+        return False
+    return abs(delta) > DEEP_ITM_ABS_DELTA
 
 
 def short_dated_otm(contract: ContractView) -> bool:
@@ -330,7 +349,12 @@ def select_top_alerts(rows: list[dict], *, limit: int = TOP_N, per_underlying: i
     """Highest scores first, at most `per_underlying` names from each ticker."""
     ranked = sorted(
         (row for row in rows if row["alert"]),
-        key=lambda row: (-(row["score"] or 0.0), -(row["premium"] or 0.0), row["contract"]),
+        key=lambda row: (
+            1 if row.get("deep_itm") else 0,
+            -(row["score"] or 0.0),
+            -(row["premium"] or 0.0),
+            row["contract"],
+        ),
     )
     chosen: list[dict] = []
     counts: dict[str, int] = {}
@@ -350,7 +374,10 @@ def build_clusters(rows: list[dict], *, limit: int = TOP_N) -> list[dict]:
     groups: dict[tuple[str, str, str], dict] = {}
     for row in rows:
         premium = row.get("premium")
-        if premium is None or premium <= 0 or not row.get("direction"):
+        direction = row.get("direction")
+        if premium is None or premium <= 0 or direction in {None, "", "unknown"}:
+            continue
+        if row.get("deep_itm"):
             continue
         key = (row["ticker"], row["expiration"], row["direction"])
         bucket = groups.get(key)
@@ -384,8 +411,11 @@ def score_book(
     *,
     feed: str,
     session_date: date,
+    tape: str = "trades",
 ) -> dict:
     resolve_feed(feed)
+    if tape not in {"trades", "snapshot_only"}:
+        raise FlowError("tape must be 'trades' or 'snapshot_only'")
     if any(item.session_date != session_date for item in contracts):
         raise FlowError("every contract must use the scan session date")
     underlyings = sorted({item.underlying for item in contracts})
@@ -440,20 +470,33 @@ def score_book(
         )
         z_flag = z_value is not None and z_value >= Z_MIN and volume is not None and volume >= MIN_VOLUME
         skew_flag = bool(otm and shift is not None and shift >= SKEW_SHIFT_MIN)
+        strong = quote_side_is_strong(prints)
+        # A snapshot tape is one latest trade. That print is not quote-side evidence.
+        snapshot_weak = tape == "snapshot_only" and not strong
+        award_aggressive = prints["aggressive_buy"] and not snapshot_weak
+        award_sweep = prints["sweep"] and not snapshot_weak
+        if snapshot_weak:
+            aggressor = "low_confidence"
+            aggressor_confidence = "low"
+            direction = "unknown"
+        else:
+            aggressor = prints["aggressor"]
+            aggressor_confidence = "high" if aggressor in {"buy", "sell"} else "low"
+            direction = flow_direction(contract.right, aggressor)
         parts = {
             "vol_oi": _vol_oi_points(vol_pct),
             "volume_z": min(Z_CAP, z_value) if z_flag and z_value is not None else 0.0,
             "premium": _premium_points(prem_pct),
-            "aggressive": 1.0 if prints["aggressive_buy"] else 0.0,
-            "sweep": 1.0 if prints["sweep"] else 0.0,
+            "aggressive": 1.0 if award_aggressive else 0.0,
+            "sweep": 1.0 if award_sweep else 0.0,
             "short_dated_otm": 1.0 if otm else 0.0,
             "skew_shift": 1.0 if skew_flag else 0.0,
         }
         score = sum(parts.values())
         bar = ALERT_SCORE if z_status == "ok" else ALERT_SCORE_WITHOUT_Z
         flags = [name for name, value in parts.items() if value > 0]
-        direction = flow_direction(contract.right, prints["aggressor"])
         premium_value = prints["premium_total"]
+        itm = deep_itm(contract)
         alert = score >= bar
         row = {
             "underlying": contract.underlying,
@@ -473,10 +516,12 @@ def score_book(
             "premium_total": _fmt(premium_value),
             "premium_percentile": _fmt(prem_pct),
             "large_premium": prints["large_premium"],
-            "aggressive_buy": prints["aggressive_buy"],
-            "sweep": prints["sweep"],
-            "aggressor": prints["aggressor"],
+            "aggressive_buy": award_aggressive,
+            "sweep": award_sweep,
+            "aggressor": aggressor,
+            "aggressor_confidence": aggressor_confidence,
             "direction": direction,
+            "deep_itm": itm,
             "short_dated_otm": otm,
             "skew": _fmt(skew_now.get(contract.underlying)),
             "skew_shift": _fmt(shift),
@@ -492,7 +537,9 @@ def score_book(
                 "ticker": contract.underlying,
                 "contract": contract.symbol,
                 "direction": direction,
-                "aggressor": prints["aggressor"],
+                "aggressor": aggressor,
+                "aggressor_confidence": aggressor_confidence,
+                "deep_itm": itm,
                 "premium": _fmt(premium_value),
                 "flags": flags,
                 "score": _fmt(score),
@@ -557,6 +604,7 @@ def score_book(
         "orders_submitted": 0,
         "live_trading": False,
         "feed": feed,
+        "tape": tape,
         "session_date": session_date.isoformat(),
         "alert_score": ALERT_SCORE,
         "alert_score_without_z": ALERT_SCORE_WITHOUT_Z,
@@ -606,6 +654,9 @@ def render_markdown(scan: dict) -> str:
         lines.append("")
     if scan.get("tape") == "snapshot_only":
         lines.append(str(scan.get("tape_reason") or "Tape unavailable. Snapshot latest trades only."))
+        lines.append(
+            "Aggressor is low-confidence. One snapshot print does not set direction and does not award the aggressive flag."
+        )
         lines.append("")
     note = scan.get("volume_z_note")
     if note:

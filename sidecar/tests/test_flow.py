@@ -335,6 +335,7 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
         return httpx.Response(404, json={})
 
     from sidecar.flow.__main__ import run_scan
+    from sidecar.flow.session import NY
 
     client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
     scan = run_scan(
@@ -343,17 +344,22 @@ def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
         markdown=tmp_path / "scan.md",
         history_path=tmp_path / "history.jsonl",
         symbols=("SPY",),
-        today=date(2026, 10, 18),
+        as_of=datetime(2026, 10, 19, 0, 50, tzinfo=NY),
         client=client,
         alerts_dir=tmp_path / "flow",
     )
     assert scan["session_date"] == "2026-10-16"
+    assert "close" in scan["session_note"]
     assert scan["tape"] == "snapshot_only"
     assert "403" in scan["tape_reason"]
     text = (tmp_path / "scan.md").read_text(encoding="utf-8")
     assert "snapshot" in text.lower() or "403" in text
     row = next(item for item in scan["contracts"] if item["symbol"] == "SPY261219C00600000")
     assert row["open_interest"] == 1500
+    assert row["direction"] == "unknown"
+    assert row["aggressor"] == "low_confidence"
+    assert row["aggressor_confidence"] == "low"
+    assert "aggressive" not in row["flags"]
     trade_calls = [call for call in calls if call.url.path.endswith("/options/trades")]
     assert len(trade_calls) == 1
     payload = json.loads((tmp_path / "flow" / "top_alerts_2026-10-16.json").read_text(encoding="utf-8"))
@@ -380,7 +386,9 @@ def test_trade_batches_stay_within_100_symbols():
 
 
 def test_last_trading_session_skips_the_weekend_and_a_holiday():
-    from sidecar.flow.session import expiration_bounds, last_trading_session
+    from zoneinfo import ZoneInfo
+
+    from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, last_trading_session
 
     weekend = [
         {"date": "2026-10-16", "open": "09:30", "close": "16:00"},
@@ -390,6 +398,22 @@ def test_last_trading_session_skips_the_weekend_and_a_holiday():
     assert last_trading_session(weekend, date(2026, 10, 19))["date"] == "2026-10-19"
     holiday = [{"date": "2026-10-09"}, {"date": "2026-10-13"}]
     assert last_trading_session(holiday, date(2026, 10, 12))["date"] == "2026-10-09"
+    # Sun 2026-10-18 21:50 PT is Mon 00:50 ET. Monday has not opened.
+    reported = datetime(2026, 10, 18, 21, 50, tzinfo=ZoneInfo("America/Los_Angeles"))
+    assert completed_trading_session(weekend, reported)["date"] == "2026-10-16"
+    assert completed_trading_session(weekend, datetime(2026, 10, 19, 0, 50, tzinfo=NY))["date"] == "2026-10-16"
+    assert completed_trading_session(weekend, datetime(2026, 10, 19, 9, 29, tzinfo=NY))["date"] == "2026-10-16"
+    assert completed_trading_session(weekend, datetime(2026, 10, 19, 9, 30, tzinfo=NY))["date"] == "2026-10-16"
+    assert completed_trading_session(weekend, datetime(2026, 10, 19, 15, 59, tzinfo=NY))["date"] == "2026-10-16"
+    assert completed_trading_session(weekend, datetime(2026, 10, 19, 16, 0, tzinfo=NY))["date"] == "2026-10-19"
+    half = [
+        {"date": "2026-10-16", "open": "09:30", "close": "16:00"},
+        {"date": "2026-11-27", "open": "09:30", "close": "13:00"},
+    ]
+    assert completed_trading_session(half, datetime(2026, 11, 27, 12, 59, tzinfo=NY))["date"] == "2026-10-16"
+    assert completed_trading_session(half, datetime(2026, 11, 27, 13, 0, tzinfo=NY))["date"] == "2026-11-27"
+    with pytest.raises(FlowError):
+        completed_trading_session(weekend, datetime(2026, 10, 19, 0, 50))
     assert expiration_bounds(["SPY261219C00600000", "NOT"], date(2026, 10, 16)) == ("2026-10-16", "2026-12-19")
 
 
@@ -562,6 +586,96 @@ def test_top_alerts_keep_at_most_three_per_underlying():
         counts[row["ticker"]] = counts.get(row["ticker"], 0) + 1
     assert counts["SPY"] == 3
     assert all(count <= 3 for count in counts.values())
+
+
+def test_snapshot_only_does_not_let_one_print_set_direction():
+    stamp = datetime(2024, 6, 3, 14, 30, tzinfo=timezone.utc)
+    one = score_book(
+        [_contract(volume=10, open_interest=None, prints=(OptionPrint(5.0, 200.0, stamp, 5.0),))],
+        [],
+        feed="indicative",
+        session_date=date(2024, 6, 3),
+        tape="snapshot_only",
+    )
+    row = one["contracts"][0]
+    assert row["large_premium"] is True
+    assert row["direction"] == "unknown"
+    assert row["aggressor"] == "low_confidence"
+    assert "aggressive" not in row["flags"]
+    assert "sweep" not in row["flags"]
+    assert one["clusters"] == []
+    two = score_book(
+        [
+            _contract(
+                volume=10,
+                open_interest=None,
+                prints=(
+                    OptionPrint(5.0, 200.0, stamp, 5.0),
+                    OptionPrint(5.0, 200.0, stamp + timedelta(milliseconds=400), 5.0),
+                ),
+            )
+        ],
+        [],
+        feed="indicative",
+        session_date=date(2024, 6, 3),
+        tape="snapshot_only",
+    )
+    confirmed = two["contracts"][0]
+    assert confirmed["direction"] == "bullish"
+    assert confirmed["aggressor"] == "buy"
+    assert confirmed["aggressor_confidence"] == "high"
+    assert "aggressive" in confirmed["flags"]
+    assert two["clusters"][0]["direction"] == "bullish"
+    assert two["clusters"][0]["contracts"] == 1
+
+
+def test_deep_itm_ranks_behind_a_directional_contract():
+    from sidecar.flow.score import deep_itm as is_deep_itm
+
+    session = date(2024, 6, 3)
+    stamp = datetime(2024, 6, 3, 15, tzinfo=timezone.utc)
+    # Inside the quote, so neither print is aggressive. The ITM premium is larger.
+    specs = (
+        ("SPY_OTM", 0.2, (OptionPrint(1.1, 5.0, stamp, 2.0),)),
+        ("SPY_ITM", 0.95, (OptionPrint(2.0, 10.0, stamp, 3.0),)),
+    )
+    contracts = []
+    history = []
+    for symbol, delta, prints in specs:
+        contracts.append(
+            _contract(
+                symbol=symbol,
+                delta=delta,
+                volume=1000,
+                open_interest=None,
+                expiration=session + timedelta(days=30),
+                strike=500,
+                prints=prints,
+                session_date=session,
+            )
+        )
+        history.extend(
+            {
+                "kind": "volume",
+                "session_date": (session - timedelta(days=index)).isoformat(),
+                "symbol": symbol,
+                "volume": 100.0 if index > 1 else 50.0,
+            }
+            for index in range(1, 21)
+        )
+    missing = _contract(symbol="SPY_NOD", delta=None, volume=10, open_interest=None, session_date=session)
+    assert is_deep_itm(missing) is False
+    scored = score_book(contracts, history, feed="indicative", session_date=session)
+    by_symbol = {row["symbol"]: row for row in scored["contracts"]}
+    assert by_symbol["SPY_ITM"]["deep_itm"] is True
+    assert by_symbol["SPY_OTM"]["deep_itm"] is False
+    assert by_symbol["SPY_ITM"]["alert"] is True
+    assert by_symbol["SPY_OTM"]["alert"] is True
+    assert by_symbol["SPY_ITM"]["premium_total"] > by_symbol["SPY_OTM"]["premium_total"]
+    assert [row["contract"] for row in scored["top_alerts"]] == ["SPY_OTM", "SPY_ITM"]
+    assert scored["clusters"][0]["contracts"] == 1
+    assert scored["clusters"][0]["direction"] == "bullish"
+    assert scored["clusters"][0]["premium"] == by_symbol["SPY_OTM"]["premium_total"]
 
 
 def test_put_bought_is_bearish_and_put_sold_is_bullish():

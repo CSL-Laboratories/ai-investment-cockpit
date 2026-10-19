@@ -15,20 +15,33 @@ from sidecar.flow.symbols import parse_occ
 NY = ZoneInfo("America/New_York")
 
 
-def last_trading_session(rows: list[dict], today: date) -> dict:
-    """Latest calendar row whose date is on or before `today`."""
+def completed_trading_session(rows: list[dict], now: datetime) -> dict:
+    """Latest calendar session whose close is at or before `now`.
+
+    A session that has not opened, or that has opened and not closed, is not
+    used. The previous completed session is used instead.
+    """
+    if now.tzinfo is None:
+        raise FlowError("scan clock must be timezone-aware")
+    moment = now.astimezone(NY)
     chosen: dict | None = None
-    chosen_day: date | None = None
+    chosen_close: datetime | None = None
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("date"), str):
             continue
-        day = date.fromisoformat(row["date"][:10])
-        if day <= today and (chosen_day is None or day > chosen_day):
+        _start, end = session_window(row)
+        if end <= moment and (chosen_close is None or end > chosen_close):
             chosen = row
-            chosen_day = day
-    if chosen is None or chosen_day is None:
-        raise FlowError("calendar has no trading session on or before the scan date")
+            chosen_close = end
+    if chosen is None:
+        raise FlowError("calendar has no completed trading session at or before the scan time")
     return chosen
+
+
+def last_trading_session(rows: list[dict], today: date) -> dict:
+    """Completed session as of the end of `today` in America/New_York."""
+    moment = datetime.combine(today, time(23, 59), tzinfo=NY)
+    return completed_trading_session(rows, moment)
 
 
 def session_window(row: dict) -> tuple[datetime, datetime]:

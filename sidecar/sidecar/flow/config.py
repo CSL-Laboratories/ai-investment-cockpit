@@ -86,6 +86,10 @@ OTM_PCT = 0.02
 OI_MAX_AGE_DAYS = 5
 SKEW_SHIFT_MIN = 0.02
 SKEW_MIN_SIDE = 2
+# Absolute delta above this is treated as a stock-replacement or financing trade.
+DEEP_ITM_ABS_DELTA = 0.85
+# Two prints on the same side of the quote. One snapshot print is not this.
+STRONG_QUOTE_PRINTS = 2
 PERCENTILE_MIN_N = 20
 PERCENTILE_FLOOR = 0.95
 ALERT_SCORE = 3.0

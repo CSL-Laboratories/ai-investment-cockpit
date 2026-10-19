@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from sidecar.flow.client import FlowDataClient
 from sidecar.flow.config import FLOW_UNIVERSE, MIN_VOLUME, FlowError, flow_watchlist, resolve_feed
 from sidecar.flow.normalize import assemble_chain
 from sidecar.flow.score import ContractView, render_markdown, score_book, top_alerts_payload
-from sidecar.flow.session import NY, expiration_bounds, last_trading_session, session_window
+from sidecar.flow.session import NY, completed_trading_session, expiration_bounds, session_window
 from sidecar.flow.study import DEFAULT_BARS, write_null_study
 from sidecar.jsonutil import write_json
 
@@ -47,13 +47,22 @@ def run_scan(
     history_path: Path,
     symbols: tuple[str, ...],
     today: date | None = None,
+    as_of: datetime | None = None,
     client: FlowDataClient | None = None,
     alerts_dir: Path | None = None,
 ) -> dict:
     owns_client = client is None
     if client is None:
         client = FlowDataClient.from_sidecar_credentials()
-    calendar_day = today or datetime.now(timezone.utc).astimezone(NY).date()
+    if as_of is not None:
+        moment = as_of.astimezone(NY)
+    elif today is not None:
+        # A bare date is the end of that New York day, so a session that
+        # already closed still counts. The live clock uses `as_of`.
+        moment = datetime.combine(today, time(23, 59), tzinfo=NY)
+    else:
+        moment = datetime.now(timezone.utc).astimezone(NY)
+    calendar_day = moment.date()
     contracts: list[ContractView] = []
     tape_available = True
     tape_reason = None
@@ -62,7 +71,7 @@ def run_scan(
             (calendar_day - timedelta(days=14)).isoformat(),
             calendar_day.isoformat(),
         )
-        session_row = last_trading_session(calendar, calendar_day)
+        session_row = completed_trading_session(calendar, moment)
         session = date.fromisoformat(str(session_row["date"])[:10])
         start, end = session_window(session_row)
         spots = client.stock_prices(list(symbols))
@@ -99,14 +108,17 @@ def run_scan(
         if owns_client:
             client.close()
     history = _load_history(history_path)
-    scan = score_book(contracts, history, feed=feed, session_date=session)
+    tape_name = "trades" if tape_available else "snapshot_only"
+    scan = score_book(contracts, history, feed=feed, session_date=session, tape=tape_name)
     history_rows = scan.pop("history_rows")
     scan["calendar_date"] = calendar_day.isoformat()
-    scan["tape"] = "trades" if tape_available else "snapshot_only"
+    scan["as_of"] = moment.isoformat()
+    scan["tape"] = tape_name
     scan["tape_reason"] = tape_reason
     if calendar_day != session:
         scan["session_note"] = (
-            "The scan session is the last Alpaca trading day on or before the calendar date."
+            "The scan session is the last completed Alpaca session. "
+            "A session is not used before its open or before its close."
         )
     else:
         scan["session_note"] = None
