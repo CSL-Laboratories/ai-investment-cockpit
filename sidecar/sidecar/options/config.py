@@ -30,6 +30,9 @@ QTY = 1
 IV_WINDOW = 60
 RV_WINDOW = 10
 RANK_WINDOW = 252
+# Fewer than this many prior sessions and the runner computes no IV rank.
+# 252 remains the percentile length whenever that many sessions exist.
+MIN_IV_HISTORY = 60
 STARTING_EQUITY = Decimal("100000")
 SPREAD_FLOOR = Decimal("0.05")
 SPREAD_FRAC = Decimal("0.08")

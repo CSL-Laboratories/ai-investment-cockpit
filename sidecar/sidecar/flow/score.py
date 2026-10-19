@@ -367,13 +367,23 @@ def render_markdown(scan: dict) -> str:
         "",
         f"Feed: {scan['feed']}. Session: {scan['session_date']}. Orders submitted: {scan['orders_submitted']}.",
         "",
-        "A row is an alert only when the predeclared score is at least "
-        f"{scan['alert_score']}. A single flag is listed and is not, by itself, an alert "
-        "unless its component reaches that score.",
-        "",
-        "| Alert | Score | Underlying | Contract | Flags | Vol/OI | Volume z | Premium |",
-        "|---|---:|---|---|---|---:|---:|---:|",
     ]
+    if scan.get("session_note"):
+        lines.append(str(scan["session_note"]))
+        lines.append("")
+    if scan.get("tape") == "snapshot_only":
+        lines.append(str(scan.get("tape_reason") or "Tape unavailable. Snapshot latest trades only."))
+        lines.append("")
+    lines.extend(
+        [
+            "A row is an alert only when the predeclared score is at least "
+            f"{scan['alert_score']}. A single flag is listed and is not, by itself, an alert "
+            "unless its component reaches that score.",
+            "",
+            "| Alert | Score | Underlying | Contract | Flags | Vol/OI | Volume z | Premium |",
+            "|---|---:|---|---|---|---:|---:|---:|",
+        ]
+    )
     flagged = [row for row in scan["contracts"] if row["flags"]]
     if not flagged:
         lines.append("| | | | none | | | | |")

@@ -13,10 +13,19 @@ from sidecar.flow.symbols import parse_occ
 
 
 def _optional_float(value: object) -> float | None:
+    """Alpaca sends open interest as a string. A non-numeric string stays missing."""
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
         return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
     return None
 
 

@@ -226,7 +226,7 @@ Do this only after the cockpit's own fixes, as a reviewed change. These packages
 
 - **Reads:** an indicative option chain and greeks from Alpaca market data, adjusted IEX daily bars for a 10-day realized vol, and the local IV-rank history. The offline book reads only `fixtures/etf_daily.csv`.
 - **Emits:** `sidecar.options_eval.v1` with `orders_submitted: 0`, and, from the runner, `sidecar.options_runner.v1`. The runner can post a defined-risk multi-leg limit to the sidecar paper account. That post is not the cockpit order path.
-- **Plug-in:** do not point this client at the cockpit gateway or the cockpit keys. Do not treat the synthetic Black-Scholes book as an OPRA backtest.
+- **Plug-in:** do not point this client at the cockpit gateway or the cockpit keys. Do not treat the synthetic Black-Scholes book as an OPRA backtest. The runner's IV rank can use a tagged CBOE proxy backfill (VIX, VXN, RVX) and a minimum shorter than 252. The report names that gap. The proxy is not the chain's ATM implied vol.
 
 ### intraday market maker
 

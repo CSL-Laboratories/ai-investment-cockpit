@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from sidecar.flow.config import FEEDS, WATCHLIST, FlowError
+from sidecar.flow.config import CONTRACT_PAGE_LIMIT, FEEDS, MAX_PAGES, TRADE_BATCH, WATCHLIST, FlowError
 from sidecar.harness.paper_credentials import load_sidecar_paper_credentials
 
 DATA_HOST = "data.alpaca.markets"
@@ -22,7 +22,26 @@ _DATA_PATHS = (
     "/v1beta1/options/trades",
     "/v2/stocks/snapshots",
 )
-_PAPER_PATHS = ("/v2/options/contracts",)
+_PAPER_PATHS = ("/v2/options/contracts", "/v2/calendar")
+
+
+class FlowHttpError(FlowError):
+    def __init__(self, status: int) -> None:
+        super().__init__(f"market data request failed with status {status}")
+        self.status = status
+
+
+def _next_token(body: dict) -> str | None:
+    """Trading responses use next_page_token. Some contract payloads use page_token."""
+    if "next_page_token" in body:
+        token = body.get("next_page_token")
+    elif "page_token" in body:
+        token = body.get("page_token")
+    else:
+        token = None
+    if not isinstance(token, str) or not token:
+        return None
+    return token
 
 
 def assert_flow_url(url: str, method: str) -> None:
@@ -72,7 +91,7 @@ class FlowDataClient:
             },
         )
         if response.status_code >= 400:
-            raise FlowError(f"market data request failed with status {response.status_code}")
+            raise FlowHttpError(response.status_code)
         body = response.json()
         if not isinstance(body, dict):
             raise FlowError("market data response was not an object")
@@ -81,7 +100,7 @@ class FlowDataClient:
     def _pages(self, url: str, params: dict[str, str], collection: str) -> dict:
         merged: dict = {collection: {} if collection != "option_contracts" else [], "pages": 0}
         token: str | None = None
-        for page in range(20):
+        for page in range(MAX_PAGES):
             query = dict(params)
             if token:
                 query["page_token"] = token
@@ -102,7 +121,7 @@ class FlowDataClient:
                 if not isinstance(chunk, dict):
                     raise FlowError(f"{collection} response was not an object")
                 merged[collection].update(chunk)
-            token = body.get("next_page_token")
+            token = _next_token(body)
             if not token:
                 return merged
         raise FlowError("pagination did not finish")
@@ -115,27 +134,83 @@ class FlowDataClient:
         url = f"https://{DATA_HOST}/v1beta1/options/snapshots/{underlying}"
         return self._pages(url, {"feed": feed, "limit": "1000"}, "snapshots")
 
-    def trades(self, symbols: list[str], feed: str, *, start: str, end: str) -> dict:
-        if feed not in FEEDS:
-            raise FlowError("options feed must be 'indicative' or 'opra'")
-        if not symbols:
-            return {"trades": {}, "pages": 0}
-        url = f"https://{DATA_HOST}/v1beta1/options/trades"
-        return self._pages(
-            url,
-            {"symbols": ",".join(symbols), "feed": feed, "start": start, "end": end, "limit": "10000"},
-            "trades",
-        )
+    def trades(self, symbols: list[str], *, start: str, end: str) -> dict:
+        """Historical trades. This endpoint rejects a feed parameter.
 
-    def contracts(self, underlying: str) -> dict:
+        A 403 means the key has no OPRA agreement. The caller scores from snapshots.
+        """
+        if not symbols:
+            return {"trades": {}, "pages": 0, "batches": 0, "available": True, "reason": None}
+        url = f"https://{DATA_HOST}/v1beta1/options/trades"
+        merged: dict[str, list] = {}
+        pages = 0
+        batches = 0
+        try:
+            for offset in range(0, len(symbols), TRADE_BATCH):
+                batch = symbols[offset : offset + TRADE_BATCH]
+                batches += 1
+                page = self._pages(
+                    url,
+                    {"symbols": ",".join(batch), "start": start, "end": end, "limit": "10000"},
+                    "trades",
+                )
+                pages += int(page["pages"])
+                for symbol, rows in page["trades"].items():
+                    merged.setdefault(symbol, []).extend(rows)
+        except FlowHttpError as exc:
+            if exc.status != 403:
+                raise
+            return {
+                "trades": {},
+                "pages": pages,
+                "batches": batches,
+                "available": False,
+                "reason": (
+                    "options trades returned 403. This key has no OPRA agreement. "
+                    "Scoring uses each snapshot's latest trade only, so sweeps are not detected."
+                ),
+            }
+        return {"trades": merged, "pages": pages, "batches": batches, "available": True, "reason": None}
+
+    def contracts(self, underlying: str, *, expiration_gte: str, expiration_lte: str) -> dict:
         if underlying not in WATCHLIST:
             raise FlowError("underlying is not on the flow watchlist")
+        if not expiration_gte or not expiration_lte:
+            raise FlowError("contracts require an explicit expiration window")
         url = f"https://{PAPER_HOST}/v2/options/contracts"
+        # Without both bounds Alpaca defaults expiration_date_lte to the next weekend
+        # and the open-interest join misses the rest of the chain.
         return self._pages(
             url,
-            {"underlying_symbols": underlying, "status": "active", "limit": "1000"},
+            {
+                "underlying_symbols": underlying,
+                "status": "active",
+                "expiration_date_gte": expiration_gte,
+                "expiration_date_lte": expiration_lte,
+                "limit": str(CONTRACT_PAGE_LIMIT),
+            },
             "option_contracts",
         )
+
+    def calendar(self, start: str, end: str) -> list[dict]:
+        url = f"https://{PAPER_HOST}/v2/calendar"
+        assert_flow_url(url, "GET")
+        response = self._client.request(
+            "GET",
+            url,
+            params={"start": start, "end": end},
+            headers={
+                "APCA-API-KEY-ID": self._key_id,
+                "APCA-API-SECRET-KEY": self._secret_key,
+                "Accept": "application/json",
+            },
+        )
+        if response.status_code >= 400:
+            raise FlowHttpError(response.status_code)
+        body = response.json()
+        if not isinstance(body, list):
+            raise FlowError("calendar response was not a list")
+        return body
 
     def stock_price(self, underlying: str) -> float | None:
         if underlying not in WATCHLIST:

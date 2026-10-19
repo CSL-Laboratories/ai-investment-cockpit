@@ -4,7 +4,11 @@ Read-only scan of Alpaca option chains. It GETs snapshots, trades, contract open
 
 ## Feeds
 
-`indicative` is the free default. `opra` is used only when `--feed opra` or `SIDECAR_OPTIONS_FEED=opra` is set. A rejected OPRA call is not retried on the other feed. Open interest comes from the paper host's contract reference (`GET /v2/options/contracts`). Interest with a missing date, or a date more than 5 calendar days before the session, is ignored.
+`indicative` is the free default. `opra` is used only when `--feed opra` or `SIDECAR_OPTIONS_FEED=opra` is set, and only on the snapshot request. The historical trades endpoint rejects a `feed` parameter, so that call does not send one. Trades are requested in batches of 100 symbols. A 403 on trades (no OPRA agreement) does not fail the scan: `tape` is `snapshot_only`, the markdown says so, and sweeps are not detected because only each contract's latest snapshot trade is available. A rejected snapshot feed is still an error and is not retried on the other feed.
+
+Open interest comes from the paper host's contract reference (`GET /v2/options/contracts`). Alpaca's default expiration filter stops at the next weekend, so the scan sends the expiration bounds of the snapshot chain and follows every page token (`next_page_token` or `page_token`). Open interest is often a string in that payload; it is parsed. Interest with a missing date, or a date more than 5 calendar days before the session, is ignored.
+
+The session is the last Alpaca calendar day on or before the scan date. A Saturday, Sunday, or holiday uses that session for the trade window and the score, and the document says so.
 
 The watchlist is fixed in `config.py`: SPY, QQQ, IWM, AAPL, MSFT, NVDA, AMZN, META, TSLA, GOOGL, AMD, AVGO. It does not change what the options runner is allowed to send.
 

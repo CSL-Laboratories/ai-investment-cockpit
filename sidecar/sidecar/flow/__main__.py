@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from sidecar.flow.client import FlowDataClient
 from sidecar.flow.config import MIN_VOLUME, WATCHLIST, FlowError, resolve_feed
 from sidecar.flow.normalize import assemble_chain
 from sidecar.flow.score import ContractView, render_markdown, score_book
+from sidecar.flow.session import NY, expiration_bounds, last_trading_session, session_window
 from sidecar.flow.study import DEFAULT_BARS, write_null_study
 from sidecar.jsonutil import write_json
-
-NY = ZoneInfo("America/New_York")
 
 
 def _load_history(path: Path | None) -> list[dict]:
@@ -41,16 +39,36 @@ def _append_history(path: Path, rows: list[dict], session: str) -> None:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def run_scan(*, feed: str, out: Path, markdown: Path, history_path: Path, symbols: tuple[str, ...]) -> dict:
-    client = FlowDataClient.from_sidecar_credentials()
-    session = datetime.now(timezone.utc).astimezone(NY).date()
-    start = datetime.combine(session, datetime.min.time(), tzinfo=NY).astimezone(timezone.utc)
-    end = start + timedelta(days=1)
+def run_scan(
+    *,
+    feed: str,
+    out: Path,
+    markdown: Path,
+    history_path: Path,
+    symbols: tuple[str, ...],
+    today: date | None = None,
+    client: FlowDataClient | None = None,
+) -> dict:
+    owns_client = client is None
+    if client is None:
+        client = FlowDataClient.from_sidecar_credentials()
+    calendar_day = today or datetime.now(timezone.utc).astimezone(NY).date()
     contracts: list[ContractView] = []
+    tape_available = True
+    tape_reason = None
     try:
+        calendar = client.calendar(
+            (calendar_day - timedelta(days=14)).isoformat(),
+            calendar_day.isoformat(),
+        )
+        session_row = last_trading_session(calendar, calendar_day)
+        session = date.fromisoformat(str(session_row["date"])[:10])
+        start, end = session_window(session_row)
         for underlying in symbols:
             snapshots = client.snapshots(underlying, feed)
-            reference = client.contracts(underlying)
+            symbols_on_chain = list(snapshots.get("snapshots", {}))
+            expiry_gte, expiry_lte = expiration_bounds(symbols_on_chain, session)
+            reference = client.contracts(underlying, expiration_gte=expiry_gte, expiration_lte=expiry_lte)
             spot = client.stock_price(underlying)
             rough = assemble_chain(
                 underlying=underlying,
@@ -61,12 +79,10 @@ def run_scan(*, feed: str, out: Path, markdown: Path, history_path: Path, symbol
                 trades={"trades": {}},
             )
             busy = [item.symbol for item in rough if item.volume is not None and item.volume >= MIN_VOLUME]
-            trades = client.trades(
-                busy,
-                feed,
-                start=start.isoformat(),
-                end=end.isoformat(),
-            )
+            fetched = client.trades(busy, start=start.isoformat(), end=end.isoformat())
+            if not fetched["available"]:
+                tape_available = False
+                tape_reason = fetched["reason"]
             contracts.extend(
                 assemble_chain(
                     underlying=underlying,
@@ -74,14 +90,24 @@ def run_scan(*, feed: str, out: Path, markdown: Path, history_path: Path, symbol
                     spot=spot,
                     snapshots=snapshots,
                     contracts=reference,
-                    trades=trades,
+                    trades=fetched,
                 )
             )
     finally:
-        client.close()
+        if owns_client:
+            client.close()
     history = _load_history(history_path)
     scan = score_book(contracts, history, feed=feed, session_date=session)
     history_rows = scan.pop("history_rows")
+    scan["calendar_date"] = calendar_day.isoformat()
+    scan["tape"] = "trades" if tape_available else "snapshot_only"
+    scan["tape_reason"] = tape_reason
+    if calendar_day != session:
+        scan["session_note"] = (
+            "The scan session is the last Alpaca trading day on or before the calendar date."
+        )
+    else:
+        scan["session_note"] = None
     write_json(out, scan)
     markdown.write_text(render_markdown(scan), encoding="utf-8")
     _append_history(history_path, history_rows, session.isoformat())

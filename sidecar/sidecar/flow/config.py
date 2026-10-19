@@ -46,6 +46,10 @@ SKEW_MIN_SIDE = 2
 ALERT_SCORE = 3.0
 HORIZONS = (1, 5)
 PRIMARY_HORIZON = 1
+# Alpaca's historical option trades endpoint allows at most 100 symbols per call.
+TRADE_BATCH = 100
+CONTRACT_PAGE_LIMIT = 1000
+MAX_PAGES = 40
 
 
 class FlowError(ValueError):

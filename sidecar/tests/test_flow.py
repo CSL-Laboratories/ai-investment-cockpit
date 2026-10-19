@@ -245,6 +245,123 @@ def test_calendar_null_is_not_a_flow_claim():
     assert report["horizons"]["5"]["eval"]["dsr"] == committed["horizons"]["5"]["eval"]["dsr"]
 
 
+def test_trades_omit_feed_and_a_403_stays_in_the_scan(tmp_path: Path):
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        path = request.url.path
+        if path.endswith("/v2/calendar"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"date": "2026-10-16", "open": "09:30", "close": "16:00"},
+                    {"date": "2026-10-19", "open": "09:30", "close": "16:00"},
+                ],
+            )
+        if "/options/snapshots/" in path:
+            return httpx.Response(
+                200,
+                json={
+                    "snapshots": {
+                        "SPY261219C00600000": {
+                            "dailyBar": {"v": 400},
+                            "latestQuote": {"bp": 1.0, "ap": 1.2},
+                            "latestTrade": {"p": 1.2, "s": 10, "t": "2026-10-16T14:00:00Z"},
+                            "greeks": {"delta": 0.2},
+                            "impliedVolatility": 0.2,
+                        }
+                    },
+                    "next_page_token": None,
+                },
+            )
+        if path.endswith("/v2/options/contracts"):
+            assert request.url.params.get("expiration_date_gte")
+            assert request.url.params.get("expiration_date_lte")
+            if request.url.params.get("page_token") == "next":
+                return httpx.Response(
+                    200,
+                    json={
+                        "option_contracts": [
+                            {
+                                "symbol": "SPY261219C00600000",
+                                "open_interest": "1500",
+                                "open_interest_date": "2026-10-16",
+                            }
+                        ],
+                        "page_token": None,
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "option_contracts": [
+                        {"symbol": "SPY261219P00500000", "open_interest": "10", "open_interest_date": "2026-10-16"}
+                    ],
+                    "page_token": "next",
+                },
+            )
+        if path.endswith("/v2/stocks/snapshots"):
+            return httpx.Response(200, json={"SPY": {"latestTrade": {"p": 500}}})
+        if path.endswith("/options/trades"):
+            assert "feed" not in request.url.params
+            return httpx.Response(403, json={"message": "forbidden"})
+        return httpx.Response(404, json={})
+
+    from sidecar.flow.__main__ import run_scan
+
+    client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
+    scan = run_scan(
+        feed="indicative",
+        out=tmp_path / "scan.json",
+        markdown=tmp_path / "scan.md",
+        history_path=tmp_path / "history.jsonl",
+        symbols=("SPY",),
+        today=date(2026, 10, 18),
+        client=client,
+    )
+    assert scan["session_date"] == "2026-10-16"
+    assert scan["tape"] == "snapshot_only"
+    assert "403" in scan["tape_reason"]
+    text = (tmp_path / "scan.md").read_text(encoding="utf-8")
+    assert "snapshot" in text.lower() or "403" in text
+    row = next(item for item in scan["contracts"] if item["symbol"] == "SPY261219C00600000")
+    assert row["open_interest"] == 1500
+    trade_calls = [call for call in calls if call.url.path.endswith("/options/trades")]
+    assert len(trade_calls) == 1
+
+
+def test_trade_batches_stay_within_100_symbols():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params["symbols"])
+        assert "feed" not in request.url.params
+        return httpx.Response(200, json={"trades": {}, "next_page_token": None})
+
+    client = FlowDataClient("key", "secret", transport=httpx.MockTransport(handler))
+    symbols = [f"SPY261219C{index:08d}" for index in range(101)]
+    result = client.trades(symbols, start="2026-10-16T13:30:00+00:00", end="2026-10-16T20:00:00+00:00")
+    client.close()
+    assert result["available"] is True
+    assert result["batches"] == 2
+    assert all(len(batch.split(",")) <= 100 for batch in seen)
+
+
+def test_last_trading_session_skips_the_weekend_and_a_holiday():
+    from sidecar.flow.session import expiration_bounds, last_trading_session
+
+    weekend = [
+        {"date": "2026-10-16", "open": "09:30", "close": "16:00"},
+        {"date": "2026-10-19", "open": "09:30", "close": "16:00"},
+    ]
+    assert last_trading_session(weekend, date(2026, 10, 18))["date"] == "2026-10-16"
+    assert last_trading_session(weekend, date(2026, 10, 19))["date"] == "2026-10-19"
+    holiday = [{"date": "2026-10-09"}, {"date": "2026-10-13"}]
+    assert last_trading_session(holiday, date(2026, 10, 12))["date"] == "2026-10-09"
+    assert expiration_bounds(["SPY261219C00600000", "NOT"], date(2026, 10, 16)) == ("2026-10-16", "2026-12-19")
+
+
 def test_events_from_scan_keep_the_highest_score():
     scored = score_book(
         [

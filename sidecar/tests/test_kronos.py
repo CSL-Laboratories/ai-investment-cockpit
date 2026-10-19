@@ -12,7 +12,6 @@ from sidecar.harness.backtest import load_bars
 from sidecar.harness.runner import RunnerError, run_runner
 from sidecar.harness.trade import PaperTradeClient
 from sidecar.kronos_signal.cutoff import EVALUATION_START, PRETRAINING_THROUGH
-from sidecar.kronos_signal.forecast import forecast_returns
 from sidecar.kronos_signal.gate import KronosGateError, load_kronos_gate
 from sidecar.kronos_signal.windows import LeakageError, decision_indexes, make_window
 
@@ -85,6 +84,10 @@ def test_cutoff_matches_the_paper():
 
 
 def test_windows_reject_pretraining_labels_and_future_bars():
+    pytest.importorskip("pandas")
+    pytest.importorskip("torch")
+    from sidecar.kronos_signal.forecast import forecast_returns
+
     rows = _bars(date(2024, 5, 1), 80)
     too_early = next(index for index, bar in enumerate(rows) if bar.day < EVALUATION_START and index > 20)
     with pytest.raises(LeakageError):
@@ -191,6 +194,32 @@ def test_runner_sizes_kronos_from_the_report_without_loading_weights(tmp_path: P
     assert report["equity_source"] == "kronos_offline_eval"
     assert any(row["result"] == "dry_run" and row["symbol"] == "SPY" for row in report["primary_config"]["order_results"])
     assert all(row["symbol"] != "QQQ" or row["result"] != "dry_run" for row in report["primary_config"]["order_results"])
+
+
+def test_kronos_tests_collect_without_the_kronos_extra():
+    import subprocess
+    import sys
+
+    script = """
+import sys
+class Block:
+    def find_spec(self, fullname, path, target=None):
+        if fullname == "torch" or fullname == "pandas" or fullname.startswith("torch.") or fullname.startswith("pandas."):
+            raise ModuleNotFoundError(fullname)
+        return None
+sys.meta_path.insert(0, Block())
+import tests.test_kronos
+print("collected")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "collected" in completed.stdout
 
 
 def test_smoke_profile_stays_post_cutoff(tmp_path: Path):

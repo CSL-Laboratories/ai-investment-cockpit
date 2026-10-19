@@ -17,7 +17,7 @@ from sidecar.chainlog import ChainLog
 from sidecar.harness.paper_credentials import SidecarCredentialsMissing, load_sidecar_paper_credentials
 from sidecar.jsonutil import json_ready, write_json
 from sidecar.options.client import OptionsClientError, OptionsPaperClient, options_level_approved
-from sidecar.options.config import ALLOWLIST, PRIMARY, RANK_WINDOW, RV_WINDOW
+from sidecar.options.config import ALLOWLIST, MIN_IV_HISTORY, PRIMARY, RANK_WINDOW, RV_WINDOW
 from sidecar.options.plan import (
     ContractQuote,
     plan_actions,
@@ -114,25 +114,71 @@ def append_iv(path: Path, *, day: str, symbol: str, iv: Decimal, existing: list[
     if any(row.get("date") == day and row.get("symbol") == symbol for row in existing):
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps({"date": day, "symbol": symbol, "iv": format(iv, "f")}, sort_keys=True)
+    row = {"date": day, "symbol": symbol, "iv": format(iv, "f"), "source": "chain"}
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
-    existing.append({"date": day, "symbol": symbol, "iv": format(iv, "f")})
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+    existing.append(row)
 
 
-def iv_rank_from_history(rows: list[dict], *, symbol: str, today: str, current: Decimal) -> Decimal | None:
-    prior = []
+def iv_rank_from_history(
+    rows: list[dict],
+    *,
+    symbol: str,
+    today: str,
+    current: Decimal,
+    minimum: int = MIN_IV_HISTORY,
+) -> dict:
+    """Percentile of `current` against prior sessions.
+
+    The canonical window is 252. With fewer sessions, down to `minimum`, the
+    percentile uses every prior session and `gap` says so. Proxy rows inside
+    the window are counted so the report can name them.
+    """
+    if minimum < 2 or minimum > RANK_WINDOW:
+        raise OptionsRunnerError("iv min history must be from 2 through 252")
+    prior: list[tuple[str, Decimal, bool]] = []
     for row in rows:
         if row.get("symbol") != symbol or str(row.get("date")) >= today:
             continue
         try:
-            prior.append(Decimal(str(row["iv"])))
+            value = Decimal(str(row["iv"]))
         except Exception as exc:
             raise OptionsRunnerError("iv history has a non-decimal iv") from exc
-    if len(prior) < RANK_WINDOW:
-        return None
+        prior.append((str(row["date"]), value, row.get("source") == "proxy"))
+    prior.sort(key=lambda item: item[0])
+    empty = {
+        "rank": None,
+        "n_prior": len(prior),
+        "window_used": 0,
+        "canonical_window": RANK_WINDOW,
+        "minimum": minimum,
+        "proxy_rows_in_window": 0,
+        "gap": f"IV rank needs at least {minimum} prior sessions. This symbol has {len(prior)}.",
+    }
+    if len(prior) < minimum:
+        return empty
     window = prior[-RANK_WINDOW:]
-    return Decimal(sum(1 for value in window if value <= current)) / Decimal(RANK_WINDOW)
+    rank = Decimal(sum(1 for _day, value, _proxy in window if value <= current)) / Decimal(len(window))
+    proxy_rows = sum(1 for _day, _value, proxy in window if proxy)
+    gaps = []
+    if len(window) < RANK_WINDOW:
+        gaps.append(
+            f"IV rank uses {len(window)} prior sessions. The canonical window is {RANK_WINDOW}."
+        )
+    if proxy_rows:
+        gaps.append(
+            "Prior IV includes CBOE index closes divided by 100, tagged source=proxy "
+            "(VIX for SPY, VXN for QQQ, RVX for IWM). Those rows are not this chain's ATM implied vol."
+        )
+    return {
+        "rank": rank,
+        "n_prior": len(prior),
+        "window_used": len(window),
+        "canonical_window": RANK_WINDOW,
+        "minimum": minimum,
+        "proxy_rows_in_window": proxy_rows,
+        "gap": " ".join(gaps) if gaps else None,
+    }
 
 
 def _realized_from_bars(bars: dict, symbol: str) -> Decimal | None:
@@ -231,6 +277,8 @@ def run_options(
     positions: list[dict] | None = None,
     open_orders: list[dict] | None = None,
     options_approved: bool | None = None,
+    iv_min_history: int = MIN_IV_HISTORY,
+    backfill_proxy: bool = False,
 ) -> dict:
     moment = now or datetime.now(timezone.utc)
     if not force_window and not in_regular_session(moment):
@@ -268,16 +316,50 @@ def run_options(
         broker_positions = []
     if broker_orders is None:
         broker_orders = []
+    if backfill_proxy:
+        from sidecar.options.iv_proxy import backfill_proxy_history
+
+        backfill_proxy_history(iv_file)
     history = load_iv_history(iv_file)
     signals = {}
+    iv_rank = {}
     for underlying in ALLOWLIST:
         current = _atm_iv(views.get(underlying) or [])
         if current is not None:
             append_iv(iv_file, day=session_day, symbol=underlying, iv=current, existing=history)
         realized = _realized_from_bars(bars, underlying) if isinstance(bars, dict) else None
-        rank = None if current is None else iv_rank_from_history(
-            history, symbol=underlying, today=session_day, current=current
+        detail = (
+            None
+            if current is None
+            else iv_rank_from_history(
+                history,
+                symbol=underlying,
+                today=session_day,
+                current=current,
+                minimum=iv_min_history,
+            )
         )
+        rank = None if detail is None else detail["rank"]
+        if detail is None:
+            iv_rank[underlying] = {
+                "rank": None,
+                "n_prior": 0,
+                "window_used": 0,
+                "canonical_window": RANK_WINDOW,
+                "minimum": iv_min_history,
+                "proxy_rows_in_window": 0,
+                "gap": "No ATM implied vol on the chain, so IV rank was not computed.",
+            }
+        else:
+            iv_rank[underlying] = {
+                "rank": None if detail["rank"] is None else format(detail["rank"], "f"),
+                "n_prior": detail["n_prior"],
+                "window_used": detail["window_used"],
+                "canonical_window": detail["canonical_window"],
+                "minimum": detail["minimum"],
+                "proxy_rows_in_window": detail["proxy_rows_in_window"],
+                "gap": detail["gap"],
+            }
         signals[underlying] = signal_ok(iv=current, iv_rank=rank, realized=realized)
     state = load_state(state_file)
     working_ids = {str(order.get("client_order_id") or "") for order in broker_orders}
@@ -395,6 +477,8 @@ def run_options(
         "options_approved": bool(approved),
         "structure": kind,
         "signals": signals,
+        "iv_rank": iv_rank,
+        "iv_min_history": iv_min_history,
         "n_planned_opens": len(plan.opens),
         "n_planned_closes": len(plan.closes),
         "planned_limit_prices": [body["limit_price"] for body in plan.opens + plan.closes],
@@ -405,7 +489,12 @@ def run_options(
         "caveats": [
             "This runner is an experimental paper path. It is not the cockpit order path.",
             "Opening orders are limit credits (negative limit price) and only defined-risk spreads.",
-            "IV rank needs 252 prior sidecar sessions in the local IV history. Until then no new spread is opened.",
+            (
+                "IV rank uses the last 252 prior sessions when that many exist. "
+                f"The minimum is {iv_min_history}. A shorter window is named in iv_rank.gap. "
+                "Rows tagged source=proxy are CBOE VIX, VXN, or RVX closes divided by 100, "
+                "not this chain's ATM implied vol."
+            ),
             "Indicative greeks are not the OPRA feed. A missing greek, a stale quote, or an unconfirmed options level refuses the open.",
         ],
     }
@@ -427,6 +516,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kill-file", type=Path, default=None)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--iv-history", type=Path, default=DEFAULT_IV)
+    parser.add_argument("--iv-min-history", type=int, default=MIN_IV_HISTORY)
+    parser.add_argument("--backfill-proxy", action="store_true")
     parser.add_argument("--order-log", type=Path, default=DEFAULT_LOG)
     args = parser.parse_args(argv)
     try:
@@ -437,6 +528,8 @@ def main(argv: list[str] | None = None) -> int:
             kill_file=args.kill_file,
             state_path=args.state,
             iv_path=args.iv_history,
+            iv_min_history=args.iv_min_history,
+            backfill_proxy=args.backfill_proxy,
             out=args.out,
             order_log_path=args.order_log,
             kind=args.structure,
