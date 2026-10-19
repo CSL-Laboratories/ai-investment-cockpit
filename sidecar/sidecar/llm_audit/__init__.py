@@ -2,5 +2,13 @@
 
 from sidecar.llm_audit.log import JudgmentLog, anonymize_text
 from sidecar.llm_audit.score import score_judgments
+from sidecar.llm_audit.showdown import ShowdownLog, classify, score_showdown
 
-__all__ = ["JudgmentLog", "anonymize_text", "score_judgments"]
+__all__ = [
+    "JudgmentLog",
+    "ShowdownLog",
+    "anonymize_text",
+    "classify",
+    "score_judgments",
+    "score_showdown",
+]

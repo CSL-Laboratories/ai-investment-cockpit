@@ -1,0 +1,159 @@
+{
+  "completion_invented": false,
+  "cost_usd": 0.0,
+  "enable_llm": false,
+  "llm_calls": 0,
+  "llm_rejected": 0,
+  "llm_stopped_for_cap": false,
+  "n_games": 8,
+  "n_turns": 8,
+  "notes": [
+    "Rules follow figgie.com/how-to-play: the goal suit is the other suit of the same color as the 12-card suit.",
+    "The RL package is a market-making simulator and has no card engine. This bench reuses its masked GRU, clipped PPO, and the Avellaneda-Stoikov half-spread with a nonzero inventory target.",
+    "CS224R Figgie win rates are not used. Fresh smoke weights are not the committed market-making checkpoint.",
+    "Goal-suit log loss uses a declared 12-deck posterior updated from other players' aggressive trades.",
+    "Markout is sign(side) * (reference - fill price). Negative is adverse. The reference is the next trade in that suit within 3 trades, else $10 for a goal card and $0 otherwise.",
+    "The stationary bootstrap is applied to P&L divided by the $350 start, then scaled back to dollars, because that helper compounds its input as a simple return.",
+    "Post-game review uses the showdown 2x2. The stated goal suit is an up call. The reason bit is decision-time evidence, not the reveal.",
+    "No model completion is invented here. The stub plays the rule bot at cost $0 unless enable_llm is set with a client and a cap.",
+    "Win rates on this bench are not an edge and are not a qualify decision. threshold_status is not_frozen."
+  ],
+  "orders_submitted": 0,
+  "roles": {
+    "gru": {
+      "bootstrap_mean_ci95": {
+        "high": 15.081249999999997,
+        "low": -21.887500000000003,
+        "method": "stationary",
+        "reps_used": 50,
+        "seed": 7,
+        "status": "ok",
+        "unit": "dollars"
+      },
+      "goal_log_loss": 1.4946657211766803,
+      "log_loss_by_trade": [
+        1.4797343871772102,
+        1.5268485035287604,
+        1.4853852637641214
+      ],
+      "mean_markout": 8.25,
+      "mean_pnl": -4.25,
+      "n": 8,
+      "n_markout": 8,
+      "normal_ci95": {
+        "high": 27.917189805763265,
+        "low": -36.417189805763265,
+        "mean": -4.25,
+        "method": "normal",
+        "n": 8
+      }
+    },
+    "llm_stub": {
+      "bootstrap_mean_ci95": {
+        "high": 19.21875,
+        "low": -20.831249999999997,
+        "method": "stationary",
+        "reps_used": 50,
+        "seed": 7,
+        "status": "ok",
+        "unit": "dollars"
+      },
+      "goal_log_loss": 1.4571699028439213,
+      "log_loss_by_trade": [
+        1.4412331245118633,
+        1.4740212301119588,
+        1.4853852637641214
+      ],
+      "mean_markout": -5.25,
+      "mean_pnl": -2.5,
+      "n": 8,
+      "n_markout": 8,
+      "normal_ci95": {
+        "high": 28.149769982823685,
+        "low": -33.149769982823685,
+        "mean": -2.5,
+        "method": "normal",
+        "n": 8
+      }
+    },
+    "random": {
+      "bootstrap_mean_ci95": {
+        "high": 64.99375,
+        "low": 5.531250000000001,
+        "method": "stationary",
+        "reps_used": 50,
+        "seed": 7,
+        "status": "ok",
+        "unit": "dollars"
+      },
+      "goal_log_loss": 1.5195153245145,
+      "log_loss_by_trade": [
+        1.4848371364922421,
+        1.6582280766035322
+      ],
+      "mean_markout": -2.6,
+      "mean_pnl": 33.0,
+      "n": 8,
+      "n_markout": 10,
+      "normal_ci95": {
+        "high": 75.62074612204718,
+        "low": -9.62074612204718,
+        "mean": 33.0,
+        "method": "normal",
+        "n": 8
+      }
+    },
+    "rule": {
+      "bootstrap_mean_ci95": {
+        "high": -16.53125,
+        "low": -37.49999999999999,
+        "method": "stationary",
+        "reps_used": 50,
+        "seed": 7,
+        "status": "ok",
+        "unit": "dollars"
+      },
+      "goal_log_loss": 1.4527033225802282,
+      "log_loss_by_trade": [
+        1.393090989607217,
+        1.5637575032302766,
+        1.4853852637641214
+      ],
+      "mean_markout": 1.0,
+      "mean_pnl": -26.25,
+      "n": 8,
+      "n_markout": 2,
+      "normal_ci95": {
+        "high": -6.671887220674204,
+        "low": -45.82811277932579,
+        "mean": -26.25,
+        "method": "normal",
+        "n": 8
+      }
+    }
+  },
+  "schema_version": "sidecar.figgie_bench.v1",
+  "seed": 7,
+  "showdown_brier": 0.19919364158491834,
+  "showdown_cells": {
+    "right_for_right_reasons": {
+      "n": 5,
+      "share": 0.15625
+    },
+    "right_for_wrong_reasons": {
+      "n": 3,
+      "share": 0.09375
+    },
+    "wrong_for_right_reasons": {
+      "n": 18,
+      "share": 0.5625
+    },
+    "wrong_for_wrong_reasons": {
+      "n": 6,
+      "share": 0.1875
+    }
+  },
+  "showdown_n_scored": 32,
+  "threshold_status": "not_frozen",
+  "yield_claim": false
+}

@@ -1,0 +1,39 @@
+{
+  "brier": 0.3157583659749695,
+  "cells": {
+    "right_for_right_reasons": {
+      "n": 7,
+      "share": 0.6363636363636364
+    },
+    "right_for_wrong_reasons": {
+      "n": 0,
+      "share": 0.0
+    },
+    "wrong_for_right_reasons": {
+      "n": 1,
+      "share": 0.09090909090909091
+    },
+    "wrong_for_wrong_reasons": {
+      "n": 3,
+      "share": 0.2727272727272727
+    }
+  },
+  "completion_invented": false,
+  "cost_usd": 0,
+  "llm_calls": 0,
+  "n_scored": 11,
+  "notes": [
+    "Stand-in thesis is the rule id combined.deterministic_stand_in.v1.",
+    "News theses are catalog kinds. Headlines are not copied into the log.",
+    "No model was called. Cost is $0."
+  ],
+  "orders_submitted": 0,
+  "schema_version": "sidecar.showdown.v1",
+  "threshold_status": "not_frozen",
+  "weeks": [
+    "2024-W09",
+    "2026-W31",
+    "2026-W32"
+  ],
+  "yield_claim": false
+}
