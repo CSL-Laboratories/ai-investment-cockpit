@@ -1,0 +1,241 @@
+{
+  "caveats": [
+    "orders_submitted is 0. This comparison does not place an order.",
+    "No recorded Alpaca IEX parquet is in this tree. Both sessions are synthetic.",
+    "legacy joins the displayed touch size and fills the whole order on a trade strictly through the price.",
+    "rigtorp uses V at send time. A trade at or through our price reduces V by the print size. A cancel reduces V by p*dQ, with p = log1p(V) / (log1p(V) + log1p(size behind)). log1p was not fit to our fills. The order fills only for the size that remains after V reaches 0.",
+    "Intrinsic value is fill probability times the distance to the mid, minus max(0, -mean 1s markout). A negative value cancels the order. The next decision may post again.",
+    "The constant-size session cannot show the cancel branch. Read the variable-size session for that.",
+    "Markouts missing at the end of the tape are omitted, not set to zero. Neither session is evidence of edge."
+  ],
+  "initial_estimate": "send",
+  "live_trading": false,
+  "minutes": 30,
+  "orders_submitted": 0,
+  "queue_function": "log1p",
+  "reading": [
+    "synthetic_constant_size: as fills 791 -> 36, fill rate 0.553921568627 -> 0.09375, ending mtm -12.5618445107 -> -1.58894599388, 1s markout -0.00924256756822 (n=789) -> 0.0264907938993 (n=35); rl fills 802 -> 4, fill rate 0.569602272727 -> 0.102564102564, ending mtm -14.5778638398 -> 2.44649651285, 1s markout -0.0104860109837 (n=800) -> -0.0165780083727 (n=4).",
+    "synthetic_variable_size: as fills 770 -> 1, fill rate 0.538461538462 -> 0.25, ending mtm -16.6444365295 -> -2.05221826477, 1s markout -0.0139528450518 (n=769) -> -0.0662419469349 (n=1); rl fills 768 -> 195, fill rate 0.551724137931 -> 0.138691322902, ending mtm -27.235437288 -> 0.119105210234, 1s markout -0.0170174513361 (n=767) -> 0.0272641072383 (n=195)."
+  ],
+  "recorded_iex_session": false,
+  "schema_version": "sidecar.intraday_mm_queue_compare.v1",
+  "sessions": [
+    {
+      "legacy": {
+        "as": {
+          "ending_inventory": 7,
+          "ending_mtm": "-12.5618445107",
+          "fill_rate": "0.553921568627",
+          "markouts": {
+            "1000": {
+              "mean": "-0.00924256756822",
+              "n": 789
+            },
+            "30000": {
+              "mean": "-0.0151083535503",
+              "n": 751
+            },
+            "5000": {
+              "mean": "-0.00932436115628",
+              "n": 784
+            }
+          },
+          "mean_minute_return": "-0.000250506879461",
+          "n_cancels": 0,
+          "n_fills": 791,
+          "n_iv_rejects": 0,
+          "n_posts": 1428,
+          "n_requotes": 0
+        },
+        "rl": {
+          "ending_inventory": 8,
+          "ending_mtm": "-14.5778638398",
+          "fill_rate": "0.569602272727",
+          "markouts": {
+            "1000": {
+              "mean": "-0.0104860109837",
+              "n": 800
+            },
+            "30000": {
+              "mean": "-0.021656802306",
+              "n": 762
+            },
+            "5000": {
+              "mean": "-0.00994173072756",
+              "n": 795
+            }
+          },
+          "mean_minute_return": "-0.000290762666382",
+          "n_cancels": 0,
+          "n_fills": 802,
+          "n_iv_rejects": 0,
+          "n_posts": 1408,
+          "n_requotes": 0
+        }
+      },
+      "note": "The committed 30-minute tape. Touch size stays 40, so a size decrease from a cancel does not occur. Trades are the only queue updates.",
+      "rigtorp": {
+        "as": {
+          "ending_inventory": -4,
+          "ending_mtm": "-1.58894599388",
+          "fill_rate": "0.09375",
+          "markouts": {
+            "1000": {
+              "mean": "0.0264907938993",
+              "n": 35
+            },
+            "30000": {
+              "mean": "-0.00170601796129",
+              "n": 25
+            },
+            "5000": {
+              "mean": "0.0367863935288",
+              "n": 34
+            }
+          },
+          "mean_minute_return": "1.04402398412e-05",
+          "n_cancels": 144,
+          "n_fills": 36,
+          "n_iv_rejects": 598,
+          "n_posts": 384,
+          "n_requotes": 143
+        },
+        "rl": {
+          "ending_inventory": 4,
+          "ending_mtm": "2.44649651285",
+          "fill_rate": "0.102564102564",
+          "markouts": {
+            "1000": {
+              "mean": "-0.0165780083727",
+              "n": 4
+            },
+            "30000": {
+              "mean": "-0.222146106492",
+              "n": 4
+            },
+            "5000": {
+              "mean": "-0.0785104486324",
+              "n": 4
+            }
+          },
+          "mean_minute_return": "1.81554476239e-05",
+          "n_cancels": 4,
+          "n_fills": 4,
+          "n_iv_rejects": 1391,
+          "n_posts": 39,
+          "n_requotes": 3
+        }
+      },
+      "tape": "synthetic_constant_size"
+    },
+    {
+      "legacy": {
+        "as": {
+          "ending_inventory": -2,
+          "ending_mtm": "-16.6444365295",
+          "fill_rate": "0.538461538462",
+          "markouts": {
+            "1000": {
+              "mean": "-0.0139528450518",
+              "n": 769
+            },
+            "30000": {
+              "mean": "-0.0234363935633",
+              "n": 735
+            },
+            "5000": {
+              "mean": "-0.0188784343923",
+              "n": 765
+            }
+          },
+          "mean_minute_return": "-0.000289646520057",
+          "n_cancels": 0,
+          "n_fills": 770,
+          "n_iv_rejects": 0,
+          "n_posts": 1430,
+          "n_requotes": 0
+        },
+        "rl": {
+          "ending_inventory": -6,
+          "ending_mtm": "-27.235437288",
+          "fill_rate": "0.551724137931",
+          "markouts": {
+            "1000": {
+              "mean": "-0.0170174513361",
+              "n": 767
+            },
+            "30000": {
+              "mean": "-0.0254523362082",
+              "n": 736
+            },
+            "5000": {
+              "mean": "-0.02061032307",
+              "n": 763
+            }
+          },
+          "mean_minute_return": "-0.000479131373766",
+          "n_cancels": 0,
+          "n_fills": 768,
+          "n_iv_rejects": 0,
+          "n_posts": 1392,
+          "n_requotes": 0
+        }
+      },
+      "note": "Deterministic tape with joins, cancels, and trades that reduce the displayed size. It is not a recorded IEX session.",
+      "rigtorp": {
+        "as": {
+          "ending_inventory": -1,
+          "ending_mtm": "-2.05221826477",
+          "fill_rate": "0.25",
+          "markouts": {
+            "1000": {
+              "mean": "-0.0662419469349",
+              "n": 1
+            },
+            "30000": {
+              "mean": "0.594457965142",
+              "n": 1
+            },
+            "5000": {
+              "mean": "0.0352943553505",
+              "n": 1
+            }
+          },
+          "mean_minute_return": "-3.6602185499e-05",
+          "n_cancels": 2,
+          "n_fills": 1,
+          "n_iv_rejects": 1426,
+          "n_posts": 4,
+          "n_requotes": 0
+        },
+        "rl": {
+          "ending_inventory": -9,
+          "ending_mtm": "0.119105210234",
+          "fill_rate": "0.138691322902",
+          "markouts": {
+            "1000": {
+              "mean": "0.0272641072383",
+              "n": 195
+            },
+            "30000": {
+              "mean": "-0.00113080548767",
+              "n": 185
+            },
+            "5000": {
+              "mean": "0.0214596962006",
+              "n": 195
+            }
+          },
+          "mean_minute_return": "-2.15838982539e-05",
+          "n_cancels": 780,
+          "n_fills": 195,
+          "n_iv_rejects": 0,
+          "n_posts": 1406,
+          "n_requotes": 779
+        }
+      },
+      "tape": "synthetic_variable_size"
+    }
+  ],
+  "symbol": "SPY"
+}

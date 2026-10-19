@@ -2,32 +2,31 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 from sidecar.intraday_mm.fills import MARKOUT_HORIZONS_MS, Book, markout, minute_returns
 from sidecar.intraday_mm.policies import as_quotes, expert_action, features, greedy_quotes, train_clone
+from sidecar.intraday_mm.stats import RollingMoments
 from sidecar.intraday_mm.tape import Event
 from sidecar.rl.sim import MAX_INVENTORY, action_mask
 
 
-def _sigma(changes: list[float]) -> float | None:
-    if len(changes) < 5:
-        return None
-    window = changes[-20:]
-    mean = sum(window) / len(window)
-    var = sum((value - mean) ** 2 for value in window) / (len(window) - 1)
-    if var <= 0 or not math.isfinite(var):
-        return None
-    return math.sqrt(var)
-
-
-def run_book(events: list[Event], *, symbol: str, latency_ms: int, quote_fn, start_ms: int | None = None, end_ms: int | None = None) -> dict:
-    book = Book(latency_ms=latency_ms)
+def run_book(
+    events: list[Event],
+    *,
+    symbol: str,
+    latency_ms: int,
+    quote_fn,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    model: str = "legacy",
+    initial: str = "send",
+    queue_fn: str = "log1p",
+) -> dict:
+    book = Book(latency_ms=latency_ms, model=model, initial=initial, queue_fn=queue_fn)
     snapshots: list[tuple[int, float]] = []
     last_decision_mid = None
-    changes: list[float] = []
+    moments = RollingMoments(20, min_count=5)
     mid0 = None
     decisions = [
         event.ts_ms
@@ -62,8 +61,8 @@ def run_book(events: list[Event], *, symbol: str, latency_ms: int, quote_fn, sta
                 mid0 = book.last_mid
             if event.ts_ms in decision_set and book.last_mid is not None:
                 if last_decision_mid is not None:
-                    changes.append(book.last_mid - last_decision_mid)
-                sigma = _sigma(changes)
+                    moments.push(book.last_mid - last_decision_mid)
+                sigma = moments.std()
                 last_ret = 0.0 if last_decision_mid is None else book.last_mid - last_decision_mid
                 if sigma is not None and mid0 is not None:
                     tau = max(0.0, 1.0 - step / n_steps)
@@ -95,8 +94,14 @@ def run_book(events: list[Event], *, symbol: str, latency_ms: int, quote_fn, sta
             value = markout(fill, book.mids, horizon)
             if value is not None:
                 markouts[str(horizon)].append(value)
+    posts = book.n_posts
     return {
         "n_fills": len(book.fills),
+        "n_posts": posts,
+        "n_cancels": book.n_cancels,
+        "n_requotes": book.n_requotes,
+        "n_iv_rejects": book.n_iv_rejects,
+        "fill_rate": None if posts <= 0 else len(book.fills) / posts,
         "ending_mtm": book.mtm(),
         "ending_inventory": book.inventory,
         "minute_returns": returns,
@@ -116,14 +121,24 @@ def _as_fn(**state):
     return quoted
 
 
-def collect_training(events: list[Event], *, symbol: str, latency_ms: int, start_ms: int, end_ms: int):
+def collect_training(
+    events: list[Event],
+    *,
+    symbol: str,
+    latency_ms: int,
+    start_ms: int,
+    end_ms: int,
+    model: str = "legacy",
+    initial: str = "send",
+    queue_fn: str = "log1p",
+):
     """Walk the train slice with the Avellaneda-Stoikov inventory path and record labels."""
-    book = Book(latency_ms=latency_ms)
+    book = Book(latency_ms=latency_ms, model=model, initial=initial, queue_fn=queue_fn)
     observations = []
     actions = []
     masks = []
     inventories = []
-    changes: list[float] = []
+    moments = RollingMoments(20, min_count=5)
     last_mid = None
     decision_times = []
     last_second = None
@@ -151,8 +166,8 @@ def collect_training(events: list[Event], *, symbol: str, latency_ms: int, start
                 mid0 = book.last_mid
             if event.ts_ms in decision_set and book.last_mid is not None and mid0 is not None:
                 if last_mid is not None:
-                    changes.append(book.last_mid - last_mid)
-                sigma = _sigma(changes)
+                    moments.push(book.last_mid - last_mid)
+                sigma = moments.std()
                 if sigma is not None:
                     last_ret = 0.0 if last_mid is None else book.last_mid - last_mid
                     action = expert_action(book.last_mid, book.inventory, sigma, max(0.0, 1.0 - step / n_steps))
@@ -197,13 +212,25 @@ def evaluate_tape(
     latency_ms: int = 75,
     train_fraction: float = 0.6,
     seed: int = 0,
+    model: str = "legacy",
+    initial: str = "send",
+    queue_fn: str = "log1p",
 ) -> dict:
     if not events:
         raise ValueError("tape is empty")
     start = events[0].ts_ms
     end = events[-1].ts_ms
     split = start + int((end - start) * train_fraction)
-    trained = collect_training(events, symbol=symbol, latency_ms=latency_ms, start_ms=start, end_ms=split)
+    trained = collect_training(
+        events,
+        symbol=symbol,
+        latency_ms=latency_ms,
+        start_ms=start,
+        end_ms=split,
+        model=model,
+        initial=initial,
+        queue_fn=queue_fn,
+    )
     policy = None
     bc_start = None
     bc_end = None
@@ -229,8 +256,25 @@ def evaluate_tape(
         )
         return bid, ask, post_bid, post_ask
 
-    as_result = run_book(events, symbol=symbol, latency_ms=latency_ms, quote_fn=_as_fn, start_ms=split, end_ms=end + 1)
-    rl_result = run_book(events, symbol=symbol, latency_ms=latency_ms, quote_fn=rl_fn, start_ms=split, end_ms=end + 1)
+    common = {"model": model, "initial": initial, "queue_fn": queue_fn}
+    as_result = run_book(
+        events,
+        symbol=symbol,
+        latency_ms=latency_ms,
+        quote_fn=_as_fn,
+        start_ms=split,
+        end_ms=end + 1,
+        **common,
+    )
+    rl_result = run_book(
+        events,
+        symbol=symbol,
+        latency_ms=latency_ms,
+        quote_fn=rl_fn,
+        start_ms=split,
+        end_ms=end + 1,
+        **common,
+    )
     return {
         "split_ms": split,
         "bc_loss_start": bc_start,
@@ -265,6 +309,56 @@ def synthetic_tape(minutes: int, *, seed: int = 0, symbol: str = "SPY") -> list[
     return events
 
 
+def sized_synthetic_tape(minutes: int, *, seed: int = 0, symbol: str = "SPY") -> list[Event]:
+    """Same mid path shape as `synthetic_tape`, with size changes, trades, and cancels.
+
+    The constant-size tape never decreases the touch, so it cannot show the
+    cancel branch of the queue estimate. This one can. It is still synthetic.
+    """
+    rng = np.random.default_rng(seed + 17)
+    mid = 500.0
+    bid_size = 80.0
+    ask_size = 80.0
+    start = 1_700_000_000_000
+    events: list[Event] = []
+    steps = int(minutes * 60 * 10)
+    for index in range(steps):
+        ts = start + index * 100
+        mid = max(50.0, mid + float(rng.normal(0.0, 0.02)))
+        if float(rng.random()) < 0.25:
+            bid_size = max(5.0, bid_size - float(rng.integers(1, 12)))
+        if float(rng.random()) < 0.25:
+            ask_size = max(5.0, ask_size - float(rng.integers(1, 12)))
+        if float(rng.random()) < 0.20:
+            bid_size += float(rng.integers(1, 8))
+        if float(rng.random()) < 0.20:
+            ask_size += float(rng.integers(1, 8))
+        events.append(Event(ts, "quote", symbol, mid - 0.03, mid + 0.03, bid_size, ask_size))
+        if index % 5 == 4:
+            draw = float(rng.random())
+            trade_size = 15.0
+            if draw < 0.45:
+                price = mid - 0.03
+                bid_size = max(1.0, bid_size - trade_size)
+            elif draw < 0.90:
+                price = mid + 0.03
+                ask_size = max(1.0, ask_size - trade_size)
+            elif draw < 0.95:
+                price = mid - 0.08
+                bid_size = max(1.0, bid_size - trade_size)
+            else:
+                price = mid + 0.08
+                ask_size = max(1.0, ask_size - trade_size)
+            events.append(Event(ts, "trade", symbol, price=price, size=trade_size))
+    return events
+
+
+def _fmt(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return format(float(value), ".12g")
+
+
 def _summarize(result: dict) -> dict:
     markouts = {}
     for horizon, values in result["markouts"].items():
@@ -274,6 +368,11 @@ def _summarize(result: dict) -> dict:
         }
     return {
         "n_fills": result["n_fills"],
+        "n_posts": result.get("n_posts"),
+        "fill_rate": _fmt(result.get("fill_rate")),
+        "n_cancels": result.get("n_cancels"),
+        "n_requotes": result.get("n_requotes"),
+        "n_iv_rejects": result.get("n_iv_rejects"),
         "ending_mtm": format(float(result["ending_mtm"]), ".12g"),
         "ending_inventory": result["ending_inventory"],
         "n_minute_returns": len(result["minute_returns"]),
@@ -281,6 +380,100 @@ def _summarize(result: dict) -> dict:
         if _mean(result["minute_returns"]) is None
         else format(_mean(result["minute_returns"]), ".12g"),
         "markouts": markouts,
+    }
+
+
+def _side_row(result: dict) -> dict:
+    summary = _summarize(result)
+    return {
+        "n_fills": summary["n_fills"],
+        "n_posts": summary["n_posts"],
+        "fill_rate": summary["fill_rate"],
+        "ending_mtm": summary["ending_mtm"],
+        "ending_inventory": summary["ending_inventory"],
+        "mean_minute_return": summary["mean_minute_return"],
+        "n_cancels": summary["n_cancels"],
+        "n_requotes": summary["n_requotes"],
+        "n_iv_rejects": summary["n_iv_rejects"],
+        "markouts": summary["markouts"],
+    }
+
+
+def build_queue_comparison(events: list[Event], *, tape: str, symbol: str = "SPY", note: str) -> dict:
+    """Run the legacy fill rule and the Rigtorp estimate on one tape. No orders."""
+    legacy = evaluate_tape(events, symbol=symbol, model="legacy")
+    rigtorp = evaluate_tape(events, symbol=symbol, model="rigtorp", initial="send", queue_fn="log1p")
+    return {
+        "tape": tape,
+        "note": note,
+        "legacy": {"as": _side_row(legacy["as"]), "rl": _side_row(legacy["rl"])},
+        "rigtorp": {"as": _side_row(rigtorp["as"]), "rl": _side_row(rigtorp["rl"])},
+    }
+
+
+def _comparison_sentence(row: dict) -> str:
+    parts = []
+    for name in ("as", "rl"):
+        old = row["legacy"][name]
+        new = row["rigtorp"][name]
+        parts.append(
+            f"{name} fills {old['n_fills']} -> {new['n_fills']}, "
+            f"fill rate {old['fill_rate']} -> {new['fill_rate']}, "
+            f"ending mtm {old['ending_mtm']} -> {new['ending_mtm']}, "
+            f"1s markout {old['markouts']['1000']['mean']} (n={old['markouts']['1000']['n']}) -> "
+            f"{new['markouts']['1000']['mean']} (n={new['markouts']['1000']['n']})"
+        )
+    return f"{row['tape']}: " + "; ".join(parts) + "."
+
+
+def build_queue_report(*, minutes: int = 30, symbol: str = "SPY") -> dict:
+    """Compare both fill models. There is no recorded IEX tape in this tree."""
+    constant = synthetic_tape(minutes, seed=0, symbol=symbol)
+    variable = sized_synthetic_tape(minutes, seed=0, symbol=symbol)
+    rows = [
+        build_queue_comparison(
+            constant,
+            tape="synthetic_constant_size",
+            symbol=symbol,
+            note=(
+                "The committed 30-minute tape. Touch size stays 40, so a size decrease from a cancel does not occur. "
+                "Trades are the only queue updates."
+            ),
+        ),
+        build_queue_comparison(
+            variable,
+            tape="synthetic_variable_size",
+            symbol=symbol,
+            note=(
+                "Deterministic tape with joins, cancels, and trades that reduce the displayed size. "
+                "It is not a recorded IEX session."
+            ),
+        ),
+    ]
+    caveats = [
+        "orders_submitted is 0. This comparison does not place an order.",
+        "No recorded Alpaca IEX parquet is in this tree. Both sessions are synthetic.",
+        "legacy joins the displayed touch size and fills the whole order on a trade strictly through the price.",
+        "rigtorp uses V at send time. A trade at or through our price reduces V by the print size. "
+        "A cancel reduces V by p*dQ, with p = log1p(V) / (log1p(V) + log1p(size behind)). "
+        "log1p was not fit to our fills. The order fills only for the size that remains after V reaches 0.",
+        "Intrinsic value is fill probability times the distance to the mid, minus max(0, -mean 1s markout). "
+        "A negative value cancels the order. The next decision may post again.",
+        "The constant-size session cannot show the cancel branch. Read the variable-size session for that.",
+        "Markouts missing at the end of the tape are omitted, not set to zero. Neither session is evidence of edge.",
+    ]
+    return {
+        "schema_version": "sidecar.intraday_mm_queue_compare.v1",
+        "orders_submitted": 0,
+        "live_trading": False,
+        "recorded_iex_session": False,
+        "initial_estimate": "send",
+        "queue_function": "log1p",
+        "minutes": minutes,
+        "symbol": symbol,
+        "sessions": rows,
+        "reading": [_comparison_sentence(row) for row in rows],
+        "caveats": caveats,
     }
 
 
@@ -417,6 +610,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--minutes", type=float, default=30)
     parser.add_argument("--symbol", default="SPY")
     parser.add_argument("--synthetic", action="store_true", help="Use the deterministic synthetic tape. No credentials.")
+    parser.add_argument(
+        "--queue-compare",
+        action="store_true",
+        help="Write the legacy versus Rigtorp comparison. Simulation only.",
+    )
     parser.add_argument("--replay", type=Path, default=None, help="Replay a parquet tape. No credentials.")
     parser.add_argument("--force-window", action="store_true")
     parser.add_argument("--now", default=None)
@@ -439,7 +637,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.replay is not None:
             events = read_tape(args.replay)
             tape = "replay"
-        elif args.synthetic:
+        elif args.synthetic or args.queue_compare:
             events = synthetic_tape(max(1, int(args.minutes)), symbol=args.symbol)
             tape = "synthetic"
         else:
@@ -467,6 +665,14 @@ def main(argv: list[str] | None = None) -> int:
     if not events:
         print("tape was empty; refusing to invent a result")
         return 1
+    if args.queue_compare:
+        report = build_queue_report(minutes=max(1, int(args.minutes)), symbol=args.symbol)
+        write_json(args.out, report)
+        print(f"wrote {args.out}")
+        print("orders_submitted", report["orders_submitted"])
+        for line in report["reading"]:
+            print(line)
+        return 0
     report = build_report(events, tape=tape, symbol=args.symbol, ledger_path=args.ledger)
     write_json(args.out, report)
     print(f"wrote {args.out}")
