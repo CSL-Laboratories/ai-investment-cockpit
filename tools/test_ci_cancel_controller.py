@@ -207,7 +207,7 @@ class ControllerTests(unittest.TestCase):
                 nonlocal seen
                 if '/workflows/11/runs?' in path and 'page=1' in path:
                     seen += 1
-                    if seen == 4:  # The second read of the final pre-cancel snapshot.
+                    if seen >= 4 and seen % 2 == 0:  # Every final corroborating read.
                         value = copy.deepcopy(value)
                         change(value)
                 return value
@@ -478,11 +478,118 @@ class ControllerTests(unittest.TestCase):
                         value['total_count'] = 3
                     elif mutation == 'capped':
                         value['total_count'] = 1000
-                    elif calls == 2:
+                    elif calls % 2 == 0:
+                        value = copy.deepcopy(value)
                         value['workflow_runs'][0]['status'] = 'completed'
                 return value
             api.hook = corrupt
             with self.subTest(mutation=mutation), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(api.cancelled, [])
+
+    def test_transient_snapshot_churn_restarts_complete_discovery_and_final_read(self):
+        for changed_read in (2, 4):
+            api = FakeGitHub()
+            calls = 0
+            def churn(path, value, changed_read=changed_read):
+                nonlocal calls
+                if '/workflows/11/runs?' in path:
+                    calls += 1
+                    if calls == changed_read:
+                        value = copy.deepcopy(value)
+                        value['workflow_runs'][0]['status'] = 'queued'
+                return value
+            api.hook = churn
+            with self.subTest(changed_read=changed_read):
+                self.assertEqual(api.reconcile(), [1])
+                self.assertEqual(calls, 6)
+                self.assertEqual(api.cancelled, [1])
+
+    def test_changed_page_count_discards_partial_snapshot(self):
+        api = FakeGitHub()
+        api.runs = [run(i, A, status='completed') for i in range(3, 103)] + api.runs
+        changed = False
+        def churn(path, value):
+            nonlocal changed
+            if '/workflows/11/runs?' in path and 'page=2' in path and not changed:
+                changed = True
+                value['total_count'] += 1
+            return value
+        api.hook = churn
+        self.assertEqual(api.reconcile(), [1])
+        pages = [parse_qs(urlsplit(p).query)['page'][0] for p in api.reads
+                 if '/workflows/11/runs?' in p]
+        self.assertEqual(pages[:5], ['1', '2', '1', '2', '1'])
+
+    def test_sustained_snapshot_churn_exhausts_three_attempts_without_writes(self):
+        api = FakeGitHub()
+        calls = 0
+        def churn(path, value):
+            nonlocal calls
+            if '/runs?' in path:
+                calls += 1
+                if calls % 2 == 0:
+                    value = copy.deepcopy(value)
+                    value['workflow_runs'][0]['status'] = 'queued'
+            return value
+        api.hook = churn
+        with self.assertRaisesRegex(m.Refused, 'snapshot changed'):
+            api.reconcile()
+        self.assertEqual(calls, 6)
+        self.assertEqual(api.cancelled, [])
+
+    def test_malformed_corroboration_is_not_retried(self):
+        for bad in (None, {}, {'total_count': 1000, 'workflow_runs': []},
+                    {'total_count': 2, 'workflow_runs': [run(), run()]},
+                    {'total_count': 3, 'workflow_runs': [run(), run(2)]}):
+            api = FakeGitHub()
+            calls = 0
+            def corrupt(path, value, bad=bad):
+                nonlocal calls
+                if '/runs?' in path:
+                    calls += 1
+                    if calls == 2:
+                        return bad
+                return value
+            api.hook = corrupt
+            with self.subTest(bad=bad), self.assertRaises(m.Refused):
+                api.reconcile()
+            self.assertEqual(calls, 2)
+            self.assertEqual(api.cancelled, [])
+
+    def test_snapshot_retry_keeps_shared_deadline_and_call_budget(self):
+        first = {'total_count': 1, 'workflow_runs': [run()]}
+        changed = copy.deepcopy(first)
+        changed['workflow_runs'][0]['status'] = 'queued'
+        for clock, initial_calls in ((Mock(side_effect=[0, 0, 119, 120]), 0),
+                                     (lambda: 0, 158)):
+            api = m.GitHub(clock=clock)
+            api.calls = initial_calls
+            responses = [Mock(stdout=json.dumps(p)) for p in (first, changed)]
+            with (patch.object(m.subprocess, 'run', side_effect=responses) as transport,
+                  self.assertRaisesRegex(m.Refused, 'budget exceeded')):
+                m.run_snapshot(api, REPO, 11, 'feature')
+            self.assertEqual(transport.call_count, 2)
+            self.assertTrue(all(c.args[0][3] == 'GET' for c in transport.call_args_list))
+            self.assertEqual(api.deadline, 120)
+
+    def test_retry_does_not_preserve_a_cancelled_witness_or_stale_head(self):
+        for change in ('witness', 'head'):
+            api = FakeGitHub()
+            calls = 0
+            def churn(path, value, change=change, api=api):
+                nonlocal calls
+                if '/workflows/11/runs?' in path:
+                    calls += 1
+                    if calls == 4:
+                        if change == 'witness':
+                            api.runs[1].update(status='completed', conclusion='cancelled')
+                        else:
+                            api.pr = pr(C)
+                        value['workflow_runs'][0]['status'] = 'queued'
+                return value
+            api.hook = churn
+            with self.subTest(change=change), self.assertRaises(m.Refused):
                 api.reconcile()
             self.assertEqual(api.cancelled, [])
 

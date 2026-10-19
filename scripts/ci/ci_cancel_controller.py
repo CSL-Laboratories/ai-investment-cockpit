@@ -21,6 +21,10 @@ class Refused(RuntimeError):
     """Insufficient evidence; do not broaden cancellation."""
 
 
+class SnapshotChanged(Refused):
+    """Well-formed reads disagree; discard this snapshot before retrying."""
+
+
 class GitHub:
     def __init__(self, clock=time.monotonic):
         self.clock = clock
@@ -131,23 +135,48 @@ def stable(data):
 
 
 def run_snapshot(api, repo, workflow_id, branch):
+    """Try at most three complete snapshots within the shared API budget."""
+    for attempt in range(3):
+        try:
+            return _run_snapshot(api, repo, workflow_id, branch)
+        except SnapshotChanged:
+            if attempt == 2:
+                raise
+    raise AssertionError('Unreachable snapshot attempt')
+
+
+def run_page(api, path):
+    data = api.read(path)
+    if not isinstance(data, dict):
+        raise Refused('Malformed run page')
+    batch, count = data.get('workflow_runs'), data.get('total_count')
+    if not isinstance(batch, list) or type(count) is not int or not 0 <= count < 1000:
+        raise Refused('Missing or capped run pagination')
+    seen = set()
+    for run in batch:
+        identifier = run.get('id') if isinstance(run, dict) else None
+        if not positive(identifier) or identifier in seen:
+            raise Refused('Invalid or duplicate run ID in pagination')
+        seen.add(identifier)
+    if len(batch) < 100 and len(batch) != count and path.endswith('&page=1'):
+        raise Refused('Incomplete run pagination')
+    return data
+
+
+def _run_snapshot(api, repo, workflow_id, branch):
     """Read all matching runs before any mutation; reject capped/changing pages."""
     query = urlencode({'event': 'pull_request', 'branch': branch, 'per_page': 100})
     path = f'repos/{repo}/actions/workflows/{workflow_id}/runs?{query}'
     rows, seen, total = [], set(), None
     first = None
     for page in range(1, 11):
-        data = api.read(f'{path}&page={page}')
-        if not isinstance(data, dict):
-            raise Refused('Malformed run page')
+        data = run_page(api, f'{path}&page={page}')
         batch, count = data.get('workflow_runs'), data.get('total_count')
-        if not isinstance(batch, list) or type(count) is not int or not 0 <= count < 1000:
-            raise Refused('Missing or capped run pagination')
         if total is None:
             total = count
             first = data
         if count != total:
-            raise Refused('Run pagination changed')
+            raise SnapshotChanged('Run pagination changed')
         for run in batch:
             identifier = run.get('id') if isinstance(run, dict) else None
             if not positive(identifier) or identifier in seen:
@@ -159,8 +188,8 @@ def run_snapshot(api, repo, workflow_id, branch):
                 raise Refused('Incomplete run pagination')
             # Listing must remain stable through discovery. Per-run revalidation
             # below catches later status/attempt changes without trusting order.
-            if stable(api.read(f'{path}&page=1')) != stable(first):
-                raise Refused('Run snapshot changed during pagination')
+            if stable(run_page(api, f'{path}&page=1')) != stable(first):
+                raise SnapshotChanged('Run snapshot changed during pagination')
             return rows
     raise Refused('Run pagination bound exceeded')
 
