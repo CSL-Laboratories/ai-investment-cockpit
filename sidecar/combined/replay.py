@@ -101,8 +101,16 @@ def run_variant(
     *,
     levels: dict[date, Decimal],
     ratios: dict[date, Decimal],
+    symbols: list[str] | None = None,
+    micro: dict | None = None,
 ) -> dict:
-    symbols = _symbols(grouped)
+    if symbols is None:
+        symbols = _symbols(grouped)
+    else:
+        symbols = list(symbols)
+        missing = [symbol for symbol in symbols if symbol not in grouped]
+        if missing:
+            raise ValueError(f"bars missing {missing}")
     by_day = {symbol: {bar.day: bar for bar in grouped[symbol]} for symbol in symbols}
     days = _calendar(grouped, symbols)
     watchlist = set(symbols)
@@ -133,6 +141,13 @@ def run_variant(
                     continue
                 name = item["proposal"]["symbol"]
                 pending_sells[name] = pending_sells.get(name, Decimal(0)) + item["proposal"]["quantity"]
+            adv = plan["adv"]
+            half_spread = None
+            if micro is not None:
+                slot = micro.get(day, {}).get(proposal["symbol"])
+                if slot is not None:
+                    half_spread = slot["half_spread"]
+                    adv = adv * slot["depth_scale"]
             record = try_fill(
                 book,
                 proposal,
@@ -144,9 +159,10 @@ def run_variant(
                 drawdown=Decimal(0),
                 buying_power=book.cash - locked - pending_notional,
                 sigma=plan["sigma"],
-                adv=plan["adv"],
+                adv=adv,
                 cost_model=cost_model,
                 decision_price=plan["decision_price"],
+                half_spread=half_spread,
             )
             if record is not None:
                 record["date"] = day.isoformat()
@@ -194,6 +210,8 @@ def run_variant(
             )
             if not admission.admitted:
                 book.refusals[admission.reason] += 1
+                for name in admission.failed:
+                    book.failed_checks[name] += 1
                 continue
             book.admitted += 1
             if proposal["side"] == "buy":
@@ -217,6 +235,7 @@ def run_variant(
         "simulated_fills": book.simulated_fills,
         "expired_limits": book.expired_limits,
         "refusals": dict(book.refusals),
+        "failed_checks": dict(book.failed_checks),
         "orders_submitted": book.orders_submitted,
         "ending_equity": scored[-1][1] if scored else curve[-1][1],
         "cash": book.cash,

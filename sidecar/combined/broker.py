@@ -51,6 +51,7 @@ class Book:
     simulated_fills: int = 0
     expired_limits: int = 0
     refusals: Counter = field(default_factory=Counter)
+    failed_checks: Counter = field(default_factory=Counter)
     orders_submitted: int = 0
 
     def position(self, symbol: str) -> Decimal:
@@ -176,14 +177,22 @@ def execution_price(
     sigma: Decimal,
     adv: Decimal,
     cost_model: str,
+    half_spread: Decimal | None = None,
 ) -> tuple[Decimal, Decimal]:
     """Fill price and fee. Flat cost keeps the next open and charges 1 bp.
 
     The TCA schedule worsens the price by a half-spread plus a square-root impact
     term and charges no extra fee. ``eta`` is an assumption, not a fitted coefficient.
+    ``half_spread`` defaults to the liquid-ETF schedule. When the caller passes one,
+    the flat book adds it to the 1 bp fee and the TCA book uses it in the price.
+    The historical replay does not pass it.
     """
+    spread = HALF_SPREAD if half_spread is None else half_spread
+    if spread < 0:
+        raise ValueError("half_spread must be non-negative")
     if cost_model == "flat":
-        fee = (qty * arrival * FLAT_COST_BPS / Decimal(10000)).quantize(
+        fee_bps = FLAT_COST_BPS if half_spread is None else FLAT_COST_BPS + spread * Decimal(10000)
+        fee = (qty * arrival * fee_bps / Decimal(10000)).quantize(
             Decimal("0.0001"), rounding=ROUND_DOWN
         )
         return arrival, fee
@@ -193,12 +202,21 @@ def execution_price(
     if participation < 0:
         participation = Decimal(0)
     impact = IMPACT_ETA * sigma * participation.sqrt() if sigma > 0 else Decimal(0)
-    worsen = HALF_SPREAD + impact
+    worsen = spread + impact
     if side == "buy":
         price = arrival * (1 + worsen)
     else:
         price = arrival * (1 - worsen)
     return price, Decimal(0)
+
+
+def _predicted_cost_bps(cost_model: str, half_spread: Decimal | None) -> Decimal:
+    spread = HALF_SPREAD if half_spread is None else half_spread
+    if cost_model == "flat":
+        if half_spread is None:
+            return FLAT_COST_BPS
+        return FLAT_COST_BPS + spread * Decimal(10000)
+    return spread * Decimal(10000)
 
 
 def try_fill(
@@ -216,13 +234,20 @@ def try_fill(
     adv: Decimal,
     cost_model: str,
     decision_price: Decimal,
+    half_spread: Decimal | None = None,
 ) -> dict | None:
     """Re-run the gate at the next open, then fill only a marketable limit."""
     limit = Decimal(proposal["notional"]) / Decimal(proposal["quantity"])
     side = proposal["side"]
     qty = Decimal(proposal["quantity"])
     fill_price, fee = execution_price(
-        side=side, arrival=arrival, qty=qty, sigma=sigma, adv=adv, cost_model=cost_model
+        side=side,
+        arrival=arrival,
+        qty=qty,
+        sigma=sigma,
+        adv=adv,
+        cost_model=cost_model,
+        half_spread=half_spread,
     )
     marketable = fill_price <= limit if side == "buy" else fill_price >= limit
     if not marketable:
@@ -245,6 +270,8 @@ def try_fill(
     )
     if not admission.admitted:
         book.refusals[admission.reason] += 1
+        for name in admission.failed:
+            book.failed_checks[name] += 1
         return None
     cash_after = book.cash - (qty * fill_price + fee) if side == "buy" else book.cash + qty * fill_price - fee
     if cash_after < 0:
@@ -276,7 +303,7 @@ def try_fill(
         "fee": format(fee, "f"),
         "sigma": format(sigma, "f"),
         "adv": format(adv, "f"),
-        "predicted_cost_bps": format(FLAT_COST_BPS if cost_model == "flat" else HALF_SPREAD * Decimal(10000), "f"),
+        "predicted_cost_bps": format(_predicted_cost_bps(cost_model, half_spread), "f"),
         "venue_label": "simulated_next_open",
     }
     record["shortfall"] = implementation_shortfall(record)
