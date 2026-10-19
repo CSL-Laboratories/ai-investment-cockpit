@@ -496,6 +496,7 @@ class ControllerTests(unittest.TestCase):
                 if '/workflows/11/runs?' in path:
                     calls += 1
                     if calls == changed_read:
+                        value = copy.deepcopy(value)
                         value['workflow_runs'][0]['status'] = 'queued'
                 return value
             api.hook = churn
