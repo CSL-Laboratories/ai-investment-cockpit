@@ -23,6 +23,8 @@ regardless of ruleset enforcement. Non-author approval checks alone do not estab
 founder identity. All three founders participate in the final
 release decision; Lucas has final say in any founder disagreement, including a 2-1 split.
 
+For issue admission, decision holds, claim release and handoff, manual ownership and shared research evidence, follow [AGENTS.md's bounded issue execution and shared evidence rules](AGENTS.md#bounded-issue-execution-and-shared-evidence). They grant no new authority, settings or spend and leave review-loop roles unchanged.
+
 Current implementation:
 A solo-developer, subscription-powered, **human-gated** AI investing copilot.
 **Paper-first** — no live capital moves until the pre-live gates pass. Think of it
