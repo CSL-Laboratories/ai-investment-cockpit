@@ -136,6 +136,19 @@ FLOOR_LOCATORS = {
         "app/tests/storage/test_audit.py::test_completeness_catches_unaudited_state"
     ]
 }
+# Floor coverage the registered selectors do not yet provide. The agent-timeout and
+# out-of-band HALT selectors do not prove automatic hung-orchestrator detection, so
+# that requirement stays binding and unqualified (PHASE-A.md coverage limitation).
+# No selector is registered until a reviewed detector test exists (CSL-333). A future
+# registration names one resolvable selector that every listed floor must contain.
+FLOOR_COVERAGE_REQUIREMENTS = {
+    "hung_orchestrator_detection": {
+        "floors": ("invariant_7_fail_closed", "fail_closed"),
+        "selector": None,
+    },
+}
+FLOOR_QUALIFICATION_INCOMPLETE = "tier-3 floor qualification incomplete"
+OBSERVATION_NARRATIVES = ("correctness", "failure", "recovery", "growth")
 WORKLOAD_IDS = (
     "ingest_to_raw_store",
     "point_in_time_replay",
@@ -261,6 +274,10 @@ NEGATIVES = (
     ("floor-results-missing.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-wrong-commit.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-failed.json", "benchmark", "tier-3 floor results are not bound to the candidate"),
+    ("blank-outcome-correctness.json", "benchmark", "measured observation narrative missing or blank: correctness"),
+    ("blank-outcome-failure.json", "benchmark", "measured observation narrative missing or blank: failure"),
+    ("blank-outcome-recovery.json", "benchmark", "measured observation narrative missing or blank: recovery"),
+    ("blank-outcome-growth.json", "benchmark", "measured observation narrative missing or blank: growth"),
 )
 
 
@@ -608,6 +625,9 @@ def benchmark_reasons(document: Any) -> list[str]:
         and not _floor_results_bound(document)
     ):
         reasons.append("tier-3 floor results are not bound to the candidate")
+    if document.get("csl42_evidence") is True:
+        # A bound receipt is structural only; missing required coverage refuses qualification.
+        reasons.extend(_floor_qualification_reasons(document))
     if isinstance(variance, dict) and variance.get("status") == "measured":
         if document.get("units") != OBSERVATION_UNITS:
             reasons.append("observation units missing or invalid")
@@ -631,6 +651,11 @@ def benchmark_reasons(document: Any) -> list[str]:
             reasons.append("tier-3 evidence lacks measured observation")
         elif not (observation["p50"] <= observation["p95"] <= observation["p99"]):
             reasons.append("impossible measured observation")
+        # Same rule as the retained baseline: a whitespace-only narrative is not a record.
+        for key in OBSERVATION_NARRATIVES:
+            value = observation.get(key)
+            if not isinstance(value, str) or not value.strip():
+                reasons.append(f"measured observation narrative missing or blank: {key}")
     reasons.extend(_schema_errors(document, BENCHMARK_SCHEMA))
     return reasons
 
@@ -668,11 +693,17 @@ def _baseline_host_matches(raw: bytes, document: dict[str, Any]) -> bool:
 def _floor_results_bound(document: dict[str, Any]) -> bool:
     """True when retained floor results pass and name this candidate commit.
 
-    The checker binds the receipt. It does not execute the floor tests.
+    The checker binds the receipt. It does not execute the floor tests. Binding is
+    structural; ``floor_qualification_gaps`` decides whether coverage is complete.
     """
+    return _bound_floor_receipt(document) is not None
+
+
+def _bound_floor_receipt(document: dict[str, Any]) -> dict[str, list[str]] | None:
+    """Passing selectors per floor from a bound receipt, or None when it does not bind."""
     raw = _retained_bytes(document.get("floor_results"))
     if raw is None:
-        return False
+        return None
     try:
         retained = json.loads(
             raw.decode("utf-8"),
@@ -680,26 +711,62 @@ def _floor_results_bound(document: dict[str, Any]) -> bool:
             parse_float=_parse_finite_float,
         )
     except (UnicodeError, ValueError, RecursionError):
-        return False
+        return None
     if not isinstance(retained, dict):
-        return False
+        return None
     commit = retained.get("commit")
     if not isinstance(commit, str) or commit != document.get("commit"):
-        return False
+        return None
     results = retained.get("results")
     if not isinstance(results, list) or len(results) != len(FLOOR_IDS):
-        return False
-    found: dict[str, bool] = {}
+        return None
+    found: dict[str, list[str]] = {}
     for item in results:
         if not isinstance(item, dict):
-            return False
+            return None
         floor_id = item.get("id")
         if not isinstance(floor_id, str) or floor_id not in FLOOR_LOCATORS or floor_id in found:
-            return False
+            return None
         if item.get("outcome") != "pass" or not _floor_locators_valid(item):
-            return False
-        found[floor_id] = True
-    return set(found) == set(FLOOR_IDS)
+            return None
+        found[floor_id] = list(item["test_locators"])
+    return found if set(found) == set(FLOOR_IDS) else None
+
+
+def floor_qualification_gaps(document: Any) -> list[str]:
+    """Required coverage that a structurally bound floor receipt still does not provide.
+
+    A requirement is covered only when its registered selector resolves to a test
+    function, appears in every listed floor's registry entry, and appears in the
+    passing receipt row for each of those floors. Neither a receipt, a manifest
+    field nor a synthetic positive control can add coverage the registry lacks.
+    """
+    receipt = _bound_floor_receipt(document) if isinstance(document, dict) else None
+    gaps = []
+    for requirement, spec in FLOOR_COVERAGE_REQUIREMENTS.items():
+        selector = spec.get("selector")
+        floors = spec.get("floors") or ()
+        covered = (
+            isinstance(selector, str)
+            and len(floors) > 0
+            and _test_locator_exists(selector)
+            and receipt is not None
+            and all(
+                selector in FLOOR_LOCATORS.get(floor_id, ()) and selector in receipt.get(floor_id, ())
+                for floor_id in floors
+            )
+        )
+        if not covered:
+            gaps.append(requirement)
+    return gaps
+
+
+def _floor_qualification_reasons(document: Any) -> list[str]:
+    return [
+        f"{FLOOR_QUALIFICATION_INCOMPLETE}: missing {requirement} selector coverage in "
+        + " and ".join(FLOOR_COVERAGE_REQUIREMENTS[requirement]["floors"])
+        for requirement in floor_qualification_gaps(document)
+    ]
 
 
 def _baseline_record(raw: bytes) -> dict[str, Any] | None:

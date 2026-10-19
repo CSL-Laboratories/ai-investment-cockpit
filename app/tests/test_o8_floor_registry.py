@@ -98,6 +98,85 @@ def test_registered_but_deleted_function_fails_every_validation_path(monkeypatch
         CHECK_O8.validate_packet(packet)
     assert f"missing floor test case: {target}" in CHECK_O8.benchmark_reasons(benchmark)
     assert not CHECK_O8._floor_results_bound(benchmark)
+    assert CHECK_O8.floor_qualification_gaps(benchmark) == ["hung_orchestrator_detection"]
+
+
+def _serve_receipt(monkeypatch, benchmark, receipt):
+    read = CHECK_O8._retained_bytes
+    monkeypatch.setattr(CHECK_O8, "_retained_bytes", lambda ref: (
+        json.dumps(receipt).encode() if ref == benchmark["floor_results"] else read(ref)
+    ))
+
+
+@pytest.mark.parametrize("floor_id", CHECK_O8.FLOOR_IDS)
+def test_every_floor_row_is_structurally_bound(monkeypatch, floor_id):
+    # Binding stays checkable for every floor even though qualification is incomplete.
+    benchmark = _synthetic_comparison()
+    receipt = json.loads(CHECK_O8._retained_bytes(benchmark["floor_results"]))
+    assert CHECK_O8._floor_results_bound(benchmark)
+    row = next(item for item in receipt["results"] if item["id"] == floor_id)
+    assert row["outcome"] == "pass"
+    assert row["test_locators"] == CHECK_O8.FLOOR_LOCATORS[floor_id]
+    row["test_locators"] = row["test_locators"][:-1] or ["app/tests/test_wp0.py::test_mode_defaults_read_only"]
+    _serve_receipt(monkeypatch, benchmark, receipt)
+    assert not CHECK_O8._floor_results_bound(benchmark)
+
+
+def test_published_registry_names_no_hung_orchestrator_selector():
+    requirement = CHECK_O8.FLOOR_COVERAGE_REQUIREMENTS["hung_orchestrator_detection"]
+    assert requirement == {"floors": ("invariant_7_fail_closed", "fail_closed"), "selector": None}
+    assert CHECK_O8.FLOOR_LOCATORS["invariant_7_fail_closed"] == CHECK_O8.FLOOR_LOCATORS["fail_closed"]
+
+
+# Test-only registration mechanics. This name is deliberately not a test function, so the
+# real source lookup rejects it; it is never a hung-orchestrator detector or a PASS.
+SYNTHETIC_SELECTOR = "app/tests/test_o8_floor_registry.py::test_synthetic_registration_placeholder_only"
+HUNG_FLOORS = ("invariant_7_fail_closed", "fail_closed")
+
+
+@pytest.mark.parametrize(
+    ("case", "registry_floors", "receipt_floors", "required", "source_exists", "bound", "qualifies"),
+    [
+        ("registered_everywhere", HUNG_FLOORS, HUNG_FLOORS, True, True, True, True),
+        ("invariant_7_list_only", HUNG_FLOORS[:1], HUNG_FLOORS[:1], True, True, True, False),
+        ("fail_closed_list_only", HUNG_FLOORS[1:], HUNG_FLOORS[1:], True, True, True, False),
+        ("receipt_lacks_selector", HUNG_FLOORS, (), True, True, False, False),
+        ("receipt_one_row_only", HUNG_FLOORS, HUNG_FLOORS[:1], True, True, False, False),
+        ("source_function_missing", HUNG_FLOORS, HUNG_FLOORS, True, False, False, False),
+        ("listed_but_not_required", HUNG_FLOORS, HUNG_FLOORS, False, True, True, False),
+    ],
+)
+def test_future_selector_registration_mechanics(
+    monkeypatch, case, registry_floors, receipt_floors, required, source_exists, bound, qualifies,
+):
+    benchmark = _synthetic_comparison()
+    receipt = json.loads(CHECK_O8._retained_bytes(benchmark["floor_results"]))
+    for row in receipt["results"]:
+        if row["id"] in receipt_floors:
+            row["test_locators"].append(SYNTHETIC_SELECTOR)
+    _serve_receipt(monkeypatch, benchmark, receipt)
+    registry = copy.deepcopy(CHECK_O8.FLOOR_LOCATORS)
+    for floor_id in registry_floors:
+        registry[floor_id].append(SYNTHETIC_SELECTOR)
+    monkeypatch.setattr(CHECK_O8, "FLOOR_LOCATORS", registry)
+    requirements = copy.deepcopy(CHECK_O8.FLOOR_COVERAGE_REQUIREMENTS)
+    if required:
+        requirements["hung_orchestrator_detection"]["selector"] = SYNTHETIC_SELECTOR
+    monkeypatch.setattr(CHECK_O8, "FLOOR_COVERAGE_REQUIREMENTS", requirements)
+    assert not CHECK_O8._test_locator_exists(SYNTHETIC_SELECTOR)
+    if source_exists:
+        exists = CHECK_O8._test_locator_exists
+        monkeypatch.setattr(CHECK_O8, "_test_locator_exists", lambda value: (
+            value == SYNTHETIC_SELECTOR or exists(value)
+        ))
+    assert CHECK_O8._floor_results_bound(benchmark) is bound
+    gaps = CHECK_O8.floor_qualification_gaps(benchmark)
+    assert gaps == ([] if qualifies else ["hung_orchestrator_detection"])
+    qualification = [
+        reason for reason in CHECK_O8.benchmark_reasons(benchmark)
+        if reason.startswith(CHECK_O8.FLOOR_QUALIFICATION_INCOMPLETE)
+    ]
+    assert bool(qualification) is not qualifies
 
 
 def test_source_lookup_does_not_execute_test_modules(tmp_path, monkeypatch):

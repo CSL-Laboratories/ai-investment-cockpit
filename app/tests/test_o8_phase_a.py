@@ -66,8 +66,18 @@ EXPECTED_NEGATIVE_LINES = (
     "O8 negative control failed as designed: floor-results-missing: tier-3 floor results are not bound to the candidate",
     "O8 negative control failed as designed: floor-results-wrong-commit: tier-3 floor results are not bound to the candidate",
     "O8 negative control failed as designed: floor-results-failed: tier-3 floor results are not bound to the candidate",
-    "O8 negative controls: 47 failed as designed",
+    "O8 negative control failed as designed: blank-outcome-correctness: measured observation narrative missing or blank: correctness",
+    "O8 negative control failed as designed: blank-outcome-failure: measured observation narrative missing or blank: failure",
+    "O8 negative control failed as designed: blank-outcome-recovery: measured observation narrative missing or blank: recovery",
+    "O8 negative control failed as designed: blank-outcome-growth: measured observation narrative missing or blank: growth",
+    "O8 negative controls: 51 failed as designed",
 )
+# No automatic hung-orchestrator detector selector is registered, so no receipt qualifies.
+HUNG_QUALIFICATION_REASON = (
+    "tier-3 floor qualification incomplete: missing hung_orchestrator_detection selector "
+    "coverage in invariant_7_fail_closed and fail_closed"
+)
+NARRATIVES = ("correctness", "failure", "recovery", "growth")
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -261,9 +271,75 @@ def _synthetic_comparison() -> dict:
     return CHECK_O8._load_json(CHECK_O8.O8 / "fixtures/validator-only/benchmark.json")
 
 
-def test_o8_accepts_structurally_bound_synthetic_comparison() -> None:
-    # Validator acceptance is not empirical evidence: these observations are invented controls.
-    assert CHECK_O8.benchmark_reasons(_synthetic_comparison()) == []
+def test_o8_synthetic_comparison_binds_structurally_but_cannot_qualify() -> None:
+    # These observations are invented controls. Structural binding is not qualification:
+    # the only remaining reason is the missing hung-orchestrator selector coverage.
+    document = _synthetic_comparison()
+    assert CHECK_O8._floor_results_bound(document)
+    assert CHECK_O8.floor_qualification_gaps(document) == ["hung_orchestrator_detection"]
+    assert CHECK_O8.benchmark_reasons(document) == [HUNG_QUALIFICATION_REASON]
+
+
+def test_o8_cli_rejects_the_synthetic_comparison_for_missing_qualification() -> None:
+    result = _run(
+        "--manifest", "docs/replacement/outcomes/O8/fixtures/validator-only/benchmark.json",
+        "--kind", "benchmark",
+    )
+    assert result.returncode == 1
+    assert HUNG_QUALIFICATION_REASON in result.stderr
+    assert "fixture accepted" not in result.stdout
+
+
+def test_o8_qualification_gap_ignores_caller_claims() -> None:
+    document = _synthetic_comparison()
+    document["floor_qualification"] = "pass"
+    document["hung_orchestrator_detection"] = True
+    reasons = CHECK_O8.benchmark_reasons(document)
+    assert HUNG_QUALIFICATION_REASON in reasons
+    assert any(reason.startswith("schema ") for reason in reasons)
+
+
+def test_o8_tier2_measurement_without_csl42_claim_stays_structurally_usable() -> None:
+    document = _synthetic_comparison()
+    document["tier"] = 2
+    document["csl42_evidence"] = False
+    assert CHECK_O8.benchmark_reasons(document) == []
+    document["observation"]["growth"] = "  "
+    assert CHECK_O8.benchmark_reasons(document) == [
+        "measured observation narrative missing or blank: growth"
+    ]
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize("key", NARRATIVES)
+@pytest.mark.parametrize("value", [_MISSING, None, "", " ", "\t\n", " "], ids=[
+    "missing", "null", "empty", "space", "tab-newline", "nbsp",
+])
+def test_o8_measured_observation_rejects_blank_narratives(key: str, value) -> None:
+    document = _synthetic_comparison()
+    if value is _MISSING:
+        del document["observation"][key]
+    else:
+        document["observation"][key] = value
+    reasons = CHECK_O8.benchmark_reasons(document)
+    semantic = [reason for reason in reasons if not reason.startswith("schema ")]
+    assert semantic == [
+        HUNG_QUALIFICATION_REASON,
+        f"measured observation narrative missing or blank: {key}",
+    ]
+    # Schema checks stay intact: only whitespace-only strings pass the schema's minLength.
+    schema_rejects = value is _MISSING or value is None or value == ""
+    assert any(reason.startswith("schema ") for reason in reasons) is schema_rejects
+
+
+@pytest.mark.parametrize("key", NARRATIVES)
+@pytest.mark.parametrize("value", ["x", "  padded narrative  ", "\trecorded outcome\n"])
+def test_o8_measured_observation_accepts_nonblank_narratives(key: str, value: str) -> None:
+    document = _synthetic_comparison()
+    document["observation"][key] = value
+    assert CHECK_O8.benchmark_reasons(document) == [HUNG_QUALIFICATION_REASON]
 
 
 def test_o8_candidate_configuration_distinguishes_boolean_from_integer() -> None:
@@ -350,12 +426,33 @@ def test_o8_candidate_cannot_be_reused_for_a_different_workload_seam() -> None:
     ("floor-results-missing", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-wrong-commit", "tier-3 floor results are not bound to the candidate"),
     ("floor-results-failed", "tier-3 floor results are not bound to the candidate"),
+    ("blank-outcome-correctness", "measured observation narrative missing or blank: correctness"),
+    ("blank-outcome-failure", "measured observation narrative missing or blank: failure"),
+    ("blank-outcome-recovery", "measured observation narrative missing or blank: recovery"),
+    ("blank-outcome-growth", "measured observation narrative missing or blank: growth"),
 ])
 def test_o8_review_negative_controls_isolate_the_intended_failure(name: str, expected: str) -> None:
     document = CHECK_O8._load_json(CHECK_O8.NEGATIVE_DIR / f"{name}.json")
     reasons = CHECK_O8.benchmark_reasons(document)
+    semantic = [reason for reason in reasons if not reason.startswith("schema ")]
+    # Every CSL-42 claim also carries the explicit qualification gap, and only CSL-42
+    # claims do. It is filtered by exact text, so it cannot hide the intended failure.
+    assert (HUNG_QUALIFICATION_REASON in semantic) is (document["csl42_evidence"] is True)
     # An unrelated semantic failure must not mask a broken control (especially huge tokens).
-    assert [reason for reason in reasons if not reason.startswith("schema ")] == [expected]
+    assert [reason for reason in semantic if reason != HUNG_QUALIFICATION_REASON] == [expected]
+
+
+@pytest.mark.parametrize("name", [
+    "blank-outcome-correctness", "blank-outcome-failure", "blank-outcome-recovery", "blank-outcome-growth",
+])
+def test_o8_blank_outcome_controls_differ_from_the_synthetic_comparison_in_one_narrative(name: str) -> None:
+    control = CHECK_O8._load_json(CHECK_O8.NEGATIVE_DIR / f"{name}.json")
+    original = _synthetic_comparison()
+    key = name.removeprefix("blank-outcome-")
+    assert isinstance(control["observation"][key], str)
+    assert control["observation"][key].strip() == ""
+    control["observation"][key] = original["observation"][key]
+    assert control == original
 
 
 @pytest.mark.parametrize("workload_id", [
