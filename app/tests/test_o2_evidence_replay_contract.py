@@ -1624,6 +1624,209 @@ def test_swapped_replay_scenario_is_rejected(tmp_path: Path) -> None:
         module.validate_candidate(copy)
 
 
+def _replace_observation_with_donor(documents: dict, target_id: str, donor_id: str) -> None:
+    """Copy a valid observation over a required one, keep the target id, mirror lineage."""
+    observations = documents["fixtures/observations.json"]["observations"]
+    donor = next(item for item in observations if item["observation_id"] == donor_id)
+    index = next(i for i, item in enumerate(observations) if item["observation_id"] == target_id)
+    replacement = json.loads(json.dumps(donor))
+    replacement["observation_id"] = target_id
+    observations[index] = replacement
+    edge = next(item for item in documents["fixtures/lineage.json"]["edges"] if item["observation_id"] == target_id)
+    edge["input_raw_record_ids"] = list(replacement["raw_record_ids"])
+
+
+def _assert_pins_unchanged(copy: Path) -> None:
+    for retained in ("CONTRACT.md", "fixtures/coverage.json"):
+        assert (copy / retained).read_bytes() == (O2 / retained).read_bytes(), retained
+
+
+def test_required_observation_binding_table_is_the_approved_mapping() -> None:
+    module = _load_validator()
+    exact = {
+        "obs-revenue-apr": "late_correction_before_amendment",
+        "obs-revenue-jul": "late_correction_after_amendment",
+        "obs-ooo-may": "out_of_order_acceptance_visible_after_accept",
+        "obs-quote-aug": "unadjusted_quote_not_rewritten",
+        "obs-split-aug": "corporate_action_retained",
+        "obs-split-corr": "corporate_action_correction_is_effective",
+        "obs-splits-sep": "independent_corporate_action_retained",
+        "obs-ev-aug21": "event_resolution_before_late_message",
+        "obs-ev-sep": "event_settled_keeps_determination_raw",
+        "obs-ev-void": "voided_event_stays_distinct",
+        "obs-ev-d1-dispute": "event_dispute_correction_is_effective",
+        "obs-ev-d1-final": "event_finalized_keeps_dispute_chain",
+    }
+    expected = {
+        observation_id: {
+            "natural_key": check_id,
+            "decision_time": check_id,
+            "effective_raw_record_id": check_id,
+        }
+        for observation_id, check_id in exact.items()
+    }
+    # Disclosed composite: revenue key and effective 10-K/A, post-split decision time.
+    expected["obs-revenue-aug"] = {
+        "natural_key": "late_correction_after_amendment",
+        "decision_time": "corporate_action_retained",
+        "effective_raw_record_id": "late_correction_after_amendment",
+    }
+    assert module.REQUIRED_OBSERVATION_BINDINGS == expected
+    coverage = json.loads((O2 / "fixtures" / "coverage.json").read_text(encoding="utf-8"))
+    assert set(module.REQUIRED_OBSERVATION_BINDINGS) == set(coverage["observation_ids"])
+    assert module.validate_candidate(O2)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
+def test_revenue_copied_over_out_of_order_observation_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _replace_observation_with_donor(documents, "obs-ooo-may", "obs-revenue-apr")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _assert_pins_unchanged(copy)
+    with pytest.raises(
+        module.ContractError,
+        match="obs-ooo-may natural_key does not match coverage scenario out_of_order_acceptance_visible_after_accept",
+    ):
+        module.validate_candidate(copy)
+
+
+def test_earlier_event_copied_over_settled_observation_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _replace_observation_with_donor(documents, "obs-ev-sep", "obs-ev-aug21")
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _assert_pins_unchanged(copy)
+    with pytest.raises(
+        module.ContractError,
+        match="obs-ev-sep decision_time does not match coverage scenario event_settled_keeps_determination_raw",
+    ):
+        module.validate_candidate(copy)
+
+
+def test_composite_revenue_observation_cannot_move_its_decision_time(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observation = next(
+        item
+        for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] == "obs-revenue-aug"
+    )
+    observation["decision_time"] = "2024-08-03T00:00:00Z"
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _assert_pins_unchanged(copy)
+    with pytest.raises(
+        module.ContractError,
+        match="obs-revenue-aug decision_time does not match coverage scenario corporate_action_retained",
+    ):
+        module.validate_candidate(copy)
+
+
+# Each donor is a valid positive observation. Nearby donors are chosen so that some
+# replacements differ in only one bound field, which catches a partial table.
+@pytest.mark.parametrize(
+    ("target_id", "donor_id"),
+    [
+        ("obs-revenue-apr", "obs-revenue-jul"),
+        ("obs-revenue-jul", "obs-revenue-aug"),
+        ("obs-ooo-may", "obs-revenue-apr"),
+        ("obs-revenue-aug", "obs-revenue-jul"),
+        ("obs-quote-aug", "obs-revenue-aug"),
+        ("obs-split-aug", "obs-split-corr"),
+        ("obs-split-corr", "obs-split-aug"),
+        ("obs-splits-sep", "obs-split-corr"),
+        ("obs-ev-aug21", "obs-ev-sep"),
+        ("obs-ev-sep", "obs-ev-aug21"),
+        ("obs-ev-void", "obs-ev-sep"),
+        ("obs-ev-d1-dispute", "obs-ev-d1-final"),
+        ("obs-ev-d1-final", "obs-ev-d1-dispute"),
+    ],
+)
+def test_required_observation_replaced_by_valid_donor_is_rejected(
+    tmp_path: Path, target_id: str, donor_id: str
+) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    _replace_observation_with_donor(documents, target_id, donor_id)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _assert_pins_unchanged(copy)
+    with pytest.raises(
+        module.ContractError,
+        match=rf"{target_id} (natural_key|decision_time|effective_raw_record_id) does not match coverage scenario",
+    ):
+        module.validate_candidate(copy)
+
+
+def test_effective_record_binding_is_checked() -> None:
+    module = _load_validator()
+    bundle = module.Bundle(_candidate_documents(module))
+    coverage = json.loads((O2 / "fixtures" / "coverage.json").read_text(encoding="utf-8"))
+    checks = {item["check_id"]: item for item in coverage["checks"]}
+    module._require_observation_bindings(checks, bundle)
+    observation = next(item for item in bundle.observations if item["observation_id"] == "obs-ooo-may")
+    observation["effective_raw_record_id"] = "raw-eq-10k"
+    with pytest.raises(
+        module.ContractError,
+        match="obs-ooo-may effective_raw_record_id does not match coverage scenario "
+        "out_of_order_acceptance_visible_after_accept",
+    ):
+        module._require_observation_bindings(checks, bundle)
+
+
+def test_required_observation_missing_under_repinned_coverage_is_rejected(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    documents["fixtures/observations.json"]["observations"] = [
+        item for item in documents["fixtures/observations.json"]["observations"]
+        if item["observation_id"] != "obs-revenue-aug"
+    ]
+    documents["fixtures/lineage.json"]["edges"] = [
+        item for item in documents["fixtures/lineage.json"]["edges"] if item["observation_id"] != "obs-revenue-aug"
+    ]
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _sync_coverage_pin(module, copy)
+    with pytest.raises(module.ContractError, match="required observation obs-revenue-aug is missing"):
+        module.validate_candidate(copy)
+
+
+def test_binding_to_missing_coverage_scenario_fails_closed() -> None:
+    module = _load_validator()
+    bundle = module.Bundle(_candidate_documents(module))
+    coverage = json.loads((O2 / "fixtures" / "coverage.json").read_text(encoding="utf-8"))
+    checks = {
+        item["check_id"]: item for item in coverage["checks"] if item["check_id"] != "corporate_action_retained"
+    }
+    with pytest.raises(
+        module.ContractError,
+        match="obs-revenue-aug binding names missing coverage scenario corporate_action_retained",
+    ):
+        module._require_observation_bindings(checks, bundle)
+
+
+def test_incomplete_required_binding_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_validator()
+    binding = dict(module.REQUIRED_OBSERVATION_BINDINGS["obs-revenue-aug"])
+    del binding["decision_time"]
+    monkeypatch.setitem(module.REQUIRED_OBSERVATION_BINDINGS, "obs-revenue-aug", binding)
+    with pytest.raises(module.ContractError, match="obs-revenue-aug has no required decision_time binding"):
+        module.validate_candidate(O2)
+
+
+def test_extended_coverage_pin_may_add_an_unbound_observation(tmp_path: Path) -> None:
+    module = _load_validator()
+    documents = _candidate_documents(module)
+    observations = documents["fixtures/observations.json"]["observations"]
+    extra = json.loads(json.dumps(next(item for item in observations if item["observation_id"] == "obs-revenue-jul")))
+    extra["observation_id"] = "obs-revenue-jul-extra"
+    observations.append(extra)
+    edges = documents["fixtures/lineage.json"]["edges"]
+    edge = json.loads(json.dumps(next(item for item in edges if item["observation_id"] == "obs-revenue-jul")))
+    edge.update(lineage_id="lin-revenue-jul-extra", observation_id="obs-revenue-jul-extra")
+    edges.append(edge)
+    copy = _write_modified_candidate(module, tmp_path / "O2", documents)
+    _sync_coverage_pin(module, copy)
+    assert module.validate_candidate(copy)[:2] == ["O2 candidate corpus: ok", "O2 maturity: researched"]
+
+
 def test_later_identity_without_prior_is_rejected(tmp_path: Path) -> None:
     module = _load_validator()
     documents = _candidate_documents(module)

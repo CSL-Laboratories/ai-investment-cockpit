@@ -1000,6 +1000,88 @@ REQUIRED_CHECK_IDS = frozenset(
 )
 
 
+_BOUND_OBSERVATION_FIELDS = ("natural_key", "decision_time", "effective_raw_record_id")
+
+
+def _bound_to(check_id: str) -> dict[str, str]:
+    return {field: check_id for field in _BOUND_OBSERVATION_FIELDS}
+
+
+# Minimum observation bindings, fixed here beside REQUIRED_CHECK_IDS. Each required
+# observation id names the coverage scenario that supplies its natural key, decision
+# time, and effective raw record. Expected values are read only from the
+# contract-pinned coverage manifest, never from observations or lineage, so copying
+# another valid observation under a required id is rejected. Observation ids outside
+# this table remain governed by the coverage equality alone, so an intentionally
+# extended coverage pin can still add observations. This binds three fields of the
+# researched synthetic corpus. It does not pin raw payload bytes or other decision
+# times, and it certifies no fiscal or reporting period.
+REQUIRED_OBSERVATION_BINDINGS = {
+    "obs-revenue-apr": _bound_to("late_correction_before_amendment"),
+    "obs-revenue-jul": _bound_to("late_correction_after_amendment"),
+    "obs-ooo-may": _bound_to("out_of_order_acceptance_visible_after_accept"),
+    # Composite binding. No replay check covers revenue at the August decision. The
+    # revenue key and its effective 10-K/A (raw-eq-10ka) come from
+    # late_correction_after_amendment; the decision time is the post-split instant of
+    # corporate_action_retained. That matches the published observation and lineage
+    # at 2024-08-02, where the contract already requires the visible split beside the
+    # revenue fact. It is an implementation binding of this synthetic corpus, not an
+    # explicit coverage row and not new provider or reporting-period semantics.
+    "obs-revenue-aug": {
+        "natural_key": "late_correction_after_amendment",
+        "decision_time": "corporate_action_retained",
+        "effective_raw_record_id": "late_correction_after_amendment",
+    },
+    "obs-quote-aug": _bound_to("unadjusted_quote_not_rewritten"),
+    "obs-split-aug": _bound_to("corporate_action_retained"),
+    "obs-split-corr": _bound_to("corporate_action_correction_is_effective"),
+    "obs-splits-sep": _bound_to("independent_corporate_action_retained"),
+    "obs-ev-aug21": _bound_to("event_resolution_before_late_message"),
+    "obs-ev-sep": _bound_to("event_settled_keeps_determination_raw"),
+    "obs-ev-void": _bound_to("voided_event_stays_distinct"),
+    "obs-ev-d1-dispute": _bound_to("event_dispute_correction_is_effective"),
+    "obs-ev-d1-final": _bound_to("event_finalized_keeps_dispute_chain"),
+}
+
+
+def _scenario_value(scenario: dict, field: str):
+    if field == "effective_raw_record_id":
+        return scenario["outcome"]["effective_raw_record_id"]
+    return scenario[field]
+
+
+def _require_observation_bindings(coverage_checks: dict, bundle: Bundle) -> None:
+    """Each required observation states the pinned scenario it is bound to.
+
+    coverage_checks is the contract-pinned coverage manifest, keyed by check id.
+    A missing observation, binding, or scenario fails closed.
+    """
+    observations = {observation["observation_id"]: observation for observation in bundle.observations}
+    for observation_id, binding in REQUIRED_OBSERVATION_BINDINGS.items():
+        observation = observations.get(observation_id)
+        if observation is None:
+            raise ContractError(f"required observation {observation_id} is missing from the candidate")
+        for field in _BOUND_OBSERVATION_FIELDS:
+            check_id = binding.get(field)
+            if type(check_id) is not str:
+                raise ContractError(f"{observation_id} has no required {field} binding")
+            scenario = coverage_checks.get(check_id)
+            if scenario is None:
+                raise ContractError(
+                    f"{observation_id} binding names missing coverage scenario {check_id}"
+                )
+            expected = _scenario_value(scenario, field)
+            if expected is None:
+                raise ContractError(
+                    f"{observation_id} binding names coverage scenario {check_id} without a {field}"
+                )
+            if observation.get(field) != expected:
+                raise ContractError(
+                    f"{observation_id} {field} does not match coverage scenario {check_id}: "
+                    f"expected {expected!r}, got {observation.get(field)!r}"
+                )
+
+
 def validate_replay(bundle: Bundle) -> None:
     check_ids = [check["check_id"] for check in bundle.checks]
     if len(check_ids) != len(set(check_ids)):
@@ -1202,7 +1284,8 @@ def validate_coverage(root: Path, bundle: Bundle) -> None:
 
     The manifest digest recorded in the contract is the pin. A swapped scenario
     or a deleted observation fails this equality even when the remaining corpus
-    is internally consistent.
+    is internally consistent. Required observations are then bound to their
+    pinned scenarios by REQUIRED_OBSERVATION_BINDINGS.
     """
     path = root / "fixtures" / "coverage.json"
     digest = _sha_file(path)
@@ -1231,6 +1314,7 @@ def validate_coverage(root: Path, bundle: Bundle) -> None:
         or sorted(observation_ids) != sorted(expected_ids)
     ):
         raise ContractError("observation set does not match the coverage manifest")
+    _require_observation_bindings(by_id, bundle)
 
 
 def validate_candidate(root: Path | None = None) -> list[str]:
